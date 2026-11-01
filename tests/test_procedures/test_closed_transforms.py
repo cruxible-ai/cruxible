@@ -16,8 +16,6 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_client.contracts.procedures.contracts import OwnedProcedureContractValidator
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
     HaltNode,
@@ -32,6 +30,7 @@ from cruxible_core.procedures.execution import ProcedureExecutor
 from tests.support.procedures import named
 from tests.test_procedures.test_procedure_execution import (
     _Authority,
+    _Contracts,
     _fixture,
     _hard_caps,
     _owned_accepted,
@@ -68,32 +67,21 @@ def _transform(node_id: str, kind: str, spec: dict[str, Any], **extra: Any) -> T
 
 
 def _run(nodes: tuple[Any, ...], tmp_path: Path, *, returns: str = "result") -> tuple[Any, list]:
+    # The values these graphs return vary by case; completeness, not the
+    # return Contract, is under test, so the run checks no boundary shape.
     empty = _owned_contract("empty", {})
-    opaque = _owned_contract("opaque", {"rows": PropertySchema(type="json")})
-    out = _owned_contract("result", {"value": PropertySchema(type="json")})
-    entry, opaque_pin, out_pin = (
-        _owned_pin("contract-in", empty),
-        _owned_pin("contract-out", opaque),
-        _owned_pin("contract-out", out),
-    )
-    rebound = []
-    for node in nodes:
-        if isinstance(node, ProjectNode):
-            target = opaque_pin if node.node_id == "feed" else out_pin
-            node = node.model_copy(update={"contract_out": named(target)})
-        rebound.append(node)
+    out = _owned_contract("result", {})
+    entry, out_pin = _owned_pin("contract-in", empty), _owned_pin("contract-out", out)
     definition = ProcedureDefinition(
         name="completeness",
         contract_in=named(entry),
         contract_out=named(out_pin),
-        nodes=tuple(rebound),
+        nodes=tuple(nodes),
         returns=returns,
         hard_caps=_hard_caps(),
         terminal_capability=1,
     )
-    accepted = _owned_accepted(
-        definition, contracts=(empty, opaque, out), pins=(entry, opaque_pin, out_pin)
-    )
+    accepted = _owned_accepted(definition, contracts=(empty, out), pins=(entry, out_pin))
     fixture = _fixture(tmp_path)
     sinks: list[tuple[str, bool]] = []
     result = ProcedureExecutor(
@@ -102,7 +90,7 @@ def _run(nodes: tuple[Any, ...], tmp_path: Path, *, returns: str = "result") -> 
         run_index=fixture.run_index,
         fencing_token="writer",
         activation_authority=_Authority(accepted.artifact_digest),
-        contract_validator=OwnedProcedureContractValidator(accepted),
+        contract_validator=_Contracts(),
         completeness_probe=lambda node_id, complete: sinks.append((node_id, complete)),
     ).execute(_prepare(accepted, fixture, _StateReader(), invocation_input={}), accepted)
     return result, sinks
@@ -112,16 +100,13 @@ _PLACEHOLDER = named(_owned_pin("contract-out", _owned_contract("result", {})))
 
 
 def _feed(*records: dict[str, Any]) -> ProjectNode:
-    return ProjectNode(
-        node_id="feed", literal={"rows": _rows(*records)}, contract_out=_PLACEHOLDER, as_="feed"
-    )
+    return ProjectNode(node_id="feed", literal={"rows": _rows(*records)}, as_="feed")
 
 
 def _returned(alias: str) -> ProjectNode:
     return ProjectNode(
         node_id="result",
         fields={"value": f"$steps.{alias}"},
-        contract_out=_PLACEHOLDER,
         as_="result",
     )
 
@@ -159,7 +144,6 @@ def _count_fixed(records: tuple[dict[str, Any], ...]) -> tuple[Any, ...]:
         ProjectNode(
             node_id="result",
             fields={"value": "$steps.verdict.result"},
-            contract_out=_PLACEHOLDER,
             as_="result",
         ),
     )
@@ -225,7 +209,6 @@ def test_a_guard_over_an_incomplete_value_carries_it_into_its_branch(tmp_path: P
         ProjectNode(
             node_id="result",
             literal={"value": "closed"},
-            contract_out=_PLACEHOLDER,
             as_="result",
             leaf=True,
         ),

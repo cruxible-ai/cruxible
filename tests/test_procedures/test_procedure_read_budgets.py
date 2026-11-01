@@ -45,7 +45,7 @@ def _reading(name: str, subjects: tuple[str, ...], *, caps: dict[str, Any] | Non
         {
             "procedure": name,
             "input": {},
-            "output": {"count": "integer"},
+            "output": {"count": "int"},
             "steps": steps,
             "returns": "out",
             **(
@@ -100,7 +100,7 @@ def test_an_invoked_child_reads_only_what_its_parent_has_left(
         {
             "procedure": "test.parent-read",
             "input": {},
-            "output": {"count": "integer"},
+            "output": {"count": "int"},
             "steps": [
                 {"read": "mine", "claim_type": PREDICATE, "subject": "wi-42"},
                 {"invoke": "test.child-read", "id": "child", "input": {}},

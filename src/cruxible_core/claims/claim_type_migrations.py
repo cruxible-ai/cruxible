@@ -556,7 +556,7 @@ def _canonical_successor_bytes(
             )
 
             candidate = render_query_definition(QueryDefinition.model_validate(payload))
-        elif current.artifact_tag == "cruxible-procedure-v3":
+        elif current.artifact_tag == "cruxible-procedure-v4":
             from cruxible_client.contracts.procedures.artifacts import (
                 ProcedureArtifact,
                 render_procedure,

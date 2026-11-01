@@ -18,7 +18,6 @@ from cruxible_client.contracts.procedure_mandates import (
 )
 from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
-    render_procedure,
 )
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
@@ -48,6 +47,7 @@ from cruxible_core.authoring import lowering
 from cruxible_core.proposals import proposals
 from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
 from tests.core_support._support import initialize_local
+from tests.support.procedures import procedure_members
 from tests.test_authoring.test_authoring_change_set_intents import (
     SUBJECT_KIND,
     TIMESTAMP,
@@ -181,7 +181,7 @@ def _world(tmp_path, *, only_subject: str | None = None, change_kinds=("create",
         owner,
         {
             **tree,
-            "procedures/triage.json": render_procedure(procedure),
+            **procedure_members(procedure),
             query_definition_path(query.identity.name): render_query_definition(query),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path("triage"): render_procedure_mandate(mandate),

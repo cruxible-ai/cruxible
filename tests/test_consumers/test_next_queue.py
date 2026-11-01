@@ -47,6 +47,7 @@ from tests.core_support._claim_authoring_support import (
     service_propose_playbill_claim,
 )
 from tests.core_support._knowledge_loop_support import activate, authoring, seed_claims
+from tests.support.procedures import procedure_members
 from tests.test_authoring.test_authoring_existing_capture import shared_capture_world
 from tests.test_authoring.test_derivation_admission import (
     _run_and_accept,
@@ -1163,7 +1164,6 @@ def test_undeclared_kinds_and_expiring_mandates_come_from_the_maintained_index(
         procedure_mandate_path,
         render_procedure_mandate,
     )
-    from cruxible_client.contracts.procedures.artifacts import render_procedure
     from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
     from cruxible_client.contracts.subjects import render_subject, subject_path
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
@@ -1204,7 +1204,7 @@ def test_undeclared_kinds_and_expiring_mandates_come_from_the_maintained_index(
         owner,
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
-            procedure.path: render_procedure(authored_procedure(procedure)),
+            **procedure_members(authored_procedure(procedure)),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path("triage"): render_procedure_mandate(lapsing),
         },

@@ -10,7 +10,6 @@ from typing import ClassVar, Literal
 from pydantic import (
     BaseModel,
     ConfigDict,
-    Field,
     field_validator,
     model_validator,
 )
@@ -22,7 +21,6 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
-    canonical_bytes,
     pretty_canonical_bytes,
     typed_digest,
 )
@@ -34,7 +32,6 @@ from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.acquisition_rules import (
     LineAcquisitionRule,
 )
-from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.graph import (
     compute_procedure_definition_digest,
     procedure_guard_halt_targets,
@@ -45,7 +42,6 @@ from cruxible_client.contracts.procedures.models import (
     InboxEgressNode,
     ProcedureDefinition,
     RepeatNode,
-    iter_references,
 )
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -62,70 +58,20 @@ class _StrictProcedureArtifactModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
 
-class ProcedureOwnedContract(_StrictProcedureArtifactModel):
-    """A closed Contract artifact carried by exactly one Procedure envelope."""
-
-    model_config = ConfigDict(
-        extra="forbid",
-        frozen=True,
-        populate_by_name=True,
-        serialize_by_alias=True,
-    )
-
-    tag: Literal["playbill-procedure-owned-contract-v1"] = "playbill-procedure-owned-contract-v1"
-    identity: ArtifactIdentity
-    contract_schema: ContractSchema = Field(alias="schema")
-
-    @field_validator("contract_schema", mode="before")
-    @classmethod
-    def _closed_schema(cls, value: object) -> object:
-        if isinstance(value, dict) and set(value) - {
-            "description",
-            "fields",
-            "allow_extra",
-        }:
-            raise ValueError("owned Contract schema contains unknown fields")
-        if isinstance(value, dict) and isinstance(value.get("fields"), dict):
-            for name, field in value["fields"].items():
-                if isinstance(field, dict) and set(field) - set(PropertySchema.model_fields):
-                    raise ValueError(f"owned Contract field {name!r} contains unknown fields")
-        return value
-
-    @model_validator(mode="after")
-    def _contract_identity(self) -> "ProcedureOwnedContract":
-        if self.identity.kind != "Contract":
-            raise ValueError("owned Contract identity must use kind Contract")
-        return self
-
-
-def procedure_owned_contract_digest(contract: ProcedureOwnedContract) -> ArtifactDigest:
-    return typed_digest(
-        ArtifactDigest,
-        "playbill-procedure-owned-contract-v1",
-        {
-            "identity": contract.identity.model_dump(mode="json"),
-            "schema": contract.contract_schema.model_dump(mode="json"),
-        },
-    )
-
-
-def _owned_contract_key(contract: ProcedureOwnedContract) -> bytes:
-    return canonical_bytes(contract.model_dump(mode="json", by_alias=True))
-
-
 class ProcedureArtifact(_StrictProcedureArtifactModel):
-    """The one Procedure envelope: one named graph and the Contracts it carries.
+    """The one Procedure envelope: one named graph.
 
-    Every dependency the graph names resolves at the accepted coordinate; the
-    envelope itself pins nothing. Acquisition rules are not the Procedure's:
+    Every dependency the graph names -- its input, output and parameter
+    Contracts included, which are governed Contracts -- resolves at the
+    accepted coordinate; the envelope itself pins nothing and carries no
+    Contracts. Acquisition rules are not the Procedure's:
     its Line declares them per capture output (``<alias>.<field>``).
     """
 
-    artifact_format: Literal["cruxible-procedure-v3"] = "cruxible-procedure-v3"
+    artifact_format: Literal["cruxible-procedure-v4"] = "cruxible-procedure-v4"
     identity: ArtifactIdentity
     definition: ProcedureDefinition
     definition_digest: str
-    owned_contracts: tuple[ProcedureOwnedContract, ...]
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
     #: The envelope carries no exact pins; its dependencies are named.
@@ -135,6 +81,12 @@ class ProcedureArtifact(_StrictProcedureArtifactModel):
     @classmethod
     def _stored(cls, value: object) -> object:
         if isinstance(value, dict):
+            if "owned_contracts" in value:
+                raise ValueError(
+                    "procedure_owned_contracts_retired: a Procedure carries no Contracts; its "
+                    "input, output and params are governed Contracts (generated "
+                    "<procedure>.input|output|params@N, or a named name@N)"
+                )
             if "acquisition_defaults" in value:
                 raise ValueError(
                     "procedure_acquisition_defaults_retired: acquisition rules live on the "
@@ -156,22 +108,6 @@ class ProcedureArtifact(_StrictProcedureArtifactModel):
         ArtifactDigest.from_tagged(value)
         return value
 
-    @field_validator("owned_contracts")
-    @classmethod
-    def _owned_contracts(
-        cls,
-        value: tuple[ProcedureOwnedContract, ...],
-    ) -> tuple[ProcedureOwnedContract, ...]:
-        if value != tuple(sorted(value, key=_owned_contract_key)):
-            raise ValueError("owned Contracts must be canonically byte-sorted")
-        identities = tuple(contract.identity.qualified for contract in value)
-        digests = tuple(procedure_owned_contract_digest(contract).tagged for contract in value)
-        if len(set(identities)) != len(identities):
-            raise ValueError("owned Contracts must be unique by identity")
-        if len(set(digests)) != len(digests):
-            raise ValueError("owned Contracts must be unique by digest")
-        return value
-
     @model_validator(mode="after")
     def _correspondence(self) -> "ProcedureArtifact":
         if self.identity.kind != "Procedure" or not _PROCEDURE_NAME_RE.fullmatch(
@@ -182,16 +118,6 @@ class ProcedureArtifact(_StrictProcedureArtifactModel):
             raise ValueError("Procedure definition name must match its identity")
         if self.definition_digest != compute_procedure_definition_digest(self.definition).tagged:
             raise ValueError("Procedure definition digest does not reproduce")
-        contracts = {contract.identity for contract in self.owned_contracts}
-        referenced = {
-            reference.target
-            for reference in iter_references(self.definition)
-            if reference.target.kind == "Contract"
-        }
-        if referenced != contracts:
-            raise ValueError(
-                "every owned Contract must be referenced by name exactly within its owner"
-            )
         guard_halts = procedure_guard_halt_targets(self.definition)
         nodes = []
         for index, node in enumerate(self.definition.nodes):
@@ -320,7 +246,7 @@ def _parse_procedure(
 def procedure_artifact_digest(procedure: ProcedureArtifact) -> ArtifactDigest:
     from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
 
-    return typed_digest(ArtifactDigest, "cruxible-procedure-v3", compact_procedure(procedure))
+    return typed_digest(ArtifactDigest, "cruxible-procedure-v4", compact_procedure(procedure))
 
 
 class AcceptedProcedure(_StrictProcedureArtifactModel):
@@ -408,7 +334,6 @@ def evaluate_procedure_law(
         if (
             procedure.definition_digest == predecessor.procedure.definition_digest
             and procedure.activation_policy == predecessor.procedure.activation_policy
-            and procedure.owned_contracts == predecessor.procedure.owned_contracts
             and procedure.lifecycle.state == predecessor.procedure.lifecycle.state
         ):
             return _refusal(
@@ -537,11 +462,9 @@ __all__ = [
     "ProcedureArtifact",
     "ProcedureFormatError",
     "ProcedureLawResult",
-    "ProcedureOwnedContract",
     "evaluate_procedure_law",
     "parse_procedure",
     "procedure_artifact_digest",
-    "procedure_owned_contract_digest",
     "procedure_contract_refs",
     "procedure_path",
     "provider_occurrences",

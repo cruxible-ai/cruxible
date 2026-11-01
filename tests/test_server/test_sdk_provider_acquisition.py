@@ -25,10 +25,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.named_references import name_provider
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
-    ProcedureOwnedContract,
-    procedure_owned_contract_digest,
 )
-from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.extract import ExtractNode
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
@@ -235,27 +232,28 @@ def acquisition_result():
     ).model_dump(mode="json")
 
 
+def _fetch_boundaries() -> tuple[object, object]:
+    """The fetch Procedure's generated boundaries (<procedure>.input|output@1)."""
+
+    from tests.support.procedures import boundary_contract
+
+    return (
+        boundary_contract("sdk-fetch-triage.input"),
+        boundary_contract("sdk-fetch-triage.output", {"severity": "string"}),
+    )
+
+
+_FETCH_BOUNDARIES = _fetch_boundaries()
+
+
 def _fetch_procedure(contract: CaptureContract, *, request: dict[str, object]) -> ProcedureArtifact:
     """One accepted Procedure whose Source slot fetches ``request`` and shapes severity."""
 
-    run_input = ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name="sdk-fetch-run-input"),
-        schema=ContractSchema(fields={}, allow_extra=True),
-    )
-    run_output = ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name="sdk-fetch-run-output"),
-        schema=ContractSchema(fields={"severity": PropertySchema(type="string")}),
-    )
-    run_input_pin = ArtifactPin(
-        role="contract-in",
-        target=run_input.identity,
-        artifact_digest=procedure_owned_contract_digest(run_input).tagged,
-    )
-    run_output_pin = ArtifactPin(
-        role="contract-out",
-        target=run_output.identity,
-        artifact_digest=procedure_owned_contract_digest(run_output).tagged,
-    )
+    from tests.support.procedures import contract_pin
+
+    run_input, run_output = _FETCH_BOUNDARIES
+    run_input_pin = contract_pin("contract-in", run_input)
+    run_output_pin = contract_pin("contract-out", run_output)
     capture_pin = ArtifactPin(
         role="capture-contract",
         target=contract.identity,
@@ -297,7 +295,6 @@ def _fetch_procedure(contract: CaptureContract, *, request: dict[str, object]) -
             ProjectNode(
                 node_id="shape",
                 fields={"severity": "$steps.bundle.rows.0.text"},
-                contract_out=named(run_output_pin),
                 as_="result",
             ),
         ),
@@ -315,12 +312,6 @@ def _fetch_procedure(contract: CaptureContract, *, request: dict[str, object]) -
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        owned_contracts=tuple(
-            sorted(
-                (run_input, run_output),
-                key=lambda item: canonical_bytes(item.model_dump(mode="json", by_alias=True)),
-            )
-        ),
         activation_policy="drain",
     )
     from tests.support.procedures import revalidated
@@ -470,7 +461,9 @@ def test_sdk_source_retains_and_reads_acquisition(
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http
     pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=tmp_path)
-    intent = pb.procedure(definition=source._sdk_procedure_input(procedure)).prepare()
+    intent = pb.procedure(
+        definition=source._sdk_procedure_input(procedure, _FETCH_BOUNDARIES)
+    ).prepare()
     assert not intent.refused, intent.diagnostics
     intent.submit(accept="never")
     _approve_and_activate(http, instance_id, reviewer, intent.proposal.proposal_id)
@@ -564,8 +557,6 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
             "procedure": "replace-me",
             "input": {},
             "output": {"size": "int"},
-            "input_contract": "empty-input",
-            "output_contract": "size",
             "slots": {
                 "invoke": {
                     "in": f"{call_input.name}@{call_input.version}",

@@ -10,7 +10,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client.authoring.sdk import Cruxible
-from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.procedures.readings import (
     ProcedureMeasureResult,
     ProcedureReadingsRequest,
@@ -25,6 +24,7 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._knowledge_loop_support import seed_claims_into
+from tests.support.procedures import procedure_members
 from tests.test_procedures.test_procedure_measurement_readings import _world_on as measured_world_on
 from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
 from tests.test_server.test_playbill_line_run_refusals import _accept_members
@@ -39,7 +39,7 @@ def test_measure_and_readings_routes_serve_a_real_run_and_typed_refusals(
     _accept_members(
         instance,
         reviewer_key_path,
-        {accepted.path: render_procedure(authored_procedure(accepted))},
+        procedure_members(authored_procedure(accepted)),
         timestamp="2026-09-03T09:00:00.000000Z",
     )
     name = accepted.procedure.identity.name

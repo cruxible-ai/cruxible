@@ -95,7 +95,7 @@ def world(  # noqa: PLR0913
     line = LineSpec.model_validate(values)
     if line_budget is not None:
         line = line.model_copy(
-            update={"budgets": {**line.budgets, "max_capture_bytes": line_budget}}
+            update={"budgets": line.budgets.model_copy(update={"max_capture_bytes": line_budget})}
         )
 
     from cruxible_client.contracts.procedure_mandates import (
@@ -664,7 +664,7 @@ def test_over_budget_occurrence_closes_then_requires_successor_for_retry(tmp_pat
     )
     successor = line.model_copy(
         update={
-            "budgets": {**line.budgets, "max_capture_bytes": 4096},
+            "budgets": line.budgets.model_copy(update={"max_capture_bytes": 4096}),
             "lifecycle": ArtifactLifecycle(predecessor_digest=line_spec_digest(line).tagged),
         }
     )

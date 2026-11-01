@@ -30,7 +30,6 @@ from typing import Any
 
 from cruxible_client.authoring.attestations import LocalEd25519ClaimAttestationSigner
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     CanonicalDuration,
     build_coordinator_self_source_capture,
@@ -57,13 +56,10 @@ from cruxible_client.contracts.procedure_mandates import (
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
-    ProcedureOwnedContract,
     procedure_artifact_digest,
-    procedure_owned_contract_digest,
     procedure_path,
     render_procedure,
 )
-from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
@@ -266,20 +262,23 @@ def _bulk(world: World) -> None:
 # -- definitions ------------------------------------------------------------------------
 
 
-def _contract(name: str) -> tuple[ProcedureOwnedContract, ArtifactPin, str]:
-    contract = ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name=name),
-        schema=ContractSchema(fields={"status": PropertySchema(type="string")}),
-    )
+def _contract(name: str) -> tuple[Any, ArtifactPin, str]:
+    from tests.support.procedures import boundary_contract, contract_pin
+
+    contract = boundary_contract(name, {"status": "string"})
     return (
         contract,
-        ArtifactPin(
-            role="contract-in" if name.endswith("-input") else "contract-out",
-            target=contract.identity,
-            artifact_digest=procedure_owned_contract_digest(contract).tagged,
-        ),
+        contract_pin("contract-in" if name.endswith(".input") else "contract-out", contract),
         name,
     )
+
+
+def boundary_members(name: str) -> dict[str, bytes]:
+    """The governed boundary Contracts of the scale world's Procedure ``name``."""
+
+    from tests.support.procedures import contract_files
+
+    return contract_files(_contract(f"{name}.input")[0], _contract(f"{name}.output")[0])
 
 
 def _procedure(
@@ -287,8 +286,8 @@ def _procedure(
 ) -> AcceptedProcedure:
     """A Procedure with no Source and no Provider: one Project node, then its terminal."""
 
-    input_contract, contract_in, _ = _contract(f"{name}-input")
-    output_contract, contract_out, _ = _contract(f"{name}-output")
+    _, contract_in, _ = _contract(f"{name}.input")
+    _, contract_out, _ = _contract(f"{name}.output")
     definition = ProcedureDefinition(
         name=name,
         contract_in=named(contract_in),
@@ -297,7 +296,6 @@ def _procedure(
             ProjectNode(
                 node_id="shape",
                 fields={"status": "$input.status"},
-                contract_out=named(contract_out),
                 as_="result",
                 **({} if terminal is None else {"next": terminal.node_id}),
             ),
@@ -317,14 +315,6 @@ def _procedure(
         identity=ArtifactIdentity(kind="Procedure", name=name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        owned_contracts=tuple(
-            sorted(
-                (input_contract, output_contract),
-                key=lambda contract: canonical_bytes(
-                    contract.model_dump(mode="json", by_alias=True)
-                ),
-            )
-        ),
         activation_policy="drain",
     )
     from tests.support.procedures import revalidated
@@ -513,6 +503,11 @@ def definitions(world: World) -> dict[str, bytes]:
         **{
             accepted.path: render_procedure(authored_procedure(accepted))
             for accepted in (propose, settle, tick)
+        },
+        **{
+            path: content
+            for accepted in (propose, settle, tick)
+            for path, content in boundary_members(accepted.procedure.identity.name).items()
         },
         **{
             line_spec_path(line.identity.name): render_line_spec(line)

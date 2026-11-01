@@ -465,13 +465,7 @@ def procedure_example() -> ProcedureInput:
                             {"id": "two", "keep": False},
                         ]
                     },
-                    "output": {
-                        "items": {
-                            "type": "list",
-                            "item_fields": {"id": {"type": "string"}, "keep": {"type": "bool"}},
-                        }
-                    },
-                    "contract": "collection",
+                    # The records flow as data: an intermediate step pins no Contract.
                 },
                 {
                     "transform": "shaped",
@@ -523,12 +517,9 @@ def procedure_example() -> ProcedureInput:
                     "project": "result",
                     "fields": {"count": step("counted", "result")},
                     "output": {"count": "int"},
-                    "contract": "count-result",
                 },
             ],
             "returns": "result",
-            "input_contract": "empty-input",
-            "output_contract": "count-result",
         }
     )
 

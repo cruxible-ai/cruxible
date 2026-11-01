@@ -7,12 +7,17 @@ reproduces the stored graph.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
-from cruxible_client.contracts.procedures.authored import ProcedureSpec, _template_aliases
-from cruxible_client.contracts.procedures.contract_schema import ContractSchema
+from cruxible_client.contracts.procedures.authored import (
+    ProcedureSpec,
+    _spelled_fields,
+    _template_aliases,
+    generated_contract_name,
+)
 from cruxible_client.contracts.procedures.graph import (
     analyze_procedure,
     procedure_guard_halt_targets,
@@ -37,11 +42,18 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.procedures.reads import DEFAULT_MAX_READ_ROWS
 from cruxible_client.contracts.refs import ref_from_graph_text
+from cruxible_client.contracts.shapes import Contract, ContractRef, contract_ref_for_identity
 from cruxible_client.contracts.temporal import format_iso_duration_microseconds
 
 
 class ProcedureNotDecompilable(ValueError):
     """A stored graph that no typed spec lowers to (it was not authored as a spec)."""
+
+
+def _named(pin: Any) -> ArtifactNameRef | ArtifactPin:
+    if not isinstance(pin, (ArtifactNameRef, ArtifactPin)):
+        raise ProcedureNotDecompilable("a Procedure dependency is not a named reference")
+    return pin
 
 
 def _name(pin: Any) -> str:
@@ -119,14 +131,31 @@ def _folded_halts(
     return {(guard, arm): halt for guard, arm, halt in candidates}
 
 
-def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
-    """The typed spec a stored Procedure graph lowers from."""
+def decompile_procedure(
+    procedure: ProcedureArtifact,
+    *,
+    contracts: Callable[[ContractRef], Contract | None] | None = None,
+) -> ProcedureSpec:
+    """The typed spec a stored Procedure graph lowers from.
+
+    Each boundary (input, output, params) names its governed Contract
+    (``input_contract: name@N``). With ``contracts`` -- governed Contracts read
+    at the Procedure's coordinate -- a boundary whose Contract is the generated
+    ``<procedure>.<role>`` renders inline instead; either form lowers back to
+    the same stored graph.
+    """
 
     definition = procedure.definition
-    contracts = {c.identity.name: c.contract_schema for c in procedure.owned_contracts}
 
-    def schema(pin: Any) -> ContractSchema:
-        return contracts[_name(pin)]
+    def boundary(role: str, pin: Any) -> dict[str, Any]:
+        ref = contract_ref_for_identity(_named(pin).target)
+        found = None if contracts is None else contracts(ref)
+        if found is not None and ref.name == generated_contract_name(definition.name, role):
+            return {"output" if role == "output" else role: _spelled_fields(found.fields)}
+        key = {"input": "input_contract", "output": "output_contract"}.get(
+            role, "parameter_contract"
+        )
+        return {key: ref.spelling}
 
     nodes = definition.nodes
     incoming = _incoming(definition)
@@ -141,7 +170,6 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
             and not node.leaf
             and node.node_id == node.as_ == returns
             and isinstance(node.fields, dict)
-            and node.contract_out == definition.contract_out
         ):
             dependencies = _template_aliases(node.fields)
             position = max(
@@ -228,12 +256,7 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                 invoke=_name(node.procedure), input=typed_template(node.input), **{"as": node.as_}
             )
         elif isinstance(node, SelectNode):
-            step = dict(
-                select=node.as_,
-                sources=node.sources,
-                output=schema(node.contract_out).fields,
-                contract=_name(node.contract_out),
-            )
+            step = dict(select=node.as_, sources=node.sources)
         elif isinstance(node, RepeatNode):
             body: list[dict[str, Any]] = []
             for member in node.body:
@@ -260,11 +283,7 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                 until=node.until.model_dump(mode="json", by_alias=True),
             )
         elif isinstance(node, ProjectNode):
-            step = dict(
-                project=node.as_,
-                output=schema(node.contract_out).fields,
-                contract=_name(node.contract_out),
-            )
+            step = dict(project=node.as_)
             if node.literal is not None:
                 step["literal"] = node.literal
             else:
@@ -330,21 +349,17 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                 name: slot.model_dump(mode="json", by_alias=True)
                 for name, slot in definition.slots.items()
             },
-            input=schema(definition.contract_in).fields,
-            input_contract=_name(definition.contract_in),
-            output=schema(definition.contract_out).fields,
-            output_contract=_name(definition.contract_out),
-            params={}
-            if definition.parameter_contract is None
-            else schema(definition.parameter_contract).fields,
-            parameter_contract=None
-            if definition.parameter_contract is None
-            else _name(definition.parameter_contract),
+            **boundary("input", definition.contract_in),
+            **boundary("output", definition.contract_out),
+            **(
+                {}
+                if definition.parameter_contract is None
+                else boundary("params", definition.parameter_contract)
+            ),
             returns=returns,
             measurements=definition.measurements,
             annotations=definition.annotations,
             activation=procedure.activation_policy,
-            contracts=contracts,
             steps=steps,
             hard_caps=dict(
                 wall_clock=format_iso_duration_microseconds(caps.max_wall_clock.microseconds),

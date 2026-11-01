@@ -94,8 +94,6 @@ def derivation_world(tmp_path):
         "procedure": "derive-ready",
         "input": {},
         "output": {"ready": "bool"},
-        "input_contract": "derive.request",
-        "output_contract": "derive.result",
         **LIMITS,
         "steps": [
             {

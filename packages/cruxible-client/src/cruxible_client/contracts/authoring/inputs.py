@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import re
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Literal, TypeAlias
@@ -21,7 +22,6 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
-from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
     ApprovalPolicyAuthoringPayload,
     AuthoringChangeSetMember,
@@ -54,7 +54,6 @@ from cruxible_client.contracts.authoring.models import (
     WorkingSelectionObservation,
     authoring_member_identity,
 )
-from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import (
     ClaimRetireDependent,
@@ -65,14 +64,12 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
-from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 from cruxible_client.contracts.procedures.authored import (
     ProcedureSpec,
     ProcedureSpecError,
     lower_procedure_spec,
 )
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
-from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.line_specs import LineBudgetsInput
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
@@ -96,7 +93,7 @@ from cruxible_client.contracts.triggers import InternalActionName
 from cruxible_client.contracts.validation_messages import validation_summary
 
 if TYPE_CHECKING:
-    from cruxible_client.contracts.records import RecordConstructor
+    pass
 
 #: ``kind/<text>``: a Subject id, an alias of the kind, or a value of its single
 #: key, resolved at lowering (exact live id, alias, key, exact retired id). The
@@ -189,21 +186,6 @@ AuthoringSourceInput: TypeAlias = Annotated[
 ]
 
 
-class CarriedContractInput(_StrictInputModel):
-    name: str
-    description: str | None = None
-    fields: dict[str, PropertySchema]
-    allow_extra: bool = False
-
-    @property
-    def value(self) -> RecordConstructor:
-        """Construct a value under this carried schema without changing its wire."""
-        from cruxible_client.contracts.procedures.contract_schema import ContractSchema
-        from cruxible_client.contracts.records import RecordConstructor
-
-        return RecordConstructor(ContractSchema(fields=self.fields, allow_extra=self.allow_extra))
-
-
 class ClaimDispositionInput(_StrictInputModel):
     claim_id: str
     disposition: Literal["not_tested", "support", "contradict", "unsure"]
@@ -274,30 +256,16 @@ def lowered_procedure_payload(
     *,
     definition: dict[str, object],
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"],
-    contracts: tuple[CarriedContractInput, ...],
+    generated: Mapping[str, Mapping[str, ContractField]],
 ) -> ProcedureAuthoringPayload:
-    """The lowered spec: its stored graph and the Contracts the graph names."""
+    """The lowered spec: its stored graph and the boundary Contracts core co-proposes."""
 
-    owned = tuple(
-        sorted(
-            (
-                ProcedureOwnedContract(
-                    identity=ArtifactIdentity(kind="Contract", name=contract.name),
-                    schema=ContractSchema(
-                        description=contract.description,
-                        fields=contract.fields,
-                        allow_extra=contract.allow_extra,
-                    ),
-                )
-                for contract in contracts
-            ),
-            key=lambda contract: canonical_bytes(contract.model_dump(mode="json", by_alias=True)),
-        )
-    )
-    return ProcedureAuthoringPayload(
-        definition=definition,
-        activation_policy=activation_policy,
-        owned_contracts=owned,
+    return ProcedureAuthoringPayload.model_validate(
+        {
+            "definition": definition,
+            "activation_policy": activation_policy,
+            "generated": {role: dict(fields) for role, fields in generated.items()},
+        }
     )
 
 
@@ -849,7 +817,6 @@ def _procedure_payload(
             "name": value.spec.procedure,
             "procedure_spec": value.spec.model_dump(mode="json", by_alias=True),
         },
-        owned_contracts=(),
         activation_policy=value.spec.activation,
         retire=value.retire,
     )
@@ -1121,7 +1088,6 @@ __all__ = [
     "AuthoringInput",
     "AuthoringObjectInput",
     "AuthoringSourceInput",
-    "CarriedContractInput",
     "ChangeSetInput",
     "ClaimDispositionInput",
     "ClaimRetirementInput",

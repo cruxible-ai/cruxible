@@ -64,7 +64,6 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     ProcedureRuntimePolicy,
 )
 from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
-from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
 from cruxible_client.contracts.procedures.line_specs import LineBudgetsInput
 from cruxible_client.contracts.procedures.windows import (
@@ -130,7 +129,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:9f18ccebebf90546d4bbed4f5212a03c4357724f41a3bace1e5c97d6a385f4d5"
+    "sha256:b3ee1ab1009e2f3d9fe39495e3040ed577654663932ddbcd2067db2afa7634fc"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -1171,18 +1170,35 @@ class ContractAuthoringPayload(_StrictAuthoringModel):
 
 
 class ProcedureAuthoringPayload(_StrictAuthoringModel):
-    """A lowered Procedure: its stored graph and the Contracts the graph names.
+    """A lowered Procedure: its stored graph and the boundary Contracts core co-proposes.
 
-    Acquisition rules are not the Procedure's: its Line declares them.
+    ``generated`` holds the inline fields of each boundary (``input``,
+    ``output``, ``params``) the spec declared inline; lowering co-proposes the
+    governed Contract ``<procedure>.<role>@N`` for each, versioned with the
+    Procedure (a successor reuses version N when its fields are unchanged), and
+    points the definition at it. A boundary the spec names (``name@N``) is not
+    here. Acquisition rules are not the Procedure's: its Line declares them.
     """
 
-    tag: Literal["cruxible-procedure-authoring-payload-v4"] = (
-        "cruxible-procedure-authoring-payload-v4"
+    tag: Literal["cruxible-procedure-authoring-payload-v5"] = (
+        "cruxible-procedure-authoring-payload-v5"
     )
     definition: dict[str, object]
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
-    owned_contracts: tuple[ProcedureOwnedContract, ...]
+    generated: dict[Literal["input", "output", "params"], dict[str, ContractField]] = Field(
+        default_factory=dict
+    )
     retire: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _retired(cls, value: object) -> object:
+        if isinstance(value, dict) and "owned_contracts" in value:
+            raise ValueError(
+                "procedure_owned_contracts_retired: a Procedure carries no Contracts; its "
+                "boundaries are governed Contracts lowering co-proposes (generated)"
+            )
+        return value
 
     @field_validator("definition", mode="before")
     @classmethod

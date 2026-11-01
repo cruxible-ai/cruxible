@@ -176,8 +176,8 @@ def slotted_spec(
         {
             "procedure": name,
             **({} if description is None else {"description": description}),
-            "input": {"value": "integer"},
-            "output": {"value": "integer"},
+            "input": {"value": "int"},
+            "output": {"value": "int"},
             "slots": {"compute": {"in": "test.value@1", "out": "test.value@1", "effect": effect}},
             "steps": [
                 {"call": "result", "slot": "compute", "input": {"value": ref("$input.value")}}

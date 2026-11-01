@@ -237,6 +237,7 @@ from cruxible_client.contracts.resolution_contracts import (
     ResolutionContractReference,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import Contract
 from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyReference
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
@@ -4126,7 +4127,7 @@ class Cruxible:
                     emitted={
                         "definition": (
                             "definition",
-                            "owned_contracts",
+                            "generated",
                             "activation_policy",
                             "retire",
                         ),
@@ -5469,6 +5470,17 @@ class Procedure:
         self._name = name
         self._coordinate = coordinate
         self._artifact: ProcedureArtifact | None = None
+        self._contracts: tuple[Contract, ...] = ()
+
+    @property
+    def contracts(self) -> tuple[Contract, ...]:
+        """The governed Contracts this Procedure's boundaries pin, with those they nest.
+
+        Next: ``procedure.input(...)`` builds a record of the input Contract.
+        """
+
+        _ = self.definition
+        return self._contracts
 
     @property
     def definition(self) -> ProcedureArtifact:
@@ -5481,6 +5493,7 @@ class Procedure:
             if procedure_artifact_digest(reading.artifact).tagged != reading.artifact_digest:
                 raise ValueError("Procedure read does not reproduce its accepted digest")
             self._artifact = reading.artifact
+            self._contracts = tuple(reading.contracts)
             self._coordinate = _coordinate(reading.coordinate)
         return self._artifact.model_copy(deep=True)
 
@@ -5491,7 +5504,7 @@ class Procedure:
         Next: ``procedure.run(input=procedure.input(...))``.
         """
 
-        return procedure_record_constructor(self.definition, "input")
+        return procedure_record_constructor(self.definition, "input", self.contracts)
 
     @property
     def ref(self) -> ProcedureRef:
@@ -5546,7 +5559,9 @@ class Procedure:
             trigger_event=trigger_event,
         )
         return ProcedureRun(
-            self._playbill, result, output=procedure_record_constructor(self.definition, "output")
+            self._playbill,
+            result,
+            output=procedure_record_constructor(self.definition, "output", self.contracts),
         )
 
     def measure(
@@ -5702,7 +5717,7 @@ class ProcedureRun:
             owner = Procedure(
                 self._playbill, str(self._raw.procedure_identity["name"]), self.coordinate
             )
-            self._output = procedure_record_constructor(owner.definition, "output")
+            self._output = procedure_record_constructor(owner.definition, "output", owner.contracts)
         return self._output.from_wire(self._raw.result)
 
     @property

@@ -26,8 +26,6 @@ from cruxible_client.contracts.procedure_mandates import (
 )
 from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
-    procedure_path,
-    render_procedure,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import (
@@ -64,6 +62,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_line,
 )
 from tests.core_support._light_capture_support import record_contract as capture_contract
+from tests.support.procedures import procedure_members
 from tests.test_procedures import test_procedure_source_runs as fixtures
 from tests.test_procedures.test_procedure_proposal_delivery import (
     PREDICATE,
@@ -308,7 +307,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
     query = _condition(only_subject=only_subject, require_claim=require_claim)
     members: dict[str, bytes] = {
         **trigger_members,
-        procedure_path(fixtures.PROCEDURE_NAME): render_procedure(with_terminal),
+        **procedure_members(with_terminal),
         line_spec_path(line.identity.name): render_line_spec(line),
         **{
             claim_type_path(item.predicate): render_claim_type(item)

@@ -1,6 +1,6 @@
 {
   "activation": "abort",
-  "description": "Read governed work-item state through the accepted query.",
+  "description": "Count governed work items through the accepted query.",
   "hard_caps": {
     "capture_bytes": 0,
     "items": 200,
@@ -9,22 +9,10 @@
     "wall_clock": "PT2S"
   },
   "input": {},
-  "input_contract": "empty-input",
   "kind": "procedure",
   "output": {
-    "rows": {
-      "item_fields": {
-        "item_id": {
-          "type": "string"
-        },
-        "status": {
-          "type": "string"
-        }
-      },
-      "type": "list"
-    }
+    "count": "int"
   },
-  "output_contract": "work-item-query-result",
   "procedure": "project.work_item.digest",
   "returns": "result",
   "steps": [
@@ -34,30 +22,32 @@
       "read": "query"
     },
     {
-      "contract": "work-item-query-result",
-      "fields": {
-        "rows": {
+      "kind": "aggregate",
+      "spec": {
+        "input": {
           "$ref": "step",
           "path": [
-            "result",
             "rows"
           ],
           "step": "query"
+        },
+        "op": "count"
+      },
+      "transform": "counted"
+    },
+    {
+      "fields": {
+        "count": {
+          "$ref": "step",
+          "path": [
+            "result"
+          ],
+          "step": "counted"
         }
       },
       "id": "shape",
       "output": {
-        "rows": {
-          "item_fields": {
-            "item_id": {
-              "type": "string"
-            },
-            "status": {
-              "type": "string"
-            }
-          },
-          "type": "list"
-        }
+        "count": "int"
       },
       "project": "result"
     }

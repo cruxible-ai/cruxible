@@ -425,7 +425,6 @@ class ProjectNode(_StrictProcedureModel):
     node_id: str
     fields: object = Field(default=None, exclude_if=lambda value: value is None)
     literal: object = Field(default=None, exclude_if=lambda value: value is None)
-    contract_out: ArtifactNameRef
     leaf: bool = False
     as_: str = Field(alias="as")
     next: str | None = None
@@ -786,7 +785,6 @@ class SelectNode(_StrictProcedureModel):
     kind: Literal["select"] = "select"
     node_id: str
     sources: tuple[str, ...]
-    contract_out: ArtifactNameRef
     as_: str = Field(alias="as")
     next: str | None = None
 

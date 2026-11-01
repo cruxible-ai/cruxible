@@ -474,8 +474,8 @@ def plain_spec(*, name="test.plain"):  # type: ignore[no-untyped-def]
         refs(
             {
                 "procedure": name,
-                "input": {"value": "integer"},
-                "output": {"value": "integer"},
+                "input": {"value": "int"},
+                "output": {"value": "int"},
                 "steps": [{"project": "result", "fields": {"value": "$input.value"}}],
                 "returns": "result",
                 "hard_caps": {"provider_calls": 0},
@@ -581,7 +581,7 @@ def _plain_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
             {
                 "procedure": name,
                 "input": {},
-                "output": {"value": "integer"},
+                "output": {"value": "int"},
                 "steps": [
                     {"project": "shaped", "fields": {"value": 1}},
                     {verb: (_self_sourced_subject_item(f"Plain direct {verb}."),)},
@@ -602,8 +602,8 @@ def _call_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
         refs(
             {
                 "procedure": name,
-                "input": {"value": "integer"},
-                "output": {"value": "integer"},
+                "input": {"value": "int"},
+                "output": {"value": "int"},
                 "slots": {
                     "compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}
                 },
@@ -726,8 +726,8 @@ def test_an_invoked_child_uses_the_parent_lines_binding_under_its_node_path(tmp_
         refs(
             {
                 "procedure": "test.parent",
-                "input": {"value": "integer"},
-                "output": {"value": "integer"},
+                "input": {"value": "int"},
+                "output": {"value": "int"},
                 "steps": [
                     {"invoke": "test.slotted", "id": "child", "input": {"value": "$input.value"}},
                     {"project": "finished", "fields": {"value": "$input.value"}},
@@ -767,7 +767,7 @@ def sourced_spec(*, description=None):  # type: ignore[no-untyped-def]
                 "procedure": "test.sourced",
                 **({} if description is None else {"description": description}),
                 "input": {},
-                "output": {"length": "integer"},
+                "output": {"length": "int"},
                 "slots": {
                     "read": {
                         "in": "workspace.file.request@1",
@@ -1109,8 +1109,8 @@ def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
             refs(
                 {
                     "procedure": "test.slotted",
-                    "input": {"value": "integer"},
-                    "output": {"severity": "string"},
+                    "input": {"value": "int"},
+                    "output": {"severity": {"type": "enum_of:test.severity"}},
                     "slots": {
                         "compute": {
                             "in": "test.value@1",
@@ -1559,7 +1559,7 @@ def _line_input(instance, name, **updates):  # type: ignore[no-untyped-def]
             "parameters": line.parameters,
             "max_authority": line.max_authority,
             "acquisition": line.acquisition,
-            "budgets": line.budgets,
+            "budgets": line.budgets.model_dump(mode="json"),
             "occurrence_epoch": line.occurrence_epoch,
             "trigger_input": line.trigger_input,
             **updates,
@@ -1617,8 +1617,8 @@ def test_a_capture_keeps_verifying_across_procedure_and_line_succession(tmp_path
             instance,
             SOURCE_LINE,
             budgets={
-                **line.budgets,
-                "max_capture_bytes": line.budgets["max_capture_bytes"] - 1,
+                **line.budgets.model_dump(mode="json"),
+                "max_capture_bytes": line.budgets.max_capture_bytes - 1,
             },
         ),
         name="line-v2",
@@ -1687,8 +1687,8 @@ def test_a_format_7_slotted_procedure_is_accepted_and_executes(tmp_path):
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     path = "procedures/test.slotted.json"
     procedure = parse_procedure(tree[path], path=path)
-    assert procedure.artifact_format == "cruxible-procedure-v3"
-    assert int(procedure.definition.graph_format) == 7
+    assert procedure.artifact_format == "cruxible-procedure-v4"
+    assert int(procedure.definition.graph_format) == 8
     assert set(procedure.definition.slots) == {"compute"}
     (node,) = procedure.definition.nodes
     assert node.slot == "compute"

@@ -114,10 +114,8 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     )
 
     request = {"url": "string"}
-    result = {
-        "status": "int",
-        "text": {"type": "json", "json_schema": {"type": ["string", "null"]}},
-    }
+    # Typed as the extracted fetch.document row declares it.
+    result = {"status": "int", "text": "string"}
     limits = ProcedureLimits(
         wall_clock="PT60S",
         provider_calls=2,

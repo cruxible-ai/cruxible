@@ -2226,6 +2226,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
             is not None
         },
         capture_outputs=capture_outputs,
+        contracts=_candidate_contract_resolver(context.candidate_tree),
         by_name=True,
     )
     if law.verdict == "refused":
@@ -4634,7 +4635,7 @@ def _evaluate_scoped_members(
             )
             continue
         content = pretty_canonical_bytes(payload)
-        if state.artifact_tag == "cruxible-procedure-v3":
+        if state.artifact_tag == "cruxible-procedure-v4":
             from cruxible_client.contracts.procedures.artifacts import (
                 ProcedureArtifact,
                 render_procedure,

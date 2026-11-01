@@ -47,8 +47,8 @@ def _pin(role: str, kind: str, name: str, *, digest: str | None = None) -> Artif
 
 
 def _definition(query: ArtifactPin) -> ProcedureDefinition:
-    contract_in = named(_pin("contract-in", "Contract", "empty-input"))
-    contract_out = named(_pin("contract-out", "Contract", "claim-rows"))
+    contract_in = named(_pin("contract-in", "Contract", "empty-input/v1"))
+    contract_out = named(_pin("contract-out", "Contract", "claim-rows/v1"))
     return ProcedureDefinition(
         name="triage",
         contract_in=named(contract_in),
@@ -63,7 +63,6 @@ def _definition(query: ArtifactPin) -> ProcedureDefinition:
             ProjectNode(
                 node_id="shape",
                 fields={"rows": "$steps.rows"},
-                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -106,7 +105,7 @@ def _line(
         identity=ArtifactIdentity(kind="Line", name="triage-hourly"),
         occurrence_epoch=epoch,
         procedure=procedure_pin,
-        parameters={"status": "open"},
+        parameters={},
         max_authority=RUNG_AUTHORITY[requested_rung],
         budgets={
             "max_capture_bytes": 0,
@@ -123,7 +122,7 @@ def _line(
 def test_line_spec_round_trip_and_digest_golden() -> None:
     line, accepted, _interfaces = _line()
 
-    expected = "sha256:680726182d9815f203f5efe36147b7d9ce482a348c5a009e5ea487c1ec0f46b1"
+    expected = "sha256:cf17c48a92a3d7defc66e6756fa649d20881f62675660f3a92b249642aecbe0b"
     assert line_spec_digest(line).tagged == expected
     content = render_line_spec(line)
     assert parse_line_spec(content, path=line_spec_path("triage-hourly")) == line

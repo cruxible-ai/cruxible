@@ -19,15 +19,8 @@ from cruxible_client.contracts.procedure_mandates import (
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
-    ProcedureOwnedContract,
     procedure_artifact_digest,
-    procedure_owned_contract_digest,
     procedure_path,
-    render_procedure,
-)
-from cruxible_client.contracts.procedures.contract_schema import (
-    ContractSchema,
-    PropertySchema,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import (
@@ -111,13 +104,22 @@ from tests.core_support._knowledge_loop_support import (
 )
 from tests.core_support._support import FIXED_TIMESTAMP, initialize_local
 from tests.support.lines import line_trigger, trigger_members
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named, revalidated
+from tests.support.procedures import (
+    MAX_WALL_CLOCK,
+    RUN_WALL_CLOCK,
+    boundary_contract,
+    contract_files,
+    contract_pin,
+    named,
+    procedure_members,
+    revalidated,
+)
 from tests.test_procedures.test_line_specs import _digest as _line_digest
 from tests.test_procedures.test_line_specs import _line
-from tests.test_procedures.test_procedure_owned_contracts import (
+from tests.test_procedures.test_procedure_boundary_contracts import (
+    WORK_ROW,
     _accepted_query_procedure,
     _activate_procedure,
-    _contract,
 )
 
 READ_TIME = datetime(2026, 8, 24, 16, 0, tzinfo=UTC)
@@ -268,32 +270,26 @@ def test_line_closure_loss_refuses_before_mandate_or_occurrence(
     assert "Restore or succeed" in str(result.terminal.details)
 
 
+def _slotless_contracts(name: str) -> tuple[object, object]:
+    """The slotless Procedure's governed boundaries (``procedure_members`` accepts them)."""
+
+    return (
+        boundary_contract(f"{name}.input", {"status": "string"}),
+        boundary_contract(f"{name}.output", {"status": "string"}),
+    )
+
+
 def _slotless_procedure(name: str) -> AcceptedProcedure:
-    """One accepted Procedure with owner-carried contracts and no pin slots.
+    """One accepted Procedure with governed boundary Contracts and no slots.
 
     No state tap, no Provider node and no slot, so a Line binding it closes with
     nothing but its own acquisition policy: the smallest Procedure that can run
     end to end through the served Line route.
     """
 
-    input_contract = ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name=f"{name}-input"),
-        schema=ContractSchema(fields={"status": PropertySchema(type="string")}),
-    )
-    output_contract = ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name=f"{name}-output"),
-        schema=ContractSchema(fields={"status": PropertySchema(type="string")}),
-    )
-    contract_in = ArtifactPin(
-        role="contract-in",
-        target=input_contract.identity,
-        artifact_digest=procedure_owned_contract_digest(input_contract).tagged,
-    )
-    contract_out = ArtifactPin(
-        role="contract-out",
-        target=output_contract.identity,
-        artifact_digest=procedure_owned_contract_digest(output_contract).tagged,
-    )
+    input_contract, output_contract = _slotless_contracts(name)
+    contract_in = contract_pin("contract-in", input_contract)
+    contract_out = contract_pin("contract-out", output_contract)
     definition = ProcedureDefinition(
         name=name,
         contract_in=named(contract_in),
@@ -302,7 +298,6 @@ def _slotless_procedure(name: str) -> AcceptedProcedure:
             ProjectNode(
                 node_id="shape",
                 fields={"status": "$input.status"},
-                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -320,14 +315,6 @@ def _slotless_procedure(name: str) -> AcceptedProcedure:
         identity=ArtifactIdentity(kind="Procedure", name=name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        owned_contracts=tuple(
-            sorted(
-                (input_contract, output_contract),
-                key=lambda contract: canonical_bytes(
-                    contract.model_dump(mode="json", by_alias=True)
-                ),
-            )
-        ),
         activation_policy="drain",
     )
     return AcceptedProcedure(
@@ -382,7 +369,8 @@ def _accept_line_tree(
     inspection = submit_member_candidate(
         instance,
         members={
-            accepted.path: render_procedure(authored_procedure(accepted)),
+            **procedure_members(authored_procedure(accepted)),
+            **contract_files(*_slotless_contracts(accepted.procedure.identity.name)),
             line_spec_path(line.identity.name): render_line_spec(line),
             **trigger_members(*triggers),
         },
@@ -699,43 +687,16 @@ def _actor(instance) -> GovernedActorContext:  # type: ignore[no-untyped-def]
     )
 
 
-def _list_output_successor(procedure, *, max_items: int):  # type: ignore[no-untyped-def]
-    old_output_pin = procedure.definition.contract_out
-    from cruxible_client.contracts.artifacts import ArtifactNameRef
+#: The bounded successor's output: the same rows, under a list bounded only by the run.
+LIST_OUTPUT = boundary_contract(
+    "test.query-rows-list", {"rows": "list<test.work-row@1>{max_items: 1000}"}, WORK_ROW
+)
 
-    assert isinstance(old_output_pin, ArtifactNameRef)
-    project = procedure.definition.nodes[-1]
-    list_output = _contract(
-        "query-rows-list",
-        {
-            "rows": PropertySchema(
-                type="list",
-                item_fields={
-                    "bindings": PropertySchema(type="json"),
-                    "conflicts": PropertySchema(type="json"),
-                    "fields": PropertySchema(type="json"),
-                    "includes": PropertySchema(type="json"),
-                    "path": PropertySchema(type="json"),
-                    "read_claims": PropertySchema(type="json"),
-                    "relation_claim": PropertySchema(type="json", optional=True),
-                    "result_subject_identity": PropertySchema(type="string"),
-                    "tag": PropertySchema(type="string"),
-                },
-            )
-        },
-    )
-    list_output_pin = ArtifactPin(
-        role="contract-out",
-        target=list_output.identity,
-        artifact_digest=procedure_owned_contract_digest(list_output).tagged,
-    )
+
+def _list_output_successor(procedure, *, max_items: int):  # type: ignore[no-untyped-def]
     definition = procedure.definition.model_copy(
         update={
-            "contract_out": named(list_output_pin),
-            "nodes": (
-                *procedure.definition.nodes[:-1],
-                project.model_copy(update={"contract_out": named(list_output_pin)}),
-            ),
+            "contract_out": named(contract_pin("contract-out", LIST_OUTPUT)),
             "hard_caps": procedure.definition.hard_caps.model_copy(update={"max_items": max_items}),
         }
     )
@@ -743,15 +704,6 @@ def _list_output_successor(procedure, *, max_items: int):  # type: ignore[no-unt
         update={
             "definition": definition,
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
-            "owned_contracts": tuple(
-                sorted(
-                    (
-                        list_output if contract.identity == old_output_pin.target else contract
-                        for contract in procedure.owned_contracts
-                    ),
-                    key=lambda contract: canonical_bytes(contract.model_dump(mode="json")),
-                )
-            ),
             "lifecycle": procedure.lifecycle.model_copy(
                 update={"predecessor_digest": procedure_artifact_digest(procedure).tagged}
             ),
@@ -802,8 +754,13 @@ def test_readiness_and_idempotent_run_use_the_accepted_query_engine(tmp_path: Pa
     # A direct run states no budget: its operating budget is the hard caps.
     assert first.receipt.budget.declared.budget == caps_budget(procedure.definition.hard_caps)
     assert first.receipt.budget.declared.hard_caps == procedure.definition.hard_caps
-    assert first.receipt.budget.observed.max_items.high_water == 0
-    assert first.receipt.budget.observed.max_items.boundary is None
+    # max_items is observed at the boundaries: the output Contract's rows list.
+    observed_items = first.receipt.budget.observed.max_items
+    assert (observed_items.high_water, observed_items.boundary, observed_items.field_path) == (
+        2,
+        "contract-out:test.query-rows/v1",
+        "rows",
+    )
     assert first.receipt.budget.observed.result_bytes.high_water > 0
     assert first.receipt.budget.observed.result_bytes.boundary == "procedure-return"
     assert first.attribution is not None
@@ -1192,7 +1149,9 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
             refusal_code="query.empty",
             message="The query returned no rows.",
         ),
-        project.model_copy(update={"fields": {"rows": "$steps.filtered.rows"}}),
+        # Raw result rows fit no declared Contract: the typed return is the
+        # plain row view the output Contract's rows hold.
+        project.model_copy(update={"fields": {"rows": "$steps.query.rows"}}),
     )
     definition = procedure.definition.model_copy(
         update={
@@ -1238,11 +1197,16 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
         actor_context=_actor(instance).model_copy(update={"operation_id": "pipeline-replay"}),
     )
 
-    assert first.status == "succeeded"
+    assert first.status == "succeeded", first.terminal
     assert first.result is not None and len(first.result["rows"]) == 2  # type: ignore[index]
     assert isinstance(first.receipt, ProcedureRunReceipt)
-    assert first.receipt.budget.observed.max_items.high_water == 0
-    assert first.receipt.budget.observed.max_items.boundary is None
+    # max_items is observed at boundaries only: the output Contract's rows,
+    # not the intermediate filter/aggregate values.
+    observed_items = first.receipt.budget.observed.max_items
+    assert (observed_items.high_water, observed_items.boundary) == (
+        2,
+        "contract-out:test.query-rows/v1",
+    )
     assert first.model_dump_json() == second.model_dump_json()
 
 
@@ -1255,6 +1219,7 @@ def test_served_list_boundary_records_nonzero_v3_receipt_high_water(tmp_path: Pa
         bounded,
         sequence=5,
         timestamp="2026-08-24T17:00:00.000000Z",
+        extra_contracts=(LIST_OUTPUT,),
     )
 
     run = service_run_playbill_procedure(
@@ -1267,7 +1232,9 @@ def test_served_list_boundary_records_nonzero_v3_receipt_high_water(tmp_path: Pa
     assert run.status == "succeeded", run
     assert isinstance(run.receipt, ProcedureRunReceipt)
     assert run.receipt.budget.observed.max_items.high_water == 2
-    assert run.receipt.budget.observed.max_items.boundary == ("contract-out:query-rows-list")
+    assert run.receipt.budget.observed.max_items.boundary == (
+        "contract-out:test.query-rows-list/v1"
+    )
     assert run.receipt.budget.observed.max_items.field_path == "rows"
 
 
@@ -1280,6 +1247,7 @@ def test_served_list_boundary_refusal_remains_typed(tmp_path: Path) -> None:
         bounded,
         sequence=5,
         timestamp="2026-08-24T17:00:00.000000Z",
+        extra_contracts=(LIST_OUTPUT,),
     )
 
     run = service_run_playbill_procedure(
@@ -1291,7 +1259,7 @@ def test_served_list_boundary_refusal_remains_typed(tmp_path: Path) -> None:
 
     assert run.status == "node_refused"
     assert isinstance(run.terminal, ProcedureBudgetExhausted)
-    assert run.terminal.details.boundary == "contract-out:query-rows-list"
+    assert run.terminal.details.boundary == "contract-out:test.query-rows-list/v1"
     assert run.terminal.details.field_path == "rows"
 
 

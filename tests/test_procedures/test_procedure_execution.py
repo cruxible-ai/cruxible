@@ -35,15 +35,12 @@ from cruxible_client.contracts.procedures.acquisition_rules import (
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
-    ProcedureOwnedContract,
     parse_procedure,
     procedure_artifact_digest,
-    procedure_owned_contract_digest,
     procedure_path,
 )
-from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.contracts import (
-    OwnedProcedureContractValidator,
+    AcceptedProcedureContractValidator,
     ValidatedProcedureContract,
 )
 from cruxible_client.contracts.procedures.graph import (
@@ -92,7 +89,13 @@ from cruxible_client.contracts.resolution_contracts import (
     InvestigationBinding,
     ResolutionContractReference,
 )
-from cruxible_client.contracts.shapes import Comparison, CountOperand, LiteralOperand, Presence
+from cruxible_client.contracts.shapes import (
+    Comparison,
+    Contract,
+    CountOperand,
+    LiteralOperand,
+    Presence,
+)
 from cruxible_core.compiler.compiler import current_compiler_coordinate
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -153,6 +156,9 @@ from tests.support.procedures import (
     accepted_artifact,
     accepted_procedure,
     bind_fixture,
+    boundary_contract,
+    contract_pin,
+    contract_resolver,
     named,
 )
 
@@ -241,8 +247,8 @@ def _accepted(
 
 
 def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> AcceptedProcedure:
-    contract_in = _pin("contract-in", "Contract", "input")
-    contract_out = _pin("contract-out", "Contract", "output")
+    contract_in = _pin("contract-in", "Contract", "input/v1")
+    contract_out = _pin("contract-out", "Contract", "output/v1")
     query = _pin("query", "QueryDefinition", "accepted-items")
     predicate = Comparison(
         op="gt",
@@ -272,7 +278,6 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
             ProjectNode(
                 node_id="project",
                 fields={"items": "$steps.rows.result.rows", "status": "ok"},
-                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -283,76 +288,65 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
     return _accepted(definition, pins=(contract_in, contract_out, query))
 
 
-def _owned_contract(name: str, fields: dict[str, PropertySchema]) -> ProcedureOwnedContract:
-    return ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name=name),
-        schema=ContractSchema(fields=fields),
-    )
+#: Each fixture Procedure's governed boundary Contracts, for the production validator.
+_BOUNDARIES: dict[str, tuple[Contract, ...]] = {}
 
 
-def _owned_pin(role: str, contract: ProcedureOwnedContract) -> ArtifactPin:
-    return ArtifactPin(
-        role=role,
-        target=contract.identity,
-        artifact_digest=procedure_owned_contract_digest(contract).tagged,
-    )
+def _owned_contract(name: str, fields: dict[str, str]) -> Contract:
+    return boundary_contract(name, fields)
+
+
+def _owned_pin(role: str, contract: Contract) -> ArtifactPin:
+    return contract_pin(role, contract)
 
 
 def _owned_accepted(
     definition: ProcedureDefinition,
     *,
-    contracts: tuple[ProcedureOwnedContract, ...],
+    contracts: tuple[Contract, ...],
     pins: tuple[ArtifactPin, ...],
 ) -> AcceptedProcedure:
     procedure = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        owned_contracts=tuple(
-            sorted(
-                contracts,
-                key=lambda contract: canonical_bytes(contract.model_dump(mode="json")),
-            )
-        ),
         activation_policy="abort",
     )
+    _BOUNDARIES[definition.name] = contracts
     return bind_fixture(accepted_artifact(procedure), extra_pins=pins)
 
 
-def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
-    """Two items cross a typed list boundary under a one-item budget.
+def _production_validator(accepted: AcceptedProcedure) -> AcceptedProcedureContractValidator:
+    """The validator a run uses: the Procedure's governed boundary Contracts."""
 
-    ``contract-out`` checks the list at a project's own Contract, ``return``
-    at the Procedure's return Contract (the project's own is opaque).
+    return AcceptedProcedureContractValidator(
+        contract_resolver(*_BOUNDARIES[accepted.procedure.identity.name])
+    )
+
+
+def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
+    """Two items cross the typed return boundary under a one-item budget.
+
+    The intermediate projects carry the same list unchecked: a value is typed
+    as it flows, and the run's item budget is enforced at boundaries.
     """
 
     empty = _owned_contract("empty-input", {})
-    opaque = _owned_contract("opaque-output", {"items": PropertySchema(type="json")})
-    typed = ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name=f"list-{boundary}"),
-        schema=ContractSchema(
-            fields={
-                "items": PropertySchema(
-                    type="list",
-                    item_fields={"id": PropertySchema(type="string")},
-                )
-            },
-        ),
+    item = _owned_contract("list-item", {"id": "string"})
+    typed = boundary_contract(
+        f"list-{boundary}", {"items": "list<list-item@1>{max_items: 10}"}, item
     )
     entry_pin = _owned_pin("contract-in", empty)
-    opaque_out = _owned_pin("contract-out", opaque)
     typed_out = _owned_pin("contract-out", typed)
     listed = ProjectNode(
         node_id="listed",
         literal={"items": [{"id": "one"}, {"id": "two"}]},
-        contract_out=named(opaque_out),
         as_="listed",
         next="compute",
     )
     compute = ProjectNode(
         node_id="compute",
         fields={"items": "$steps.listed.items"},
-        contract_out=named(typed_out if boundary == "contract-out" else opaque_out),
         as_="result",
     )
     definition = ProcedureDefinition(
@@ -364,14 +358,12 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
         hard_caps=_hard_caps(items=1),
         terminal_capability=1,
     )
-    return _owned_accepted(
-        definition, contracts=(empty, opaque, typed), pins=(entry_pin, opaque_out, typed_out)
-    )
+    return _owned_accepted(definition, contracts=(empty, item, typed), pins=(entry_pin, typed_out))
 
 
 def _repeat_transform_procedure(*, max_items: int = 100) -> AcceptedProcedure:
-    contract_in = _pin("contract-in", "Contract", "input")
-    contract_out = _pin("contract-out", "Contract", "output")
+    contract_in = _pin("contract-in", "Contract", "input/v1")
+    contract_out = _pin("contract-out", "Contract", "output/v1")
     definition = ProcedureDefinition(
         name="repeat-transform-procedure",
         contract_in=named(contract_in),
@@ -412,10 +404,7 @@ def _guarded_filter_procedure(
     """A closed filter, a count guard over what it kept, then a count of it."""
 
     empty = _owned_contract("guard-empty-input", {})
-    count_result = _owned_contract(
-        "guard-count-result",
-        {"count": PropertySchema(type="int")},
-    )
+    count_result = _owned_contract("guard-count-result", {"count": "int"})
     entry_pin = _owned_pin("contract-in", empty)
     result_pin = _owned_pin("contract-out", count_result)
     definition = ProcedureDefinition(
@@ -469,7 +458,6 @@ def _guarded_filter_procedure(
             ProjectNode(
                 node_id="result",
                 fields={"count": "$steps.counted.result"},
-                contract_out=named(result_pin),
                 as_="result",
                 next=result_next,
             ),
@@ -492,10 +480,7 @@ def _guarded_scalar_procedure(
     path: tuple[str, ...] = ("count",),
 ) -> AcceptedProcedure:
     empty = _owned_contract("scalar-empty-input", {})
-    count_result = _owned_contract(
-        "scalar-count-result",
-        {"count": PropertySchema(type="int")},
-    )
+    count_result = _owned_contract("scalar-count-result", {"count": "int"})
     entry_pin = _owned_pin("contract-in", empty)
     count_out = _owned_pin("contract-out", count_result)
     definition = ProcedureDefinition(
@@ -506,7 +491,6 @@ def _guarded_scalar_procedure(
             ProjectNode(
                 node_id="summarize",
                 literal={"count": 1},
-                contract_out=named(count_out),
                 as_="summary",
                 next="gate",
             ),
@@ -521,7 +505,6 @@ def _guarded_scalar_procedure(
             ProjectNode(
                 node_id="emit",
                 fields="$steps.summary",
-                contract_out=named(count_out),
                 as_="result",
             ),
             HaltNode(node_id="stop", reason="Summary count was not positive."),
@@ -1528,8 +1511,8 @@ def test_executor_recognizes_a_source_node_as_a_landed_capture_input(tmp_path) -
     )
     source_definition = ProcedureDefinition(
         name="source-landed-capture",
-        contract_in=named(_pin("contract-in", "Contract", "provider-input")),
-        contract_out=named(_pin("contract-out", "Contract", "provider-output")),
+        contract_in=named(_pin("contract-in", "Contract", "provider-input/v1")),
+        contract_out=named(_pin("contract-out", "Contract", "provider-output/v1")),
         slots={"fetch": {"in": "test.value@1", "out": "test.value@1", "effect": "external_read"}},
         nodes=(source,),
         returns="capture",
@@ -2007,10 +1990,7 @@ def test_a_repeat_body_transform_is_held_to_the_items_budget(tmp_path) -> None:
 
 @pytest.mark.parametrize(
     ("boundary", "expected_boundary"),
-    (
-        ("contract-out", "contract-out:list-contract-out"),
-        ("return", "contract-out:list-return"),
-    ),
+    (("return", "contract-out:list-return/v1"),),
 )
 def test_production_validator_enforces_every_list_boundary(
     tmp_path,
@@ -2025,7 +2005,7 @@ def test_production_validator_enforces_every_list_boundary(
         run_index=fixture.run_index,
         fencing_token="writer",
         activation_authority=_Authority(accepted.artifact_digest),
-        contract_validator=OwnedProcedureContractValidator(accepted),
+        contract_validator=_production_validator(accepted),
     ).execute(
         _prepare(
             accepted,
@@ -2249,7 +2229,7 @@ def test_count_guard_selects_mutually_exclusive_arms_with_production_validator(
             run_index=fixture.run_index,
             fencing_token="writer",
             activation_authority=_Authority(accepted.artifact_digest),
-            contract_validator=OwnedProcedureContractValidator(accepted),
+            contract_validator=_production_validator(accepted),
         ).execute(
             _prepare(
                 accepted,
@@ -2290,7 +2270,7 @@ def test_scalar_step_guard_returns_through_true_arm_with_production_validator(
         run_index=fixture.run_index,
         fencing_token="writer",
         activation_authority=_Authority(accepted.artifact_digest),
-        contract_validator=OwnedProcedureContractValidator(accepted),
+        contract_validator=_production_validator(accepted),
     ).execute(
         _prepare(accepted, fixture, _StateReader(), invocation_input={}),
         accepted,
@@ -2312,7 +2292,7 @@ def test_explicit_next_into_guard_arm_halt_remains_authoritative(
         run_index=fixture.run_index,
         fencing_token="writer",
         activation_authority=_Authority(accepted.artifact_digest),
-        contract_validator=OwnedProcedureContractValidator(accepted),
+        contract_validator=_production_validator(accepted),
     ).execute(
         _prepare(accepted, fixture, _StateReader(), invocation_input={}),
         accepted,
@@ -2334,7 +2314,7 @@ def test_unresolved_step_guard_operand_is_typed_refusal_not_false_branch(
         run_index=fixture.run_index,
         fencing_token="writer",
         activation_authority=_Authority(accepted.artifact_digest),
-        contract_validator=OwnedProcedureContractValidator(accepted),
+        contract_validator=_production_validator(accepted),
     ).execute(
         _prepare(accepted, fixture, _StateReader(), invocation_input={}),
         accepted,
@@ -2352,67 +2332,12 @@ def test_guard_missing_alias_is_rejected_by_static_law() -> None:
         _guarded_scalar_procedure(alias="missing")
 
 
-def test_json_escape_hatch_is_not_charged_as_a_typed_collection(tmp_path) -> None:
-    fixture = _fixture(tmp_path)
-    empty = _owned_contract("json-empty-input", {})
-    opaque = _owned_contract(
-        "json-output",
-        {
-            "items": PropertySchema(type="json"),
-            "status": PropertySchema(type="string"),
-        },
-    )
-    entry_pin = _owned_pin("contract-in", empty)
-    output_pin = _owned_pin("contract-out", opaque)
-    query = _pin("query", "QueryDefinition", "json-accepted-items")
-    definition = ProcedureDefinition(
-        name="json-escape-hatch",
-        contract_in=named(entry_pin),
-        contract_out=named(output_pin),
-        nodes=(
-            ReadNode(
-                node_id="read",
-                query=named(query),
-                parameters={},
-                as_="rows",
-                next="project",
-            ),
-            ProjectNode(
-                node_id="project",
-                fields={"items": "$steps.rows.result.rows", "status": "ok"},
-                contract_out=named(output_pin),
-                as_="result",
-            ),
-        ),
-        returns="result",
-        hard_caps=_hard_caps(items=1),
-        terminal_capability=1,
-    )
-    accepted = _owned_accepted(
-        definition,
-        contracts=(empty, opaque),
-        pins=(entry_pin, output_pin, query),
-    )
-    prepared = _prepare(
-        accepted,
-        fixture,
-        _StateReader({"items": [{"id": "one"}, {"id": "two"}]}),
-        invocation_input={},
-    )
-    result = ProcedureExecutor(
-        journal=fixture.journal,
-        bodies=fixture.bodies,
-        run_index=fixture.run_index,
-        fencing_token="writer",
-        activation_authority=_Authority(accepted.artifact_digest),
-        contract_validator=OwnedProcedureContractValidator(accepted),
-    ).execute(prepared, accepted)
-    assert result.status == "succeeded"
-    assert result.refusal is None
-    assert result.output == {
-        "items": _query_rows({"items": [{"id": "one"}, {"id": "two"}]}),
-        "status": "ok",
-    }
+def test_a_boundary_contract_cannot_declare_an_untyped_json_field() -> None:
+    from cruxible_client.contracts.shapes import ContractTypeRefused
+
+    # The retired json escape hatch: every boundary value is typed.
+    with pytest.raises(ContractTypeRefused, match="nested Contract"):
+        _owned_contract("json-output", {"items": "json", "status": "string"})
 
 
 def test_noncurrent_procedure_refuses_before_any_journal_record(tmp_path) -> None:

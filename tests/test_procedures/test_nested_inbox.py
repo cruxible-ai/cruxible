@@ -9,8 +9,6 @@ from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     procedure_artifact_digest,
-    procedure_path,
-    render_procedure,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import ProjectNode
@@ -19,6 +17,7 @@ from cruxible_core.exhaust.line_inbox import LineInboxStore
 from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
 from tests.core_support._support import initialize_local
 from tests.support.inbox import contract_members, inbox_node
+from tests.support.procedures import procedure_members
 from tests.test_procedures.test_nested_source_runs import accept_blueprint, blueprints
 
 NOTE = {"note": "child ready"}
@@ -91,7 +90,6 @@ def _inbox_child(child: ProcedureArtifact) -> ProcedureArtifact:
             node = NamedConstantNode(
                 node_id=node.node_id,
                 fields=node.fields,
-                contract_out=node.contract_out,
                 **{"as": node.as_},
                 next="inbox",
             )
@@ -155,9 +153,9 @@ def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) ->
         owner,
         {
             **contract_members(),
-            procedure_path("inbox_child"): render_procedure(child),
-            procedure_path("relay"): render_procedure(relay),
-            procedure_path("grand"): render_procedure(grand),
+            **procedure_members(child),
+            **procedure_members(relay),
+            **procedure_members(grand),
         },
         name="inbox-children",
     )

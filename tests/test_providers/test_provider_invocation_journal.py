@@ -221,8 +221,8 @@ def _accepted_one_provider(
         effect=effect or ("external_mutation" if mutation else "pure")
     )
     operation_signature = provider.provider.operations[0].signature()
-    contract_in = pin("contract-in", "Contract", "provider-input")
-    contract_out = pin("contract-out", "Contract", "provider-output")
+    contract_in = pin("contract-in", "Contract", "provider-input/v1")
+    contract_out = pin("contract-out", "Contract", "provider-output/v1")
     effect_policy = (
         ArtifactPin(
             role="effect-policy",

@@ -16,12 +16,12 @@ from cruxible_client.contracts.procedure_mandates import parse_procedure_mandate
 from cruxible_client.contracts.procedures.artifacts import (
     parse_procedure,
     procedure_artifact_digest,
-    render_procedure,
 )
 from cruxible_client.contracts.procedures.line_specs import line_spec_digest, parse_line_spec
 from cruxible_client.contracts.provider_installation import ProviderRetireRequest
 from cruxible_client.contracts.triggers import CadenceSchedule
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
+from tests.support.procedures import procedure_members
 from tests.support.provider_checkout import ProviderCheckout
 from tests.test_server.test_kit_providers import (
     PROCEDURE,
@@ -53,8 +53,8 @@ def _author_user_procedure(world) -> None:
     spec = ProcedureSpec.model_validate(
         {
             "procedure": USER_PROCEDURE,
-            "input": {"n": "integer"},
-            "output": {"n": "integer"},
+            "input": {"n": "int"},
+            "output": {"n": "int"},
             "slots": {"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
             "steps": [
                 {
@@ -181,7 +181,7 @@ def test_kit_101_to_102_is_one_add_and_keep_build_is_per_line(
             _accept_members(
                 get_playbill_manager().get(publisher.instance_id),
                 publisher.reviewer_key,
-                {kit_path: render_procedure(changed)},
+                procedure_members(changed),
                 timestamp="2026-10-15T10:00:00.000000Z",
             )
             publisher.pb.refresh()

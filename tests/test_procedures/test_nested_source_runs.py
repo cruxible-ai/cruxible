@@ -42,12 +42,10 @@ def _succeeded(step: str) -> dict[str, object]:
 def blueprints():
     """A child that halts unless positive, and a parent that invokes it twice."""
 
-    contracts = {"input_contract": "decision.request", "output_contract": "decision.result"}
     child = {
         "procedure": "child",
         "input": {"positive": "bool"},
         "output": {"label": "string"},
-        **contracts,
         **LIMITS,
         "steps": [
             {
@@ -57,7 +55,6 @@ def blueprints():
             {
                 "project": "label",
                 "fields": {"label": "ready"},
-                "contract": "decision.result",
                 "leaf": True,
             },
         ],
@@ -66,7 +63,6 @@ def blueprints():
         "procedure": "parent",
         "input": {"positive": "bool"},
         "output": {"label": "string"},
-        **contracts,
         **LIMITS,
         "steps": [
             {"invoke": "child", "as": "first", "input": {"positive": ref("$input.positive")}},
@@ -76,14 +72,12 @@ def blueprints():
             {
                 "project": "relabelled",
                 "fields": {"label": ref("$steps.second.value.label")},
-                "contract": "decision.result",
                 "output": {"label": "string"},
                 "leaf": True,
             },
             {
                 "project": "halted",
                 "fields": {"label": "child halted"},
-                "contract": "decision.result",
                 "leaf": True,
             },
         ],
@@ -119,7 +113,7 @@ def accept_blueprint(instance, owner, blueprint):
         parse_procedure(
             lowered.proposed_tree[authored_path], path=authored_path
         ).definition.graph_format
-        == 7
+        == 8
     )
     _accept_tree(
         instance,
@@ -375,8 +369,6 @@ def test_a_spec_combines_a_typed_claim_read_and_an_existing_query(tmp_path):
             "procedure": "assess-work",
             "input": {"item": "string"},
             "output": {"status": "string", "count": "int"},
-            "input_contract": "assessment.input",
-            "output_contract": "assessment.output",
             **LIMITS,
             "steps": [
                 {
@@ -411,7 +403,6 @@ def test_a_spec_combines_a_typed_claim_read_and_an_existing_query(tmp_path):
                         "count": ref("$steps.work.result.truncation.returned_result_count"),
                     },
                     "output": {"status": "string", "count": "int"},
-                    "contract": "assessment.output",
                     "leaf": True,
                 },
             ],

@@ -547,8 +547,8 @@ class ProcedureReadinessRequestV1(_StrictProcedureSurfaceModel):
 class ProcedureReadinessResultV1(_StrictProcedureSurfaceModel):
     """How one accepted Procedure can run: the one runnability answer, with its artifact."""
 
-    tag: Literal["playbill-procedure-readiness-result-v1"] = (
-        "playbill-procedure-readiness-result-v1"
+    tag: Literal["playbill-procedure-readiness-result-v2"] = (
+        "playbill-procedure-readiness-result-v2"
     )
     coordinate: AcceptedCoordinate
     procedure_identity: ArtifactIdentity
@@ -556,6 +556,8 @@ class ProcedureReadinessResultV1(_StrictProcedureSurfaceModel):
     artifact_digest: str
     definition_digest: str
     artifact: ProcedureArtifact
+    #: The governed Contracts the boundaries pin, with the Contracts they nest.
+    contracts: tuple[Contract, ...] = ()
     runnable: ProcedureRunnable
     unsupported_nodes: tuple[ProcedureNodeSupport, ...]
     next_operation: ProcedureNextOperationV1
@@ -1773,14 +1775,33 @@ def _readiness(
     accepted: AcceptedProcedure,
     *,
     coordinate: AcceptedProjectionCoordinate,
+    instance: PlaybillInstance | None = None,
 ) -> ProcedureReadinessResultV1:
-    runnable, unsupported = procedure_runnability(accepted.procedure.definition)
+    """How the Procedure can run; with ``instance``, the boundary Contracts it pins too."""
+
+    from cruxible_client.contracts.provider_operations import contract_closure
+    from cruxible_client.contracts.shapes import contract_ref_for_identity
+
+    definition = accepted.procedure.definition
+    runnable, unsupported = procedure_runnability(definition)
+    boundaries = [definition.contract_in, definition.contract_out]
+    if definition.parameter_contract is not None:
+        boundaries.append(definition.parameter_contract)
+    contracts = (
+        None
+        if instance is None
+        else contract_closure(
+            tuple(contract_ref_for_identity(pin.target) for pin in boundaries),
+            accepted_contract_resolver(instance, coordinate),
+        )
+    )
     return ProcedureReadinessResultV1(
         coordinate=AcceptedCoordinate.from_internal(coordinate),
         procedure_identity=accepted.procedure.identity,
         artifact_digest=accepted.artifact_digest,
         definition_digest=accepted.procedure.definition_digest,
         artifact=authored_procedure(accepted),
+        contracts=tuple(contracts or ()),
         runnable=runnable,
         unsupported_nodes=unsupported,
         next_operation=ProcedureNextOperationV1(
@@ -1798,7 +1819,7 @@ def service_playbill_procedure_readiness(
     coordinate = _resolve_coordinate(instance, request.at)
     # A read: a retired Procedure is still readable, though nothing runs it.
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate, allow_retired=True)
-    return _readiness(accepted, coordinate=coordinate)
+    return _readiness(accepted, coordinate=coordinate, instance=instance)
 
 
 @dataclass(frozen=True)
@@ -3697,6 +3718,7 @@ def _run_playbill_line(
         slots=slots,
         providers={item.provider.identity.qualified: item for item in providers.values()},
         capture_outputs=capture_outputs,
+        contracts=accepted_contract_resolver(instance, coordinate),
     )
     if law.verdict != "accepted":
         return _line_refusal_state(

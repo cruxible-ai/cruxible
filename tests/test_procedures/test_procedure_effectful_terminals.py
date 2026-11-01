@@ -13,7 +13,6 @@ from cruxible_client.contracts.procedure_mandates import (
 from cruxible_client.contracts.procedures.artifacts import (
     DIRECT_NODE_KINDS,
     LINE_NODE_KINDS,
-    render_procedure,
 )
 from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
@@ -46,7 +45,7 @@ from cruxible_core.procedures.terminal_services import (
 )
 from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import initialize_local
-from tests.support.procedures import bind_fixture
+from tests.support.procedures import bind_fixture, procedure_members
 from tests.test_procedures.test_procedure_execution import (
     _actor,
     _coordinate,
@@ -431,7 +430,7 @@ def test_proposal_adapter_rechecks_authority_before_submission(tmp_path, retire_
         core_assigned(
             instance,
             {
-                accepted.path: render_procedure(authored_procedure(accepted)),
+                **procedure_members(authored_procedure(accepted)),
                 line_spec_path(line.identity.name): render_line_spec(line),
                 procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
                 # A first work item declares the kind the terminal creates wi-2 of.

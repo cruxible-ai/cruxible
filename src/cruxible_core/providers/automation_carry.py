@@ -7,9 +7,9 @@ grant never follows a changed Line (ruling C3). Literal digest-looking
 parameters and conditions are data, never reference replacement targets.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
-from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactNameRef, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.procedure_mandates import (
@@ -22,7 +22,7 @@ from cruxible_client.contracts.procedure_mandates import (
 )
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.contracts import (
-    OwnedProcedureContractValidator,
+    AcceptedProcedureContractValidator,
     ProcedureContractValidationError,
 )
 from cruxible_client.contracts.procedures.line_specs import (
@@ -36,6 +36,7 @@ from cruxible_client.contracts.provider_installation import (
     CarriedLineV1,
     CarriedMandateV1,
 )
+from cruxible_client.contracts.shapes import Contract, ContractRef
 
 # These newly selected families have no contract-level parse memo yet. Share the
 # exact-byte models between upgrade planning and the generation findings worker.
@@ -49,7 +50,13 @@ def parse_carry_line(content: bytes, *, path: str) -> LineSpec:
     return _LINES.parse(content, path, None, lambda: parse_line_spec(content, path=path))
 
 
-def validate_carried_line(content: bytes, *, path: str, procedure: AcceptedProcedure) -> None:
+def validate_carried_line(
+    content: bytes,
+    *,
+    path: str,
+    procedure: AcceptedProcedure,
+    contracts: Callable[[ContractRef], Contract | None],
+) -> None:
     """Apply ordinary Line-authoring input semantics to the exact final Procedure.
 
     Called once per affected Line at settlement; parameters remain unchanged.
@@ -57,10 +64,8 @@ def validate_carried_line(content: bytes, *, path: str, procedure: AcceptedProce
 
     line = parse_carry_line(content, path=path)
     contract = procedure.procedure.definition.contract_in
-    if not isinstance(contract, ArtifactPin | ArtifactNameRef):
-        return
     try:
-        OwnedProcedureContractValidator(procedure).validate_contract(
+        AcceptedProcedureContractValidator(contracts).validate_contract(
             contract=contract,
             payload=normalize_canonical(line.parameters),
             direction="input",

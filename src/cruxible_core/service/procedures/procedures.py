@@ -13,7 +13,7 @@ from cruxible_client.contracts.captures import CaptureContractAny as CaptureCont
 from cruxible_client.contracts.errors import ExecutionError, JournalError
 from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionRule
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
-from cruxible_client.contracts.procedures.contracts import OwnedProcedureContractValidator
+from cruxible_client.contracts.procedures.contracts import AcceptedProcedureContractValidator
 from cruxible_client.contracts.procedures.reads import DEFAULT_MAX_READ_ROWS, ProcedureReadCeiling
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.query.results import (
@@ -502,7 +502,11 @@ def service_execute_direct_procedure(
 ) -> ProcedureRunResultV1:
     """Execute through the shared runtime; no transport duplicates orchestration."""
 
-    validator = contract_validator or OwnedProcedureContractValidator(accepted)
+    if contract_validator is None:
+        if contract_resolver is None:
+            raise ExecutionError("a Procedure run checks its boundaries against governed Contracts")
+        contract_validator = AcceptedProcedureContractValidator(contract_resolver, enum_resolver)
+    validator = contract_validator
     index = ProcedureRunIndex(run_index_path)
     try:
         return ProcedureExecutor(

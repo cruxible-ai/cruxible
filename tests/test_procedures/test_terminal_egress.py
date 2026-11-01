@@ -43,8 +43,8 @@ ITEM = Contract.model_validate(
 
 
 def _terminal_procedure():
-    contract_in = _pin("contract-in", "Contract", "terminal-input")
-    contract_out = _pin("contract-out", "Contract", "terminal-output")
+    contract_in = _pin("contract-in", "Contract", "terminal-input/v1")
+    contract_out = _pin("contract-out", "Contract", "terminal-output/v1")
     query = _pin("query", "QueryDefinition", "terminal-items")
     definition = ProcedureDefinition(
         name="terminal-procedure",

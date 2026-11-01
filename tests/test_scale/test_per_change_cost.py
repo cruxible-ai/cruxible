@@ -1,4 +1,5 @@
 """Per-change cost at adoption size: one change costs the same at ten times the instance.
+from tests.support.procedures import procedure_members
 
 ``test_scale_guard`` holds every route to its change between worlds of about 20
 and 200 work items. Several costs only show at adoption size: a case-fold check
@@ -69,7 +70,6 @@ from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
 )
-from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.procedures.line_specs import (
     line_spec_digest,
     line_spec_path,
@@ -90,6 +90,7 @@ from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.service.procedures.procedure_runs import LineRunRequest
 from tests.core_support._write_support import KIND
 from tests.core_support._write_support import seed_write_vocabulary as _seed_vocabulary
+from tests.support.procedures import procedure_members
 from tests.test_scale import _counters, _worlds
 from tests.test_scale._counters import COUNTERS, counting, trace_sqlite
 from tests.test_scale._worlds import World, settle_advertisement
@@ -171,7 +172,7 @@ def _propose_line(
         expires_at=_worlds._FAR_FUTURE,  # noqa: SLF001
     )
     return {
-        procedure.path: render_procedure(authored_procedure(procedure)),
+        **procedure_members(authored_procedure(procedure)),
         line_spec_path(line.identity.name): render_line_spec(line),
         procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
     }

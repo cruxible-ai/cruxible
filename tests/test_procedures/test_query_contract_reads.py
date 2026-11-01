@@ -66,7 +66,7 @@ def _world(tmp_path: Path, row_fields: dict[str, str]) -> tuple[Any, str]:
             {
                 "procedure": "test.read-work",
                 "input": {},
-                "output": {"count": "integer"},
+                "output": {"count": "int"},
                 "steps": [
                     {"read": "work", "query": query.identity.name},
                     {"project": "out", "fields": {"count": 2}},
@@ -186,7 +186,7 @@ def _param_world(tmp_path: Path, contract_fields: dict[str, str]) -> Any:
             {
                 "procedure": "test.read-work",
                 "input": {},
-                "output": {"count": "integer"},
+                "output": {"count": "int"},
                 "steps": [
                     {"read": "work", "query": query.identity.name},
                     {"project": "out", "fields": {"count": 1}},

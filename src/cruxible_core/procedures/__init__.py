@@ -4,16 +4,14 @@ from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
     ProcedureLawResult,
-    ProcedureOwnedContract,
     evaluate_procedure_law,
     parse_procedure,
     procedure_artifact_digest,
-    procedure_owned_contract_digest,
     procedure_path,
     render_procedure,
 )
 from cruxible_client.contracts.procedures.contracts import (
-    OwnedProcedureContractValidator,
+    AcceptedProcedureContractValidator,
     ProcedureContractValidationError,
 )
 from cruxible_client.contracts.procedures.graph import (
@@ -154,6 +152,7 @@ from cruxible_core.procedures.settled_outcomes import (
 )
 
 __all__ = [
+    "AcceptedProcedureContractValidator",
     "accepted_procedure_pin_set_digest",
     "AcceptedLineSpec",
     "AcceptedProcedure",
@@ -190,7 +189,6 @@ __all__ = [
     "line_spec_path",
     "LineSpec",
     "load_procedure_calibration_reading",
-    "OwnedProcedureContractValidator",
     "parse_line_spec",
     "parse_procedure",
     "prepare_direct_procedure_run",
@@ -201,7 +199,6 @@ __all__ = [
     "procedure_calibration_reading_digest",
     "procedure_calibration_reading_id",
     "procedure_calibration_reading_pin",
-    "procedure_owned_contract_digest",
     "procedure_path",
     "procedure_reading_digest",
     "procedure_reading_id",
@@ -232,7 +229,6 @@ __all__ = [
     "ProcedureMeasurementSituationShape",
     "ProcedureNodeDigests",
     "ProcedureNodePinSetV1",
-    "ProcedureOwnedContract",
     "ProcedureSlot",
     "ProcedureProofReferenceV1",
     "ProcedureReadingGradeV1",

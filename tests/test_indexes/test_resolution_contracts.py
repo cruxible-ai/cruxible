@@ -24,7 +24,6 @@ from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     procedure_path,
-    render_procedure,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_node_digests
 from cruxible_client.contracts.procedures.measurements import (
@@ -66,7 +65,7 @@ from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import client_material, initialize_local
-from tests.support.procedures import MAX_WALL_CLOCK, accepted_procedure, named
+from tests.support.procedures import MAX_WALL_CLOCK, accepted_procedure, named, procedure_members
 from tests.test_ledger.test_activation import _sign
 
 NOW = datetime(2026, 8, 17, 14, 0, tzinfo=timezone.utc)
@@ -139,8 +138,8 @@ def _measurement(
 
 
 def _accepted() -> AcceptedProcedure:
-    contract_in = _pin("contract-in", "Contract", "input")
-    contract_out = _pin("contract-out", "Contract", "output")
+    contract_in = _pin("contract-in", "Contract", "input/v1")
+    contract_out = _pin("contract-out", "Contract", "output/v1")
     definition = ProcedureDefinition(
         name="measured-procedure",
         contract_in=named(contract_in),
@@ -164,21 +163,18 @@ def _accepted() -> AcceptedProcedure:
             ProjectNode(
                 node_id="hot",
                 fields={"arm": "hot"},
-                contract_out=named(contract_out),
                 as_="hot_result",
                 next="finish",
             ),
             ProjectNode(
                 node_id="cold",
                 fields={"arm": "cold"},
-                contract_out=named(contract_out),
                 as_="cold_result",
                 next="finish",
             ),
             ProjectNode(
                 node_id="finish",
                 fields={"status": "done"},
-                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -460,10 +456,10 @@ def test_derived_activation_remains_bound_to_its_accepting_generation(tmp_path) 
     instance, owner = initialize_local(tmp_path)
     accepted = _accepted()
     procedure = authored_procedure(accepted)
-    procedure_path_value = procedure_path(procedure.identity.name)
+    procedure_path(procedure.identity.name)
     first_tree = {
         **instance.tree_at(instance.accepted_coordinate().git_oid),
-        procedure_path_value: render_procedure(procedure),
+        **procedure_members(procedure),
         **subject_query_members(
             "state", "measure-arm-health", "measure-node-health", "measure-unit-health"
         ),

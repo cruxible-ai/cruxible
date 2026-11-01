@@ -173,8 +173,8 @@ def _run_call(http, instance_id, reviewer, *, build, value, name="installed-pack
         reviewer,
         spec={
             "procedure": f"test.{name}",
-            "input": {"n": "integer"},
-            "output": {"n": "integer"},
+            "input": {"n": "int"},
+            "output": {"n": "int"},
             "slots": {"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
             "steps": [
                 {
@@ -875,7 +875,7 @@ def _author_workspace_line(http, instance_id, reviewer, *, build, name):
         spec={
             "procedure": f"test.{name}",
             "input": {},
-            "output": {"lines": "integer"},
+            "output": {"lines": "int"},
             "slots": {
                 "read": {
                     "in": "workspace.file.request@1",

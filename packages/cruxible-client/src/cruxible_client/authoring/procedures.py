@@ -14,7 +14,7 @@ Accepted references are resolved by the daemon at prepare.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from difflib import get_close_matches
 from typing import Any, Literal
@@ -25,7 +25,6 @@ from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.authoring.inputs import ProcedureInput
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
-    procedure_owned_contract_digest,
 )
 from cruxible_client.contracts.procedures.authored import (
     AbortAction,
@@ -105,22 +104,31 @@ from cruxible_client.contracts.shapes import (
 
 
 def procedure_record_constructor(
-    artifact: ProcedureArtifact, direction: Literal["input", "output"]
+    artifact: ProcedureArtifact,
+    direction: Literal["input", "output"],
+    contracts: Iterable[Contract],
 ) -> RecordConstructor:
+    """A typed record constructor for one boundary of an accepted Procedure.
+
+    ``contracts`` are the governed Contracts the Procedure's boundaries pin at
+    its coordinate (with the Contracts they nest), as its readiness read returns
+    them.
+    """
+
+    from cruxible_client.contracts.provider_operations import contract_schema_view
+
     pin = (
         artifact.definition.contract_in
         if direction == "input"
         else artifact.definition.contract_out
     )
     if not isinstance(pin, ArtifactPin | ArtifactNameRef):
-        raise ValueError("Typed execution requires a resolved owner-carried Contract")
-    for contract in artifact.owned_contracts:
-        if contract.identity == pin.target and (
-            isinstance(pin, ArtifactNameRef)
-            or procedure_owned_contract_digest(contract).tagged == pin.artifact_digest
-        ):
-            return RecordConstructor(contract.contract_schema)
-    raise ValueError("Procedure contract is absent from its exact owner closure")
+        raise ValueError("Typed execution requires a named boundary Contract")
+    by_identity = {contract.identity: contract for contract in contracts}
+    found = by_identity.get(pin.target)
+    if found is None:
+        raise ValueError(f"the Procedure's {direction} Contract {pin.target.qualified} is unread")
+    return RecordConstructor(contract_schema_view(found, lambda ref: by_identity.get(ref.identity)))
 
 
 # -- typed references and predicates ------------------------------------------------------
@@ -305,9 +313,9 @@ class Sequence:
         self,
         procedure: str,
         *,
-        input: Mapping[str, FieldType],
-        params: Mapping[str, FieldType] | None = None,
-        output: Mapping[str, FieldType] | None = None,
+        input: Mapping[str, FieldType | str] | None = None,
+        params: Mapping[str, FieldType | str] | None = None,
+        output: Mapping[str, FieldType | str] | None = None,
         slots: Mapping[str, ProcedureSlot | Mapping[str, object]] | None = None,
         contracts: Mapping[str, Contract] | None = None,
         description: str | None = None,
@@ -315,7 +323,7 @@ class Sequence:
         hard_caps: ProcedureLimits | None = None,
     ) -> None:
         self.procedure = procedure
-        self._input = dict(input)
+        self._input = dict(input or {})
         self._params = dict(params or {})
         self._output = None if output is None else dict(output)
         self._slots = {
@@ -444,7 +452,6 @@ class Sequence:
         fields: Mapping[str, Template] | Ref | None = None,
         literal: object = None,
         output: Mapping[str, FieldType] | None = None,
-        contract: str | None = None,
         leaf: bool = False,
         id: str | None = None,
         next: str | None = None,
@@ -457,7 +464,6 @@ class Sequence:
                 fields=dict(fields) if isinstance(fields, Mapping) else fields,
                 literal=literal,
                 output=None if output is None else dict(output),
-                contract=contract,
                 leaf=leaf,
                 id=id,
                 next=next,

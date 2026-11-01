@@ -45,13 +45,10 @@ from cruxible_client.contracts.procedures.artifacts import (
     DIRECT_NODE_KINDS,
     LINE_NODE_KINDS,
     ProcedureArtifact,
-    ProcedureOwnedContract,
     procedure_artifact_digest,
-    procedure_owned_contract_digest,
     procedure_path,
     render_procedure,
 )
-from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
@@ -118,7 +115,7 @@ from tests.core_support._candidate_support import submit_member_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._support import initialize_local
-from tests.support.procedures import MAX_WALL_CLOCK, named
+from tests.support.procedures import MAX_WALL_CLOCK, named, procedure_members
 
 NOW = datetime(2026, 9, 12, 12, 0, tzinfo=UTC)
 SEED_STAMP = "2026-09-12T11:00:00.000000Z"
@@ -229,16 +226,14 @@ class _Operator:
         )
 
 
-def _contracts() -> tuple[ProcedureOwnedContract, ProcedureOwnedContract]:
+def _contracts() -> tuple[Any, Any]:
+    """The Source Procedure's governed input and output Contracts."""
+
+    from tests.support.procedures import boundary_contract
+
     return (
-        ProcedureOwnedContract(
-            identity=ArtifactIdentity(kind="Contract", name=f"{PROCEDURE_NAME}-input"),
-            schema=ContractSchema(fields={}),
-        ),
-        ProcedureOwnedContract(
-            identity=ArtifactIdentity(kind="Contract", name=f"{PROCEDURE_NAME}-output"),
-            schema=ContractSchema(fields={"severity": PropertySchema(type="string")}),
-        ),
+        boundary_contract(f"{PROCEDURE_NAME}.input"),
+        boundary_contract(f"{PROCEDURE_NAME}.output", {"severity": "string"}),
     )
 
 
@@ -262,17 +257,11 @@ def _procedure(  # noqa: PLR0913
     contract: CaptureContract,
     relative_path: str = RELATIVE_PATH,
 ) -> ProcedureArtifact:
+    from tests.support.procedures import contract_pin
+
     input_contract, output_contract = _contracts()
-    contract_in = ArtifactPin(
-        role="contract-in",
-        target=input_contract.identity,
-        artifact_digest=procedure_owned_contract_digest(input_contract).tagged,
-    )
-    contract_out = ArtifactPin(
-        role="contract-out",
-        target=output_contract.identity,
-        artifact_digest=procedure_owned_contract_digest(output_contract).tagged,
-    )
+    contract_in = contract_pin("contract-in", input_contract)
+    contract_out = contract_pin("contract-out", output_contract)
     capture_pin = ArtifactPin(
         role="capture-contract",
         target=contract.identity,
@@ -331,7 +320,6 @@ def _procedure(  # noqa: PLR0913
             ProjectNode(
                 node_id="shape",
                 fields={"severity": f"$steps.{SOURCE_ALIAS}.content.text"},
-                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -349,12 +337,6 @@ def _procedure(  # noqa: PLR0913
         identity=ArtifactIdentity(kind="Procedure", name=PROCEDURE_NAME),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        owned_contracts=tuple(
-            sorted(
-                (input_contract, output_contract),
-                key=lambda item: canonical_bytes(item.model_dump(mode="json", by_alias=True)),
-            )
-        ),
         activation_policy="drain",
     )
 
@@ -433,7 +415,7 @@ def fan_out_members() -> dict[str, bytes]:
 
     return {
         contract_path(contract.name, contract.version): render_contract(contract)
-        for contract in (*fan_out_contracts(), document_contract())
+        for contract in (*fan_out_contracts(), document_contract(), *_contracts())
     }
 
 
@@ -579,7 +561,7 @@ def _world(  # noqa: PLR0913
         **fan_out_members(),
     }
     if accept_procedure:
-        members[procedure_path(PROCEDURE_NAME)] = render_procedure(procedure)
+        members.update(procedure_members(procedure))
     inspection = submit_member_candidate(
         instance,
         members=members,
@@ -1348,7 +1330,7 @@ def test_a_direct_run_reaches_a_terminal_under_an_ephemeral_propose_capped_line(
     _accept_more(
         instance,
         owner,
-        {procedure_path(PROCEDURE_NAME): render_procedure(with_terminal)},
+        procedure_members(with_terminal),
         name="terminal-procedure",
     )
     journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
@@ -1601,16 +1583,24 @@ def test_the_authoring_path_produces_the_exact_artifact_the_run_lane_executes(
     assert lowered.resolved_authoring["artifact_digest"] == (
         procedure_artifact_digest(procedure).tagged
     )
-    assert lowered.resolved_authoring["definition"]["graph_format"] == 7
+    assert lowered.resolved_authoring["definition"]["graph_format"] == 8
     assert lowered.proposed_tree[procedure_path(PROCEDURE_NAME)] == render_procedure(procedure)
 
 
-def _sdk_procedure_input(procedure: ProcedureArtifact) -> ProcedureInput:
-    """The stored graph as an author writes it: the one typed spec it decompiles to."""
+def _sdk_procedure_input(
+    procedure: ProcedureArtifact, contracts: tuple[Any, ...] | None = None
+) -> ProcedureInput:
+    """The stored graph as an author writes it: the one typed spec it decompiles to.
+
+    Its generated ``<procedure>.input|output`` Contracts render inline, so
+    lowering co-proposes them again.
+    """
 
     from cruxible_client.contracts.procedures.decompile import decompile_procedure
+    from tests.support.procedures import contract_resolver
 
-    return ProcedureInput(kind="procedure", spec=decompile_procedure(procedure))
+    resolve = contract_resolver(*(_contracts() if contracts is None else contracts))
+    return ProcedureInput(kind="procedure", spec=decompile_procedure(procedure, contracts=resolve))
 
 
 def test_a_line_over_a_source_procedure_authors_without_an_acquisition_override(

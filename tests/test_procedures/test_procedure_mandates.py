@@ -27,7 +27,6 @@ from cruxible_client.contracts.procedure_mandates import (
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     procedure_artifact_digest,
-    render_procedure,
 )
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
@@ -42,7 +41,7 @@ from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
 from tests.core_support._support import initialize_local
-from tests.support.procedures import named
+from tests.support.procedures import procedure_members
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
 
@@ -52,14 +51,12 @@ _D0 = "sha256:" + "0" * 64
 def _closed_definition(*, terminal_capability=3):
     from cruxible_client.contracts.procedures.models import ProjectNode
 
-    template = _definition(terminal_capability=terminal_capability)
     return _definition(
         terminal_capability=terminal_capability,
         nodes=(
             ProjectNode(
                 node_id="shape",
                 fields={"rows": []},
-                contract_out=named(template.contract_out),
                 as_="result",
             ),
         ),
@@ -283,7 +280,7 @@ def test_line_and_mandate_successors_are_one_changeset_relation(tmp_path) -> Non
     first_mandate = _mandate(line=first_line, grants="propose")
     first_tree = {
         **base_tree,
-        procedure.path: render_procedure(authored_procedure(procedure)),
+        **procedure_members(authored_procedure(procedure)),
         line_spec_path(first_line.identity.name): render_line_spec(first_line),
         procedure_mandate_path("triage"): render_procedure_mandate(first_mandate),
     }
@@ -301,7 +298,8 @@ def test_line_and_mandate_successors_are_one_changeset_relation(tmp_path) -> Non
 
     successor_line = first_line.model_copy(
         update={
-            "parameters": {"changed": True},
+            # A real change the Procedure's empty input Contract still admits.
+            "epsilon": {"$decimal": "0.5"},
             "lifecycle": ArtifactLifecycle(predecessor_digest=line_spec_digest(first_line).tagged),
         }
     )
@@ -387,7 +385,7 @@ def test_procedure_mandate_authoring_resolves_machine_owned_digests(tmp_path) ->
     line = _line(procedure=procedure_accepted)
     tree = {
         **instance.tree_at(instance.accepted_coordinate().git_oid),
-        "procedures/triage.json": render_procedure(procedure),
+        **procedure_members(procedure),
         line_spec_path(line.identity.name): render_line_spec(line),
     }
     _accept_tree(

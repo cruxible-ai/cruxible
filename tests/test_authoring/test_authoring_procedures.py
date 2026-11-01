@@ -65,8 +65,8 @@ def _digest(label: str) -> str:
     return typed_digest(ArtifactDigest, "playbill-authoring-test-v1", {"label": label}).tagged
 
 
-#: The triage result's one field.
-ROWS = {"rows": "json"}
+#: The triage result's one field: whether its read was complete.
+ROWS = {"complete": "bool"}
 
 #: The run limits every triage spec declares (one minute, no provider calls).
 LIMITS = {
@@ -94,18 +94,15 @@ def _triage_definition(*, query: str | None = None) -> dict[str, object]:
         {
             "project": "result",
             "id": "shape",
-            "fields": {"rows": ref("$steps.rows") if query is not None else []},
+            "fields": {"complete": ref("$steps.rows.completed") if query is not None else True},
             "output": ROWS,
-            "contract": "rows-output",
         }
     )
     return {
         "procedure": "triage",
         "description": "Read accepted claims and shape a bounded result.",
         "input": {},
-        "output": {"rows": "json"},
-        "input_contract": "empty-input",
-        "output_contract": "rows-output",
+        "output": ROWS,
         "activation": "drain",
         "steps": steps,
         "returns": "result",
@@ -118,9 +115,8 @@ def _layout_definition(*, halt_before_return: bool) -> dict[str, object]:
     read = {
         "project": "rows",
         "id": "read",
-        "fields": {"rows": []},
+        "fields": {"complete": True},
         "output": ROWS,
-        "contract": "rows-output",
     }
     gate = {
         "guard": {"op": "eq", "left": {"literal": True}, "right": {"literal": True}},
@@ -130,9 +126,8 @@ def _layout_definition(*, halt_before_return: bool) -> dict[str, object]:
     }
     result = {
         "project": "result",
-        "fields": {"rows": ref("$steps.rows")},
+        "fields": {"complete": ref("$steps.rows.complete")},
         "output": ROWS,
-        "contract": "rows-output",
     }
     stop = {"halt": "No rows are available.", "id": "stop"}
     tail = [stop, result] if halt_before_return else [result, stop]
@@ -263,7 +258,7 @@ def _world_holding_a_document(
 
 
 def _list_contract_payload() -> ProcedureAuthoringPayload:
-    listed = {"rows": {"type": "list", "item_fields": {"id": {"type": "string"}}}}
+    listed = {"rows": "list<string>{max_items: 10}"}
     return _payload(
         {
             **_triage_definition(),
@@ -275,7 +270,6 @@ def _list_contract_payload() -> ProcedureAuthoringPayload:
                     "project": "result",
                     "fields": {"rows": []},
                     "output": listed,
-                    "contract": "rows-output",
                 }
             ],
         }
@@ -438,21 +432,27 @@ def test_change_set_membership_and_candidate_reference_refusals(tmp_path: Path) 
 def test_invalid_definition_message_excludes_pydantic_metadata(tmp_path: Path) -> None:
     coordinator, actor = _coordinator(tmp_path)
     spec = _triage_definition()
-    spec["steps"] = [{"project": "result", "fields": {}, "contract": 7}]
+    spec["steps"] = [
+        {
+            "project": "result",
+            "fields": {},
+        }
+    ]
 
     result = coordinator.compile(
         actor=actor,
         payload=ProcedureAuthoringPayload(
             definition={"name": "triage", "procedure_spec": spec},
             activation_policy="drain",
-            owned_contracts=(),
         ),
         canonical_timestamp=TIMESTAMP,
     )
     assert result.verdict == "refused"
-    message = result.frontier.diagnostics[0].message
-    assert "procedure_spec.steps[0]" in message
-    assert "contract" in message
+    diagnostic = result.frontier.diagnostics[0]
+    message = diagnostic.message
+    # The returned record lacks the declared output field: refused statically.
+    assert diagnostic.offending_element == "$.output"
+    assert "output Contract" in message and "complete" in message
     assert "input_value=" not in message
     assert "input_type=" not in message
     assert "errors.pydantic.dev" not in message
@@ -484,31 +484,27 @@ def test_graph_law_failures_use_typed_definition_refusal(
             {
                 "project": "rows",
                 "id": "read",
-                "fields": {"rows": []},
+                "fields": {"complete": True},
                 "output": ROWS,
-                "contract": "rows-output",
             },
             {"guard": always, "id": "gate", "then": {"goto": "result"}, "else": {"goto": "unused"}},
             {
                 "project": "result",
-                "fields": {"rows": ref("$steps.rows")},
+                "fields": {"complete": ref("$steps.rows.complete")},
                 "output": ROWS,
-                "contract": "rows-output",
             },
             {
                 "project": "unused",
-                "fields": {"rows": ref("$steps.rows")},
+                "fields": {"complete": ref("$steps.rows.complete")},
                 "output": ROWS,
-                "contract": "rows-output",
             },
         ]
     else:
         spec["steps"] = [
             {
                 "project": "result",
-                "fields": {"rows": []},
+                "fields": {"complete": True},
                 "output": ROWS,
-                "contract": "rows-output",
             },
             {"guard": always, "id": "gate"},
         ]
@@ -610,7 +606,7 @@ def test_an_authored_procedure_cannot_state_a_graph_format(
     lowered = compute_preflight(coordinator.instance, intent=pending, actor=actor).lowered
     assert lowered is not None
     path = procedure_path("triage")
-    assert parse_procedure(lowered.proposed_tree[path], path=path).definition.graph_format == 7
+    assert parse_procedure(lowered.proposed_tree[path], path=path).definition.graph_format == 8
 
 
 def test_a_procedure_revision_submits_without_reaching_the_claim_revision_marker(
@@ -682,8 +678,6 @@ def test_coordinator_authored_halt_reason_reaches_terminal_and_receipt(
             "procedure": "halt-with-reason",
             "input": {},
             "output": {},
-            "input_contract": "empty-input",
-            "output_contract": "halt-output",
             "activation": "snapshot",
             **LIMITS,
             "steps": [
@@ -692,7 +686,10 @@ def test_coordinator_authored_halt_reason_reaches_terminal_and_receipt(
                     "id": "gate",
                     "else": {"halt": reason, "id": "stop"},
                 },
-                {"project": "result", "fields": {}, "contract": "halt-output"},
+                {
+                    "project": "result",
+                    "fields": {},
+                },
             ],
             "returns": "result",
         }
@@ -940,7 +937,6 @@ def test_a_graph_definition_refuses_at_compile_and_preflight_naming_the_spec(
     payload: object = ProcedureAuthoringPayload(
         definition={"name": "triage", "nodes": [{"kind": "state_tap", "node_id": "retired"}]},
         activation_policy="drain",
-        owned_contracts=(),
     )
     if in_change_set:
         payload = ChangeSetAuthoringPayload(members=(payload,))  # type: ignore[arg-type]

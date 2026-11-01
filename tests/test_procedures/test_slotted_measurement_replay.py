@@ -194,8 +194,8 @@ def _slotted_world(tmp_path, *, landed=False):
         refs(
             {
                 "procedure": "test.measured-slot",
-                "input": {"value": "integer"},
-                "output": {"value": "integer"},
+                "input": {"value": "int"},
+                "output": {"value": "int"},
                 "slots": {
                     "compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}
                 },

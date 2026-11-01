@@ -160,7 +160,7 @@ def test_friendly_change_set_sorts_members_and_typed_refuses_duplicate_identity(
     )
 
     assert [member.tag for member in lowered.members] == [
-        "cruxible-procedure-authoring-payload-v4",
+        "cruxible-procedure-authoring-payload-v5",
         "playbill-query-definition-authoring-payload-v1",
     ]
     with pytest.raises(AuthoringInputError) as raised:
@@ -245,7 +245,7 @@ def test_a_spec_lowers_with_the_contracts_its_graph_names_and_no_digests(
     payload = (
         coordinator.list_pending(actor=AuthenticatedActor(actor_id="owner")).intents[0].payload
     )
-    assert payload.tag == "cruxible-procedure-authoring-payload-v4"
+    assert payload.tag == "cruxible-procedure-authoring-payload-v5"
     encoded = payload.model_dump_json(by_alias=True)
     assert '"procedure_spec"' in encoded
     assert "artifact_digest" not in encoded
@@ -584,7 +584,7 @@ def test_a_procedure_input_refuses_acquisition_rules_naming_the_line() -> None:
         )
     assert "the Line's acquisition per capture output" in str(caught.value)
     payload = lower_authoring_input(spec_input(_triage_definition()))
-    assert payload.tag == "cruxible-procedure-authoring-payload-v4"
+    assert payload.tag == "cruxible-procedure-authoring-payload-v5"
     assert "acquisition_defaults" not in type(payload).model_fields
 
 

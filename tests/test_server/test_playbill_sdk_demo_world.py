@@ -383,8 +383,6 @@ def _assess_procedure(query: str) -> ProcedureInput:
             "description": "Classify a vulnerability from governed policy and service facts.",
             "input": {},
             "output": {"lane": "string"},
-            "input_contract": "assess-input",
-            "output_contract": "assess-result",
             "activation": "drain",
             "steps": [
                 {
@@ -395,17 +393,18 @@ def _assess_procedure(query: str) -> ProcedureInput:
                 {
                     "project": "decision",
                     "id": "classify",
+                    # The read result rides in no declared field: a Procedure
+                    # value is typed, and raw read results have no Contract.
                     "fields": {
-                        "input": {"$ref": "step", "step": "policy_rows"},
+                        "truncated": {"$ref": "step", "step": "policy_rows", "path": ["truncated"]},
                         "lane": "standard",
                     },
-                    "output": {"input": "json", "lane": "string"},
+                    "output": {"truncated": "bool", "lane": "string"},
                 },
                 {
                     "project": "result",
                     "fields": {"lane": {"$ref": "step", "step": "decision", "path": ["lane"]}},
                     "output": {"lane": "string"},
-                    "contract": "assess-result",
                 },
             ],
             "returns": "result",

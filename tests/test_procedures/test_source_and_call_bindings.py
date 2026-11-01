@@ -18,8 +18,6 @@ from cruxible_client.contracts.procedure_mandates import (
 )
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
-    procedure_path,
-    render_procedure,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
@@ -30,6 +28,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     ProcedureRunRequest,
     service_run_playbill_procedure,
 )
+from tests.support.procedures import procedure_members
 from tests.test_procedures import test_procedure_source_runs as fixtures
 
 
@@ -105,7 +104,7 @@ def _world(tmp_path: Path) -> tuple[Any, Any, Path, Any]:
         instance,
         owner,
         {
-            procedure_path(both.identity.name): render_procedure(both),
+            **procedure_members(both),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
         },

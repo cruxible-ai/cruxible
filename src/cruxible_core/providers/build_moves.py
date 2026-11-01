@@ -45,6 +45,7 @@ from cruxible_client.contracts.providers import (
     provider_digest,
     provider_path,
 )
+from cruxible_client.contracts.shapes import tree_contract_resolver
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDisposition,
     ClaimTypeMigrationError,
@@ -487,6 +488,7 @@ def settle_changes(
                             tree[item.path],
                             path=item.path,
                             procedure=final_procedures[procedure_digest],
+                            contracts=tree_contract_resolver(tree),
                         )
                         line_content, outcome = carry_line(
                             item.path, tree[item.path], live_procedures

@@ -35,7 +35,6 @@ from cruxible_client.contracts.policies import (
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
-from cruxible_client.contracts.procedures.artifacts import procedure_owned_contract_digest
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.procedures.models import (
     CallNode,
@@ -68,13 +67,25 @@ from tests.core_support._light_capture_support import procedure_contract
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._subject_kind_support import bare_slug_claim_type, create_by_key
 from tests.support.procedures import MAX_WALL_CLOCK, named
-from tests.test_procedures.test_procedure_source_runs import _contracts
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
 SUBJECT_KIND = "security.advisory"
 SUBJECT_ID = "osv-2026-0001"
 PREDICATE = "security.advisory.severity"
 PROCEDURE_NAME = "osv-advisory-severity"
+
+
+def _contracts() -> tuple[Any, Any]:
+    """The Procedure's generated boundaries (<procedure>.input|output@1)."""
+
+    from tests.support.procedures import boundary_contract
+
+    return (
+        boundary_contract(f"{PROCEDURE_NAME}.input"),
+        boundary_contract(f"{PROCEDURE_NAME}.output", {"severity": "string"}),
+    )
+
+
 POLICY_NAME = "osv-advisory-reads"
 LINE_NAME = "osv-advisory-hourly"
 MANDATE_NAME = "osv-advisory-mandate"
@@ -198,17 +209,11 @@ def _procedure_definition(
     workspace: Path,
     terminal_kind: str = "propose_change_set",
 ) -> ProcedureDefinition:
+    from tests.support.procedures import contract_pin as boundary_pin
+
     input_contract, output_contract = _contracts()
-    contract_in = ArtifactPin(
-        role="contract-in",
-        target=input_contract.identity,
-        artifact_digest=procedure_owned_contract_digest(input_contract).tagged,
-    )
-    contract_out = ArtifactPin(
-        role="contract-out",
-        target=output_contract.identity,
-        artifact_digest=procedure_owned_contract_digest(output_contract).tagged,
-    )
+    contract_in = boundary_pin("contract-in", input_contract)
+    contract_out = boundary_pin("contract-out", output_contract)
     request = WorkspaceFileSourceRequestV2(
         logical_source="commerce.production.orders",
         relative_path=RELATIVE_PATH,
@@ -251,7 +256,6 @@ def _procedure_definition(
             ProjectNode(
                 node_id="shape",
                 fields={"severity": "$steps.advisory.content.text"},
-                contract_out=named(contract_out),
                 as_="result",
                 next="propose",
             ),
@@ -293,18 +297,18 @@ def _authored(
     from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
     from cruxible_client.contracts.procedures.decompile import decompile_procedure
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+    from tests.support.procedures import contract_resolver
 
-    input_contract, output_contract = contracts or _contracts()
     artifact = ProcedureArtifact(
         identity=Identity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        owned_contracts=tuple(
-            sorted((input_contract, output_contract), key=lambda c: c.identity.name)
-        ),
         activation_policy="drain",
     )
-    return ProcedureInput(kind="procedure", spec=decompile_procedure(artifact))
+    # Its generated <procedure>.input|output Contracts render inline; lowering
+    # co-proposes them again.
+    spec = decompile_procedure(artifact, contracts=contract_resolver(*(contracts or _contracts())))
+    return ProcedureInput(kind="procedure", spec=spec)
 
 
 def _binding_digest(workspace: Path) -> str:
@@ -492,7 +496,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
                 member
                 for member in members
                 if member["tag"]
-                not in {line_tag, mandate_tag, "cruxible-procedure-authoring-payload-v4"}
+                not in {line_tag, mandate_tag, "cruxible-procedure-authoring-payload-v5"}
             ]
         )
         pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)

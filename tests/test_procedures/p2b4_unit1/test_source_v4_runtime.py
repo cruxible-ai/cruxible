@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import subprocess
 import sys
 import textwrap
@@ -435,6 +436,11 @@ def _source_fixture(
             for candidate in (contract, terminal_contract):
                 if candidate.identity == identity:
                     return candidate, capture_contract_digest(candidate).tagged
+        if identity.kind == "Contract":
+            # A boundary Contract (this executor checks no boundary shape).
+            from tests.support.procedures import fixture_digest
+
+            return object(), fixture_digest(identity)
         return None
 
     operation = historical_provider.provider.operations[0]
@@ -710,6 +716,15 @@ def test_exact_run_id_replay_does_not_construct_an_invoker_or_spawn(
     accepted_path.write_text(authored.model_dump_json(), encoding="utf-8")
     (tmp_path / "binding-provider.json").write_text(_source_provider().provider.model_dump_json())
     (tmp_path / "binding-contract.json").write_text(contract.model_dump_json())
+    # The boundary Contracts the admission pinned replay at their exact
+    # digests too (this executor checks no boundary shape).
+    governed = [
+        [pin.target.name, pin.artifact_digest]
+        for pin in prepared.admission.full_pins
+        if pin.target.kind == "Contract"
+    ]
+    assert governed
+    (tmp_path / "binding-governed.json").write_text(json.dumps(governed))
     prepared_path.write_text(prepared.model_dump_json(), encoding="utf-8")
     fixture.run_index.close()
     script = textwrap.dedent(
@@ -744,6 +759,11 @@ def test_exact_run_id_replay_does_not_construct_an_invoker_or_spawn(
             material[(artifact.identity, digest(artifact).tagged)] = artifact
             if name == "provider":
                 provider_artifact = artifact
+        import json
+        from cruxible_client.contracts.artifacts import ArtifactIdentity
+
+        for name, digest in json.loads((root / "binding-governed.json").read_text()):
+            material[(ArtifactIdentity(kind="Contract", name=name), digest)] = object()
         operation = provider_artifact.operations[0]
         bindings = {
             "compute": LineBinding(

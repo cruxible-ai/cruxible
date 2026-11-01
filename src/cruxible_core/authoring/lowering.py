@@ -167,16 +167,14 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     render_procedure_runtime_policy,
 )
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedure,
     ProcedureArtifact,
     parse_procedure,
     procedure_artifact_digest,
-    procedure_owned_contract_digest,
     procedure_path,
     render_procedure,
 )
 from cruxible_client.contracts.procedures.contracts import (
-    OwnedProcedureContractValidator,
+    AcceptedProcedureContractValidator,
     ProcedureContractValidationError,
 )
 from cruxible_client.contracts.procedures.graph import (
@@ -220,6 +218,7 @@ from cruxible_client.contracts.shapes import (
     contract_digest,
     contract_path,
     parse_contract,
+    tree_contract_resolver,
     type_refs,
 )
 from cruxible_client.contracts.source_references import (
@@ -2439,10 +2438,16 @@ def _lower_named_procedure(
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
 ) -> LoweredAuthoring:
-    """Validate the authored named tree into its one governed envelope."""
+    """Validate the authored named tree into its one governed envelope.
+
+    Each boundary the spec declared inline becomes the governed Contract
+    ``<procedure>.<role>@N``, co-proposed in the same tree: a successor whose
+    fields are unchanged keeps version N; changed fields are version N+1.
+    """
+    generated_files, definition_data = _co_propose_boundary_contracts(payload, base_tree=base_tree)
     try:
         definition = ProcedureDefinition.model_validate(
-            _pin_slot_contracts(payload.definition, base_tree)
+            _pin_slot_contracts(definition_data, base_tree)
         )
     except (ValueError, KeyError, ProcedureGraphFormatError) as exc:
         message = (
@@ -2465,7 +2470,6 @@ def _lower_named_procedure(
                 identity=ArtifactIdentity(kind="Procedure", name=definition.name),
                 definition=definition,
                 definition_digest=compute_procedure_definition_digest(definition).tagged,
-                owned_contracts=payload.owned_contracts,
                 activation_policy=payload.activation_policy,
                 lifecycle=ArtifactLifecycle(
                     state="retired" if payload.retire else "live",
@@ -2481,10 +2485,8 @@ def _lower_named_procedure(
             "procedure",
             "The lowered Procedure artifact is invalid: "
             + " | ".join(_validation_error_lines(exc, root="procedure")),
-            repair_kind="replace_definition_or_contracts",
-            repair_description=(
-                "Repair the Procedure definition or its owned Contract declarations."
-            ),
+            repair_kind="replace_definition",
+            repair_description="Repair the Procedure definition or its boundary fields.",
         )
     return _procedure_lowered(
         instance,
@@ -2493,7 +2495,64 @@ def _lower_named_procedure(
         path=path,
         base=base,
         base_tree=base_tree,
+        co_proposed=generated_files,
     )
+
+
+def _co_propose_boundary_contracts(
+    payload: ProcedureAuthoringPayload, *, base_tree: Mapping[str, bytes]
+) -> tuple[dict[str, bytes], dict[str, object]]:
+    """Each inline boundary's governed Contract and the definition that names it."""
+
+    from cruxible_client.contracts.procedures.authored import (
+        CONTRACT_ROLES,
+        generated_contract_name,
+    )
+    from cruxible_core.authoring.contract_lowering import (
+        ContractLoweringRefusal,
+        render_contract_member,
+    )
+
+    definition = dict(payload.definition)
+    files: dict[str, bytes] = {}
+    for role, fields in sorted(payload.generated.items()):
+        name = generated_contract_name(str(definition["name"]), role)
+        latest = 0
+        while contract_path(name, latest + 1) in base_tree:
+            latest += 1
+        version = latest + 1
+        try:
+            if latest:
+                # Unchanged fields keep the accepted version: it is the same shape.
+                try:
+                    reused = render_contract_member(
+                        ContractAuthoringPayload(name=name, version=latest, fields=fields),
+                        tree=base_tree,
+                    )
+                except ContractLoweringRefusal as exc:
+                    if exc.code != "cruxible.contract.immutable":
+                        raise
+                else:
+                    version = latest
+                    files[reused[0]] = reused[1]
+            if version != latest:
+                rendered = render_contract_member(
+                    ContractAuthoringPayload(name=name, version=version, fields=fields),
+                    tree=base_tree,
+                )
+                files[rendered[0]] = rendered[1]
+        except ContractLoweringRefusal as exc:
+            _refuse(
+                exc.code,
+                f"procedure_spec.{role}",
+                f"The Procedure's {role} Contract {name}@{version}: {exc.message}",
+                repair_kind="replace_definition",
+                repair_description=exc.repair,
+            )
+        definition[CONTRACT_ROLES[role]] = {
+            "target": {"kind": "Contract", "name": f"{name}/v{version}"}
+        }
+    return files, definition
 
 
 def _pin_slot_contracts(definition: Any, tree: Mapping[str, bytes]) -> Any:
@@ -2592,6 +2651,7 @@ def _procedure_lowered(
     path: str,
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
+    co_proposed: Mapping[str, bytes] | None = None,
 ) -> LoweredAuthoring:
     candidate_tree = fork_tree(base_tree)
     if predecessor is not None and _same_revision_content(procedure, predecessor):
@@ -2600,7 +2660,14 @@ def _procedure_lowered(
     else:
         procedure_bytes = render_procedure(procedure)
     candidate_tree[path] = procedure_bytes
-    changed = () if base_tree.get(path) == procedure_bytes else ((path, procedure_bytes),)
+    written = {**dict(co_proposed or {}), path: procedure_bytes}
+    for member_path, content in written.items():
+        candidate_tree[member_path] = content
+    changed = tuple(
+        (member_path, content)
+        for member_path, content in sorted(written.items())
+        if base_tree.get(member_path) != content
+    )
     return LoweredAuthoring(
         proposed_tree=candidate_tree,
         resolved_authoring={
@@ -2937,7 +3004,9 @@ def _render_line_member(
         target=procedure.identity,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
-    _check_line_parameters(payload, procedure=procedure, procedure_path_value=procedure_target)
+    _check_line_parameters(
+        payload, procedure=procedure, procedure_path_value=procedure_target, tree=tree
+    )
 
     def child(identity: ArtifactIdentity) -> Any:
         target = procedure_path(identity.name)
@@ -3271,18 +3340,14 @@ def _render_contract_member(
 
 
 def _contract_fields_summary(
-    procedure: ProcedureArtifact, contract: ArtifactPin | ArtifactNameRef
+    contract: ArtifactPin | ArtifactNameRef, tree: Mapping[str, bytes]
 ) -> dict[str, str]:
-    for owned in procedure.owned_contracts:
-        if owned.identity == contract.target and (
-            isinstance(contract, ArtifactNameRef)
-            or procedure_owned_contract_digest(owned).tagged == contract.artifact_digest
-        ):
-            return {
-                name: field.type + (" (optional)" if field.optional else "")
-                for name, field in sorted(owned.contract_schema.fields.items())
-            }
-    return {}
+    from cruxible_client.contracts.shapes import contract_ref_for_identity
+
+    found = tree_contract_resolver(tree)(contract_ref_for_identity(contract.target))
+    if found is None:
+        return {}
+    return {name: field.spelling for name, field in sorted(found.fields.items())}
 
 
 def _check_line_parameters(
@@ -3290,6 +3355,7 @@ def _check_line_parameters(
     *,
     procedure: ProcedureArtifact,
     procedure_path_value: str,
+    tree: Mapping[str, bytes],
 ) -> None:
     """Refuse Line parameters the Procedure's input contract would refuse at run time.
 
@@ -3300,15 +3366,8 @@ def _check_line_parameters(
     """
 
     contract = procedure.definition.contract_in
-    if not isinstance(contract, ArtifactPin | ArtifactNameRef):
-        return
-    accepted = AcceptedProcedure(
-        path=procedure_path_value,
-        procedure=procedure,
-        artifact_digest=procedure_artifact_digest(procedure).tagged,
-    )
     try:
-        OwnedProcedureContractValidator(accepted).validate_contract(
+        AcceptedProcedureContractValidator(tree_contract_resolver(tree)).validate_contract(
             contract=contract,
             payload=normalize_canonical(payload.parameters),
             direction="input",
@@ -3325,7 +3384,7 @@ def _check_line_parameters(
                 "Set parameters to a record the Procedure's input contract accepts; "
                 "the replacement lists its fields and types."
             ),
-            replacement=_contract_fields_summary(procedure, contract),
+            replacement=_contract_fields_summary(contract, tree),
         )
 
 

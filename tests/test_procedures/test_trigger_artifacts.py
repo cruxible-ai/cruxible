@@ -19,7 +19,6 @@ from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
 )
-from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.procedures.line_specs import (
     line_spec_digest,
     line_spec_path,
@@ -60,6 +59,7 @@ from tests.support.lines import (
     successor,
     trigger_members,
 )
+from tests.support.procedures import procedure_members
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
 from tests.test_server.test_playbill_line_run_refusals import (
@@ -316,7 +316,7 @@ def _line_world(tmp_path):  # type: ignore[no-untyped-def]
             capture_contract_path(TRIGGER_CONTRACT.identity.name): (
                 render_capture_contract(TRIGGER_CONTRACT)
             ),
-            accepted.path: render_procedure(authored_procedure(accepted)),
+            **procedure_members(authored_procedure(accepted)),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
             line_spec_path(line.identity.name): render_line_spec(line),
         }

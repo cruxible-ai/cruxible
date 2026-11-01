@@ -28,7 +28,6 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
 )
-from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.providers import provider_path, render_provider
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
@@ -47,6 +46,7 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._support import generate_client
+from tests.support.procedures import procedure_members
 from tests.test_authoring.test_authoring_existing_capture import _activate
 from tests.test_authoring.test_authoring_preflight import _working_payload
 from tests.test_claims.test_claim_attestation_service import _request
@@ -181,7 +181,7 @@ def run_capture_producers(
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree.update(source_contract_files())
     tree[provider_path(provider.provider.identity.name)] = render_provider(provider.provider)
-    tree[accepted.path] = render_procedure(authored_procedure(accepted))
+    tree.update(procedure_members(authored_procedure(accepted)))
     _accept_tree(
         instance,
         owner,

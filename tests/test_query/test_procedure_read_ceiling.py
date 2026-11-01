@@ -245,7 +245,7 @@ def _two_reads(max_read_rows: int) -> Any:
         nodes=(
             ReadNode(node_id="first", query=named(query), as_="first"),
             ReadNode(node_id="second", query=named(query), as_="second"),
-            ProjectNode(node_id="result", literal={}, contract_out=named(out), as_="result"),
+            ProjectNode(node_id="result", literal={}, as_="result"),
         ),
         returns="result",
         hard_caps=_hard_caps().model_copy(update={"max_read_rows": max_read_rows}),
@@ -276,11 +276,11 @@ def _query_then_claims(max_read_rows: int) -> Any:
         as_="second",
     )
     definition = accepted.procedure.definition.model_copy(update={"nodes": (first, claims, result)})
-    from tests.test_procedures.test_procedure_execution import _owned_accepted
+    from tests.test_procedures.test_procedure_execution import _BOUNDARIES, _owned_accepted
 
     return _owned_accepted(
         ProcedureDefinition.model_validate(definition.model_dump(mode="python", by_alias=True)),
-        contracts=accepted.procedure.owned_contracts,
+        contracts=_BOUNDARIES[accepted.procedure.identity.name],
         pins=(*accepted.procedure.pins, claim_type),
     )
 

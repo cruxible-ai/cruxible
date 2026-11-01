@@ -64,7 +64,7 @@ def test_a_sequence_states_one_spec_and_previews_it_with_the_shared_lowering():
     assert draft.payload == lower_authoring_input(built)
     current = lower_procedure_spec(built.spec)
     assert current.definition["nodes"][1]["slot"] == PROVIDER_SLOT
-    assert current.definition["graph_format"] == 7
+    assert current.definition["graph_format"] == 8
 
 
 def test_handles_are_typed_refs_checked_against_the_fields_a_step_produces():
@@ -77,7 +77,7 @@ def test_handles_are_typed_refs_checked_against_the_fields_a_step_produces():
     )
     plan = sequence(
         slots=SLOTS,
-        params={"limit": "integer"},
+        params={"limit": "int"},
         contracts={"test.procedure-composition.response@1": out},
     )
     answer = plan.call("answer", slot=PROVIDER_SLOT, input={})
@@ -113,7 +113,8 @@ def test_source_project_emit_matches_security_dogfood_shape():
     assert preview.terminals == ("emit",)
     assert preview.nodes[-1]["input"] == "$steps.fetch"
     assert preview.returns == "summary"
-    assert len(lower_procedure_spec(plan.build().spec).owned_contracts) == 3
+    # The boundaries are co-proposed (input, output); the intermediate project pins none.
+    assert set(lower_procedure_spec(plan.build().spec).generated) == {"input", "output"}
 
 
 def test_undeclared_slot_refuses_before_authoring():
@@ -228,14 +229,21 @@ def test_invalid_graphs_use_shared_validator(compose):
         plan.build()
 
 
-def test_conflicting_contracts_refused():
+def test_a_returned_record_that_breaks_the_declared_output_is_refused():
     plan = sequence()
-    plan.project("first", fields={"count": 1}, output={"count": "int"}, contract="shared")
+    plan.project(
+        "first",
+        fields={"count": 1},
+        output={"count": "int"},
+    )
     second = plan.project(
-        "second", fields={"count": "x"}, output={"count": "string"}, contract="shared"
+        "second",
+        fields={"count": "x"},
+        output={"count": "string"},
     )
     plan.returns(second)
-    with pytest.raises(ProcedureCompositionError, match="Conflicting contract fields"):
+    # The returned record is typed as it flows; it must fit the declared output.
+    with pytest.raises(ProcedureCompositionError, match="does not fit the declared output"):
         plan.build()
 
 
@@ -384,7 +392,6 @@ def test_a_valid_post_inbox_step_ends_its_path_and_preserves_its_bounds():
     listed = plan.project(
         "listed",
         fields={"items": [{"note": "a"}]},
-        output={"items": {"type": "list", "item_fields": {"note": {"type": "string"}}}},
     )
     plan.project("result", fields={"count": 1})
     plan.inbox(

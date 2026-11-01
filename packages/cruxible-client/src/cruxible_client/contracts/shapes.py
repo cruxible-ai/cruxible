@@ -31,6 +31,7 @@ from pydantic import (
     ConfigDict,
     Discriminator,
     Field,
+    StrictBool,
     Tag,
     TypeAdapter,
     ValidationError,
@@ -724,7 +725,7 @@ class ContractField(_Shape):
     """One field: its type, whether its key may be absent, and what it means."""
 
     type: FieldType
-    optional: bool = Field(default=False, exclude_if=lambda value: value is False)
+    optional: StrictBool = Field(default=False, exclude_if=lambda value: value is False)
     description: str | None = Field(default=None, exclude_if=_not_none)
 
     @model_validator(mode="before")
@@ -962,6 +963,32 @@ def render_contract(contract: Contract) -> bytes:
 
 def contract_digest(contract: Contract) -> ArtifactDigest:
     return typed_digest(ArtifactDigest, CONTRACT_DIGEST_DOMAIN, contract.model_dump(mode="json"))
+
+
+def tree_contract_resolver(
+    tree: Mapping[str, bytes],
+) -> Callable[[ContractRef], Contract | None]:
+    """Read Contract versions from a (candidate or accepted) tree.
+
+    A reference that pins a digest resolves only to the version with that digest.
+    """
+
+    found: dict[tuple[str, int], Contract | None] = {}
+
+    def resolve(ref: ContractRef) -> Contract | None:
+        key = (ref.name, ref.version)
+        if key not in found:
+            path = contract_path(ref.name, ref.version)
+            content = tree.get(path)
+            found[key] = None if content is None else parse_contract(content, path=path)
+        contract = found[key]
+        if contract is None or (
+            ref.digest is not None and contract_digest(contract).tagged != ref.digest
+        ):
+            return None
+        return contract
+
+    return resolve
 
 
 def contract_type_refusal(exc: BaseException) -> ContractTypeRefused | None:
@@ -2123,6 +2150,7 @@ __all__ = [
     "DecimalType",
     "NumberType",
     "canonical_number",
+    "tree_contract_resolver",
     "DuplicateArm",
     "DurationType",
     "EnumOfType",

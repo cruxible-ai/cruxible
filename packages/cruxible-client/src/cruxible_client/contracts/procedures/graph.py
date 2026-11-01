@@ -334,17 +334,6 @@ def analyze_procedure(definition: ProcedureDefinition) -> ProcedureGraph:
             continue
         if not set(node.sources).issubset(reachable_aliases[node.node_id]):
             raise ProcedureGraphFormatError("select names a producer outside its incoming paths")
-        producers = {
-            _node_alias(candidate): candidate
-            for candidate in definition.nodes
-            if _node_alias(candidate) in node.sources
-        }
-        if any(
-            not isinstance(producer, CallNode)
-            and getattr(producer, "contract_out", None) != node.contract_out
-            for producer in producers.values()
-        ):
-            raise ProcedureGraphFormatError("select producers must share its exact output contract")
         counts: dict[str, tuple[int, int]] = {}
         for candidate in definition.nodes:
             before = [counts[pred] for pred in predecessors[candidate.node_id]] or [(0, 0)]
@@ -451,7 +440,7 @@ def _procedure_node_digests(
         node = nodes[node_id]
         local = typed_digest(
             ArtifactDigest,
-            "cruxible-procedure-node-local-v9",
+            "cruxible-procedure-node-local-v10",
             _node_local_payload(node),
         ).tagged
         successor_digests = {
@@ -460,7 +449,7 @@ def _procedure_node_digests(
         }
         subtree = typed_digest(
             ArtifactDigest,
-            "cruxible-procedure-node-subtree-v9",
+            "cruxible-procedure-node-subtree-v10",
             {"local_digest": local, "successors": successor_digests},
         ).tagged
         result[node_id] = ProcedureNodeDigests(
@@ -481,7 +470,7 @@ def compute_procedure_definition_digest(definition: ProcedureDefinition) -> Arti
     payload.pop("nodes")
     return typed_digest(
         ArtifactDigest,
-        "cruxible-procedure-definition-v9",
+        "cruxible-procedure-definition-v10",
         {
             "definition": payload,
             "entry_node_id": definition.nodes[0].node_id,

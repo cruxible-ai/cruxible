@@ -1185,8 +1185,6 @@ class ContractValidatorProtocol(Protocol):
         max_items: int,
     ) -> ValidatedProcedureContract: ...
 
-    def unique_list_field_path(self, contract: ArtifactPin) -> str | None: ...
-
 
 class ProcedureActivationAuthorityProtocol(Protocol):
     def current_procedure_digest(
@@ -1776,6 +1774,13 @@ def state_tap_view(node: ReadNode, value: object) -> CanonicalValue:
         result = ClaimQueryResult.model_validate(value)
         return normalize_canonical(
             {
+                # Each row as a plain record of its present projected fields: the
+                # shape the Query's row Contract types (absent and conflicted
+                # fields are left out; the whole result keeps their states).
+                "rows": [
+                    {item.name: item.value for item in row.fields if item.state == "present"}
+                    for row in result.rows
+                ],
                 "result": value,
                 "coordinate": result.coordinate.model_dump(mode="json"),
                 "definition_path": result.definition_path,
@@ -3358,16 +3363,9 @@ class ProcedureExecutor:
                     outputs=state.outputs,
                 )
             )
-            contract = self._pin(node.contract_out, label=f"project {node.node_id!r} output")
-            state.outputs[node.as_] = _validate_node_contract(
-                self.contract_validator,
-                contract=contract,
-                payload=value,
-                direction="output",
-                node_id=node.node_id,
-                max_items=_effective_max_items(admission),
-                observe_items=state.observe_items,
-            )
+            # An intermediate value is typed as it flows: a project or select pins
+            # no Contract, and the run's item budget is enforced at boundaries.
+            state.outputs[node.as_] = normalize_canonical(value)
             provenance_fields = fields
             state.provenance[node.as_] = _projected_provenance(
                 provenance_fields,

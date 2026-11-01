@@ -41,6 +41,7 @@ from cruxible_core.errors import RequestRefusedError
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.runtime.provider_runtime import PROVIDER_RUNTIME_CONFIG_PATH
+from tests.support.procedures import procedure_members
 from tests.support.provider_checkout import ProviderCheckout
 
 
@@ -217,8 +218,8 @@ def _graph(world: Any, *, provider: str | None) -> Any:
     return ProcedureSpec.model_validate(
         {
             "procedure": PROCEDURE if provider is not None else BLUEPRINT,
-            "input": {"n": "integer"},
-            "output": {"n": "integer"},
+            "input": {"n": "int"},
+            "output": {"n": "int"},
             "slots": {"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
             "steps": [
                 {
@@ -273,10 +274,18 @@ def _author(world: Any, *, procedure: bool = True) -> None:
         (call,) = stored.definition.nodes
         assert call.slot == "increment"
         assert set(stored.definition.slots) == {"increment"}
-        assert len(stored.owned_contracts) == 2
-        for owned in stored.owned_contracts:
-            assert set(owned.contract_schema.fields) == {"n"}
-            assert owned.contract_schema.fields["n"].type in {"int", "integer"}
+        # Its boundaries are governed Contracts co-proposed beside it.
+        tree = _tree(world)
+        for pin in (stored.definition.contract_in, stored.definition.contract_out):
+            from cruxible_client.contracts.shapes import (
+                contract_path_for_identity,
+                parse_contract,
+            )
+
+            path = contract_path_for_identity(pin.target.name)
+            boundary = parse_contract(tree[path], path=path)
+            assert set(boundary.fields) == {"n"}
+            assert boundary.fields["n"].spelling == "int"
 
 
 def _build(world: Any, *projects: Path, version: str = "1.0.0") -> KitBundle:
@@ -358,7 +367,7 @@ def test_fresh_consumer_provisions_the_operation_contract_before_bundled_install
                 {
                     "procedure": "acme.installation-marker",
                     "input": {},
-                    "output": {"n": "integer"},
+                    "output": {"n": "int"},
                     "steps": [{"project": "result", "fields": {"n": 2}}],
                     "returns": "result",
                     "hard_caps": {"provider_calls": 0},
@@ -374,7 +383,12 @@ def test_fresh_consumer_provisions_the_operation_contract_before_bundled_install
         submitted = intent.submit(accept="never")
         publisher.approve(submitted._candidate_status.proposal_id)
         release = _build(publisher, project)
-        assert set(release.contents()) == {"procedures/acme.installation-marker.json"}
+        # The inline boundaries ship as the Procedure's co-proposed Contracts.
+        assert set(release.contents()) == {
+            "contracts/acme.installation-marker.input/v1.json",
+            "contracts/acme.installation-marker.output/v1.json",
+            "procedures/acme.installation-marker.json",
+        }
         assert len(release.manifest.providers) == 1
         before = _tree(consumer)
         assert all(before[path] == content for path, content in local_call_contract_files().items())
@@ -418,7 +432,11 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
 
         manifest = release.manifest
         assert [item.path for item in manifest.artifacts] == [
+            f"contracts/{PROCEDURE}.input/v1.json",
+            f"contracts/{PROCEDURE}.output/v1.json",
             f"contracts/{POLICY}/v1.json",
+            f"contracts/{BLUEPRINT}.input/v1.json",
+            f"contracts/{BLUEPRINT}.output/v1.json",
             "contracts/local.increment.value/v1.json",
             f"procedures/{PROCEDURE}.json",
             f"procedures/{BLUEPRINT}.json",
@@ -964,7 +982,6 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
         identity={"kind": "Procedure", "name": "acme.files-skeleton"},  # type: ignore[arg-type]
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        owned_contracts=procedure.owned_contracts,
         activation_policy="drain",
     )
     inspection = submit_member_candidate(
@@ -1010,7 +1027,6 @@ def test_a_takeover_of_another_kits_definition_refuses_before_any_provider_insta
 ) -> None:
     """F002: feature.reader really carries a mutable Query owned by the prior kit."""
     from cruxible_client.contracts.kits import KitArtifact, KitArtifactBytes
-    from cruxible_client.contracts.procedures.artifacts import render_procedure
     from cruxible_client.contracts.query.definitions import (
         parse_query_definition,
         render_query_definition,
@@ -1038,7 +1054,7 @@ def test_a_takeover_of_another_kits_definition_refuses_before_any_provider_insta
             publisher_instance,
             members={
                 query_path: render_query_definition(query),
-                reader_path: render_procedure(reader),
+                **procedure_members(reader),
             },
             actor_id="operator",
             proposal_name="foreign-query-dependency",

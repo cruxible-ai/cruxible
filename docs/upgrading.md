@@ -203,7 +203,7 @@ compiler, so reads and proofs at them are unchanged. The instance descriptor
 keeps its genesis compiler; inspection reports the active compiler from
 accepted history.
 
-This release installs one compiler, revision 41 (`typed-authoring-foundations-v1`), and
+This release installs one compiler, revision 42 (`typed-authoring-foundations-v2`), and
 no upgrade edge leads to or from it: `cruxible compiler upgrade` refuses
 `cruxible.compiler_upgrade.already_current` (or
 `cruxible.compiler_upgrade.unsupported_transition` for any other target). An
@@ -215,7 +215,9 @@ its content into a fresh instance.
 
 A ClaimType has one format (`cruxible-claim-type-v10`) with one evidence
 policy (`cruxible-claim-evidence-admission-policy-v4`), and a Claim one artifact
-(`playbill-claim-v4`). Accepted state under an earlier format is refused with the
+(`playbill-claim-v4`). A Procedure has one format (`cruxible-procedure-v4`): its
+input, params and output name governed Contracts, and a Procedure carries no
+Contracts of its own. Accepted state under an earlier format is refused with the
 reseed answer above, never restated.
 
 ## Compiler facet states

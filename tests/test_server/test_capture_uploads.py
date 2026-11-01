@@ -20,13 +20,9 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.captures import capture_contract_digest
-from cruxible_client.contracts.procedures.artifacts import (
-    ProcedureOwnedContract,
-    procedure_owned_contract_digest,
-)
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     ProcedureDefinition,
@@ -524,30 +520,24 @@ def test_every_path_the_part_route_could_receive_is_bounded(tail: str) -> None:
 ADVISORY = b"high"
 
 
-def _contracts() -> tuple[ProcedureOwnedContract, ProcedureOwnedContract]:
-    from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
+def _contracts() -> tuple[Any, Any]:
+    """The acquire Procedure's generated boundaries (<procedure>.input|output@1)."""
+
+    from tests.support.procedures import boundary_contract
 
     return (
-        ProcedureOwnedContract(
-            identity=ArtifactIdentity(kind="Contract", name=f"{PROCEDURE}-input"),
-            schema=ContractSchema(fields={"relative_path": PropertySchema(type="string")}),
-        ),
-        ProcedureOwnedContract(
-            identity=ArtifactIdentity(kind="Contract", name=f"{PROCEDURE}-output"),
-            schema=ContractSchema(fields={"severity": PropertySchema(type="string")}),
-        ),
+        boundary_contract(f"{PROCEDURE}.input", {"relative_path": "string"}),
+        boundary_contract(f"{PROCEDURE}.output", {"severity": "string"}),
     )
 
 
 def _definition(contract_pin: ArtifactPin) -> ProcedureDefinition:
     input_contract, output_contract = _contracts()
 
-    def pin(role: str, contract: ProcedureOwnedContract) -> ArtifactPin:
-        return ArtifactPin(
-            role=role,
-            target=contract.identity,
-            artifact_digest=procedure_owned_contract_digest(contract).tagged,
-        )
+    def pin(role: str, contract: Any) -> ArtifactPin:
+        from tests.support.procedures import contract_pin
+
+        return contract_pin(role, contract)
 
     request = WorkspaceFileSourceRequestV2(
         logical_source="commerce.production.orders",
@@ -592,7 +582,6 @@ def _definition(contract_pin: ArtifactPin) -> ProcedureDefinition:
             ProjectNode(
                 node_id="shape",
                 fields={"severity": "$steps.advisory.content.text"},
-                contract_out=named(pin("contract-out", output_contract)),
                 as_="result",
             ),
         ),

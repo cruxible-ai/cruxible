@@ -32,8 +32,6 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
-    procedure_path,
-    render_procedure,
 )
 from cruxible_client.contracts.query.definitions import (
     query_definition_path,
@@ -46,7 +44,7 @@ from tests.core_support._adoption_fixture import _claim_type_path, _query_defini
 from tests.core_support._light_capture_support import record_contract
 from tests.core_support._support import initialize_local
 from tests.support.lines import action_trigger, trigger_members
-from tests.support.procedures import procedure_artifact
+from tests.support.procedures import procedure_artifact, procedure_members
 from tests.test_indexes.test_projection_next import _accepted_procedure
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_service.test_typed_source_catalogs import _published_sources
@@ -286,7 +284,7 @@ def complete_policy_inventory(
         lifecycle=ArtifactLifecycle(state="retired"),
     )
     for procedure in (live_procedure, retired_procedure):
-        tree[procedure_path(procedure.identity.name)] = render_procedure(procedure)
+        tree.update(procedure_members(procedure))
 
     # The seeded default Triggers are three live carriers, and the seeded builtin
     # ClaimTypes two more of the claim policies; this inventory keeps one of each.

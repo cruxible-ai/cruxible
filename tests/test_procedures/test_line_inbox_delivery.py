@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
+from cruxible_client.contracts.procedures.artifacts import procedure_path
 from cruxible_client.contracts.procedures.extract import ExtractNode
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
@@ -21,7 +21,7 @@ from cruxible_client.contracts.shapes import Contract
 from cruxible_core.exhaust.line_inbox import LineInboxStore
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.support.inbox import NOTE, contract_members, inbox_node
-from tests.support.procedures import MAX_WALL_CLOCK
+from tests.support.procedures import MAX_WALL_CLOCK, procedure_members
 from tests.test_procedures.test_manual_line_runs import manual_run
 from tests.test_procedures.test_procedure_source_runs import (
     NOW,
@@ -133,7 +133,7 @@ def inbox_world(  # type: ignore[no-untyped-def]
         {
             contract_path(row.name, row.version): render_contract(row),
             **contract_members(NOTE, SEVERITY, KEYED),
-            procedure_path(with_inbox.identity.name): render_procedure(with_inbox),
+            **procedure_members(with_inbox),
             line_spec_path(line.identity.name): render_line_spec(line),
         },
         name="inbox-line",

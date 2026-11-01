@@ -41,9 +41,7 @@ def test_a_retired_payload_form_refuses_typed_naming_the_spec(tmp_path, definiti
     before = instance.accepted_coordinate()
     result = _compile(
         instance,
-        ProcedureAuthoringPayload(
-            activation_policy="snapshot", owned_contracts=(), definition=definition
-        ),
+        ProcedureAuthoringPayload(activation_policy="snapshot", definition=definition),
     )
     assert result.verdict == "refused"
     (refusal,) = result.frontier.diagnostics

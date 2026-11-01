@@ -47,6 +47,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryProjection,
     QueryProjectionField,
 )
+from tests.support.procedures import procedure_members
 from tests.test_procedures.test_procedure_mandates import (
     _accepted_line,
     _line,
@@ -460,7 +461,6 @@ def _world(tmp_path):
     from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
     from cruxible_client.contracts.procedures.artifacts import (
         procedure_artifact_digest,
-        render_procedure,
     )
     from cruxible_client.contracts.query.definitions import render_query_definition
     from tests.core_support._support import initialize_local
@@ -546,7 +546,7 @@ def _world(tmp_path):
     )
     grown = {
         **tree,
-        accepted_procedure.path: render_procedure(procedure),
+        **procedure_members(procedure),
         accepted_query.path: render_query_definition(query),
         line_spec_path(this_line.identity.name): render_line_spec(this_line),
     }

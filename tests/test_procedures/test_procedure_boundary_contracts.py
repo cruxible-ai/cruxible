@@ -1,4 +1,4 @@
-"""Owner-carried Procedure contracts and daemon-query execution boundary."""
+"""A Procedure's governed boundary Contracts, checked at its boundaries only."""
 
 from __future__ import annotations
 
@@ -11,23 +11,19 @@ from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactPin,
 )
-from cruxible_client.contracts.canonical import ArtifactDigest, canonical_bytes, typed_digest
+from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
-    ProcedureOwnedContract,
     procedure_artifact_digest,
-    procedure_owned_contract_digest,
     procedure_path,
     procedure_runnability,
-    render_procedure,
 )
-from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
+from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.contracts import (
+    AcceptedProcedureContractValidator,
     ProcedureContractItemBudgetExceeded,
     ProcedureContractValidationError,
-    _validate_payload,
-    _validate_payload_with_budget,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
@@ -37,6 +33,7 @@ from cruxible_client.contracts.procedures.models import (
     ReadNode,
 )
 from cruxible_client.contracts.query.definitions import query_definition_digest
+from cruxible_client.contracts.shapes import Contract
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
@@ -66,7 +63,16 @@ from tests.core_support._knowledge_loop_support import (
     work_item_query,
 )
 from tests.core_support._support import client_material
-from tests.support.procedures import MAX_WALL_CLOCK, bind_fixture, named
+from tests.support.procedures import (
+    MAX_WALL_CLOCK,
+    bind_fixture,
+    boundary_contract,
+    contract_files,
+    contract_pin,
+    contract_resolver,
+    named,
+    procedure_members,
+)
 from tests.test_ledger.test_activation import _sign
 
 READ_TIME = datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
@@ -96,53 +102,66 @@ def test_list_contract_schema_is_recursive_without_changing_scalar_bytes() -> No
         PropertySchema(type="list", item_fields={}, primary_key=True)
 
 
-def test_list_contract_validation_names_nested_element_and_path() -> None:
-    contract = _contract(
-        "rows",
-        {
-            "rows": PropertySchema(
-                type="list",
-                item_fields={
-                    "parts": PropertySchema(
-                        type="list",
-                        item_fields={"value": PropertySchema(type="int")},
-                    )
-                },
-            )
-        },
-    )
+#: One work item as a Query row: what a read of the work-item Query yields.
+WORK_ROW = boundary_contract("test.work-row", {"item_id": "string", "status": "string?"})
+_PART = boundary_contract("test.part", {"value": "int"})
+_NESTED_ROW = boundary_contract(
+    "test.nested-row", {"parts": "list<test.part@1>{max_items: 10}"}, _PART
+)
 
-    assert _validate_payload(
-        contract,
-        {"rows": [{"parts": [{"value": 3}]}]},
+
+def _validator(*contracts: Contract) -> AcceptedProcedureContractValidator:
+    return AcceptedProcedureContractValidator(contract_resolver(*contracts))
+
+
+def test_a_boundary_value_is_checked_exactly_and_names_the_nested_field() -> None:
+    rows = boundary_contract(
+        "rows", {"rows": "list<test.nested-row@1>{max_items: 10}"}, _NESTED_ROW
+    )
+    validator = _validator(rows, _NESTED_ROW, _PART)
+    pin = contract_pin("contract-out", rows)
+
+    assert validator.validate_contract(
+        contract=pin, payload={"rows": [{"parts": [{"value": 3}]}]}, direction="output"
     ) == {"rows": [{"parts": [{"value": 3}]}]}
     with pytest.raises(ProcedureContractValidationError) as caught:
-        _validate_payload(
-            contract,
-            {"rows": [{"parts": [{"value": "not-an-int"}]}]},
+        validator.validate_contract(
+            contract=pin,
+            payload={"rows": [{"parts": [{"value": "not-an-int"}]}]},
+            direction="output",
         )
     assert caught.value.field_path == "rows[0].parts[0].value"
-    assert caught.value.element_index == 0
+    with pytest.raises(ProcedureContractValidationError, match="undeclared"):
+        validator.validate_contract(
+            contract=pin, payload={"rows": [], "extra": 1}, direction="output"
+        )
 
 
-def test_list_contract_budget_refuses_at_the_typed_boundary_without_clipping() -> None:
-    contract = _contract(
-        "rows",
-        {
-            "rows": PropertySchema(
-                type="list",
-                item_fields={"id": PropertySchema(type="string")},
-            )
-        },
-    )
-    payload = {"rows": [{"id": "a"}, {"id": "b"}]}
+def test_a_list_at_a_boundary_refuses_past_the_run_item_budget_without_clipping() -> None:
+    rows = boundary_contract("rows", {"rows": "list<test.work-row@1>{max_items: 100}"}, WORK_ROW)
+    validator = _validator(rows, WORK_ROW)
+    payload = {"rows": [{"item_id": "a"}, {"item_id": "b"}]}
 
     with pytest.raises(ProcedureContractItemBudgetExceeded) as caught:
-        _validate_payload_with_budget(contract, payload, max_items=1)
+        validator.validate_contract_with_budget(
+            contract=contract_pin("contract-out", rows),
+            payload=payload,
+            direction="output",
+            max_items=1,
+        )
     assert caught.value.field_path == "rows"
     assert caught.value.limit == 1
     assert caught.value.observed == 2
-    assert payload["rows"] == [{"id": "a"}, {"id": "b"}]
+    assert payload["rows"] == [{"item_id": "a"}, {"item_id": "b"}]
+
+
+def test_a_boundary_contract_not_accepted_at_its_pinned_digest_refuses() -> None:
+    rows = boundary_contract("rows", {"count": "int"})
+    other = boundary_contract("rows", {"count": "string"})
+    with pytest.raises(ProcedureContractValidationError, match="not accepted"):
+        _validator(other).validate_contract(
+            contract=contract_pin("contract-out", rows), payload={"count": 1}, direction="output"
+        )
 
 
 def test_boundary_budget_refusal_and_high_water_tie_are_deterministic() -> None:
@@ -198,26 +217,21 @@ class _Authority:
         return self.digest
 
 
-def _contract(name: str, fields: dict[str, PropertySchema]) -> ProcedureOwnedContract:
-    return ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name=name),
-        schema=ContractSchema(fields=fields),
-    )
+#: The query Procedure's governed boundaries (accepted beside it by ``_activate_procedure``).
+EMPTY_INPUT = boundary_contract("test.empty-input")
+QUERY_ROWS = boundary_contract(
+    "test.query-rows", {"rows": "list<test.work-row@1>{max_items: 200}"}, WORK_ROW
+)
+QUERY_CONTRACTS = (EMPTY_INPUT, QUERY_ROWS, WORK_ROW)
+
+
+def _contract(name: str, fields: dict[str, str]) -> Contract:
+    return boundary_contract(name, fields)
 
 
 def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
-    input_contract = _contract("empty-input", {})
-    output_contract = _contract("query-rows", {"rows": PropertySchema(type="json")})
-    contract_in = ArtifactPin(
-        role="contract-in",
-        target=input_contract.identity,
-        artifact_digest=procedure_owned_contract_digest(input_contract).tagged,
-    )
-    contract_out = ArtifactPin(
-        role="contract-out",
-        target=output_contract.identity,
-        artifact_digest=procedure_owned_contract_digest(output_contract).tagged,
-    )
+    contract_in = contract_pin("contract-in", EMPTY_INPUT)
+    contract_out = contract_pin("contract-out", QUERY_ROWS)
     query = ArtifactPin(
         role="query",
         target=ArtifactIdentity(kind="QueryDefinition", name=QUERY_NAME),
@@ -237,8 +251,7 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
             ),
             ProjectNode(
                 node_id="project",
-                fields={"rows": "$steps.query.result.rows"},
-                contract_out=named(contract_out),
+                fields={"rows": "$steps.query.rows"},
                 as_="result",
             ),
         ),
@@ -256,14 +269,6 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        owned_contracts=tuple(
-            sorted(
-                (input_contract, output_contract),
-                key=lambda contract: canonical_bytes(
-                    contract.model_dump(mode="json", by_alias=True)
-                ),
-            )
-        ),
         activation_policy="abort",
     )
     return bind_fixture(
@@ -272,7 +277,7 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
             procedure=procedure,
             artifact_digest=procedure_artifact_digest(procedure).tagged,
         ),
-        extra_pins=(query,),
+        extra_pins=(query, contract_in, contract_out),
     )
 
 
@@ -337,6 +342,7 @@ def test_query_only_procedure_runs_through_daemon_query_without_provider(
         run_index_path=tmp_path / "procedure-run-index.sqlite",
         fencing_token="writer",
         activation_authority=_Authority(accepted.artifact_digest),
+        contract_resolver=contract_resolver(*QUERY_CONTRACTS),
     )
 
     assert procedure_runnability(accepted.procedure.definition) == ("direct", ())
@@ -345,11 +351,15 @@ def test_query_only_procedure_runs_through_daemon_query_without_provider(
     assert len(result.output["rows"]) == 2  # type: ignore[index]
 
 
-def _activate_procedure(instance, owner, procedure, *, sequence: int, timestamp: str):  # type: ignore[no-untyped-def]
+def _activate_procedure(  # type: ignore[no-untyped-def]
+    instance, owner, procedure, *, sequence: int, timestamp: str, extra_contracts=()
+):
     base = instance.accepted_coordinate()
     tree = instance.tree_at(base.git_oid)
-    path = procedure_path(procedure.identity.name)
-    tree[path] = render_procedure(procedure)
+    procedure_path(procedure.identity.name)
+    tree.update(procedure_members(procedure))
+    # Its governed boundary Contracts are accepted beside it (unchanged if present).
+    tree.update(contract_files(*QUERY_CONTRACTS, *extra_contracts))
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),
         request=ProposalAdmissionRequest(
@@ -394,10 +404,9 @@ def _activate_procedure(instance, owner, procedure, *, sequence: int, timestamp:
 def test_a_contract_refusal_names_the_offending_field_even_at_the_root(
     payload: dict[str, object], field_path: str
 ) -> None:
-    from cruxible_client.contracts.procedures.contracts import validate_contract_schema
-
-    schema = ContractSchema(fields={"count": PropertySchema(type="int")})
+    contract = boundary_contract("counts", {"count": "int"})
     with pytest.raises(ProcedureContractValidationError) as refused:
-        validate_contract_schema(schema, payload)
+        _validator(contract).validate_contract(
+            contract=contract_pin("contract-out", contract), payload=payload, direction="output"
+        )
     assert refused.value.field_path == field_path
-    assert "count" in str(refused.value)

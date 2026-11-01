@@ -108,16 +108,15 @@ EDITED_BODY = "sha256:" + hashlib.sha256(b"status: blocked\n").hexdigest()
 def _accepted_procedure() -> AcceptedProcedure:
     """One accepted graph-v6 Procedure; these tests only read its identity and path."""
 
-    contract_out = pin("contract-out", "Contract", "procedure-output")
+    contract_out = pin("contract-out", "Contract", "procedure-output/v1")
     definition = ProcedureDefinition(
         name="catalog-procedure",
-        contract_in=named(pin("contract-in", "Contract", "procedure-input")),
+        contract_in=named(pin("contract-in", "Contract", "procedure-input/v1")),
         contract_out=named(contract_out),
         nodes=(
             ProjectNode(
                 node_id="finish",
                 fields={"status": "done"},
-                contract_out=named(contract_out),
                 as_="result",
             ),
         ),

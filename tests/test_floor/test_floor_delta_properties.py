@@ -61,6 +61,7 @@ from tests.core_support._write_support import (
     report_evidence,
     seed_write_surface,
 )
+from tests.support.procedures import procedure_members
 from tests.test_floor.test_floor_index import _set, _write, accept_edit, add_lead_field
 from tests.test_floor.test_floor_notes_and_retention import _revise_rationale
 
@@ -236,7 +237,6 @@ def _ontology_history(instance: PlaybillInstance) -> None:
         procedure_mandate_path,
         render_procedure_mandate,
     )
-    from cruxible_client.contracts.procedures.artifacts import render_procedure
     from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
     from cruxible_client.contracts.query.definitions import (
         query_definition_path,
@@ -283,7 +283,7 @@ def _ontology_history(instance: PlaybillInstance) -> None:
         instance,
         "onto-line",
         {
-            procedure.path: render_procedure(authored_procedure(procedure)),
+            **procedure_members(authored_procedure(procedure)),
             line_spec_path(line.identity.name): render_line_spec(line),
             query_definition_path(condition.identity.name): render_query_definition(condition),
             procedure_mandate_path(first.identity.name): render_procedure_mandate(first),

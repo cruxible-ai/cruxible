@@ -16,7 +16,6 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.claim_verdicts import reported_claim_verdict
 from cruxible_client.contracts.claims import (
@@ -38,10 +37,8 @@ from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
     procedure_artifact_digest,
-    procedure_owned_contract_digest,
     procedure_path,
 )
-from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.graph import (
     compute_procedure_definition_digest,
     compute_procedure_node_digests,
@@ -118,9 +115,13 @@ from tests.core_support._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
-from tests.support.procedures import MAX_WALL_CLOCK, named
+from tests.support.procedures import MAX_WALL_CLOCK, contract_pin, named
 from tests.test_claims.test_claim_attestation_service import _request as _attestation_request
-from tests.test_procedures.test_procedure_owned_contracts import _activate_procedure, _contract
+from tests.test_procedures.test_procedure_boundary_contracts import (
+    EMPTY_INPUT,
+    QUERY_ROWS,
+    _activate_procedure,
+)
 
 ACCEPT_STAMP = "2026-08-24T15:00:00.000000Z"
 ACTIVATED_AT = datetime(2026, 8, 24, 15, 0, tzinfo=UTC)
@@ -236,18 +237,8 @@ def _procedure(
     declarations: tuple[ProcedureMeasurementDeclaration, ...],
 ) -> ProcedureArtifact:
     """The measured Procedure; its state tap names the query ``query_digest`` admits."""
-    input_contract = _contract("empty-input", {})
-    output_contract = _contract("query-rows", {"rows": PropertySchema(type="json")})
-    contract_in = ArtifactPin(
-        role="contract-in",
-        target=input_contract.identity,
-        artifact_digest=procedure_owned_contract_digest(input_contract).tagged,
-    )
-    contract_out = ArtifactPin(
-        role="contract-out",
-        target=output_contract.identity,
-        artifact_digest=procedure_owned_contract_digest(output_contract).tagged,
-    )
+    contract_in = contract_pin("contract-in", EMPTY_INPUT)
+    contract_out = contract_pin("contract-out", QUERY_ROWS)
     query = ArtifactPin(
         role="query",
         target=ArtifactIdentity(kind="QueryDefinition", name=QUERY_NAME),
@@ -271,22 +262,19 @@ def _procedure(
             ),
             ProjectNode(
                 node_id="hot",
-                fields={"rows": "$steps.query.result.rows"},
-                contract_out=named(contract_out),
+                fields={"rows": "$steps.query.rows"},
                 as_="hot_result",
                 next="finish",
             ),
             ProjectNode(
                 node_id="cold",
-                fields={"rows": "$steps.query.result.rows"},
-                contract_out=named(contract_out),
+                fields={"rows": "$steps.query.rows"},
                 as_="cold_result",
                 next="finish",
             ),
             ProjectNode(
                 node_id="finish",
-                fields={"rows": "$steps.query.result.rows"},
-                contract_out=named(contract_out),
+                fields={"rows": "$steps.query.rows"},
                 as_="result",
             ),
         ),
@@ -305,14 +293,6 @@ def _procedure(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        owned_contracts=tuple(
-            sorted(
-                (input_contract, output_contract),
-                key=lambda contract: canonical_bytes(
-                    contract.model_dump(mode="json", by_alias=True)
-                ),
-            )
-        ),
         activation_policy="abort",
     )
 

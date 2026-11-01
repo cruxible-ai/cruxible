@@ -50,6 +50,10 @@ ENTRY = Contract.model_validate(
         "fields": {"status": {"type": "enum[open, closed]"}, "note": {"type": "int?"}},
     }
 )
+#: One extracted row as it flows: an invalid field is dropped from the row.
+ENTRY_VIEW = Contract.model_validate(
+    {"name": "test.entry-view", "version": 1, "fields": {"status": "string?", "note": "int?"}}
+)
 
 
 @dataclass(frozen=True)
@@ -158,6 +162,7 @@ def _workspace_world(tmp_path: Path, documents: dict[str, object]) -> tuple[Any,
         {
             capture_contract_path(capture.identity.name): render_capture_contract(capture),
             contract_path(ENTRY.name, ENTRY.version): render(ENTRY),
+            contract_path(ENTRY_VIEW.name, ENTRY_VIEW.version): render(ENTRY_VIEW),
         },
         name="capture-and-row",
     )
@@ -298,7 +303,7 @@ def _row_read(tmp_path: Path, field: str) -> Any:
         {
             "procedure": "test.row-read",
             "input": {},
-            "output": {"row": "json"},
+            "output": {"row": "test.entry-view@1"},
             "slots": {"read": _SLOT},
             "steps": [
                 {
@@ -311,7 +316,7 @@ def _row_read(tmp_path: Path, field: str) -> Any:
                 {
                     "project": "out",
                     "fields": {"row": f"$steps.entries.rows.{field}"},
-                    "output": {"row": "json"},
+                    "output": {"row": "test.entry-view@1"},
                 },
             ],
             "returns": "out",
@@ -452,7 +457,7 @@ def test_an_invoke_carries_its_childs_incomplete_return_past_complete_parent_inp
             {
                 "procedure": "test.parent",
                 "input": {},
-                "output": {"child": "json"},
+                "output": {"child": "test.child.output@1"},
                 "steps": [
                     {"invoke": "test.child", "id": "child", "input": {}},
                     # The invoke's value is {succeeded, status, receipt, value}; the
@@ -460,8 +465,7 @@ def test_an_invoke_carries_its_childs_incomplete_return_past_complete_parent_inp
                     {
                         "project": "finished",
                         "fields": {"child": "$steps.child.value"},
-                        "output": {"child": "json"},
-                        "contract": "test.parent-output",
+                        "output": {"child": "test.child.output@1"},
                     },
                 ],
                 "returns": "finished",
@@ -508,7 +512,7 @@ def test_a_repeat_is_the_and_over_the_attempts_it_used(
             {
                 "procedure": "test.repeated",
                 "input": {},
-                "output": {"kept": "integer"},
+                "output": {"kept": "int"},
                 "steps": [
                     {
                         "repeat": "retry",
@@ -559,11 +563,16 @@ def test_a_closed_transforms_rows_view_also_taints_a_read_reaching_a_dropped_fie
 
     document = {"entries": [{"id": "a", "status": "open", "note": "seven"}]}
     instance, root = _workspace_world(tmp_path, {"doc.json": document})
+    kept_type = (
+        "list<test.entry-view@1>{max_items: 10}"
+        if view == "rows"
+        else "list<record<test.entry@1>>{max_items: 10}"
+    )
     spec = _spec(
         {
             "procedure": "test.kept-rows",
             "input": {},
-            "output": {"kept": "json"},
+            "output": {"kept": kept_type},
             "slots": {"read": _SLOT},
             "steps": [
                 {
@@ -588,7 +597,7 @@ def test_a_closed_transforms_rows_view_also_taints_a_read_reaching_a_dropped_fie
                 {
                     "project": "out",
                     "fields": {"kept": f"$steps.kept.{view}"},
-                    "output": {"kept": "json"},
+                    "output": {"kept": kept_type},
                 },
             ],
             "returns": "out",
@@ -627,7 +636,7 @@ def test_an_inbox_item_reading_an_invalid_field_reaches_its_sink_incomplete(
         {
             "procedure": "test.inbox-statuses",
             "input": {},
-            "output": {"posted": "integer"},
+            "output": {"posted": "int"},
             "slots": {"read": _SLOT},
             "steps": [
                 {

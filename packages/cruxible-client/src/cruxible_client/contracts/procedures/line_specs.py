@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Literal
 
@@ -20,7 +20,6 @@ from pydantic import (
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
-    ArtifactNameRef,
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
@@ -59,6 +58,7 @@ from cruxible_client.contracts.provider_operations import (
 )
 from cruxible_client.contracts.providers import AcceptedProvider, ProviderV2
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import Contract, ContractRef
 
 _LINE_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 
@@ -479,6 +479,7 @@ def evaluate_line_spec_law(
     slots: Mapping[str, OperationSignature] | None = None,
     providers: Mapping[str, AcceptedProvider] | None = None,
     capture_outputs: frozenset[str] | None = None,
+    contracts: Callable[[ContractRef], Contract | None] | None = None,
     by_name: bool = True,
 ) -> LineSpecLawResult:
     """The Line law.
@@ -488,6 +489,8 @@ def evaluate_line_spec_law(
     ``providers`` the accepted builds by qualified identity. ``capture_outputs``
     is every capture output the Line may name a rule for, invoked children's
     included (:func:`line_capture_outputs`); omitted, the Procedure's own.
+    ``contracts`` reads governed Contracts at the coordinate: the Line's
+    parameters are checked against the Procedure's input Contract with it.
     """
 
     del by_name
@@ -514,13 +517,13 @@ def evaluate_line_spec_law(
         )
         return _refusal(code, trigger_problem, path=path)
     from cruxible_client.contracts.procedures.contracts import (
-        OwnedProcedureContractValidator,
+        AcceptedProcedureContractValidator,
         ProcedureContractValidationError,
     )
 
-    if isinstance(definition.contract_in, ArtifactPin | ArtifactNameRef):
+    if contracts is not None:
         try:
-            OwnedProcedureContractValidator(procedure).validate_contract(
+            AcceptedProcedureContractValidator(contracts).validate_contract(
                 contract=definition.contract_in,
                 payload=normalize_canonical(line.parameters),
                 direction="input",

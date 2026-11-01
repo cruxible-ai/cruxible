@@ -15,6 +15,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 from cruxible_core.service.proposals.proposal_egress import _fold_partition
 from cruxible_core.storage.cas import BodyAccessContext
+from tests.support.procedures import procedure_members
 from tests.test_procedures.test_procedure_settlement_delivery import run_settle, settle_world
 
 _ACCESS = BodyAccessContext(principal_id="test", can_read_body=True)
@@ -122,7 +123,6 @@ def _inbox_loss_world(tmp_path):
     from cruxible_client.contracts.procedures.artifacts import (
         AcceptedProcedure,
         procedure_artifact_digest,
-        render_procedure,
     )
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
     from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
@@ -163,7 +163,7 @@ def _inbox_loss_world(tmp_path):
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
             **contract_members(),
-            accepted.path: render_procedure(procedure),
+            **procedure_members(procedure),
             line_spec_path(line.identity.name): render_line_spec(line),
         },
         timestamp="2026-08-21T12:00:00.000000Z",

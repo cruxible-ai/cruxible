@@ -31,6 +31,7 @@ from cruxible_core.service.procedures.resolution_dispositions import (
     service_dispose_procedure_resolution,
 )
 from cruxible_core.storage.cas import BodyAccessContext
+from tests.test_procedures.test_procedure_boundary_contracts import _activate_procedure
 from tests.test_procedures.test_procedure_measurement_readings import (
     OBSERVE_AT,
     RECORD_AT,
@@ -38,7 +39,6 @@ from tests.test_procedures.test_procedure_measurement_readings import (
     _measure,
     _world,
 )
-from tests.test_procedures.test_procedure_owned_contracts import _activate_procedure
 
 
 @pytest.fixture

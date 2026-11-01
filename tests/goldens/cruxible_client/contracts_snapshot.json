@@ -5124,6 +5124,19 @@
             "title": "ArtifactPin",
             "type": "object"
           },
+          "BoolType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "bool",
+                "default": "bool",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "BoolType",
+            "type": "object"
+          },
           "CadenceSchedule": {
             "additionalProperties": false,
             "description": "Fire one interval after the last fire; a new schedule fires on its first tick.",
@@ -5328,6 +5341,27 @@
               "capture_contract"
             ],
             "title": "CaptureLandingByNameSchedule",
+            "type": "object"
+          },
+          "CaptureType": {
+            "additionalProperties": false,
+            "description": "Retained bytes of one CaptureKind, by Capture digest.",
+            "properties": {
+              "capture_kind": {
+                "title": "Capture Kind",
+                "type": "string"
+              },
+              "kind": {
+                "const": "capture",
+                "default": "capture",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "capture_kind"
+            ],
+            "title": "CaptureType",
             "type": "object"
           },
           "ChangeSetInput": {
@@ -6716,6 +6750,124 @@
             "title": "CompleteWhen",
             "type": "object"
           },
+          "ContractField": {
+            "additionalProperties": false,
+            "description": "One field: its type, whether its key may be absent, and what it means.",
+            "properties": {
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "optional": {
+                "default": false,
+                "title": "Optional",
+                "type": "boolean"
+              },
+              "type": {
+                "discriminator": {
+                  "mapping": {
+                    "bool": "#/$defs/BoolType",
+                    "capture": "#/$defs/CaptureType",
+                    "contract": "#/$defs/NestedType",
+                    "date": "#/$defs/DateType",
+                    "datetime": "#/$defs/DateTimeType",
+                    "decimal": "#/$defs/DecimalType",
+                    "duration": "#/$defs/DurationType",
+                    "enum": "#/$defs/EnumType",
+                    "enum_of": "#/$defs/EnumOfType",
+                    "field_result": "#/$defs/FieldResultType",
+                    "int": "#/$defs/IntType",
+                    "key": "#/$defs/KeyType",
+                    "list": "#/$defs/ListType",
+                    "number": "#/$defs/NumberType",
+                    "record": "#/$defs/RecordType",
+                    "refusal": "#/$defs/RefusalType",
+                    "result": "#/$defs/ResultType",
+                    "string": "#/$defs/StringType",
+                    "subject": "#/$defs/SubjectType",
+                    "variant": "#/$defs/VariantType"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/StringType"
+                  },
+                  {
+                    "$ref": "#/$defs/IntType"
+                  },
+                  {
+                    "$ref": "#/$defs/DecimalType"
+                  },
+                  {
+                    "$ref": "#/$defs/NumberType"
+                  },
+                  {
+                    "$ref": "#/$defs/BoolType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateTimeType"
+                  },
+                  {
+                    "$ref": "#/$defs/DurationType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumOfType"
+                  },
+                  {
+                    "$ref": "#/$defs/ListType"
+                  },
+                  {
+                    "$ref": "#/$defs/NestedType"
+                  },
+                  {
+                    "$ref": "#/$defs/VariantType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyType"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectType"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureType"
+                  },
+                  {
+                    "$ref": "#/$defs/FieldResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RecordType"
+                  },
+                  {
+                    "$ref": "#/$defs/ResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RefusalType"
+                  }
+                ],
+                "title": "Type"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "ContractField",
+            "type": "object"
+          },
           "ContractFieldInput": {
             "additionalProperties": false,
             "description": "One Contract field with its meaning: a type spelling and an optional description.",
@@ -6835,40 +6987,6 @@
             "title": "ContractRef",
             "type": "object"
           },
-          "ContractSchema": {
-            "description": "Typed input or output schema carried inside one Procedure envelope.",
-            "properties": {
-              "allow_extra": {
-                "default": false,
-                "title": "Allow Extra",
-                "type": "boolean"
-              },
-              "description": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Description"
-              },
-              "fields": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/PropertySchema"
-                },
-                "title": "Fields",
-                "type": "object"
-              }
-            },
-            "required": [
-              "fields"
-            ],
-            "title": "ContractSchema",
-            "type": "object"
-          },
           "CorroborationRequirement": {
             "additionalProperties": false,
             "properties": {
@@ -6939,6 +7057,70 @@
               "expression"
             ],
             "title": "CronSchedule",
+            "type": "object"
+          },
+          "DateTimeType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "datetime",
+                "default": "datetime",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "DateTimeType",
+            "type": "object"
+          },
+          "DateType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "date",
+                "default": "date",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "DateType",
+            "type": "object"
+          },
+          "DecimalType": {
+            "additionalProperties": false,
+            "description": "A decimal; bounds are canonical decimal strings, never floats.",
+            "properties": {
+              "kind": {
+                "const": "decimal",
+                "default": "decimal",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max"
+              },
+              "min": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min"
+              }
+            },
+            "title": "DecimalType",
             "type": "object"
           },
           "DedupeSpec": {
@@ -7077,6 +7259,19 @@
             "title": "DeriveSpec",
             "type": "object"
           },
+          "DurationType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "duration",
+                "default": "duration",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "DurationType",
+            "type": "object"
+          },
           "EmitStep": {
             "additionalProperties": false,
             "properties": {
@@ -7123,6 +7318,52 @@
               "result"
             ],
             "title": "EmitStep",
+            "type": "object"
+          },
+          "EnumOfType": {
+            "additionalProperties": false,
+            "description": "The members a ClaimType's enum value admits, read from that ClaimType.",
+            "properties": {
+              "claim_type": {
+                "title": "Claim Type",
+                "type": "string"
+              },
+              "kind": {
+                "const": "enum_of",
+                "default": "enum_of",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_type"
+            ],
+            "title": "EnumOfType",
+            "type": "object"
+          },
+          "EnumType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "enum",
+                "default": "enum",
+                "title": "Kind",
+                "type": "string"
+              },
+              "members": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 1024,
+                "minItems": 1,
+                "title": "Members",
+                "type": "array"
+              }
+            },
+            "required": [
+              "members"
+            ],
+            "title": "EnumType",
             "type": "object"
           },
           "ExactContentObjectInput": {
@@ -7363,6 +7604,113 @@
               "fields"
             ],
             "title": "ExtractStep",
+            "type": "object"
+          },
+          "FieldResultType": {
+            "additionalProperties": false,
+            "description": "``variant{present: {value: T, at}, absent: {}, invalid: {problem}}``.",
+            "properties": {
+              "kind": {
+                "const": "field_result",
+                "default": "field_result",
+                "title": "Kind",
+                "type": "string"
+              },
+              "value": {
+                "discriminator": {
+                  "mapping": {
+                    "bool": "#/$defs/BoolType",
+                    "capture": "#/$defs/CaptureType",
+                    "contract": "#/$defs/NestedType",
+                    "date": "#/$defs/DateType",
+                    "datetime": "#/$defs/DateTimeType",
+                    "decimal": "#/$defs/DecimalType",
+                    "duration": "#/$defs/DurationType",
+                    "enum": "#/$defs/EnumType",
+                    "enum_of": "#/$defs/EnumOfType",
+                    "field_result": "#/$defs/FieldResultType",
+                    "int": "#/$defs/IntType",
+                    "key": "#/$defs/KeyType",
+                    "list": "#/$defs/ListType",
+                    "number": "#/$defs/NumberType",
+                    "record": "#/$defs/RecordType",
+                    "refusal": "#/$defs/RefusalType",
+                    "result": "#/$defs/ResultType",
+                    "string": "#/$defs/StringType",
+                    "subject": "#/$defs/SubjectType",
+                    "variant": "#/$defs/VariantType"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/StringType"
+                  },
+                  {
+                    "$ref": "#/$defs/IntType"
+                  },
+                  {
+                    "$ref": "#/$defs/DecimalType"
+                  },
+                  {
+                    "$ref": "#/$defs/NumberType"
+                  },
+                  {
+                    "$ref": "#/$defs/BoolType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateTimeType"
+                  },
+                  {
+                    "$ref": "#/$defs/DurationType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumOfType"
+                  },
+                  {
+                    "$ref": "#/$defs/ListType"
+                  },
+                  {
+                    "$ref": "#/$defs/NestedType"
+                  },
+                  {
+                    "$ref": "#/$defs/VariantType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyType"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectType"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureType"
+                  },
+                  {
+                    "$ref": "#/$defs/FieldResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RecordType"
+                  },
+                  {
+                    "$ref": "#/$defs/ResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RefusalType"
+                  }
+                ],
+                "title": "Value"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "FieldResultType",
             "type": "object"
           },
           "FilterSpec": {
@@ -7833,6 +8181,43 @@
             "title": "InboxStep",
             "type": "object"
           },
+          "IntType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "int",
+                "default": "int",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max"
+              },
+              "min": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min"
+              }
+            },
+            "title": "IntType",
+            "type": "object"
+          },
           "InvokeStep": {
             "additionalProperties": false,
             "properties": {
@@ -7934,6 +8319,27 @@
             "type": "object"
           },
           "JsonValue": {},
+          "KeyType": {
+            "additionalProperties": false,
+            "description": "A Subject key of one kind; core canonicalizes it with the kind's identity rule.",
+            "properties": {
+              "kind": {
+                "const": "key",
+                "default": "key",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject_kind": {
+                "title": "Subject Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject_kind"
+            ],
+            "title": "KeyType",
+            "type": "object"
+          },
           "LineAcquisitionRule": {
             "additionalProperties": false,
             "description": "One capture output's rule as a Line declares it.",
@@ -8214,6 +8620,119 @@
             "title": "LineInput",
             "type": "object"
           },
+          "ListType": {
+            "additionalProperties": false,
+            "properties": {
+              "item": {
+                "discriminator": {
+                  "mapping": {
+                    "bool": "#/$defs/BoolType",
+                    "capture": "#/$defs/CaptureType",
+                    "contract": "#/$defs/NestedType",
+                    "date": "#/$defs/DateType",
+                    "datetime": "#/$defs/DateTimeType",
+                    "decimal": "#/$defs/DecimalType",
+                    "duration": "#/$defs/DurationType",
+                    "enum": "#/$defs/EnumType",
+                    "enum_of": "#/$defs/EnumOfType",
+                    "field_result": "#/$defs/FieldResultType",
+                    "int": "#/$defs/IntType",
+                    "key": "#/$defs/KeyType",
+                    "list": "#/$defs/ListType",
+                    "number": "#/$defs/NumberType",
+                    "record": "#/$defs/RecordType",
+                    "refusal": "#/$defs/RefusalType",
+                    "result": "#/$defs/ResultType",
+                    "string": "#/$defs/StringType",
+                    "subject": "#/$defs/SubjectType",
+                    "variant": "#/$defs/VariantType"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/StringType"
+                  },
+                  {
+                    "$ref": "#/$defs/IntType"
+                  },
+                  {
+                    "$ref": "#/$defs/DecimalType"
+                  },
+                  {
+                    "$ref": "#/$defs/NumberType"
+                  },
+                  {
+                    "$ref": "#/$defs/BoolType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateTimeType"
+                  },
+                  {
+                    "$ref": "#/$defs/DurationType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumOfType"
+                  },
+                  {
+                    "$ref": "#/$defs/ListType"
+                  },
+                  {
+                    "$ref": "#/$defs/NestedType"
+                  },
+                  {
+                    "$ref": "#/$defs/VariantType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyType"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectType"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureType"
+                  },
+                  {
+                    "$ref": "#/$defs/FieldResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RecordType"
+                  },
+                  {
+                    "$ref": "#/$defs/ResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RefusalType"
+                  }
+                ],
+                "title": "Item"
+              },
+              "kind": {
+                "const": "list",
+                "default": "list",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max_items": {
+                "maximum": 1000000,
+                "minimum": 1,
+                "title": "Max Items",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "item",
+              "max_items"
+            ],
+            "title": "ListType",
+            "type": "object"
+          },
           "LiteralObjectInput": {
             "additionalProperties": false,
             "properties": {
@@ -8409,6 +8928,26 @@
             "title": "Membership",
             "type": "object"
           },
+          "NestedType": {
+            "additionalProperties": false,
+            "description": "A field holding one record of another Contract version.",
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "kind": {
+                "const": "contract",
+                "default": "contract",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract"
+            ],
+            "title": "NestedType",
+            "type": "object"
+          },
           "Not": {
             "additionalProperties": false,
             "properties": {
@@ -8466,6 +9005,44 @@
             "title": "Not",
             "type": "object"
           },
+          "NumberType": {
+            "additionalProperties": false,
+            "description": "A number, integral or not. Its canonical encoding is an integer when the value\nis integral and canonical decimal text otherwise, so ``1`` and ``1.0`` are equal\n(:func:`canonical_number`). Bounds are canonical decimal strings, never floats.",
+            "properties": {
+              "kind": {
+                "const": "number",
+                "default": "number",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max"
+              },
+              "min": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min"
+              }
+            },
+            "title": "NumberType",
+            "type": "object"
+          },
           "Presence": {
             "additionalProperties": false,
             "description": "Whether the referenced value is ``present`` (or ``absent``).",
@@ -8487,133 +9064,6 @@
               "of"
             ],
             "title": "Presence",
-            "type": "object"
-          },
-          "ProcedureField": {
-            "additionalProperties": false,
-            "description": "Strict authored schema; retained PropertySchema encodings stay frozen.",
-            "properties": {
-              "default": {
-                "anyOf": [
-                  {},
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Default"
-              },
-              "description": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Description"
-              },
-              "enum": {
-                "anyOf": [
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Enum"
-              },
-              "enum_ref": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Enum Ref"
-              },
-              "indexed": {
-                "default": false,
-                "title": "Indexed",
-                "type": "boolean"
-              },
-              "item_fields": {
-                "anyOf": [
-                  {
-                    "additionalProperties": {
-                      "$ref": "#/$defs/PropertySchema"
-                    },
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Item Fields"
-              },
-              "json_schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Json Schema"
-              },
-              "optional": {
-                "default": false,
-                "title": "Optional",
-                "type": "boolean"
-              },
-              "primary_key": {
-                "default": false,
-                "title": "Primary Key",
-                "type": "boolean"
-              },
-              "required": {
-                "anyOf": [
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Required"
-              },
-              "type": {
-                "default": "string",
-                "enum": [
-                  "string",
-                  "int",
-                  "integer",
-                  "float",
-                  "number",
-                  "bool",
-                  "date",
-                  "datetime",
-                  "json",
-                  "list"
-                ],
-                "title": "Type",
-                "type": "string"
-              }
-            },
-            "title": "ProcedureField",
             "type": "object"
           },
           "ProcedureInput": {
@@ -9230,13 +9680,6 @@
               "annotations": {
                 "$ref": "#/$defs/JsonValue"
               },
-              "contracts": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/ContractSchema"
-                },
-                "title": "Contracts",
-                "type": "object"
-              },
               "description": {
                 "anyOf": [
                   {
@@ -9264,27 +9707,9 @@
               },
               "input": {
                 "additionalProperties": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "string",
-                        "int",
-                        "integer",
-                        "float",
-                        "number",
-                        "bool",
-                        "date",
-                        "datetime",
-                        "json",
-                        "list"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "$ref": "#/$defs/ProcedureField"
-                    }
-                  ]
+                  "$ref": "#/$defs/ContractField"
                 },
+                "description": "Input fields (Contract field spellings); core co-proposes the governed <procedure>.input@N Contract. Or name one with input_contract.",
                 "title": "Input",
                 "type": "object"
               },
@@ -9312,26 +9737,7 @@
                 "anyOf": [
                   {
                     "additionalProperties": {
-                      "anyOf": [
-                        {
-                          "enum": [
-                            "string",
-                            "int",
-                            "integer",
-                            "float",
-                            "number",
-                            "bool",
-                            "date",
-                            "datetime",
-                            "json",
-                            "list"
-                          ],
-                          "type": "string"
-                        },
-                        {
-                          "$ref": "#/$defs/ProcedureField"
-                        }
-                      ]
+                      "$ref": "#/$defs/ContractField"
                     },
                     "type": "object"
                   },
@@ -9368,26 +9774,7 @@
               },
               "params": {
                 "additionalProperties": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "string",
-                        "int",
-                        "integer",
-                        "float",
-                        "number",
-                        "bool",
-                        "date",
-                        "datetime",
-                        "json",
-                        "list"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "$ref": "#/$defs/ProcedureField"
-                    }
-                  ]
+                  "$ref": "#/$defs/ContractField"
                 },
                 "title": "Params",
                 "type": "object"
@@ -9478,7 +9865,6 @@
             },
             "required": [
               "procedure",
-              "input",
               "steps"
             ],
             "title": "ProcedureSpec",
@@ -9488,18 +9874,6 @@
             "additionalProperties": false,
             "description": "A typed record: ``fields`` resolved from the run, or an exact ``literal``.\n\nA ``literal`` is data: nothing in it is a reference. ``leaf: true`` makes\nthe record this branch's own return value (a leaf has no successor).",
             "properties": {
-              "contract": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Contract"
-              },
               "fields": {
                 "anyOf": [
                   {
@@ -9557,26 +9931,7 @@
                 "anyOf": [
                   {
                     "additionalProperties": {
-                      "anyOf": [
-                        {
-                          "enum": [
-                            "string",
-                            "int",
-                            "integer",
-                            "float",
-                            "number",
-                            "bool",
-                            "date",
-                            "datetime",
-                            "json",
-                            "list"
-                          ],
-                          "type": "string"
-                        },
-                        {
-                          "$ref": "#/$defs/ProcedureField"
-                        }
-                      ]
+                      "$ref": "#/$defs/ContractField"
                     },
                     "type": "object"
                   },
@@ -9597,132 +9952,6 @@
               "project"
             ],
             "title": "ProjectStep",
-            "type": "object"
-          },
-          "PropertySchema": {
-            "description": "One owner-carried Contract field, byte-compatible with the deferred family.",
-            "properties": {
-              "default": {
-                "anyOf": [
-                  {},
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Default"
-              },
-              "description": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Description"
-              },
-              "enum": {
-                "anyOf": [
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Enum"
-              },
-              "enum_ref": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Enum Ref"
-              },
-              "indexed": {
-                "default": false,
-                "title": "Indexed",
-                "type": "boolean"
-              },
-              "item_fields": {
-                "anyOf": [
-                  {
-                    "additionalProperties": {
-                      "$ref": "#/$defs/PropertySchema"
-                    },
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Item Fields"
-              },
-              "json_schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Json Schema"
-              },
-              "optional": {
-                "default": false,
-                "title": "Optional",
-                "type": "boolean"
-              },
-              "primary_key": {
-                "default": false,
-                "title": "Primary Key",
-                "type": "boolean"
-              },
-              "required": {
-                "anyOf": [
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Required"
-              },
-              "type": {
-                "default": "string",
-                "enum": [
-                  "string",
-                  "int",
-                  "integer",
-                  "float",
-                  "number",
-                  "bool",
-                  "date",
-                  "datetime",
-                  "json",
-                  "list"
-                ],
-                "title": "Type",
-                "type": "string"
-              }
-            },
-            "title": "PropertySchema",
             "type": "object"
           },
           "ProposeStep": {
@@ -11783,6 +12012,26 @@
             "title": "ReadStep",
             "type": "object"
           },
+          "RecordType": {
+            "additionalProperties": false,
+            "description": "``{record: <locator>, key, fields: {f: field_result<C.f>}}``.",
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "kind": {
+                "const": "record",
+                "default": "record",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract"
+            ],
+            "title": "RecordType",
+            "type": "object"
+          },
           "Ref": {
             "additionalProperties": false,
             "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, or list positions as digits. A ``param`` reference names the\nparameter as its first path member.",
@@ -11822,6 +12071,26 @@
               "$ref"
             ],
             "title": "Ref",
+            "type": "object"
+          },
+          "RefusalType": {
+            "additionalProperties": false,
+            "description": "One operation refusal code's typed body.",
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "kind": {
+                "const": "refusal",
+                "default": "refusal",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract"
+            ],
+            "title": "RefusalType",
             "type": "object"
           },
           "RepeatCall": {
@@ -12049,6 +12318,26 @@
             "title": "RepeatTransform",
             "type": "object"
           },
+          "ResultType": {
+            "additionalProperties": false,
+            "description": "``variant{record: record<C>, invalid_record, duplicate}``; consumed via ``.records``.",
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "kind": {
+                "const": "result",
+                "default": "result",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract"
+            ],
+            "title": "ResultType",
+            "type": "object"
+          },
           "ReturnFields": {
             "additionalProperties": false,
             "properties": {
@@ -12104,18 +12393,6 @@
           "SelectStep": {
             "additionalProperties": false,
             "properties": {
-              "contract": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Contract"
-              },
               "id": {
                 "anyOf": [
                   {
@@ -12146,26 +12423,7 @@
                 "anyOf": [
                   {
                     "additionalProperties": {
-                      "anyOf": [
-                        {
-                          "enum": [
-                            "string",
-                            "int",
-                            "integer",
-                            "float",
-                            "number",
-                            "bool",
-                            "date",
-                            "datetime",
-                            "json",
-                            "list"
-                          ],
-                          "type": "string"
-                        },
-                        {
-                          "$ref": "#/$defs/ProcedureField"
-                        }
-                      ]
+                      "$ref": "#/$defs/ContractField"
                     },
                     "type": "object"
                   },
@@ -12384,6 +12642,57 @@
               "fields"
             ],
             "title": "ShapeSpec",
+            "type": "object"
+          },
+          "StringType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "string",
+                "default": "string",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max_len": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Len"
+              },
+              "min_len": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min Len"
+              },
+              "pattern": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Pattern"
+              }
+            },
+            "title": "StringType",
             "type": "object"
           },
           "SubjectAssignment": {
@@ -12714,6 +13023,27 @@
             "title": "SubjectSuccessionInput",
             "type": "object"
           },
+          "SubjectType": {
+            "additionalProperties": false,
+            "description": "A Subject of one kind. Reads produce it; an operation may only echo its input's.",
+            "properties": {
+              "kind": {
+                "const": "subject",
+                "default": "subject",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject_kind": {
+                "title": "Subject Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject_kind"
+            ],
+            "title": "SubjectType",
+            "type": "object"
+          },
           "Template": {
             "anyOf": [
               {
@@ -12936,6 +13266,32 @@
               "inputs"
             ],
             "title": "UnionSpec",
+            "type": "object"
+          },
+          "VariantType": {
+            "additionalProperties": false,
+            "description": "A tagged choice; each arm is one Contract version.",
+            "properties": {
+              "arms": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/ContractRef"
+                },
+                "maxProperties": 64,
+                "minProperties": 1,
+                "title": "Arms",
+                "type": "object"
+              },
+              "kind": {
+                "const": "variant",
+                "default": "variant",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "arms"
+            ],
+            "title": "VariantType",
             "type": "object"
           },
           "WindowCloseAuthoringSchedule": {
@@ -50327,6 +50683,22 @@
             "type": "string"
           }
         },
+        "contracts": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "contracts",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/Contract"
+            },
+            "title": "Contracts",
+            "type": "array"
+          }
+        },
         "coordinate": {
           "has_default": false,
           "has_default_factory": false,
@@ -50384,15 +50756,15 @@
           }
         },
         "tag": {
-          "default": "playbill-procedure-readiness-result-v1",
+          "default": "playbill-procedure-readiness-result-v2",
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
           "json_name": "tag",
           "required": false,
           "schema": {
-            "const": "playbill-procedure-readiness-result-v1",
-            "default": "playbill-procedure-readiness-result-v1",
+            "const": "playbill-procedure-readiness-result-v2",
+            "default": "playbill-procedure-readiness-result-v2",
             "title": "Tag",
             "type": "string"
           }
@@ -50692,6 +51064,19 @@
             "title": "ArtifactPin",
             "type": "object"
           },
+          "BoolType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "bool",
+                "default": "bool",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "BoolType",
+            "type": "object"
+          },
           "CallNode": {
             "additionalProperties": false,
             "description": "A typed call: the slot names the signature; the Line names the operation.\n\n``captures`` pins, for each ``capture<K>`` field of the slot's out Contract,\nthe accepted CaptureContract the field's bytes are committed as (``K``\nitself, or any CaptureContract for the generic ``capture<workspace.file>``\nof the core-served read). A call with captures acquires: its capture\nfields are committed byte-exact as Captures and its other fields are\nnormalized, and its value names each Capture by digest.",
@@ -50808,6 +51193,27 @@
               "result"
             ],
             "title": "CaptureEgressNode",
+            "type": "object"
+          },
+          "CaptureType": {
+            "additionalProperties": false,
+            "description": "Retained bytes of one CaptureKind, by Capture digest.",
+            "properties": {
+              "capture_kind": {
+                "title": "Capture Kind",
+                "type": "string"
+              },
+              "kind": {
+                "const": "capture",
+                "default": "capture",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "capture_kind"
+            ],
+            "title": "CaptureType",
             "type": "object"
           },
           "ClaimAttestationProcedureMeasurement": {
@@ -50973,6 +51379,185 @@
             "title": "CompleteWhen",
             "type": "object"
           },
+          "Contract": {
+            "additionalProperties": false,
+            "description": "One immutable data shape. A successor version names its predecessor's digest.\n\n``fields`` may be empty: the closed empty record, which accepts only ``{}``\n(an empty selector, a refusal without detail, a parameterless operation).",
+            "properties": {
+              "artifact_format": {
+                "const": "cruxible-contract-v1",
+                "default": "cruxible-contract-v1",
+                "title": "Artifact Format",
+                "type": "string"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "fields": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/ContractField"
+                },
+                "maxProperties": 256,
+                "title": "Fields",
+                "type": "object"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "predecessor_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Predecessor Digest"
+              },
+              "version": {
+                "maximum": 999999999,
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "version",
+              "fields"
+            ],
+            "title": "Contract",
+            "type": "object"
+          },
+          "ContractField": {
+            "additionalProperties": false,
+            "description": "One field: its type, whether its key may be absent, and what it means.",
+            "properties": {
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "optional": {
+                "default": false,
+                "title": "Optional",
+                "type": "boolean"
+              },
+              "type": {
+                "discriminator": {
+                  "mapping": {
+                    "bool": "#/$defs/BoolType",
+                    "capture": "#/$defs/CaptureType",
+                    "contract": "#/$defs/NestedType",
+                    "date": "#/$defs/DateType",
+                    "datetime": "#/$defs/DateTimeType",
+                    "decimal": "#/$defs/DecimalType",
+                    "duration": "#/$defs/DurationType",
+                    "enum": "#/$defs/EnumType",
+                    "enum_of": "#/$defs/EnumOfType",
+                    "field_result": "#/$defs/FieldResultType",
+                    "int": "#/$defs/IntType",
+                    "key": "#/$defs/KeyType",
+                    "list": "#/$defs/ListType",
+                    "number": "#/$defs/NumberType",
+                    "record": "#/$defs/RecordType",
+                    "refusal": "#/$defs/RefusalType",
+                    "result": "#/$defs/ResultType",
+                    "string": "#/$defs/StringType",
+                    "subject": "#/$defs/SubjectType",
+                    "variant": "#/$defs/VariantType"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/StringType"
+                  },
+                  {
+                    "$ref": "#/$defs/IntType"
+                  },
+                  {
+                    "$ref": "#/$defs/DecimalType"
+                  },
+                  {
+                    "$ref": "#/$defs/NumberType"
+                  },
+                  {
+                    "$ref": "#/$defs/BoolType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateTimeType"
+                  },
+                  {
+                    "$ref": "#/$defs/DurationType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumOfType"
+                  },
+                  {
+                    "$ref": "#/$defs/ListType"
+                  },
+                  {
+                    "$ref": "#/$defs/NestedType"
+                  },
+                  {
+                    "$ref": "#/$defs/VariantType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyType"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectType"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureType"
+                  },
+                  {
+                    "$ref": "#/$defs/FieldResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RecordType"
+                  },
+                  {
+                    "$ref": "#/$defs/ResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RefusalType"
+                  }
+                ],
+                "title": "Type"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "ContractField",
+            "type": "object"
+          },
           "ContractRef": {
             "additionalProperties": false,
             "description": "A pin to one Contract version. Authors write ``name@N``; acceptance adds the digest.",
@@ -51007,40 +51592,6 @@
             "title": "ContractRef",
             "type": "object"
           },
-          "ContractSchema": {
-            "description": "Typed input or output schema carried inside one Procedure envelope.",
-            "properties": {
-              "allow_extra": {
-                "default": false,
-                "title": "Allow Extra",
-                "type": "boolean"
-              },
-              "description": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Description"
-              },
-              "fields": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/PropertySchema"
-                },
-                "title": "Fields",
-                "type": "object"
-              }
-            },
-            "required": [
-              "fields"
-            ],
-            "title": "ContractSchema",
-            "type": "object"
-          },
           "CountOperand": {
             "additionalProperties": false,
             "description": "The number of elements of the referenced list (guards and repeat ``until`` only).",
@@ -51053,6 +51604,70 @@
               "count"
             ],
             "title": "CountOperand",
+            "type": "object"
+          },
+          "DateTimeType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "datetime",
+                "default": "datetime",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "DateTimeType",
+            "type": "object"
+          },
+          "DateType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "date",
+                "default": "date",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "DateType",
+            "type": "object"
+          },
+          "DecimalType": {
+            "additionalProperties": false,
+            "description": "A decimal; bounds are canonical decimal strings, never floats.",
+            "properties": {
+              "kind": {
+                "const": "decimal",
+                "default": "decimal",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max"
+              },
+              "min": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min"
+              }
+            },
+            "title": "DecimalType",
             "type": "object"
           },
           "DeriveCase": {
@@ -51122,6 +51737,65 @@
               "value"
             ],
             "title": "DeriveCase",
+            "type": "object"
+          },
+          "DurationType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "duration",
+                "default": "duration",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "DurationType",
+            "type": "object"
+          },
+          "EnumOfType": {
+            "additionalProperties": false,
+            "description": "The members a ClaimType's enum value admits, read from that ClaimType.",
+            "properties": {
+              "claim_type": {
+                "title": "Claim Type",
+                "type": "string"
+              },
+              "kind": {
+                "const": "enum_of",
+                "default": "enum_of",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_type"
+            ],
+            "title": "EnumOfType",
+            "type": "object"
+          },
+          "EnumType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "enum",
+                "default": "enum",
+                "title": "Kind",
+                "type": "string"
+              },
+              "members": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 1024,
+                "minItems": 1,
+                "title": "Members",
+                "type": "array"
+              }
+            },
+            "required": [
+              "members"
+            ],
+            "title": "EnumType",
             "type": "object"
           },
           "ExtractField": {
@@ -51302,6 +51976,113 @@
               "as"
             ],
             "title": "ExtractNode",
+            "type": "object"
+          },
+          "FieldResultType": {
+            "additionalProperties": false,
+            "description": "``variant{present: {value: T, at}, absent: {}, invalid: {problem}}``.",
+            "properties": {
+              "kind": {
+                "const": "field_result",
+                "default": "field_result",
+                "title": "Kind",
+                "type": "string"
+              },
+              "value": {
+                "discriminator": {
+                  "mapping": {
+                    "bool": "#/$defs/BoolType",
+                    "capture": "#/$defs/CaptureType",
+                    "contract": "#/$defs/NestedType",
+                    "date": "#/$defs/DateType",
+                    "datetime": "#/$defs/DateTimeType",
+                    "decimal": "#/$defs/DecimalType",
+                    "duration": "#/$defs/DurationType",
+                    "enum": "#/$defs/EnumType",
+                    "enum_of": "#/$defs/EnumOfType",
+                    "field_result": "#/$defs/FieldResultType",
+                    "int": "#/$defs/IntType",
+                    "key": "#/$defs/KeyType",
+                    "list": "#/$defs/ListType",
+                    "number": "#/$defs/NumberType",
+                    "record": "#/$defs/RecordType",
+                    "refusal": "#/$defs/RefusalType",
+                    "result": "#/$defs/ResultType",
+                    "string": "#/$defs/StringType",
+                    "subject": "#/$defs/SubjectType",
+                    "variant": "#/$defs/VariantType"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/StringType"
+                  },
+                  {
+                    "$ref": "#/$defs/IntType"
+                  },
+                  {
+                    "$ref": "#/$defs/DecimalType"
+                  },
+                  {
+                    "$ref": "#/$defs/NumberType"
+                  },
+                  {
+                    "$ref": "#/$defs/BoolType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateTimeType"
+                  },
+                  {
+                    "$ref": "#/$defs/DurationType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumOfType"
+                  },
+                  {
+                    "$ref": "#/$defs/ListType"
+                  },
+                  {
+                    "$ref": "#/$defs/NestedType"
+                  },
+                  {
+                    "$ref": "#/$defs/VariantType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyType"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectType"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureType"
+                  },
+                  {
+                    "$ref": "#/$defs/FieldResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RecordType"
+                  },
+                  {
+                    "$ref": "#/$defs/ResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RefusalType"
+                  }
+                ],
+                "title": "Value"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "FieldResultType",
             "type": "object"
           },
           "GuardNode": {
@@ -51512,6 +52293,43 @@
             "title": "InboxEgressNode",
             "type": "object"
           },
+          "IntType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "int",
+                "default": "int",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max"
+              },
+              "min": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min"
+              }
+            },
+            "title": "IntType",
+            "type": "object"
+          },
           "InvokeNode": {
             "additionalProperties": false,
             "description": "A call to a named accepted Procedure under the enclosing run's limits.",
@@ -51556,6 +52374,140 @@
               "as"
             ],
             "title": "InvokeNode",
+            "type": "object"
+          },
+          "KeyType": {
+            "additionalProperties": false,
+            "description": "A Subject key of one kind; core canonicalizes it with the kind's identity rule.",
+            "properties": {
+              "kind": {
+                "const": "key",
+                "default": "key",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject_kind": {
+                "title": "Subject Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject_kind"
+            ],
+            "title": "KeyType",
+            "type": "object"
+          },
+          "ListType": {
+            "additionalProperties": false,
+            "properties": {
+              "item": {
+                "discriminator": {
+                  "mapping": {
+                    "bool": "#/$defs/BoolType",
+                    "capture": "#/$defs/CaptureType",
+                    "contract": "#/$defs/NestedType",
+                    "date": "#/$defs/DateType",
+                    "datetime": "#/$defs/DateTimeType",
+                    "decimal": "#/$defs/DecimalType",
+                    "duration": "#/$defs/DurationType",
+                    "enum": "#/$defs/EnumType",
+                    "enum_of": "#/$defs/EnumOfType",
+                    "field_result": "#/$defs/FieldResultType",
+                    "int": "#/$defs/IntType",
+                    "key": "#/$defs/KeyType",
+                    "list": "#/$defs/ListType",
+                    "number": "#/$defs/NumberType",
+                    "record": "#/$defs/RecordType",
+                    "refusal": "#/$defs/RefusalType",
+                    "result": "#/$defs/ResultType",
+                    "string": "#/$defs/StringType",
+                    "subject": "#/$defs/SubjectType",
+                    "variant": "#/$defs/VariantType"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/StringType"
+                  },
+                  {
+                    "$ref": "#/$defs/IntType"
+                  },
+                  {
+                    "$ref": "#/$defs/DecimalType"
+                  },
+                  {
+                    "$ref": "#/$defs/NumberType"
+                  },
+                  {
+                    "$ref": "#/$defs/BoolType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateTimeType"
+                  },
+                  {
+                    "$ref": "#/$defs/DurationType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumOfType"
+                  },
+                  {
+                    "$ref": "#/$defs/ListType"
+                  },
+                  {
+                    "$ref": "#/$defs/NestedType"
+                  },
+                  {
+                    "$ref": "#/$defs/VariantType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyType"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectType"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureType"
+                  },
+                  {
+                    "$ref": "#/$defs/FieldResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RecordType"
+                  },
+                  {
+                    "$ref": "#/$defs/ResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RefusalType"
+                  }
+                ],
+                "title": "Item"
+              },
+              "kind": {
+                "const": "list",
+                "default": "list",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max_items": {
+                "maximum": 1000000,
+                "minimum": 1,
+                "title": "Max Items",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "item",
+              "max_items"
+            ],
+            "title": "ListType",
             "type": "object"
           },
           "LiteralOperand": {
@@ -51641,6 +52593,26 @@
             "title": "Membership",
             "type": "object"
           },
+          "NestedType": {
+            "additionalProperties": false,
+            "description": "A field holding one record of another Contract version.",
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "kind": {
+                "const": "contract",
+                "default": "contract",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract"
+            ],
+            "title": "NestedType",
+            "type": "object"
+          },
           "Not": {
             "additionalProperties": false,
             "properties": {
@@ -51698,6 +52670,44 @@
             "title": "Not",
             "type": "object"
           },
+          "NumberType": {
+            "additionalProperties": false,
+            "description": "A number, integral or not. Its canonical encoding is an integer when the value\nis integral and canonical decimal text otherwise, so ``1`` and ``1.0`` are equal\n(:func:`canonical_number`). Bounds are canonical decimal strings, never floats.",
+            "properties": {
+              "kind": {
+                "const": "number",
+                "default": "number",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max"
+              },
+              "min": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min"
+              }
+            },
+            "title": "NumberType",
+            "type": "object"
+          },
           "Presence": {
             "additionalProperties": false,
             "description": "Whether the referenced value is ``present`` (or ``absent``).",
@@ -51723,7 +52733,7 @@
           },
           "ProcedureArtifact": {
             "additionalProperties": false,
-            "description": "The one Procedure envelope: one named graph and the Contracts it carries.\n\nEvery dependency the graph names resolves at the accepted coordinate; the\nenvelope itself pins nothing. Acquisition rules are not the Procedure's:\nits Line declares them per capture output (``<alias>.<field>``).",
+            "description": "The one Procedure envelope: one named graph.\n\nEvery dependency the graph names -- its input, output and parameter\nContracts included, which are governed Contracts -- resolves at the\naccepted coordinate; the envelope itself pins nothing and carries no\nContracts. Acquisition rules are not the Procedure's:\nits Line declares them per capture output (``<alias>.<field>``).",
             "properties": {
               "activation_policy": {
                 "enum": [
@@ -51736,8 +52746,8 @@
                 "type": "string"
               },
               "artifact_format": {
-                "const": "cruxible-procedure-v3",
-                "default": "cruxible-procedure-v3",
+                "const": "cruxible-procedure-v4",
+                "default": "cruxible-procedure-v4",
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -51757,20 +52767,12 @@
                   "predecessor_digest": null,
                   "state": "live"
                 }
-              },
-              "owned_contracts": {
-                "items": {
-                  "$ref": "#/$defs/ProcedureOwnedContract"
-                },
-                "title": "Owned Contracts",
-                "type": "array"
               }
             },
             "required": [
               "identity",
               "definition",
               "definition_digest",
-              "owned_contracts",
               "activation_policy"
             ],
             "title": "ProcedureArtifact",
@@ -51802,8 +52804,8 @@
                 "title": "Description"
               },
               "graph_format": {
-                "const": 7,
-                "default": 7,
+                "const": 8,
+                "default": 8,
                 "title": "Graph Format",
                 "type": "integer"
               },
@@ -52325,30 +53327,6 @@
             "title": "ProcedureNodeSupport",
             "type": "object"
           },
-          "ProcedureOwnedContract": {
-            "additionalProperties": false,
-            "description": "A closed Contract artifact carried by exactly one Procedure envelope.",
-            "properties": {
-              "identity": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              },
-              "schema": {
-                "$ref": "#/$defs/ContractSchema"
-              },
-              "tag": {
-                "const": "playbill-procedure-owned-contract-v1",
-                "default": "playbill-procedure-owned-contract-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "identity",
-              "schema"
-            ],
-            "title": "ProcedureOwnedContract",
-            "type": "object"
-          },
           "ProcedureSlot": {
             "additionalProperties": false,
             "description": "One binding point a Procedure declares: the signature its operation must serve.",
@@ -52384,9 +53362,6 @@
               "as": {
                 "title": "As",
                 "type": "string"
-              },
-              "contract_out": {
-                "$ref": "#/$defs/ArtifactNameRef"
               },
               "fields": {
                 "default": null,
@@ -52426,136 +53401,9 @@
             },
             "required": [
               "node_id",
-              "contract_out",
               "as"
             ],
             "title": "ProjectNode",
-            "type": "object"
-          },
-          "PropertySchema": {
-            "description": "One owner-carried Contract field, byte-compatible with the deferred family.",
-            "properties": {
-              "default": {
-                "anyOf": [
-                  {},
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Default"
-              },
-              "description": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Description"
-              },
-              "enum": {
-                "anyOf": [
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Enum"
-              },
-              "enum_ref": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Enum Ref"
-              },
-              "indexed": {
-                "default": false,
-                "title": "Indexed",
-                "type": "boolean"
-              },
-              "item_fields": {
-                "anyOf": [
-                  {
-                    "additionalProperties": {
-                      "$ref": "#/$defs/PropertySchema"
-                    },
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Item Fields"
-              },
-              "json_schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Json Schema"
-              },
-              "optional": {
-                "default": false,
-                "title": "Optional",
-                "type": "boolean"
-              },
-              "primary_key": {
-                "default": false,
-                "title": "Primary Key",
-                "type": "boolean"
-              },
-              "required": {
-                "anyOf": [
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Required"
-              },
-              "type": {
-                "default": "string",
-                "enum": [
-                  "string",
-                  "int",
-                  "integer",
-                  "float",
-                  "number",
-                  "bool",
-                  "date",
-                  "datetime",
-                  "json",
-                  "list"
-                ],
-                "title": "Type",
-                "type": "string"
-              }
-            },
-            "title": "PropertySchema",
             "type": "object"
           },
           "ProposalItemsFanOut": {
@@ -52712,6 +53560,26 @@
             "title": "ReadNode",
             "type": "object"
           },
+          "RecordType": {
+            "additionalProperties": false,
+            "description": "``{record: <locator>, key, fields: {f: field_result<C.f>}}``.",
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "kind": {
+                "const": "record",
+                "default": "record",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract"
+            ],
+            "title": "RecordType",
+            "type": "object"
+          },
           "Ref": {
             "additionalProperties": false,
             "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, or list positions as digits. A ``param`` reference names the\nparameter as its first path member.",
@@ -52751,6 +53619,26 @@
               "$ref"
             ],
             "title": "Ref",
+            "type": "object"
+          },
+          "RefusalType": {
+            "additionalProperties": false,
+            "description": "One operation refusal code's typed body.",
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "kind": {
+                "const": "refusal",
+                "default": "refusal",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract"
+            ],
+            "title": "RefusalType",
             "type": "object"
           },
           "RepeatBodyNode": {
@@ -52964,6 +53852,26 @@
             "title": "RepeatNode",
             "type": "object"
           },
+          "ResultType": {
+            "additionalProperties": false,
+            "description": "``variant{record: record<C>, invalid_record, duplicate}``; consumed via ``.records``.",
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "kind": {
+                "const": "result",
+                "default": "result",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract"
+            ],
+            "title": "ResultType",
+            "type": "object"
+          },
           "SelectNode": {
             "additionalProperties": false,
             "description": "Join mutually exclusive record producers without guessing a winner.",
@@ -52971,9 +53879,6 @@
               "as": {
                 "title": "As",
                 "type": "string"
-              },
-              "contract_out": {
-                "$ref": "#/$defs/ArtifactNameRef"
               },
               "kind": {
                 "const": "select",
@@ -53008,7 +53913,6 @@
             "required": [
               "node_id",
               "sources",
-              "contract_out",
               "as"
             ],
             "title": "SelectNode",
@@ -53144,6 +54048,78 @@
               }
             },
             "title": "ShapeField",
+            "type": "object"
+          },
+          "StringType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "string",
+                "default": "string",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max_len": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Len"
+              },
+              "min_len": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min Len"
+              },
+              "pattern": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Pattern"
+              }
+            },
+            "title": "StringType",
+            "type": "object"
+          },
+          "SubjectType": {
+            "additionalProperties": false,
+            "description": "A Subject of one kind. Reads produce it; an operation may only echo its input's.",
+            "properties": {
+              "kind": {
+                "const": "subject",
+                "default": "subject",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject_kind": {
+                "title": "Subject Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject_kind"
+            ],
+            "title": "SubjectType",
             "type": "object"
           },
           "TransformAggregateSpec": {
@@ -53570,6 +54546,32 @@
             ],
             "title": "TransformUnionSpec",
             "type": "object"
+          },
+          "VariantType": {
+            "additionalProperties": false,
+            "description": "A tagged choice; each arm is one Contract version.",
+            "properties": {
+              "arms": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/ContractRef"
+                },
+                "maxProperties": 64,
+                "minProperties": 1,
+                "title": "Arms",
+                "type": "object"
+              },
+              "kind": {
+                "const": "variant",
+                "default": "variant",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "arms"
+            ],
+            "title": "VariantType",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -53581,6 +54583,14 @@
           "artifact_digest": {
             "title": "Artifact Digest",
             "type": "string"
+          },
+          "contracts": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/Contract"
+            },
+            "title": "Contracts",
+            "type": "array"
           },
           "coordinate": {
             "$ref": "#/$defs/AcceptedCoordinate"
@@ -53609,8 +54619,8 @@
             "type": "string"
           },
           "tag": {
-            "const": "playbill-procedure-readiness-result-v1",
-            "default": "playbill-procedure-readiness-result-v1",
+            "const": "playbill-procedure-readiness-result-v2",
+            "default": "playbill-procedure-readiness-result-v2",
             "title": "Tag",
             "type": "string"
           },
@@ -75811,40 +76821,6 @@
             "title": "ContractRef",
             "type": "object"
           },
-          "ContractSchema": {
-            "description": "Typed input or output schema carried inside one Procedure envelope.",
-            "properties": {
-              "allow_extra": {
-                "default": false,
-                "title": "Allow Extra",
-                "type": "boolean"
-              },
-              "description": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Description"
-              },
-              "fields": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/PropertySchema"
-                },
-                "title": "Fields",
-                "type": "object"
-              }
-            },
-            "required": [
-              "fields"
-            ],
-            "title": "ContractSchema",
-            "type": "object"
-          },
           "CorroborationRequirement": {
             "additionalProperties": false,
             "properties": {
@@ -76605,7 +77581,7 @@
           },
           "ProcedureArtifact": {
             "additionalProperties": false,
-            "description": "The one Procedure envelope: one named graph and the Contracts it carries.\n\nEvery dependency the graph names resolves at the accepted coordinate; the\nenvelope itself pins nothing. Acquisition rules are not the Procedure's:\nits Line declares them per capture output (``<alias>.<field>``).",
+            "description": "The one Procedure envelope: one named graph.\n\nEvery dependency the graph names -- its input, output and parameter\nContracts included, which are governed Contracts -- resolves at the\naccepted coordinate; the envelope itself pins nothing and carries no\nContracts. Acquisition rules are not the Procedure's:\nits Line declares them per capture output (``<alias>.<field>``).",
             "properties": {
               "activation_policy": {
                 "enum": [
@@ -76618,8 +77594,8 @@
                 "type": "string"
               },
               "artifact_format": {
-                "const": "cruxible-procedure-v3",
-                "default": "cruxible-procedure-v3",
+                "const": "cruxible-procedure-v4",
+                "default": "cruxible-procedure-v4",
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -76639,20 +77615,12 @@
                   "predecessor_digest": null,
                   "state": "live"
                 }
-              },
-              "owned_contracts": {
-                "items": {
-                  "$ref": "#/$defs/ProcedureOwnedContract"
-                },
-                "title": "Owned Contracts",
-                "type": "array"
               }
             },
             "required": [
               "identity",
               "definition",
               "definition_digest",
-              "owned_contracts",
               "activation_policy"
             ],
             "title": "ProcedureArtifact",
@@ -76684,8 +77652,8 @@
                 "title": "Description"
               },
               "graph_format": {
-                "const": 7,
-                "default": 7,
+                "const": 8,
+                "default": 8,
                 "title": "Graph Format",
                 "type": "integer"
               },
@@ -77178,30 +78146,6 @@
             "title": "ProcedureMeasurementSituationShape",
             "type": "object"
           },
-          "ProcedureOwnedContract": {
-            "additionalProperties": false,
-            "description": "A closed Contract artifact carried by exactly one Procedure envelope.",
-            "properties": {
-              "identity": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              },
-              "schema": {
-                "$ref": "#/$defs/ContractSchema"
-              },
-              "tag": {
-                "const": "playbill-procedure-owned-contract-v1",
-                "default": "playbill-procedure-owned-contract-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "identity",
-              "schema"
-            ],
-            "title": "ProcedureOwnedContract",
-            "type": "object"
-          },
           "ProcedureSlot": {
             "additionalProperties": false,
             "description": "One binding point a Procedure declares: the signature its operation must serve.",
@@ -77237,9 +78181,6 @@
               "as": {
                 "title": "As",
                 "type": "string"
-              },
-              "contract_out": {
-                "$ref": "#/$defs/ArtifactNameRef"
               },
               "fields": {
                 "default": null,
@@ -77279,136 +78220,9 @@
             },
             "required": [
               "node_id",
-              "contract_out",
               "as"
             ],
             "title": "ProjectNode",
-            "type": "object"
-          },
-          "PropertySchema": {
-            "description": "One owner-carried Contract field, byte-compatible with the deferred family.",
-            "properties": {
-              "default": {
-                "anyOf": [
-                  {},
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Default"
-              },
-              "description": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Description"
-              },
-              "enum": {
-                "anyOf": [
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Enum"
-              },
-              "enum_ref": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Enum Ref"
-              },
-              "indexed": {
-                "default": false,
-                "title": "Indexed",
-                "type": "boolean"
-              },
-              "item_fields": {
-                "anyOf": [
-                  {
-                    "additionalProperties": {
-                      "$ref": "#/$defs/PropertySchema"
-                    },
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Item Fields"
-              },
-              "json_schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Json Schema"
-              },
-              "optional": {
-                "default": false,
-                "title": "Optional",
-                "type": "boolean"
-              },
-              "primary_key": {
-                "default": false,
-                "title": "Primary Key",
-                "type": "boolean"
-              },
-              "required": {
-                "anyOf": [
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Required"
-              },
-              "type": {
-                "default": "string",
-                "enum": [
-                  "string",
-                  "int",
-                  "integer",
-                  "float",
-                  "number",
-                  "bool",
-                  "date",
-                  "datetime",
-                  "json",
-                  "list"
-                ],
-                "title": "Type",
-                "type": "string"
-              }
-            },
-            "title": "PropertySchema",
             "type": "object"
           },
           "ProposalItemsFanOut": {
@@ -78667,9 +79481,6 @@
                 "title": "As",
                 "type": "string"
               },
-              "contract_out": {
-                "$ref": "#/$defs/ArtifactNameRef"
-              },
               "kind": {
                 "const": "select",
                 "default": "select",
@@ -78703,7 +79514,6 @@
             "required": [
               "node_id",
               "sources",
-              "contract_out",
               "as"
             ],
             "title": "SelectNode",
@@ -83579,40 +84389,6 @@
             "title": "ContractRef",
             "type": "object"
           },
-          "ContractSchema": {
-            "description": "Typed input or output schema carried inside one Procedure envelope.",
-            "properties": {
-              "allow_extra": {
-                "default": false,
-                "title": "Allow Extra",
-                "type": "boolean"
-              },
-              "description": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Description"
-              },
-              "fields": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/PropertySchema"
-                },
-                "title": "Fields",
-                "type": "object"
-              }
-            },
-            "required": [
-              "fields"
-            ],
-            "title": "ContractSchema",
-            "type": "object"
-          },
           "CorroborationRequirement": {
             "additionalProperties": false,
             "properties": {
@@ -84410,7 +85186,7 @@
           },
           "ProcedureArtifact": {
             "additionalProperties": false,
-            "description": "The one Procedure envelope: one named graph and the Contracts it carries.\n\nEvery dependency the graph names resolves at the accepted coordinate; the\nenvelope itself pins nothing. Acquisition rules are not the Procedure's:\nits Line declares them per capture output (``<alias>.<field>``).",
+            "description": "The one Procedure envelope: one named graph.\n\nEvery dependency the graph names -- its input, output and parameter\nContracts included, which are governed Contracts -- resolves at the\naccepted coordinate; the envelope itself pins nothing and carries no\nContracts. Acquisition rules are not the Procedure's:\nits Line declares them per capture output (``<alias>.<field>``).",
             "properties": {
               "activation_policy": {
                 "enum": [
@@ -84423,8 +85199,8 @@
                 "type": "string"
               },
               "artifact_format": {
-                "const": "cruxible-procedure-v3",
-                "default": "cruxible-procedure-v3",
+                "const": "cruxible-procedure-v4",
+                "default": "cruxible-procedure-v4",
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -84444,20 +85220,12 @@
                   "predecessor_digest": null,
                   "state": "live"
                 }
-              },
-              "owned_contracts": {
-                "items": {
-                  "$ref": "#/$defs/ProcedureOwnedContract"
-                },
-                "title": "Owned Contracts",
-                "type": "array"
               }
             },
             "required": [
               "identity",
               "definition",
               "definition_digest",
-              "owned_contracts",
               "activation_policy"
             ],
             "title": "ProcedureArtifact",
@@ -84489,8 +85257,8 @@
                 "title": "Description"
               },
               "graph_format": {
-                "const": 7,
-                "default": 7,
+                "const": 8,
+                "default": 8,
                 "title": "Graph Format",
                 "type": "integer"
               },
@@ -84983,30 +85751,6 @@
             "title": "ProcedureMeasurementSituationShape",
             "type": "object"
           },
-          "ProcedureOwnedContract": {
-            "additionalProperties": false,
-            "description": "A closed Contract artifact carried by exactly one Procedure envelope.",
-            "properties": {
-              "identity": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              },
-              "schema": {
-                "$ref": "#/$defs/ContractSchema"
-              },
-              "tag": {
-                "const": "playbill-procedure-owned-contract-v1",
-                "default": "playbill-procedure-owned-contract-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "identity",
-              "schema"
-            ],
-            "title": "ProcedureOwnedContract",
-            "type": "object"
-          },
           "ProcedureSlot": {
             "additionalProperties": false,
             "description": "One binding point a Procedure declares: the signature its operation must serve.",
@@ -85042,9 +85786,6 @@
               "as": {
                 "title": "As",
                 "type": "string"
-              },
-              "contract_out": {
-                "$ref": "#/$defs/ArtifactNameRef"
               },
               "fields": {
                 "default": null,
@@ -85084,136 +85825,9 @@
             },
             "required": [
               "node_id",
-              "contract_out",
               "as"
             ],
             "title": "ProjectNode",
-            "type": "object"
-          },
-          "PropertySchema": {
-            "description": "One owner-carried Contract field, byte-compatible with the deferred family.",
-            "properties": {
-              "default": {
-                "anyOf": [
-                  {},
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Default"
-              },
-              "description": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Description"
-              },
-              "enum": {
-                "anyOf": [
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Enum"
-              },
-              "enum_ref": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Enum Ref"
-              },
-              "indexed": {
-                "default": false,
-                "title": "Indexed",
-                "type": "boolean"
-              },
-              "item_fields": {
-                "anyOf": [
-                  {
-                    "additionalProperties": {
-                      "$ref": "#/$defs/PropertySchema"
-                    },
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Item Fields"
-              },
-              "json_schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Json Schema"
-              },
-              "optional": {
-                "default": false,
-                "title": "Optional",
-                "type": "boolean"
-              },
-              "primary_key": {
-                "default": false,
-                "title": "Primary Key",
-                "type": "boolean"
-              },
-              "required": {
-                "anyOf": [
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Required"
-              },
-              "type": {
-                "default": "string",
-                "enum": [
-                  "string",
-                  "int",
-                  "integer",
-                  "float",
-                  "number",
-                  "bool",
-                  "date",
-                  "datetime",
-                  "json",
-                  "list"
-                ],
-                "title": "Type",
-                "type": "string"
-              }
-            },
-            "title": "PropertySchema",
             "type": "object"
           },
           "ProposalItemsFanOut": {
@@ -86748,9 +87362,6 @@
                 "title": "As",
                 "type": "string"
               },
-              "contract_out": {
-                "$ref": "#/$defs/ArtifactNameRef"
-              },
               "kind": {
                 "const": "select",
                 "default": "select",
@@ -86784,7 +87395,6 @@
             "required": [
               "node_id",
               "sources",
-              "contract_out",
               "as"
             ],
             "title": "SelectNode",

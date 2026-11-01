@@ -226,9 +226,9 @@ LAW_COORDINATES += (
     (
         NAMED_REFERENCE_LAWS[1],
         "cruxible.procedure.named.v1",
-        "cruxible-procedure-v3",
+        "cruxible-procedure-v4",
         1,
-        "sha256:43266f5543258472166c75b9c7ab202e48104873eded063bf95ee1b84fcffef7",
+        "sha256:cde6301632d7fd5a692b98987a82e88546e2e796f8f569f4c9e59ffed9e5b251",
     ),
     (
         NAMED_REFERENCE_LAWS[2],
@@ -311,16 +311,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:69b0cf5b8b0f9397311bd7516369ef0952364801a45f50966f8a307ad73a8e78"
+    expected = "sha256:4835b9291f90b81d85923ec8d0dc5f44c0b5632c0b517a1bd35e75737a117a2f"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 41,
+            "semantic_revision": 42,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "typed-authoring-foundations-v1",
+            "revision_name": "typed-authoring-foundations-v2",
         },
     )
     assert computed == expected
@@ -365,8 +365,8 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "typed-authoring-foundations-v1"
-    assert compiler_revision_label(CURRENT_COMPILER) == "typed-authoring-foundations-v1"
+    assert CURRENT_COMPILER_REVISION == "typed-authoring-foundations-v2"
+    assert compiler_revision_label(CURRENT_COMPILER) == "typed-authoring-foundations-v2"
     for earlier_digest in (
         "sha256:56542b566100db8fadfd4bfcea8f0fe58e37de444885906f3914ec1cc225d085",
         # Revision 36 (light-artifacts-v1): flat-manifest sroot-v1 genesis.

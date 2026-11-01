@@ -66,8 +66,8 @@ def _definition(
 ) -> ProcedureDefinition:
     return ProcedureDefinition(
         name="static-laws",
-        contract_in=named(_pin("contract-in", "Contract", "definition-input")),
-        contract_out=named(_pin("contract-out", "Contract", "definition-output")),
+        contract_in=named(_pin("contract-in", "Contract", "definition-input/v1")),
+        contract_out=named(_pin("contract-out", "Contract", "definition-output/v1")),
         parameter_contract=named(parameter_contract),
         nodes=tuple(nodes),  # type: ignore[arg-type]
         returns=returns,
@@ -84,7 +84,7 @@ def _definition(
 
 
 def _kitchen_sink_definition() -> ProcedureDefinition:
-    contract_out = _pin("contract-out", "Contract", "node-output")
+    _pin("contract-out", "Contract", "node-output/v1")
     return _definition(
         (
             ReadNode(
@@ -122,7 +122,6 @@ def _kitchen_sink_definition() -> ProcedureDefinition:
             ProjectNode(
                 node_id="project",
                 fields={"rows": "$steps.transformed_rows"},
-                contract_out=named(contract_out),
                 as_="projected_rows",
             ),
             RepeatNode(
@@ -164,7 +163,7 @@ def _kitchen_sink_definition() -> ProcedureDefinition:
             ),
         ),
         returns="repeated_rows",
-        parameter_contract=_pin("parameter-contract", "Contract", "parameters"),
+        parameter_contract=_pin("parameter-contract", "Contract", "parameters/v1"),
         slots={
             "worker": _slot_signature(),
             "fetch": _slot_signature(effect="external_read"),
@@ -188,7 +187,6 @@ def _replace_path(root: object, path: tuple[object, ...], value: object) -> None
         ("nodes", 0, "query"),
         ("nodes", 1, "captures", "capture"),
         ("nodes", 2, "effect_policy"),
-        ("nodes", 4, "contract_out"),
         ("nodes", 6, "capture_contract"),
     ),
 )
@@ -215,7 +213,7 @@ def test_semantic_reference_expectations_cover_every_dependency_field(
 
 
 def test_branch_join_tracks_must_availability_separately_from_may_reachability() -> None:
-    contract_out = _pin("contract-out", "Contract", "result")
+    _pin("contract-out", "Contract", "result/v1")
     definition = _definition(
         (
             ReadNode(
@@ -232,14 +230,12 @@ def test_branch_join_tracks_must_availability_separately_from_may_reachability()
             ProjectNode(
                 node_id="hot",
                 fields={"hot": True},
-                contract_out=named(contract_out),
                 as_="hot_rows",
                 next="join",
             ),
             ProjectNode(
                 node_id="join",
                 fields={"status": "joined"},
-                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -257,7 +253,7 @@ def test_branch_join_tracks_must_availability_separately_from_may_reachability()
 
 
 def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
-    contract_out = _pin("contract-out", "Contract", "result")
+    _pin("contract-out", "Contract", "result/v1")
     with pytest.raises(ProcedureGraphFormatError, match="not produced on every path"):
         _definition(
             (
@@ -275,7 +271,6 @@ def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
                 ProjectNode(
                     node_id="hot",
                     fields={"hot": True},
-                    contract_out=named(contract_out),
                     as_="hot_rows",
                     next="join",
                 ),
@@ -289,7 +284,6 @@ def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
                 ProjectNode(
                     node_id="result",
                     fields={"status": "joined"},
-                    contract_out=named(contract_out),
                     as_="result",
                 ),
             ),
@@ -318,7 +312,7 @@ def test_trailing_halt_is_a_terminal_graph_leaf_without_edges() -> None:
 
 
 def _guard_halt_layout(*, halt_before_return: bool) -> ProcedureDefinition:
-    contract_out = _pin("contract-out", "Contract", "guard-layout-result")
+    _pin("contract-out", "Contract", "guard-layout-result/v1")
     read = ReadNode(
         node_id="read",
         query=named(_pin("query", "QueryDefinition", "guard-layout-input")),
@@ -334,7 +328,6 @@ def _guard_halt_layout(*, halt_before_return: bool) -> ProcedureDefinition:
     result = ProjectNode(
         node_id="result",
         fields={"rows": "$steps.rows"},
-        contract_out=named(contract_out),
         as_="result",
     )
     stop = HaltNode(node_id="stop", reason="No rows are available.")
@@ -362,7 +355,6 @@ def test_terminal_position_guard_requires_authored_true_target(explicit_halt: bo
     result = ProjectNode(
         node_id="result",
         fields={"ok": True},
-        contract_out=named(_pin("contract-out", "Contract", "terminal-guard-result")),
         as_="result",
     )
     gate = GuardNode(
@@ -390,7 +382,7 @@ def test_terminal_position_guard_requires_authored_true_target(explicit_halt: bo
 
 
 def test_nonterminal_guard_keeps_implicit_true_fallthrough() -> None:
-    contract_out = _pin("contract-out", "Contract", "guard-fallthrough")
+    _pin("contract-out", "Contract", "guard-fallthrough/v1")
     definition = _definition(
         (
             GuardNode(
@@ -405,7 +397,6 @@ def test_nonterminal_guard_keeps_implicit_true_fallthrough() -> None:
             ProjectNode(
                 node_id="result",
                 fields={"ok": True},
-                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -419,7 +410,7 @@ def test_nonterminal_guard_keeps_implicit_true_fallthrough() -> None:
 
 
 def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
-    contract_out = _pin("contract-out", "Contract", "guard-tail-result")
+    _pin("contract-out", "Contract", "guard-tail-result/v1")
     with pytest.raises(ProcedureGraphFormatError) as raised:
         _definition(
             (
@@ -448,7 +439,6 @@ def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
                 ProjectNode(
                     node_id="tail",
                     fields={"extra": True},
-                    contract_out=named(contract_out),
                     as_="extra",
                 ),
                 HaltNode(node_id="stop", reason="No rows are available."),
@@ -576,7 +566,6 @@ def test_terminal_kinds_cannot_exceed_the_declared_capability(
         ProjectNode(
             node_id="project",
             fields={"ready": True},
-            contract_out=named(_pin("contract-out", "Contract", "result")),
             as_="result",
         ),
         terminal,
@@ -596,7 +585,7 @@ def test_terminal_kinds_cannot_exceed_the_declared_capability(
 
 
 def test_external_provider_effects_do_not_raise_the_terminal_rung() -> None:
-    contract_out = _pin("contract-out", "Contract", "provider-output")
+    _pin("contract-out", "Contract", "provider-output/v1")
     definition = _definition(
         (
             CallNode(
@@ -609,7 +598,6 @@ def test_external_provider_effects_do_not_raise_the_terminal_rung() -> None:
             ProjectNode(
                 node_id="project",
                 fields={"result": "$steps.provider_result"},
-                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -640,7 +628,6 @@ def test_all_terminal_runtime_templates_receive_structured_reference_checks(
                 ProjectNode(
                     node_id="project",
                     fields={"ready": True},
-                    contract_out=named(_pin("contract-out", "Contract", "result")),
                     as_="result",
                 ),
                 terminal,
@@ -690,7 +677,6 @@ def test_a_post_inbox_contract_is_pinned_to_its_accepted_version() -> None:
             ProjectNode(
                 node_id="result",
                 literal={"note": "x"},
-                contract_out=named(_pin("contract-out", "Contract", "node-output")),
                 as_="result",
                 next="inbox",
             ),

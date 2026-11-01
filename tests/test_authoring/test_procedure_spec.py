@@ -23,7 +23,8 @@ from cruxible_client.contracts.procedures.contract_schema import ContractSchema,
 from cruxible_client.contracts.procedures.decompile import decompile_procedure
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import ProcedureDefinition
-from tests.support.procedures import ref
+from cruxible_client.contracts.shapes import validate_contract
+from tests.support.procedures import procedure_members, ref
 
 
 def _artifact(definition):
@@ -38,7 +39,6 @@ def _stored(lowered, *, name=None, activation="snapshot"):
         identity={"kind": "Procedure", "name": name or definition.name},
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        owned_contracts=lowered.owned_contracts,
         activation_policy=activation,
     )
 
@@ -46,7 +46,7 @@ def _stored(lowered, *, name=None, activation="snapshot"):
 def spec(**changes):
     data = dict(
         procedure="test.authored",
-        input={"value": "integer", "flag": "bool"},
+        input={"value": "int", "flag": "bool"},
         returns="result",
         steps=[{"project": "result", "fields": {"value": ref("$input.value")}}],
     )
@@ -258,6 +258,13 @@ CORPUS = json.loads(
 OPERATIONS = json.loads(
     (Path(__file__).parents[1] / "fixtures/procedures/security-p1-operations.json").read_text()
 )
+#: The governed boundary Contracts the corpus Procedures name (``name@1``).
+CORPUS_CONTRACTS = {
+    name: validate_contract(contract)
+    for name, contract in json.loads(
+        (Path(__file__).parents[1] / "fixtures/procedures/security-p1-contracts.json").read_text()
+    ).items()
+}
 
 
 def _corpus_resolver(original):
@@ -274,6 +281,8 @@ def _corpus_resolver(original):
             return value
         if kind == "query":
             return None
+        if kind == "contract":
+            return CORPUS_CONTRACTS.get(value.name)
         signature = original.definition.slots[value.slot]
         entry = by_request[signature.in_.name]
         acquiring = bool(getattr(value, "captures", None))
@@ -324,9 +333,9 @@ def _inventory_import_worked_example():
                 "effect": "pure",
             },
         },
-        input={"scope": "string"},
-        input_contract="security-inventory-import-input",
-        output_contract="security-runtime-inventory-summary",
+        input={},
+        input_contract="security-inventory-import-input@1",
+        output_contract="security-runtime-inventory-summary@1",
         returns={"from": "parse", "omit": ["items"]},
         activation="drain",
         hard_caps={
@@ -385,11 +394,8 @@ def _inventory_import_worked_example():
 def test_handwritten_inventory_import_matches_the_stored_definition_digest():
     original, authored, resolve = _inventory_import_worked_example()
     lowered = lower_procedure_spec(authored, resolve=resolve)
-    contracts = {
-        contract.identity.name: contract.contract_schema for contract in original.owned_contracts
-    }
-    for contract in lowered.owned_contracts:
-        assert contract.contract_schema == contracts[contract.identity.name]
+    # Its boundaries name governed Contracts: nothing is co-proposed.
+    assert lowered.generated == {}
     actual = ProcedureDefinition.model_validate(lowered.definition)
     # Independent handwritten steps and literal signatures. Neither decompile
     # nor a graph normalizer constructs the authored side.
@@ -551,9 +557,9 @@ def test_every_predicate_shape_renders_typed_and_lowers_back(node_kind, predicat
 
 def test_field_descriptors_forbid_unknown_fields_and_coercion():
     with pytest.raises(ValidationError):
-        spec(input={"value": {"type": "integer", "optinal": True}})
+        spec(input={"value": {"type": "int", "optinal": True}})
     with pytest.raises(ValidationError):
-        spec(input={"value": {"type": "integer", "optional": "true"}})
+        spec(input={"value": {"type": "int", "optional": "true"}})
     with pytest.raises(ValidationError):
         spec(
             input={
@@ -637,7 +643,6 @@ def test_named_schema_refusals_keep_authored_path_and_nearest_candidate(
         foreign_source_capture_contract,
         render_capture_contract,
     )
-    from cruxible_client.contracts.procedures.artifacts import procedure_path
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
     from cruxible_core.proposals.proposals import AuthenticatedActor
     from tests.core_support._support import initialize_local
@@ -652,7 +657,7 @@ def test_named_schema_refusals_keep_authored_path_and_nearest_candidate(
     )
     tree[capture_contract_path(capture.identity.name)] = render_capture_contract(capture)
     procedure = _slotless_procedure("stored.proc").procedure
-    tree[procedure_path(procedure.identity.name)] = render_procedure(procedure)
+    tree.update(procedure_members(procedure))
     _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="named-candidates")
 
     authored = spec(
@@ -790,7 +795,6 @@ def test_every_transform_kind_renders_typed_and_lowers_back():
         {
             "project": "rows",
             "literal": {"items": [{"id": "a", "keep": True}]},
-            "output": {"items": {"type": "list", "item_fields": {"id": {"type": "string"}}}},
         },
         {
             "transform": "shaped",
@@ -975,7 +979,7 @@ def test_omitted_guard_diagnostics_and_halt_messages_round_trip(change):
 
 def test_parameter_and_step_references_have_distinct_typed_roots():
     authored = spec(
-        params={"limit": "integer"},
+        params={"limit": "int"},
         steps=[
             {"project": "params", "fields": {"value": ref("$input.value")}},
             {
@@ -998,7 +1002,7 @@ def test_parameter_and_step_references_have_distinct_typed_roots():
     with pytest.raises(ProcedureSpecError) as caught:
         lower_procedure_spec(
             spec(
-                params={"limit": "integer"},
+                params={"limit": "int"},
                 steps=[{"project": "result", "fields": {"value": ref("$params.limit")}}],
             )
         )
@@ -1008,7 +1012,7 @@ def test_parameter_and_step_references_have_distinct_typed_roots():
 def test_parameter_name_can_match_a_collection_step_alias():
     authored = spec(
         input={"subject": "string"},
-        params={"limit": "integer"},
+        params={"limit": "int"},
         steps=[
             {
                 "read": "limit",
@@ -1070,8 +1074,8 @@ def test_handwritten_slotted_procedure_round_trips_without_provider_selection():
     authored = ProcedureSpec.model_validate(
         {
             "procedure": "test.slotted",
-            "input": {"value": "integer"},
-            "output": {"value": "integer"},
+            "input": {"value": "int"},
+            "output": {"value": "int"},
             "slots": {
                 "compute": {
                     "in": "test.compute-input@1",

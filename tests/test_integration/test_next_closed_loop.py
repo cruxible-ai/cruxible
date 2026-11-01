@@ -112,6 +112,7 @@ from tests.core_support._published_world import (
 )
 from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import client_material, initialize_local
+from tests.support.procedures import procedure_members
 from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
 from tests.test_claims.test_claims import _claim_type
 from tests.test_evidence.test_evidence_freshness import _activate as _activate_migration
@@ -1634,7 +1635,6 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         procedure_mandate_path,
         render_procedure_mandate,
     )
-    from cruxible_client.contracts.procedures.artifacts import render_procedure
     from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
     from tests.test_indexes.test_resolution_contracts import _accept_tree
     from tests.test_procedures.test_procedure_mandates import _line, _mandate, _procedure
@@ -1651,7 +1651,7 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         owner,
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
-            procedure.path: render_procedure(authored_procedure(procedure)),
+            **procedure_members(authored_procedure(procedure)),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path("triage"): render_procedure_mandate(lapsing),
         },
@@ -2178,7 +2178,6 @@ def _line_inbox_unread(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     from cruxible_client.contracts.procedures.artifacts import (
         AcceptedProcedure,
         procedure_artifact_digest,
-        render_procedure,
     )
     from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
     from cruxible_client.contracts.shapes import Contract
@@ -2215,7 +2214,7 @@ def _line_inbox_unread(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
             **contract_members(cve),
-            accepted.path: render_procedure(procedure),
+            **procedure_members(procedure),
             line_spec_path(line.identity.name): render_line_spec(line),
         },
         timestamp="2026-08-21T12:00:00.000000Z",

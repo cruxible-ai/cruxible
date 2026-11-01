@@ -174,7 +174,7 @@ class ProcedureDefinition(_StrictProcedureModel):
     slot to one exact build and operation when it is accepted.
     """
 
-    graph_format: Literal[7] = 7
+    graph_format: Literal[8] = 8
     name: str
     description: str | None = None
     contract_in: ArtifactNameRef

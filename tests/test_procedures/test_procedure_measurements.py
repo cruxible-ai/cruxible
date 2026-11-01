@@ -14,7 +14,6 @@ from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     procedure_runnability,
-    render_procedure,
 )
 from cruxible_client.contracts.procedures.graph import (
     compute_procedure_definition_digest,
@@ -42,7 +41,13 @@ from cruxible_client.contracts.shapes import Comparison, LiteralOperand, Predica
 from cruxible_core.compiler.projection_artifacts import (
     parse_projection_tree,
 )
-from tests.support.procedures import named, owned_contract, owned_pin, procedure_artifact
+from tests.support.procedures import (
+    boundary_contract,
+    contract_pin,
+    named,
+    procedure_artifact,
+    procedure_members,
+)
 
 
 def _digest(label: str) -> str:
@@ -55,8 +60,8 @@ def _digest(label: str) -> str:
 
 def _pin(role: str, kind: str, name: str) -> ArtifactPin:
     if kind == "Contract":
-        # Contracts ride in the envelope: pin the exact owned Contract digest.
-        return owned_pin(role, owned_contract(name))
+        # A boundary Contract is governed: pin its exact version 1 digest.
+        return contract_pin(role, boundary_contract(name.removesuffix("/v1")))
     return ArtifactPin(
         role=role,
         target=ArtifactIdentity(kind=kind, name=name),
@@ -119,8 +124,8 @@ def _predicate(alias: str) -> Predicate:
 def _definition(
     measurements: tuple[ProcedureMeasurementDeclaration, ...] = (),
 ) -> ProcedureDefinition:
-    contract_in = _pin("contract-in", "Contract", "empty-input")
-    contract_out = _pin("contract-out", "Contract", "result")
+    contract_in = _pin("contract-in", "Contract", "empty-input/v1")
+    contract_out = _pin("contract-out", "Contract", "result/v1")
     return ProcedureDefinition(
         name="measured-procedure",
         contract_in=named(contract_in),
@@ -140,21 +145,18 @@ def _definition(
             ProjectNode(
                 node_id="hot",
                 fields={"arm": "hot"},
-                contract_out=named(contract_out),
                 as_="hot_rows",
                 next="finish",
             ),
             ProjectNode(
                 node_id="cold",
                 fields={"arm": "cold"},
-                contract_out=named(contract_out),
                 as_="cold_rows",
                 next="finish",
             ),
             ProjectNode(
                 node_id="finish",
                 fields={"status": "complete"},
-                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -186,7 +188,7 @@ def test_measurement_declaration_moves_only_the_definition_envelope_digest() -> 
         compute_procedure_definition_digest(measured)
     )
     assert compute_procedure_definition_digest(measured).tagged == (
-        "sha256:de1505c6ff11eb4dc15a1f24a37e99e65c04cf7034e41198237cf76876e5aac2"
+        "sha256:253e64125fec37cace80fcae986ec3483f7d8676b17887d870c9d126ce9ec2be"
     )
     payload = measured.model_dump(mode="json", by_alias=True)
     assert payload["annotations"] == {}
@@ -218,9 +220,8 @@ def test_measurement_query_is_an_exact_pin_not_a_line_slot() -> None:
 def test_measurements_are_projected_from_the_typed_field_not_annotations() -> None:
     definition = _definition((_declaration(),))
     procedure = _artifact(definition)
-    path = "procedures/measured-procedure.json"
     projection = parse_projection_tree(
-        {path: render_procedure(procedure)},
+        procedure_members(procedure),
     )
     fact = next(
         item

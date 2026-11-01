@@ -22,6 +22,7 @@ from cruxible_client.contracts.captures import (
     parse_capture_contract,
     render_capture_contract,
 )
+from tests.support.procedures import procedure_members
 
 
 @pytest.mark.parametrize(
@@ -78,19 +79,13 @@ def test_named_procedure_is_admitted_and_runs_without_rewriting_its_authored_gra
 
     definition = _definition()
     definition = definition.model_copy(
-        update={
-            "nodes": (
-                ProjectNode(
-                    node_id="result", contract_out=definition.contract_out, literal={}, as_="result"
-                ),
-            )
-        }
+        update={"nodes": (ProjectNode(node_id="result", literal={}, as_="result"),)}
     )
     artifact = _artifact(definition)
     instance, _ = initialize_local(tmp_path)
     path = procedure_path(artifact.identity.name)
     original = render_procedure(artifact)
-    accept_tree(instance, {path: original}, name="named-procedure")
+    accept_tree(instance, procedure_members(artifact), name="named-procedure")
     before = instance.accepted_coordinate()
     result = service_run_playbill_procedure(
         instance,
@@ -108,7 +103,6 @@ def test_named_line_and_trigger_keep_their_bytes_when_contract_advances(tmp_path
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.captures import foreign_source_capture_contract
     from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
-    from cruxible_client.contracts.procedures.artifacts import render_procedure
     from cruxible_client.contracts.procedures.line_specs import (
         line_spec_path,
         parse_line_spec,
@@ -126,7 +120,7 @@ def test_named_line_and_trigger_keep_their_bytes_when_contract_advances(tmp_path
 
     # A Line pins an exact accepted Procedure version (C2): use the same
     # AcceptedProcedure _line() itself pinned (already built in the named,
-    # cruxible-procedure-v3 format by default), rather than a separately
+    # cruxible-procedure-v4 format by default), rather than a separately
     # built one with a different digest at the same name -- its state tap
     # pins query "claims-by-status" by name, which in turn pins two
     # ClaimTypes; world() (test_named_reference_closure.py) already builds
@@ -168,7 +162,7 @@ def test_named_line_and_trigger_keep_their_bytes_when_contract_advances(tmp_path
         instance,
         {
             **world_members,
-            accepted.path: render_procedure(procedure),
+            **procedure_members(procedure),
             lpath: lb,
             tpath: tb,
             cpath: render_capture_contract(contract),
@@ -278,7 +272,7 @@ def test_new_artifacts_take_the_named_format_and_recorded_old_bytes_still_replay
 
 @pytest.mark.parametrize(
     "path,old,new",
-    [("procedures/check.json", "playbill-procedure-v2", "cruxible-procedure-v3")],
+    [("procedures/check.json", "playbill-procedure-v2", "cruxible-procedure-v4")],
 )
 def test_a_collapsed_kind_has_one_format_and_no_other_law(path, old, new):
     from types import SimpleNamespace
@@ -304,33 +298,26 @@ def test_a_collapsed_kind_has_one_format_and_no_other_law(path, old, new):
 
 def test_sdk_root_record_constructor_accepts_a_named_owner_contract():
     from cruxible_client.authoring.procedures import procedure_record_constructor
-    from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
-    from cruxible_client.contracts.procedures.contract_schema import (
-        ContractSchema,
-        PropertySchema,
-    )
     from cruxible_client.contracts.procedures.contracts import ProcedureContractValidationError
+    from tests.support.procedures import boundary_contract
     from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
 
-    # Each direction's named owner Contract gets its own closed field, so a
+    # Each direction's governed Contract has its own closed field, so a
     # constructor read off the wrong root has the wrong schema and refuses the
     # other direction's field.
-    schemas = {
-        "empty-input": ContractSchema(fields={"status": PropertySchema(type="string")}),
-        "claim-rows": ContractSchema(fields={"row_count": PropertySchema(type="int")}),
-    }
-    raw = _artifact(_definition()).model_dump(mode="json", by_alias=True)
-    for contract in raw["owned_contracts"]:
-        contract["schema"] = schemas[contract["identity"]["name"]].model_dump(mode="json")
-    procedure = ProcedureArtifact.model_validate(raw)
+    contracts = (
+        boundary_contract("empty-input", {"status": "string"}),
+        boundary_contract("claim-rows", {"row_count": "int"}),
+    )
+    procedure = _artifact(_definition())
 
     expected = {
-        "input": ("empty-input", "status", "open", "row_count", 3),
-        "output": ("claim-rows", "row_count", 3, "status", "open"),
+        "input": ("status", "open", "row_count", 3),
+        "output": ("row_count", 3, "status", "open"),
     }
-    for direction, (name, field, value, other, other_value) in expected.items():
-        constructor = procedure_record_constructor(procedure, direction)
-        assert constructor.schema == schemas[name]
+    for direction, (field, value, other, other_value) in expected.items():
+        constructor = procedure_record_constructor(procedure, direction, contracts)
+        assert set(constructor.schema.fields) == {field}
         assert dict(constructor(**{field: value})) == {field: value}
         with pytest.raises(ProcedureContractValidationError):
             constructor(**{other: other_value})
@@ -412,14 +399,16 @@ def test_authored_procedure_lowers_directly_to_the_named_graph():
 
     authored = ProcedureSpec(
         procedure="test.native",
-        input={"value": "integer"},
+        input={"value": "int"},
         returns="result",
         steps=({"project": "result", "fields": {"value": ref("$input.value")}},),
     )
     lowered = lower_procedure_spec(authored)
     definition = ProcedureDefinition.model_validate(lowered.definition)
-    assert definition.graph_format == 7
-    assert definition.contract_in.target.name == "test.native-input"
+    assert definition.graph_format == 8
+    # The inline input lowers to the co-proposed generated Contract.
+    assert definition.contract_in.target.name == "test.native.input/v1"
+    assert set(lowered.generated) == {"input", "output"}
     payload = lower_authoring_input(ProcedureInput(kind="procedure", spec=authored))
     assert payload.definition["procedure_spec"] == authored.model_dump(mode="json", by_alias=True)
     assert "artifact_digest" not in json.dumps(lowered.definition)
@@ -465,7 +454,7 @@ def test_authoring_chooses_the_named_format_for_every_kind(tmp_path):
     )
     authored = ProcedureSpec(
         procedure="test.writer",
-        input={"value": "integer"},
+        input={"value": "int"},
         returns="result",
         steps=({"project": "result", "fields": {"value": ref("$input.value")}},),
     )
@@ -482,7 +471,7 @@ def test_authoring_chooses_the_named_format_for_every_kind(tmp_path):
         (
             lower_authoring_input(ProcedureInput(kind="procedure", spec=authored)),
             "procedures/test.writer.json",
-            "cruxible-procedure-v3",
+            "cruxible-procedure-v4",
         ),
         (
             QueryDefinitionAuthoringPayload(query_definition=query),
@@ -670,7 +659,7 @@ def test_native_artifacts_round_trip_through_sdk_readiness_and_authoring_carrier
         }
     )
     assert readiness.artifact == artifact
-    assert readiness.artifact.definition.graph_format == 7
+    assert readiness.artifact.definition.graph_format == 8
     payload = CaptureContractAuthoringPayload(capture_contract=record_contract())
     assert (
         CaptureContractAuthoringPayload.model_validate(payload.model_dump(mode="json")) == payload

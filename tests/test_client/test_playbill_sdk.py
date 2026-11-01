@@ -437,7 +437,6 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
     _workspace(tmp_path)
 
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
-    from cruxible_client.contracts.procedures.contract_schema import PropertySchema
     from cruxible_client.contracts.procedures.models import ProcedureDefinition, ProjectNode
     from tests.test_procedures.test_procedure_execution import (
         _hard_caps,
@@ -446,19 +445,15 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
         _owned_pin,
     )
 
-    ci = _owned_contract("input", {"account": PropertySchema(type="string")})
-    co = _owned_contract("output", {"ok": PropertySchema(type="bool")})
+    ci = _owned_contract("input", {"account": "string"})
+    co = _owned_contract("output", {"ok": "bool"})
     pi, po = _owned_pin("contract-in", ci), _owned_pin("contract-out", co)
     artifact = _owned_accepted(
         ProcedureDefinition(
             name="daily-summary",
             contract_in=named(pi),
             contract_out=named(po),
-            nodes=(
-                ProjectNode(
-                    node_id="result", fields={"ok": True}, contract_out=named(po), as_="result"
-                ),
-            ),
+            nodes=(ProjectNode(node_id="result", fields={"ok": True}, as_="result"),),
             returns="result",
             hard_caps=_hard_caps(),
             terminal_capability=1,
@@ -473,6 +468,8 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
                 coordinate=_COORDINATE,
                 artifact=artifact,
                 artifact_digest=procedure_artifact_digest(artifact).tagged,
+                # The readiness read carries the governed boundary Contracts.
+                contracts=[ci, co],
             )
 
         def __init__(self) -> None:

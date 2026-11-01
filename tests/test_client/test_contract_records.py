@@ -4,30 +4,28 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from cruxible_client.authoring.inputs import CarriedContractInput
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.contracts import ProcedureContractValidationError
 from cruxible_client.contracts.records import RecordConstructor, RecordSchemaError
 
 
-def test_carried_record_reuses_schema_without_changing_authoring_or_wire():
-    contract = CarriedContractInput(
-        name="fetch",
+def test_a_record_reuses_its_schema_without_changing_the_schema_or_wire():
+    schema = ContractSchema(
         fields={
             "url": PropertySchema(type="string"),
             "format": PropertySchema(type="string", enum=["json", "text"]),
             "max_bytes": PropertySchema(type="integer", optional=True, default=1024),
         },
     )
-    before = contract.model_dump(mode="json")
-    record = contract.value(url="https://example.test", format="json")
+    before = schema.model_dump(mode="json")
+    record = RecordConstructor(schema)(url="https://example.test", format="json")
     assert record.url == "https://example.test"
     assert record.max_bytes == 1024
     assert canonical_bytes(record) == canonical_bytes(
         {"url": "https://example.test", "format": "json", "max_bytes": 1024}
     )
-    assert contract.model_dump(mode="json") == before
+    assert schema.model_dump(mode="json") == before
     with pytest.raises(FrozenInstanceError):
         record.url = "changed"
 
@@ -42,9 +40,9 @@ def test_carried_record_reuses_schema_without_changing_authoring_or_wire():
     ],
 )
 def test_record_refuses_wrong_types_missing_and_unknown_fields(fields):
-    constructor = CarriedContractInput(
-        name="count", fields={"count": PropertySchema(type="integer")}
-    ).value
+    constructor = RecordConstructor(
+        ContractSchema(fields={"count": PropertySchema(type="integer")})
+    )
     with pytest.raises(ProcedureContractValidationError):
         constructor(**fields)
 

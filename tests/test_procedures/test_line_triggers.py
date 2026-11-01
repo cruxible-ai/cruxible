@@ -17,7 +17,6 @@ from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
 )
-from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
 from cruxible_client.contracts.procedures.windows import (
     CaptureEventNameSelector,
@@ -34,6 +33,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     _stream,
 )
 from tests.support.lines import line_trigger, trigger_members
+from tests.support.procedures import procedure_members
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.test_independent_resolution_contracts import contract_world
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor, _slotless_procedure
@@ -47,7 +47,6 @@ TRIGGER_CONTRACT = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CO
 SELECTOR = CaptureEventNameSelector(
     capture_contract_identity=TRIGGER_CONTRACT.identity,
 )
-
 
 TRIGGER = "trigger-test-trigger"
 
@@ -68,7 +67,7 @@ def line_world(tmp_path, schedule, *, with_owner=False, triggers=None):
     tree[capture_contract_path(profile.identity.name)] = render_capture_contract(profile)
     tree.update(
         {
-            accepted.path: render_procedure(procedure),
+            **procedure_members(procedure),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
             line_spec_path(line.identity.name): render_line_spec(line),
             **trigger_members(
