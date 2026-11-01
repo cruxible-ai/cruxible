@@ -275,7 +275,7 @@ def test_a_claim_type_edit_reaches_only_the_files_it_shows_on(
         return render(self, path, changed_at)
 
     monkeypatch.setattr(floor_ontology._Renderer, "render", counting)
-    revise_claim_type(instance, "title", literal_schema={"type": "string", "minLength": 1})
+    revise_claim_type(instance, "title", value_type={"type": "string", "minLength": 1})
     after = advance_floor_index(instance)
     written = sorted(path for path in after.steps[-1].written if path.startswith("ontology/"))
     # The one kind card it shows on and the ClaimType INDEX: never the
@@ -316,7 +316,7 @@ def test_owner_markers_follow_the_receipt_and_the_held_content(tmp_path: Any) ->
     revise_claim_type(
         instance,
         "status",
-        literal_schema={"enum": ["blocked", "done", "ready", "waiting"], "type": "string"},
+        value_type={"enum": ["blocked", "done", "ready", "waiting"], "type": "string"},
     )
     edited = advance_floor_index(instance)
     fields = yaml.safe_load(_text(edited, CARD))["fields"]
