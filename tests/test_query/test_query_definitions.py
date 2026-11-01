@@ -18,8 +18,6 @@ from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, 
 from cruxible_client.contracts.errors import CanonicalEncodingError, ProjectionFormatError
 from cruxible_client.contracts.laws import ACCEPTANCE_LAWS, QUERY_DEFINITION_V3_ACCEPTANCE_LAW
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicy,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.query.definitions import (
@@ -65,6 +63,7 @@ from cruxible_core.proposals.proposals import (
     evaluate_proposal_tree,
 )
 from tests.core_support._support import initialize_local
+from tests.support.claim_types import claim_type as build_claim_type
 
 GOLDEN = Path(__file__).parents[1] / "goldens" / "playbill" / "query-definition-v1.json"
 QUERY_PATH = "query-definitions/project.active_work.json"
@@ -76,17 +75,12 @@ TIMESTAMP = "2026-08-16T14:00:00.000000Z"
 
 
 def claim_type(predicate: str, *, object_kind: str = "literal") -> ClaimType:
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name=predicate),
+    return build_claim_type(
         predicate=predicate,
         allowed_subject_kinds=("project.work_item",),
-        object_kind=object_kind,  # type: ignore[arg-type]
-        literal_schema={"type": "string"} if object_kind == "literal" else None,
-        allowed_object_subject_kinds=() if object_kind == "literal" else ("project.person",),
+        value_type={"type": "string"} if object_kind == "literal" else ("project.person",),
         cardinality="one" if object_kind == "literal" else "many",
         permitted_roles=("normative",),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
-        admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="one" if object_kind == "literal" else "many",
             eligible_verdicts=("supported",),

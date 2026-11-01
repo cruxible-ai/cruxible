@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.support.claim_types import claim_type_changes
+
 
 def test_a_traversal_over_a_literal_predicate_is_refused_naming_the_claim_type() -> None:
     """Reverse traversal used to answer silence; the definition never accepts now."""
@@ -60,13 +62,7 @@ def test_a_subject_object_predicate_traversal_is_accepted() -> None:
     from tests.test_claims.test_claims import _claim_type
 
     literal = _claim_type()
-    subject_typed = literal.model_copy(
-        update={
-            "object_kind": "subject",
-            "literal_schema": None,
-            "allowed_object_subject_kinds": ("project.work_item",),
-        }
-    )
+    subject_typed = literal.model_copy(update=claim_type_changes(value_type=("project.work_item",)))
     accepted = AcceptedClaimType(
         path=claim_type_path(subject_typed.predicate),
         claim_type=subject_typed,

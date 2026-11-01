@@ -30,6 +30,7 @@ from cruxible_core.service.discovery.authored_query import (
     candidate_query_vocabulary,
 )
 from cruxible_core.service.read_refusals import ReadRefusalError
+from tests.support.claim_types import claim_type_changes
 
 FIXTURE = json.loads(
     (Path(__file__).parent / "fixtures/security_authored_queries.json").read_text()
@@ -214,7 +215,7 @@ def test_decimal_filter_preserves_its_exact_spelling(resolver):
         info,
         value_type="decimal",
         claim_type=info.claim_type.model_copy(
-            update={"literal_schema": {"type": "number"}, "canonical_form": ()}
+            update=claim_type_changes(value_type={"type": "number"}, canonical_form=())
         ),
     )
     vocabulary = QueryVocabulary(
