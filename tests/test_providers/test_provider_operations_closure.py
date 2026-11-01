@@ -434,3 +434,66 @@ def test_a_malformed_field_result_tag_refuses_typed_not_a_python_exception(malfo
     with pytest.raises(OperationValueRefused) as excinfo:
         validate_operation_value(bad, outer, resolve=resolve)
     assert "type_mismatch" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "wrapper", ["nested", "variant", "field_result", "record", "result", "refusal"]
+)
+def test_run_list_budget_traverses_declared_wrappers(wrapper):
+    from cruxible_client.contracts.provider_operations import OperationItemBudgetExceeded
+
+    inner = Contract.model_validate(
+        {
+            "name": "test.parts",
+            "version": 1,
+            "fields": {"parts": {"type": "list<int>{max_items: 10}"}},
+        }
+    )
+    body = {"parts": [1, 2]}
+    envelope = {
+        "record": "claims/x.json",
+        "key": {},
+        "fields": {"parts": {"tag": "present", "at": "/parts", "value": [1, 2]}},
+    }
+    types_and_values = {
+        "nested": ("test.parts@1", body),
+        "variant": (
+            {"kind": "variant", "arms": {"yes": {"name": "test.parts", "version": 1}}},
+            {"tag": "yes", **body},
+        ),
+        "field_result": (
+            "field_result<test.parts@1>",
+            {"tag": "present", "at": "/", "value": body},
+        ),
+        "record": ("record<test.parts@1>", envelope),
+        "result": ("result<test.parts@1>", {"tag": "record", "record": envelope}),
+        "refusal": (
+            "refusal<test.parts@1>",
+            {
+                "code": "bad",
+                "contract": {
+                    "name": "test.parts",
+                    "version": 1,
+                    "digest": contract_digest(inner).tagged,
+                },
+                "body": body,
+            },
+        ),
+    }
+    field_type, value = types_and_values[wrapper]
+    outer = Contract.model_validate(
+        {"name": "test.outer", "version": 1, "fields": {"wrapped": {"type": field_type}}}
+    )
+    resolve = closure_lookup((inner, outer))
+    observed = []
+    validate_operation_value(
+        {"wrapped": value},
+        outer,
+        resolve=resolve,
+        max_items=2,
+        observe_items=lambda count, path: observed.append((count, path)),
+    )
+    assert len(observed) == 1 and observed[0][0] == 2
+    with pytest.raises(OperationItemBudgetExceeded) as caught:
+        validate_operation_value({"wrapped": value}, outer, resolve=resolve, max_items=1)
+    assert caught.value.field_path == observed[0][1]

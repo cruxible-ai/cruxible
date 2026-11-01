@@ -1707,4 +1707,4 @@ def test_a_release_with_inert_files_installs_as_the_same_release(
 # test_a_kit_carries_a_named_policy_without_pinning_its_versions was deleted:
 # the named-reference form it tested (Procedure.acquisition_policy = <name>,
 # no pin) is gone along with SourceAcquisitionPolicy -- acquisition is now
-# inline AcquisitionDefault data on the Procedure/Line itself (ruling C12).
+# inline LineAcquisitionRule data on the Procedure/Line itself (ruling C12).

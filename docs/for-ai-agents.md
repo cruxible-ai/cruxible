@@ -345,11 +345,14 @@ both.
 Lines run Procedures on schedules and events; the [Lines and
 automation](lines-and-automation.md) guide walks through one. From the SDK:
 
-- Procedures are authored as a `Sequence` of typed steps
-  (`cruxible_client.authoring.procedures`: StateTap, Source, Call, Transform,
-  Project, Guard, EmitCapture, PostInbox, ProposeChangeSet, SettleChangeSet,
-  Halt) with `.preview()` before submitting, or as Python source with
-  `@procedure` ([Procedure source reference](procedure-source.md)).
+- A Procedure is authored in one typed form, the `ProcedureSpec` (JSON over
+  MCP/HTTP, YAML on the CLI). In Python, `Sequence`
+  (`cruxible_client.authoring.procedures`) is a thin builder over that spec:
+  `read`, `call`, `extract`, `transform`, `project`, `guard`, `repeat`,
+  `invoke`, `select`, `inbox`, `propose`, `settle`, `emit` and `halt` steps,
+  typed references (`handle["field"]`), typed predicates (`eq`, `gt`,
+  `present`, `all_of`, ...) and typed guard actions (`abort`, `halt`,
+  `goto`), with `.preview()` before submitting.
 - `cx.line(name).run()` runs a Line once; `.enable()` lets its Triggers fire.
 - `cx.accepted_procedure(name)` reads one: `.run(input=...)` for a direct run,
   `.measure(run=...)` and `.readings(...)` for its measurements.

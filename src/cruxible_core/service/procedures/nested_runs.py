@@ -10,6 +10,10 @@ from typing import TYPE_CHECKING, Any
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateAny
+from cruxible_client.contracts.procedures.acquisition_rules import (
+    LineAcquisitionRule,
+    child_acquisition,
+)
 from cruxible_client.contracts.procedures.artifacts import (
     DIRECT_NODE_KINDS,
     AcceptedProcedure,
@@ -20,8 +24,10 @@ from cruxible_client.contracts.procedures.models import (
     InvokeNode,
     ProcedureBudget,
     ProcedureHardCaps,
+    caps_budget,
 )
 from cruxible_client.contracts.provider_operations import LineBinding
+from cruxible_core.claims.enum_resolution import accepted_enum_resolver
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.errors import RequestRefusedError
 from cruxible_core.exhaust.line_inbox import LineInboxStore
@@ -205,6 +211,10 @@ class ServedNestedProcedureRunner:
     #: The root run's bindings (its Line's, or a direct run's ephemeral spec),
     #: keyed by slot or ``<invoke node path>.<slot>``; a child binds through it.
     bindings: Mapping[str, LineBinding] = field(default_factory=dict)
+    #: The root run's acquisition rules (its Line's, or a direct run's request),
+    #: keyed by capture output or ``<invoke node path>.<alias>.<field>``; a
+    #: child runs its own capture outputs under the rules keyed by its path.
+    acquisition: Mapping[str, LineAcquisitionRule] = field(default_factory=dict)
     #: The invoke node path of the Procedure this runner runs children for.
     prefix: str = ""
 
@@ -277,7 +287,9 @@ class ServedNestedProcedureRunner:
                         "pin_binding_mismatch", "The child exceeds the parent terminal capability."
                     )
                 child_caps = constrained_caps(definition.hard_caps, caps)
-                child_budget = constrained_budget(definition.budget, budget, child_caps)
+                child_budget = constrained_budget(
+                    caps_budget(definition.hard_caps), budget, child_caps
+                )
                 plan = _plan_direct_external_run(
                     self.instance,
                     child,
@@ -286,6 +298,7 @@ class ServedNestedProcedureRunner:
                     evaluation_time=self.evaluation_time,
                     provider_runtime_operator=self.provider_runtime_operator,
                     budget=child_budget,
+                    acquisition=child_acquisition(self.acquisition, child_prefix),
                 )
                 if isinstance(plan, ProcedureRunStateV2):
                     raise ProcedureBoundaryRefused(
@@ -309,17 +322,19 @@ class ServedNestedProcedureRunner:
             self.prefix,
         )
 
-    def run(self, context: ParentInvocationContext, value: object) -> ProcedureRunResultV1:
+    def run(
+        self, context: ParentInvocationContext, value: object, parameters: object
+    ) -> ProcedureRunResultV1:
         from cruxible_core.service.procedures.procedure_runs import (
             PROCEDURE_RUN_FENCING_TOKEN,
             ProcedureRunStateV2,
             _activate_writer,
-            _claim_type_enum_resolver,
             _CurrentProcedureAuthority,
             _journal_for_write,
             _LineTerminalEgressSink,
             _prepare_direct_external_run,
             accepted_contract_resolver,
+            accepted_key_rules,
         )
         from cruxible_core.service.procedures.procedures import (
             PlaybillProcedureStateTapReader,
@@ -327,6 +342,9 @@ class ServedNestedProcedureRunner:
         )
 
         parent = context.admission
+        if not isinstance(parameters, dict):  # an invoke node's parameters are a record
+            raise ExecutionError("an invoked child's parameters are a record")
+        child_parameters: Mapping[str, object] = parameters
         if parent.accepted_coordinate != AcceptedCoordinate.from_internal(self.coordinate):
             raise ProcedureBoundaryRefused(
                 "pin_binding_mismatch", "Nested runner names another accepted state."
@@ -336,7 +354,9 @@ class ServedNestedProcedureRunner:
             resolved_pin(context.accepted, context.node.procedure), prefix=child_prefix
         )
         caps = constrained_caps(accepted.procedure.definition.hard_caps, parent.hard_caps)
-        budget = constrained_budget(accepted.procedure.definition.budget, context.remaining, caps)
+        budget = constrained_budget(
+            caps_budget(accepted.procedure.definition.hard_caps), context.remaining, caps
+        )
         planned = _prepare_direct_external_run(
             self.instance,
             accepted,
@@ -344,6 +364,7 @@ class ServedNestedProcedureRunner:
             head_at_admission=self.head_at_admission,
             evaluation_time=self.evaluation_time,
             invocation_input=value,
+            parameters=child_parameters,
             actor_context=parent.actor_context,
             state_reader=PlaybillProcedureStateTapReader(
                 instance=self.instance, evaluation_time=self.evaluation_time
@@ -353,6 +374,7 @@ class ServedNestedProcedureRunner:
             provider_runtime_operator=self.provider_runtime_operator,
             effective_budget=budget,
             effective_caps=caps,
+            acquisition=child_acquisition(self.acquisition, child_prefix),
         )
         if isinstance(planned, ProcedureRunStateV2):
             raise ProcedureBoundaryRefused(
@@ -418,8 +440,9 @@ class ServedNestedProcedureRunner:
             workspace_file_reader=self.workspace_file_reader,
             effective_rung=context.child_rung(accepted),
             egress_sink=sink,
-            enum_resolver=_claim_type_enum_resolver(self.instance, self.coordinate),
+            enum_resolver=accepted_enum_resolver(self.instance, self.coordinate),
             contract_resolver=accepted_contract_resolver(self.instance, self.coordinate),
+            key_rules=accepted_key_rules(self.instance, self.coordinate),
             clock=self.clock,
             nested_runner=replace(self, prefix=child_prefix),
             parent_context=context,

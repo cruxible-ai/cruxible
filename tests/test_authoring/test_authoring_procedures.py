@@ -9,7 +9,6 @@ import pytest
 
 from cruxible_client.authoring.examples import procedure_example, query_claims_by_type_example
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.authoring.models import (
     ApprovalPolicyAuthoringPayload,
@@ -25,16 +24,10 @@ from cruxible_client.contracts.documents import (
     DocumentShell,
     render_document,
 )
-from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.procedures.artifacts import (
-    ProcedureOwnedContract,
     parse_procedure,
     procedure_path,
-)
-from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
-from cruxible_client.contracts.procedures.models import (
-    ProcedureHardCaps,
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureHaltTerminal,
@@ -61,7 +54,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_procedure,
 )
 from tests.core_support._support import initialize_local
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
+from tests.support.procedures import MAX_WALL_CLOCK, ref, spec_payload
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_ledger.test_activation import _sign
 
@@ -72,89 +65,73 @@ def _digest(label: str) -> str:
     return typed_digest(ArtifactDigest, "playbill-authoring-test-v1", {"label": label}).tagged
 
 
-def _contract_reference(name: str, role: str) -> dict[str, object]:
-    return {"kind": "carried_contract", "name": name, "role": role}
+#: The triage result's one field: whether its read was complete.
+ROWS = {"complete": "bool"}
+
+#: The run limits every triage spec declares (one minute, no provider calls).
+LIMITS = {
+    "hard_caps": {
+        "wall_clock": f"PT{MAX_WALL_CLOCK.microseconds // 1_000_000}S",
+        "provider_calls": 0,
+        "capture_bytes": 0,
+        "items": 200,
+        "repeat_attempts": 1,
+    },
+}
 
 
-def _triage_definition(*, query: dict[str, object] | None = None) -> dict[str, object]:
-    """The triage Procedure as authored: carried Contracts and, given a query, a state tap.
+def _triage_definition(*, query: str | None = None) -> dict[str, object]:
+    """The triage Procedure as authored: one typed spec; given a query, a read of it.
 
-    `query` is an authoring reference (accepted or candidate-in-change-set). Without
-    one the Procedure projects a constant, so it lowers in an empty instance.
+    Without a query the Procedure projects a constant, so it lowers in an empty
+    instance.
     """
 
-    contract_out = _contract_reference("rows-output", "contract-out")
-    nodes: list[dict[str, object]] = []
+    steps: list[dict[str, object]] = []
     if query is not None:
-        nodes.append(
-            {"kind": "read", "node_id": "read", "query": query, "parameters": {}, "as": "rows"}
-        )
-    nodes.append(
+        steps.append({"read": "rows", "id": "read", "query": query})
+    steps.append(
         {
-            "kind": "project",
-            "node_id": "shape",
-            "fields": {"rows": "$steps.rows" if query is not None else []},
-            "contract_out": contract_out,
-            "as": "result",
+            "project": "result",
+            "id": "shape",
+            "fields": {"complete": ref("$steps.rows.completed") if query is not None else True},
+            "output": ROWS,
         }
     )
     return {
-        "name": "triage",
+        "procedure": "triage",
         "description": "Read accepted claims and shape a bounded result.",
-        "contract_in": _contract_reference("empty-input", "contract-in"),
-        "contract_out": contract_out,
-        "nodes": nodes,
+        "input": {},
+        "output": ROWS,
+        "activation": "drain",
+        "steps": steps,
         "returns": "result",
-        "budget": {
-            "wall_clock": {"microseconds": RUN_WALL_CLOCK.microseconds},
-            "max_provider_calls": 0,
-            "max_capture_bytes": 0,
-        },
-        "hard_caps": {
-            "max_wall_clock": {"microseconds": MAX_WALL_CLOCK.microseconds},
-            "max_provider_calls": 0,
-            "max_capture_bytes": 0,
-            "max_items": 200,
-            "max_repeat_attempts": 1,
-        },
-        "terminal_capability": 1,
+        **LIMITS,
     }
 
 
 def _layout_definition(*, halt_before_return: bool) -> dict[str, object]:
     base = _triage_definition()
-    contract_out = base["contract_out"]
     read = {
-        "kind": "project",
-        "node_id": "read",
-        "fields": {"rows": []},
-        "contract_out": contract_out,
-        "as": "rows",
-        "next": "gate",
+        "project": "rows",
+        "id": "read",
+        "fields": {"complete": True},
+        "output": ROWS,
     }
     gate = {
-        "kind": "guard",
-        "node_id": "gate",
-        "predicate": {
-            "left": {"kind": "literal", "value": True},
-            "operator": "eq",
-            "right": {"kind": "literal", "value": True},
-        },
-        "on_true": "result",
-        "on_false": "stop",
-        "refusal_code": "rows.empty",
-        "message": "No rows are available.",
+        "guard": {"op": "eq", "left": {"literal": True}, "right": {"literal": True}},
+        "id": "gate",
+        "then": {"goto": "result"},
+        "else": {"goto": "stop"},
     }
     result = {
-        "kind": "project",
-        "node_id": "result",
-        "fields": {"rows": "$steps.rows"},
-        "contract_out": contract_out,
-        "as": "result",
+        "project": "result",
+        "fields": {"complete": ref("$steps.rows.complete")},
+        "output": ROWS,
     }
-    stop = {"kind": "halt", "node_id": "stop", "reason": "No rows are available."}
+    stop = {"halt": "No rows are available.", "id": "stop"}
     tail = [stop, result] if halt_before_return else [result, stop]
-    return {**base, "nodes": [read, gate, *tail]}
+    return {**base, "steps": [read, gate, *tail]}
 
 
 def _coordinator(tmp_path: Path) -> tuple[AuthoringIntentCoordinator, AuthenticatedActor]:
@@ -169,65 +146,16 @@ def _coordinator(tmp_path: Path) -> tuple[AuthoringIntentCoordinator, Authentica
 
 
 def _payload(definition: dict[str, object]) -> ProcedureAuthoringPayload:
-    return ProcedureAuthoringPayload(
-        definition=definition,
-        activation_policy="drain",
-        owned_contracts=(
-            _carried_contract("empty-input", PropertySchema(type="json")),
-            _carried_contract("rows-output", PropertySchema(type="json")),
-        ),
-    )
+    payload = spec_payload(definition)
+    assert isinstance(payload, ProcedureAuthoringPayload)
+    return payload
 
 
-def _carried_contract(name: str, field: PropertySchema) -> ProcedureOwnedContract:
-    return ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name=name),
-        schema=ContractSchema(fields={} if name == "empty-input" else {"rows": field}),
-    )
+def _revise(payload: ProcedureAuthoringPayload, **changes: object) -> ProcedureAuthoringPayload:
+    """The same authored Procedure with spec fields changed."""
 
-
-def _carried_definition() -> dict[str, object]:
-    return {
-        "name": "bounded-projection",
-        "contract_in": {
-            "kind": "carried_contract",
-            "name": "empty-input",
-            "role": "contract-in",
-        },
-        "contract_out": {
-            "kind": "carried_contract",
-            "name": "rows-output",
-            "role": "contract-out",
-        },
-        "nodes": [
-            {
-                "kind": "project",
-                "node_id": "project",
-                "fields": {"rows": []},
-                "contract_out": {
-                    "kind": "carried_contract",
-                    "name": "rows-output",
-                    "role": "contract-out",
-                },
-                "as": "result",
-            }
-        ],
-        "returns": "result",
-        "budget": {
-            "wall_clock": {"microseconds": RUN_WALL_CLOCK.microseconds},
-            "max_provider_calls": 0,
-            "max_capture_bytes": 0,
-            "max_items": 10,
-        },
-        "hard_caps": {
-            "max_wall_clock": {"microseconds": MAX_WALL_CLOCK.microseconds},
-            "max_provider_calls": 0,
-            "max_capture_bytes": 0,
-            "max_items": 20,
-            "max_repeat_attempts": 1,
-        },
-        "terminal_capability": 1,
-    }
+    spec = dict(payload.definition["procedure_spec"])  # type: ignore[arg-type]
+    return _payload({**spec, **changes})
 
 
 def _change_set_query(*, named: bool = True) -> QueryDefinition:
@@ -242,116 +170,11 @@ def _change_set_query(*, named: bool = True) -> QueryDefinition:
 
 
 def _change_set_payload(query: QueryDefinition) -> ChangeSetAuthoringPayload:
-    definition = _triage_definition(
-        query={
-            "tag": "playbill-authoring-candidate-reference-v1",
-            "role": "query",
-            "target": query.identity.model_dump(mode="json"),
-            "resolution": "candidate_in_change_set",
-        }
-    )
+    """The triage Procedure reading a Query staged in the same change set."""
+
     return ChangeSetAuthoringPayload(
         members=(
-            _payload(definition),
-            QueryDefinitionAuthoringPayload(query_definition=query),
-        )
-    )
-
-
-def _with_accepted_query_reference(
-    payload: ChangeSetAuthoringPayload,
-) -> ChangeSetAuthoringPayload:
-    procedure = payload.members[0]
-    query = payload.members[1]
-    assert isinstance(procedure, ProcedureAuthoringPayload)
-    assert isinstance(query, QueryDefinitionAuthoringPayload)
-    definition = dict(procedure.definition)
-    nodes = [dict(node) for node in definition["nodes"]]  # type: ignore[arg-type]
-    nodes[0]["query"] = {
-        "tag": "playbill-authoring-artifact-reference-v1",
-        "role": "query",
-        "target": query.query_definition.identity.model_dump(mode="json"),
-        "resolution": "accepted_at_intent_base",
-    }
-    definition["nodes"] = nodes
-    return payload.model_copy(
-        update={
-            "members": (
-                procedure.model_copy(update={"definition": definition}),
-                query,
-            )
-        }
-    )
-
-
-def _runnable_change_set_payload(
-    query: QueryDefinition,
-    *,
-    description: str,
-) -> ChangeSetAuthoringPayload:
-    definition: dict[str, object] = {
-        "name": "candidate-query-run",
-        "description": description,
-        "contract_in": {
-            "kind": "carried_contract",
-            "name": "empty-input",
-            "role": "contract-in",
-        },
-        "contract_out": {
-            "kind": "carried_contract",
-            "name": "query-output",
-            "role": "contract-out",
-        },
-        "nodes": [
-            {
-                "kind": "read",
-                "node_id": "read",
-                "query": {
-                    "tag": "playbill-authoring-candidate-reference-v1",
-                    "role": "query",
-                    "target": query.identity.model_dump(mode="json"),
-                    "resolution": "candidate_in_change_set",
-                },
-                "parameters": {},
-                "as": "rows",
-            },
-            {
-                "kind": "project",
-                "node_id": "result",
-                "fields": {"rows": "$steps.rows"},
-                "contract_out": {
-                    "kind": "carried_contract",
-                    "name": "query-output",
-                    "role": "contract-out",
-                },
-                "as": "result",
-            },
-        ],
-        "returns": "result",
-        "budget": {
-            "wall_clock": {"microseconds": RUN_WALL_CLOCK.microseconds},
-            "max_provider_calls": 0,
-            "max_capture_bytes": 0,
-        },
-        "hard_caps": {
-            "max_wall_clock": {"microseconds": MAX_WALL_CLOCK.microseconds},
-            "max_provider_calls": 0,
-            "max_capture_bytes": 0,
-            "max_items": 100,
-            "max_repeat_attempts": 1,
-        },
-        "terminal_capability": 1,
-    }
-    return ChangeSetAuthoringPayload(
-        members=(
-            ProcedureAuthoringPayload(
-                definition=definition,
-                activation_policy="snapshot",
-                owned_contracts=(
-                    _carried_contract("empty-input", PropertySchema(type="json")),
-                    _carried_contract("query-output", PropertySchema(type="json")),
-                ),
-            ),
+            _payload(_triage_definition(query=query.identity.name)),
             QueryDefinitionAuthoringPayload(query_definition=query),
         )
     )
@@ -435,16 +258,21 @@ def _world_holding_a_document(
 
 
 def _list_contract_payload() -> ProcedureAuthoringPayload:
-    return ProcedureAuthoringPayload(
-        definition=_carried_definition(),
-        activation_policy="snapshot",
-        owned_contracts=(
-            _carried_contract("empty-input", PropertySchema(type="json")),
-            _carried_contract(
-                "rows-output",
-                PropertySchema(type="list", item_fields={"id": PropertySchema(type="string")}),
-            ),
-        ),
+    listed = {"rows": "list<string>{max_items: 10}"}
+    return _payload(
+        {
+            **_triage_definition(),
+            "procedure": "bounded-projection",
+            "output": listed,
+            "activation": "snapshot",
+            "steps": [
+                {
+                    "project": "result",
+                    "fields": {"rows": []},
+                    "output": listed,
+                }
+            ],
+        }
     )
 
 
@@ -465,105 +293,10 @@ def test_a_procedure_can_be_authored_in_a_world_that_governs_a_document(
     assert compiled.frontier.diagnostics == ()
 
 
-def test_an_unreadable_accepted_tree_refuses_typed_rather_than_faulting(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An unreadable referenced artifact yields a typed repair."""
-
-    coordinator, actor = _world_holding_a_document(tmp_path)
-
-    def unreadable(*_args: object, **_values: object) -> object:
-        raise ProjectionFormatError("Document body is unavailable during projection")
-
-    monkeypatch.setattr(lowering, "parse_projection_tree", unreadable)
-
-    payload = _list_contract_payload()
-    definition = {
-        **payload.definition,
-        "annotations": {
-            "design": {
-                "tag": "playbill-authoring-artifact-reference-v1",
-                "role": "design",
-                "target": {"kind": "document", "name": "design"},
-                "resolution": "accepted_at_intent_base",
-            }
-        },
-    }
-
-    compiled = coordinator.compile(
-        actor=actor,
-        payload=payload.model_copy(update={"definition": definition}),
-        canonical_timestamp="2026-08-21T12:03:00.000000Z",
-    )
-
-    assert compiled.verdict == "refused"
-    (diagnostic,) = compiled.frontier.diagnostics
-    assert diagnostic.code == "cruxible.authoring.lowering_invalid"
-    assert diagnostic.offending_element == "definition"
-    assert diagnostic.repairs[0].kind == "restore_accepted_projection"
-
-
-def test_max_items_requires_a_referenced_list_contract(tmp_path: Path) -> None:
-    coordinator, actor = _coordinator(tmp_path)
-    opaque = ProcedureAuthoringPayload(
-        definition=_carried_definition(),
-        activation_policy="snapshot",
-        owned_contracts=(
-            _carried_contract("empty-input", PropertySchema(type="json")),
-            _carried_contract("rows-output", PropertySchema(type="json")),
-        ),
-    )
-    refused = coordinator.compile(
-        actor=actor,
-        payload=opaque,
-        canonical_timestamp=TIMESTAMP,
-    )
-    assert refused.verdict == "refused"
-    diagnostic = refused.frontier.diagnostics[0]
-    assert diagnostic.code == ("cruxible.authoring.procedure_definition_invalid")
-    assert diagnostic.offending_element == "definition.budget.max_items"
-    assert "declare a list field" in diagnostic.repairs[0].description.lower()
-
-    supported = opaque.model_copy(
-        update={
-            "owned_contracts": (
-                _carried_contract("empty-input", PropertySchema(type="json")),
-                _carried_contract(
-                    "rows-output",
-                    PropertySchema(
-                        type="list",
-                        item_fields={"id": PropertySchema(type="string")},
-                    ),
-                ),
-            )
-        }
-    )
-    supported_root = tmp_path / "supported"
-    supported_root.mkdir()
-    supported_coordinator, supported_actor = _coordinator(supported_root)
-    passed = supported_coordinator.compile(
-        actor=supported_actor,
-        payload=supported,
-        canonical_timestamp="2026-08-21T12:01:00.000000Z",
-    )
-    assert passed.verdict == "passed"
-
-
 def test_served_procedure_example_reaches_the_closed_transforms(tmp_path: Path) -> None:
     example = procedure_example()
-    tags = {
-        node["spec"]["tag"]
-        for node in example.definition["nodes"]
-        if isinstance(node, dict) and isinstance(node.get("spec"), dict)
-    }
-    assert tags == {
-        "cruxible-transform-aggregate-spec-v1",
-        "cruxible-transform-dedupe-spec-v1",
-        "cruxible-transform-filter-spec-v1",
-        "cruxible-transform-join-spec-v1",
-        "cruxible-transform-shape-spec-v1",
-    }
+    kinds = {step.kind for step in example.spec.steps if hasattr(step, "transform")}
+    assert kinds == {"aggregate", "dedupe", "filter", "join", "shape"}
 
     coordinator, actor = _coordinator(tmp_path)
     result = coordinator.compile(
@@ -571,7 +304,7 @@ def test_served_procedure_example_reaches_the_closed_transforms(tmp_path: Path) 
         payload=lower_authoring_input(example),
         canonical_timestamp=TIMESTAMP,
     )
-    assert result.verdict == "passed"
+    assert result.verdict == "passed", result.frontier
 
 
 def test_approval_policy_is_a_real_singleton_authoring_scope(tmp_path: Path) -> None:
@@ -674,103 +407,52 @@ def test_change_set_membership_and_candidate_reference_refusals(tmp_path: Path) 
             payload=_change_set_payload(renamed),
         )
 
+    # A Query the change set does not stage (and the base does not hold) is
+    # unresolved, named by the step that reads it.
     outside_root = tmp_path / "outside"
     outside_root.mkdir()
     coordinator, actor = _coordinator(outside_root)
-    outside = _change_set_payload(query)
-    procedure = outside.members[0]
-    assert isinstance(procedure, ProcedureAuthoringPayload)
-    definition = dict(procedure.definition)
-    nodes = [dict(node) for node in definition["nodes"]]  # type: ignore[arg-type]
-    nodes[0]["query"] = {
-        "tag": "playbill-authoring-candidate-reference-v1",
-        "role": "query",
-        "target": {"kind": "QueryDefinition", "name": "outside"},
-        "resolution": "candidate_in_change_set",
-    }
-    definition["nodes"] = nodes
     refused = coordinator.compile(
         actor=actor,
-        payload=outside.model_copy(
-            update={
-                "members": (
-                    procedure.model_copy(update={"definition": definition}),
-                    outside.members[1],
-                )
-            }
+        payload=ChangeSetAuthoringPayload(
+            members=(
+                _payload(_triage_definition(query="outside")),
+                QueryDefinitionAuthoringPayload(query_definition=query),
+            )
         ),
         canonical_timestamp=TIMESTAMP,
     )
     assert refused.verdict == "refused"
-    assert refused.frontier.diagnostics[0].code == (
-        "cruxible.authoring.candidate_reference_outside_change_set"
-    )
-
-
-@pytest.mark.parametrize(
-    ("reference", "expected_code"),
-    (
-        (
-            {
-                "tag": "playbill-authoring-candidate-reference-v1",
-                "role": "procedure",
-                "target": {"kind": "Procedure", "name": "other"},
-                "resolution": "candidate_in_change_set",
-            },
-            "cruxible.authoring.candidate_procedure_reference_forbidden",
-        ),
-        (
-            {
-                "tag": "playbill-authoring-candidate-reference-v1",
-                "target": {"kind": "QueryDefinition", "name": "claims-by-type"},
-                "resolution": "candidate_in_change_set",
-            },
-            "cruxible.authoring.candidate_reference_invalid",
-        ),
-    ),
-)
-def test_change_set_candidate_reference_shape_refusals_are_reachable(
-    tmp_path: Path,
-    reference: dict[str, object],
-    expected_code: str,
-) -> None:
-    coordinator, actor = _coordinator(tmp_path)
-    payload = _change_set_payload(_change_set_query())
-    procedure = payload.members[0]
-    assert isinstance(procedure, ProcedureAuthoringPayload)
-    definition = dict(procedure.definition)
-    definition["contract_in"] = reference
-    refused = coordinator.compile(
-        actor=actor,
-        payload=payload.model_copy(
-            update={
-                "members": (
-                    procedure.model_copy(update={"definition": definition}),
-                    payload.members[1],
-                )
-            }
-        ),
-        canonical_timestamp=TIMESTAMP,
-    )
-    assert refused.verdict == "refused"
-    assert refused.frontier.diagnostics[0].code == expected_code
+    diagnostic = refused.frontier.diagnostics[0]
+    assert diagnostic.code == "cruxible.authoring.artifact_reference_unresolved"
+    assert diagnostic.offending_element == "members[0].steps[0].query"
+    assert "QueryDefinition:outside" in diagnostic.message
 
 
 def test_invalid_definition_message_excludes_pydantic_metadata(tmp_path: Path) -> None:
     coordinator, actor = _coordinator(tmp_path)
-    definition = _triage_definition()
-    definition["nodes"][0]["kind"] = "not-a-node-kind"  # type: ignore[index]
+    spec = _triage_definition()
+    spec["steps"] = [
+        {
+            "project": "result",
+            "fields": {},
+        }
+    ]
 
     result = coordinator.compile(
         actor=actor,
-        payload=_payload(definition),
+        payload=ProcedureAuthoringPayload(
+            definition={"name": "triage", "procedure_spec": spec},
+            activation_policy="drain",
+        ),
         canonical_timestamp=TIMESTAMP,
     )
     assert result.verdict == "refused"
-    message = result.frontier.diagnostics[0].message
-    assert "definition.nodes[0]" in message
-    assert "not-a-node-kind" in message
-    assert "Input tag 'not-a-node-kind'" in message
+    diagnostic = result.frontier.diagnostics[0]
+    message = diagnostic.message
+    # The returned record lacks the declared output field: refused statically.
+    assert diagnostic.offending_element == "$.output"
+    assert "output Contract" in message and "complete" in message
     assert "input_value=" not in message
     assert "input_type=" not in message
     assert "errors.pydantic.dev" not in message
@@ -795,71 +477,41 @@ def test_graph_law_failures_use_typed_definition_refusal(
     expected_cause: str,
 ) -> None:
     coordinator, actor = _coordinator(tmp_path)
-    definition = _triage_definition()
-    contract_out = definition["contract_out"]
+    spec = _triage_definition()
+    always = {"op": "eq", "left": {"literal": True}, "right": {"literal": True}}
     if invalid_graph == "nonreturn_leaf":
-        definition["nodes"] = [
+        spec["steps"] = [
             {
-                "kind": "project",
-                "node_id": "read",
-                "fields": {"rows": []},
-                "contract_out": contract_out,
-                "as": "rows",
+                "project": "rows",
+                "id": "read",
+                "fields": {"complete": True},
+                "output": ROWS,
+            },
+            {"guard": always, "id": "gate", "then": {"goto": "result"}, "else": {"goto": "unused"}},
+            {
+                "project": "result",
+                "fields": {"complete": ref("$steps.rows.complete")},
+                "output": ROWS,
             },
             {
-                "kind": "guard",
-                "node_id": "gate",
-                "predicate": {
-                    "left": {"kind": "literal", "value": True},
-                    "operator": "eq",
-                    "right": {"kind": "literal", "value": True},
-                },
-                "on_true": "result",
-                "on_false": "unused",
-                "refusal_code": "guard.false",
-                "message": "The guard refused.",
-            },
-            {
-                "kind": "project",
-                "node_id": "result",
-                "fields": {"rows": "$steps.rows"},
-                "contract_out": contract_out,
-                "as": "result",
-            },
-            {
-                "kind": "project",
-                "node_id": "unused",
-                "fields": {"rows": "$steps.rows"},
-                "contract_out": contract_out,
-                "as": "unused",
+                "project": "unused",
+                "fields": {"complete": ref("$steps.rows.complete")},
+                "output": ROWS,
             },
         ]
     else:
-        definition["nodes"] = [
+        spec["steps"] = [
             {
-                "kind": "project",
-                "node_id": "result",
-                "fields": {"rows": []},
-                "contract_out": contract_out,
-                "as": "result",
+                "project": "result",
+                "fields": {"complete": True},
+                "output": ROWS,
             },
-            {
-                "kind": "guard",
-                "node_id": "gate",
-                "predicate": {
-                    "left": {"kind": "literal", "value": True},
-                    "operator": "eq",
-                    "right": {"kind": "literal", "value": True},
-                },
-                "on_false": "$abort",
-                "refusal_code": "guard.false",
-                "message": "The guard refused.",
-            },
+            {"guard": always, "id": "gate"},
         ]
 
     result = coordinator.compile(
         actor=actor,
-        payload=_payload(definition),
+        payload=_payload(spec),
         canonical_timestamp=TIMESTAMP,
     )
 
@@ -910,33 +562,6 @@ def test_layout_only_procedure_successor_refuses_in_coordinator(tmp_path: Path) 
     )
 
 
-def test_invalid_artifact_reference_message_excludes_pydantic_metadata(
-    tmp_path: Path,
-) -> None:
-    coordinator, actor = _coordinator(tmp_path)
-    definition = _triage_definition()
-    definition["contract_in"] = {
-        "tag": "playbill-authoring-artifact-reference-v1",
-        "target": {"kind": "Contract"},
-    }
-
-    result = coordinator.compile(
-        actor=actor,
-        payload=_payload(definition),
-        canonical_timestamp=TIMESTAMP,
-    )
-
-    assert result.verdict == "refused"
-    diagnostic = result.frontier.diagnostics[0]
-    assert diagnostic.code == "cruxible.authoring.artifact_reference_invalid"
-    assert "definition.contract_in.role" in diagnostic.message
-    assert "definition.contract_in.target.name" in diagnostic.message
-    assert "offending element" in diagnostic.message
-    assert "input_value=" not in diagnostic.message
-    assert "input_type=" not in diagnostic.message
-    assert "errors.pydantic.dev" not in diagnostic.message
-
-
 def test_procedure_compiles_without_writer_managed_envelope_fields(
     tmp_path: Path,
 ) -> None:
@@ -960,62 +585,28 @@ def test_procedure_compiles_without_writer_managed_envelope_fields(
     )
 
 
-def test_caller_originated_exact_procedure_pin_is_typed_refusal(tmp_path: Path) -> None:
-    coordinator, actor = _coordinator(tmp_path)
-    definition = _triage_definition()
-    definition["contract_in"] = ArtifactPin(
-        role="contract-in",
-        target=ArtifactIdentity(kind="Contract", name="caller-chosen"),
-        artifact_digest=_digest("caller-chosen"),
-    ).model_dump(mode="json")
-
-    result = coordinator.compile(
-        actor=actor,
-        payload=_payload(definition),
-        canonical_timestamp=TIMESTAMP,
-    )
-
-    assert result.verdict == "refused"
-    diagnostic = next(
-        item
-        for item in result.frontier.diagnostics
-        if item.code == "cruxible.authoring.caller_artifact_digest_forbidden"
-    )
-    assert diagnostic.offending_element == "definition.contract_in"
-    assert diagnostic.repairs[0].kind == "replace_reference"
-
-
-@pytest.mark.parametrize("graph_format", [6, 5, "7"])
-def test_an_authored_procedure_stating_a_removed_graph_format_refuses_typed(
+@pytest.mark.parametrize("graph_format", [6, 5, 7])
+def test_an_authored_procedure_cannot_state_a_graph_format(
     tmp_path: Path, graph_format: object
 ) -> None:
+    """The spec carries no graph coordinate: lowering states the one format (7)."""
+
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="graph_format"):
+        _payload({**_triage_definition(), "graph_format": graph_format})
     coordinator, actor = _coordinator(tmp_path)
-    definition = {**_triage_definition(), "graph_format": graph_format}
-
-    result = coordinator.compile(
+    unstated = coordinator.compile(
         actor=actor,
-        payload=_payload(definition),
-        canonical_timestamp=TIMESTAMP,
-    )
-
-    assert result.verdict == "refused"
-    diagnostic = next(
-        item
-        for item in result.frontier.diagnostics
-        if item.code == "cruxible.authoring.procedure_definition_invalid"
-    )
-    assert diagnostic.offending_element == "definition.graph_format"
-    assert "the one Procedure graph format is 7" in diagnostic.message
-    assert diagnostic.repairs[0].kind == "replace_definition"
-    # The same authored spelling without a stated format lowers to graph format 7.
-    (tmp_path / "unstated").mkdir()
-    fresh, fresh_actor = _coordinator(tmp_path / "unstated")
-    unstated = fresh.compile(
-        actor=fresh_actor,
         payload=_payload(_triage_definition()),
         canonical_timestamp=TIMESTAMP,
     )
     assert unstated.verdict == "passed"
+    pending = coordinator.list_pending(actor=actor).intents[0]
+    lowered = compute_preflight(coordinator.instance, intent=pending, actor=actor).lowered
+    assert lowered is not None
+    path = procedure_path("triage")
+    assert parse_procedure(lowered.proposed_tree[path], path=path).definition.graph_format == 8
 
 
 def test_a_procedure_revision_submits_without_reaching_the_claim_revision_marker(
@@ -1082,66 +673,26 @@ def test_coordinator_authored_halt_reason_reaches_terminal_and_receipt(
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
     reason = "No eligible work remains."
-    payload = ProcedureAuthoringPayload(
-        definition={
-            "name": "halt-with-reason",
-            "contract_in": {
-                "kind": "carried_contract",
-                "name": "empty-input",
-                "role": "contract-in",
-            },
-            "contract_out": {
-                "kind": "carried_contract",
-                "name": "halt-output",
-                "role": "contract-out",
-            },
-            "nodes": [
+    payload = _payload(
+        {
+            "procedure": "halt-with-reason",
+            "input": {},
+            "output": {},
+            "activation": "snapshot",
+            **LIMITS,
+            "steps": [
                 {
-                    "kind": "guard",
-                    "node_id": "gate",
-                    "predicate": {
-                        "left": {"kind": "literal", "value": False},
-                        "operator": "eq",
-                        "right": {"kind": "literal", "value": True},
-                    },
-                    "on_true": "result",
-                    "on_false": "stop",
-                    "refusal_code": "work.exhausted",
-                    "message": reason,
+                    "guard": {"op": "eq", "left": {"literal": False}, "right": {"literal": True}},
+                    "id": "gate",
+                    "else": {"halt": reason, "id": "stop"},
                 },
                 {
-                    "kind": "project",
-                    "node_id": "result",
+                    "project": "result",
                     "fields": {},
-                    "contract_out": {
-                        "kind": "carried_contract",
-                        "name": "halt-output",
-                        "role": "contract-out",
-                    },
-                    "as": "result",
                 },
-                {"kind": "halt", "node_id": "stop", "reason": reason},
             ],
             "returns": "result",
-            "budget": {
-                "wall_clock": {"microseconds": RUN_WALL_CLOCK.microseconds},
-                "max_provider_calls": 0,
-                "max_capture_bytes": 0,
-            },
-            "hard_caps": {
-                "max_wall_clock": {"microseconds": MAX_WALL_CLOCK.microseconds},
-                "max_provider_calls": 0,
-                "max_capture_bytes": 0,
-                "max_items": 1,
-                "max_repeat_attempts": 1,
-            },
-            "terminal_capability": 1,
-        },
-        activation_policy="snapshot",
-        owned_contracts=(
-            _carried_contract("empty-input", PropertySchema(type="json")),
-            _carried_contract("halt-output", PropertySchema(type="json")),
-        ),
+        }
     )
     created = coordinator.create(
         actor=actor,
@@ -1205,7 +756,7 @@ def _accepted_authoring_trio(tmp_path):
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
     procedure = _list_contract_payload()
-    name = procedure.definition["name"]
+    name = str(procedure.definition["name"])
     line = LineAuthoringPayload(
         name=name,
         procedure_name=name,
@@ -1215,7 +766,6 @@ def _accepted_authoring_trio(tmp_path):
         name=name,
         line_name=name,
         grants="propose",
-        resource_ceiling=ProcedureHardCaps.model_validate(procedure.definition["hard_caps"]),
         namespace=("captures",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),
@@ -1297,11 +847,9 @@ def test_changed_procedure_rebinds_dependents_then_reauthoring_is_unchanged(tmp_
     coordinator, actor, owner, payload, procedure, _, _ = _accepted_authoring_trio(tmp_path)
     instance = coordinator.instance
     before = instance.tree_at(instance.accepted_coordinate().git_oid)
-    path = procedure_path(procedure.definition["name"])
+    path = procedure_path(str(procedure.definition["name"]))
     old_digest = procedure_artifact_digest(parse_procedure(before[path], path=path)).tagged
-    changed = procedure.model_copy(
-        update={"definition": {**procedure.definition, "description": "Real change"}}
-    )
+    changed = _revise(procedure, description="Real change")
     revised = payload.model_copy(
         update={"members": tuple(changed if m == procedure else m for m in payload.members)}
     )
@@ -1361,7 +909,7 @@ def test_authoring_no_change_comparison_keeps_lifecycle_and_policy_changes(tmp_p
     instance = coordinator.instance
     # These are material changes even with unchanged Procedure graph content.
     variants = (
-        procedure.model_copy(update={"activation_policy": "drain"}),
+        _revise(procedure, activation="drain"),
         procedure.model_copy(update={"retire": True}),
         line.model_copy(update={"occurrence_epoch": 2}),
         line.model_copy(update={"retire": True}),
@@ -1379,35 +927,25 @@ def test_authoring_no_change_comparison_keeps_lifecycle_and_policy_changes(tmp_p
         assert len(changed.changed_members) == expected
 
 
-@pytest.mark.parametrize(
-    ("kind", "replacement"),
-    [
-        ("source", "'call'"),
-        ("state_tap", "'read' naming its 'query'"),
-        ("state_claim", "'read' naming its 'claim_type'"),
-        ("exhaust_tap", "no run lane serves exhaust reads"),
-        ("return", "'project' with 'leaf: true'"),
-        ("constant", "'project' with a 'literal' record"),
-    ],
-)
 @pytest.mark.parametrize("in_change_set", [False, True])
-def test_a_retired_node_kind_refuses_at_compile_and_preflight_naming_its_replacement(
-    tmp_path: Path, in_change_set: bool, kind: str, replacement: str
+def test_a_graph_definition_refuses_at_compile_and_preflight_naming_the_spec(
+    tmp_path: Path, in_change_set: bool
 ) -> None:
+    """A graph is the stored form, never an authored one (retired kinds included)."""
+
     coordinator, actor = _coordinator(tmp_path)
-    definition = _triage_definition()
-    definition["nodes"][0] = {"kind": kind, "node_id": "retired"}
-    payload = _payload(definition)
+    payload: object = ProcedureAuthoringPayload(
+        definition={"name": "triage", "nodes": [{"kind": "state_tap", "node_id": "retired"}]},
+        activation_policy="drain",
+    )
     if in_change_set:
-        payload = ChangeSetAuthoringPayload(members=(payload,))
+        payload = ChangeSetAuthoringPayload(members=(payload,))  # type: ignore[arg-type]
     compiled = coordinator.compile(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP)
     for result in (compiled, coordinator.preflight(compiled.certificate.intent_id, actor=actor)):
         assert result.verdict == "refused"
         diagnostic = result.frontier.diagnostics[0]
-        assert diagnostic.code == "cruxible.procedure.node_kind_retired"
-        assert diagnostic.offending_element.endswith("definition.nodes[0]")
-        assert repr(kind) in diagnostic.message
-        assert replacement in diagnostic.repairs[0].description
+        assert diagnostic.code == "cruxible.authoring.procedure_authoring_form_retired"
+        assert "ProcedureSpec" in diagnostic.message
 
 
 @pytest.mark.parametrize(
@@ -1419,7 +957,7 @@ def test_a_retired_node_kind_refuses_at_compile_and_preflight_naming_its_replace
             {"claim": "value", "claim_type": "a.b", "subject": "x"},
             "'read:' naming its 'claim_type'",
         ),
-        ({"explicit": {"kind": "state_tap", "node_id": "rows"}}, "'read' naming its 'query'"),
+        ({"explicit": {"kind": "state_tap", "node_id": "rows"}}, "the typed step for the node"),
     ],
     ids=["source", "tap", "claim", "explicit-state-tap"],
 )

@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
+from cruxible_client.contracts.procedures.artifacts import procedure_path
 from cruxible_client.contracts.procedures.extract import ExtractNode
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
@@ -21,7 +21,7 @@ from cruxible_client.contracts.shapes import Contract
 from cruxible_core.exhaust.line_inbox import LineInboxStore
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.support.inbox import NOTE, contract_members, inbox_node
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
+from tests.support.procedures import MAX_WALL_CLOCK, procedure_members
 from tests.test_procedures.test_manual_line_runs import manual_run
 from tests.test_procedures.test_procedure_source_runs import (
     NOW,
@@ -133,7 +133,7 @@ def inbox_world(  # type: ignore[no-untyped-def]
         {
             contract_path(row.name, row.version): render_contract(row),
             **contract_members(NOTE, SEVERITY, KEYED),
-            procedure_path(with_inbox.identity.name): render_procedure(with_inbox),
+            **procedure_members(with_inbox),
             line_spec_path(line.identity.name): render_line_spec(line),
         },
         name="inbox-line",
@@ -433,20 +433,9 @@ def _accept_sdk_input(instance: PlaybillInstance, owner: Any, payload: Any) -> N
 def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Path) -> None:
     """Sequence(..., Extract, PostInbox) lowers to the same graph a Line posts from."""
 
-    from cruxible_client.authoring.inputs import CarriedContractInput
-    from cruxible_client.authoring.procedures import (
-        Call,
-        Extract,
-        Item,
-        Output,
-        PostInbox,
-        Project,
-        Sequence,
-    )
+    from cruxible_client.authoring.procedures import ProcedureLimits, Sequence, field
     from cruxible_client.authoring.sdk import Cruxible
     from cruxible_client.contracts.procedures.artifacts import parse_procedure
-    from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-    from cruxible_client.contracts.procedures.models import ProcedureBudget, ProcedureHardCaps
     from cruxible_client.contracts.shapes import contract_digest, contract_path, render_contract
     from tests.core_support._light_capture_support import record_contract as capture_contract
     from tests.test_procedures.test_procedure_source_runs import _source_request
@@ -458,56 +447,38 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
     _accept_more(
         instance, owner, {contract_path(row.name, row.version): render_contract(row)}, name="row"
     )
-    severity = CarriedContractInput(
-        name="sdk-inbox-output", fields={"severity": PropertySchema(type="string")}
-    )
     plan = Sequence(
-        (
-            Call(
-                SOURCE_ALIAS,
-                slot="read",
-                input=_source_request(instance, root).model_dump(mode="json"),
-                captures={"capture": capture_contract().identity.name},
-            ),
-            Extract(
-                ROWS_ALIAS,
-                capture=Output(SOURCE_ALIAS, "capture"),
-                records="/rows/*",
-                row={
-                    "name": row.name,
-                    "version": row.version,
-                    "digest": contract_digest(row).tagged,
-                },
-                fields={"cve": {"at": "cve"}},
-            ),
-            Project(
-                "result",
-                fields={"severity": Output(SOURCE_ALIAS, "content.text")},
-                contract_out=severity,
-            ),
-            PostInbox(
-                "inbox",
-                contract=f"{row.name}@{row.version}",
-                for_each=Output(ROWS_ALIAS, "records"),
-                fields={"cve": Item("fields.cve")},
-            ),
-        ),
-        name="sdk-inbox",
-        contract_in=CarriedContractInput(name="sdk-inbox-input", fields={}),
-        contract_out=severity,
-        budget=ProcedureBudget(
-            wall_clock=RUN_WALL_CLOCK,
-            max_provider_calls=2,
-            max_capture_bytes=65_536,
-        ),
-        hard_caps=ProcedureHardCaps(
-            max_wall_clock=MAX_WALL_CLOCK,
-            max_provider_calls=4,
-            max_capture_bytes=131_072,
-            max_items=200,
-            max_repeat_attempts=1,
+        "sdk-inbox",
+        input={},
+        output={"severity": "string"},
+        hard_caps=ProcedureLimits(
+            wall_clock=f"PT{MAX_WALL_CLOCK.microseconds // 1_000_000}S",
+            provider_calls=4,
+            capture_bytes=131_072,
+            items=200,
+            repeat_attempts=1,
         ),
         slots=dict(procedure.definition.slots),
+    )
+    source = plan.call(
+        SOURCE_ALIAS,
+        slot="read",
+        input=_source_request(instance, root).model_dump(mode="json"),
+        captures={"capture": capture_contract().identity.name},
+    )
+    rows = plan.extract(
+        ROWS_ALIAS,
+        capture=source["capture"],
+        records="/rows/*",
+        row=f"{row.name}@{row.version}",
+        fields={"cve": {"at": "cve"}},
+    )
+    plan.project("result", fields={"severity": source.ref("content", "text")})
+    plan.inbox(
+        f"{row.name}@{row.version}",
+        for_each=rows["records"],
+        fields={"cve": field("cve")},
+        id="inbox",
     )
     preview = plan.preview()
     assert preview.ready_for_prepare, preview.errors

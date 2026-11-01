@@ -85,10 +85,6 @@ from cruxible_client.contracts.predictions import (
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedures.artifacts import procedure_path
-from cruxible_client.contracts.procedures.source_requests import (
-    ProcedureSourcePreview,
-    ProcedureSourcePreviewRequest,
-)
 from cruxible_client.contracts.provider_installation import (
     ProviderCatalog,
     ProviderInstallRequest,
@@ -2239,17 +2235,6 @@ def playbill_query(
             paths=tuple(sorted(served)),
         )
     return result
-
-
-def playbill_procedure_source_preview(
-    instance_id: str, *, request: ProcedureSourcePreviewRequest
-) -> ProcedureSourcePreview:
-    from cruxible_core.service.procedures.source_preview import service_preview_procedure_source
-
-    check_permission("cruxible_get", instance_id=instance_id)
-    return service_preview_procedure_source(
-        get_playbill_manager().get(instance_id), request=request
-    )
 
 
 def playbill_procedure_readiness(

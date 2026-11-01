@@ -92,7 +92,7 @@ def dependency_pins(
     """Old exact spellings plus new field-typed names, for derived indexes only."""
     pins: list[ArtifactPin | ArtifactRef] = list(getattr(artifact, "pins", ()))
     if not by_name and getattr(artifact, "artifact_format", "") not in {
-        "cruxible-procedure-v3",
+        "cruxible-procedure-v4",
         "cruxible-query-definition-v3",
         "cruxible-trigger-v2",
         "cruxible-line-v8",
@@ -131,7 +131,7 @@ def dependency_pins(
             # Retained source describes provenance. Actual graph fields already
             # contain their governed dependencies.
             for name in type(item).model_fields:
-                if name not in {"source", "owned_contracts", "pins", "bindings"}:
+                if name not in {"source", "pins", "bindings"}:
                     yield from visit(getattr(item, name), name)
         elif isinstance(item, tuple | list):
             for member in item:

@@ -1,4 +1,4 @@
-"""Graph Procedure lowering reads references, independently of unrelated state."""
+"""Procedure spec lowering reads its references, independently of unrelated state."""
 
 from collections import Counter
 from collections.abc import Iterator
@@ -6,7 +6,6 @@ from collections.abc import Iterator
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayload
 from cruxible_client.contracts.documents import render_document
 from cruxible_client.contracts.query.definitions import (
     query_definition_path,
@@ -15,10 +14,10 @@ from cruxible_client.contracts.query.definitions import (
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.authoring.lowering import _lower_procedure
 from cruxible_core.derived.derived_state import SnapshotTree
+from tests.support.procedures import spec_payload
 from tests.test_authoring.test_authoring_history_reuse import _intent
 from tests.test_authoring.test_authoring_procedures import (
     _change_set_query,
-    _list_contract_payload,
     _triage_definition,
     _world_holding_a_document,
 )
@@ -48,8 +47,10 @@ class ObservedTree(SnapshotTree):
             yield path
 
 
-@pytest.mark.parametrize("candidate", [False, True])
-def test_graph_procedure_reference_work_is_flat_at_ten_times_unrelated_state(tmp_path, candidate):
+@pytest.mark.parametrize("candidate", [True])
+def test_spec_procedure_reference_work_is_flat_at_ten_times_unrelated_state(tmp_path, candidate):
+    """The spec names its Query; lowering resolves that one name, never a scan."""
+
     from cruxible_client.contracts.claims import claim_path, render_claim
     from cruxible_client.contracts.documents import parse_document
 
@@ -60,19 +61,7 @@ def test_graph_procedure_reference_work_is_flat_at_ten_times_unrelated_state(tmp
     document = parse_document(original["documents/design.json"], path="documents/design.json")
     query = _change_set_query()
     query_path = query_definition_path(query.identity.name)
-    reference = {
-        "tag": (
-            "playbill-authoring-candidate-reference-v1"
-            if candidate
-            else "playbill-authoring-artifact-reference-v1"
-        ),
-        "role": "query",
-        "target": query.identity.model_dump(mode="json"),
-        "resolution": "candidate_in_change_set" if candidate else "accepted_at_intent_base",
-    }
-    payload: ProcedureAuthoringPayload = _list_contract_payload().model_copy(
-        update={"definition": _triage_definition(query=reference)}
-    )
+    payload = spec_payload(_triage_definition(query=query.identity.name))
     intent = _intent().model_copy(update={"payload": payload})
     measurements = []
     lowered_bytes = []
@@ -99,23 +88,16 @@ def test_graph_procedure_reference_work_is_flat_at_ten_times_unrelated_state(tmp
             unrelated = document.model_copy(update={"identity": f"document:unrelated-{index}"})
             blobs[f"documents/unrelated-{index}.json"] = render_document(unrelated)
         tree = ObservedTree(blobs)
-        accepted = ObservedTree(original) if candidate else tree
         with counting(instance.root) as window:
             lowered = _lower_procedure(
                 instance,
                 intent=intent,
                 base=base,
                 base_tree=tree,
-                accepted_reference_tree=accepted,
-                candidate_identities=frozenset({query.identity.qualified})
-                if candidate
-                else frozenset(),
-                candidate_paths=(query_path,) if candidate else (),
+                candidate_paths=(query_path,),
             )
         assert not window.unexplained
-        measurements.append(
-            dict(window.counts + tree.work + (accepted.work if candidate else Counter()))
-        )
+        measurements.append(dict(window.counts + tree.work))
         lowered_bytes.append(lowered.proposed_tree["procedures/triage.json"])
     print("Procedure reference work at 10/100 unrelated Claims, Subjects, Documents:", measurements)
     assert lowered_bytes[0] == lowered_bytes[1]

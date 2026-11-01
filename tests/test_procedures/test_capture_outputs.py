@@ -30,6 +30,7 @@ from cruxible_client.contracts.procedures.capture_outputs import (
     trigger_capture_output,
 )
 from tests.support.operation_world import Invoker
+from tests.support.procedures import refs
 from tests.test_procedures.test_b2_operations import run_line
 
 LINE_NAME = "test.paired-line"
@@ -144,32 +145,34 @@ def _paired_world(
     author_procedure(
         instance,
         ProcedureSpec.model_validate(
-            {
-                "procedure": "test.paired",
-                "input": {},
-                "output": {name: "string" for name in returned},
-                "slots": {
-                    "pair": {
-                        "in": "demo.pair.request@1",
-                        "out": "demo.pair.result@1",
-                        "effect": "external_read",
-                    }
-                },
-                "steps": [
-                    {
-                        "call": "doc",
-                        "captures": {"left": "test.events-v1", "right": "test.other-v1"},
-                        "slot": "pair",
-                        "input": {"query": "orders"},
+            refs(
+                {
+                    "procedure": "test.paired",
+                    "input": {},
+                    "output": {name: result.fields[name].spelling for name in returned},
+                    "slots": {
+                        "pair": {
+                            "in": "demo.pair.request@1",
+                            "out": "demo.pair.result@1",
+                            "effect": "external_read",
+                        }
                     },
-                    {
-                        "project": "out",
-                        "fields": {name: f"$doc.{name}" for name in returned},
-                    },
-                ],
-                "returns": "out",
-                "budget": {"provider_calls": 1, "capture_bytes": 65536},
-            }
+                    "steps": [
+                        {
+                            "call": "doc",
+                            "captures": {"left": "test.events-v1", "right": "test.other-v1"},
+                            "slot": "pair",
+                            "input": {"query": "orders"},
+                        },
+                        {
+                            "project": "out",
+                            "fields": {name: f"$doc.{name}" for name in returned},
+                        },
+                    ],
+                    "returns": "out",
+                    "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
+                }
+            )
         ),
     )
     line: dict[str, Any] = {

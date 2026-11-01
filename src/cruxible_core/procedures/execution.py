@@ -13,7 +13,19 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable, Final, Literal, NoReturn, Protocol, cast
 
 from cruxible_client.contracts.captures import capture_retention_policy, parse_capture_envelope
-from cruxible_client.contracts.shapes import Contract, ContractRef
+from cruxible_client.contracts.refs import Ref
+from cruxible_client.contracts.shapes import (
+    AllOf,
+    AnyOf,
+    Contract,
+    ContractRef,
+    CountOperand,
+    LiteralOperand,
+    Membership,
+    Not,
+    Predicate,
+    Presence,
+)
 
 if TYPE_CHECKING:
     from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
@@ -80,11 +92,9 @@ from cruxible_client.contracts.procedures.models import (
     CaptureEgressNode,
     ExtractNode,
     GuardNode,
-    GuardPredicate,
     HaltNode,
     InboxEgressNode,
     InvokeNode,
-    PredicateOperand,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
@@ -98,9 +108,12 @@ from cruxible_client.contracts.procedures.models import (
     SettleChangeSetNode,
     TransformNode,
     authority_for_rung,
+    budget_within_caps,
+    caps_budget,
     is_terminal_node,
     iter_references,
     iter_role_references,
+    predicate_step_aliases,
 )
 from cruxible_client.contracts.procedures.reads import effective_read_rows
 from cruxible_client.contracts.procedures.results import (
@@ -149,7 +162,7 @@ from cruxible_client.contracts.provider_operations import (
 )
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.resolution_contracts import InvestigationBinding
-from cruxible_client.contracts.shapes import EnumResolver
+from cruxible_client.contracts.shapes import EnumResolver, KeyCanonicalizer
 from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_client.contracts.workspace_file import (
@@ -263,7 +276,6 @@ from cruxible_core.procedures.terminal_dependencies import (
 )
 from cruxible_core.procedures.transforms import (
     TransformInputInvalid,
-    TransformItemBudgetExceeded,
     apply_closed_transform,
 )
 from cruxible_core.providers.provider_local_runtime import (
@@ -304,8 +316,8 @@ ProcedureRunStatusV1 = Literal[
 PROCEDURE_SEMANTIC_RESULT_DOMAIN = "playbill-procedure-semantic-result-v1"
 #: The one admitted-run family: its admission tag is also its binding-digest
 #: domain, and its replay key hashes one explicit semantic projection.
-PROCEDURE_RUN_ADMISSION_TAG: Final = "playbill-procedure-run-admission-v10"
-PROCEDURE_SEMANTIC_REPLAY_KEY_DOMAIN: Final = "playbill-procedure-replay-key-v10"
+PROCEDURE_RUN_ADMISSION_TAG: Final = "playbill-procedure-run-admission-v11"
+PROCEDURE_SEMANTIC_REPLAY_KEY_DOMAIN: Final = "playbill-procedure-replay-key-v11"
 PROCEDURE_INPUT_PROVENANCE_DOMAIN = "playbill-procedure-replay-input-provenance-v1"
 PROCEDURE_LINE_RUN_ID_DOMAIN = "playbill-procedure-line-run-id-v1"
 PROCEDURE_RUN_ID_V2_DOMAIN = "playbill-procedure-run-id-v2"
@@ -501,7 +513,7 @@ class ProcedureRunAdmission(_StrictExecutionModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
-    tag: Literal["playbill-procedure-run-admission-v10"] = PROCEDURE_RUN_ADMISSION_TAG
+    tag: Literal["playbill-procedure-run-admission-v11"] = PROCEDURE_RUN_ADMISSION_TAG
     instance_id: str
     run_id: str
     attempt: int = Field(ge=1)
@@ -518,6 +530,9 @@ class ProcedureRunAdmission(_StrictExecutionModel):
     node_pin_sets: tuple[ProcedureNodePinSetV1, ...]
     pin_set_digest: str
     invocation_input: object
+    #: The run's effective parameters: the Line's (or a direct run's) values
+    #: over the Procedure's ``parameter_defaults``.
+    parameters: object
     accepted_state_inputs: tuple[AcceptedStateRunInput, ...]
     landed_capture_inputs: tuple[LandedCaptureRunInputV1, ...] = ()
     exhaust_inputs: tuple[ExhaustRunInputV1, ...] = ()
@@ -552,7 +567,7 @@ class ProcedureRunAdmission(_StrictExecutionModel):
     semantic_replay_key_digest: str
     admission_binding_digest: str
 
-    @field_validator("invocation_input", mode="before")
+    @field_validator("invocation_input", "parameters", mode="before")
     @classmethod
     def _invocation_input(cls, value: object) -> object:
         return normalize_canonical(value)
@@ -1080,6 +1095,22 @@ class StateTapReadResultV1(_StrictExecutionModel):
     rows: int = Field(default=0, ge=0, exclude=True)
 
 
+class QueryContractViolated(ExecutionError):
+    """A Procedure read whose parameters or a row break the Query's pinned Contract."""
+
+    def __init__(
+        self, *, direction: Literal["parameters", "row"], details: Mapping[str, object]
+    ) -> None:
+        self.direction = direction
+        self.details: dict[str, object] = dict(details)
+        self.reason = (
+            "the read's parameters do not satisfy the Query's parameter Contract"
+            if direction == "parameters"
+            else "a row the read returned does not satisfy the Query's row Contract"
+        )
+        super().__init__(f"query_contract_violated: {self.reason}")
+
+
 class ReadCeilingExceeded(ExecutionError):
     """A Procedure read that the run's read ceiling would clip: refused, never truncated."""
 
@@ -1155,8 +1186,6 @@ class ContractValidatorProtocol(Protocol):
         direction: Literal["input", "output"],
         max_items: int,
     ) -> ValidatedProcedureContract: ...
-
-    def unique_list_field_path(self, contract: ArtifactPin) -> str | None: ...
 
 
 class ProcedureActivationAuthorityProtocol(Protocol):
@@ -1520,6 +1549,7 @@ def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmission) -> st
             "procedure_identity": admission.procedure_identity.model_dump(mode="json"),
             "procedure_artifact_digest": admission.procedure_artifact_digest,
             "invocation_input": admission.invocation_input,
+            "parameters": admission.parameters,
             "bound_coordinate": admission.bound_coordinate.model_dump(mode="json"),
             "evaluation_time": format_datetime(admission.occurrence_evaluation_time),
             "validated_pins": pins,
@@ -1585,6 +1615,7 @@ def seal_procedure_run_admission(
             **cast(dict[str, Any], fields),
             # Exactly the normalized values validation hashes again.
             "invocation_input": normalize_canonical(fields.get("invocation_input")),
+            "parameters": normalize_canonical(fields.get("parameters")),
             "admitted_at": ensure_utc(cast(datetime, fields["admitted_at"])),
             "occurrence_evaluation_time": ensure_utc(
                 cast(datetime, fields["occurrence_evaluation_time"])
@@ -1722,6 +1753,7 @@ def state_tap_parameters(
     node: ReadNode,
     *,
     invocation_input: object,
+    parameters: object,
     values: dict[str, CanonicalValue],
 ) -> CanonicalValue:
     if node.reads_claims:
@@ -1732,10 +1764,14 @@ def state_tap_parameters(
                 "cardinality": node.cardinality,
             },
             input_payload=normalize_canonical(invocation_input),
+            parameters=normalize_canonical(parameters),
             outputs=values,
         )
     return _resolve_template(
-        node.parameters, input_payload=normalize_canonical(invocation_input), outputs=values
+        node.parameters,
+        input_payload=normalize_canonical(invocation_input),
+        parameters=normalize_canonical(parameters),
+        outputs=values,
     )
 
 
@@ -1747,6 +1783,13 @@ def state_tap_view(node: ReadNode, value: object) -> CanonicalValue:
         result = ClaimQueryResult.model_validate(value)
         return normalize_canonical(
             {
+                # Each row as a plain record of its present projected fields: the
+                # shape the Query's row Contract types (absent and conflicted
+                # fields are left out; the whole result keeps their states).
+                "rows": [
+                    {item.name: item.value for item in row.fields if item.state == "present"}
+                    for row in result.rows
+                ],
                 "result": value,
                 "coordinate": result.coordinate.model_dump(mode="json"),
                 "definition_path": result.definition_path,
@@ -1769,14 +1812,15 @@ def bind_accepted_state_materials(
     state_reader: StateTapReaderProtocol,
     bodies: ContentAddressedBodyStore,
     read_ceiling: int,
-    invocation_input: object = None,
+    invocation_input: object,
+    parameters: object,
 ) -> tuple[AcceptedStateRunMaterial, ...]:
     """Read and retain every accepted-state read this run will observe.
 
     Every run lane reads the accepted-state plane the SAME way, so this is the
     one place a read becomes admitted material. ``read_ceiling`` is the rows
     the run's reads may return in all, as its admission budget states it (its
-    Line's and Mandates', or what an invoking parent has left): Query reads
+    Line's, or what an invoking parent has left): Query reads
     and Claim reads alike draw it down, and the read that would pass it
     refuses ``read_ceiling_exceeded``.
     """
@@ -1793,14 +1837,16 @@ def bind_accepted_state_materials(
         binding = node.claim_type if node.claim_type is not None else node.query
         assert binding is not None  # a read names exactly one selection
         query = resolved_pin(accepted, binding)
-        parameters = state_tap_parameters(node, invocation_input=invocation_input, values=values)
+        read_parameters = state_tap_parameters(
+            node, invocation_input=invocation_input, parameters=parameters, values=values
+        )
         try:
             if remaining < 1:
                 raise ReadCeilingExceeded(clipped=("max_results",), candidates=None, ceiling=0)
             if node.reads_claims:
-                assert isinstance(parameters, dict)
+                assert isinstance(read_parameters, dict)
                 assert node.subject_kind is not None
-                identity = parameters["subject_id"]
+                identity = read_parameters["subject_id"]
                 if not isinstance(identity, str):
                     raise ExecutionError("Subject id must resolve to a string")
                 read = state_reader.read_accepted_claim(
@@ -1815,11 +1861,17 @@ def bind_accepted_state_materials(
             else:
                 read = state_reader.read_accepted_state(
                     query=query,
-                    parameters=parameters,
+                    parameters=read_parameters,
                     coordinate=accepted_coordinate,
                     ceiling=remaining,
                 )
             remaining -= read.rows
+        except QueryContractViolated as exc:
+            raise ProcedureBoundaryRefused(
+                "query_contract_violated",
+                exc.reason,
+                details={"node": node.node_id, "direction": exc.direction, **exc.details},
+            ) from exc
         except ReadCeilingExceeded as exc:
             raise ProcedureBoundaryRefused(
                 "read_ceiling_exceeded",
@@ -1844,7 +1896,7 @@ def bind_accepted_state_materials(
         common = dict(
             input_name=node.as_,
             read_coordinate=accepted_coordinate,
-            parameters_digest=run_value_digest("state-parameters", parameters),
+            parameters_digest=run_value_digest("state-parameters", read_parameters),
             result_digest=run_value_digest("state-result", value),
             effective_query_budgets=read.effective_budgets,
             material_body_digest=retained.digest,
@@ -1879,14 +1931,20 @@ def prepare_direct_procedure_run(
     admitted_at: datetime,
     attempt: int = 1,
     runtime_policy: ProcedureRuntimePolicy | None = None,
+    budget: ProcedureBudget | None = None,
+    parameters: Mapping[str, object] | None = None,
 ) -> PreparedProcedureRun:
     """Bind exact accepted state and all pins for an actor's pure direct run.
 
     A pure run plans no Provider occurrence, so it binds no acquisition plan,
     Provider binding or deployment; its admission material manifest is empty.
+    ``budget`` is the run's ephemeral Line budget (default: the hard caps), and
+    ``parameters`` its parameter values over the Procedure's defaults.
     """
 
     procedure = accepted.procedure
+    effective_parameters = procedure.definition.effective_parameters(parameters or {})
+    budget = caps_budget(procedure.definition.hard_caps) if budget is None else budget
     from cruxible_core.procedures.reference_binding import authored_procedure
 
     if procedure_artifact_digest(authored_procedure(accepted)).tagged != accepted.artifact_digest:
@@ -1898,10 +1956,11 @@ def prepare_direct_procedure_run(
         state_reader=state_reader,
         bodies=bodies,
         read_ceiling=effective_read_rows(
-            procedure.definition.budget.max_read_rows,
+            budget.max_read_rows,
             procedure.definition.hard_caps.max_read_rows,
         ),
         invocation_input=invocation_input,
+        parameters=effective_parameters,
     )
     node_pin_sets = _node_pin_sets(accepted)
     admitted_at = ensure_utc(admitted_at)
@@ -1922,15 +1981,16 @@ def prepare_direct_procedure_run(
             "node_pin_sets": node_pin_sets,
             "pin_set_digest": procedure_pin_set_digest(procedure.pins, node_pin_sets),
             "invocation_input": invocation_input,
+            "parameters": effective_parameters,
             "accepted_state_inputs": tuple(item.input for item in materials),
             "resource_budget": (
                 resolve_procedure_resource_budget(
-                    procedure.definition.budget, procedure.definition.hard_caps, runtime_policy
+                    budget, procedure.definition.hard_caps, runtime_policy
                 )
                 if runtime_policy is not None
                 else None
             ),
-            "budget": procedure.definition.budget,
+            "budget": budget,
             "hard_caps": procedure.definition.hard_caps,
             "actor_context": actor_context,
             "invocation_origin": "actor",
@@ -2223,6 +2283,7 @@ class ProcedureExecutor:
         enum_resolver: EnumResolver | None = None,
         contract_resolver: Callable[[ContractRef], Contract | None] | None = None,
         completeness_probe: CompletenessProbe | None = None,
+        key_rules: KeyCanonicalizer | None = None,
     ) -> None:
         self.journal = journal
         self.bodies = bodies
@@ -2262,6 +2323,9 @@ class ProcedureExecutor:
         # Resolves an extract's row Contract (and the Contracts it nests) at the
         # admitted coordinate, by name, version and pinned digest.
         self.contract_resolver = contract_resolver
+        # R12/D4: the SubjectKind identity rules at the admitted (immutable)
+        # coordinate; every key<K> / key_part<K:p> value reads through them.
+        self.key_rules = key_rules
         # A sink harness told whether each sink's value is complete (the law's
         # real sinks belong to the Claims terminal).
         self.completeness_probe = completeness_probe
@@ -2394,7 +2458,7 @@ class ProcedureExecutor:
         state = _RunState(
             outputs={},
             input_payload=normalize_canonical(admission.invocation_input),
-            parameters={},
+            parameters=normalize_canonical(admission.parameters),
         )
         status: ProcedureRunStatusV1
         output: CanonicalValue | None = None
@@ -2420,6 +2484,25 @@ class ProcedureExecutor:
                 max_items=_effective_max_items(admission),
                 observe_items=state.observe_items,
             )
+            # The effective parameters (Line values over the defaults) are
+            # checked against the params Contract after the defaults apply.
+            parameter_contract = accepted.procedure.definition.parameter_contract
+            if parameter_contract is not None:
+                state.parameters = _validate_node_contract(
+                    self.contract_validator,
+                    contract=self._pin(parameter_contract, label="Procedure parameter_contract"),
+                    payload=state.parameters,
+                    direction="input",
+                    node_id="procedure",
+                    max_items=_effective_max_items(admission),
+                    observe_items=state.observe_items,
+                )
+            elif state.parameters != {}:
+                raise _RunRefusal(
+                    "contract_input_refused",
+                    "The Procedure declares no parameters; the run supplied some.",
+                    node_id="procedure",
+                )
             output = self._walk(
                 accepted,
                 admission=admission,
@@ -2437,6 +2520,7 @@ class ProcedureExecutor:
                 "provider_replay_receipt_required",
                 # An invoked child's read past what its parent left refuses.
                 "read_ceiling_exceeded",
+                "query_contract_violated",
             }:
                 status = "refused"
                 refusal = ProcedureRunRefusalV1(
@@ -2720,7 +2804,7 @@ class ProcedureExecutor:
         state = _RunState(
             outputs={},
             input_payload=normalize_canonical(admission.invocation_input),
-            parameters={},
+            parameters=normalize_canonical(admission.parameters),
             outcomes={item.input_name: item for item in prepared.acquisition_outcomes},
             acquisition_plan=prepared.acquisition_plan,
             read_rows=sum(item.rows for item in prepared.accepted_state_materials),
@@ -2858,21 +2942,10 @@ class ProcedureExecutor:
                 "pin_binding_mismatch",
                 "Line run pins must close the accepted Procedure pins exactly.",
             )
-        if admission.invocation_origin == "actor" and admission.parent_binding is None:
-            if procedure.definition.budget != admission.budget:
-                raise ExecutionError("Procedure admission and accepted artifact differ")
-        else:
-            caps = procedure.definition.hard_caps
-            if (
-                admission.budget.wall_clock.microseconds > caps.max_wall_clock.microseconds
-                or admission.budget.max_provider_calls > caps.max_provider_calls
-                or admission.budget.max_capture_bytes > caps.max_capture_bytes
-                or (
-                    admission.budget.max_items is not None
-                    and admission.budget.max_items > caps.max_items
-                )
-            ):
-                raise ExecutionError("Line run budget exceeds the Procedure hard caps")
+        # Every run's operating budget is its Line's (a direct run's ephemeral
+        # Line spec's): it never exceeds the Procedure's hard caps.
+        if not budget_within_caps(admission.budget, procedure.definition.hard_caps):
+            raise ExecutionError("the run budget exceeds the Procedure hard caps")
         if _node_pin_sets(accepted) != admission.node_pin_sets:
             raise ProcedureBoundaryRefused(
                 "pin_binding_mismatch",
@@ -2909,7 +2982,10 @@ class ProcedureExecutor:
                 run_value_digest(
                     "state-parameters",
                     state_tap_parameters(
-                        node, invocation_input=admission.invocation_input, values=retained_values
+                        node,
+                        invocation_input=admission.invocation_input,
+                        parameters=admission.parameters,
+                        values=retained_values,
                     ),
                 ),
             )
@@ -3200,6 +3276,7 @@ class ProcedureExecutor:
                             node.result,
                             node_id=node.node_id,
                             input_payload=state.input_payload,
+                            parameters=state.parameters,
                             outputs=state.outputs,
                         )
                         state.return_tokens = _base_tokens(
@@ -3306,7 +3383,7 @@ class ProcedureExecutor:
             )
             return None
         if isinstance(node, TransformNode):
-            self._run_closed_transform(node, admission=admission, state=state)
+            self._run_closed_transform(node, state=state)
             return None
         if isinstance(node, ProjectNode | SelectNode):
             if isinstance(node, SelectNode):
@@ -3327,19 +3404,13 @@ class ProcedureExecutor:
                     fields,
                     node_id=node.node_id,
                     input_payload=state.input_payload,
+                    parameters=state.parameters,
                     outputs=state.outputs,
                 )
             )
-            contract = self._pin(node.contract_out, label=f"project {node.node_id!r} output")
-            state.outputs[node.as_] = _validate_node_contract(
-                self.contract_validator,
-                contract=contract,
-                payload=value,
-                direction="output",
-                node_id=node.node_id,
-                max_items=_effective_max_items(admission),
-                observe_items=state.observe_items,
-            )
+            # An intermediate value is typed as it flows: a project or select pins
+            # no Contract, and the run's item budget is enforced at boundaries.
+            state.outputs[node.as_] = normalize_canonical(value)
             provenance_fields = fields
             state.provenance[node.as_] = _projected_provenance(
                 provenance_fields,
@@ -3365,7 +3436,7 @@ class ProcedureExecutor:
             state.control = (
                 state.control
                 | _node_policy_tokens(node, self.references)
-                | state.alias_tokens(frozenset(node.predicate.step_aliases()))
+                | state.alias_tokens(frozenset(predicate_step_aliases(node.predicate)))
             )
             self._append_event(
                 admission,
@@ -3525,6 +3596,7 @@ class ProcedureExecutor:
             _resolve_template(
                 node.input,
                 input_payload=state.input_payload,
+                parameters=state.parameters,
                 outputs=state.outputs,
             )
         )
@@ -3961,6 +4033,7 @@ class ProcedureExecutor:
                 node.only_keys,
                 node_id=node.node_id,
                 input_payload=state.input_payload,
+                parameters=state.parameters,
                 outputs=state.outputs,
             )
             if not isinstance(resolved, list) or not all(
@@ -3982,6 +4055,7 @@ class ProcedureExecutor:
                 resolve=self.contract_resolver,
                 enums=self.enum_resolver,
                 only_keys=only_keys,
+                keys=self.key_rules,
             )
         except ExtractRefused as exc:
             raise _RunRefusal(
@@ -4011,7 +4085,6 @@ class ProcedureExecutor:
         spec: object,
         *,
         outputs: dict[str, CanonicalValue],
-        admission: ProcedureRunAdmission,
         state: _RunState,
     ) -> tuple[CanonicalValue, bool]:
         """One closed transform over ``outputs``: its value, and whether it is complete."""
@@ -4021,6 +4094,7 @@ class ProcedureExecutor:
                 reference,
                 node_id=node_id,
                 input_payload=state.input_payload,
+                parameters=state.parameters,
                 outputs=outputs,
             )
 
@@ -4031,17 +4105,8 @@ class ProcedureExecutor:
                 resolve,
                 parameters=state.parameters if isinstance(state.parameters, dict) else None,
                 enums=self.enum_resolver,
-                max_items=_effective_max_items(admission),
+                keys=self.key_rules,
             )
-        except TransformItemBudgetExceeded as exc:
-            raise _budget_refusal(
-                budget_kind="max_items",
-                limit=exc.limit,
-                observed=exc.observed,
-                node_id=node_id,
-                boundary=f"transform:{node_id}",
-                field_path="records",
-            ) from exc
         except TransformInputInvalid as exc:
             raise _RunRefusal(
                 "contract_input_refused",
@@ -4053,7 +4118,6 @@ class ProcedureExecutor:
         self,
         node: TransformNode,
         *,
-        admission: ProcedureRunAdmission,
         state: _RunState,
     ) -> None:
         """One closed transform over records: typed, three-valued, completeness carried."""
@@ -4063,7 +4127,6 @@ class ProcedureExecutor:
             node.transform_kind,
             node.spec,
             outputs=state.outputs,
-            admission=admission,
             state=state,
         )
         aliases = _referenced_aliases(node.spec)
@@ -4369,6 +4432,14 @@ class ProcedureExecutor:
             node.input,
             node_id=node.node_id,
             input_payload=state.input_payload,
+            parameters=state.parameters,
+            outputs=state.outputs,
+        )
+        child_parameters = _resolve_node_template(
+            node.parameters,
+            node_id=node.node_id,
+            input_payload=state.input_payload,
+            parameters=state.parameters,
             outputs=state.outputs,
         )
         self._append_event(
@@ -4385,7 +4456,7 @@ class ProcedureExecutor:
                 "remaining_budget": remaining.model_dump(mode="json"),
             },
         )
-        result = self.nested_runner.run(context, value)
+        result = self.nested_runner.run(context, value, child_parameters)
         child_records = [
             row
             for row in self.journal.all_records(result.receipt.stream, result.receipt.partition_id)
@@ -4524,6 +4595,7 @@ class ProcedureExecutor:
             contract=contract,
             resolve=self.contract_resolver or (lambda _ref: None),
             enums=self.enum_resolver,
+            keys=self.key_rules,
         )
 
     def _run_terminal(
@@ -4990,6 +5062,20 @@ class ProcedureExecutor:
             values, item_tokens = self._inbox_items(node, state=state)
         else:
             values, item_tokens = _terminal_items(_terminal_item_templates(node), state=state)
+        # Check the selected rows before inbox clipping, dependency journaling,
+        # proposal lowering or delivery. A scalar return cannot hide this fan-out.
+        boundary = f"terminal:{node.node_id}"
+        state.observe_items(len(values), boundary, "items")
+        item_limit = _effective_max_items(admission)
+        if len(values) > item_limit:
+            raise _budget_refusal(
+                budget_kind="max_items",
+                limit=item_limit,
+                observed=len(values),
+                node_id=node.node_id,
+                boundary=boundary,
+                field_path="items",
+            )
         if isinstance(node, ProposeChangeSetNode):
             from cruxible_core.procedures.source_candidates import bind_source_candidate
 
@@ -5155,6 +5241,7 @@ class ProcedureExecutor:
                 enum_members=self.enum_resolver,
                 max_items=_effective_max_items(admission),
                 observe_items=lambda count, path: state.observe_items(count, boundary, path),
+                keys=self.key_rules,
             )
         except OperationItemBudgetExceeded as exc:
             state.observe_items(exc.observed, boundary, exc.field_path)
@@ -5192,6 +5279,7 @@ class ProcedureExecutor:
                     contract,
                     resolve=resolve,
                     enum_members=self.enum_resolver,
+                    keys=self.key_rules,
                 )
             except OperationValueRefused as exc:
                 return exc.problems or (str(exc),)
@@ -5626,6 +5714,7 @@ class ProcedureExecutor:
             _resolve_template(
                 node.input,
                 input_payload=state.input_payload,
+                parameters=state.parameters,
                 outputs=state.outputs,
             )
         )
@@ -5799,7 +5888,6 @@ class ProcedureExecutor:
                 body.transform_kind,
                 body.spec,
                 outputs=combined,
-                admission=admission,
                 state=state,
             )
             local_outputs[body.as_] = value
@@ -5811,6 +5899,7 @@ class ProcedureExecutor:
             body.spec,
             node_id=body.node_id,
             input_payload=state.input_payload,
+            parameters=state.parameters,
             outputs=combined,
         )
         if body.operation == "call":
@@ -6156,22 +6245,28 @@ def _node_reads(node: object) -> tuple[Read, ...]:
     return tuple(reads)
 
 
-def _predicate_reads(predicate: GuardPredicate) -> tuple[Read, ...]:
-    """The reads a guard predicate's step operands make; a count reads no field."""
+def _predicate_reads(predicate: Predicate) -> tuple[Read, ...]:
+    """The reads a run predicate's step references make; a count reads no field."""
 
     found: list[Read] = []
-    pending = [predicate]
+    pending: list[Predicate] = [predicate]
     while pending:
         item = pending.pop()
-        for operand in (item.left, item.right):
-            if operand is None or operand.alias is None:
-                continue
-            reads_content = operand.kind in {"step", "exists"}
-            found.append((operand.alias, tuple(operand.path) if reads_content else None))
-        pending.extend(item.all_of or ())
-        pending.extend(item.any_of or ())
-        if item.not_of is not None:
-            pending.append(item.not_of)
+        if isinstance(item, AllOf | AnyOf):
+            pending.extend(item.of)
+            continue
+        if isinstance(item, Not):
+            pending.append(item.of)
+            continue
+        if isinstance(item, Presence):
+            operands: tuple[object, ...] = (item.of,)
+        else:
+            operands = (item.left, item.right)
+        for operand in operands:
+            if isinstance(operand, CountOperand) and operand.count.step is not None:
+                found.append((operand.count.step, None))
+            elif isinstance(operand, Ref) and operand.step is not None:
+                found.append((operand.step, tuple(operand.path)))
     return tuple(found)
 
 
@@ -6316,7 +6411,10 @@ def _fan_out_list(
 
     try:
         resolved = _resolve_template(
-            template, input_payload=state.input_payload, outputs=state.outputs
+            template,
+            input_payload=state.input_payload,
+            parameters=state.parameters,
+            outputs=state.outputs,
         )
     except ExecutionError as exc:
         raise _RunRefusal(
@@ -6362,6 +6460,7 @@ def _inbox_items(
     contract: Contract,
     resolve: Callable[[ContractRef], Contract | None],
     enums: EnumResolver | None = None,
+    keys: KeyCanonicalizer | None = None,
 ) -> tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]:
     """The typed items a post_inbox terminal posts, each with its own evidence.
 
@@ -6405,6 +6504,7 @@ def _inbox_items(
                 resolved = _resolve_template(
                     template,
                     input_payload=state.input_payload,
+                    parameters=state.parameters,
                     outputs=state.outputs,
                     item=element,
                 )
@@ -6430,6 +6530,7 @@ def _inbox_items(
                 contract,
                 resolve=resolve,
                 enum_members=enums,
+                keys=keys,
             )
         except OperationValueRefused as exc:
             raise _RunRefusal(
@@ -6585,6 +6686,7 @@ def _terminal_items(
     resolved = _resolve_template(
         declared,
         input_payload=state.input_payload,
+        parameters=state.parameters,
         outputs=state.outputs,
     )
     if isinstance(declared, list | tuple):
@@ -6642,6 +6744,7 @@ def _resolve_reference(
     value: str,
     *,
     input_payload: CanonicalValue,
+    parameters: CanonicalValue,
     outputs: dict[str, CanonicalValue],
     item: CanonicalValue | None = None,
 ) -> object:
@@ -6649,6 +6752,9 @@ def _resolve_reference(
         return input_payload
     if value.startswith("$input."):
         return _resolve_path(input_payload, tuple(value[7:].split(".")), reference=value)
+    if value.startswith("$params."):
+        current = parameters if isinstance(parameters, dict) else {}
+        return _resolve_path(current, tuple(value[8:].split(".")), reference=value)
     if value.startswith("$steps."):
         parts = tuple(value[7:].split("."))
         alias = parts[0]
@@ -6670,6 +6776,7 @@ def _resolve_template(
     value: object,
     *,
     input_payload: CanonicalValue,
+    parameters: CanonicalValue,
     outputs: dict[str, CanonicalValue],
     item: CanonicalValue | None = None,
     preserve_item_references: bool = False,
@@ -6681,6 +6788,7 @@ def _resolve_template(
             _resolve_reference(
                 value,
                 input_payload=input_payload,
+                parameters=parameters,
                 outputs=outputs,
                 item=item,
             )
@@ -6690,6 +6798,7 @@ def _resolve_template(
             _resolve_template(
                 member,
                 input_payload=input_payload,
+                parameters=parameters,
                 outputs=outputs,
                 item=item,
                 preserve_item_references=preserve_item_references,
@@ -6701,6 +6810,7 @@ def _resolve_template(
             key: _resolve_template(
                 member,
                 input_payload=input_payload,
+                parameters=parameters,
                 outputs=outputs,
                 item=item,
                 preserve_item_references=preserve_item_references,
@@ -6715,10 +6825,13 @@ def _resolve_node_template(
     *,
     node_id: str,
     input_payload: CanonicalValue,
+    parameters: CanonicalValue,
     outputs: dict[str, CanonicalValue],
 ) -> CanonicalValue:
     try:
-        return _resolve_template(value, input_payload=input_payload, outputs=outputs)
+        return _resolve_template(
+            value, input_payload=input_payload, parameters=parameters, outputs=outputs
+        )
     except ExecutionError as exc:
         raise _RunRefusal(
             "runtime_reference_unresolved",
@@ -6877,46 +6990,55 @@ def _check_return_budget(
         )
 
 
+_NOT_RESOLVED = object()
+
+
+def _ref_value(
+    ref: Ref,
+    *,
+    input_payload: CanonicalValue,
+    outputs: dict[str, CanonicalValue],
+    parameters: CanonicalValue,
+) -> object:
+    """The run value a reference names, or ``_NOT_RESOLVED`` when it names none."""
+
+    if ref.root == "input":
+        current: object = input_payload
+    elif ref.root == "param":
+        current = parameters if isinstance(parameters, dict) else {}
+    elif ref.root == "step":
+        if ref.step not in outputs:
+            return _NOT_RESOLVED
+        current = outputs[str(ref.step)]
+    else:
+        return _NOT_RESOLVED
+    for member in ref.path:
+        if isinstance(current, dict) and member in current:
+            current = current[member]
+        elif isinstance(current, list) and member.isdigit() and int(member) < len(current):
+            current = current[int(member)]
+        else:
+            return _NOT_RESOLVED
+    return current
+
+
 def _operand_value(
-    operand: PredicateOperand,
+    operand: object,
     *,
     input_payload: CanonicalValue,
     outputs: dict[str, CanonicalValue],
     parameters: CanonicalValue,
 ) -> CanonicalValue:
-    if operand.kind == "literal":
-        return normalize_canonical(operand.value)
-    if operand.kind == "parameter":
-        if not isinstance(parameters, dict) or operand.parameter_name not in parameters:
-            raise ExecutionError("guard parameter is absent")
-        return normalize_canonical(parameters[operand.parameter_name])
-    if operand.kind in {"input", "exists"} and operand.input_name is not None:
-        if not isinstance(input_payload, dict) or operand.input_name not in input_payload:
-            return False if operand.kind == "exists" else _missing_operand(operand.input_name)
-        value = _resolve_path(
-            input_payload[operand.input_name],
-            operand.path,
-            reference=operand.input_name,
-        )
-        return True if operand.kind == "exists" else normalize_canonical(value)
-    if operand.alias is None or operand.alias not in outputs:
-        return False if operand.kind == "exists" else _missing_operand(str(operand.alias))
-    value = outputs[operand.alias]
-    if operand.path:
-        value = normalize_canonical(
-            _resolve_path(value, operand.path, reference=f"$steps.{operand.alias}")
-        )
-    if operand.kind == "exists":
-        return True
-    if operand.kind == "count":
-        return _item_count(value)
-    if operand.kind == "truncated":
-        return bool(isinstance(value, dict) and value.get("truncated") is True)
+    if isinstance(operand, LiteralOperand):
+        return normalize_canonical(operand.literal)
+    ref = operand.count if isinstance(operand, CountOperand) else operand
+    assert isinstance(ref, Ref)
+    value = _ref_value(ref, input_payload=input_payload, outputs=outputs, parameters=parameters)
+    if value is _NOT_RESOLVED:
+        raise ExecutionError(f"guard operand {ref.render()!r} is absent")
+    if isinstance(operand, CountOperand):
+        return _item_count(normalize_canonical(value))
     return normalize_canonical(value)
-
-
-def _missing_operand(name: str) -> CanonicalValue:
-    raise ExecutionError(f"guard operand {name!r} is absent")
 
 
 def _compare(left: CanonicalValue, operator: str, right: CanonicalValue) -> bool:
@@ -6934,64 +7056,65 @@ def _compare(left: CanonicalValue, operator: str, right: CanonicalValue) -> bool
         comparable_right = right
     else:
         raise ExecutionError("ordered guard operands must share an int or string type")
-    if operator in {"gt", "after"}:
+    if operator == "gt":
         return comparable_left > comparable_right  # type: ignore[operator]
-    if operator in {"gte", "on_or_after"}:
+    if operator == "ge":
         return comparable_left >= comparable_right  # type: ignore[operator]
-    if operator in {"lt", "before"}:
+    if operator == "lt":
         return comparable_left < comparable_right  # type: ignore[operator]
-    if operator in {"lte", "on_or_before"}:
+    if operator == "le":
         return comparable_left <= comparable_right  # type: ignore[operator]
     raise ExecutionError(f"unknown guard operator {operator!r}")
 
 
 def _evaluate_predicate(
-    predicate: GuardPredicate,
+    predicate: Predicate,
     *,
     input_payload: CanonicalValue,
     outputs: dict[str, CanonicalValue],
     parameters: CanonicalValue,
 ) -> tuple[bool, CanonicalValue]:
-    if predicate.left is not None and predicate.right is not None and predicate.operator:
-        left = _operand_value(
-            predicate.left,
-            input_payload=input_payload,
-            outputs=outputs,
-            parameters=parameters,
-        )
-        right = _operand_value(
-            predicate.right,
-            input_payload=input_payload,
-            outputs=outputs,
-            parameters=parameters,
-        )
-        verdict = _compare(left, predicate.operator, right)
+    """A run predicate's two-valued verdict and its operand trace.
+
+    A guard reads run values, not field results: a reference that resolves to
+    nothing refuses (``present``/``absent`` test exactly that).
+    """
+
+    values = {"input_payload": input_payload, "outputs": outputs, "parameters": parameters}
+    if isinstance(predicate, Presence):
+        found = _ref_value(predicate.of, **values) is not _NOT_RESOLVED  # type: ignore[arg-type]
+        verdict = found == (predicate.op == "present")
         return verdict, normalize_canonical(
-            {"left": left, "operator": predicate.operator, "right": right}
+            {"operator": predicate.op, "ref": predicate.of.render(), "present": found}
         )
-    if predicate.not_of is not None:
-        child, trace = _evaluate_predicate(
-            predicate.not_of,
-            input_payload=input_payload,
-            outputs=outputs,
-            parameters=parameters,
-        )
+    if isinstance(predicate, Not):
+        child, trace = _evaluate_predicate(predicate.of, **values)  # type: ignore[arg-type]
         return not child, {"not": trace}
-    children = predicate.all_of if predicate.all_of is not None else predicate.any_of or ()
-    results = [
-        _evaluate_predicate(
-            child,
-            input_payload=input_payload,
-            outputs=outputs,
-            parameters=parameters,
+    if isinstance(predicate, AllOf | AnyOf):
+        results = [
+            _evaluate_predicate(child, **values)  # type: ignore[arg-type]
+            for child in predicate.of
+        ]
+        verdicts = [item[0] for item in results]
+        every = isinstance(predicate, AllOf)
+        return (all(verdicts) if every else any(verdicts)), normalize_canonical(
+            {"all" if every else "any": [item[1] for item in results]}
         )
-        for child in children
-    ]
-    verdicts = [item[0] for item in results]
-    verdict = all(verdicts) if predicate.all_of is not None else any(verdicts)
-    return verdict, normalize_canonical(
-        {"all" if predicate.all_of is not None else "any": [item[1] for item in results]}
-    )
+    left = _operand_value(predicate.left, **values)  # type: ignore[arg-type]
+    if isinstance(predicate, Membership):
+        if isinstance(predicate.right, Ref):
+            members = _operand_value(predicate.right, **values)  # type: ignore[arg-type]
+            if not isinstance(members, list):
+                raise ExecutionError("a membership guard reads a list")
+        else:
+            members = [normalize_canonical(member) for member in predicate.right]
+        inside = left in members
+        return inside == (predicate.op == "in"), normalize_canonical(
+            {"left": left, "operator": predicate.op, "right": members}
+        )
+    right = _operand_value(predicate.right, **values)  # type: ignore[arg-type]
+    verdict = _compare(left, predicate.op, right)
+    return verdict, normalize_canonical({"left": left, "operator": predicate.op, "right": right})
 
 
 __all__ = [

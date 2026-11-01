@@ -59,7 +59,6 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.procedures.models import (
     RUNG_AUTHORITY,
-    ProcedureBudget,
     ProcedureHardCaps,
 )
 from cruxible_client.contracts.projection_extensions import (
@@ -171,7 +170,6 @@ class PlaybillProcedureFloorCardV1(_StrictFloorModel):
     output_contract: ArtifactPin | ArtifactNameRef
     runnable: ProcedureRunnable
     capabilities: PlaybillProcedureCapabilitiesV1
-    budget: ProcedureBudget
     hard_caps: ProcedureHardCaps
     governance: PlaybillProcedureGovernanceV1
     track_record: tuple[PlaybillProcedureTrackRecordEntryV1, ...]
@@ -380,7 +378,6 @@ def _procedure_cards(
                 ),
                 authority=RUNG_AUTHORITY[definition.terminal_capability],
             ),
-            budget=definition.budget,
             hard_caps=definition.hard_caps,
             governance=PlaybillProcedureGovernanceV1(
                 activation_policy=procedure.activation_policy,

@@ -20,16 +20,19 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Context, Decimal, InvalidOperation
-from typing import Annotated, Any, Literal, TypeAlias, cast
+from typing import Annotated, Any, Literal, Protocol, TypeAlias, cast
 
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Discriminator,
     Field,
+    StrictBool,
+    Tag,
     TypeAdapter,
     ValidationError,
     field_validator,
@@ -43,6 +46,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.errors import FormatError
+from cruxible_client.contracts.refs import Ref
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 
 CONTRACT_ARTIFACT_FORMAT = "cruxible-contract-v1"
@@ -207,6 +211,49 @@ class DecimalType(_Shape):
         return self
 
 
+class NumberType(_Shape):
+    """A number, integral or not. Its canonical encoding is an integer when the value
+    is integral and canonical decimal text otherwise, so ``1`` and ``1.0`` are equal
+    (:func:`canonical_number`). Bounds are canonical decimal strings, never floats."""
+
+    kind: Literal["number"] = "number"
+    min: str | None = Field(default=None, exclude_if=_not_none)
+    max: str | None = Field(default=None, exclude_if=_not_none)
+
+    @field_validator("min", "max", mode="before")
+    @classmethod
+    def _decimal(cls, value: object) -> object:
+        return DecimalType._decimal(value)
+
+    @model_validator(mode="after")
+    def _bounds(self) -> NumberType:
+        if self.min is not None and self.max is not None and Decimal(self.min) > Decimal(self.max):
+            raise ValueError("number min exceeds max")
+        return self
+
+
+def canonical_number(value: object) -> int | str:
+    """A number's canonical encoding: an integer when integral, else canonical decimal text.
+
+    ``1``, ``"1"``, ``"1.0"`` and ``Decimal("1.00")`` all encode as ``1``;
+    ``"0.50"`` encodes as ``"0.5"``. Floats, booleans and non-finite values refuse.
+    """
+
+    if isinstance(value, bool) or not isinstance(value, (int, str, Decimal)):
+        raise ValueError(f"{value!r} is not a number")
+    if isinstance(value, int):
+        return value
+    try:
+        number = Decimal(value.strip() if isinstance(value, str) else value)
+    except InvalidOperation as exc:
+        raise ValueError(f"{value!r} is not a number") from exc
+    if not number.is_finite():
+        raise ValueError(f"{value!r} is not a finite number")
+    if number == number.to_integral_value():
+        return int(number)
+    return _decimal_text(number)
+
+
 class BoolType(_Shape):
     kind: Literal["bool"] = "bool"
 
@@ -284,13 +331,39 @@ class VariantType(_Shape):
 
 
 class KeyType(_Shape):
-    """A Subject key of one kind; core canonicalizes it with the kind's identity rule."""
+    """A Subject key of one kind; core canonicalizes it with the kind's identity rule.
+
+    The value is the key: the bare value for a one-key kind, or a mapping of
+    every key part to its value for a composite one (canonically keyed by each
+    part's last name under the kind; a conversion also reads full predicates).
+    Core canonicalizes each part with its key ClaimType's canonical form and the
+    SubjectKind's normalizer for it.
+    """
 
     kind: Literal["key"] = "key"
     subject_kind: str
 
     _subject_kind = field_validator("subject_kind")(
         lambda value: _nfc_identifier(value, _KIND_NAME_RE, label="SubjectKind")
+    )
+
+
+class KeyPartType(_Shape):
+    """``key_part<K:part>``: one key part of kind ``K``, canonicalized by that part's rule.
+
+    ``part`` names the key ClaimType by predicate or by its last name under the
+    kind (``key_part<security.vulnerability:cve_id>``).
+    """
+
+    kind: Literal["key_part"] = "key_part"
+    subject_kind: str
+    part: str
+
+    _subject_kind = field_validator("subject_kind")(
+        lambda value: _nfc_identifier(value, _KIND_NAME_RE, label="SubjectKind")
+    )
+    _part = field_validator("part")(
+        lambda value: _nfc_identifier(value, _KIND_NAME_RE, label="key part")
     )
 
 
@@ -348,6 +421,7 @@ FieldType: TypeAlias = Annotated[
     StringType
     | IntType
     | DecimalType
+    | NumberType
     | BoolType
     | DateType
     | DateTimeType
@@ -358,6 +432,7 @@ FieldType: TypeAlias = Annotated[
     | NestedType
     | VariantType
     | KeyType
+    | KeyPartType
     | SubjectType
     | CaptureType
     | FieldResultType
@@ -371,13 +446,27 @@ ListType.model_rebuild()
 FieldResultType.model_rebuild()
 _FIELD_TYPE: Any = TypeAdapter(FieldType)
 
-_SCALAR_KINDS = frozenset({"string", "int", "decimal", "bool", "date", "datetime", "duration"})
+_SCALAR_KINDS = frozenset(
+    {"string", "int", "decimal", "number", "bool", "date", "datetime", "duration"}
+)
 _SIMPLE_TYPES: dict[str, type[_Shape]] = {
     "bool": BoolType,
     "date": DateType,
     "datetime": DateTimeType,
     "duration": DurationType,
 }
+
+
+def _refused_type_message(name: str) -> str:
+    if name.lower() in {"json", "object", "map", "dict", "any"}:
+        return (
+            f"the field type {name!r} is refused: declare its shape -- a nested Contract "
+            "(name@N), list<T>{max_items: N}, a variant{...}, or a capture<K> for opaque bytes"
+        )
+    return (
+        f"the field type {name!r} is refused: only core decides what a Claim is; "
+        "declare a typed value shape"
+    )
 
 
 def _refuse_structured(value: object, *, depth: int = 0) -> None:
@@ -393,7 +482,7 @@ def _refuse_structured(value: object, *, depth: int = 0) -> None:
         return
     kind = value.get("kind")
     if isinstance(kind, str) and kind in REFUSED_TYPE_NAMES:
-        raise ContractTypeRefused(f"the field type {kind!r} is refused; declare a typed shape")
+        raise ContractTypeRefused(_refused_type_message(kind))
     if kind == "list" and value.get("max_items") is None:
         raise ContractTypeRefused("a list type requires max_items")
     for key in ("item", "value"):
@@ -458,14 +547,14 @@ def _read_type(reader: _Spelling, depth: int = 0) -> dict[str, Any]:
     _kind, name = reader.take("name")
     lowered = name.lower()
     if lowered in REFUSED_TYPE_NAMES:
-        raise ContractTypeRefused(f"the field type {name!r} is refused; declare a typed shape")
+        raise ContractTypeRefused(_refused_type_message(name))
     if reader.at_symbol("@"):
         reader.take("sym", "@")
         _n, version = reader.take("num")
         return {"kind": "contract", "contract": _ref(name, version)}
     if name == "string":
         return {"kind": "string", **_read_refinement(reader, ("pattern", "min_len", "max_len"))}
-    if name in ("int", "decimal"):
+    if name in ("int", "decimal", "number"):
         return {"kind": name, **_read_refinement(reader, ("min", "max"), numeric=name)}
     if name in _SIMPLE_TYPES:
         return {"kind": name}
@@ -505,6 +594,13 @@ def _read_type(reader: _Spelling, depth: int = 0) -> dict[str, Any]:
             break
         reader.take("sym", "}")
         return {"kind": "variant", "arms": arms}
+    if name == "key_part":
+        reader.take("sym", "<")
+        _k, target = reader.take("name")
+        reader.take("sym", ":")
+        _p, part = reader.take("name")
+        reader.take("sym", ">")
+        return {"kind": "key_part", "subject_kind": target, "part": part}
     if name in ("key", "subject", "capture"):
         reader.take("sym", "<")
         _k, target = reader.take("name")
@@ -628,7 +724,7 @@ def render_type(field_type: FieldType) -> str:
         if field_type.max_len is not None:
             parts.append(f"max_len: {field_type.max_len}")
         return "string" + ("{" + ", ".join(parts) + "}" if parts else "")
-    if isinstance(field_type, IntType | DecimalType):
+    if isinstance(field_type, IntType | DecimalType | NumberType):
         if field_type.min is None and field_type.max is None:
             return kind
         low = "" if field_type.min is None else str(field_type.min)
@@ -647,6 +743,8 @@ def render_type(field_type: FieldType) -> str:
         return "variant{" + arms + "}"
     if isinstance(field_type, KeyType | SubjectType):
         return f"{kind}<{field_type.subject_kind}>"
+    if isinstance(field_type, KeyPartType):
+        return f"key_part<{field_type.subject_kind}:{field_type.part}>"
     if isinstance(field_type, CaptureType):
         return f"capture<{field_type.capture_kind}>"
     if isinstance(field_type, FieldResultType):
@@ -663,7 +761,7 @@ class ContractField(_Shape):
     """One field: its type, whether its key may be absent, and what it means."""
 
     type: FieldType
-    optional: bool = Field(default=False, exclude_if=lambda value: value is False)
+    optional: StrictBool = Field(default=False, exclude_if=lambda value: value is False)
     description: str | None = Field(default=None, exclude_if=_not_none)
 
     @model_validator(mode="before")
@@ -699,22 +797,15 @@ class ContractField(_Shape):
         return render_type(self.type) + ("?" if self.optional else "")
 
 
-def _contains_key_type(field_type: FieldType) -> bool:
-    """Whether ``field_type`` is, or nests, a ``key<K>``.
+def key_types(field_type: FieldType) -> Iterator[KeyType | KeyPartType]:
+    """Every key type ``field_type`` is, or nests in a list or a field_result."""
 
-    No SubjectKind identity rule exists yet (B1 scope): a Contract field may
-    not declare one, bare or nested inside a list or a field_result. The
-    spelling itself keeps parsing and rendering; only Contract acceptance
-    (here) and value validation (``check_value``) fail closed.
-    """
-
-    if isinstance(field_type, KeyType):
-        return True
-    if isinstance(field_type, ListType):
-        return _contains_key_type(field_type.item)
-    if isinstance(field_type, FieldResultType):
-        return _contains_key_type(field_type.value)
-    return False
+    if isinstance(field_type, KeyType | KeyPartType):
+        yield field_type
+    elif isinstance(field_type, ListType):
+        yield from key_types(field_type.item)
+    elif isinstance(field_type, FieldResultType):
+        yield from key_types(field_type.value)
 
 
 class Contract(_Shape):
@@ -738,13 +829,8 @@ class Contract(_Shape):
     @field_validator("fields")
     @classmethod
     def _fields(cls, value: dict[str, ContractField]) -> dict[str, ContractField]:
-        for name, item in value.items():
+        for name in value:
             _nfc_identifier(name, _FIELD_NAME_RE, label="Contract field name")
-            if _contains_key_type(item.type):
-                raise ContractTypeRefused(
-                    f"field {name!r}: key<SubjectKind> is not yet supported; SubjectKind "
-                    "canonicalization is a later slice. Declare a string field instead."
-                )
         return value
 
     @field_validator("predecessor_digest")
@@ -903,6 +989,32 @@ def contract_digest(contract: Contract) -> ArtifactDigest:
     return typed_digest(ArtifactDigest, CONTRACT_DIGEST_DOMAIN, contract.model_dump(mode="json"))
 
 
+def tree_contract_resolver(
+    tree: Mapping[str, bytes],
+) -> Callable[[ContractRef], Contract | None]:
+    """Read Contract versions from a (candidate or accepted) tree.
+
+    A reference that pins a digest resolves only to the version with that digest.
+    """
+
+    found: dict[tuple[str, int], Contract | None] = {}
+
+    def resolve(ref: ContractRef) -> Contract | None:
+        key = (ref.name, ref.version)
+        if key not in found:
+            path = contract_path(ref.name, ref.version)
+            content = tree.get(path)
+            found[key] = None if content is None else parse_contract(content, path=path)
+        contract = found[key]
+        if contract is None or (
+            ref.digest is not None and contract_digest(contract).tagged != ref.digest
+        ):
+            return None
+        return contract
+
+    return resolve
+
+
 def contract_type_refusal(exc: BaseException) -> ContractTypeRefused | None:
     """The definition-time type refusal inside a validation failure, if that is what it is."""
 
@@ -970,7 +1082,9 @@ def evaluate_contract_law(
     """Judge one Contract version against its candidate tree.
 
     A version is immutable, its predecessor is the accepted previous version,
-    and every nested pin resolves to the exact accepted Contract it names.
+    every nested pin resolves to the exact accepted Contract it names, and every
+    ``key<K>`` / ``key_part<K:p>`` names a live keyed SubjectKind (and one of
+    its keys).
     """
 
     problems: list[ContractLawProblem] = []
@@ -1028,9 +1142,52 @@ def evaluate_contract_law(
                     f"{ref.spelling} pins {ref.digest}, but the accepted version is {digest}.",
                 )
             )
+    for name, declared in contract.fields.items():
+        for found in key_types(declared.type):
+            problem = _key_type_problem(found, lookup)
+            if problem is not None:
+                problems.append(
+                    ContractLawProblem(
+                        "cruxible.contract.key_kind_invalid", f"field {name!r}: {problem}"
+                    )
+                )
     # Several occurrences of the same pin can earn the identical problem; keep
     # one of each so a repeated reference does not multiply the diagnostics.
     return tuple(dict.fromkeys(problems))
+
+
+def _key_type_problem(
+    field_type: KeyType | KeyPartType, lookup: Callable[[str], bytes | None]
+) -> str | None:
+    """Why ``key<K>`` / ``key_part<K:p>`` names no key here: K live and keyed, p one of its keys."""
+
+    from cruxible_client.contracts.subject_kinds import (
+        SubjectKindFormatError,
+        key_predicate,
+        parse_subject_kind,
+        subject_kind_path,
+    )
+
+    kind = field_type.subject_kind
+    try:
+        path = subject_kind_path(kind)
+    except SubjectKindFormatError:
+        return f"{render_type(field_type)} names no Subject kind"
+    content = lookup(path)
+    declared = None if content is None else parse_subject_kind(content, path=path)
+    if declared is None or declared.lifecycle.state != "live":
+        return (
+            f"{render_type(field_type)}: no live SubjectKind declares {kind}; a key is read "
+            "by its kind's identity rules"
+        )
+    if declared.minted:
+        return f"{render_type(field_type)}: {kind} is minted, so it has no key"
+    if isinstance(field_type, KeyPartType) and key_predicate(declared, field_type.part) is None:
+        return (
+            f"{render_type(field_type)}: {field_type.part!r} is not a key of {kind}; its keys "
+            "are " + ", ".join(declared.keys)
+        )
+    return None
 
 
 # -- runtime values ------------------------------------------------------------------------
@@ -1121,6 +1278,57 @@ ContractResolver = Callable[[ContractRef], "Contract | None"]
 EnumResolver = Callable[[str], "tuple[str, ...] | None"]
 
 
+class KeyValueRefused(ValueError):
+    """A value that is not a key of its kind; the message says why."""
+
+
+class KeyCanonicalizer(Protocol):
+    """Core's SubjectKind identity rules, as a value check reads them (D4).
+
+    ``canonical`` returns the canonical key ``value`` names -- one part's value
+    for ``part``, else the whole key (the bare value of a one-key kind, or a
+    mapping of each part by its last name) -- or raises ``KeyValueRefused``.
+    ``rule_token`` is everything that canonicalization depends on for a kind
+    (its normalizers and key ClaimTypes' canonical forms), for cache keys.
+    """
+
+    def canonical(self, subject_kind: str, part: str | None, value: object) -> object: ...
+
+    def rule_token(self, subject_kind: str) -> object: ...
+
+
+def check_key_value(
+    value: object,
+    field_type: KeyType | KeyPartType,
+    *,
+    at: str,
+    field: str | None,
+    keys: KeyCanonicalizer | None,
+    convert: bool = False,
+) -> FieldPresent | FieldInvalid:
+    """``key<K>`` / ``key_part<K:p>``: the canonical key, by K's identity rules.
+
+    A checked value must already be canonical (``canonical_form_failed``
+    otherwise, as a non-NFC string is): a value crossing a Contract boundary
+    states its key. ``convert`` -- an explicit conversion (an ``extract`` key
+    or field read, a ``shape`` cast ``as: key<K>``) -- returns the canonical key
+    instead, so two raw keys that canonicalize to one key become one key.
+    Without the rules (``keys`` None) no value can be confirmed as a key, so
+    every value fails closed ``key_unparseable``.
+    """
+
+    if keys is None:
+        return _invalid("key_unparseable", field, value)
+    part = field_type.part if isinstance(field_type, KeyPartType) else None
+    try:
+        canonical = keys.canonical(field_type.subject_kind, part, value)
+    except KeyValueRefused:
+        return _invalid("key_unparseable", field, value)
+    if not convert and canonical != value:
+        return _invalid("canonical_form_failed", field, value)
+    return FieldPresent(value=canonical, at=at)
+
+
 def records(results: Iterable[RecordArm | InvalidRecordArm | DuplicateArm]) -> list[RecordValue]:
     """``$steps.x.records``: the record arm of each result, and only that arm."""
 
@@ -1158,6 +1366,7 @@ def check_value(
     field: str | None = None,
     resolve: ContractResolver | None = None,
     enum_members: EnumResolver | None = None,
+    keys: KeyCanonicalizer | None = None,
 ) -> FieldPresent | FieldInvalid:
     """Check one present value against one type; a problem is a result, never an exception."""
 
@@ -1191,6 +1400,16 @@ def check_value(
         if not _in_range(number, low, high):
             return _invalid("out_of_range", field, value)
         return FieldPresent(value=number, at=at)
+    if isinstance(field_type, NumberType):
+        try:
+            canonical = canonical_number(value)
+        except ValueError:
+            return _invalid("type_mismatch", field, value)
+        low = None if field_type.min is None else Decimal(field_type.min)
+        high = None if field_type.max is None else Decimal(field_type.max)
+        if not _in_range(Decimal(canonical), low, high):
+            return _invalid("out_of_range", field, value)
+        return FieldPresent(value=canonical, at=at)
     if isinstance(field_type, BoolType):
         if not isinstance(value, bool):
             return _invalid("type_mismatch", field, value)
@@ -1256,6 +1475,7 @@ def check_value(
                 field=f"{field or ''}[{index}]",
                 resolve=resolve,
                 enum_members=enum_members,
+                keys=keys,
             )
             if isinstance(checked, FieldInvalid):
                 return checked
@@ -1275,7 +1495,7 @@ def check_value(
         if target is None:
             return _invalid("type_mismatch", field, value)
         nested = check_record(
-            body, target, record=at, resolve=resolve, enum_members=enum_members, base=at
+            body, target, record=at, resolve=resolve, enum_members=enum_members, keys=keys, base=at
         )
         for name, result in nested.fields.items():
             if isinstance(result, FieldInvalid):
@@ -1286,16 +1506,8 @@ def check_value(
                     )
                 )
         return FieldPresent(value=dict(value), at=at)
-    if isinstance(field_type, KeyType):
-        # Core canonicalizes a key with its SubjectKind's identity rule; that
-        # hook is not built yet (B1 scope). Without it no string or structure
-        # can be confirmed as a valid key -- not a non-empty string, not a
-        # canonical spelling -- so key<K> fails closed on every value.
-        # Contract acceptance already refuses any field declaring key<K> (see
-        # Contract's validator); this is defense in depth for a hand-built
-        # type reaching check_value some other way. A later slice lifts this
-        # once the identity rule exists.
-        return _invalid("key_unparseable", field, value)
+    if isinstance(field_type, KeyType | KeyPartType):
+        return check_key_value(value, field_type, at=at, field=field, keys=keys)
     if isinstance(field_type, SubjectType):
         if isinstance(value, str) and value:
             return FieldPresent(value=value, at=at)
@@ -1306,25 +1518,43 @@ def check_value(
         return _invalid("type_mismatch", field, value)
     if isinstance(field_type, FieldResultType):
         return _check_field_result(
-            value, field_type, at=at, field=field, resolve=resolve, enum_members=enum_members
+            value,
+            field_type,
+            at=at,
+            field=field,
+            resolve=resolve,
+            enum_members=enum_members,
+            keys=keys,
         )
     if isinstance(field_type, RecordType):
         target = None if resolve is None else resolve(field_type.contract)
         if target is None:
             return _invalid("type_mismatch", field, value)
         envelope = _check_record_envelope(
-            value, target, at=at, resolve=resolve, enum_members=enum_members
+            value, target, at=at, resolve=resolve, enum_members=enum_members, keys=keys
         )
         if envelope is None:
             return _invalid("type_mismatch", field, value)
         return FieldPresent(value=envelope, at=at)
     if isinstance(field_type, ResultType):
         return _check_result(
-            value, field_type, at=at, field=field, resolve=resolve, enum_members=enum_members
+            value,
+            field_type,
+            at=at,
+            field=field,
+            resolve=resolve,
+            enum_members=enum_members,
+            keys=keys,
         )
     if isinstance(field_type, RefusalType):
         return _check_refusal(
-            value, field_type, at=at, field=field, resolve=resolve, enum_members=enum_members
+            value,
+            field_type,
+            at=at,
+            field=field,
+            resolve=resolve,
+            enum_members=enum_members,
+            keys=keys,
         )
     raise AssertionError(f"unreachable field type {field_type!r}")  # pragma: no cover
 
@@ -1337,6 +1567,7 @@ def _check_field_result(
     field: str | None,
     resolve: ContractResolver | None,
     enum_members: EnumResolver | None,
+    keys: KeyCanonicalizer | None,
 ) -> FieldPresent | FieldInvalid:
     """``field_result<T>``: the ``present`` arm's value is checked against ``T``."""
 
@@ -1354,6 +1585,7 @@ def _check_field_result(
             field=field,
             resolve=resolve,
             enum_members=enum_members,
+            keys=keys,
         )
         if isinstance(inner, FieldInvalid):
             return _invalid("type_mismatch", field, value)
@@ -1380,6 +1612,7 @@ def _check_record_envelope(
     at: str,
     resolve: ContractResolver | None,
     enum_members: EnumResolver | None,
+    keys: KeyCanonicalizer | None,
 ) -> dict[str, Any] | None:
     """``{record, key, fields: {f: field_result<C.f>}}`` against ``contract``'s own fields.
 
@@ -1407,6 +1640,7 @@ def _check_record_envelope(
             field=name,
             resolve=resolve,
             enum_members=enum_members,
+            keys=keys,
         )
         if isinstance(checked, FieldInvalid):
             return None
@@ -1422,6 +1656,7 @@ def _check_result(
     field: str | None,
     resolve: ContractResolver | None,
     enum_members: EnumResolver | None,
+    keys: KeyCanonicalizer | None,
 ) -> FieldPresent | FieldInvalid:
     """``result<C>``: the ``record`` arm is checked against ``C``; the other arms are shape-only."""
 
@@ -1433,7 +1668,12 @@ def _check_result(
         if target is None:
             return _invalid("type_mismatch", field, value)
         checked = _check_record_envelope(
-            value.get("record"), target, at=at, resolve=resolve, enum_members=enum_members
+            value.get("record"),
+            target,
+            at=at,
+            resolve=resolve,
+            enum_members=enum_members,
+            keys=keys,
         )
         if checked is None:
             return _invalid("type_mismatch", field, value)
@@ -1456,6 +1696,7 @@ def _check_refusal(
     field: str | None,
     resolve: ContractResolver | None,
     enum_members: EnumResolver | None,
+    keys: KeyCanonicalizer | None,
 ) -> FieldPresent | FieldInvalid:
     """``refusal<C>``: the body is checked against the exact ``C`` the type names."""
 
@@ -1480,7 +1721,7 @@ def _check_refusal(
     if not isinstance(body, Mapping):
         return _invalid("type_mismatch", field, value)
     nested = check_record(
-        body, target, record=at, resolve=resolve, enum_members=enum_members, base=at
+        body, target, record=at, resolve=resolve, enum_members=enum_members, keys=keys, base=at
     )
     for result in nested.fields.values():
         if isinstance(result, FieldInvalid):
@@ -1501,6 +1742,7 @@ def check_record(
     key: Mapping[str, object] | None = None,
     resolve: ContractResolver | None = None,
     enum_members: EnumResolver | None = None,
+    keys: KeyCanonicalizer | None = None,
     base: str = "",
 ) -> RecordValue:
     """``record<C>`` from raw data: every field gets its own result; siblings never taint.
@@ -1521,6 +1763,7 @@ def check_record(
             field=name,
             resolve=resolve,
             enum_members=enum_members,
+            keys=keys,
         )
     return RecordValue(record=record, key=dict(key or {}), fields=fields)
 
@@ -1534,6 +1777,7 @@ def cast_value(
     *,
     field: str | None = None,
     enum_members: EnumResolver | None = None,
+    keys: KeyCanonicalizer | None = None,
 ) -> FieldPresent | FieldAbsent | FieldInvalid:
     """``shape`` ``as: <type>``: an explicit conversion of one field result.
 
@@ -1566,7 +1810,18 @@ def cast_value(
         return _invalid("type_mismatch", field, str(value))
     elif isinstance(to, DecimalType) and isinstance(value, int) and not isinstance(value, bool):
         converted = Decimal(value)
-    checked = check_value(converted, to, at=result.at, field=field, enum_members=enum_members)
+    elif isinstance(to, KeyType | KeyPartType):
+        cast_key = check_key_value(value, to, at=result.at, field=field, keys=keys, convert=True)
+        return (
+            _invalid("type_mismatch", field, value)
+            if isinstance(cast_key, FieldInvalid)
+            else cast_key
+        )
+    elif isinstance(to, NumberType) and isinstance(value, Decimal):
+        converted = canonical_number(value) if value.is_finite() else value
+    checked = check_value(
+        converted, to, at=result.at, field=field, enum_members=enum_members, keys=keys
+    )
     if isinstance(checked, FieldInvalid) and checked.problem.code in (
         "canonical_form_failed",
         "key_unparseable",
@@ -1581,17 +1836,18 @@ def cast_record(
     *,
     key_fields: Iterable[str] = (),
     enum_members: EnumResolver | None = None,
+    keys: KeyCanonicalizer | None = None,
 ) -> RecordArm | InvalidRecordArm:
     """Cast named fields. Only a failed cast of a key field invalidates the record."""
 
-    keys = frozenset(key_fields)
+    key_names = frozenset(key_fields)
     fields = dict(record.fields)
     key_problems: list[Problem] = []
     for name, to in casts.items():
         source = fields.get(name, FieldAbsent())
-        cast_result = cast_value(source, to, field=name, enum_members=enum_members)
+        cast_result = cast_value(source, to, field=name, enum_members=enum_members, keys=keys)
         fields[name] = cast_result
-        if name in keys and isinstance(cast_result, FieldInvalid):
+        if name in key_names and isinstance(cast_result, FieldInvalid):
             key_problems.append(cast_result.problem.model_copy(update={"code": "key_unparseable"}))
     if key_problems:
         return InvalidRecordArm(record=record.record, problems=tuple(key_problems))
@@ -1659,7 +1915,9 @@ def edge_refusal(src: FieldType, dst: FieldType, *, via: EdgeVia | None = None) 
             if _within(src.min, src.max, dst.min, dst.max)
             else ("the source int range is wider than the destination's")
         )
-    if isinstance(src, DecimalType) and isinstance(dst, DecimalType):
+    if (isinstance(src, DecimalType) and isinstance(dst, DecimalType)) or (
+        isinstance(src, NumberType) and isinstance(dst, NumberType)
+    ):
         bounds = [None if item is None else Decimal(item) for item in (src.min, src.max)]
         outer = [None if item is None else Decimal(item) for item in (dst.min, dst.max)]
         return (
@@ -1710,26 +1968,6 @@ Truth = Literal["true", "false", "unknown"]
 Scalar: TypeAlias = str | int | bool | Decimal | date | datetime
 
 
-class FieldOperand(_Shape):
-    """``$item.fields.<name>``: evaluates only when the field is present."""
-
-    field: str
-
-    _field = field_validator("field")(
-        lambda value: _nfc_identifier(value, _FIELD_NAME_RE, label="predicate field")
-    )
-
-
-class ParameterOperand(_Shape):
-    """``$parameters.<name>``."""
-
-    parameter: str
-
-    _parameter = field_validator("parameter")(
-        lambda value: _nfc_identifier(value, _FIELD_NAME_RE, label="predicate parameter")
-    )
-
-
 class LiteralOperand(_Shape):
     literal: str | int | bool
 
@@ -1741,7 +1979,35 @@ class LiteralOperand(_Shape):
         return value
 
 
-Operand: TypeAlias = FieldOperand | ParameterOperand | LiteralOperand
+class CountOperand(_Shape):
+    """The number of elements of the referenced list (guards and repeat ``until`` only)."""
+
+    count: Ref
+
+
+def _operand_tag(value: object) -> str | None:
+    if isinstance(value, Ref):
+        return "ref"
+    if isinstance(value, LiteralOperand):
+        return "literal"
+    if isinstance(value, CountOperand):
+        return "count"
+    if isinstance(value, Mapping):
+        if "$ref" in value:
+            return "ref"
+        if "literal" in value:
+            return "literal"
+        if "count" in value:
+            return "count"
+    return None
+
+
+Operand: TypeAlias = Annotated[
+    Annotated[Ref, Tag("ref")]
+    | Annotated[LiteralOperand, Tag("literal")]
+    | Annotated[CountOperand, Tag("count")],
+    Discriminator(_operand_tag),
+]
 ComparisonOp = Literal["eq", "ne", "lt", "le", "gt", "ge"]
 
 
@@ -1752,18 +2018,18 @@ class Comparison(_Shape):
 
 
 class Membership(_Shape):
+    """``left`` is (``in``) or is not (``not_in``) one of the literal members or a list."""
+
     op: Literal["in", "not_in"]
     left: Operand
-    right: tuple[str | int | bool, ...] | ParameterOperand
+    right: tuple[str | int | bool, ...] | Ref
 
 
 class Presence(_Shape):
-    op: Literal["present", "absent"]
-    field: str
+    """Whether the referenced value is ``present`` (or ``absent``)."""
 
-    _field = field_validator("field")(
-        lambda value: _nfc_identifier(value, _FIELD_NAME_RE, label="predicate field")
-    )
+    op: Literal["present", "absent"]
+    of: Ref
 
 
 class AllOf(_Shape):
@@ -1788,12 +2054,89 @@ for _model in (AllOf, AnyOf, Not):
     _model.model_rebuild()
 _PREDICATE: Any = TypeAdapter(Predicate)
 
+PredicateContext = Literal["record", "run"]
+
+
+def predicate_refs(predicate: Predicate) -> Iterator[Ref]:
+    """Every reference a predicate reads, in order."""
+
+    if isinstance(predicate, AllOf | AnyOf):
+        for part in predicate.of:
+            yield from predicate_refs(part)
+        return
+    if isinstance(predicate, Not):
+        yield from predicate_refs(predicate.of)
+        return
+    if isinstance(predicate, Presence):
+        yield predicate.of
+        return
+    for operand in (predicate.left, predicate.right):
+        if isinstance(operand, Ref):
+            yield operand
+        elif isinstance(operand, CountOperand):
+            yield operand.count
+
+
+def _has_count(predicate: Predicate) -> bool:
+    if isinstance(predicate, AllOf | AnyOf):
+        return any(_has_count(part) for part in predicate.of)
+    if isinstance(predicate, Not):
+        return _has_count(predicate.of)
+    if isinstance(predicate, Presence):
+        return False
+    return any(isinstance(operand, CountOperand) for operand in (predicate.left, predicate.right))
+
+
+def predicate_context_problem(predicate: Predicate, context: PredicateContext) -> str | None:
+    """Why ``predicate`` cannot be evaluated where it is used, or ``None``.
+
+    A ``record`` predicate (a transform's ``where``/``when``) reads the current
+    record's fields (``item`` references ``fields.<f>``) and Line parameters; a
+    ``run`` predicate (a guard, a repeat ``until``) reads the Procedure input,
+    parameters and earlier steps, and may count a list.
+    """
+
+    for ref in predicate_refs(predicate):
+        if ref.root == "param":
+            if len(ref.path) != 1:
+                return f"a predicate reads one parameter by name, not {ref.render()!r}"
+            continue
+        if context == "record":
+            if ref.root != "item" or len(ref.path) != 2 or ref.path[0] != "fields":
+                return (
+                    "a record predicate reads the record's fields ($item.fields.<f>) and "
+                    f"parameters, not {ref.render()!r}"
+                )
+        elif ref.root == "item":
+            return f"a guard or repeat predicate cannot read the current item {ref.render()!r}"
+    if context == "record" and _has_count(predicate):
+        return "a record predicate cannot count a list; aggregate it with a transform"
+    return None
+
+
 _UNKNOWN = object()
 _ABSENT = object()
 
 
 def _not(value: Truth) -> Truth:
     return {"true": "false", "false": "true", "unknown": "unknown"}[value]  # type: ignore[return-value]
+
+
+def _record_value(
+    ref: Ref,
+    fields: Mapping[str, FieldPresent | FieldAbsent | FieldInvalid],
+    parameters: Mapping[str, object],
+    required: frozenset[str],
+) -> object:
+    if ref.root == "param":
+        return parameters.get(ref.path[0], _UNKNOWN)
+    name = ref.path[-1]
+    result = fields.get(name)
+    if isinstance(result, FieldPresent):
+        return result.value
+    if isinstance(result, FieldAbsent) and name not in required:
+        return _ABSENT
+    return _UNKNOWN
 
 
 def _operand(
@@ -1804,14 +2147,9 @@ def _operand(
 ) -> object:
     if isinstance(operand, LiteralOperand):
         return operand.literal
-    if isinstance(operand, ParameterOperand):
-        return parameters.get(operand.parameter, _UNKNOWN)
-    result = fields.get(operand.field)
-    if isinstance(result, FieldPresent):
-        return result.value
-    if isinstance(result, FieldAbsent) and operand.field not in required:
-        return _ABSENT
-    return _UNKNOWN
+    if isinstance(operand, CountOperand):
+        return _UNKNOWN
+    return _record_value(operand, fields, parameters, required)
 
 
 def _comparable(left: object, right: object) -> tuple[Any, Any] | None:
@@ -1863,9 +2201,13 @@ def evaluate_predicate(
     stated = parameters or {}
     needed = frozenset(required)
     if isinstance(predicate, Presence):
-        result = values.get(predicate.field)
+        if predicate.of.root == "param":
+            present = predicate.of.path[0] in stated
+            return "true" if present == (predicate.op == "present") else "false"
+        name = predicate.of.path[-1]
+        result = values.get(name)
         if isinstance(result, FieldInvalid) or (
-            isinstance(result, FieldAbsent | type(None)) and predicate.field in needed
+            isinstance(result, FieldAbsent | type(None)) and name in needed
         ):
             return "unknown"
         present = isinstance(result, FieldPresent)
@@ -1887,8 +2229,8 @@ def evaluate_predicate(
     if left is _UNKNOWN:
         return "unknown"
     if isinstance(predicate, Membership):
-        if isinstance(predicate.right, ParameterOperand):
-            members = stated.get(predicate.right.parameter, _UNKNOWN)
+        if isinstance(predicate.right, Ref):
+            members = _record_value(predicate.right, values, stated, needed)
             if members is _UNKNOWN or not isinstance(members, (list, tuple, frozenset, set)):
                 return "unknown"
         else:
@@ -1928,123 +2270,14 @@ def evaluate_predicate(
     return "true" if outcome else "false"
 
 
-_CALL_RE = re.compile(r"\s*([a-z_]+)\s*\(")
-
-
-def parse_predicate(text: str) -> Predicate:
-    """Read the closed call form: ``eq($item.fields.status, "fixed")``, ``all_of(a, b)``.
-
-    Operands are ``$item.fields.<f>``, ``$parameters.<p>``, or a string,
-    integer or boolean literal; ``in``/``not_in`` take a ``[...]`` literal list
-    or a parameter. Anything else is refused.
-    """
-
-    reader = _PredicateReader(text)
-    predicate = reader.predicate()
-    reader.skip()
-    if reader.position != len(text):
-        raise ContractFormatError(f"the predicate {text!r} has trailing text")
-    return predicate
-
-
-class _PredicateReader:
-    def __init__(self, text: str) -> None:
-        self.text = text
-        self.position = 0
-
-    def skip(self) -> None:
-        while self.position < len(self.text) and self.text[self.position].isspace():
-            self.position += 1
-
-    def expect(self, symbol: str) -> None:
-        self.skip()
-        if not self.text.startswith(symbol, self.position):
-            raise ContractFormatError(f"the predicate {self.text!r} expected {symbol!r}")
-        self.position += len(symbol)
-
-    def peek(self, symbol: str) -> bool:
-        self.skip()
-        return self.text.startswith(symbol, self.position)
-
-    def predicate(self) -> Predicate:
-        match = _CALL_RE.match(self.text, self.position)
-        if match is None:
-            raise ContractFormatError(f"the predicate {self.text!r} is not a closed form")
-        op = match.group(1)
-        self.position = match.end()
-        data: dict[str, Any]
-        if op in ("all_of", "any_of"):
-            parts = [self.predicate()]
-            while self.peek(","):
-                self.expect(",")
-                parts.append(self.predicate())
-            data = {"op": op, "of": parts}
-        elif op == "not":
-            data = {"op": "not", "of": self.predicate()}
-        elif op in ("present", "absent"):
-            operand = self.operand()
-            if not isinstance(operand, dict) or "field" not in operand:
-                raise ContractFormatError(f"{op} takes $item.fields.<f>")
-            data = {"op": op, "field": operand["field"]}
-        elif op in ("eq", "ne", "lt", "le", "gt", "ge"):
-            left = self.operand()
-            self.expect(",")
-            data = {"op": op, "left": left, "right": self.operand()}
-        elif op in ("in", "not_in"):
-            left = self.operand()
-            self.expect(",")
-            if self.peek("["):
-                self.expect("[")
-                members = [self.literal()]
-                while self.peek(","):
-                    self.expect(",")
-                    members.append(self.literal())
-                self.expect("]")
-                right: object = members
-            else:
-                right = self.operand()
-            data = {"op": op, "left": left, "right": right}
-        else:
-            raise ContractFormatError(f"{op!r} is outside the closed predicate grammar")
-        self.expect(")")
-        if isinstance(data.get("of"), list):
-            data["of"] = [item for item in data["of"]]
-        return cast(Predicate, _PREDICATE.validate_python(data))
-
-    def literal(self) -> str | int | bool:
-        self.skip()
-        rest = self.text[self.position :]
-        string = re.match(r'"(?:[^"\\]|\\.)*"', rest)
-        if string is not None:
-            self.position += string.end()
-            return cast(str, json.loads(string.group(0)))
-        number = re.match(r"-?[0-9]+(?![0-9.])", rest)
-        if number is not None:
-            self.position += number.end()
-            return int(number.group(0))
-        for word, value in (("true", True), ("false", False)):
-            if rest.startswith(word):
-                self.position += len(word)
-                return value
-        raise ContractFormatError(f"the predicate {self.text!r} has an invalid literal")
-
-    def operand(self) -> dict[str, object]:
-        self.skip()
-        rest = self.text[self.position :]
-        reference = re.match(r"\$(item\.fields|parameters)\.([a-z][a-z0-9_]*)", rest)
-        if reference is not None:
-            self.position += reference.end()
-            if reference.group(1) == "item.fields":
-                return {"field": reference.group(2)}
-            return {"parameter": reference.group(2)}
-        return {"literal": self.literal()}
-
-
-def as_predicate(value: Predicate | str | Mapping[str, object]) -> Predicate:
-    """A predicate from its call form or its structured form."""
+def as_predicate(value: Predicate | Mapping[str, object]) -> Predicate:
+    """A predicate from its structured form; expression strings are not a predicate form."""
 
     if isinstance(value, str):
-        return parse_predicate(value)
+        raise ContractFormatError(
+            "a predicate is a typed structure ({op, left, right}, {op, of}); "
+            "expression strings are not accepted"
+        )
     if isinstance(value, BaseModel):
         return value
     return cast(Predicate, _PREDICATE.validate_python(value))
@@ -2061,6 +2294,7 @@ __all__ = [
     "BoolType",
     "CaptureType",
     "Comparison",
+    "CountOperand",
     "Contract",
     "ContractField",
     "ContractFormatError",
@@ -2070,27 +2304,32 @@ __all__ = [
     "DateTimeType",
     "DateType",
     "DecimalType",
+    "NumberType",
+    "canonical_number",
+    "tree_contract_resolver",
     "DuplicateArm",
     "DurationType",
     "EnumOfType",
     "EnumType",
     "FieldAbsent",
     "FieldInvalid",
-    "FieldOperand",
     "FieldPresent",
     "FieldResult",
     "FieldResultType",
     "FieldType",
     "IntType",
     "InvalidRecordArm",
+    "KeyCanonicalizer",
+    "KeyPartType",
     "KeyType",
+    "KeyValueRefused",
     "ListType",
     "LiteralOperand",
     "Membership",
     "NestedType",
     "Not",
-    "ParameterOperand",
     "Predicate",
+    "PredicateContext",
     "Presence",
     "Problem",
     "ProblemCode",
@@ -2109,6 +2348,8 @@ __all__ = [
     "assignable",
     "cast_record",
     "cast_value",
+    "check_key_value",
+    "key_types",
     "check_record",
     "check_value",
     "coerce_field_type",
@@ -2122,11 +2363,12 @@ __all__ = [
     "edge_refusal",
     "evaluate_contract_law",
     "evaluate_predicate",
+    "predicate_context_problem",
+    "predicate_refs",
     "map_type_refs",
     "parse_contract",
     "parse_contract_ref",
     "parse_field_spelling",
-    "parse_predicate",
     "parse_type",
     "pin_contract_refs",
     "records",

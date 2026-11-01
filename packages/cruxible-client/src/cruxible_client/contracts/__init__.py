@@ -354,6 +354,7 @@ from cruxible_client.contracts.resolution_contracts import (
 from cruxible_client.contracts.runtime_credentials import (
     RuntimeCredentialPermissionMode as RuntimeCredentialPermissionMode,
 )
+from cruxible_client.contracts.shapes import Contract as _Contract
 from cruxible_client.contracts.triggers import (
     CadenceSchedule as CadenceSchedule,
 )
@@ -1478,14 +1479,16 @@ class ProcedureReadiness(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tag: Literal["playbill-procedure-readiness-result-v1"] = (
-        "playbill-procedure-readiness-result-v1"
+    tag: Literal["playbill-procedure-readiness-result-v2"] = (
+        "playbill-procedure-readiness-result-v2"
     )
     coordinate: AcceptedCoordinate
     procedure_identity: dict[str, Any]
     artifact_digest: str
     definition_digest: str
     artifact: _ProcedureArtifact
+    #: The governed Contracts the boundaries pin, with the Contracts they nest.
+    contracts: list[_Contract] = []
     runnable: ProcedureRunnable
     unsupported_nodes: list[ProcedureNodeSupport]
     next_operation: dict[str, Any]

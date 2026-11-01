@@ -15,7 +15,6 @@ from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     evaluate_procedure_law,
     procedure_path,
-    render_procedure,
 )
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
@@ -24,7 +23,6 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
 )
@@ -35,7 +33,20 @@ from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmiss
 from tests.core_support._p2b1_support import accepted_provider, pin
 from tests.core_support._support import initialize_local
 from tests.support.operation_world import VALUE, contract_files
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, accepted_procedure, named
+from tests.support.procedures import (
+    MAX_WALL_CLOCK,
+    RUN_WALL_CLOCK,
+    accepted_procedure,
+    boundary_contract,
+    named,
+    procedure_members,
+)
+
+#: The governed boundaries ``procedure_members`` accepts beside the Procedure.
+_BOUNDARIES = (
+    boundary_contract("provider-input"),
+    boundary_contract("provider-output", {"value": "int"}),
+)
 
 
 def _value_ref() -> dict[str, object]:
@@ -43,8 +54,8 @@ def _value_ref() -> dict[str, object]:
 
 
 def _definition() -> ProcedureDefinition:
-    contract_in = pin("contract-in", "Contract", "provider-input")
-    contract_out = pin("contract-out", "Contract", "provider-output")
+    contract_in = pin("contract-in", "Contract", "provider-input/v1")
+    contract_out = pin("contract-out", "Contract", "provider-output/v1")
     return ProcedureDefinition.model_validate(
         {
             "name": "provider-v4",
@@ -60,12 +71,6 @@ def _definition() -> ProcedureDefinition:
                 ),
             ),
             "returns": "result",
-            "budget": ProcedureBudget(
-                wall_clock=RUN_WALL_CLOCK,
-                max_provider_calls=2,
-                max_capture_bytes=1024,
-                max_items=10,
-            ),
             "hard_caps": ProcedureHardCaps(
                 max_wall_clock=MAX_WALL_CLOCK,
                 max_provider_calls=4,
@@ -155,7 +160,7 @@ def test_real_proposal_path_closes_contracts_build_procedure_and_line(tmp_path) 
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree.update(contract_files())
     tree[provider.path] = render_provider(provider.provider)
-    tree[procedure.path] = render_procedure(named)
+    tree.update(procedure_members(named))
     tree[line_spec_path(line.identity.name)] = render_line_spec(line)
 
     result = instance.proposal_service().submit(

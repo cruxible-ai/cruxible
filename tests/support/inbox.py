@@ -55,38 +55,14 @@ def inbox_node(
 def listed_inbox_procedure(template: Any, rows: list[dict[str, Any]], contract: Contract) -> Any:
     """``template`` (one shaping project) then a literal list of ``rows``, each posted.
 
-    The list is the run's own data: a literal project typed by an owned list
-    Contract, and a ``for_each`` over it posting each row as ``contract``.
+    The list is the run's own data: a literal project (typed as it flows), and
+    a ``for_each`` over it posting each row as ``contract``.
     """
 
-    from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-    from cruxible_client.contracts.canonical import canonical_bytes
-    from cruxible_client.contracts.procedures.artifacts import (
-        ProcedureOwnedContract,
-        procedure_owned_contract_digest,
-    )
-    from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
     from cruxible_client.contracts.procedures.models import ProjectNode
-    from tests.support.procedures import named
 
     (shape,) = template.definition.nodes
-    listed = ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name=f"{template.identity.name}-rows"),
-        schema=ContractSchema(
-            fields={
-                "items": PropertySchema(
-                    type="list",
-                    item_fields={name: PropertySchema(type="string") for name in contract.fields},
-                )
-            }
-        ),
-    )
-    pin = ArtifactPin(
-        role="contract-out",
-        target=listed.identity,
-        artifact_digest=procedure_owned_contract_digest(listed).tagged,
-    )
     definition = template.definition.model_copy(
         update={
             "nodes": (
@@ -94,7 +70,6 @@ def listed_inbox_procedure(template: Any, rows: list[dict[str, Any]], contract: 
                 ProjectNode(
                     node_id="listed",
                     literal={"items": rows},
-                    contract_out=named(pin),
                     as_="listed",
                     next="inbox",
                 ),
@@ -111,12 +86,6 @@ def listed_inbox_procedure(template: Any, rows: list[dict[str, Any]], contract: 
         update={
             "definition": definition,
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
-            "owned_contracts": tuple(
-                sorted(
-                    (*template.owned_contracts, listed),
-                    key=lambda item: canonical_bytes(item.model_dump(mode="json", by_alias=True)),
-                )
-            ),
         }
     )
 

@@ -264,6 +264,7 @@ from cruxible_core.claims.closure import (
     judge_dependency_closure,
     update_dependency_index,
 )
+from cruxible_core.claims.enum_resolution import tree_enum_resolver
 from cruxible_core.claims.key_claims import (
     carried_key_claim,
     derive_key_claim_retirements,
@@ -384,8 +385,8 @@ REMOVED_NOUNS: Final[Mapping[str, str]] = {
         "a Procedure slot names the signature {in, out, effect} it needs."
     ),
     "source-acquisition-policies/": (
-        "SourceAcquisitionPolicies are removed; declare acquisition_defaults on the "
-        "Procedure, or acquisition per capture output (<alias>.<field>) on the Line."
+        "SourceAcquisitionPolicies are removed; declare acquisition per capture output "
+        "(<alias>.<field>) on the Line."
     ),
 }
 
@@ -1904,75 +1905,6 @@ def _accepted(
     )
 
 
-def _verify_source(context: _MemberContext, procedure: Any) -> None:
-    """Resolve a source graph's retained declarations against candidate state."""
-
-    from cruxible_client.contracts.query.definitions import (
-        parse_query_definition,
-        query_definition_path,
-    )
-    from cruxible_core.authoring.procedure_source import verify_source_bindings
-
-    def source_lookup(identity: str) -> object | None:
-        kind = identity.split(":", 1)[0]
-        if kind == "QueryDefinition":
-            path = query_definition_path(identity.split(":", 1)[1])
-            content = context.candidate_tree.get(path)
-            return None if content is None else parse_query_definition(content, path=path)
-        if kind == "Contract":
-            contract: object | None = _candidate_contract(context, identity.split(":", 1)[1])
-            return contract
-        owners = {
-            "Provider": (context.resolved.providers, "provider"),
-            "Procedure": (context.resolved.procedures, "procedure"),
-            "ClaimType": (context.resolved.claim_types, "claim_type"),
-            "CaptureContract": (context.resolved.capture_contracts, "contract"),
-        }
-        if kind not in owners:
-            return None
-        mapping, attribute = owners[kind]
-        selected = mapping.get(identity)
-        return None if selected is None else getattr(selected, attribute)
-
-    source = procedure.definition.source
-    type_ids = tuple("ClaimType:" + name for name in (() if source is None else source.claim_types))
-    subject_kinds: tuple[str, ...] = ()
-    if (
-        source is not None
-        and getattr(source, "syntax_rules", source.rules) == "cruxible.procedure-source.v2"
-    ):
-        from cruxible_core.authoring.procedure_source import source_ontology_names
-        from cruxible_core.indexes.evaluated_state import EvaluationRows, SelectedRows
-
-        names = source_ontology_names(source.text)
-        states = context.candidate_states
-        if isinstance(states, SelectedRows) and states.owner is not None:
-            owner = states.owner
-            type_ids, subject_kinds = (
-                owner.claim_type_names(names)
-                if isinstance(owner, EvaluationRows)
-                else owner.call(lambda rows: rows.claim_type_names(names))
-            )
-        else:
-            # Cold replay already materialized definitions; use the same name relation.
-            from cruxible_core.indexes.typed_state import claim_type_names
-
-            matched = [
-                row
-                for accepted in context.resolved.claim_types.values()
-                for row in claim_type_names(accepted.claim_type)
-                if row[2] in names or row[3] in names
-            ]
-            type_ids = tuple(sorted({row[0] for row in matched if row[1] == "predicate"}))
-            subject_kinds = tuple(sorted({row[2] for row in matched if row[1] == "subject_kind"}))
-    verify_source_bindings(
-        procedure,
-        lookup=source_lookup,
-        claim_types=(source_lookup(identity) for identity in type_ids),
-        subject_kinds=subject_kinds,
-    )
-
-
 def _reserved_provider_refusal_codes() -> frozenset[str]:
     from cruxible_core.providers.provider_runtime_contract import (
         PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES,
@@ -2054,7 +1986,6 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
     procedure = parse_procedure(context.content, path=context.path)
     installed = _installed(context, procedure.artifact_format)
 
-    _verify_source(context, procedure)
     predecessor: AcceptedProcedure | None = None
     if context.parent_content is not None:
         previous = parse_procedure(context.parent_content, path=context.path)
@@ -2083,6 +2014,7 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
         ),
         contract_lookup=candidate_contract,
         capture_lookup=candidate_capture_contract,
+        enum_members=tree_enum_resolver(context.candidate_tree),
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -2272,7 +2204,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
             )
         accepted_procedure = pinned
     from cruxible_core.errors import RequestRefusedError
-    from cruxible_core.providers.operation_index import line_slot_map
+    from cruxible_core.providers.operation_index import line_capture_output_map, line_slot_map
 
     def child(identity: ArtifactIdentity) -> Any:
         accepted = context.resolved.procedures.get(identity.qualified)
@@ -2280,6 +2212,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
 
     try:
         slots = line_slot_map(accepted_procedure.procedure.definition, child)
+        capture_outputs = line_capture_output_map(accepted_procedure.procedure.definition, child)
     except RequestRefusedError as exc:
         return _MemberVerdict(diagnostics=(_diagnostic(exc.error_code, str(exc), context.path),))
     law = evaluate_line_spec_law(
@@ -2294,6 +2227,9 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
             if (provider := context.resolved.providers.get(binding.build.target.qualified))
             is not None
         },
+        capture_outputs=capture_outputs,
+        contracts=_candidate_contract_resolver(context.candidate_tree),
+        enum_members=tree_enum_resolver(context.candidate_tree),
         by_name=True,
     )
     if law.verdict == "refused":
@@ -2525,14 +2461,22 @@ def _corroboration_digests(claim_type: ClaimType) -> frozenset[str]:
 def _candidate_contract_resolver(
     tree: Mapping[str, bytes],
 ) -> Callable[[ContractRef], Contract | None]:
-    """Read a pinned Contract version from the candidate tree, which includes this set."""
+    """Read a pinned Contract version from the candidate tree, which includes this set.
 
-    from cruxible_client.contracts.shapes import contract_path, parse_contract
+    A reference that pins a digest resolves only to the Contract with that digest.
+    """
+
+    from cruxible_client.contracts.shapes import contract_digest, contract_path, parse_contract
 
     def resolve(ref: ContractRef) -> Contract | None:
         path = contract_path(ref.name, ref.version)
         content = tree.get(path)
-        return None if content is None else parse_contract(content, path=path)
+        if content is None:
+            return None
+        contract = parse_contract(content, path=path)
+        if ref.digest is not None and contract_digest(contract).tagged != ref.digest:
+            return None
+        return contract
 
     return resolve
 
@@ -4694,7 +4638,7 @@ def _evaluate_scoped_members(
             )
             continue
         content = pretty_canonical_bytes(payload)
-        if state.artifact_tag == "cruxible-procedure-v3":
+        if state.artifact_tag == "cruxible-procedure-v4":
             from cruxible_client.contracts.procedures.artifacts import (
                 ProcedureArtifact,
                 render_procedure,

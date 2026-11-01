@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.captures import capture_components
 from cruxible_client.contracts.procedures.authored import (
     CallStep,
@@ -104,19 +103,26 @@ def resolve_procedure_spec(
             return value if isinstance(value, Contract) else None
 
         def resolve(kind: str, name: Any) -> Any:
+            if kind == "query":
+                return source(
+                    "QueryDefinition:" + name.query.removeprefix("QueryDefinition:"),
+                    step_paths[id(name)] + ".query",
+                )
+            if kind == "contract":
+                return resolve_ref(name)
             if kind == "procedure_output":
+                from cruxible_client.contracts.shapes import contract_ref_for_identity
+
                 child = source(
                     "Procedure:" + name.invoke.removeprefix("Procedure:"),
                     step_paths[id(name)] + ".invoke",
                 )
-                pin = child.definition.contract_out
-                return next(
-                    c.contract_schema.fields
-                    for c in child.owned_contracts
-                    if c.identity == pin.target
+                output = resolve_ref(
+                    contract_ref_for_identity(child.definition.contract_out.target)
                 )
+                return None if output is None else contract_schema_view(output, resolve_ref).fields
             if kind == "claim":
-                from cruxible_client.contracts.procedures.source_views import claim_view_schema
+                from cruxible_client.contracts.procedures.views import claim_view_schema
 
                 claim_type = source(
                     "ClaimType:" + name.claim_type.removeprefix("ClaimType:"),
@@ -171,6 +177,7 @@ def resolve_procedure_spec(
             output_view = contract_schema_view(contract(slot.out, authored_path), resolve_ref)
             request_defaults: dict[str, Any] = {}
             output_fields: Any = output_view.fields
+            output_contract: Any = dict(contract(slot.out, authored_path).fields)
             workspace_source = acquiring and is_workspace_file_signature(
                 operation_signature_digest(slot)
             )
@@ -185,6 +192,7 @@ def resolve_procedure_spec(
                     # The operation returns one Capture as its whole output: the
                     # call's value names only that Capture.
                     output_fields = {WHOLE_WIRE_CAPTURE_FIELD: PropertySchema(type="string")}
+                    output_contract = None
             if workspace_source:
                 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
                 from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_CAPTURE_FIELD
@@ -194,6 +202,7 @@ def resolve_procedure_spec(
                     **output_fields,
                     WORKSPACE_FILE_CAPTURE_FIELD: PropertySchema(type="string"),
                 }
+                output_contract = None
             if workspace_source and capture is not None:
                 components = capture_components(capture)
                 coordinates = components.coordinate_schema_pins
@@ -222,6 +231,7 @@ def resolve_procedure_spec(
                 "input": None if input_view is None else input_view.fields,
                 "input_allow_extra": False,
                 "output": output_fields,
+                "output_contract": output_contract,
             }
 
-        return lower_authoring_input(lower_procedure_spec(spec, resolve=resolve))
+        return lower_procedure_spec(spec, resolve=resolve)

@@ -31,6 +31,7 @@ from cruxible_core.service.procedures.resolution_dispositions import (
     service_dispose_procedure_resolution,
 )
 from cruxible_core.storage.cas import BodyAccessContext
+from tests.test_procedures.test_procedure_boundary_contracts import _activate_procedure
 from tests.test_procedures.test_procedure_measurement_readings import (
     OBSERVE_AT,
     RECORD_AT,
@@ -38,7 +39,6 @@ from tests.test_procedures.test_procedure_measurement_readings import (
     _measure,
     _world,
 )
-from tests.test_procedures.test_procedure_owned_contracts import _activate_procedure
 
 
 @pytest.fixture
@@ -207,8 +207,8 @@ def test_replaced_contract_refuses_but_its_history_remains_readable(measured):
     old = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     definition = procedure.definition.model_copy(
         update={
-            "budget": procedure.definition.budget.model_copy(
-                update={"max_items": procedure.definition.budget.max_items - 1}
+            "hard_caps": procedure.definition.hard_caps.model_copy(
+                update={"max_items": procedure.definition.hard_caps.max_items - 1}
             )
         }
     )
@@ -361,8 +361,8 @@ def test_dispose_revalidates_contract_changed_after_writer_fence(measured, monke
         if change == "replace":
             definition = definition.model_copy(
                 update={
-                    "budget": definition.budget.model_copy(
-                        update={"max_items": definition.budget.max_items - 1}
+                    "hard_caps": definition.hard_caps.model_copy(
+                        update={"max_items": definition.hard_caps.max_items - 1}
                     )
                 }
             )

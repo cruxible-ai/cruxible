@@ -58,7 +58,7 @@ def test_unknown_or_substituted_acceptance_law_refuses() -> None:
 
 def test_procedure_law_is_the_one_named_envelope_coordinate() -> None:
     assert (
-        ACCEPTANCE_LAWS.resolve_member(artifact_tag="cruxible-procedure-v3") is LIGHT_PROCEDURE_LAW
+        ACCEPTANCE_LAWS.resolve_member(artifact_tag="cruxible-procedure-v4") is LIGHT_PROCEDURE_LAW
     )
     with pytest.raises(ProposalIntegrityError, match="no acceptance law"):
         ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-procedure-v2")

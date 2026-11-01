@@ -75,16 +75,7 @@ def _instance_with_procedure(tmp_path: Path):
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     intent = coordinator.create(
         actor=actor,
-        payload=_payload(
-            _triage_definition(
-                query={
-                    "tag": "playbill-authoring-artifact-reference-v1",
-                    "role": "query",
-                    "target": {"kind": "QueryDefinition", "name": QUERY_NAME},
-                    "resolution": "accepted_at_intent_base",
-                }
-            )
-        ),
+        payload=_payload(_triage_definition(query=QUERY_NAME)),
         canonical_timestamp="2026-08-21T12:00:00.000000Z",
     ).intent
     submitted = coordinator.submit(intent.intent_id, actor=actor)
@@ -261,7 +252,6 @@ def test_procedure_floor_card_keeps_runnability_governance_and_track_record_sepa
         "output_contract",
         "runnable",
         "capabilities",
-        "budget",
         "hard_caps",
         "governance",
         "track_record",
@@ -269,8 +259,9 @@ def test_procedure_floor_card_keeps_runnability_governance_and_track_record_sepa
     assert card.identity.qualified == "Procedure:triage"
     assert isinstance(card.input_contract.input, ArtifactNameRef)
     assert isinstance(card.output_contract, ArtifactNameRef)
-    assert card.input_contract.input.target.qualified == "Contract:empty-input"
-    assert card.output_contract.target.qualified == "Contract:rows-output"
+    # The boundaries are the governed Contracts core co-proposed with it.
+    assert card.input_contract.input.target.qualified == "Contract:triage.input/v1"
+    assert card.output_contract.target.qualified == "Contract:triage.output/v1"
     assert card.runnable == "direct"
     assert card.capabilities.node_kinds == ("project", "read")
     assert card.capabilities.authority == "observe"

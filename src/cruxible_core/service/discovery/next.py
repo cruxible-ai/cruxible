@@ -94,6 +94,7 @@ from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate
 from cruxible_client.contracts.procedures.line_specs import (
+    LineBudgetsInput,
     LineSpec,
     line_spec_path,
     parse_line_spec,
@@ -4817,11 +4818,7 @@ def _line_demotion_repair(line_identity: str, spec: LineSpec | None) -> Playbill
         max_authority="propose",
         trigger_input=spec.trigger_input,
         parameters=cast(dict[str, object], spec.model_dump(mode="json")["parameters"]),
-        budgets=(
-            {str(key): int(value) for key, value in budgets.items()}
-            if isinstance(budgets, Mapping)
-            else None
-        ),
+        budgets=LineBudgetsInput.model_validate(budgets.model_dump(mode="json")),
         occurrence_epoch=spec.occurrence_epoch,
     )
     return PlaybillNextRepairV1(

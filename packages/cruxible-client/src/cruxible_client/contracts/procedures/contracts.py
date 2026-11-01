@@ -1,22 +1,31 @@
-"""Runtime validation for Contract schemas carried by Procedure envelopes."""
+"""Runtime validation of the values that cross a Procedure's boundaries."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
 from cruxible_client.contracts.primitives import canonical_json
-from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedure,
-    ProcedureOwnedContract,
-    procedure_owned_contract_digest,
-)
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
+from cruxible_client.contracts.provider_operations import (
+    OperationItemBudgetExceeded,
+    OperationValueRefused,
+    validate_operation_value,
+)
+from cruxible_client.contracts.shapes import (
+    Contract,
+    ContractRef,
+    EnumResolver,
+    contract_ref_for_identity,
+)
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
+
+if TYPE_CHECKING:
+    from cruxible_client.contracts.procedures.models import ProcedureDefinition
 
 
 class ProcedureContractValidationError(ValueError):
@@ -221,13 +230,6 @@ def _normalize_fields(
     return normalized
 
 
-def _validate_payload(
-    contract: ProcedureOwnedContract,
-    payload: CanonicalValue,
-) -> CanonicalValue:
-    return validate_contract_schema(contract.contract_schema, payload)
-
-
 def validate_contract_schema(schema: ContractSchema, payload: object) -> CanonicalValue:
     """Validate an operation boundary using the existing Contract field semantics."""
     if not isinstance(payload, Mapping):
@@ -240,17 +242,6 @@ def validate_contract_schema(schema: ContractSchema, payload: object) -> Canonic
         path_prefix="",
     )
     return normalize_canonical(normalized)
-
-
-def _validate_payload_with_budget(
-    contract: ProcedureOwnedContract,
-    payload: CanonicalValue,
-    *,
-    max_items: int,
-) -> ValidatedProcedureContract:
-    return validate_contract_schema_with_budget(
-        contract.contract_schema, payload, max_items=max_items
-    )
 
 
 def validate_contract_schema_with_budget(
@@ -276,32 +267,79 @@ def validate_contract_schema_with_budget(
     )
 
 
-class OwnedProcedureContractValidator:
-    """Resolve Contract pins only from one accepted Procedure owner."""
+class AcceptedProcedureContractValidator:
+    """Check a Procedure boundary value against one governed Contract at the run's coordinate.
 
-    def __init__(self, accepted: AcceptedProcedure) -> None:
-        self._contracts = {
-            procedure_owned_contract_digest(contract).tagged: contract
-            for contract in accepted.procedure.owned_contracts
-        }
-        self._by_name = {
-            contract.identity: contract for contract in accepted.procedure.owned_contracts
-        }
+    A Procedure's input, output and parameters are governed Contracts (its
+    generated ``<procedure>.input|output|params@N``, or any ``name@N`` it names).
+    ``resolve`` reads a Contract version at the admitted coordinate; a pin's
+    digest must reproduce. The value is checked exactly (undeclared keys and
+    missing required fields refuse) and returned unchanged. ``max_items`` bounds
+    every list at this boundary; intermediate values are not checked.
+    """
 
-    def _validate_structured(self, owned: ProcedureOwnedContract, value: CanonicalValue) -> None:
-        from cruxible_client.contracts.records import validate_record_constraints
+    def __init__(
+        self,
+        resolve: Callable[[ContractRef], Contract | None],
+        enum_members: EnumResolver | None = None,
+    ) -> None:
+        self._resolve = resolve
+        self._enum_members = enum_members
 
-        assert isinstance(value, dict)
-        validate_record_constraints(owned.contract_schema, value)
+    def contract(
+        self,
+        contract: ArtifactPin | ArtifactNameRef,
+        *,
+        direction: Literal["input", "output"],
+    ) -> Contract:
+        if contract.target.kind != "Contract":
+            raise ProcedureContractValidationError(
+                f"{direction} contract pin does not target Contract"
+            )
+        ref = contract_ref_for_identity(contract.target)
+        if isinstance(contract, ArtifactPin):
+            ref = ref.model_copy(update={"digest": contract.artifact_digest})
+        found = self._resolve(ref)
+        if found is None:
+            raise ProcedureContractValidationError(
+                f"{direction} Contract {ref.spelling} is not accepted at this coordinate"
+            )
+        return found
 
-    def _normalization_contract(
-        self, owned: ProcedureOwnedContract, payload: object
-    ) -> ProcedureOwnedContract:
-        from cruxible_client.contracts.records import record_normalization_schema
-
-        return owned.model_copy(
-            update={"contract_schema": record_normalization_schema(owned.contract_schema, payload)}
-        )
+    def _check(
+        self,
+        *,
+        contract: ArtifactPin | ArtifactNameRef,
+        payload: object,
+        direction: Literal["input", "output"],
+        max_items: int | None,
+        observations: list[ProcedureContractListObservation] | None,
+    ) -> CanonicalValue:
+        declared = self.contract(contract, direction=direction)
+        try:
+            validate_operation_value(
+                payload,
+                declared,
+                resolve=self._resolve,
+                enum_members=self._enum_members,
+                max_items=max_items,
+                observe_items=None
+                if observations is None
+                else lambda count, path: observations.append(
+                    ProcedureContractListObservation(field_path=path, observed=count)
+                ),
+            )
+        except OperationItemBudgetExceeded as exc:
+            raise ProcedureContractItemBudgetExceeded(
+                field_path=exc.field_path, limit=exc.limit, observed=exc.observed
+            ) from exc
+        except OperationValueRefused as exc:
+            first = exc.problems[0].partition(":")[0] if exc.problems else None
+            raise ProcedureContractValidationError(
+                f"{declared.name}@{declared.version} refuses the value: {exc}",
+                field_path=first or None,
+            ) from exc
+        return normalize_canonical(payload)
 
     def validate_contract(
         self,
@@ -310,22 +348,13 @@ class OwnedProcedureContractValidator:
         payload: CanonicalValue,
         direction: Literal["input", "output"],
     ) -> CanonicalValue:
-        if contract.target.kind != "Contract":
-            raise ProcedureContractValidationError(
-                f"{direction} contract pin does not target Contract"
-            )
-        owned = (
-            self._by_name.get(contract.target)
-            if isinstance(contract, ArtifactNameRef)
-            else self._contracts.get(contract.artifact_digest)
+        return self._check(
+            contract=contract,
+            payload=payload,
+            direction=direction,
+            max_items=None,
+            observations=None,
         )
-        if owned is None or owned.identity != contract.target:
-            raise ProcedureContractValidationError(
-                f"{direction} contract pin is outside the Procedure owner closure"
-            )
-        value = _validate_payload(self._normalization_contract(owned, payload), payload)
-        self._validate_structured(owned, value)
-        return value
 
     def validate_contract_with_budget(
         self,
@@ -335,54 +364,67 @@ class OwnedProcedureContractValidator:
         direction: Literal["input", "output"],
         max_items: int,
     ) -> ValidatedProcedureContract:
-        if contract.target.kind != "Contract":
-            raise ProcedureContractValidationError(
-                f"{direction} contract pin does not target Contract"
-            )
-        owned = (
-            self._by_name.get(contract.target)
-            if isinstance(contract, ArtifactNameRef)
-            else self._contracts.get(contract.artifact_digest)
-        )
-        if owned is None or owned.identity != contract.target:
-            raise ProcedureContractValidationError(
-                f"{direction} contract pin is outside the Procedure owner closure"
-            )
-        result = _validate_payload_with_budget(
-            self._normalization_contract(owned, payload),
-            payload,
+        observations: list[ProcedureContractListObservation] = []
+        value = self._check(
+            contract=contract,
+            payload=payload,
+            direction=direction,
             max_items=max_items,
+            observations=observations,
         )
-        self._validate_structured(owned, result.value)
-        return result
+        return ValidatedProcedureContract(value=value, list_observations=tuple(observations))
 
-    def unique_list_field_path(self, contract: ArtifactPin | ArtifactNameRef) -> str | None:
-        owned = (
-            self._by_name.get(contract.target)
-            if isinstance(contract, ArtifactNameRef)
-            else self._contracts.get(contract.artifact_digest)
+
+#: A Line run's Procedure input: a Line supplies parameters, never input.
+LINE_RUN_INPUT: dict[str, CanonicalValue] = {}
+
+
+def validate_line_parameters(
+    validator: AcceptedProcedureContractValidator,
+    definition: ProcedureDefinition,
+    parameters: object,
+) -> None:
+    """Refuse a Line whose runs the Procedure would refuse at the boundary.
+
+    A Line supplies the Procedure's parameters and its runs take an empty
+    input: the input Contract must accept ``{}``, and the Line's values over
+    the Procedure's defaults must satisfy its params Contract. A refusal names
+    the parameter (``field_path``) it is about.
+    """
+
+    try:
+        validator.validate_contract(
+            contract=definition.contract_in, payload=LINE_RUN_INPUT, direction="input"
         )
-        if owned is None or owned.identity != contract.target:
-            return None
-        paths: list[str] = []
-
-        def visit(fields: Mapping[str, PropertySchema], prefix: str) -> None:
-            for name in sorted(fields, key=lambda item: item.encode("utf-8")):
-                field = fields[name]
-                path = f"{prefix}.{name}" if prefix else name
-                if field.type == "list":
-                    paths.append(path)
-                    if field.item_fields is not None:
-                        visit(field.item_fields, f"{path}[*]")
-
-        visit(owned.contract_schema.fields, "")
-        return paths[0] if len(paths) == 1 else None
+    except ProcedureContractValidationError as exc:
+        raise ProcedureContractValidationError(
+            f"a Line run's input is empty, and the Procedure's input refuses it: {exc}; "
+            "a Line supplies parameters (declare them as the Procedure's params)",
+        ) from exc
+    supplied = normalize_canonical(parameters)
+    if not isinstance(supplied, dict):
+        raise ProcedureContractValidationError("Line parameters are a record")
+    if definition.parameter_contract is None:
+        if supplied:
+            raise ProcedureContractValidationError(
+                f"Procedure {definition.name!r} declares no parameters; the Line names "
+                + ", ".join(sorted(supplied)),
+                field_path=sorted(supplied)[0],
+            )
+        return
+    validator.validate_contract(
+        contract=definition.parameter_contract,
+        payload=definition.effective_parameters(supplied),
+        direction="input",
+    )
 
 
 __all__ = [
-    "OwnedProcedureContractValidator",
+    "LINE_RUN_INPUT",
+    "AcceptedProcedureContractValidator",
     "ProcedureContractItemBudgetExceeded",
     "ProcedureContractListObservation",
     "ProcedureContractValidationError",
     "ValidatedProcedureContract",
+    "validate_line_parameters",
 ]

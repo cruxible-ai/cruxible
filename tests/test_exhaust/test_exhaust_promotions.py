@@ -7,7 +7,6 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     procedure_artifact_digest,
-    render_procedure,
 )
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -33,6 +32,7 @@ from cruxible_core.service.procedures.procedures import (
 )
 from cruxible_core.storage.cas import ContentAddressedBodyStore
 from tests.core_support._support import initialize_local
+from tests.support.procedures import procedure_members
 from tests.test_indexes.test_resolution_contracts import (
     NOW,
     _accept_tree,
@@ -236,7 +236,7 @@ def test_promotion_passes_proposal_replay_and_projects_canonical_output(
         owner,
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
-            accepted_procedure.path: render_procedure(base_procedure),
+            **procedure_members(base_procedure),
             **subject_query_members(
                 "state", "measure-arm-health", "measure-node-health", "measure-unit-health"
             ),

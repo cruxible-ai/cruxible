@@ -329,7 +329,7 @@ def _identity_of(path: str, kind: SeedEntryKind, payload: Mapping[str, Any]) -> 
             return validate_query_definition(payload).identity.name
         if kind == "procedure":
             procedure = ProcedureInput.model_validate(payload)
-            return str(procedure.definition["name"])
+            return procedure.spec.procedure
         if payload.get("kind") == "claim":
             claim = ClaimInput.model_validate(payload)
             return f"{claim.subject}#{claim.predicate}"

@@ -22,7 +22,6 @@ from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
 )
-from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
 from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
     render_line_spec,
@@ -41,6 +40,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.support.lines import line_trigger, trigger_members
+from tests.support.procedures import procedure_members
 from tests.test_procedures import test_procedure_source_runs as fixtures
 from tests.test_procedures.test_procedure_proposal_delivery import (
     PREDICATE,
@@ -94,7 +94,7 @@ def _trigger_fed_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
         instance,
         owner,
         {
-            procedure_path(PROPOSER): render_procedure(proposer),
+            **procedure_members(proposer),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
             claim_type_path(claim_type.predicate): render_claim_type(claim_type),

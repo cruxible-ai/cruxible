@@ -16,7 +16,6 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.claim_verdicts import reported_claim_verdict
 from cruxible_client.contracts.claims import (
@@ -38,10 +37,8 @@ from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
     procedure_artifact_digest,
-    procedure_owned_contract_digest,
     procedure_path,
 )
-from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.graph import (
     compute_procedure_definition_digest,
     compute_procedure_node_digests,
@@ -62,9 +59,6 @@ from cruxible_client.contracts.procedures.measurements import (
 )
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
-    GuardPredicate,
-    PredicateOperand,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
@@ -75,6 +69,8 @@ from cruxible_client.contracts.procedures.readings import (
     ProcedureReadingsRequest,
 )
 from cruxible_client.contracts.query.definitions import query_definition_digest
+from cruxible_client.contracts.refs import step_ref
+from cruxible_client.contracts.shapes import Comparison, CountOperand, LiteralOperand
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.procedures.readings import procedure_reading_partition_id
 from cruxible_core.procedures.resolution import (
@@ -119,9 +115,13 @@ from tests.core_support._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
+from tests.support.procedures import MAX_WALL_CLOCK, contract_pin, named
 from tests.test_claims.test_claim_attestation_service import _request as _attestation_request
-from tests.test_procedures.test_procedure_owned_contracts import _activate_procedure, _contract
+from tests.test_procedures.test_procedure_boundary_contracts import (
+    EMPTY_INPUT,
+    QUERY_ROWS,
+    _activate_procedure,
+)
 
 ACCEPT_STAMP = "2026-08-24T15:00:00.000000Z"
 ACTIVATED_AT = datetime(2026, 8, 24, 15, 0, tzinfo=UTC)
@@ -237,18 +237,8 @@ def _procedure(
     declarations: tuple[ProcedureMeasurementDeclaration, ...],
 ) -> ProcedureArtifact:
     """The measured Procedure; its state tap names the query ``query_digest`` admits."""
-    input_contract = _contract("empty-input", {})
-    output_contract = _contract("query-rows", {"rows": PropertySchema(type="json")})
-    contract_in = ArtifactPin(
-        role="contract-in",
-        target=input_contract.identity,
-        artifact_digest=procedure_owned_contract_digest(input_contract).tagged,
-    )
-    contract_out = ArtifactPin(
-        role="contract-out",
-        target=output_contract.identity,
-        artifact_digest=procedure_owned_contract_digest(output_contract).tagged,
-    )
+    contract_in = contract_pin("contract-in", EMPTY_INPUT)
+    contract_out = contract_pin("contract-out", QUERY_ROWS)
     query = ArtifactPin(
         role="query",
         target=ArtifactIdentity(kind="QueryDefinition", name=QUERY_NAME),
@@ -262,45 +252,34 @@ def _procedure(
             ReadNode(node_id="read", query=named(query), parameters={}, as_="query", next="gate"),
             GuardNode(
                 node_id="gate",
-                predicate=GuardPredicate(
-                    left=PredicateOperand(kind="count", alias="query"),
-                    operator="gt",
-                    right=PredicateOperand(kind="literal", value=0),
+                predicate=Comparison(
+                    op="gt",
+                    left=CountOperand(count=step_ref("query")),
+                    right=LiteralOperand(literal=0),
                 ),
                 on_true="hot",
                 on_false="cold",
-                refusal_code="empty",
-                message="No rows.",
             ),
             ProjectNode(
                 node_id="hot",
-                fields={"rows": "$steps.query.result.rows"},
-                contract_out=named(contract_out),
+                fields={"rows": "$steps.query.rows"},
                 as_="hot_result",
                 next="finish",
             ),
             ProjectNode(
                 node_id="cold",
-                fields={"rows": "$steps.query.result.rows"},
-                contract_out=named(contract_out),
+                fields={"rows": "$steps.query.rows"},
                 as_="cold_result",
                 next="finish",
             ),
             ProjectNode(
                 node_id="finish",
-                fields={"rows": "$steps.query.result.rows"},
-                contract_out=named(contract_out),
+                fields={"rows": "$steps.query.rows"},
                 as_="result",
             ),
         ),
         returns="result",
         measurements=tuple(sorted(declarations, key=lambda item: item.name.encode())),
-        budget=ProcedureBudget(
-            wall_clock=RUN_WALL_CLOCK,
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=100,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=0,
@@ -314,14 +293,6 @@ def _procedure(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        owned_contracts=tuple(
-            sorted(
-                (input_contract, output_contract),
-                key=lambda contract: canonical_bytes(
-                    contract.model_dump(mode="json", by_alias=True)
-                ),
-            )
-        ),
         activation_policy="abort",
     )
 
@@ -1361,7 +1332,6 @@ def _line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
         grants="propose",
-        resource_ceiling=caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),

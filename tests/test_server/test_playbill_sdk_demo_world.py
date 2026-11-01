@@ -24,7 +24,6 @@ from cruxible_client import (
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.examples import authoring_example
 from cruxible_client.authoring.inputs import (
-    CarriedContractInput,
     ClaimInput,
     ProcedureInput,
     QueryDefinitionInput,
@@ -47,10 +46,6 @@ from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
     ClaimResolutionPolicy,
 )
-from cruxible_client.contracts.procedures.models import (
-    ProcedureBudget,
-    ProcedureHardCaps,
-)
 from cruxible_client.contracts.query.definitions import QueryDefinition, QueryEvaluationPolicy
 from cruxible_client.contracts.query.grammar import (
     QueryBudgets,
@@ -69,7 +64,7 @@ from tests.core_support._claim_type_support import (
     claim_type_input_example,
     defaulted_claim_type_input_example,
 )
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
+from tests.support.procedures import MAX_WALL_CLOCK
 from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
 
 
@@ -379,65 +374,48 @@ def test_cli_claim_type_input_is_accepted_in_a_fresh_world(
 
 
 def _assess_procedure(query: str) -> ProcedureInput:
-    """The assess Procedure over the accepted policy query, its Contracts carried."""
+    """The assess Procedure over the accepted policy query: one typed spec."""
 
-    def carried(name: str, role: str) -> dict[str, str]:
-        return {"kind": "carried_contract", "name": name, "role": role}
-
-    contract_in = carried("assess-input", "contract-in")
-    contract_out = carried("assess-result", "contract-out")
-    return ProcedureInput(
-        kind="procedure",
-        definition={
-            "name": "secops.vuln.assess",
+    return ProcedureInput.model_validate(
+        {
+            "kind": "procedure",
+            "procedure": "secops.vuln.assess",
             "description": "Classify a vulnerability from governed policy and service facts.",
-            "contract_in": contract_in,
-            "contract_out": contract_out,
-            "nodes": [
+            "input": {},
+            "output": {"lane": "string"},
+            "activation": "drain",
+            "steps": [
                 {
-                    "kind": "read",
-                    "node_id": "read-policy",
-                    "query": {"kind": "accepted", "role": "query", "target": query},
-                    "parameters": {},
-                    "as": "policy_rows",
-                    "next": "classify",
+                    "read": "policy_rows",
+                    "id": "read-policy",
+                    "query": query.removeprefix("QueryDefinition:"),
                 },
                 {
-                    "kind": "project",
-                    "node_id": "classify",
-                    "contract_out": contract_out,
-                    "fields": {"input": "$steps.policy_rows"},
-                    "as": "decision",
-                    "next": "result",
+                    "project": "decision",
+                    "id": "classify",
+                    # The read result rides in no declared field: a Procedure
+                    # value is typed, and raw read results have no Contract.
+                    "fields": {
+                        "truncated": {"$ref": "step", "step": "policy_rows", "path": ["truncated"]},
+                        "lane": "standard",
+                    },
+                    "output": {"truncated": "bool", "lane": "string"},
                 },
                 {
-                    "kind": "project",
-                    "node_id": "result",
-                    "fields": {"lane": "$steps.decision.lane"},
-                    "contract_out": contract_out,
-                    "as": "result",
+                    "project": "result",
+                    "fields": {"lane": {"$ref": "step", "step": "decision", "path": ["lane"]}},
+                    "output": {"lane": "string"},
                 },
             ],
             "returns": "result",
-            "budget": ProcedureBudget(
-                wall_clock=RUN_WALL_CLOCK,
-                max_provider_calls=0,
-                max_capture_bytes=0,
-            ).model_dump(mode="json"),
-            "hard_caps": ProcedureHardCaps(
-                max_wall_clock=MAX_WALL_CLOCK,
-                max_provider_calls=0,
-                max_capture_bytes=0,
-                max_items=200,
-                max_repeat_attempts=1,
-            ).model_dump(mode="json"),
-            "terminal_capability": 1,
-        },
-        contracts=(
-            CarriedContractInput(name="assess-input", fields={}, allow_extra=True),
-            CarriedContractInput(name="assess-result", fields={}, allow_extra=True),
-        ),
-        activation_policy="drain",
+            "hard_caps": {
+                "wall_clock": f"PT{MAX_WALL_CLOCK.microseconds // 1_000_000}S",
+                "provider_calls": 0,
+                "capture_bytes": 0,
+                "items": 200,
+                "repeat_attempts": 1,
+            },
+        }
     )
 
 

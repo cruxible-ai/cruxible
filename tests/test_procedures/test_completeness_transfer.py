@@ -41,6 +41,7 @@ from tests.support.operation_world import (
     operation_build,
     world,
 )
+from tests.support.procedures import refs
 
 ENTRY = Contract.model_validate(
     {
@@ -48,6 +49,10 @@ ENTRY = Contract.model_validate(
         "version": 1,
         "fields": {"status": {"type": "enum[open, closed]"}, "note": {"type": "int?"}},
     }
+)
+#: One extracted row as it flows: an invalid field is dropped from the row.
+ENTRY_VIEW = Contract.model_validate(
+    {"name": "test.entry-view", "version": 1, "fields": {"status": "string?", "note": "int?"}}
 )
 
 
@@ -122,16 +127,23 @@ _SLOT = {"in": "workspace.file.request@1", "out": "workspace.file.result@1", "ef
 
 
 def _transform(node_id: str, kind: str, spec: dict[str, Any], next_node: str) -> dict[str, Any]:
-    return {
-        "explicit": {
-            "kind": "transform",
-            "node_id": node_id,
-            "transform_kind": kind,
-            "spec": {"tag": f"cruxible-transform-{kind}-spec-v1", **spec},
-            "as": node_id,
-            "next": next_node,
-        }
-    }
+    return {"transform": node_id, "kind": kind, "spec": spec, "next": next_node}
+
+
+def _typed(node: dict[str, Any]) -> dict[str, Any]:
+    """A closed-transform node as its typed spec step (or repeat body member)."""
+
+    spec = {key: value for key, value in node["spec"].items() if key != "tag"}
+    typed = {"transform": node["as"], "kind": node["transform_kind"], "spec": spec}
+    if node["node_id"] != node["as"]:
+        typed["id"] = node["node_id"]
+    return typed
+
+
+def _spec(data: dict[str, Any]) -> ProcedureSpec:
+    """The typed spec: every ``$...`` reference spelled as a typed ``Ref``."""
+
+    return ProcedureSpec.model_validate(refs(data))
 
 
 def _workspace_world(tmp_path: Path, documents: dict[str, object]) -> tuple[Any, Path]:
@@ -150,6 +162,7 @@ def _workspace_world(tmp_path: Path, documents: dict[str, object]) -> tuple[Any,
         {
             capture_contract_path(capture.identity.name): render_capture_contract(capture),
             contract_path(ENTRY.name, ENTRY.version): render(ENTRY),
+            contract_path(ENTRY_VIEW.name, ENTRY_VIEW.version): render(ENTRY_VIEW),
         },
         name="capture-and-row",
     )
@@ -171,7 +184,7 @@ def _entries(capture: str, *, node_id: str = "entries", **extra: Any) -> dict[st
 def _count_fixed(instance: Any, *, kept_from: str) -> None:
     """call -> extract -> filter present(status) over ``kept_from`` -> count -> derive -> leaf."""
 
-    spec = ProcedureSpec.model_validate(
+    spec = _spec(
         {
             "procedure": "test.rows",
             "input": {},
@@ -184,11 +197,17 @@ def _count_fixed(instance: Any, *, kept_from: str) -> None:
                     "slot": "read",
                     "input": {**_READ, "relative_path": "data/doc.json"},
                 },
-                _entries("$doc.capture", next="kept"),
+                _entries("$steps.doc.capture", next="kept"),
                 _transform(
                     "kept",
                     "filter",
-                    {"input": kept_from, "where": "present($item.fields.status)"},
+                    {
+                        "input": kept_from,
+                        "where": {
+                            "op": "present",
+                            "of": {"$ref": "item", "path": ["fields", "status"]},
+                        },
+                    },
                     "count",
                 ),
                 _transform(
@@ -199,7 +218,16 @@ def _count_fixed(instance: Any, *, kept_from: str) -> None:
                     "derive",
                     {
                         "input": {"open": "$steps.count"},
-                        "cases": [{"when": "eq($item.fields.open, 0)", "value": "fixed"}],
+                        "cases": [
+                            {
+                                "when": {
+                                    "op": "eq",
+                                    "left": {"$ref": "item", "path": ["fields", "open"]},
+                                    "right": {"literal": 0},
+                                },
+                                "value": "fixed",
+                            }
+                        ],
                         "else": "affected",
                     },
                     "out",
@@ -207,7 +235,7 @@ def _count_fixed(instance: Any, *, kept_from: str) -> None:
                 {"project": "out", "fields": {"verdict": "$steps.verdict.result"}},
             ],
             "returns": "out",
-            "budget": {"provider_calls": 1, "capture_bytes": 65536},
+            "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
         }
     )
     author_procedure(instance, spec)
@@ -271,11 +299,11 @@ def test_an_invalid_field_elsewhere_taints_rows_but_not_the_records_it_never_rea
 def _row_read(tmp_path: Path, field: str) -> Any:
     document = {"entries": [{"id": "a", "status": "Maybe"}, {"id": "b", "status": "open"}]}
     instance, root = _workspace_world(tmp_path, {"doc.json": document})
-    spec = ProcedureSpec.model_validate(
+    spec = _spec(
         {
             "procedure": "test.row-read",
             "input": {},
-            "output": {"row": "json"},
+            "output": {"row": "test.entry-view@1"},
             "slots": {"read": _SLOT},
             "steps": [
                 {
@@ -284,15 +312,15 @@ def _row_read(tmp_path: Path, field: str) -> Any:
                     "slot": "read",
                     "input": {**_READ, "relative_path": "data/doc.json"},
                 },
-                _entries("$doc.capture"),
+                _entries("$steps.doc.capture"),
                 {
                     "project": "out",
                     "fields": {"row": f"$steps.entries.rows.{field}"},
-                    "output": {"row": "json"},
+                    "output": {"row": "test.entry-view@1"},
                 },
             ],
             "returns": "out",
-            "budget": {"provider_calls": 1, "capture_bytes": 65536},
+            "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
         }
     )
     author_procedure(instance, spec)
@@ -332,7 +360,7 @@ def test_an_acquiring_call_over_an_incomplete_request_is_incomplete(
     index = {"count": stated, "next": "data/doc.json", "entries": [{"id": "a", "status": "open"}]}
     document = {"entries": [{"id": "b", "status": "open"}]}
     instance, root = _workspace_world(tmp_path, {"index.json": index, "doc.json": document})
-    spec = ProcedureSpec.model_validate(
+    spec = _spec(
         {
             "procedure": "test.chained",
             "input": {},
@@ -346,7 +374,7 @@ def test_an_acquiring_call_over_an_incomplete_request_is_incomplete(
                     "input": {**_READ, "relative_path": "data/index.json"},
                 },
                 _entries(
-                    "$index.capture",
+                    "$steps.index.capture",
                     node_id="listing",
                     complete_when={"count_at": "/count"},
                     header={"next": {"at": "/next", "presence": "required"}},
@@ -357,7 +385,7 @@ def test_an_acquiring_call_over_an_incomplete_request_is_incomplete(
                     "slot": "second",
                     "input": {**_READ, "relative_path": "$steps.listing.header.next.value"},
                 },
-                _entries("$doc.capture"),
+                _entries("$steps.doc.capture"),
                 {
                     "project": "out",
                     "fields": {"status": "$steps.entries.rows.0.status"},
@@ -365,7 +393,7 @@ def test_an_acquiring_call_over_an_incomplete_request_is_incomplete(
                 },
             ],
             "returns": "out",
-            "budget": {"provider_calls": 2, "capture_bytes": 65536},
+            "hard_caps": {"provider_calls": 2, "capture_bytes": 65536},
         }
     )
     author_procedure(instance, spec)
@@ -386,7 +414,7 @@ def _child(instance: Any) -> None:
 
     author_procedure(
         instance,
-        ProcedureSpec.model_validate(
+        _spec(
             {
                 "procedure": "test.child",
                 "input": {},
@@ -399,7 +427,7 @@ def _child(instance: Any) -> None:
                         "slot": "read",
                         "input": {**_READ, "relative_path": "data/doc.json"},
                     },
-                    _entries("$doc.capture", complete_when={"count_at": "/count"}),
+                    _entries("$steps.doc.capture", complete_when={"count_at": "/count"}),
                     {
                         "project": "result",
                         "fields": {"status": "$steps.entries.rows.0.status"},
@@ -407,7 +435,7 @@ def _child(instance: Any) -> None:
                     },
                 ],
                 "returns": "result",
-                "budget": {"provider_calls": 1, "capture_bytes": 65536},
+                "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
             }
         ),
         name="child",
@@ -425,29 +453,23 @@ def test_an_invoke_carries_its_childs_incomplete_return_past_complete_parent_inp
     _child(instance)
     author_procedure(
         instance,
-        ProcedureSpec.model_validate(
+        _spec(
             {
                 "procedure": "test.parent",
                 "input": {},
-                "output": {"child": "json"},
+                "output": {"child": "test.child.output@1"},
                 "steps": [
                     {"invoke": "test.child", "id": "child", "input": {}},
                     # The invoke's value is {succeeded, status, receipt, value}; the
                     # authored typing reads the child's output, so the path is explicit.
                     {
-                        "explicit": {
-                            "kind": "project",
-                            "node_id": "finished",
-                            "fields": {"child": "$steps.child.value"},
-                            "contract_out": {
-                                "target": {"kind": "Contract", "name": "test.parent-output"}
-                            },
-                            "as": "finished",
-                        }
+                        "project": "finished",
+                        "fields": {"child": "$steps.child.value"},
+                        "output": {"child": "test.child.output@1"},
                     },
                 ],
                 "returns": "finished",
-                "budget": {"provider_calls": 1, "capture_bytes": 65536},
+                "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
             }
         ),
         name="parent",
@@ -486,29 +508,33 @@ def test_a_repeat_is_the_and_over_the_attempts_it_used(
     instance = world(tmp_path, operation_build())
     author_procedure(
         instance,
-        ProcedureSpec.model_validate(
+        _spec(
             {
                 "procedure": "test.repeated",
                 "input": {},
-                "output": {"kept": "integer"},
+                "output": {"kept": "int"},
                 "steps": [
                     {
                         "repeat": "retry",
                         "max_attempts": 1,
                         "body": [
                             {
-                                "node_id": "attempt",
-                                "operation": "transform",
-                                "transform_kind": "filter",
+                                "transform": "attempt",
+                                "kind": "filter",
                                 "spec": {
-                                    "tag": "cruxible-transform-filter-spec-v1",
                                     "input": [_record("open", invalid=invalid)],
-                                    "where": "present($item.fields.status)",
+                                    "where": {
+                                        "op": "present",
+                                        "of": {"$ref": "item", "path": ["fields", "status"]},
+                                    },
                                 },
-                                "as": "attempt",
                             }
                         ],
-                        "until": "attempt.count >= 0",
+                        "until": {
+                            "op": "ge",
+                            "left": {"$ref": "step", "step": "attempt", "path": ["count"]},
+                            "right": {"literal": 0},
+                        },
                     },
                     {
                         "project": "finished",
@@ -516,7 +542,7 @@ def test_a_repeat_is_the_and_over_the_attempts_it_used(
                     },
                 ],
                 "returns": "finished",
-                "budget": {"provider_calls": 0},
+                "hard_caps": {"provider_calls": 0},
             }
         ),
     )
@@ -537,11 +563,16 @@ def test_a_closed_transforms_rows_view_also_taints_a_read_reaching_a_dropped_fie
 
     document = {"entries": [{"id": "a", "status": "open", "note": "seven"}]}
     instance, root = _workspace_world(tmp_path, {"doc.json": document})
-    spec = ProcedureSpec.model_validate(
+    kept_type = (
+        "list<test.entry-view@1>{max_items: 10}"
+        if view == "rows"
+        else "list<record<test.entry@1>>{max_items: 10}"
+    )
+    spec = _spec(
         {
             "procedure": "test.kept-rows",
             "input": {},
-            "output": {"kept": "json"},
+            "output": {"kept": kept_type},
             "slots": {"read": _SLOT},
             "steps": [
                 {
@@ -550,21 +581,27 @@ def test_a_closed_transforms_rows_view_also_taints_a_read_reaching_a_dropped_fie
                     "slot": "read",
                     "input": {**_READ, "relative_path": "data/doc.json"},
                 },
-                _entries("$doc.capture", next="kept"),
+                _entries("$steps.doc.capture", next="kept"),
                 _transform(
                     "kept",
                     "filter",
-                    {"input": "$steps.entries", "where": "present($item.fields.status)"},
+                    {
+                        "input": "$steps.entries",
+                        "where": {
+                            "op": "present",
+                            "of": {"$ref": "item", "path": ["fields", "status"]},
+                        },
+                    },
                     "out",
                 ),
                 {
                     "project": "out",
                     "fields": {"kept": f"$steps.kept.{view}"},
-                    "output": {"kept": "json"},
+                    "output": {"kept": kept_type},
                 },
             ],
             "returns": "out",
-            "budget": {"provider_calls": 1, "capture_bytes": 65536},
+            "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
         }
     )
     author_procedure(instance, spec)
@@ -595,11 +632,11 @@ def test_an_inbox_item_reading_an_invalid_field_reaches_its_sink_incomplete(
     from tests.support.inbox import contract_members
 
     accept_tree(instance, contract_members(status_item), name="status-item")
-    spec = ProcedureSpec.model_validate(
+    spec = _spec(
         {
             "procedure": "test.inbox-statuses",
             "input": {},
-            "output": {"posted": "integer"},
+            "output": {"posted": "int"},
             "slots": {"read": _SLOT},
             "steps": [
                 {
@@ -608,7 +645,7 @@ def test_an_inbox_item_reading_an_invalid_field_reaches_its_sink_incomplete(
                     "slot": "read",
                     "input": {**_READ, "relative_path": "data/doc.json"},
                 },
-                _entries("$doc.capture"),
+                _entries("$steps.doc.capture"),
                 {"project": "out", "fields": {"posted": 1}},
                 {
                     "inbox": "test.status-item@1",
@@ -617,7 +654,7 @@ def test_an_inbox_item_reading_an_invalid_field_reaches_its_sink_incomplete(
                 },
             ],
             "returns": "out",
-            "budget": {"provider_calls": 1, "capture_bytes": 65536},
+            "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
         }
     )
     author_procedure(instance, spec)
@@ -646,7 +683,7 @@ def _filter_count_derive(source: str, *, prefix: str) -> list[dict[str, Any]]:
             "spec": {
                 "tag": "cruxible-transform-filter-spec-v1",
                 "input": source,
-                "where": "present($item.fields.status)",
+                "where": {"op": "present", "of": {"$ref": "item", "path": ["fields", "status"]}},
             },
             "as": f"{prefix}kept",
         },
@@ -666,7 +703,16 @@ def _filter_count_derive(source: str, *, prefix: str) -> list[dict[str, Any]]:
             "spec": {
                 "tag": "cruxible-transform-derive-spec-v1",
                 "input": {"open": f"$steps.{prefix}count"},
-                "cases": [{"when": "eq($item.fields.open, 0)", "value": "fixed"}],
+                "cases": [
+                    {
+                        "when": {
+                            "op": "eq",
+                            "left": {"$ref": "item", "path": ["fields", "open"]},
+                            "right": {"literal": 0},
+                        },
+                        "value": "fixed",
+                    }
+                ],
                 "else": "affected",
             },
             "as": f"{prefix}verdict",
@@ -697,10 +743,10 @@ def _repeat_world(tmp_path: Path, body: list[dict[str, Any]], after: list[dict[s
     explicit_after = []
     for index, step in enumerate(after):
         following = after[index + 1]["node_id"] if index + 1 < len(after) else "finished"
-        explicit_after.append({"explicit": {"kind": "transform", **step, "next": following}})
+        explicit_after.append({**_typed(step), "next": following})
     author_procedure(
         instance,
-        ProcedureSpec.model_validate(
+        _spec(
             {
                 "procedure": "test.repeat-rows",
                 "input": {},
@@ -709,8 +755,12 @@ def _repeat_world(tmp_path: Path, body: list[dict[str, Any]], after: list[dict[s
                     {
                         "repeat": "retry",
                         "max_attempts": 1,
-                        "body": [{**item, "operation": "transform"} for item in body],
-                        "until": "shaped.count >= 0",
+                        "body": [_typed(item) for item in body],
+                        "until": {
+                            "op": "ge",
+                            "left": {"$ref": "step", "step": "shaped", "path": ["count"]},
+                            "right": {"literal": 0},
+                        },
                         **({"next": after[0]["node_id"]} if after else {}),
                     },
                     *explicit_after,
@@ -727,7 +777,7 @@ def _repeat_world(tmp_path: Path, body: list[dict[str, Any]], after: list[dict[s
                     },
                 ],
                 "returns": "finished",
-                "budget": {"provider_calls": 0},
+                "hard_caps": {"provider_calls": 0},
             }
         ),
     )

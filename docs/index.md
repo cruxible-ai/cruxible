@@ -47,7 +47,6 @@ judgment; Cruxible checks it, records it and serves it back.
 - [CLI reference](cli-reference.md)
 - [MCP tools](mcp-tools.md)
 - [Python SDK](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md)
-  and its [Procedure source authoring](procedure-source.md) reference
 - [Architecture](architecture.md)
 
 ## Operations

@@ -26,7 +26,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
@@ -48,8 +47,8 @@ def _pin(role: str, kind: str, name: str, *, digest: str | None = None) -> Artif
 
 
 def _definition(query: ArtifactPin) -> ProcedureDefinition:
-    contract_in = named(_pin("contract-in", "Contract", "empty-input"))
-    contract_out = named(_pin("contract-out", "Contract", "claim-rows"))
+    contract_in = named(_pin("contract-in", "Contract", "empty-input/v1"))
+    contract_out = named(_pin("contract-out", "Contract", "claim-rows/v1"))
     return ProcedureDefinition(
         name="triage",
         contract_in=named(contract_in),
@@ -64,17 +63,10 @@ def _definition(query: ArtifactPin) -> ProcedureDefinition:
             ProjectNode(
                 node_id="shape",
                 fields={"rows": "$steps.rows"},
-                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
         returns="result",
-        budget=ProcedureBudget(
-            wall_clock=CanonicalDuration(microseconds=1_000_000),
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=100,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=CanonicalDuration(microseconds=2_000_000),
             max_provider_calls=0,
@@ -113,7 +105,7 @@ def _line(
         identity=ArtifactIdentity(kind="Line", name="triage-hourly"),
         occurrence_epoch=epoch,
         procedure=procedure_pin,
-        parameters={"status": "open"},
+        parameters={},
         max_authority=RUNG_AUTHORITY[requested_rung],
         budgets={
             "max_capture_bytes": 0,
@@ -130,7 +122,7 @@ def _line(
 def test_line_spec_round_trip_and_digest_golden() -> None:
     line, accepted, _interfaces = _line()
 
-    expected = "sha256:34c2a41b4eef8d0909e10b7a36780ac0b90c484598919cac222e8197e5a6ae10"
+    expected = "sha256:cf17c48a92a3d7defc66e6756fa649d20881f62675660f3a92b249642aecbe0b"
     assert line_spec_digest(line).tagged == expected
     content = render_line_spec(line)
     assert parse_line_spec(content, path=line_spec_path("triage-hourly")) == line
@@ -216,3 +208,23 @@ def test_a_line_advances_its_epoch_exactly_when_its_accepted_event_changes() -> 
         {**first.model_dump(mode="python"), "trigger_event": selector, "trigger_input": "feed"}
     )
     assert verdict(stray).verdict == "refused"
+
+
+def test_line_budgets_are_a_declared_model_checked_against_the_caps() -> None:
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.procedures.line_specs import LineBudgets, LineBudgetsInput
+
+    line, accepted, _interfaces = _line()
+    assert isinstance(line.budgets, LineBudgets)
+    with pytest.raises(ValidationError):
+        line.model_copy(update={"budgets": None}).model_validate(
+            {**line.model_dump(mode="json", by_alias=True), "budgets": {"max_items": "10"}}
+        )
+    with pytest.raises(ValidationError):
+        LineBudgetsInput.model_validate({"max_wall_clock": 1})
+    caps = accepted.procedure.definition.hard_caps
+    wide = line.budgets.model_copy(update={"max_items": caps.max_items + 1})
+    assert wide.widened(caps) == (f"max_items {caps.max_items + 1} > {caps.max_items}",)
+    filled = LineBudgetsInput(max_items=1).filled(caps)
+    assert filled.max_provider_calls == caps.max_provider_calls and filled.max_items == 1

@@ -9,8 +9,6 @@ from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     procedure_artifact_digest,
-    procedure_path,
-    render_procedure,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import ProjectNode
@@ -19,6 +17,7 @@ from cruxible_core.exhaust.line_inbox import LineInboxStore
 from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
 from tests.core_support._support import initialize_local
 from tests.support.inbox import contract_members, inbox_node
+from tests.support.procedures import procedure_members
 from tests.test_procedures.test_nested_source_runs import accept_blueprint, blueprints
 
 NOTE = {"note": "child ready"}
@@ -49,7 +48,6 @@ def _roomy(artifact: ProcedureArtifact, *, seconds: int = 60) -> ProcedureArtifa
     wall_clock = CanonicalDuration(microseconds=seconds * 1_000_000)
     definition = artifact.definition.model_copy(
         update={
-            "budget": artifact.definition.budget.model_copy(update={"wall_clock": wall_clock}),
             "hard_caps": artifact.definition.hard_caps.model_copy(
                 update={"max_wall_clock": wall_clock}
             ),
@@ -92,7 +90,6 @@ def _inbox_child(child: ProcedureArtifact) -> ProcedureArtifact:
             node = NamedConstantNode(
                 node_id=node.node_id,
                 fields=node.fields,
-                contract_out=node.contract_out,
                 **{"as": node.as_},
                 next="inbox",
             )
@@ -106,6 +103,25 @@ def _inbox_child(child: ProcedureArtifact) -> ProcedureArtifact:
         }
     )
     return _redigest(child.model_copy(update={"definition": definition}))
+
+
+def _hands_parameters(parent: ProcedureArtifact) -> ProcedureArtifact:
+    """The parent, handing each invoked child its values as the child's parameters.
+
+    ``relay`` is parent-shaped: it takes ``positive`` as a parameter (a Line's
+    shape), so whatever invokes it maps the value into its params, not input.
+    """
+
+    from cruxible_client.contracts.procedures.models import InvokeNode
+
+    nodes = tuple(
+        node.model_copy(update={"input": {}, "parameters": node.input})
+        if isinstance(node, InvokeNode)
+        else node
+        for node in parent.definition.nodes
+    )
+    definition = parent.definition.model_copy(update={"nodes": nodes})
+    return _redigest(parent.model_copy(update={"definition": definition}))
 
 
 def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) -> None:
@@ -128,7 +144,7 @@ def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) ->
     instance, owner = initialize_local(tmp_path)
     child_blueprint, parent_blueprint = blueprints()
     accept_blueprint(instance, owner, child_blueprint)
-    accept_blueprint(instance, owner, parent_blueprint, child="child")
+    accept_blueprint(instance, owner, parent_blueprint)
     old_child, old_parent = _accepted(instance, "child"), _accepted(instance, "parent")
 
     # New identities, so nothing is a successor: `grand` (run by the Line) invokes
@@ -146,19 +162,21 @@ def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) ->
         )
     )
     relay_digest = procedure_artifact_digest(relay).tagged
-    grand = _rewritten(
-        relay,
-        {child_digest: relay_digest, '"name": "inbox_child"': '"name": "relay"'},
-        name="grand",
+    grand = _hands_parameters(
+        _rewritten(
+            relay,
+            {child_digest: relay_digest, '"name": "inbox_child"': '"name": "relay"'},
+            name="grand",
+        )
     )
     _accept_more(
         instance,
         owner,
         {
             **contract_members(),
-            procedure_path("inbox_child"): render_procedure(child),
-            procedure_path("relay"): render_procedure(relay),
-            procedure_path("grand"): render_procedure(grand),
+            **procedure_members(child),
+            **procedure_members(relay),
+            **procedure_members(grand),
         },
         name="inbox-children",
     )
@@ -191,7 +209,6 @@ def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) ->
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
         grants="propose",
-        resource_ceiling=caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
         expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc),
@@ -227,7 +244,7 @@ def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) ->
     direct = service_run_playbill_procedure(
         instance,
         name="grand",
-        request=ProcedureRunRequest(input={"positive": True}),
+        request=ProcedureRunRequest(input={}, parameters={"positive": True}),
         actor_context=_actor(instance),
     )
     assert direct.status != "succeeded"

@@ -116,6 +116,7 @@ from cruxible_client.contracts.get_reads import (
     ReadSurface,
     RevisionChange,
 )
+from cruxible_client.contracts.identity_normalizers import NoneNormalizer, normalizer_spelling
 from cruxible_client.contracts.operational_reads import capture_handle
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
@@ -1764,6 +1765,11 @@ def _subject_kind_card(
         lifecycle=declared.lifecycle.state,
         rule=rule.rule,
         keys=declared.keys,
+        normalizers={
+            predicate: normalizer_spelling(declared.normalizer(predicate))
+            for predicate in declared.keys
+            if not isinstance(declared.normalizer(predicate), NoneNormalizer)
+        },
         uniqueness=getattr(rule, "uniqueness", None),
         live_subjects=int(live),
         kit=kit,

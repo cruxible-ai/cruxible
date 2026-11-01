@@ -13,13 +13,14 @@ from cruxible_client.contracts.captures import CaptureContractAny as CaptureCont
 from cruxible_client.contracts.errors import ExecutionError, JournalError
 from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionRule
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
-from cruxible_client.contracts.procedures.contracts import OwnedProcedureContractValidator
+from cruxible_client.contracts.procedures.contracts import AcceptedProcedureContractValidator
 from cruxible_client.contracts.procedures.reads import DEFAULT_MAX_READ_ROWS, ProcedureReadCeiling
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.query.results import (
     ClaimQueryResult,
 )
-from cruxible_client.contracts.shapes import Contract, ContractRef, EnumResolver
+from cruxible_client.contracts.shapes import Contract, ContractRef, EnumResolver, KeyCanonicalizer
+from cruxible_core.claims.enum_resolution import accepted_enum_resolver
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -43,6 +44,7 @@ from cruxible_core.procedures.execution import (
     ProcedureExecutor,
     ProcedureRunResultV1,
     ProviderRuntimeInvokerProtocol,
+    QueryContractViolated,
     ReadCeilingExceeded,
     StateTapReaderProtocol,
     StateTapReadResultV1,
@@ -120,6 +122,132 @@ class LocalExhaustPromotionVerifier:
         )
 
 
+def _pinned_contract(
+    resolve: Callable[[ContractRef], Contract | None], ref: ContractRef
+) -> Contract:
+    contract = resolve(ref)
+    if contract is None:
+        raise ExecutionError(
+            f"the Query's pinned Contract {ref.spelling} is not accepted at this coordinate"
+        )
+    return contract
+
+
+def _first_problem(record: Any) -> dict[str, object] | None:
+    from cruxible_client.contracts.shapes import FieldInvalid
+
+    for name, result in sorted(record.fields.items()):
+        if isinstance(result, FieldInvalid):
+            return {"field": name, "problem": result.problem.model_dump(mode="json")}
+    return None
+
+
+def _first_number_problem(
+    value: Mapping[str, object],
+    contract: Contract,
+    resolve: Callable[[ContractRef], Contract | None],
+) -> dict[str, object] | None:
+    from cruxible_client.contracts.provider_operations import (
+        OperationValueRefused,
+        validate_typed_number_encoding,
+    )
+
+    for name, declared in contract.fields.items():
+        if name not in value:
+            continue
+        try:
+            validate_typed_number_encoding(value[name], declared.type, resolve=resolve, path=name)
+        except OperationValueRefused as exc:
+            return {"field": name, "problem": {"code": "noncanonical_number", "message": str(exc)}}
+    return None
+
+
+def effective_query_parameters(
+    definition: Any, parameters: Mapping[str, object]
+) -> dict[str, object] | None:
+    """The bound parameter record a Query evaluates: defaults applied, references normalized.
+
+    It is the Query's own binding (``resolve_query_parameters``), so a Contract
+    checks exactly what the Query will evaluate. ``None`` when the Query itself
+    refuses the parameters; its own run then refuses them the same way.
+    """
+
+    from cruxible_core.query.engine import resolve_query_parameters
+
+    try:
+        bindings = resolve_query_parameters(definition, parameters)
+    except Exception:  # the Query's own typed refusal follows from its run
+        return None
+    return {item.name: item.value for item in bindings if item.value is not None}
+
+
+def enforce_query_parameter_contract(
+    parameters: Mapping[str, object],
+    contract: Contract,
+    resolve: Callable[[ContractRef], Contract | None],
+    enum_members: EnumResolver | None = None,
+) -> None:
+    """Refuse a Procedure read whose effective parameters break the parameter Contract."""
+
+    from cruxible_client.contracts.shapes import check_record
+
+    problem = _first_problem(
+        check_record(
+            parameters, contract, record="parameters", resolve=resolve, enum_members=enum_members
+        )
+    ) or _first_number_problem(parameters, contract, resolve)
+    if problem is not None:
+        raise QueryContractViolated(
+            direction="parameters",
+            details={"contract": f"{contract.name}@{contract.version}", **problem},
+        )
+
+
+def enforce_query_row_contract(
+    result: ClaimQueryResult,
+    contract: Contract,
+    resolve: Callable[[ContractRef], Contract | None],
+    enum_members: EnumResolver | None = None,
+) -> None:
+    """Refuse a Procedure read any of whose rows breaks the Query's row Contract.
+
+    A row's projected fields are checked by name: a present field's value is
+    checked against its declared type; an absent one satisfies only an
+    optional field; a conflicted one satisfies none.
+    """
+
+    from cruxible_client.contracts.shapes import check_record
+
+    for index, row in enumerate(result.rows):
+        present: dict[str, object] = {}
+        conflicted: list[str] = []
+        for item in row.fields:
+            if item.state == "present":
+                present[item.name] = item.value
+            elif item.state == "conflict":
+                conflicted.append(item.name)
+        declared_conflicts = sorted(set(conflicted) & set(contract.fields))
+        problem: dict[str, object] | None = (
+            {"field": declared_conflicts[0], "problem": {"code": "conflict"}}
+            if declared_conflicts
+            else _first_problem(
+                check_record(
+                    present, contract, record="row", resolve=resolve, enum_members=enum_members
+                )
+            )
+            or _first_number_problem(present, contract, resolve)
+        )
+        if problem is not None:
+            raise QueryContractViolated(
+                direction="row",
+                details={
+                    "contract": f"{contract.name}@{contract.version}",
+                    "row": index,
+                    **problem,
+                },
+            )
+
+
 class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
     """Read accepted state for a Procedure: one exact Query or ClaimType, to the end."""
 
@@ -160,6 +288,26 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
             raise ExecutionError(
                 "state tap QueryDefinition pin does not match the admitted coordinate"
             )
+        definition = accepted.query
+        resolve = None
+        enum_members: EnumResolver | None = None
+        if definition.parameter_contract is not None or definition.row_contract is not None:
+            from cruxible_core.service.procedures.procedure_runs import (
+                accepted_contract_resolver,
+            )
+
+            resolve = accepted_contract_resolver(self.instance, internal)
+            enum_members = accepted_enum_resolver(self.instance, internal)
+        if definition.parameter_contract is not None:
+            assert resolve is not None
+            effective = effective_query_parameters(definition, dict(parameters))
+            if effective is not None:
+                enforce_query_parameter_contract(
+                    effective,
+                    _pinned_contract(resolve, definition.parameter_contract),
+                    resolve,
+                    enum_members,
+                )
         run = service_run_playbill_query(
             self.instance,
             name=query.target.name,
@@ -177,6 +325,14 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
                 clipped=truncation.clipped_budgets,
                 candidates=truncation.candidate_result_count,
                 ceiling=ceiling,
+            )
+        if definition.row_contract is not None:
+            assert resolve is not None
+            enforce_query_row_contract(
+                run.result,
+                _pinned_contract(resolve, definition.row_contract),
+                resolve,
+                enum_members,
             )
         return StateTapReadResultV1(
             value=state_tap_value(run.result),
@@ -351,10 +507,15 @@ def service_execute_direct_procedure(
     ephemeral_spec_digest: str | None = None,
     enum_resolver: EnumResolver | None = None,
     contract_resolver: Callable[[ContractRef], Contract | None] | None = None,
+    key_rules: KeyCanonicalizer | None = None,
 ) -> ProcedureRunResultV1:
     """Execute through the shared runtime; no transport duplicates orchestration."""
 
-    validator = contract_validator or OwnedProcedureContractValidator(accepted)
+    if contract_validator is None:
+        if contract_resolver is None:
+            raise ExecutionError("a Procedure run checks its boundaries against governed Contracts")
+        contract_validator = AcceptedProcedureContractValidator(contract_resolver, enum_resolver)
+    validator = contract_validator
     index = ProcedureRunIndex(run_index_path)
     try:
         return ProcedureExecutor(
@@ -378,6 +539,7 @@ def service_execute_direct_procedure(
             parent_context=parent_context,
             enum_resolver=enum_resolver,
             contract_resolver=contract_resolver,
+            key_rules=key_rules,
             ephemeral_spec_digest=ephemeral_spec_digest,
         ).execute(prepared, accepted)
     finally:

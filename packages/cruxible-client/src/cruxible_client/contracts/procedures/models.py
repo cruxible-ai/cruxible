@@ -8,12 +8,13 @@ binds; nothing here performs a mutable config or registry lookup.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactNameRef
-from cruxible_client.contracts.canonical import normalize_canonical
+from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.measurements import (
     ProcedureMeasurementDeclaration,
@@ -43,16 +44,13 @@ from cruxible_client.contracts.procedures.nodes import (
     AuthorityVerb,
     CallNode,
     CaptureEgressNode,
-    ComparisonOperator,
     EffectiveAuthority,
     EgressNode,
     ExtractNode,
     GuardNode,
-    GuardPredicate,
     HaltNode,
     InboxEgressNode,
     InvokeNode,
-    PredicateOperand,
     PredicateScalar,
     ProcedureNode,
     ProcedureTransformSpec,
@@ -69,6 +67,7 @@ from cruxible_client.contracts.procedures.nodes import (
     authority_for_rung,
     derived_terminal_capability,
     is_terminal_node,
+    predicate_step_aliases,
     refuse_retired_kinds,
     required_authority,
 )
@@ -77,7 +76,6 @@ from cruxible_client.contracts.procedures.slots import (
     ProcedureSlot,
     validate_procedure_slots,
 )
-from cruxible_client.contracts.procedures.source_program import ProcedureSourceProgram
 
 
 class ProcedureBudget(_StrictProcedureModel):
@@ -133,6 +131,40 @@ class ProcedureHardCaps(_StrictProcedureModel):
         return self
 
 
+def caps_budget(caps: ProcedureHardCaps) -> ProcedureBudget:
+    """The operating budget of a run whose Line states none: the hard caps themselves.
+
+    A direct run's ephemeral Line spec records this budget; an accepted Line
+    states its own ``budgets``, which must fit within the caps.
+    """
+
+    return ProcedureBudget(
+        wall_clock=caps.max_wall_clock,
+        max_provider_calls=caps.max_provider_calls,
+        max_capture_bytes=caps.max_capture_bytes,
+        max_result_bytes=caps.max_result_bytes,
+        max_items=caps.max_items,
+        max_read_rows=caps.max_read_rows,
+    )
+
+
+def budget_within_caps(budget: ProcedureBudget, caps: ProcedureHardCaps) -> bool:
+    """Whether an operating budget fits within a Procedure's hard caps."""
+
+    return (
+        budget.wall_clock.microseconds <= caps.max_wall_clock.microseconds
+        and budget.max_provider_calls <= caps.max_provider_calls
+        and budget.max_capture_bytes <= caps.max_capture_bytes
+        and (budget.max_items is None or budget.max_items <= caps.max_items)
+        and (
+            budget.max_result_bytes is None
+            or caps.max_result_bytes is None
+            or budget.max_result_bytes <= caps.max_result_bytes
+        )
+        and (budget.max_read_rows is None or budget.max_read_rows <= caps.max_read_rows)
+    )
+
+
 class ProcedureDefinition(_StrictProcedureModel):
     """The one Procedure graph: explicit value joins and typed return paths.
 
@@ -143,29 +175,40 @@ class ProcedureDefinition(_StrictProcedureModel):
     slot to one exact build and operation when it is accepted.
     """
 
-    graph_format: Literal[7] = 7
+    graph_format: Literal[8] = 8
     name: str
     description: str | None = None
     contract_in: ArtifactNameRef
     contract_out: ArtifactNameRef
     parameter_contract: ArtifactNameRef | None = None
+    #: Each parameter's default by name. The params Contract stays shape-only;
+    #: acceptance checks each default against its field, and a run's
+    #: effective parameters are the Line's values over these defaults.
+    parameter_defaults: dict[str, object] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
     nodes: tuple[ProcedureNode, ...]
     returns: str | None = None
     slots: dict[str, ProcedureSlot] = Field(
         default_factory=dict, exclude_if=lambda value: not value
     )
     measurements: tuple[ProcedureMeasurementDeclaration, ...] = ()
-    budget: ProcedureBudget
+    #: The Procedure's limits are its hard caps alone: the operating budget of a
+    #: run is its Line's (a direct run's ephemeral Line spec), within these caps.
     hard_caps: ProcedureHardCaps
     terminal_capability: Literal[1, 2, 3]
     annotations: object = Field(default_factory=dict)
-    source: ProcedureSourceProgram | None = None
 
     @model_validator(mode="before")
     @classmethod
     def _retired_kinds(cls, value: object) -> object:
         if isinstance(value, dict):
             refuse_retired_kinds(value.get("nodes"))
+            if "budget" in value:
+                raise ValueError(
+                    "procedure_budget_retired: a Procedure declares hard_caps only; the "
+                    "operating budget is its Line's (budgets), within those caps"
+                )
         return value
 
     @field_validator("name")
@@ -200,6 +243,15 @@ class ProcedureDefinition(_StrictProcedureModel):
     def _annotations(cls, value: object) -> object:
         return normalize_canonical(value)
 
+    @field_validator("parameter_defaults", mode="before")
+    @classmethod
+    def _parameter_defaults(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            raise ValueError("parameter_defaults maps each parameter name to its default")
+        if not all(isinstance(name, str) for name in value):
+            raise ValueError("a parameter default is keyed by its parameter name")
+        return normalize_canonical(value)
+
     @model_validator(mode="after")
     def _basic_shape(self) -> "ProcedureDefinition":
         if not self.nodes:
@@ -216,15 +268,11 @@ class ProcedureDefinition(_StrictProcedureModel):
             raise ValueError("Procedure node ids must be unique")
         if len(set(aliases)) != len(aliases):
             raise ValueError("Procedure output aliases must be unique")
-        # Source-v2 returns through explicit terminal nodes, never one global
-        # alias; source-v1 retains its display-only alias.
-        if (
-            self.source is not None
-            and getattr(self.source, "syntax_rules", self.source.rules)
-            == "cruxible.procedure-source.v2"
-            and self.returns is not None
-        ):
-            raise ValueError("Source-v2 uses explicit return paths, not a return alias")
+        if self.parameter_defaults and self.parameter_contract is None:
+            raise ValueError(
+                "procedure_parameter_default_undeclared: parameter_defaults name "
+                "parameters, and this Procedure declares no params Contract"
+            )
         used = {slot for _occurrence, slot in self.slot_nodes()}
         if used != set(self.slots):
             undeclared = sorted(used - set(self.slots))
@@ -260,25 +308,6 @@ class ProcedureDefinition(_StrictProcedureModel):
                         f"node {getattr(item, 'node_id', '?')!r}: an effect policy is declared "
                         "exactly when its slot's effect is external_mutation"
                     )
-        if self.budget.wall_clock.microseconds > self.hard_caps.max_wall_clock.microseconds:
-            raise ValueError("Procedure budget exceeds its wall-clock hard cap")
-        if self.budget.max_provider_calls > self.hard_caps.max_provider_calls:
-            raise ValueError("Procedure budget exceeds its provider-call hard cap")
-        if (
-            self.budget.max_result_bytes is not None
-            and self.hard_caps.max_result_bytes is not None
-            and self.budget.max_result_bytes > self.hard_caps.max_result_bytes
-        ):
-            raise ValueError("Procedure result budget exceeds hard caps")
-        if self.budget.max_capture_bytes > self.hard_caps.max_capture_bytes:
-            raise ValueError("Procedure budget exceeds its capture-byte hard cap")
-        if self.budget.max_items is not None and self.budget.max_items > self.hard_caps.max_items:
-            raise ValueError("Procedure budget exceeds its item hard cap")
-        if (
-            self.budget.max_read_rows is not None
-            and self.budget.max_read_rows > self.hard_caps.max_read_rows
-        ):
-            raise ValueError("Procedure budget exceeds its read-row hard cap")
         if any(
             isinstance(node, RepeatNode) and node.max_attempts > self.hard_caps.max_repeat_attempts
             for node in self.nodes
@@ -318,6 +347,15 @@ class ProcedureDefinition(_StrictProcedureModel):
                 )
         return self
 
+    def effective_parameters(self, supplied: Mapping[str, object]) -> CanonicalValue:
+        """A run's parameters: the supplied values (its Line's) over the defaults.
+
+        The result is checked against the params Contract after the defaults
+        apply; a parameter neither supplied nor defaulted stays absent.
+        """
+
+        return normalize_canonical({**self.parameter_defaults, **supplied})
+
     def slot_nodes(self) -> tuple[tuple[str, str], ...]:
         """``(occurrence id, slot)`` for every slotted node, repeat bodies included."""
 
@@ -343,17 +381,13 @@ REFERENCE_ROLES = {
     "capture_contract": "capture-contract",
     "captures": "capture-contract",
     "claim_type": "claim-type",
-    "claim_types": "claim-type",
     "procedure": "procedure",
     "effect_policy": "effect-policy",
 }
 
 
 def iter_role_references(value: object) -> tuple[tuple[str, ArtifactNameRef], ...]:
-    """Every dependency reference nested in a Procedure model, with its field's role.
-
-    Retained source is provenance, not a graph field, and is not traversed.
-    """
+    """Every dependency reference nested in a Procedure model, with its field's role."""
 
     found: list[tuple[str, ArtifactNameRef]] = []
 
@@ -363,8 +397,7 @@ def iter_role_references(value: object) -> tuple[tuple[str, ArtifactNameRef], ..
             return
         if isinstance(item, BaseModel):
             for field_name in item.__class__.model_fields:
-                if field_name != "source":
-                    visit(getattr(item, field_name), field_name)
+                visit(getattr(item, field_name), field_name)
             return
         if isinstance(item, tuple | list):
             for member in item:
@@ -390,16 +423,13 @@ __all__ = [
     "AuthorityVerb",
     "CallNode",
     "CaptureEgressNode",
-    "ComparisonOperator",
     "EffectiveAuthority",
     "EgressNode",
     "ExtractNode",
     "GuardNode",
-    "GuardPredicate",
     "HaltNode",
     "InboxEgressNode",
     "InvokeNode",
-    "PredicateOperand",
     "PredicateScalar",
     "ProcedureBudget",
     "ProcedureDefinition",
@@ -422,10 +452,13 @@ __all__ = [
     "TransformKind",
     "TransformNode",
     "authority_for_rung",
+    "budget_within_caps",
+    "caps_budget",
     "is_terminal_node",
     "derived_terminal_capability",
     "REFERENCE_ROLES",
     "iter_references",
     "iter_role_references",
+    "predicate_step_aliases",
     "required_authority",
 ]

@@ -14,6 +14,7 @@ from cruxible_client.contracts.authoring.inputs import (
     QueryDefinitionInput,
     lower_authoring_input,
 )
+from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.shapes import (
     contract_digest,
     contract_path,
@@ -303,90 +304,97 @@ def test_a_query_definitions_contract_pins_are_dependencies() -> None:
     assert ArtifactIdentity(kind="Contract", name="project.status-row/v1") in targets
 
 
-# -- Query Contracts are not supported in B1 (coordinator decision) ---------------------
+# -- Query Contracts: pinned at acceptance, enforced where a Procedure reads ------------
 #
-# Acceptance-time proof of a Query's parameter/row Contract (agreement,
-# refinement, presence) repeatedly leaked: nested refinements, Claim-sourced
-# kinds/cardinality and parameter-vs-Contract bare-type gaps each let a
-# signed, accepted, executed Query violate its own declared Contract. Rather
-# than keep chasing a sound acceptance-time proof, a QueryDefinition may not
-# declare parameter_contract or row_contract at all in B1: the model fields,
-# lowering's exact-digest pin and the dependency_pins edge above all stay
-# built (tested), but evaluate_query_definition_law refuses either field
-# outright, before ever resolving or judging it. B3 owns runtime validation
-# of supplied parameters and emitted rows.
+# Acceptance proves only that a declared parameter/row Contract is exact-pinned,
+# resolves, and names declared parameters (projected fields); acceptance-time
+# proofs that rows satisfy it were unsound. Values are checked at runtime for a
+# Procedure read (tests/test_procedures/test_query_contract_reads.py).
 
 
-def test_a_raw_candidate_declaring_a_row_contract_is_refused() -> None:
-    """The law refuses row_contract outright, before resolving or judging it."""
-
-    from cruxible_client.contracts.query.definitions import (
-        QueryDefinition,
-        evaluate_query_definition_law,
-        query_definition_path,
-    )
-
+def _raw_query(**changes: object) -> QueryDefinition:
     data = query_claims_by_type_example().query_definition.model_dump(
         mode="json", exclude={"pins", "artifact_format"}
     )
     data["artifact_format"] = "cruxible-query-definition-v3"
-    # An unresolvable Contract name: the refusal must fire before any
-    # resolution is even attempted.
-    data["row_contract"] = "project.unresolvable-row@1"
-    query = QueryDefinition.model_validate(data)
-    result = evaluate_query_definition_law(
-        query, path=query_definition_path(query.identity.name), predecessor=None
-    )
-    assert result.verdict == "refused"
-    assert any(
-        diagnostic.code == "cruxible.query_definition.contract_unsupported"
-        for diagnostic in result.diagnostics
-    )
+    data.update(changes)
+    return QueryDefinition.model_validate(data)
 
 
-def test_a_raw_candidate_declaring_a_parameter_contract_is_refused() -> None:
+def test_a_raw_candidate_with_an_unpinned_row_contract_is_refused() -> None:
     from cruxible_client.contracts.query.definitions import (
-        QueryDefinition,
         evaluate_query_definition_law,
         query_definition_path,
     )
 
-    data = query_claims_by_type_example().query_definition.model_dump(
-        mode="json", exclude={"pins", "artifact_format"}
-    )
-    data["artifact_format"] = "cruxible-query-definition-v3"
-    data["parameters"] = [{"name": "status", "value_type": "string"}]
-    data["parameter_contract"] = "project.unresolvable-params@1"
-    query = QueryDefinition.model_validate(data)
+    query = _raw_query(row_contract="project.status-row@1")
     result = evaluate_query_definition_law(
         query, path=query_definition_path(query.identity.name), predecessor=None
     )
     assert result.verdict == "refused"
-    assert any(
-        diagnostic.code == "cruxible.query_definition.contract_unsupported"
-        for diagnostic in result.diagnostics
+    assert [item.code for item in result.diagnostics] == [
+        "cruxible.query_definition.contract_unpinned"
+    ]
+
+
+def test_a_raw_candidate_with_an_unresolvable_parameter_contract_is_refused() -> None:
+    from cruxible_client.contracts.query.definitions import (
+        evaluate_query_definition_law,
+        query_definition_path,
     )
 
+    query = _raw_query(
+        parameters=[{"name": "status", "value_type": "string"}],
+        parameter_contract={"name": "project.params", "version": 1, "digest": "sha256:" + "0" * 64},
+    )
+    result = evaluate_query_definition_law(
+        query,
+        path=query_definition_path(query.identity.name),
+        predecessor=None,
+        contracts=lambda _ref: None,
+    )
+    assert result.verdict == "refused"
+    assert [item.code for item in result.diagnostics] == [
+        "cruxible.query_definition.contract_unresolved"
+    ]
 
-def test_authoring_a_query_with_a_row_contract_is_refused(tmp_path: Path) -> None:
-    """Ordinary authoring (signed preflight) refuses a declared row_contract.
 
-    The Contract itself is accepted first, so lowering succeeds in pinning
-    the digest (that plumbing stays built); the law refuses the Query
-    regardless of a perfectly resolvable row_contract.
-    """
+def test_authoring_a_query_with_a_row_contract_accepts_and_pins_it(tmp_path: Path) -> None:
+    """Lowering pins the row Contract's exact digest; the law accepts it."""
+
+    from cruxible_client.contracts.query.definitions import (
+        parse_query_definition,
+        query_definition_path,
+    )
 
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
     _accept(
         instance, owner, _row_contract("project.status-row", item_id="string", status="string?")
     )
-    assert "cruxible.query_definition.contract_unsupported" in _refusal(
+    query = _status_query("project.status-row@1")
+    _accept(instance, owner, query)
+    name = query.query_definition.identity.name
+    path = query_definition_path(name)
+    accepted = parse_query_definition(_accepted_tree(instance)[path], path=path)
+    assert accepted.row_contract is not None
+    row_path = contract_path("project.status-row", 1)
+    assert (
+        accepted.row_contract.digest
+        == contract_digest(parse_contract(_accepted_tree(instance)[row_path], path=row_path)).tagged
+    )
+
+
+def test_a_row_contract_naming_an_unprojected_field_is_refused(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    _accept(instance, owner, _row_contract("project.status-row", owner="string"))
+    assert "cruxible.query_definition.contract_field_unknown" in _refusal(
         instance, _status_query("project.status-row@1")
     )
 
 
-def test_authoring_a_query_with_a_parameter_contract_is_refused(tmp_path: Path) -> None:
+def test_authoring_a_query_with_a_parameter_contract_accepts(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
     _accept(instance, owner, _row_contract("project.params", status="string"))
@@ -402,7 +410,7 @@ def test_authoring_a_query_with_a_parameter_contract_is_refused(tmp_path: Path) 
             },
         }
     )
-    assert "cruxible.query_definition.contract_unsupported" in _refusal(instance, query)
+    _accept(instance, owner, query)
 
 
 def accept_contract_world(tmp_path: Path) -> PlaybillInstance:

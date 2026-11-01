@@ -7,6 +7,7 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.claim_types import render_claim_type
 from cruxible_client.contracts.procedures.artifacts import render_procedure
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.query.definitions import (
     query_definition_digest,
     render_query_definition,
@@ -20,7 +21,18 @@ from cruxible_core.claims.closure import (
 from cruxible_core.proposals.proposals import evaluate_proposal_tree
 from tests.core_support._identity_support import accept_tree
 from tests.core_support._support import initialize_local
-from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
+from tests.support.procedures import (
+    boundary_contract,
+    contract_files,
+    contract_pin,
+    named,
+    revalidated,
+)
+from tests.test_procedures.test_procedure_artifacts import (
+    ARTIFACT_CONTRACTS,
+    _artifact,
+    _definition,
+)
 from tests.test_query.test_query_definitions import (
     REVIEWER_PREDICATE,
     STATUS_PREDICATE,
@@ -174,28 +186,18 @@ def test_existing_signing_provider_is_rechecked_without_creation_gates(tmp_path,
 
 def authored_procedure(name="reader", query="definitions"):
     """Explicit authored fields; only compiler-owned digests are computed."""
-    from cruxible_client.contracts.procedures.artifacts import (
-        ProcedureArtifact,
-        ProcedureOwnedContract,
-    )
+    from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
     from cruxible_client.contracts.procedures.models import ProcedureDefinition
-
-    contract = ProcedureOwnedContract.model_validate(
-        {
-            "identity": {"kind": "Contract", "name": "io"},
-            "schema": {"fields": {}, "allow_extra": True},
-        }
-    )
 
     def reference(kind, target):
         return {"target": {"kind": kind, "name": target}}
 
     raw = {
-        "graph_format": 7,
+        "graph_format": 8,
         "name": name,
-        "contract_in": reference("Contract", "io"),
-        "contract_out": reference("Contract", "io"),
+        "contract_in": reference("Contract", "io/v1"),
+        "contract_out": reference("Contract", "io/v1"),
         "nodes": [
             {
                 "kind": "read",
@@ -212,16 +214,9 @@ def authored_procedure(name="reader", query="definitions"):
                 "node_id": "result",
                 "as": "result",
                 "literal": {},
-                "contract_out": reference("Contract", "io"),
             }
         ],
         "returns": "result",
-        "budget": {
-            "wall_clock": {"microseconds": 1_000_000},
-            "max_provider_calls": 0,
-            "max_capture_bytes": 0,
-            "max_items": 100,
-        },
         "hard_caps": {
             "max_wall_clock": {"microseconds": 1_000_000},
             "max_provider_calls": 0,
@@ -237,7 +232,6 @@ def authored_procedure(name="reader", query="definitions"):
             "identity": {"kind": "Procedure", "name": name},
             "definition": definition,
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
-            "owned_contracts": (contract,),
             "activation_policy": "snapshot",
         }
     )
@@ -256,7 +250,7 @@ def test_genesis_recovery_reproduces_all_named_law_evidence_bytes(tmp_path):
     qpath, ppath = "query-definitions/definitions.json", "procedures/reader.json"
     revisions = (
         {qpath: render_query_definition(query)},
-        {ppath: render_procedure(procedure)},
+        {ppath: render_procedure(procedure), **contract_files(boundary_contract("io"))},
         {
             qpath: render_query_definition(
                 query.model_copy(
@@ -323,6 +317,7 @@ def test_proposal_recheck_reads_one_bucket_per_changed_member(tmp_path, unrelate
         qpath: render_query_definition(query),
         other_path: render_query_definition(other),
         "procedures/reader.json": render_procedure(authored_procedure()),
+        **contract_files(boundary_contract("io")),
         **{
             f"procedures/unrelated-{n}.json": render_procedure(
                 authored_procedure(f"unrelated-{n}", query="unrelated")
@@ -383,6 +378,7 @@ def world():
         {
             QPATH: render_query_definition(query),
             PPATH: render_procedure(procedure),
+            **contract_files(*ARTIFACT_CONTRACTS),
             "claim-types/project.work_item/status.json": render_claim_type(
                 claim_type(STATUS_PREDICATE)
             ),
@@ -535,7 +531,6 @@ def test_current_trigger_dependencies_always_include_the_named_line():
 
 def test_procedure_revision_requires_a_disposition_for_its_exact_line(tmp_path):
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
-    from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
     from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
     from tests.test_procedures.test_line_specs import _line
 
@@ -554,21 +549,14 @@ def test_procedure_revision_requires_a_disposition_for_its_exact_line(tmp_path):
     accept_tree(instance, {**updates, path: render_line_spec(line)}, name="named-line-world")
     current = instance.accepted_coordinate()
     parent = instance.tree_at(current.git_oid)
-    contracts = tuple(
-        c.model_copy(
-            update={
-                "contract_schema": ContractSchema(
-                    fields={"required": PropertySchema(type="string")}, allow_extra=False
-                )
-            }
-        )
-        if c.identity == procedure.definition.contract_in.target
-        else c
-        for c in procedure.owned_contracts
+    strict = boundary_contract("strict-input", {"required": "string"})
+    definition = procedure.definition.model_copy(
+        update={"contract_in": named(contract_pin("contract-in", strict))}
     )
     successor = procedure.model_copy(
         update={
-            "owned_contracts": contracts,
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
             "lifecycle": ArtifactLifecycle(
                 predecessor_digest=procedure_artifact_digest(procedure).tagged
             ),
@@ -577,7 +565,11 @@ def test_procedure_revision_requires_a_disposition_for_its_exact_line(tmp_path):
     result = evaluate_proposal_tree(
         base_tree=parent,
         current_tree=parent,
-        proposed_tree={**parent, PPATH: render_procedure(successor)},
+        proposed_tree={
+            **parent,
+            PPATH: render_procedure(revalidated(successor)),
+            **contract_files(strict),
+        },
         current=current,
         bodies=instance.body_store(),
         timestamp="2026-10-25T04:00:00.000000Z",

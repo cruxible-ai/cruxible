@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from decimal import Decimal, InvalidOperation
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -20,7 +20,6 @@ from pydantic import (
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
-    ArtifactNameRef,
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
@@ -33,7 +32,7 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.acquisition_rules import (
-    AcquisitionDefault,
+    LineAcquisitionRule,
     validate_acquisition_keys,
 )
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
@@ -41,7 +40,9 @@ from cruxible_client.contracts.procedures.models import (
     AUTHORITY_RUNG,
     RUNG_AUTHORITY,
     AuthorityVerb,
+    ProcedureBudget,
     ProcedureDefinition,
+    ProcedureHardCaps,
 )
 from cruxible_client.contracts.procedures.trigger_rules import (
     trigger_capture_source,
@@ -57,6 +58,7 @@ from cruxible_client.contracts.provider_operations import (
 )
 from cruxible_client.contracts.providers import AcceptedProvider, ProviderV2
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import Contract, ContractRef, EnumResolver
 
 _LINE_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 
@@ -107,7 +109,7 @@ def _decimal_wrapper(value: object) -> dict[str, str]:
 def _canonical_object(value: object) -> object:
     normalized = normalize_canonical(value)
     if not isinstance(normalized, dict):
-        raise ValueError("LineSpec parameters and budgets must be canonical objects")
+        raise ValueError("LineSpec parameters must be a canonical object")
     return normalized
 
 
@@ -121,6 +123,98 @@ def _sorted_pins(value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
 
 
 LineAuthority = AuthorityVerb
+
+_Count = Annotated[int, Field(strict=True, ge=0, le=2**63 - 1)]
+_Positive = Annotated[int, Field(strict=True, ge=1, le=2**63 - 1)]
+
+
+class LineBudgets(_StrictLineModel):
+    """A Line's operating budget: each limit within its Procedure's hard cap.
+
+    Wall clock, provider calls and capture bytes are always stated (authoring
+    fills an unstated one with the cap). Items, result bytes and read rows are
+    optional: a Line that states none runs under the cap.
+    """
+
+    max_wall_clock_microseconds: _Positive
+    max_provider_calls: _Count
+    max_capture_bytes: _Count
+    max_items: _Positive | None = Field(default=None, exclude_if=lambda value: value is None)
+    max_result_bytes: _Positive | None = Field(default=None, exclude_if=lambda value: value is None)
+    max_read_rows: _Positive | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    def widened(self, caps: ProcedureHardCaps) -> tuple[str, ...]:
+        """Each limit that exceeds its cap, as ``name value > cap``."""
+
+        limits: dict[str, int | None] = {
+            "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
+            "max_provider_calls": caps.max_provider_calls,
+            "max_capture_bytes": caps.max_capture_bytes,
+            "max_items": caps.max_items,
+            "max_result_bytes": caps.max_result_bytes,
+            "max_read_rows": caps.max_read_rows,
+        }
+        found = []
+        for name, cap in limits.items():
+            value = getattr(self, name)
+            if value is not None and cap is not None and value > cap:
+                found.append(f"{name} {value} > {cap}")
+        return tuple(found)
+
+    def budget(self, caps: ProcedureHardCaps) -> ProcedureBudget:
+        """The run budget this Line states; an unstated optional limit is the cap's."""
+
+        from cruxible_client.contracts.captures import CanonicalDuration
+        from cruxible_client.contracts.procedures.reads import effective_read_rows
+
+        return ProcedureBudget(
+            wall_clock=CanonicalDuration(microseconds=self.max_wall_clock_microseconds),
+            max_provider_calls=self.max_provider_calls,
+            max_capture_bytes=self.max_capture_bytes,
+            max_items=self.max_items,
+            max_result_bytes=self.max_result_bytes
+            if self.max_result_bytes is not None
+            else caps.max_result_bytes,
+            max_read_rows=effective_read_rows(self.max_read_rows, caps.max_read_rows),
+        )
+
+
+class LineBudgetsInput(_StrictLineModel):
+    """The budget a Line author states; each unstated required limit defaults to the cap."""
+
+    max_wall_clock_microseconds: _Positive | None = None
+    max_provider_calls: _Count | None = None
+    max_capture_bytes: _Count | None = None
+    max_items: _Positive | None = None
+    max_result_bytes: _Positive | None = None
+    max_read_rows: _Positive | None = None
+
+    def filled(self, caps: ProcedureHardCaps) -> LineBudgets:
+        def stated(value: int | None, cap: int) -> int:
+            return cap if value is None else value
+
+        return LineBudgets(
+            max_wall_clock_microseconds=stated(
+                self.max_wall_clock_microseconds, caps.max_wall_clock.microseconds
+            ),
+            max_provider_calls=stated(self.max_provider_calls, caps.max_provider_calls),
+            max_capture_bytes=stated(self.max_capture_bytes, caps.max_capture_bytes),
+            max_items=self.max_items,
+            max_result_bytes=self.max_result_bytes,
+            max_read_rows=self.max_read_rows,
+        )
+
+
+def caps_line_budgets(caps: ProcedureHardCaps) -> LineBudgets:
+    """The budget of a Line that states none: the hard caps themselves."""
+
+    return LineBudgets(
+        max_wall_clock_microseconds=caps.max_wall_clock.microseconds,
+        max_provider_calls=caps.max_provider_calls,
+        max_capture_bytes=caps.max_capture_bytes,
+        max_items=caps.max_items,
+    )
+
 
 _BINDING_KEY_RE = re.compile(r"^(?:[a-z][a-z0-9_.-]{0,127}\.)*[a-z][a-z0-9_]{0,63}$")
 
@@ -140,14 +234,18 @@ class LineSpec(_StrictLineModel):
     ``procedure`` pins the exact Procedure version the Line runs. ``bindings``
     holds one exact ``{build, operation}`` per slot, including the slots of
     invoked children (keyed ``<invoke node path>.<slot>``); core records them
-    when the Line is accepted, and runs never rebind. ``acquisition`` replaces
-    the Procedure's ``acquisition_defaults`` per capture output (``<alias>.<field>``).
+    when the Line is accepted, and runs never rebind. ``acquisition`` declares
+    the run's acquisition rule per capture output (``<alias>.<field>``); a
+    capture output it names no rule for runs under the core default
+    (``CORE_DEFAULT_ACQUISITION_RULE``).
 
     When it runs is not the Line's to say: every Trigger aimed at it is its own
     governed artifact, and Triggers drive it only while the Line is enabled.
     ``trigger_input`` binds the triggering Capture to one named Source input,
     and ``trigger_event`` declares the exact Capture event that input accepts.
     ``occurrence_epoch`` advances exactly when that acceptance changes.
+    ``budgets`` is the Line's operating budget; it must fit within the
+    Procedure's hard caps (the Procedure declares no budget of its own).
 
     A Mandate pins the Line's exact digest, so changing the Procedure version,
     the parameters or any binding is a new Line digest and renews the grant.
@@ -161,17 +259,17 @@ class LineSpec(_StrictLineModel):
     bindings: dict[str, LineBinding] = Field(
         default_factory=dict, exclude_if=lambda value: not value
     )
-    acquisition: dict[str, AcquisitionDefault] = Field(
+    acquisition: dict[str, LineAcquisitionRule] = Field(
         default_factory=dict, exclude_if=lambda value: not value
     )
     max_authority: LineAuthority
     trigger_input: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
     trigger_event: CaptureEventNameSelector | None = None
-    budgets: object
+    budgets: LineBudgets
     epsilon: object
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
-    _canonical_objects = field_validator("parameters", "budgets", mode="before")(_canonical_object)
+    _canonical_objects = field_validator("parameters", mode="before")(_canonical_object)
     _epsilon = field_validator("epsilon", mode="before")(_decimal_wrapper)
     _bindings = field_validator("bindings")(_binding_keys)
     _acquisition = field_validator("acquisition")(validate_acquisition_keys)
@@ -204,11 +302,14 @@ class EphemeralLineSpec(_StrictLineModel):
     propose would allow and in practice observes.
     """
 
-    tag: Literal["cruxible-ephemeral-line-spec-v1"] = "cruxible-ephemeral-line-spec-v1"
+    tag: Literal["cruxible-ephemeral-line-spec-v3"] = "cruxible-ephemeral-line-spec-v3"
     procedure: ArtifactPin
     parameters: object
     bindings: dict[str, LineBinding] = Field(default_factory=dict)
-    acquisition: dict[str, AcquisitionDefault] = Field(default_factory=dict)
+    acquisition: dict[str, LineAcquisitionRule] = Field(default_factory=dict)
+    #: The run's operating budget: a direct run states none, so it runs under
+    #: its Procedure's hard caps (``caps_budget``), recorded here by digest.
+    budget: ProcedureBudget
 
     _canonical_parameters = field_validator("parameters", mode="before")(normalize_canonical)
     _bindings = field_validator("bindings")(_binding_keys)
@@ -218,7 +319,7 @@ class EphemeralLineSpec(_StrictLineModel):
 def ephemeral_line_spec_digest(spec: EphemeralLineSpec) -> str:
     return typed_digest(
         ArtifactDigest,
-        "cruxible-ephemeral-line-spec-v1",
+        "cruxible-ephemeral-line-spec-v3",
         spec.model_dump(mode="json", exclude={"tag"}),
     ).tagged
 
@@ -253,6 +354,26 @@ def line_slot_signatures(
                 line_slot_signatures(nested, child=child, prefix=path + ".", depth=depth + 1)
             )
     return found
+
+
+def line_capture_outputs(
+    definition: ProcedureDefinition,
+    *,
+    child: Mapping[str, ProcedureDefinition] | None = None,
+) -> frozenset[str]:
+    """Every capture output a Line may name an acquisition rule for.
+
+    The Procedure's own are ``<alias>.<field>``; an invoked child's are keyed
+    ``<invoke node path>.<alias>.<field>`` (``child`` maps each invoke node
+    path to the definition it invokes, as for :func:`line_slot_signatures`).
+    """
+
+    from cruxible_client.contracts.procedures.artifacts import acquisition_keys
+
+    found = set(acquisition_keys(definition))
+    for path, nested in (child or {}).items():
+        found.update(f"{path}.{key}" for key in acquisition_keys(nested))
+    return frozenset(found)
 
 
 def line_requested_rung(line: LineSpec) -> Literal[1, 2, 3]:
@@ -349,13 +470,6 @@ def _refusal(code: str, message: str, *, path: str) -> LineSpecLawResult:
     )
 
 
-def _budget_int(budgets: object, key: str) -> int | None:
-    if not isinstance(budgets, dict):
-        return None
-    value = budgets.get(key)
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
 def evaluate_line_spec_law(
     line: LineSpec,
     *,
@@ -364,13 +478,21 @@ def evaluate_line_spec_law(
     predecessor: AcceptedLineSpec | None,
     slots: Mapping[str, OperationSignature] | None = None,
     providers: Mapping[str, AcceptedProvider] | None = None,
+    capture_outputs: frozenset[str] | None = None,
+    contracts: Callable[[ContractRef], Contract | None] | None = None,
+    enum_members: EnumResolver | None = None,
     by_name: bool = True,
 ) -> LineSpecLawResult:
     """The Line law.
 
     ``procedure`` is the exact accepted version the Line pins. ``slots`` is
     every slot the Line must bind (:func:`line_slot_signatures`), and
-    ``providers`` the accepted builds by qualified identity.
+    ``providers`` the accepted builds by qualified identity. ``capture_outputs``
+    is every capture output the Line may name a rule for, invoked children's
+    included (:func:`line_capture_outputs`); omitted, the Procedure's own.
+    ``contracts`` reads governed Contracts at the coordinate: the Line's
+    parameters (over the defaults) are checked against the Procedure's params
+    Contract with it, and the empty Line-run input against its input Contract.
     """
 
     del by_name
@@ -397,16 +519,17 @@ def evaluate_line_spec_law(
         )
         return _refusal(code, trigger_problem, path=path)
     from cruxible_client.contracts.procedures.contracts import (
-        OwnedProcedureContractValidator,
+        AcceptedProcedureContractValidator,
         ProcedureContractValidationError,
+        validate_line_parameters,
     )
 
-    if isinstance(definition.contract_in, ArtifactPin | ArtifactNameRef):
+    if contracts is not None:
         try:
-            OwnedProcedureContractValidator(procedure).validate_contract(
-                contract=definition.contract_in,
-                payload=normalize_canonical(line.parameters),
-                direction="input",
+            validate_line_parameters(
+                AcceptedProcedureContractValidator(contracts, enum_members),
+                definition,
+                line.parameters,
             )
         except ProcedureContractValidationError as exc:
             return _refusal("cruxible.line.parameters_invalid", str(exc), path=path)
@@ -417,14 +540,13 @@ def evaluate_line_spec_law(
     )
     if binding_problem is not None:
         return _refusal(binding_problem[0], binding_problem[1], path=path)
-    from cruxible_client.contracts.procedures.artifacts import acquisition_keys
-
-    unknown_keys = sorted(set(line.acquisition) - acquisition_keys(definition))
+    known = line_capture_outputs(definition) if capture_outputs is None else capture_outputs
+    unknown_keys = sorted(set(line.acquisition) - known)
     if unknown_keys:
         return _refusal(
             "cruxible.line.acquisition_unknown_source",
-            "Line acquisition names no capture output (<alias>.<field>) of its Procedure: "
-            f"{unknown_keys}.",
+            "Line acquisition names no capture output (<alias>.<field>, or an invoked "
+            f"child's <invoke node path>.<alias>.<field>) of its Procedure: {unknown_keys}.",
             path=path,
         )
     if line_requested_rung(line) > definition.terminal_capability:
@@ -433,33 +555,15 @@ def evaluate_line_spec_law(
             "The Line's max_authority exceeds what its Procedure's terminals can do.",
             path=path,
         )
-    caps = definition.hard_caps
-    limits = {
-        "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
-        "max_provider_calls": caps.max_provider_calls,
-        "max_capture_bytes": caps.max_capture_bytes,
-        "max_items": caps.max_items,
-    }
-    if caps.max_result_bytes is not None:
-        limits["max_result_bytes"] = caps.max_result_bytes
-    for key, hard_cap in limits.items():
-        value = _budget_int(line.budgets, key)
-        if value is None or value < 0 or value > hard_cap:
-            return _refusal(
-                "cruxible.line.budget_exceeds_procedure_cap",
-                f"LineSpec budget {key!r} is missing, invalid, or exceeds the Procedure cap.",
-                path=path,
-            )
-    # The read budget is optional: a Line that states none reads under the
-    # Procedure's hard cap; one that states it can only lower it.
-    if isinstance(line.budgets, dict) and "max_read_rows" in line.budgets:
-        rows = _budget_int(line.budgets, "max_read_rows")
-        if rows is None or rows < 1 or rows > caps.max_read_rows:
-            return _refusal(
-                "cruxible.line.budget_exceeds_procedure_cap",
-                "LineSpec budget 'max_read_rows' is invalid or exceeds the Procedure cap.",
-                path=path,
-            )
+    widened = line.budgets.widened(definition.hard_caps)
+    if widened:
+        return _refusal(
+            "cruxible.line.budget_exceeds_procedure_cap",
+            "The Line's operating budget exceeds its Procedure's hard caps: "
+            + ", ".join(widened)
+            + ".",
+            path=path,
+        )
     if predecessor is None:
         if line.lifecycle.predecessor_digest is not None or line.occurrence_epoch != 1:
             return _refusal(
@@ -567,6 +671,9 @@ def line_binding_problem(
 __all__ = [
     "AUTHORITY_RUNG",
     "EphemeralLineSpec",
+    "LineBudgets",
+    "LineBudgetsInput",
+    "caps_line_budgets",
     "bound_operation_of",
     "ephemeral_line_spec_digest",
     "line_binding_problem",

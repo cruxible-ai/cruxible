@@ -18,10 +18,7 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.authoring.inputs import (
-    CarriedContractInput,
-    ProcedureInput,
-)
+from cruxible_client.contracts.authoring.inputs import ProcedureInput
 from cruxible_client.contracts.kits import (
     KitBuildRequest,
     KitBundle,
@@ -29,7 +26,6 @@ from cruxible_client.contracts.kits import (
     KitProvider,
     KitProviderFile,
 )
-from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.providers import parse_provider
 from cruxible_client.kits import read_kit_directory, write_kit_directory
 from cruxible_core.cli.provider_wheels import stage_kit_provider_directory
@@ -162,7 +158,6 @@ def _author(world: Any) -> None:
                 "node_id": "shape",
                 "as": "result",
                 "fields": {"text": "$steps.observation.derived.text"},
-                "contract_out": carried,
             },
         ],
         "pin_slots": [
@@ -172,13 +167,6 @@ def _author(world: Any) -> None:
                 "artifact_kind": "Provider",
             }
         ],
-        "budget": {
-            **example.definition["budget"],  # type: ignore[dict-item]
-            "wall_clock": {"microseconds": 30_000_000},
-            "max_items": None,
-            "max_provider_calls": 1,
-            "max_capture_bytes": 1048576,
-        },
         "hard_caps": {
             **example.definition["hard_caps"],  # type: ignore[dict-item]
             "max_wall_clock": {"microseconds": 60_000_000},
@@ -186,10 +174,7 @@ def _author(world: Any) -> None:
             "max_capture_bytes": 2097152,
         },
     }
-    contracts = (
-        next(row for row in example.contracts if row.name == "empty-input"),
-        CarriedContractInput(name="fetch-result", fields={"text": PropertySchema(type="string")}),
-    )
+    contracts = ()  # the retired source-node premise; the module is skipped
     _accept(
         world,
         world.pb.changes(rationale="Fetch with whichever web.fetch is installed.").procedure(

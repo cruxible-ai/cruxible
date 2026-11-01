@@ -24,7 +24,6 @@ from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     procedure_path,
-    render_procedure,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_node_digests
 from cruxible_client.contracts.procedures.measurements import (
@@ -34,14 +33,13 @@ from cruxible_client.contracts.procedures.measurements import (
 )
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
-    GuardPredicate,
-    PredicateOperand,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
     ReadNode,
 )
+from cruxible_client.contracts.refs import step_ref
+from cruxible_client.contracts.shapes import Comparison, CountOperand, LiteralOperand
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
@@ -67,7 +65,7 @@ from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import client_material, initialize_local
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, accepted_procedure, named
+from tests.support.procedures import MAX_WALL_CLOCK, accepted_procedure, named, procedure_members
 from tests.test_ledger.test_activation import _sign
 
 NOW = datetime(2026, 8, 17, 14, 0, tzinfo=timezone.utc)
@@ -140,8 +138,8 @@ def _measurement(
 
 
 def _accepted() -> AcceptedProcedure:
-    contract_in = _pin("contract-in", "Contract", "input")
-    contract_out = _pin("contract-out", "Contract", "output")
+    contract_in = _pin("contract-in", "Contract", "input/v1")
+    contract_out = _pin("contract-out", "Contract", "output/v1")
     definition = ProcedureDefinition(
         name="measured-procedure",
         contract_in=named(contract_in),
@@ -154,34 +152,29 @@ def _accepted() -> AcceptedProcedure:
             ),
             GuardNode(
                 node_id="gate",
-                predicate=GuardPredicate(
-                    left=PredicateOperand(kind="count", alias="rows"),
-                    operator="gt",
-                    right=PredicateOperand(kind="literal", value=0),
+                predicate=Comparison(
+                    op="gt",
+                    left=CountOperand(count=step_ref("rows")),
+                    right=LiteralOperand(literal=0),
                 ),
                 on_true="hot",
                 on_false="cold",
-                refusal_code="empty",
-                message="No rows.",
             ),
             ProjectNode(
                 node_id="hot",
                 fields={"arm": "hot"},
-                contract_out=named(contract_out),
                 as_="hot_result",
                 next="finish",
             ),
             ProjectNode(
                 node_id="cold",
                 fields={"arm": "cold"},
-                contract_out=named(contract_out),
                 as_="cold_result",
                 next="finish",
             ),
             ProjectNode(
                 node_id="finish",
                 fields={"status": "done"},
-                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -192,12 +185,6 @@ def _accepted() -> AcceptedProcedure:
             ),
             _measurement("node-health", "node", node_id="hot"),
             _measurement("unit-health", "procedure_unit"),
-        ),
-        budget=ProcedureBudget(
-            wall_clock=RUN_WALL_CLOCK,
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=100,
         ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=MAX_WALL_CLOCK,
@@ -469,10 +456,10 @@ def test_derived_activation_remains_bound_to_its_accepting_generation(tmp_path) 
     instance, owner = initialize_local(tmp_path)
     accepted = _accepted()
     procedure = authored_procedure(accepted)
-    procedure_path_value = procedure_path(procedure.identity.name)
+    procedure_path(procedure.identity.name)
     first_tree = {
         **instance.tree_at(instance.accepted_coordinate().git_oid),
-        procedure_path_value: render_procedure(procedure),
+        **procedure_members(procedure),
         **subject_query_members(
             "state", "measure-arm-health", "measure-node-health", "measure-unit-health"
         ),

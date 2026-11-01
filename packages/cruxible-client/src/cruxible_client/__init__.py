@@ -72,7 +72,6 @@ if TYPE_CHECKING:
         ClaimAdmissionPolicy,
         ClaimResolutionPolicy,
     )
-    from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
     from cruxible_client.contracts.procedures.contract_schema import (
         ContractSchema,
         PropertySchema,
@@ -143,7 +142,6 @@ __all__ = [
     "ProcedureBudget",
     "ProcedureDefinition",
     "ProcedureHardCaps",
-    "ProcedureOwnedContract",
     "ProcedureSlot",
     "ProjectNode",
     "PropertySchema",
@@ -270,10 +268,6 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.contracts import policies
 
         return getattr(policies, name)
-    if name == "ProcedureOwnedContract":
-        from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
-
-        return ProcedureOwnedContract
     if name in {"ContractSchema", "PropertySchema"}:
         from cruxible_client.contracts.procedures import contract_schema
 

@@ -30,13 +30,9 @@ from cruxible_client.contracts.procedure_runtime_policy import PROCEDURE_RUNTIME
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
-    ProcedureOwnedContract,
     procedure_artifact_digest,
-    procedure_owned_contract_digest,
     procedure_path,
-    render_procedure,
 )
-from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
@@ -50,7 +46,6 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProcedureSlot,
@@ -119,7 +114,14 @@ from cruxible_core.service.procedures.procedures import service_execute_direct_p
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._provider_seal_support import write_test_provider_seal_v2
 from tests.support.invocation_ids import unique_invocation_id
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
+from tests.support.procedures import (
+    MAX_WALL_CLOCK,
+    boundary_contract,
+    contract_files,
+    contract_pin,
+    named,
+    procedure_members,
+)
 from tests.support.short_temporary_root import short_temporary_directory
 from tests.test_procedures.test_procedure_execution import (
     _accepted_line_for_admission,
@@ -311,10 +313,10 @@ def _complete_line_for_admission(
                 for slot in definition.slots
             },
             "budgets": {
-                "max_capture_bytes": definition.budget.max_capture_bytes,
-                "max_items": definition.budget.max_items,
-                "max_provider_calls": definition.budget.max_provider_calls,
-                "max_wall_clock_microseconds": definition.budget.wall_clock.microseconds,
+                "max_capture_bytes": definition.hard_caps.max_capture_bytes,
+                "max_items": definition.hard_caps.max_items,
+                "max_provider_calls": definition.hard_caps.max_provider_calls,
+                "max_wall_clock_microseconds": definition.hard_caps.max_wall_clock.microseconds,
             },
         }
     )
@@ -867,14 +869,10 @@ def test_lazy_rearm_is_serialized_and_never_runs_during_an_invocation(
     assert operator.lane_status() == ("available", None, None)
 
 
-_SERVED_RUN_INPUT = ProcedureOwnedContract(
-    identity=ArtifactIdentity(kind="Contract", name="served-provider-run-input"),
-    schema=ContractSchema(fields={"status": PropertySchema(type="string")}),
-)
-_SERVED_PROVIDER_OUTPUT = ProcedureOwnedContract(
-    identity=ArtifactIdentity(kind="Contract", name="served-provider-output"),
-    schema=ContractSchema(fields={"echo": PropertySchema(type="string")}),
-)
+_SERVED_RUN_INPUT = boundary_contract("served-provider-run-input")
+#: The Line supplies ``status`` as the Procedure's parameter; its input is empty.
+_SERVED_RUN_PARAMS = boundary_contract("served-provider-run-params", {"status": "string"})
+_SERVED_PROVIDER_OUTPUT = boundary_contract("served-provider-output", {"echo": "string"})
 
 
 def _provider_line_procedure(accepted_provider: AcceptedProvider) -> AcceptedProcedure:
@@ -887,21 +885,14 @@ def _provider_line_procedure(accepted_provider: AcceptedProvider) -> AcceptedPro
 
     run_input = _SERVED_RUN_INPUT
     provider_output = _SERVED_PROVIDER_OUTPUT
-    run_input_pin = ArtifactPin(
-        role="contract-in",
-        target=run_input.identity,
-        artifact_digest=procedure_owned_contract_digest(run_input).tagged,
-    )
-    provider_output_pin = ArtifactPin(
-        role="contract-out",
-        target=provider_output.identity,
-        artifact_digest=procedure_owned_contract_digest(provider_output).tagged,
-    )
+    run_input_pin = contract_pin("contract-in", run_input)
+    provider_output_pin = contract_pin("contract-out", provider_output)
     operation = accepted_provider.provider.operations[0]
     definition = ProcedureDefinition(
         name="served-provider-triage",
         contract_in=named(run_input_pin),
         contract_out=named(provider_output_pin),
+        parameter_contract=named(contract_pin("parameter-contract", _SERVED_RUN_PARAMS)),
         nodes=(
             CallNode(
                 node_id="ask",
@@ -914,12 +905,6 @@ def _provider_line_procedure(accepted_provider: AcceptedProvider) -> AcceptedPro
         slots={
             "ask": ProcedureSlot.model_validate(operation.signature().model_dump(by_alias=True))
         },
-        budget=ProcedureBudget(
-            wall_clock=RUN_WALL_CLOCK,
-            max_provider_calls=2,
-            max_capture_bytes=1024,
-            max_items=10,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=4,
@@ -933,14 +918,6 @@ def _provider_line_procedure(accepted_provider: AcceptedProvider) -> AcceptedPro
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        owned_contracts=tuple(
-            sorted(
-                (run_input, provider_output),
-                key=lambda contract: canonical_bytes(
-                    contract.model_dump(mode="json", by_alias=True)
-                ),
-            )
-        ),
         activation_policy="drain",
     )
     return AcceptedProcedure(
@@ -1108,10 +1085,10 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
         },
         max_authority="propose",
         budgets={
-            "max_capture_bytes": definition.budget.max_capture_bytes,
-            "max_items": definition.budget.max_items,
-            "max_provider_calls": definition.budget.max_provider_calls,
-            "max_wall_clock_microseconds": definition.budget.wall_clock.microseconds,
+            "max_capture_bytes": definition.hard_caps.max_capture_bytes,
+            "max_items": definition.hard_caps.max_items,
+            "max_provider_calls": definition.hard_caps.max_provider_calls,
+            "max_wall_clock_microseconds": definition.hard_caps.max_wall_clock.microseconds,
         },
         epsilon={"$decimal": "0"},
     )
@@ -1121,7 +1098,6 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
         grants="propose",
-        resource_ceiling=definition.hard_caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),
@@ -1131,7 +1107,8 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
         instance,
         reviewer_key_path,
         {
-            accepted.path: render_procedure(authored_procedure(accepted)),
+            **procedure_members(authored_procedure(accepted)),
+            **contract_files(_SERVED_RUN_INPUT, _SERVED_RUN_PARAMS, _SERVED_PROVIDER_OUTPUT),
             accepted_provider.path: render_provider(accepted_provider.provider),
             contract_path(_OPERATION_INPUT.name, _OPERATION_INPUT.version): render_contract(
                 _OPERATION_INPUT

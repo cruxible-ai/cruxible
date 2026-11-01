@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
@@ -26,7 +28,6 @@ from tests.support.procedures import named
 from tests.test_procedures.test_procedure_execution import (
     _accepted,
     _Authority,
-    _budget,
     _Contracts,
     _digest,
     _fixture,
@@ -44,8 +45,8 @@ ITEM = Contract.model_validate(
 
 
 def _terminal_procedure():
-    contract_in = _pin("contract-in", "Contract", "terminal-input")
-    contract_out = _pin("contract-out", "Contract", "terminal-output")
+    contract_in = _pin("contract-in", "Contract", "terminal-input/v1")
+    contract_out = _pin("contract-out", "Contract", "terminal-output/v1")
     query = _pin("query", "QueryDefinition", "terminal-items")
     definition = ProcedureDefinition(
         name="terminal-procedure",
@@ -66,7 +67,6 @@ def _terminal_procedure():
             ),
         ),
         returns="rows",
-        budget=_budget(items=100),
         hard_caps=_hard_caps(items=100),
         terminal_capability=1,
     )
@@ -305,3 +305,85 @@ def test_the_mandate_term_names_whichever_source_reached_the_rung() -> None:
     term = next(item for item in mandate_wins.terms if item.term == "mandate_grant")
     assert term.rung == 3
     assert term.reason == "The exact accepted Procedure mandate grants settle."
+
+
+@pytest.mark.parametrize("kind", ["post_inbox", "propose_change_set", "settle_change_set"])
+def test_terminal_fan_out_obeys_run_budget_with_scalar_return(tmp_path, kind):
+    from cruxible_client.contracts.procedures.models import (
+        ProjectNode,
+        ProposeChangeSetNode,
+        SettleChangeSetNode,
+    )
+    from tests.test_procedures.test_procedure_proposal_delivery import item_template
+
+    fixture = _fixture(tmp_path)
+    original = _terminal_procedure().procedure.definition
+    if kind == "post_inbox":
+        terminal = inbox_node(
+            fields={"id": "$item.id"}, for_each="$steps.fan.items", contract=ITEM, max_items=1
+        )
+    else:
+        node_type = ProposeChangeSetNode if kind == "propose_change_set" else SettleChangeSetNode
+        terminal = node_type(
+            node_id="inbox",
+            candidate_templates={"items": "$steps.fan.items"},
+            result="$steps.summary",
+        )
+    definition = original.model_copy(
+        update={
+            "nodes": (
+                ProjectNode(node_id="summary", literal={"count": 2}, as_="summary", next="fan"),
+                ProjectNode(
+                    node_id="fan",
+                    literal={
+                        "items": [{"id": "a"}, {"id": "b"}]
+                        if kind == "post_inbox"
+                        else [item_template(), item_template()]
+                    },
+                    as_="fan",
+                    next="inbox",
+                ),
+                terminal,
+            ),
+            "returns": "summary",
+            "hard_caps": _hard_caps(items=1),
+            "terminal_capability": {
+                "post_inbox": 1,
+                "propose_change_set": 2,
+                "settle_change_set": 3,
+            }[kind],
+        }
+    )
+    accepted = _accepted(
+        definition,
+        pins=(
+            _pin("contract-in", "Contract", "terminal-input/v1"),
+            _pin("contract-out", "Contract", "terminal-output/v1"),
+        ),
+    )
+    prepared = _prepare(accepted, fixture, _StateReader({}))
+    sink = _InboxSink()
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        contract_resolver=lambda _ref: ITEM,
+        egress_sink=sink,
+    ).execute(prepared, accepted)
+    assert result.refusal.code == "budget_max_items_exceeded"
+    assert result.refusal.details["observed"] == 2
+    assert sink.requests == []
+    kinds = [item.record.event_kind for item in fixture.journal.all_records(fixture.stream, "runs")]
+    assert "item_dependencies" not in kinds and "terminal_egress" not in kinds
+    final = next(
+        item
+        for item in fixture.journal.all_records(fixture.stream, "runs")
+        if item.record.event_kind == "attempt_finalized"
+    )
+    budget = _payload(fixture, final.record.payload_digest)["budget"]["observed"]["max_items"]
+    assert budget["high_water"] == 2
+    assert budget["boundary"] == "terminal:inbox"
+    assert budget["field_path"] == "items"

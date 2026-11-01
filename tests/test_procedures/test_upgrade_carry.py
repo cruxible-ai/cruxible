@@ -55,7 +55,6 @@ def test_settle_conversion_clears_all_fields_preserves_namespace_and_suspension(
     assert successor.scope == () and successor.condition is None
     assert successor.subject_scope is None and not successor.subject_creation
     assert successor.suspended and successor.namespace == mandate.namespace
-    assert successor.resource_ceiling == mandate.resource_ceiling
     assert successor.lifecycle.predecessor_digest == procedure_mandate_digest(mandate).tagged
     assert row.loses_settle and row.subject_creation_namespace_limitation
 

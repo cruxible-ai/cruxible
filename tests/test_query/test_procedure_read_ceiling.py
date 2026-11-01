@@ -222,7 +222,6 @@ class _CeilingReader:
 
 def _two_reads(max_read_rows: int) -> Any:
     from tests.test_procedures.test_procedure_execution import (
-        _budget,
         _hard_caps,
         _owned_accepted,
         _owned_contract,
@@ -246,10 +245,9 @@ def _two_reads(max_read_rows: int) -> Any:
         nodes=(
             ReadNode(node_id="first", query=named(query), as_="first"),
             ReadNode(node_id="second", query=named(query), as_="second"),
-            ProjectNode(node_id="result", literal={}, contract_out=named(out), as_="result"),
+            ProjectNode(node_id="result", literal={}, as_="result"),
         ),
         returns="result",
-        budget=_budget(),
         hard_caps=_hard_caps().model_copy(update={"max_read_rows": max_read_rows}),
         terminal_capability=1,
     )
@@ -278,11 +276,11 @@ def _query_then_claims(max_read_rows: int) -> Any:
         as_="second",
     )
     definition = accepted.procedure.definition.model_copy(update={"nodes": (first, claims, result)})
-    from tests.test_procedures.test_procedure_execution import _owned_accepted
+    from tests.test_procedures.test_procedure_execution import _BOUNDARIES, _owned_accepted
 
     return _owned_accepted(
         ProcedureDefinition.model_validate(definition.model_dump(mode="python", by_alias=True)),
-        contracts=accepted.procedure.owned_contracts,
+        contracts=_BOUNDARIES[accepted.procedure.identity.name],
         pins=(*accepted.procedure.pins, claim_type),
     )
 
@@ -299,6 +297,8 @@ def test_a_claim_read_draws_on_the_same_ceiling_as_a_query_read(claims: int, ref
         state_reader=reader,
         bodies=_fixture_bodies(),
         read_ceiling=100,
+        invocation_input={},
+        parameters={},
     )
     if refused:
         with pytest.raises(ProcedureBoundaryRefused) as caught:
@@ -325,6 +325,8 @@ def test_two_reads_share_the_runs_read_ceiling_and_the_second_refuses() -> None:
             state_reader=reader,  # type: ignore[arg-type]
             bodies=_fixture_bodies(),
             read_ceiling=100,
+            invocation_input={},
+            parameters={},
         )
 
     assert reader.ceilings == [100, 40]
@@ -347,6 +349,8 @@ def test_reads_within_the_ceiling_all_bind() -> None:
         state_reader=reader,  # type: ignore[arg-type]
         bodies=_fixture_bodies(),
         read_ceiling=100,
+        invocation_input={},
+        parameters={},
     )
 
     assert reader.ceilings == [100, 50]

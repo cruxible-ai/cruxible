@@ -80,7 +80,6 @@ from cruxible_client.authoring.selectors import (
     WorkspaceFiles,
 )
 from cruxible_client.authoring.signing import ApprovalSigner
-from cruxible_client.authoring.source import ProcedureSource
 from cruxible_client.authoring.source_map import (
     DiagnosticSourceMap,
     capture_keyword_sites,
@@ -202,6 +201,7 @@ from cruxible_client.contracts.get_reads import (
     GetResult,
     GetSubjectHistory,
 )
+from cruxible_client.contracts.identity_normalizers import KeyNormalizer
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     CaptureContractAdmission,
@@ -217,11 +217,12 @@ from cruxible_client.contracts.predictions import (
     TerminalSettlementEvidence,
 )
 from cruxible_client.contracts.principals import PRINCIPAL_KEY_ENV
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
+from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     procedure_artifact_digest,
 )
+from cruxible_client.contracts.procedures.line_specs import LineBudgetsInput
 from cruxible_client.contracts.procedures.results import ProcedureTerminalEgress
 from cruxible_client.contracts.procedures.windows import (
     TriggerEventReference,
@@ -237,6 +238,7 @@ from cruxible_client.contracts.resolution_contracts import (
     ResolutionContractReference,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import Contract
 from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyReference
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
@@ -823,7 +825,7 @@ class PredictionSettlement:
 
 
 #: Every form ``cx.procedure`` accepts.
-ProcedureDefinitionInput: TypeAlias = ProcedureInput | ProcedureSequence | ProcedureSource
+ProcedureDefinitionInput: TypeAlias = ProcedureInput | ProcedureSequence
 
 
 @dataclass(frozen=True)
@@ -1154,7 +1156,7 @@ class ChangeSetDraft:
     def procedure(
         self,
         *,
-        definition: ProcedureInput | ProcedureSequence | ProcedureSource,
+        definition: ProcedureInput | ProcedureSequence,
     ) -> ChangeSetDraft:
         """Compose a Procedure with its Line and mandate in one existing changeset.
 
@@ -1242,13 +1244,15 @@ class ChangeSetDraft:
                     procedure_name=procedure,
                     bindings={} if bindings is None else dict(bindings),
                     acquisition={
-                        alias: AcquisitionDefault.model_validate(rule)
+                        alias: LineAcquisitionRule.model_validate(rule)
                         for alias, rule in (acquisition or {}).items()
                     },
                     max_authority=max_authority,
                     trigger_input=trigger_input,
                     parameters={} if parameters is None else parameters,
-                    budgets=None if budgets is None else dict(budgets),
+                    budgets=None
+                    if budgets is None
+                    else LineBudgetsInput.model_validate(dict(budgets)),
                     occurrence_epoch=occurrence_epoch,
                     retire=retire,
                 ),
@@ -1314,6 +1318,7 @@ class ChangeSetDraft:
         minted: bool = False,
         description: str | None = None,
         retire: bool = False,
+        normalizers: Mapping[str, KeyNormalizer] | None = None,
     ) -> ChangeSetDraft:
         """Declare how Subjects of one kind are named: by key ClaimTypes, or minted.
 
@@ -1323,7 +1328,9 @@ class ChangeSetDraft:
         optional ``uniqueness`` -- the default ``unique`` refuses a second Subject
         with the same key, ``hint`` only surfaces it in the duplicates audit -- or
         ``minted=True`` to have core mint opaque ids. Core then names every new Subject of the kind:
-        its id is the readable rendering of its key, or a minted id.
+        its id is the readable rendering of its key, or a minted id. ``normalizers``
+        maps a key (predicate or last name) to its identity normalizer, pinned by
+        version (e.g. ``Pep503Normalizer(version=1)``); unnamed keys take ``none@1``.
 
         Next: ``.submit()``; afterwards ``cx.set("<kind>/<key value>", ...)`` creates
         a Subject of a single-key unique kind by its key.
@@ -1333,6 +1340,7 @@ class ChangeSetDraft:
             name=name,
             description=description,
             keys=tuple(keys),
+            normalizers=dict(normalizers or {}),
             uniqueness=uniqueness,
             minted=minted,
             retire=retire,
@@ -4089,48 +4097,27 @@ class Cruxible:
     def procedure(
         self,
         *,
-        definition: ProcedureInput | ProcedureSequence | ProcedureSource,
+        definition: ProcedureInput | ProcedureSequence,
     ) -> ProcedureDraft:
-        """Author a Procedure from a Sequence or the input shared by CLI and HTTP.
+        """Author a Procedure from a Sequence or the typed ProcedureSpec input.
 
-        A Sequence first performs its local structural checks and builds that
-        same input. Its preview never runs providers or replaces daemon preflight.
-
-        Declare owned input/output schemas in ``definition.contracts`` and use
-        ``carried_contract`` references in its graph. ``accepted`` references
-        resolve at the intent base. A Procedure declares each slot's signature
-        ``{in, out, effect}`` and names no provider: a Line binds every slot to
-        one exact build and operation when it is accepted.
-
-        Activation, retirement, and per-Source ``acquisition_defaults`` are also
-        carried by this input.
+        A Sequence builds that same spec (``{kind: procedure, spec}``), the one
+        authoring form every surface submits; its preview never runs providers
+        or replaces daemon preflight. A Procedure declares each slot's
+        signature ``{in, out, effect}`` and names no provider: a Line binds
+        every slot to one exact build and operation when it is accepted.
 
         Next: ``draft.submit()``, then ``cx.accepted_procedure(name).run(...)`` once
         accepted.
         """
 
         sites = capture_keyword_sites("procedure", stacklevel=1)
-        if isinstance(definition, ProcedureSource):
-            definition = definition.build(world=self.world())
         if isinstance(definition, ProcedureSequence):
             definition = definition.build()
         if not isinstance(definition, ProcedureInput):
-            raise TypeError(
-                "procedure definition must be a ProcedureInput, ProcedureSource "
-                "or authoring Sequence"
-            )
+            raise TypeError("procedure definition must be a ProcedureInput or a Sequence")
         payload = lower_authoring_input(definition)
         assert isinstance(payload, ProcedureAuthoringPayload)
-        if definition.spec is not None:
-            pass  # the shared typed authored-form lowering checks it
-        elif "source_request" in definition.definition:
-            from cruxible_client.contracts.procedures.source_requests import (
-                ProcedureSourceRequest,
-            )
-
-            ProcedureSourceRequest.model_validate(definition.definition["source_request"])
-        elif not isinstance(definition.definition.get("nodes"), list | tuple):
-            raise ValueError("Procedure input must declare its nodes")
         return ProcedureDraft(
             self,
             payload,
@@ -4145,9 +4132,8 @@ class Cruxible:
                     emitted={
                         "definition": (
                             "definition",
-                            "owned_contracts",
+                            "generated",
                             "activation_policy",
-                            "acquisition_defaults",
                             "retire",
                         ),
                     },
@@ -5489,6 +5475,17 @@ class Procedure:
         self._name = name
         self._coordinate = coordinate
         self._artifact: ProcedureArtifact | None = None
+        self._contracts: tuple[Contract, ...] = ()
+
+    @property
+    def contracts(self) -> tuple[Contract, ...]:
+        """The governed Contracts this Procedure's boundaries pin, with those they nest.
+
+        Next: ``procedure.input(...)`` builds a record of the input Contract.
+        """
+
+        _ = self.definition
+        return self._contracts
 
     @property
     def definition(self) -> ProcedureArtifact:
@@ -5501,6 +5498,7 @@ class Procedure:
             if procedure_artifact_digest(reading.artifact).tagged != reading.artifact_digest:
                 raise ValueError("Procedure read does not reproduce its accepted digest")
             self._artifact = reading.artifact
+            self._contracts = tuple(reading.contracts)
             self._coordinate = _coordinate(reading.coordinate)
         return self._artifact.model_copy(deep=True)
 
@@ -5511,7 +5509,16 @@ class Procedure:
         Next: ``procedure.run(input=procedure.input(...))``.
         """
 
-        return procedure_record_constructor(self.definition, "input")
+        return procedure_record_constructor(self.definition, "input", self.contracts)
+
+    @property
+    def params(self) -> RecordConstructor:
+        """The typed constructor for this Procedure's parameter record.
+
+        Next: ``procedure.run(parameters=procedure.params(...))``.
+        """
+
+        return procedure_record_constructor(self.definition, "params", self.contracts)
 
     @property
     def ref(self) -> ProcedureRef:
@@ -5536,12 +5543,16 @@ class Procedure:
         self,
         *,
         input: Record | None = None,
+        parameters: Record | None = None,
         bindings: Mapping[str, str] | None = None,
         at: AcceptedCoordinate | None = None,
         resolution_contract: ResolutionContractReference | None = None,
         trigger_event: TriggerEventReference | None = None,
     ) -> ProcedureRun:
-        """Run this Procedure on a typed input and return the run.
+        """Run this Procedure on a typed input (and parameters) and return the run.
+
+        ``parameters`` (made by ``procedure.params``) are the run's values over
+        the Procedure's defaults.
 
         Next: ``run.succeeded`` and ``run.result``, or
         ``cx.get(f"ProcedureRun:{run.run_id}")``.
@@ -5553,20 +5564,31 @@ class Procedure:
             self._coordinate = at
         if input is not None and not isinstance(input, Record):
             raise TypeError("Procedure.run requires a record made by procedure.input")
+        if parameters is not None and not isinstance(parameters, Record):
+            raise TypeError("Procedure.run parameters are a record made by procedure.params")
         constructor = self.input
         normalized = constructor() if input is None else constructor.from_wire(input)
+        supplied = None
+        if parameters is not None:
+            record = normalize_canonical(self.params.from_wire(parameters))
+            if not isinstance(record, dict):  # pragma: no cover - a Record is an object
+                raise TypeError("Procedure.run parameters are a record")
+            supplied = record
         result = self._playbill._client.run_procedure(
             self._playbill._instance_id,
             self._name,
             evaluation_time=self._playbill._evaluation_time(),
             at=self._playbill._read_at(at or self._coordinate),
             input=normalize_canonical(normalized),
+            parameters=supplied,
             **({"bindings": bindings} if bindings else {}),
             resolution_contract=resolution_contract,
             trigger_event=trigger_event,
         )
         return ProcedureRun(
-            self._playbill, result, output=procedure_record_constructor(self.definition, "output")
+            self._playbill,
+            result,
+            output=procedure_record_constructor(self.definition, "output", self.contracts),
         )
 
     def measure(
@@ -5722,7 +5744,7 @@ class ProcedureRun:
             owner = Procedure(
                 self._playbill, str(self._raw.procedure_identity["name"]), self.coordinate
             )
-            self._output = procedure_record_constructor(owner.definition, "output")
+            self._output = procedure_record_constructor(owner.definition, "output", owner.contracts)
         return self._output.from_wire(self._raw.result)
 
     @property

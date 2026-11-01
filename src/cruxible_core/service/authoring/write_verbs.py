@@ -190,6 +190,7 @@ from cruxible_core.indexes.subject_identity import (
     KeyTuple,
     SubjectKeyInvalid,
     canonical_key,
+    canonical_key_value,
     key_ambiguous_message,
     key_encoding,
     subject_kind_of,
@@ -947,10 +948,13 @@ class _Planner:
     ) -> tuple[str, str]:
         predicate = declared.keys[0]
         info = self.vocabulary.predicates.get(predicate)
-        form = () if info is None else effective_canonical_form(info.claim_type)
         try:
-            value = canonicalize_literal(text, form)
-        except CanonicalFormDidNotConverge as exc:
+            if info is None:
+                raise SubjectKeyInvalid(f"key ClaimType {predicate!r} is not accepted")
+            value = canonical_key_value(
+                text, info.claim_type, declared.normalizer(predicate), predicate=predicate
+            )
+        except SubjectKeyInvalid as exc:
             raise _refuse(
                 "cruxible.subject.key_invalid",
                 f"{kind}/{text}: {exc}",
@@ -1425,6 +1429,20 @@ class _Planner:
                     str(exc),
                     change=index,
                     repair="Pass a value the field's canonical form settles",
+                    field_path=path,
+                ) from exc
+        if info.key_normalizer is not None and isinstance(value, str):
+            # A key part is stored in its SubjectKind's canonical value (R12).
+            try:
+                value = canonical_key_value(
+                    value, info.claim_type, info.key_normalizer, predicate=info.predicate
+                )
+            except SubjectKeyInvalid as exc:
+                raise _refuse(
+                    "cruxible.subject.key_invalid",
+                    str(exc),
+                    change=index,
+                    repair="Pass a value that is a key of this field's kind",
                     field_path=path,
                 ) from exc
         if info.members:

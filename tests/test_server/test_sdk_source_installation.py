@@ -1,31 +1,17 @@
-"""Typed source authoring uses real installed provider wheels and normal run doors."""
+"""The typed SDK builder uses real installed provider wheels and normal run doors."""
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from cruxible_client import Cruxible, Disposition
-from cruxible_client.authoring.inputs import CarriedContractInput
-from cruxible_client.authoring.source import (
-    claim_candidate,
-    emit_capture,
-    extract,
-    halt,
-    invoke,
-    procedure,
-    propose_change_set,
-    source,
-)
+from cruxible_client import Cruxible
+from cruxible_client.authoring.procedures import ProcedureLimits, Sequence, eq, halt
 from cruxible_client.contracts.authoring.inputs import ProcedureMandateInput
-from cruxible_client.contracts.captures import (
-    CanonicalDuration,
-)
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
-from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_client.contracts.procedures.models import ProcedureBudget, ProcedureHardCaps
+from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
 from tests.core_support._light_capture_support import (
     JSON_DECODING,
@@ -127,74 +113,64 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         name="fetch-document",
     )
 
-    Request = CarriedContractInput(
-        name="fetch.input", fields={"url": PropertySchema(type="string")}
-    )
-    Result = CarriedContractInput(
-        name="fetch.output",
-        fields={
-            "status": PropertySchema(type="int"),
-            "text": PropertySchema(type="json", json_schema={"type": ["string", "null"]}),
-        },
-    )
-    budget = ProcedureBudget(
-        wall_clock=CanonicalDuration(microseconds=30_000_000),
-        max_provider_calls=1,
-        max_capture_bytes=2_097_152,
-    )
-    caps = ProcedureHardCaps(
-        max_wall_clock=CanonicalDuration(microseconds=60_000_000),
-        max_provider_calls=2,
-        max_capture_bytes=4_194_304,
-        max_repeat_attempts=1,
-        max_items=100,
+    request = {"url": "string"}
+    # Typed as the extracted fetch.document row declares it.
+    result = {"status": "int", "text": "string"}
+    limits = ProcedureLimits(
+        wall_clock="PT60S",
+        provider_calls=2,
+        capture_bytes=4_194_304,
+        repeat_attempts=1,
+        items=100,
     )
 
-    @procedure(
-        name="observe-web",
-        input=Request,
-        output=Result,
-        budget=budget,
-        hard_caps=caps,
+    def sequence(name: str, *, line_run: bool = False, **extra: Any) -> Sequence:
+        # A Line-run parent takes the URL as its parameter (a Line supplies it);
+        # the invoked observer takes it as input.
+        boundary = {"params": request} if line_run else {"input": request}
+        return Sequence(name, **boundary, output=result, hard_caps=limits, **extra)
+
+    observer = sequence(
+        "observe-web",
         # One slot of web.fetch's exact signature; a Line binds it to a build.
         slots={
-            "fetch": {
-                "in": "web.fetch.request@1",
-                "out": "web.fetch.result@1",
-                "effect": "external_read",
-            }
+            "fetch": ProcedureSlot.model_validate(
+                {
+                    "in": "web.fetch.request@1",
+                    "out": "web.fetch.result@1",
+                    "effect": "external_read",
+                }
+            )
         },
     )
-    def observer(request, bindings):
-        observation = source(
-            bindings.fetch,
-            request=bindings.fetch.input(url=request.url, expected_format="json"),
-            capture_contract="test.web",
-        )
-        document = extract(
-            observation,
-            row="fetch.document@1",
-            fields={"status": "/retrieved/status_code", "text": "/derived/text"},
-        )
-        return emit_capture(
-            observation,
-            capture_contract="test.web-output",
-            result=Result.value(status=document.status, text=document.text),
-        )
-
-    authored = observer.build(world=pb.world())
-    assert "sha256:" not in authored.model_dump_json()
-    preview = observer.preview(world=pb.world())
-    assert preview.ready_for_prepare, preview.errors
-    # The Source's acquisition rule is the child Procedure's own default: a
-    # Line's acquisition rules name only its root Procedure's Sources.
-    built = type(authored).model_validate(
-        {
-            **authored.model_dump(mode="json"),
-            "acquisition_defaults": {"observation.capture": _policy()},
-        }
+    observation = observer.call(
+        "observation",
+        slot="fetch",
+        input={"url": observer.input["url"], "expected_format": "json"},
+        captures={"capture": "test.web"},
     )
-    accept(pb.procedure(definition=built))
+    document = observer.extract(
+        "document",
+        capture=observation["capture"],
+        records="/",
+        row="fetch.document@1",
+        fields={"status": {"at": "/retrieved/status_code"}, "text": {"at": "/derived/text"}},
+    )
+    observer.emit(
+        "test.web-output",
+        input=observation.whole,
+        result={
+            "status": document.ref("rows", "0", "status"),
+            "text": document.ref("rows", "0", "text"),
+        },
+    )
+    authored = observer.build()
+    assert "sha256:" not in authored.model_dump_json()
+    preview = observer.preview()
+    assert preview.ready_for_prepare, preview.errors
+    # The Procedure declares no acquisition rule: each Line over a parent
+    # names the child's capture output by invoke path.
+    accept(pb.procedure(definition=authored))
 
     knowledge = pb.changes(rationale="Describe the advisory observation.")
     # Core assigns a new Subject's id from its declared kind's key (identity D1).
@@ -229,34 +205,40 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     knowledge.claim_type(definition)
     accept(knowledge)
 
-    @procedure(
-        name="observe-parent",
-        input=Request,
-        output=Result,
-        budget=budget,
-        hard_caps=caps,
-    )
-    def parent(request, world, bindings):
-        observed = invoke(bindings.observer, input=bindings.observer.input(url=request.url))
-        if not observed.succeeded:
-            return halt("Observation failed")
-        candidate = claim_candidate(
-            subject=world.security.advisory["osv-2026-0001"],
-            predicate=world.claim_type("security.advisory.severity"),
-            value="high",
-            role="observation",
-            rationale="The acquired report is high severity.",
-            supported_by=observed.terminal.capture,
-        )
-        return propose_change_set(
-            candidates=[candidate],
-            result=Result.value(status=observed.value.status, text=observed.value.text),
-        )
+    def candidate(observed: Any, **fields: Any) -> dict[str, Any]:
+        return {
+            "tag": "playbill-source-claim-candidate-v1",
+            "subject_kind": "security.advisory",
+            "subject_id": "osv-2026-0001",
+            "predicate": "security.advisory.severity",
+            "object_kind": "literal",
+            "source_kind": "supported_by",
+            "source_value": observed.ref("terminal", "capture"),
+            "source_alias": "observed.terminal.capture",
+            **fields,
+        }
 
-    parent = parent.bind(observer=pb.accepted_procedure("observe-web").ref)
+    def observed_result(observed: Any) -> dict[str, Any]:
+        return {"status": observed.ref("value", "status"), "text": observed.ref("value", "text")}
+
+    parent = sequence("observe-parent", line_run=True)
+    observed = parent.invoke("observe-web", input={"url": parent.params["url"]}, as_="observed")
+    parent.guard(eq(observed["succeeded"], True), else_=halt("Observation failed"))
+    parent.propose(
+        (
+            candidate(
+                observed,
+                value="high",
+                role="observation",
+                rationale="The acquired report is high severity.",
+                basis=[],
+            ),
+        ),
+        result=observed_result(observed),
+    )
     accept(pb.procedure(definition=parent))
     accepted_parent = pb.accepted_procedure("observe-parent")
-    refused = accepted_parent.run(input=accepted_parent.input(url=URL))
+    refused = accepted_parent.run(parameters=accepted_parent.params(url=URL))
     assert refused.status == "admission_refused"
     # Child capture cannot acquire a Line's authority directly: nothing ran, nothing fetched.
     assert refused.run_id is None and not refused.outcome.children
@@ -268,7 +250,8 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         .line(
             name="source-line",
             procedure="observe-parent",
-            bindings={"invoke_1.fetch": fetch},
+            bindings={"observed.fetch": fetch},
+            acquisition={"observed.observation.capture": _policy().model_dump(mode="json")},
             max_authority="propose",
             parameters={"url": URL},
         )
@@ -278,7 +261,6 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
                 name="source-authority",
                 line_name="source-line",
                 grants="propose",
-                resource_ceiling=caps,
                 namespace=("claims",),
                 valid_from=now - timedelta(days=1),
                 expires_at=now + timedelta(days=1),
@@ -306,44 +288,47 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     _approve_and_activate(http, instance_id, reviewer, proposal.proposal_id)
     pb.refresh()
 
-    @procedure(
-        name="verify-parent",
-        input=Request,
-        output=Result,
-        budget=budget,
-        hard_caps=caps,
+    verify_parent = sequence("verify-parent", line_run=True)
+    baseline = verify_parent.read_claims(
+        "baseline",
+        claim_type="security.advisory.severity",
+        subject="osv-2026-0001",
+        subject_kind="security.advisory",
     )
-    def verify_parent(request, world, bindings):
-        baseline = world.security.advisory["osv-2026-0001"].severity.one()
-        observed = invoke(bindings.observer, input=bindings.observer.input(url=request.url))
-        if not observed.succeeded:
-            return halt("Observation failed")
-        candidate = claim_candidate(
-            subject=world.security.advisory["osv-2026-0001"],
-            predicate=world.claim_type("security.advisory.severity"),
-            value=baseline.value,
-            role="derivation",
-            rationale="Rechecked the accepted baseline against a fresh observation.",
-            supported_by=observed.terminal.capture,
-            basis=(baseline,),
-            dispositions={baseline: Disposition.NOT_TESTED},
-        )
-        return propose_change_set(
-            candidates=[candidate],
-            result=Result.value(status=observed.value.status, text=observed.value.text),
-        )
-
-    verify_parent = verify_parent.bind(observer=pb.accepted_procedure("observe-web").ref)
-    inspected = verify_parent.preview(world=pb.world())
-    assert len(inspected.state_dependencies) == 1 and len(inspected.children) == 1
-    assert inspected.state_dependencies[0].subject_kind == "security.advisory"
+    observed = verify_parent.invoke(
+        "observe-web", input={"url": verify_parent.params["url"]}, as_="observed"
+    )
+    verify_parent.guard(eq(observed["succeeded"], True), else_=halt("Observation failed"))
+    verify_parent.propose(
+        (
+            candidate(
+                observed,
+                value=baseline["value"],
+                role="derivation",
+                rationale="Rechecked the accepted baseline against a fresh observation.",
+                basis=[baseline.whole],
+                dispositions=[{"claim": baseline.whole, "disposition": "not_tested"}],
+            ),
+        ),
+        result=observed_result(observed),
+    )
+    inspected = verify_parent.preview()
+    assert inspected.ready_for_prepare, inspected.errors
+    assert [node["kind"] for node in inspected.nodes] == [
+        "read",
+        "invoke",
+        "guard",
+        "propose_change_set",
+        "halt",
+    ]
     accept(pb.procedure(definition=verify_parent))
     accept(
         pb.changes(rationale="Verify the same baseline with an exact child.").line(
             name="verify-line",
             procedure="verify-parent",
-            # The baseline read compiles first, so the child is the second node.
-            bindings={"invoke_2.fetch": fetch},
+            # The child's one slot binds under the invoke step's node path.
+            bindings={"observed.fetch": fetch},
+            acquisition={"observed.observation.capture": _policy().model_dump(mode="json")},
             max_authority="propose",
             parameters={"url": URL},
         )
@@ -362,7 +347,6 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
                 name="verify-authority",
                 line_name="verify-line",
                 grants="propose",
-                resource_ceiling=caps,
                 namespace=("claims",),
                 valid_from=now - timedelta(days=1),
                 expires_at=now + timedelta(days=1),

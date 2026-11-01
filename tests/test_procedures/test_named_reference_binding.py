@@ -16,7 +16,10 @@ from cruxible_core.procedures.reference_binding import (
     bind_procedure_references,
     replay_procedure_references,
 )
+from tests.support.procedures import procedure_members
 from tests.test_procedures.test_procedure_artifacts import _artifact, _definition, _digest
+
+_BOUNDARIES = ("Contract:empty-input/v1", "Contract:claim-rows/v1")
 
 
 def authored_policy_call():
@@ -49,7 +52,7 @@ def authored_policy_call():
     raw = base.definition.model_dump(mode="json", by_alias=True)
     raw["nodes"] = [node]
     raw["slots"] = {"act": {"in": value, "out": value, "effect": "external_mutation"}}
-    raw["budget"]["max_provider_calls"] = raw["hard_caps"]["max_provider_calls"] = 1
+    raw["hard_caps"]["max_provider_calls"] = 1
     definition = ProcedureDefinition.model_validate(raw)
     artifact = ProcedureArtifact.model_validate(
         {
@@ -83,7 +86,7 @@ def test_name_only_effect_policy_is_refused_by_admission_law(tmp_path):
         current_tree=parent,
         proposed_tree={
             **parent,
-            procedure_path(artifact.identity.name): render_procedure(artifact),
+            **procedure_members(artifact),
         },
         current=current,
         bodies=instance.body_store(),
@@ -112,6 +115,9 @@ def test_admission_resolves_each_name_once_without_population_reads(unrelated_co
         SimpleNamespace(lifecycle=ArtifactLifecycle()),
         selected_digest,
     )
+    # Admission resolves the boundary Contracts the graph names, too.
+    for boundary in _BOUNDARIES:
+        sources[boundary] = (SimpleNamespace(lifecycle=ArtifactLifecycle()), _digest(boundary))
     reads = []
 
     def lookup(identity: ArtifactIdentity):
@@ -119,7 +125,7 @@ def test_admission_resolves_each_name_once_without_population_reads(unrelated_co
         return sources.get(identity.qualified)
 
     bound = bind_procedure_references(accepted, lookup=lookup)
-    assert reads == ["QueryDefinition:claims-by-status"]
+    assert sorted(reads) == sorted([*_BOUNDARIES, "QueryDefinition:claims-by-status"])
     assert bound.artifact_digest == digest
     assert bound.procedure.definition_digest == authored.definition_digest
     assert bound.procedure.definition == authored.definition
@@ -168,7 +174,9 @@ def test_replay_uses_recorded_versions_and_refuses_substituted_material():
     replayed = replay_procedure_references(
         accepted, pins=admitted.procedure.pins, lookup_exact=exact, bindings={}
     )
-    assert reads == [("QueryDefinition:claims-by-status", recorded)]
+    assert sorted(reads) == sorted(
+        (name, recorded) for name in (*_BOUNDARIES, "QueryDefinition:claims-by-status")
+    )
     assert replayed.procedure.pins == admitted.procedure.pins
     assert replayed.procedure.definition == admitted.procedure.definition
     assert replayed.procedure.resolved == admitted.procedure.resolved
@@ -183,7 +191,7 @@ def test_replay_uses_recorded_versions_and_refuses_substituted_material():
             ),
             bindings={},
         )
-    with pytest.raises(ExecutionError, match="lacks QueryDefinition"):
+    with pytest.raises(ExecutionError, match="lacks Contract:empty-input/v1"):
         replay_procedure_references(accepted, pins=(), lookup_exact=exact, bindings={})
 
 
@@ -207,7 +215,7 @@ def test_v3_artifact_and_admission_graph_digests_reproduce_from_compact_named_wi
     restored = parse_procedure(wire, path="procedures/" + original.identity.name + ".json")
     assert procedure_artifact_digest(original) == typed_digest(
         ArtifactDigest,
-        "cruxible-procedure-v3",
+        "cruxible-procedure-v4",
         json.loads(wire),
     )
     assert procedure_artifact_digest(restored) == procedure_artifact_digest(original)

@@ -347,6 +347,7 @@ class RecordConstructor:
     """A schema handle usable as .value(...), .input(...), or .parameters(...)."""
 
     _schema: ContractSchema
+    _omittable_fields: frozenset[str] = frozenset()
 
     @classmethod
     def from_json_schema(cls, schema: Mapping[str, object]) -> RecordConstructor:
@@ -368,13 +369,27 @@ class RecordConstructor:
             if wire in data:
                 raise ValueError(f"two arguments supply field {wire!r}")
             data[wire] = value
-        return Record(self._schema, data)
+        return self.from_wire(data)
 
     def from_wire(self, value: object) -> Record:
         """Validate a service/provider result without changing its field names."""
         if not isinstance(value, Mapping):
             raise TypeError("record value must be an object")
-        return Record(self._schema, value)
+        schema = (
+            self._schema.model_copy(
+                update={
+                    "fields": {
+                        name: declared.model_copy(update={"optional": True})
+                        if name in self._omittable_fields and name not in value
+                        else declared
+                        for name, declared in self._schema.fields.items()
+                    }
+                }
+            )
+            if self._omittable_fields
+            else self._schema
+        )
+        return Record(schema, value)
 
     def __getattr__(self, name: str) -> RecordConstructor:
         wire = record_field_names(self._schema).get(name)

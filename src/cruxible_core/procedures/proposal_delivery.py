@@ -1371,7 +1371,6 @@ def select_procedure_mandate(
                 line_identity=line_identity,
                 line_artifact_digest=line_digest,
                 requested_rung=request.required_rung,  # type: ignore[arg-type]
-                requested_authority=admission.hard_caps,
                 target_paths=target_paths,
                 evaluation_time=evaluation_time,
                 accepted_mandate_digest=digest,
@@ -1425,7 +1424,6 @@ def select_settle_mandate(
                 line_identity=line_identity,
                 line_artifact_digest=line_digest,
                 requested_rung=3,
-                requested_authority=admission.hard_caps,
                 target_paths=target_paths,
                 evaluation_time=request.prepared_at,
                 accepted_mandate_digest=digest,

@@ -64,7 +64,6 @@ from cruxible_client.contracts.procedure_mandates import (
 )
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
-    ProcedureHardCaps,
     authority_for_rung,
 )
 from cruxible_client.contracts.procedures.results import ServedAuthorityTerm
@@ -753,7 +752,6 @@ class TerminalEgressRequestV2(TerminalEgressRequestV1):
     #: (``EPHEMERAL_RUN_RUNG_CEILING``), so this never authorizes settlement.
     ephemeral_spec_digest: str | None = None
     calibration_reading_digests: tuple[str, ...] = ()
-    requested_authority: ProcedureHardCaps
     target_paths: tuple[str, ...] = ()
     evaluation_time: datetime = Field(description="Reads EVALUATION INSTANT.")
     operation_key: str | None = None
@@ -920,8 +918,7 @@ def _validated_run_admission(
         and request.prepared_at >= validated.admitted_at
     )
     v2_matches = not isinstance(request, TerminalEgressRequestV2) or (
-        request.requested_authority == validated.hard_caps
-        and request.evaluation_time == request.prepared_at
+        request.evaluation_time == request.prepared_at
     )
     if not common_matches or not v2_matches:
         raise TerminalAuthorityRefusal(
@@ -951,7 +948,7 @@ def build_terminal_egress_request_v2(
     mutually exclusive with ``procedure_mandate_digest``.
     """
 
-    validated_admission = _validated_run_admission(request, admission)
+    _validated_run_admission(request, admission)
     payload = {
         field_name: getattr(request, field_name)
         for field_name in TerminalEgressRequestV1.model_fields
@@ -964,7 +961,6 @@ def build_terminal_egress_request_v2(
         procedure_mandate_digest=procedure_mandate_digest,
         ephemeral_spec_digest=ephemeral_spec_digest,
         calibration_reading_digests=calibration_reading_digests,
-        requested_authority=validated_admission.hard_caps,
         target_paths=target_paths,
         evaluation_time=request.prepared_at,
         operation_key=None,
@@ -1482,7 +1478,6 @@ def require_procedure_mandate(
             line_identity=line_identity,
             line_artifact_digest=line_digest,
             requested_rung=request.required_rung,  # type: ignore[arg-type]
-            requested_authority=request.requested_authority,
             target_paths=request.target_paths,
             evaluation_time=request.prepared_at,
             accepted_mandate_digest=digest,

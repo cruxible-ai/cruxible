@@ -5,12 +5,16 @@ Identity is decided once, by declared rules, at one authoritative boundary
 kind with an accepted SubjectKind, and the SubjectKind says how core names it:
 
 ``keys``
-    An ordered list of key ClaimTypes (one, or several for a composite key).
-    Each is a ClaimType about this kind only, literal and one-valued; its
-    canonical form governs its key value. The key parts of a Subject are
-    ordinary Claims of those ClaimTypes. ``uniqueness`` is ``unique`` (a second
-    live Subject with the same canonical key is refused) or ``hint`` (never
-    refused; equal keys surface in the duplicates audit).
+    An ordered list of key parts (one, or several for a composite key). Each
+    names a key ClaimType -- about this kind only, literal and one-valued --
+    and the identity normalizer its value takes, pinned by version, from the
+    fixed core set (``identity_normalizers``: ``none``, ``lowercase``,
+    ``pep503``, ``purl-type``). A key part's canonical value is its ClaimType's
+    canonical form, then its normalizer: two raw values that canonicalize to
+    one value name the same Subject. The key parts of a Subject are ordinary
+    Claims of those ClaimTypes, stating canonical values. ``uniqueness`` is
+    ``unique`` (a second live Subject with the same canonical key is refused)
+    or ``hint`` (never refused; equal keys surface in the duplicates audit).
 ``minted``
     Core mints an opaque id.
 
@@ -19,9 +23,11 @@ rendering of its canonical key values (``render_key_slug``); a minted Subject's
 id is ``sub-`` and 32 hex digits. The id is a stable handle: it is never
 re-derived when a key Claim later changes.
 
-A SubjectKind changes through the usual definition succession: changing its keys
-or its uniqueness is a governed successor, never a silent re-keying, and no
-existing Subject's id moves.
+A SubjectKind changes through the usual definition succession: changing its keys,
+a key part's normalizer (or its version) or its uniqueness is a governed
+successor, never a silent re-keying: a changed normalizer re-keys the kind, and
+the same change re-authors every live key value the new rule moves. No existing
+Subject's id moves.
 """
 
 from __future__ import annotations
@@ -45,10 +51,19 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
+from cruxible_client.contracts.identity_normalizers import (
+    LOWERCASING_NORMALIZERS,
+    KeyNormalizer,
+    NoneNormalizer,
+    normalizer_spelling,
+)
+from cruxible_client.contracts.identity_normalizers import (
+    key_value_problem as key_value_problem,
+)
 from cruxible_client.contracts.semantic import SemanticAddress
 
-SUBJECT_KIND_ARTIFACT_FORMAT: Final = "cruxible-subject-kind-v1"
-SUBJECT_KIND_DIGEST_DOMAIN: Final = "cruxible-subject-kind-artifact-v1"
+SUBJECT_KIND_ARTIFACT_FORMAT: Final = "cruxible-subject-kind-v2"
+SUBJECT_KIND_DIGEST_DOMAIN: Final = "cruxible-subject-kind-artifact-v2"
 SUBJECT_KIND_PREFIX: Final = "subject-kinds/"
 #: The most key ClaimTypes one composite key may name.
 MAX_KEY_PARTS: Final = 8
@@ -74,25 +89,43 @@ SubjectKeyValue: TypeAlias = str | int | bool
 """A key part's value: a string, an integer or a boolean, as its Claim stores it."""
 
 
+class SubjectKeyRule(_StrictSubjectKindModel):
+    """One key part: its key ClaimType, and the identity normalizer its value takes."""
+
+    claim_type: str
+    normalizer: KeyNormalizer
+
+    @field_validator("claim_type")
+    @classmethod
+    def _claim_type(cls, value: str) -> str:
+        if not _PREDICATE_RE.fullmatch(value):
+            raise ValueError(f"key {value!r} is not a canonical ClaimType predicate")
+        return value
+
+
 class SubjectKindKeys(_StrictSubjectKindModel):
-    """A Subject of this kind is named by its key: one ClaimType, or several in order."""
+    """A Subject of this kind is named by its key: one part, or several in order."""
 
     rule: Literal["keys"] = "keys"
-    #: The key ClaimTypes by predicate, in key order.
-    keys: tuple[str, ...] = Field(min_length=1, max_length=MAX_KEY_PARTS)
+    #: The key parts, in key order: each a key ClaimType and its normalizer.
+    parts: tuple[SubjectKeyRule, ...] = Field(min_length=1, max_length=MAX_KEY_PARTS)
     #: ``unique`` refuses a second live Subject with the same canonical key;
     #: ``hint`` never refuses and feeds the duplicates audit.
     uniqueness: Literal["unique", "hint"]
 
-    @field_validator("keys")
+    @field_validator("parts")
     @classmethod
-    def _keys(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        for predicate in value:
-            if not _PREDICATE_RE.fullmatch(predicate):
-                raise ValueError(f"key {predicate!r} is not a canonical ClaimType predicate")
-        if len(set(value)) != len(value):
+    def _parts(cls, value: tuple[SubjectKeyRule, ...]) -> tuple[SubjectKeyRule, ...]:
+        predicates = [part.claim_type for part in value]
+        if len(set(predicates)) != len(predicates):
             raise ValueError("a SubjectKind names each key ClaimType once")
         return value
+
+    @property
+    def keys(self) -> tuple[str, ...]:
+        """The key ClaimTypes by predicate, in key order."""
+
+        return tuple(part.claim_type for part in self.parts)
 
 
 class SubjectKindMinted(_StrictSubjectKindModel):
@@ -109,7 +142,7 @@ SubjectKindIdentityRule: TypeAlias = Annotated[
 class SubjectKind(_StrictSubjectKindModel):
     """How Subjects of one kind are identified: by declared keys, or by minted ids."""
 
-    artifact_format: Literal["cruxible-subject-kind-v1"] = SUBJECT_KIND_ARTIFACT_FORMAT
+    artifact_format: Literal["cruxible-subject-kind-v2"] = SUBJECT_KIND_ARTIFACT_FORMAT
     identity: ArtifactIdentity
     description: str | None = Field(default=None, exclude_if=lambda value: value is None)
     identity_rule: SubjectKindIdentityRule
@@ -150,6 +183,16 @@ class SubjectKind(_StrictSubjectKindModel):
 
         rule = self.identity_rule
         return rule.keys if isinstance(rule, SubjectKindKeys) else ()
+
+    def normalizer(self, predicate: str) -> KeyNormalizer:
+        """The identity normalizer key part ``predicate`` takes (``none`` off the key)."""
+
+        rule = self.identity_rule
+        if isinstance(rule, SubjectKindKeys):
+            for part in rule.parts:
+                if part.claim_type == predicate:
+                    return part.normalizer
+        return NoneNormalizer(version=1)
 
     @property
     def unique(self) -> bool:
@@ -233,6 +276,10 @@ class KeyClaimTypeShape(_StrictSubjectKindModel):
     object_kind: str
     cardinality: str
     allowed_subject_kinds: tuple[str, ...]
+    #: The JSON type its literal schema declares (``string``, ``integer``...), if any.
+    literal_type: str | None = None
+    #: Its effective canonical form (the transforms applied before the normalizer).
+    canonical_form: tuple[str, ...] = ()
 
 
 def _refusal(code: str, message: str, *, path: str) -> SubjectKindLawResult:
@@ -250,9 +297,17 @@ def _refusal(code: str, message: str, *, path: str) -> SubjectKindLawResult:
 
 
 def key_claim_type_problem(
-    kind: str, shape: KeyClaimTypeShape | None, predicate: str
+    kind: str,
+    shape: KeyClaimTypeShape | None,
+    predicate: str,
+    normalizer: KeyNormalizer | None = None,
 ) -> str | None:
-    """Why one ClaimType cannot be a key of ``kind``, or None when it can."""
+    """Why one ClaimType cannot be a key of ``kind`` under ``normalizer``, or None when it can.
+
+    A normalizer other than ``none`` reads text, so its key ClaimType states
+    strings; a lowercasing normalizer cannot follow an ``upper`` canonical form
+    (the two rules would never agree on one value).
+    """
 
     if shape is None or not shape.live:
         return (
@@ -267,6 +322,19 @@ def key_claim_type_problem(
         return f"key ClaimType {predicate!r} must be about {kind} only; it admits " + ", ".join(
             shape.allowed_subject_kinds
         )
+    if normalizer is not None and not isinstance(normalizer, NoneNormalizer):
+        spelled = normalizer_spelling(normalizer)
+        if shape.literal_type != "string":
+            return (
+                f"key ClaimType {predicate!r} states {shape.literal_type or 'untyped'} values, "
+                f"and {spelled} normalizes text; give it a string literal schema or "
+                "normalizer none"
+            )
+        if normalizer.normalizer in LOWERCASING_NORMALIZERS and "upper" in shape.canonical_form:
+            return (
+                f"key ClaimType {predicate!r} has canonical form upper, which {spelled} "
+                "undoes; drop one of them"
+            )
     return None
 
 
@@ -329,7 +397,12 @@ def evaluate_subject_kind_law(
             )
     if subject_kind.lifecycle.state == "live":
         for predicate in subject_kind.keys:
-            problem = key_claim_type_problem(kind, key_claim_types.get(predicate), predicate)
+            problem = key_claim_type_problem(
+                kind,
+                key_claim_types.get(predicate),
+                predicate,
+                subject_kind.normalizer(predicate),
+            )
             if problem is not None:
                 return _refusal(
                     "cruxible.subject_kind.key_claim_type_invalid",
@@ -481,16 +554,6 @@ def minted_subject_id(*, operation: str, member: str) -> str:
 # -- key values and references -------------------------------------------------------
 
 
-def key_value_problem(value: object) -> str | None:
-    """Why a value cannot be a key part, or None: keys are strings, integers or booleans."""
-
-    if isinstance(value, bool | int):
-        return None
-    if isinstance(value, str):
-        return None if value else "a key part is never empty"
-    return f"a key part is a string, an integer or a boolean, not {type(value).__name__}"
-
-
 class SubjectKeyPart(_StrictSubjectKindModel):
     """One key part: the key ClaimType and its value."""
 
@@ -630,6 +693,7 @@ __all__ = [
     "KeyClaimTypeShape",
     "SubjectIdUnassignable",
     "SubjectKeyPart",
+    "SubjectKeyRule",
     "SubjectKeyReference",
     "key_reference_mapping",
     "SubjectKeyValue",

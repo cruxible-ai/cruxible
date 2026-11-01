@@ -18,7 +18,7 @@ from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
 )
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure, render_procedure
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
     line_identity_digest,
@@ -42,7 +42,10 @@ from cruxible_core.service.procedures.procedure_runs import (
     PROCEDURE_RUN_CONFIG_PATH,
     ProcedureRunOperationalConfigV1,
 )
-from tests.support.procedures import RUN_WALL_CLOCK
+from tests.support.procedures import (
+    RUN_WALL_CLOCK,
+    procedure_members,  # noqa: E402
+)
 from tests.test_ledger.test_activation import _sign
 from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
 
@@ -83,7 +86,6 @@ def _line_mandate(accepted: AcceptedProcedure, line: LineSpec) -> ProcedureManda
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
         grants="propose",
-        resource_ceiling=accepted.procedure.definition.hard_caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),
@@ -179,7 +181,7 @@ def test_an_unknown_procedure_names_the_nearest_accepted_ones_and_the_repair(
     _accept_members(
         instance,
         reviewer_key_path,
-        {accepted.path: render_procedure(authored_procedure(accepted))},
+        procedure_members(authored_procedure(accepted)),
         timestamp="2026-09-03T09:00:00.000000Z",
     )
 
@@ -364,7 +366,7 @@ def test_a_line_pinning_a_query_definition_runs_through_the_live_route(
         instance,
         reviewer_key_path,
         {
-            accepted.path: render_procedure(authored_procedure(accepted)),
+            **procedure_members(authored_procedure(accepted)),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
         },
@@ -399,7 +401,7 @@ def test_a_real_accepted_line_runs_through_the_live_route_with_no_patch(
         instance,
         reviewer_key_path,
         {
-            accepted.path: render_procedure(authored_procedure(accepted)),
+            **procedure_members(authored_procedure(accepted)),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
         },
@@ -448,7 +450,7 @@ def test_accepted_line_successors_run_against_their_retained_predecessor(
         instance,
         reviewer_key_path,
         {
-            accepted.path: render_procedure(authored_procedure(accepted)),
+            **procedure_members(authored_procedure(accepted)),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
         },

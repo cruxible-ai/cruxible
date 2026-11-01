@@ -19,13 +19,10 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.errors import ExecutionError
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
-    ProcedureOwnedContract,
     procedure_artifact_digest,
-    procedure_owned_contract_digest,
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
@@ -87,9 +84,7 @@ class ProcedureExecutionPlan(BaseModel):
     pins: tuple[ArtifactPin, ...]
     #: Each named dependency's exact digest at the coordinate, by qualified identity.
     resolved: dict[str, str]
-    owned_contracts: tuple[ProcedureOwnedContract, ...]
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
-    acquisition_defaults: dict[str, AcquisitionDefault]
     #: Each bound slot, by slot name: the run uses these and never refits.
     slot_bindings: tuple[ResolvedSlotBinding, ...] = ()
     lifecycle: ArtifactLifecycle
@@ -218,10 +213,7 @@ def bind_procedure_references(
     retained source snapshots are not traversed.
     """
     authored = authored_procedure(accepted)
-    resolved = {
-        c.identity.qualified: (c, procedure_owned_contract_digest(c).tagged)
-        for c in authored.owned_contracts
-    }
+    resolved: dict[str, tuple[Any, str]] = {}
 
     def resolve(identity: ArtifactIdentity) -> tuple[Any, str]:
         if identity.qualified not in resolved:
@@ -315,9 +307,7 @@ def bind_procedure_references(
         definition_digest=authored.definition_digest,
         pins=tuple(sorted(pins, key=lambda p: (p.role, p.target.qualified, p.artifact_digest))),
         resolved=references,
-        owned_contracts=authored.owned_contracts,
         activation_policy=authored.activation_policy,
-        acquisition_defaults=dict(authored.acquisition_defaults),
         slot_bindings=tuple(slot_bindings),
         lifecycle=authored.lifecycle,
     )

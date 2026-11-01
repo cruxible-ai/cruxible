@@ -437,36 +437,33 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
     _workspace(tmp_path)
 
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
-    from cruxible_client.contracts.procedures.contract_schema import PropertySchema
     from cruxible_client.contracts.procedures.models import ProcedureDefinition, ProjectNode
     from tests.test_procedures.test_procedure_execution import (
-        _budget,
         _hard_caps,
         _owned_accepted,
         _owned_contract,
         _owned_pin,
     )
 
-    ci = _owned_contract("input", {"account": PropertySchema(type="string")})
-    co = _owned_contract("output", {"ok": PropertySchema(type="bool")})
+    ci = _owned_contract("input", {"account": "string"})
+    co = _owned_contract("output", {"ok": "bool"})
+    cp = _owned_contract("params", {"a": "int", "b": "int"})
+    pp = _owned_pin("contract-params", cp)
     pi, po = _owned_pin("contract-in", ci), _owned_pin("contract-out", co)
     artifact = _owned_accepted(
         ProcedureDefinition(
             name="daily-summary",
             contract_in=named(pi),
             contract_out=named(po),
-            nodes=(
-                ProjectNode(
-                    node_id="result", fields={"ok": True}, contract_out=named(po), as_="result"
-                ),
-            ),
+            parameter_contract=named(pp),
+            parameter_defaults={"a": 1},
+            nodes=(ProjectNode(node_id="result", fields={"ok": True}, as_="result"),),
             returns="result",
-            budget=_budget(),
             hard_caps=_hard_caps(),
             terminal_capability=1,
         ),
-        contracts=(ci, co),
-        pins=(pi, po),
+        contracts=(ci, co, cp),
+        pins=(pi, po, pp),
     ).procedure
 
     class ProcedureClient(_Client):
@@ -475,6 +472,8 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
                 coordinate=_COORDINATE,
                 artifact=artifact,
                 artifact_digest=procedure_artifact_digest(artifact).tagged,
+                # The readiness read carries the governed boundary Contracts.
+                contracts=[ci, co, cp],
             )
 
         def __init__(self) -> None:
@@ -513,14 +512,20 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
     )
     procedure = pb.accepted_procedure("daily-summary")
 
-    assert procedure.run(input=procedure.input(account="one")).status == "succeeded"
     assert (
-        procedure.run(at=pb.coordinate, input=procedure.input(account="one")).status == "succeeded"
+        procedure.run(input=procedure.input(account="one"), parameters=procedure.params(b=2)).status
+        == "succeeded"
+    )
+    assert (
+        procedure.run(
+            at=pb.coordinate, input=procedure.input(account="one"), parameters=procedure.params(b=2)
+        ).status
+        == "succeeded"
     )
     assert client.runs[0]["at"] == _COORDINATE
     assert client.runs[0]["input"] == {"account": "one"}
     assert client.runs[1]["at"] == _COORDINATE
-    run = procedure.run(input=procedure.input(account="one"))
+    run = procedure.run(input=procedure.input(account="one"), parameters=procedure.params(b=2))
     assert run.succeeded and run.result.ok is True
     assert run.outcome.status == "succeeded"
     with pytest.raises(TypeError, match="record"):
@@ -529,6 +534,18 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
     assert not run.succeeded
     with pytest.raises(ValueError, match="no successful output"):
         _ = run.result
+
+    overrides = procedure.params(b=2)
+    assert overrides.model_dump(mode="json") == {"b": 2}
+    assert procedure.run(input=procedure.input(account="one"), parameters=overrides).succeeded
+    assert client.runs[-1]["parameters"] == {"b": 2}
+    assert procedure.definition.definition.parameter_defaults == {"a": 1}
+    with pytest.raises(ValueError, match="b"):
+        procedure.params()
+    with pytest.raises(ValueError, match="a"):
+        procedure.params(a="one", b=2)
+    with pytest.raises(ValueError, match="a"):
+        procedure.params(a=None, b=2)
 
 
 def test_sdk_line_run_carries_the_asserted_identity_occurrence_and_event(tmp_path: Path) -> None:

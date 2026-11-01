@@ -3,32 +3,29 @@
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
     procedure_artifact_digest,
     procedure_path,
 )
-from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_client.contracts.procedures.contracts import OwnedProcedureContractValidator
+from cruxible_client.contracts.procedures.contracts import AcceptedProcedureContractValidator
 from cruxible_client.contracts.procedures.graph import (
     ProcedureGraphFormatError,
     compute_procedure_definition_digest,
 )
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
-    GuardPredicate,
-    PredicateOperand,
     ProcedureDefinition,
     ProjectNode,
     SelectNode,
 )
+from cruxible_client.contracts.refs import input_ref
+from cruxible_client.contracts.shapes import Comparison, LiteralOperand
 from cruxible_core.procedures.execution import ProcedureExecutor
-from tests.support.procedures import bind_fixture, named
+from tests.support.procedures import bind_fixture, boundary_contract, contract_resolver, named
 from tests.test_procedures.test_procedure_execution import (
     _Authority,
-    _budget,
     _fixture,
     _hard_caps,
     _owned_contract,
@@ -37,22 +34,22 @@ from tests.test_procedures.test_procedure_execution import (
     _StateReader,
 )
 
+_CHOICE = (
+    boundary_contract("choice-input", {"choice": "bool"}),
+    boundary_contract("choice-output", {"value": "int"}),
+)
+
 
 def definition(*, early=False):
-    ci = _owned_contract("choice-input", {"choice": PropertySchema(type="bool")})
-    co = _owned_contract("choice-output", {"value": PropertySchema(type="int")})
+    ci = _owned_contract("choice-input", {"choice": "bool"})
+    co = _owned_contract("choice-output", {"value": "int"})
     pi, po = named(_owned_pin("contract-in", ci)), named(_owned_pin("contract-out", co))
+    assert (ci, co) == _CHOICE
     branch = GuardNode(
         node_id="choose",
-        predicate=GuardPredicate(
-            left=PredicateOperand(kind="input", input_name="choice"),
-            operator="eq",
-            right=PredicateOperand(kind="literal", value=True),
-        ),
+        predicate=Comparison(op="eq", left=input_ref("choice"), right=LiteralOperand(literal=True)),
         on_true="yes",
         on_false="no",
-        refusal_code="choice",
-        message="Choose a branch",
     )
     factory = ProjectNode
     nodes = [
@@ -60,7 +57,6 @@ def definition(*, early=False):
         factory(
             node_id="yes",
             fields={"value": 1},
-            contract_out=po,
             as_="yes",
             leaf=early,
             next=None if early else "join",
@@ -68,7 +64,6 @@ def definition(*, early=False):
         factory(
             node_id="no",
             fields={"value": 2},
-            contract_out=po,
             as_="no",
             leaf=early,
             next=None if early else "join",
@@ -76,11 +71,10 @@ def definition(*, early=False):
     ]
     if not early:
         nodes += [
-            SelectNode(node_id="join", sources=("yes", "no"), contract_out=named(po), as_="joined"),
+            SelectNode(node_id="join", sources=("yes", "no"), as_="joined"),
             ProjectNode(
                 node_id="return",
                 fields="$steps.joined",
-                contract_out=named(po),
                 as_="result",
                 leaf=True,
             ),
@@ -91,7 +85,6 @@ def definition(*, early=False):
         contract_out=named(po),
         nodes=tuple(nodes),
         returns="yes" if early else "result",
-        budget=_budget(),
         hard_caps=_hard_caps(),
         terminal_capability=1,
     )
@@ -99,9 +92,6 @@ def definition(*, early=False):
         identity=ArtifactIdentity(kind="Procedure", name="choice"),
         definition=graph,
         definition_digest=compute_procedure_definition_digest(graph).tagged,
-        owned_contracts=tuple(
-            sorted((ci, co), key=lambda c: canonical_bytes(c.model_dump(mode="json")))
-        ),
         activation_policy="snapshot",
     )
     return bind_fixture(
@@ -124,7 +114,7 @@ def test_join_and_early_returns_execute_selected_branch(tmp_path, early, choice,
         run_index=fixture.run_index,
         fencing_token="writer",
         activation_authority=_Authority(accepted.artifact_digest),
-        contract_validator=OwnedProcedureContractValidator(accepted),
+        contract_validator=AcceptedProcedureContractValidator(contract_resolver(*_CHOICE)),
     )
     prepared = _prepare(accepted, fixture, _StateReader(), invocation_input={"choice": choice})
     result = executor.execute(prepared, accepted)
@@ -140,7 +130,8 @@ def test_join_and_early_returns_execute_selected_branch(tmp_path, early, choice,
         ("both", "exactly one"),
         ("missing", "exactly one"),
         ("unknown", "outside"),
-        ("schema", "exact output contract"),
+        # A select pins no Contract: its value is typed as it flows.
+        ("schema", "Extra inputs"),
     ],
 )
 def test_unsafe_joins_fail_before_execution(mutation, message):
@@ -153,6 +144,6 @@ def test_unsafe_joins_fail_before_execution(mutation, message):
     elif mutation == "unknown":
         graph["nodes"][3]["sources"] = ["yes", "typo"]
     else:
-        graph["nodes"][1]["contract_out"]["target"]["name"] = "other-output"
+        graph["nodes"][3]["contract_out"] = {"target": {"kind": "Contract", "name": "out/v1"}}
     with pytest.raises((ValueError, ProcedureGraphFormatError), match=message):
         ProcedureDefinition.model_validate(graph)

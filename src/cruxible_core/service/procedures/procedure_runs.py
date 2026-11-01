@@ -25,11 +25,10 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
-    CanonicalDuration,
-    capture_retention_policy,
+    CaptureContractAny as CaptureContract,
 )
 from cruxible_client.contracts.captures import (
-    CaptureContractAny as CaptureContract,
+    capture_retention_policy,
 )
 from cruxible_client.contracts.dependencies import dependency_pins
 from cruxible_client.contracts.errors import (
@@ -52,9 +51,9 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 )
 from cruxible_client.contracts.procedures.acquisition_rules import (
     ACQUISITION_RULES_DIGEST_DOMAIN,
-    AcquisitionDefault,
     AcquisitionInputDecision,
     AcquisitionRule,
+    LineAcquisitionRule,
     acquisition_rules_digest,
     resolve_acquisition_rules,
 )
@@ -68,6 +67,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_runnability,
 )
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
+from cruxible_client.contracts.procedures.contracts import LINE_RUN_INPUT
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
     LineSpec,
@@ -85,6 +85,7 @@ from cruxible_client.contracts.procedures.models import (
     RepeatBodyNode,
     RepeatNode,
     authority_for_rung,
+    caps_budget,
     required_authority,
 )
 from cruxible_client.contracts.procedures.reads import effective_read_rows
@@ -178,6 +179,7 @@ from cruxible_client.contracts.workspace_file import (
     source_read_receipt_digest,
 )
 from cruxible_core.claims.closure import DEFERRED_PIN_TARGET_KINDS
+from cruxible_core.claims.enum_resolution import accepted_enum_resolver
 from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.errors import PermissionDeniedError
@@ -196,6 +198,7 @@ from cruxible_core.exhaust.records import (
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_identity import KeyRules
 from cruxible_core.indexes.typed_state import ProcedureInventoryRow, utc_microseconds
 from cruxible_core.procedures.acquisition import (
     ACQUISITION_OVERSIZED,
@@ -547,8 +550,8 @@ class ProcedureReadinessRequestV1(_StrictProcedureSurfaceModel):
 class ProcedureReadinessResultV1(_StrictProcedureSurfaceModel):
     """How one accepted Procedure can run: the one runnability answer, with its artifact."""
 
-    tag: Literal["playbill-procedure-readiness-result-v1"] = (
-        "playbill-procedure-readiness-result-v1"
+    tag: Literal["playbill-procedure-readiness-result-v2"] = (
+        "playbill-procedure-readiness-result-v2"
     )
     coordinate: AcceptedCoordinate
     procedure_identity: ArtifactIdentity
@@ -556,6 +559,8 @@ class ProcedureReadinessResultV1(_StrictProcedureSurfaceModel):
     artifact_digest: str
     definition_digest: str
     artifact: ProcedureArtifact
+    #: The governed Contracts the boundaries pin, with the Contracts they nest.
+    contracts: tuple[Contract, ...] = ()
     runnable: ProcedureRunnable
     unsupported_nodes: tuple[ProcedureNodeSupport, ...]
     next_operation: ProcedureNextOperationV1
@@ -574,14 +579,27 @@ class ProcedureRunRequest(_StrictProcedureSurfaceModel):
             "'<invoke node>.<slot>'. Omitted slots are fitted when the run is admitted."
         ),
     )
-    acquisition: dict[str, AcquisitionDefault] = Field(
+    acquisition: dict[str, LineAcquisitionRule] = Field(
         default_factory=dict,
         description=(
-            "Per capture output <alias>.<field>: {max_age, on_unavailable}; replaces the "
-            "Procedure default."
+            "Per capture output <alias>.<field> (an invoked child's: <invoke node "
+            "path>.<alias>.<field>): {max_age, on_unavailable, ...}. The direct run's "
+            "ephemeral Line spec carries them; one left out runs under the core default."
+        ),
+    )
+    parameters: dict[str, object] = Field(
+        default_factory=dict,
+        description=(
+            "The run's Procedure parameter values (its ephemeral Line spec's), over the "
+            "Procedure's parameter_defaults; checked against its params Contract."
         ),
     )
     input: object
+
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def _parameters(cls, value: object) -> object:
+        return normalize_canonical(value)
 
     @field_validator("evaluation_time")
     @classmethod
@@ -747,26 +765,32 @@ def _resolve_coordinate(
     )
 
 
-def _claim_type_enum_resolver(
+def accepted_key_rules(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
-) -> Callable[[str], tuple[str, ...] | None]:
-    """F07: every ``enum_of<ClaimType>`` field's members, read at this run's
-    admitted (immutable) coordinate.
+) -> KeyRules:
+    """R12/D4: the SubjectKind identity rules (and key ClaimTypes) at this run's coordinate.
 
-    The coordinate never changes once admitted, so a replay's read is the
-    same read: nothing needs separately retaining for determinism.
+    Like the enum and Contract resolvers, it reads the admitted (immutable)
+    coordinate, so a replay canonicalizes every key exactly as the run did.
     """
 
-    def resolve(claim_type_name: str) -> tuple[str, ...] | None:
-        with instance.bind_accepted_projection(coordinate) as projection:
-            claim_type = projection.typed.source(f"ClaimType:{claim_type_name}")
-        if claim_type is None or getattr(claim_type, "literal_schema", None) is None:
-            return None
-        members = claim_type.literal_schema.get("enum")
-        return tuple(members) if isinstance(members, list) else None
+    from cruxible_client.contracts.claim_types import ClaimType
+    from cruxible_client.contracts.subject_kinds import SubjectKind
 
-    return resolve
+    def read(identity: str) -> object:
+        with instance.bind_accepted_projection(coordinate) as projection:
+            return projection.typed.source(identity)
+
+    def subject_kind(kind: str) -> SubjectKind | None:
+        value = read(f"SubjectKind:{kind}")
+        return value if isinstance(value, SubjectKind) else None
+
+    def claim_type(predicate: str) -> ClaimType | None:
+        value = read(f"ClaimType:{predicate}")
+        return value if isinstance(value, ClaimType) else None
+
+    return KeyRules(subject_kind, claim_type)
 
 
 def accepted_contract_resolver(
@@ -782,20 +806,21 @@ def accepted_contract_resolver(
 
     from cruxible_client.contracts.shapes import contract_digest, contract_identity
 
-    found: dict[tuple[str, int], Contract | None] = {}
+    found: dict[tuple[str, int], tuple[Contract, str] | None] = {}
 
     def resolve(ref: ContractRef) -> Contract | None:
         key = (ref.name, ref.version)
         if key not in found:
             with instance.bind_accepted_projection(coordinate) as projection:
                 value = projection.typed.source(contract_identity(ref.name, ref.version).qualified)
-            found[key] = value if isinstance(value, Contract) else None
-        contract = found[key]
-        if contract is None or (
-            ref.digest is not None and contract_digest(contract).tagged != ref.digest
-        ):
+            # The digest is computed once per version, not once per nested value.
+            found[key] = (
+                (value, contract_digest(value).tagged) if isinstance(value, Contract) else None
+            )
+        entry = found[key]
+        if entry is None or (ref.digest is not None and entry[1] != ref.digest):
             return None
-        return contract
+        return entry[0]
 
     return resolve
 
@@ -892,7 +917,21 @@ def line_slot_map_at(
 ) -> dict[str, Any]:
     """Every slot a Line over ``accepted`` binds, invoked children's included."""
 
-    from cruxible_core.providers.operation_index import line_slot_map
+    return _line_shape_at(instance, coordinate, accepted)[0]
+
+
+def _line_shape_at(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    accepted: AcceptedProcedure,
+) -> tuple[dict[str, Any], frozenset[str]]:
+    """Every slot a Line over ``accepted`` binds and every capture output it may rule."""
+
+    from cruxible_client.contracts.procedures.line_specs import (
+        line_capture_outputs,
+        line_slot_signatures,
+    )
+    from cruxible_core.providers.operation_index import line_child_definitions
 
     with instance.bind_accepted_projection(coordinate) as projection:
 
@@ -900,7 +939,12 @@ def line_slot_map_at(
             source = projection.typed.source(identity.qualified)
             return None if source is None else source.definition
 
-        return line_slot_map(authored_procedure(accepted).definition, child)
+        definition = authored_procedure(accepted).definition
+        children = line_child_definitions(definition, child)
+    return (
+        line_slot_signatures(definition, child=children),
+        line_capture_outputs(definition, child=children),
+    )
 
 
 def _accepted_runtime_policy(
@@ -1435,36 +1479,14 @@ def _line_occurrence(
 def _line_budget(
     accepted_line: AcceptedLineSpec,
     accepted_procedure: AcceptedProcedure,
-    mandates: Sequence[tuple[str, ProcedureMandateAny]] = (),
 ) -> ProcedureBudget:
-    """The Line occurrence's budget: the Line's, its read rows lowered by its Mandates.
+    """The Line occurrence's operating budget: the Line's own, within the hard caps.
 
-    A Line that states no ``max_read_rows`` reads under the Procedure's hard
-    cap; every live Mandate granting the Line caps it by its resource ceiling.
+    A Line that states no ``max_read_rows`` (or ``max_result_bytes``) reads
+    (and returns) under the Procedure's hard cap.
     """
 
-    definition = accepted_procedure.procedure.definition
-    budgets = accepted_line.line.budgets
-    stated = budgets.get("max_read_rows") if isinstance(budgets, dict) else None
-    read_rows = min(
-        (
-            effective_read_rows(
-                stated if isinstance(stated, int) else definition.budget.max_read_rows,
-                definition.hard_caps.max_read_rows,
-            ),
-            *(mandate.resource_ceiling.max_read_rows for _digest, mandate in mandates),
-        )
-    )
-    if not isinstance(budgets, dict):
-        return definition.budget.model_copy(update={"max_read_rows": read_rows})
-    return ProcedureBudget(
-        wall_clock=CanonicalDuration(microseconds=budgets["max_wall_clock_microseconds"]),
-        max_provider_calls=budgets["max_provider_calls"],
-        max_capture_bytes=budgets["max_capture_bytes"],
-        max_items=budgets.get("max_items"),
-        max_result_bytes=budgets.get("max_result_bytes", definition.budget.max_result_bytes),
-        max_read_rows=read_rows,
-    )
+    return accepted_line.line.budgets.budget(accepted_procedure.procedure.definition.hard_caps)
 
 
 def _line_state_materials(
@@ -1474,6 +1496,7 @@ def _line_state_materials(
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
     invocation_input: object,
+    parameters: object,
     read_ceiling: int,
 ) -> tuple[AcceptedStateRunMaterial, ...]:
     return bind_accepted_state_materials(
@@ -1485,6 +1508,7 @@ def _line_state_materials(
         bodies=instance.body_store(),
         read_ceiling=read_ceiling,
         invocation_input=invocation_input,
+        parameters=parameters,
     )
 
 
@@ -1706,16 +1730,11 @@ def _accepted_capture_contracts(
 
 def procedure_acquisition_rules(
     accepted: AcceptedProcedure,
-    overrides: Mapping[str, AcquisitionDefault] | None = None,
+    line_rules: Mapping[str, LineAcquisitionRule] | None = None,
 ) -> dict[str, AcquisitionRule]:
-    """The run's acquisition rule per capture output: the Line's, else the Procedure's."""
+    """The run's acquisition rule per capture output: the Line's, else the core default."""
 
-    procedure = authored_procedure(accepted)
-    return resolve_acquisition_rules(
-        _source_input_names(accepted),
-        defaults=getattr(procedure, "acquisition_defaults", {}),
-        overrides=overrides or {},
-    )
+    return resolve_acquisition_rules(_source_input_names(accepted), line_rules=line_rules or {})
 
 
 def _plan_selection_decision(
@@ -1780,14 +1799,33 @@ def _readiness(
     accepted: AcceptedProcedure,
     *,
     coordinate: AcceptedProjectionCoordinate,
+    instance: PlaybillInstance | None = None,
 ) -> ProcedureReadinessResultV1:
-    runnable, unsupported = procedure_runnability(accepted.procedure.definition)
+    """How the Procedure can run; with ``instance``, the boundary Contracts it pins too."""
+
+    from cruxible_client.contracts.provider_operations import contract_closure
+    from cruxible_client.contracts.shapes import contract_ref_for_identity
+
+    definition = accepted.procedure.definition
+    runnable, unsupported = procedure_runnability(definition)
+    boundaries = [definition.contract_in, definition.contract_out]
+    if definition.parameter_contract is not None:
+        boundaries.append(definition.parameter_contract)
+    contracts = (
+        None
+        if instance is None
+        else contract_closure(
+            tuple(contract_ref_for_identity(pin.target) for pin in boundaries),
+            accepted_contract_resolver(instance, coordinate),
+        )
+    )
     return ProcedureReadinessResultV1(
         coordinate=AcceptedCoordinate.from_internal(coordinate),
         procedure_identity=accepted.procedure.identity,
         artifact_digest=accepted.artifact_digest,
         definition_digest=accepted.procedure.definition_digest,
         artifact=authored_procedure(accepted),
+        contracts=tuple(contracts or ()),
         runnable=runnable,
         unsupported_nodes=unsupported,
         next_operation=ProcedureNextOperationV1(
@@ -1805,7 +1843,7 @@ def service_playbill_procedure_readiness(
     coordinate = _resolve_coordinate(instance, request.at)
     # A read: a retired Procedure is still readable, though nothing runs it.
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate, allow_retired=True)
-    return _readiness(accepted, coordinate=coordinate)
+    return _readiness(accepted, coordinate=coordinate, instance=instance)
 
 
 @dataclass(frozen=True)
@@ -2872,7 +2910,7 @@ def _plan_direct_external_run(
     evaluation_time: datetime,
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
     budget: ProcedureBudget,
-    acquisition: Mapping[str, AcquisitionDefault] | None = None,
+    acquisition: Mapping[str, LineAcquisitionRule] | None = None,
     ephemeral_spec_digest: str | None = None,
 ) -> (
     tuple[
@@ -2904,7 +2942,7 @@ def _plan_direct_external_run(
     source_names = _source_input_names(accepted)
     # Calls bind the accepted runtime output cap, with no evidence selection.
     # Source occurrences additionally bind the run's acquisition rules (the
-    # Procedure's defaults under the request's overrides) through the same plan.
+    # request's, else the core default) through the same plan.
     policy_digest = procedure_runtime_policy_digest(runtime_policy).tagged
     policy_format: str = runtime_policy.tag
     if source_names:
@@ -3012,8 +3050,9 @@ def _prepare_direct_external_run(
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
     effective_budget: ProcedureBudget | None = None,
     effective_caps: ProcedureHardCaps | None = None,
-    acquisition: Mapping[str, AcquisitionDefault] | None = None,
+    acquisition: Mapping[str, LineAcquisitionRule] | None = None,
     ephemeral_spec_digest: str | None = None,
+    parameters: Mapping[str, object] | None = None,
 ) -> (
     tuple[
         PreparedProcedureRun,
@@ -3022,9 +3061,14 @@ def _prepare_direct_external_run(
     ]
     | ProcedureRunStateV2
 ):
-    """Bind state and external inputs through the same planner for root and child runs."""
+    """Bind state and external inputs through the same planner for root and child runs.
+
+    ``parameters`` are the run's values over the Procedure's defaults (an
+    invoked child supplies none: it runs on its defaults).
+    """
     definition = accepted.procedure.definition
-    budget = effective_budget or definition.budget
+    effective_parameters = definition.effective_parameters(parameters or {})
+    budget = effective_budget or caps_budget(definition.hard_caps)
     caps = effective_caps or definition.hard_caps
     planned = _plan_direct_external_run(
         instance,
@@ -3053,6 +3097,7 @@ def _prepare_direct_external_run(
         bodies=instance.body_store(),
         read_ceiling=effective_read_rows(budget.max_read_rows, caps.max_read_rows),
         invocation_input=invocation_input,
+        parameters=effective_parameters,
     )
     node_pin_sets = procedure_node_pin_sets(accepted)
     bindings = procedure_provider_bindings(external_occurrences)
@@ -3082,6 +3127,7 @@ def _prepare_direct_external_run(
             "node_pin_sets": node_pin_sets,
             "pin_set_digest": procedure_pin_set_digest(accepted.procedure.pins, node_pin_sets),
             "invocation_input": invocation_input,
+            "parameters": effective_parameters,
             "accepted_state_inputs": tuple(item.input for item in materials),
             "budget": budget,
             "hard_caps": caps,
@@ -3169,9 +3215,10 @@ def service_run_playbill_procedure(
                 target=accepted.procedure.identity,
                 artifact_digest=accepted.artifact_digest,
             ),
-            parameters=request.input,
+            parameters=request.parameters,
             bindings=spec_bindings,
             acquisition=request.acquisition,
+            budget=caps_budget(accepted.procedure.definition.hard_caps),
         )
     )
     if caller_rung is not None:
@@ -3253,6 +3300,7 @@ def service_run_playbill_procedure(
                 provider_runtime_operator=provider_runtime_operator,
                 acquisition=request.acquisition,
                 ephemeral_spec_digest=ephemeral_spec_digest,
+                parameters=request.parameters,
             )
             if isinstance(planned, ProcedureRunStateV2):
                 return planned
@@ -3276,9 +3324,14 @@ def service_run_playbill_procedure(
                 head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
                 lane=lane,
                 admitted_at=evaluation_time,
+                parameters=request.parameters,
             )
     except ProcedureBoundaryRefused as exc:
-        if exc.code not in {"read_ceiling_exceeded", "state_tap_refused"}:
+        if exc.code not in {
+            "read_ceiling_exceeded",
+            "state_tap_refused",
+            "query_contract_violated",
+        }:
             raise
         # A read the admission refuses (past the run's read budget, or a
         # selection the reader declines) is an admission refusal, not a crash.
@@ -3356,8 +3409,9 @@ def service_run_playbill_procedure(
             effective_rung=direct_effective_rung,
             egress_sink=direct_egress_sink,
             ephemeral_spec_digest=ephemeral_spec_digest,
-            enum_resolver=_claim_type_enum_resolver(instance, coordinate),
+            enum_resolver=accepted_enum_resolver(instance, coordinate),
             contract_resolver=accepted_contract_resolver(instance, coordinate),
+            key_rules=accepted_key_rules(instance, coordinate),
             clock=_DeterministicClock(evaluation_time),
             nested_runner=ServedNestedProcedureRunner(
                 instance,
@@ -3368,6 +3422,7 @@ def service_run_playbill_procedure(
                 workspace_file_reader,
                 _DeterministicClock(evaluation_time),
                 bindings=spec_bindings,
+                acquisition=dict(request.acquisition),
             ),
         )
     except ProcedureBoundaryRefused as exc:
@@ -3685,6 +3740,7 @@ def _run_playbill_line(
     providers = _line_catalogs(
         instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
     )
+    slots, capture_outputs = _line_shape_at(instance, coordinate, accepted)
     law = evaluate_line_spec_law(
         accepted_line.line,
         path=accepted_line.path,
@@ -3694,8 +3750,11 @@ def _run_playbill_line(
             artifact_digest=accepted.artifact_digest,
         ),
         predecessor=_accepted_line_predecessor(instance, accepted_line, coordinate),
-        slots=line_slot_map_at(instance, coordinate, accepted),
+        slots=slots,
         providers={item.provider.identity.qualified: item for item in providers.values()},
+        capture_outputs=capture_outputs,
+        contracts=accepted_contract_resolver(instance, coordinate),
+        enum_members=accepted_enum_resolver(instance, coordinate),
     )
     if law.verdict != "accepted":
         return _line_refusal_state(
@@ -4021,7 +4080,7 @@ def _run_playbill_line(
     if investigation is not None:
         require_current_investigation(instance, investigation)
     runtime_policy = _accepted_runtime_policy(instance, coordinate)
-    budget = _line_budget(accepted_line, accepted, mandates)
+    budget = _line_budget(accepted_line, accepted)
     capture_contracts = _accepted_capture_contracts(
         instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
     )
@@ -4197,6 +4256,11 @@ def _run_playbill_line(
             message="The accepted Provider closure for this Line is incomplete.",
             details={"reason": str(exc), "repair": "Accept the Provider closure this graph pins."},
         )
+    # A Line supplies the Procedure's parameters; a Line run's input is empty.
+    supplied = accepted_line.line.parameters
+    if not isinstance(supplied, dict):  # the Line law accepts a record only
+        raise ExecutionError("accepted Line parameters are not a record")
+    line_parameters = accepted.procedure.definition.effective_parameters(supplied)
     plan_digest = procedure_acquisition_plan_digest(plan)
     try:
         materials = _line_state_materials(
@@ -4204,13 +4268,18 @@ def _run_playbill_line(
             accepted,
             coordinate=coordinate,
             evaluation_time=evaluation_time,
-            invocation_input=accepted_line.line.parameters,
+            invocation_input=LINE_RUN_INPUT,
+            parameters=line_parameters,
             read_ceiling=effective_read_rows(
                 budget.max_read_rows, accepted.procedure.definition.hard_caps.max_read_rows
             ),
         )
     except ProcedureBoundaryRefused as exc:
-        if exc.code not in {"read_ceiling_exceeded", "state_tap_refused"}:
+        if exc.code not in {
+            "read_ceiling_exceeded",
+            "state_tap_refused",
+            "query_contract_violated",
+        }:
             raise
         return _line_refusal_state(
             accepted,
@@ -4268,7 +4337,8 @@ def _run_playbill_line(
             "full_pins": full_pins,
             "node_pin_sets": node_pin_sets,
             "pin_set_digest": procedure_pin_set_digest(full_pins, node_pin_sets),
-            "invocation_input": accepted_line.line.parameters,
+            "invocation_input": LINE_RUN_INPUT,
+            "parameters": line_parameters,
             "accepted_state_inputs": tuple(item.input for item in materials),
             "landed_capture_inputs": tuple(item.input for item in landed_materials),
             "budget": budget,
@@ -4458,8 +4528,9 @@ def _run_playbill_line(
                 workspace_file_reader=workspace_file_reader,
                 effective_rung=effective_rung,
                 egress_sink=egress_sink,
-                enum_resolver=_claim_type_enum_resolver(instance, coordinate),
+                enum_resolver=accepted_enum_resolver(instance, coordinate),
                 contract_resolver=accepted_contract_resolver(instance, coordinate),
+                key_rules=accepted_key_rules(instance, coordinate),
                 clock=_DeterministicClock(evaluation_time),
                 nested_runner=ServedNestedProcedureRunner(
                     instance,
@@ -4471,6 +4542,7 @@ def _run_playbill_line(
                     _DeterministicClock(evaluation_time),
                     mandates=dict(mandates),
                     bindings=dict(accepted_line.line.bindings),
+                    acquisition=dict(accepted_line.line.acquisition),
                 ),
             )
         except ProcedureBoundaryRefused as exc:

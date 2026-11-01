@@ -1,19 +1,11 @@
-"""Retained source authoring through real acceptance and shared run services."""
+"""Typed Procedure specs through real acceptance and shared run services."""
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 
-from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
-from cruxible_client.authoring.source import halt, invoke, procedure
 from cruxible_client.contracts.authoring.inputs import lower_authoring_input
-from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_client.contracts.procedures.source_requests import (
-    ProcedureSourcePreviewRequest,
-    SourceProcedureSelection,
-)
-from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import compute_preflight
 from cruxible_core.exhaust.records import parse_journal_payload
@@ -26,79 +18,80 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_get_playbill_procedure_run,
     service_run_playbill_procedure,
 )
-from cruxible_core.service.procedures.source_preview import service_preview_procedure_source
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import initialize_local
-from tests.support.procedures import RUN_WALL_CLOCK
+from tests.support.procedures import ref, spec_input
 from tests.test_indexes.test_resolution_contracts import _accept_tree
-from tests.test_procedures.test_procedure_execution import _budget, _hard_caps
+
+#: The run limits every spec below declares (60 s, no provider calls).
+LIMITS = {
+    "hard_caps": {
+        "wall_clock": "PT120S",
+        "provider_calls": 0,
+        "capture_bytes": 0,
+        "items": 100,
+        "repeat_attempts": 3,
+    },
+}
+
+
+def _succeeded(step: str) -> dict[str, object]:
+    return {"op": "eq", "left": ref(f"$steps.{step}.succeeded"), "right": {"literal": True}}
 
 
 def blueprints():
-    Request = CarriedContractInput(
-        name="decision.request", fields={"positive": PropertySchema(type="bool")}
-    )
-    Result = CarriedContractInput(
-        name="decision.result", fields={"label": PropertySchema(type="string")}
-    )
+    """A child that halts unless positive, and a parent that invokes it twice."""
 
-    @procedure(
-        name="child",
-        input=Request,
-        output=Result,
-        budget=_budget().model_copy(update={"max_items": None}),
-        hard_caps=_hard_caps(),
-    )
-    def child(request):
-        if not request.positive:
-            return halt("No work")
-        return Result.value(label="ready")
-
-    @procedure(
-        name="parent",
-        input=Request,
-        output=Result,
-        budget=_budget().model_copy(update={"max_items": None}),
-        hard_caps=_hard_caps(),
-    )
-    def parent(request, bindings):
-        first = invoke(bindings.child, input=bindings.child.input(positive=request.positive))
-        if not first.succeeded:
-            return Result.value(label="child halted")
-        second = invoke(bindings.child, input=bindings.child.input(positive=True))
-        if not second.succeeded:
-            return halt("Second child failed")
-        return Result.value(label=second.value.label)
-
+    child = {
+        "procedure": "child",
+        "input": {"positive": "bool"},
+        "output": {"label": "string"},
+        **LIMITS,
+        "steps": [
+            {
+                "guard": {"op": "eq", "left": ref("$input.positive"), "right": {"literal": True}},
+                "else": {"halt": "No work"},
+            },
+            {
+                "project": "label",
+                "fields": {"label": "ready"},
+                "leaf": True,
+            },
+        ],
+    }
+    parent = {
+        "procedure": "parent",
+        # A Line supplies ``positive``; the parent hands it to its first child.
+        "params": {"positive": "bool"},
+        "output": {"label": "string"},
+        **LIMITS,
+        "steps": [
+            {"invoke": "child", "as": "first", "input": {"positive": ref("$params.positive")}},
+            {"guard": _succeeded("first"), "else": {"goto": "halted"}},
+            {"invoke": "child", "as": "second", "input": {"positive": True}},
+            {"guard": _succeeded("second"), "else": {"halt": "Second child failed"}},
+            {
+                "project": "relabelled",
+                "fields": {"label": ref("$steps.second.value.label")},
+                "output": {"label": "string"},
+                "leaf": True,
+            },
+            {
+                "project": "halted",
+                "fields": {"label": "child halted"},
+                "leaf": True,
+            },
+        ],
+    }
     return child, parent
 
 
-def accept_blueprint(instance, owner, blueprint, **bindings):
+def accept_blueprint(instance, owner, blueprint):
+    """Author one spec through the coordinator and accept the tree it proposes."""
+
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
-    source = blueprint._at(SimpleNamespace())
-    if bindings:
-        source = source.model_copy(
-            update={
-                "bindings": {
-                    key: (SourceProcedureSelection(name=name) if isinstance(name, str) else name)
-                    for key, name in bindings.items()
-                }
-            }
-        )
-    preview = service_preview_procedure_source(
-        instance,
-        request=ProcedureSourcePreviewRequest(
-            source=source,
-            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-        ),
-    )
-    assert preview.ready_for_prepare, preview.errors
-    authored = ProcedureInput(
-        kind="procedure",
-        activation_policy=blueprint.activation_policy,
-        definition={"name": blueprint.name, "source_request": source.model_dump(mode="json")},
-    )
+    authored = spec_input(blueprint)
     assert "sha256:" not in authored.model_dump_json()
     assert "artifact_digest" not in authored.model_dump_json()
     compiled = coordinator.compile(
@@ -110,25 +103,25 @@ def accept_blueprint(instance, owner, blueprint, **bindings):
     pending = next(
         intent
         for intent in coordinator.list_pending(actor=actor).intents
-        if intent.semantic_identity == "Procedure:" + blueprint.name
+        if intent.semantic_identity == "Procedure:" + blueprint["procedure"]
     )
     lowered = compute_preflight(instance, intent=pending, actor=actor).lowered
     assert lowered is not None
     from cruxible_client.contracts.procedures.artifacts import parse_procedure, procedure_path
-    from cruxible_core.compiler.compiler import CURRENT_COMPILER
 
-    authored_path = procedure_path(blueprint.name)
-    assert parse_procedure(
-        lowered.proposed_tree[authored_path], path=authored_path
-    ).definition.graph_format == (
-        7 if instance.accepted_coordinate().compiler == CURRENT_COMPILER else 6
+    authored_path = procedure_path(blueprint["procedure"])
+    assert (
+        parse_procedure(
+            lowered.proposed_tree[authored_path], path=authored_path
+        ).definition.graph_format
+        == 8
     )
     _accept_tree(
         instance,
         owner,
         lowered.proposed_tree,
         timestamp="2026-08-21T12:02:00.000000Z",
-        proposal_name=blueprint.name,
+        proposal_name=blueprint["procedure"],
     )
 
 
@@ -152,7 +145,7 @@ def test_child_occurrences_have_exact_bindings_and_replay_without_execution(
     instance, owner = initialize_local(tmp_path)
     child, parent = blueprints()
     accept_blueprint(instance, owner, child)
-    accept_blueprint(instance, owner, parent, child="child")
+    accept_blueprint(instance, owner, parent)
     from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
 
     definition = _accepted_procedure(
@@ -179,7 +172,7 @@ def test_child_occurrences_have_exact_bindings_and_replay_without_execution(
     result = service_run_playbill_procedure(
         instance,
         name="parent",
-        request=ProcedureRunRequest(input={"positive": positive}),
+        request=ProcedureRunRequest(input={}, parameters={"positive": positive}),
         actor_context=actor,
     )
     assert result.status == "succeeded", payloads(instance, result.run_id)[-1][1]
@@ -236,7 +229,7 @@ def test_child_occurrences_have_exact_bindings_and_replay_without_execution(
         instance,
         name="parent",
         request=ProcedureRunRequest(
-            input={"positive": positive}, evaluation_time=result.evaluation_time
+            input={}, parameters={"positive": positive}, evaluation_time=result.evaluation_time
         ),
         actor_context=actor,
     )
@@ -245,179 +238,6 @@ def test_child_occurrences_have_exact_bindings_and_replay_without_execution(
     journal, _ = _journal(instance)
     assert journal is not None
     assert service_get_playbill_procedure_run(instance, run_id=result.run_id).status == "succeeded"
-
-
-@pytest.mark.skip(
-    reason=(
-        "needs reconstruction against the new operation model: imports "
-        "call_procedure/operation from tests.test_providers.test_operation_contracts, "
-        "a module that no longer exists (test_provider_invocation_journal.py's own "
-        "migration replaced that pattern with _accepted_one_provider()/_provider_for(), "
-        "which build a single Line/Call world, not the parent-invokes-child nested "
-        "scenario this test needs); also calls _prepared_acquisition_run(..., "
-        "operation_contract=operation()), a kwarg that function no longer takes."
-    )
-)
-@pytest.mark.parametrize("planning_delay", [False, True])
-def test_calls_share_the_parent_provider_budget(tmp_path, planning_delay):
-    import textwrap
-
-    from cruxible_client.contracts.procedures.contracts import OwnedProcedureContractValidator
-    from cruxible_client.contracts.procedures.source_compiler import compile_source
-    from cruxible_client.contracts.procedures.source_program import (
-        ProcedureSourceProgram,
-        SourceProcedureBinding,
-    )
-    from cruxible_core.procedures.execution import ProcedureExecutor
-    from cruxible_core.procedures.nested import constrained_budget, constrained_caps
-    from tests.test_procedures.test_procedure_execution import (
-        _Authority,
-        _Contracts,
-        _prepare,
-        _StateReader,
-    )
-    from tests.test_procedures.test_source_compiler import INPUT, OUTPUT, accepted
-    from tests.test_providers.test_operation_contracts import call_procedure, operation
-    from tests.test_providers.test_provider_invocation_journal import (
-        _Invoker,
-        _prepared_acquisition_run,
-    )
-
-    child = call_procedure()
-    base, fixture = _prepared_acquisition_run(child, tmp_path, operation_contract=operation())
-    compiled = compile_source(
-        ProcedureSourceProgram(
-            text=textwrap.dedent("""
-                def example(request, bindings):
-                    first = invoke(bindings.child, input=bindings.child.input(size=1))
-                    if not first.succeeded:
-                        return halt('first failed')
-                    second = invoke(bindings.child, input=bindings.child.input(size=2))
-                    if not second.succeeded:
-                        return Output.value(value='budget preserved')
-                    return Output.value(value='unexpected second call')
-            """),
-            filename="budget.py",
-            function="example",
-            contracts={"Output": OUTPUT},
-            bindings={
-                "child": SourceProcedureBinding(
-                    name=child.procedure.identity.name,
-                    input=operation().input,
-                    output=operation().output,
-                )
-            },
-        ),
-        name="example",
-        input=INPUT,
-        output=OUTPUT,
-        budget=_budget().model_copy(update={"max_provider_calls": 1}),
-        hard_caps=_hard_caps().model_copy(update={"max_provider_calls": 1}),
-    )
-    parent = accepted(compiled)
-    invoker = _Invoker()
-
-    class Clock:
-        ticks = 0
-
-        def now(self):
-            return base.admission.admitted_at
-
-        def monotonic_ns(self):
-            return self.ticks
-
-    clock = Clock()
-
-    class Runner:
-        budgets = []
-
-        def preflight(self, accepted, admission):
-            pass
-
-        def run(self, context, value):
-            caps = constrained_caps(
-                child.procedure.definition.hard_caps, context.admission.hard_caps
-            )
-            budget = constrained_budget(child.procedure.definition.budget, context.remaining, caps)
-            self.budgets.append(budget.max_provider_calls)
-            child_base = base.model_copy(
-                update={
-                    "acquisition_plan": base.acquisition_plan.model_copy(
-                        update={"selection_receipt_digest": None}
-                    ),
-                    "admission": base.admission.model_copy(
-                        update={
-                            "budget": budget,
-                            "hard_caps": caps,
-                            "selection_receipt_digest": None,
-                        }
-                    ),
-                }
-            )
-            prepared = context.bind(child_base)
-            if planning_delay:
-                # Planning the child spends one second more than the whole run's budget.
-                clock.ticks += (RUN_WALL_CLOCK.microseconds + 1_000_000) * 1_000
-            fixture.journal.activate_writer(
-                prepared.admission.journal_stream,
-                prepared.admission.journal_partition_id,
-                fencing_token="writer",
-                expected_head=fixture.journal.read_head(
-                    prepared.admission.journal_stream, prepared.admission.journal_partition_id
-                ),
-            )
-            return ProcedureExecutor(
-                journal=fixture.journal,
-                bodies=fixture.bodies,
-                run_index=fixture.run_index,
-                fencing_token="writer",
-                activation_authority=_Authority(child.artifact_digest),
-                contract_validator=_Contracts(),
-                provider_runtime_invoker=invoker,
-                parent_context=context,
-                clock=clock,
-            ).execute(prepared, child)
-
-    runner = Runner()
-    preparation = _prepare(
-        parent, fixture, _StateReader(), invocation_input={"choice": True, "count": 1}
-    )
-    result = ProcedureExecutor(
-        journal=fixture.journal,
-        bodies=fixture.bodies,
-        run_index=fixture.run_index,
-        fencing_token="writer",
-        activation_authority=_Authority(parent.artifact_digest),
-        contract_validator=OwnedProcedureContractValidator(parent),
-        nested_runner=runner,
-        clock=clock,
-    ).execute(preparation, parent)
-    if planning_delay:
-        assert result.status == "failed"
-        final = fixture.journal.all_records(
-            preparation.admission.journal_stream, preparation.admission.journal_partition_id
-        )[-1]
-        final_payload = parse_journal_payload(
-            fixture.bodies.read(
-                final.record.payload_digest,
-                access=BodyAccessContext(principal_id="test", can_read_body=True),
-            )
-        )
-        assert final_payload["failure_code"] == "wall_clock_exhausted"
-        assert invoker.calls == []
-        return
-    final = fixture.journal.all_records(
-        preparation.admission.journal_stream, preparation.admission.journal_partition_id
-    )[-1]
-    assert result.status == "succeeded", parse_journal_payload(
-        fixture.bodies.read(
-            final.record.payload_digest,
-            access=BodyAccessContext(principal_id="test", can_read_body=True),
-        )
-    )["failure"]
-    assert result.output == {"value": "budget preserved"}
-    assert runner.budgets == [1, 0]
-    assert len(invoker.calls) == 1
 
 
 def test_line_child_inherits_authority_and_recovery_rebuilds_only_the_recorded_delegation(tmp_path):
@@ -443,7 +263,7 @@ def test_line_child_inherits_authority_and_recovery_rebuilds_only_the_recorded_d
     instance, owner = initialize_local(tmp_path)
     child, parent = blueprints()
     accept_blueprint(instance, owner, child)
-    accept_blueprint(instance, owner, parent, child="child")
+    accept_blueprint(instance, owner, parent)
     accepted = _accepted_procedure(
         instance, name="parent", coordinate=instance.accepted_coordinate()
     )
@@ -475,7 +295,6 @@ def test_line_child_inherits_authority_and_recovery_rebuilds_only_the_recorded_d
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
         grants="propose",
-        resource_ceiling=caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
         expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc),
@@ -525,9 +344,7 @@ def test_line_child_inherits_authority_and_recovery_rebuilds_only_the_recorded_d
         )
 
 
-def test_source_combines_typed_field_read_and_existing_query(tmp_path):
-    from cruxible_client.authoring.source import query, require
-    from cruxible_client.contracts.procedures.source_requests import SourceQuerySelection
+def test_a_spec_combines_a_typed_claim_read_and_an_existing_query(tmp_path):
     from cruxible_client.contracts.query.definitions import (
         query_definition_path,
         render_query_definition,
@@ -545,33 +362,52 @@ def test_source_combines_typed_field_read_and_existing_query(tmp_path):
         },
         name="work-query",
     )
-    Request = CarriedContractInput(
-        name="assessment.input", fields={"item": PropertySchema(type="string")}
-    )
-    Result = CarriedContractInput(
-        name="assessment.output",
-        fields={
-            "status": PropertySchema(type="string"),
-            "count": PropertySchema(type="int"),
-        },
-    )
-
-    @procedure(
-        name="assess-work",
-        input=Request,
-        output=Result,
-        budget=_budget().model_copy(update={"max_items": None}),
-        hard_caps=_hard_caps(),
-    )
-    def assessment(request, world, bindings):
-        item = world.project.work_item[request.item]
-        status = item.status.one()
-        work = query(bindings.work, parameters=bindings.work.parameters())
-        require(work.completed and not work.truncated, code="incomplete", message="Incomplete work")
-        return Result.value(status=status.value, count=work.result.truncation.returned_result_count)
-
+    incomplete = {"abort": {"code": "incomplete", "message": "Incomplete work"}}
     accept_blueprint(
-        instance, owner, assessment, work=SourceQuerySelection(name=definition.identity.name)
+        instance,
+        owner,
+        {
+            "procedure": "assess-work",
+            "input": {"item": "string"},
+            "output": {"status": "string", "count": "int"},
+            **LIMITS,
+            "steps": [
+                {
+                    "read": "status",
+                    "claim_type": "project.work_item.status",
+                    "subject": ref("$input.item"),
+                    "subject_kind": "project.work_item",
+                },
+                {"read": "work", "query": definition.identity.name},
+                {
+                    "guard": {
+                        "op": "all_of",
+                        "of": [
+                            {
+                                "op": "eq",
+                                "left": ref("$steps.work.completed"),
+                                "right": {"literal": True},
+                            },
+                            {
+                                "op": "eq",
+                                "left": ref("$steps.work.truncated"),
+                                "right": {"literal": False},
+                            },
+                        ],
+                    },
+                    "else": incomplete,
+                },
+                {
+                    "project": "assessed",
+                    "fields": {
+                        "status": ref("$steps.status.value"),
+                        "count": ref("$steps.work.result.truncation.returned_result_count"),
+                    },
+                    "output": {"status": "string", "count": "int"},
+                    "leaf": True,
+                },
+            ],
+        },
     )
     actor = GovernedActorContext(
         actor_id="owner",

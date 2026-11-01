@@ -13,12 +13,10 @@ from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.examples import procedure_example, query_claims_by_type_example
 from cruxible_client.authoring.inputs import (
     AuthoringInputError,
-    CarriedContractInput,
     ChangeSetInput,
     ClaimInput,
     ExistingCaptureInput,
     LiteralObjectInput,
-    ProcedureInput,
     SelfSourceInput,
     WorkingSelectionInput,
     lower_authoring_input,
@@ -34,12 +32,6 @@ from cruxible_client.contracts.claim_types import (
     ClaimEvidenceFreshness,
     ClaimFreshnessDuration,
 )
-from cruxible_client.contracts.procedures.artifacts import (
-    ProcedureArtifact,
-    parse_procedure,
-    procedure_owned_contract_digest,
-)
-from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.lowering import lower_authoring
@@ -168,7 +160,7 @@ def test_friendly_change_set_sorts_members_and_typed_refuses_duplicate_identity(
     )
 
     assert [member.tag for member in lowered.members] == [
-        "cruxible-procedure-authoring-payload-v3",
+        "cruxible-procedure-authoring-payload-v5",
         "playbill-query-definition-authoring-payload-v1",
     ]
     with pytest.raises(AuthoringInputError) as raised:
@@ -236,56 +228,16 @@ def test_create_and_compile_refuse_working_selection_with_bind_repair(
     assert "authoring bind" in raised.value.repair
 
 
-def test_carried_contract_input_computes_owned_digests_in_the_current_procedure(
+def test_a_spec_lowers_with_the_contracts_its_graph_names_and_no_digests(
     tmp_path: Path,
 ) -> None:
+    from tests.support.procedures import spec_input
 
     instance, _owner = initialize_local(tmp_path)
     coordinator = _coordinator(instance)
-    definition = _triage_definition()
-
-    def remove_tags(value: object) -> object:
-        if isinstance(value, dict):
-            return {key: remove_tags(item) for key, item in value.items() if key != "tag"}
-        if isinstance(value, list):
-            return [remove_tags(item) for item in value]
-        return value
-
-    tagless = remove_tags(definition)
-    assert isinstance(tagless, dict)
-    tagless["contract_in"] = {
-        "kind": "carried_contract",
-        "name": "empty-input",
-        "role": "contract-in",
-    }
-    tagless["contract_out"] = {
-        "kind": "carried_contract",
-        "name": "query-result",
-        "role": "contract-out",
-    }
-    nodes = tagless["nodes"]
-    assert isinstance(nodes, list)
-    project = nodes[0]
-    assert isinstance(project, dict)
-    project["contract_out"] = {
-        "kind": "carried_contract",
-        "name": "query-result",
-        "role": "contract-out",
-    }
     result = coordinator.compile_input(
         actor=AuthenticatedActor(actor_id="owner"),
-        input=ProcedureInput(
-            kind="procedure",
-            definition=tagless,
-            activation_policy="drain",
-            contracts=(
-                CarriedContractInput(name="empty-input", fields={}),
-                CarriedContractInput(
-                    name="query-result",
-                    fields={"rows": PropertySchema(type="list", item_fields={})},
-                ),
-            ),
-        ),
+        input=spec_input(_triage_definition()),
         canonical_timestamp=TIMESTAMP,
     )
 
@@ -293,39 +245,10 @@ def test_carried_contract_input_computes_owned_digests_in_the_current_procedure(
     payload = (
         coordinator.list_pending(actor=AuthenticatedActor(actor_id="owner")).intents[0].payload
     )
-    assert payload.tag == "cruxible-procedure-authoring-payload-v3"
+    assert payload.tag == "cruxible-procedure-authoring-payload-v5"
     encoded = payload.model_dump_json(by_alias=True)
-    assert "playbill-procedure-owned-contract-v1" in encoded
-    assert "carried_contract" in encoded
+    assert '"procedure_spec"' in encoded
     assert "artifact_digest" not in encoded
-
-    intent = coordinator.list_pending(actor=AuthenticatedActor(actor_id="owner")).intents[0]
-    lowered = lower_authoring(instance, intent=intent, actor_id="owner")
-    procedure_path, content = lowered.changed_members[0]
-    procedure = parse_procedure(content, path=procedure_path)
-    assert isinstance(procedure, ProcedureArtifact)
-    contracts = {contract.identity.name: contract for contract in procedure.owned_contracts}
-    expected_pins = {
-        ("contract-in", "Contract:empty-input"): (
-            "sha256:29f46c96b59b046a24793570a573f83cb4ba61372351976866f7aa2e6809f7a1"
-        ),
-        ("contract-out", "Contract:query-result"): (
-            "sha256:74a97d982c95bd8035d5ee9f8bb3a5aed3ed83c65ca9fb28316ce9fd0b35062e"
-        ),
-    }
-    assert {
-        ("contract-in", "Contract:empty-input"): procedure_owned_contract_digest(
-            contracts["empty-input"]
-        ).tagged,
-        ("contract-out", "Contract:query-result"): procedure_owned_contract_digest(
-            contracts["query-result"]
-        ).tagged,
-    } == expected_pins
-    # Owned Contract bytes and digests live in this envelope; only external
-    # references belong in its exact pins.
-    assert procedure.pins == ()
-    assert procedure.definition.contract_in.target == contracts["empty-input"].identity
-    assert procedure.definition.contract_out.target == contracts["query-result"].identity
 
 
 def test_claim_type_example_is_tagless_and_source_intent_is_lint_only(
@@ -643,48 +566,26 @@ def test_claim_type_source_intent_produces_an_actionable_per_source_warning(
     ]
 
 
-def test_a_procedure_input_carries_acquisition_defaults_and_refuses_an_unknown_source(
-    tmp_path: Path,
-) -> None:
-    """Inline acquisition rules stay typed and must name a declared Source alias."""
+def test_a_procedure_input_refuses_acquisition_rules_naming_the_line() -> None:
+    """Acquisition rules live on the Line only; a Procedure declaring them is refused."""
 
-    instance, _owner = initialize_local(tmp_path)
-    coordinator = _coordinator(instance)
-    member = ProcedureInput(
-        kind="procedure",
-        definition=_triage_definition(),
-        activation_policy="drain",
-        contracts=(
-            CarriedContractInput(name="empty-input", fields={}),
-            CarriedContractInput(name="rows-output", fields={"rows": PropertySchema(type="json")}),
-        ),
-        acquisition_defaults={"advisory.capture": {"max_age": "PT10M", "on_unavailable": "refuse"}},
-    )
-    payload = lower_authoring_input(member)
-    # The payload carries the rule itself; no standalone policy or digest relay.
-    assert payload.tag == "cruxible-procedure-authoring-payload-v3"
-    assert payload.acquisition_defaults["advisory.capture"].max_age.microseconds == 600_000_000
-    assert payload.acquisition_defaults["advisory.capture"].on_unavailable == "refuse"
+    from pydantic import ValidationError
 
-    result = coordinator.compile_input(
-        actor=AuthenticatedActor(actor_id="owner"),
-        input=member,
-        canonical_timestamp=TIMESTAMP,
-    )
+    from tests.support.procedures import spec_input
 
-    assert result.verdict == "refused"
-    diagnostics = {item.code for item in result.frontier.diagnostics}
-    assert "cruxible.authoring.procedure_definition_invalid" in diagnostics
-    offending = {
-        item.offending_element
-        for item in result.frontier.diagnostics
-        if item.code == "cruxible.authoring.procedure_definition_invalid"
-    }
-    assert offending == {"procedure"}
-    assert any(
-        "acquisition_defaults name no capture output" in item.message
-        for item in result.frontier.diagnostics
-    )
+    with pytest.raises(ValidationError, match="procedure_acquisition_defaults_retired") as caught:
+        spec_input(
+            {
+                **_triage_definition(),
+                "acquisition_defaults": {
+                    "advisory.capture": {"max_age": "PT10M", "on_unavailable": "refuse"}
+                },
+            }
+        )
+    assert "the Line's acquisition per capture output" in str(caught.value)
+    payload = lower_authoring_input(spec_input(_triage_definition()))
+    assert payload.tag == "cruxible-procedure-authoring-payload-v5"
+    assert "acquisition_defaults" not in type(payload).model_fields
 
 
 def test_a_zero_attestation_threshold_lints_as_a_disabled_rule(tmp_path: Path) -> None:
@@ -730,6 +631,7 @@ def test_a_zero_attestation_threshold_lints_as_a_disabled_rule(tmp_path: Path) -
 def test_subject_kind_omitted_uniqueness_lowers_to_unique(tmp_path: Path) -> None:
     from cruxible_client.authoring.inputs import ClaimTypeInput, SubjectKindInput
     from cruxible_client.contracts.subject_kinds import SubjectKindKeys, parse_subject_kind
+    from tests.core_support._subject_kind_support import plain_key_rules
 
     instance, _owner = initialize_local(tmp_path)
     key = lower_claim_type_input(
@@ -758,7 +660,7 @@ def test_subject_kind_omitted_uniqueness_lowers_to_unique(tmp_path: Path) -> Non
         if path.startswith("subject-kinds/")
     )
     assert parse_subject_kind(content, path=path).identity_rule == SubjectKindKeys(
-        keys=(key.predicate,), uniqueness="unique"
+        parts=plain_key_rules(key.predicate), uniqueness="unique"
     )
 
 

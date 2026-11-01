@@ -5888,7 +5888,10 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
         else:
             for key, value in card.items():
                 if key == "authored" and result.kind == "procedure" and value is not None:
-                    click.echo(json.dumps(value, ensure_ascii=False, indent=2))
+                    from cruxible_client.contracts.refs import concise
+
+                    # Review rendering: each typed reference shown as its $... text.
+                    click.echo(json.dumps(concise(value), ensure_ascii=False, indent=2))
                     continue
                 if value in (None, [], {}):
                     continue
@@ -7307,6 +7310,15 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
     type=PayloadFile(),
     help="Exact retained Capture event reference JSON/YAML.",
 )
+@click.option(
+    "--parameters",
+    "parameters_file",
+    type=PayloadFile(),
+    help=(
+        "The Procedure's parameter values JSON/YAML, over its parameter_defaults "
+        "(checked against its params Contract)."
+    ),
+)
 @json_option
 @handle_errors
 def run_procedure(
@@ -7318,6 +7330,7 @@ def run_procedure(
     output_json: bool,
     contract_file: str | None,
     event_file: str | None,
+    parameters_file: str | None,
 ) -> None:
     """Run an accepted Procedure.
 
@@ -7345,6 +7358,7 @@ def run_procedure(
             trigger_event=trigger_event,
             at=None if at is None else at.model_dump(mode="json"),
             input=_read_mapping(input_file),
+            **({"parameters": _read_mapping(parameters_file)} if parameters_file else {}),
             **({"bindings": bindings} if bindings else {}),
         ),
         command_name="cruxible procedure run",

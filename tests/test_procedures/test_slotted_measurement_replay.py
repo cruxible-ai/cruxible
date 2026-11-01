@@ -11,7 +11,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
+from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     procedure_artifact_digest,
@@ -50,6 +50,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 from tests.core_support._identity_support import accept_tree
 from tests.support.operation_world import author, contract_files, operation_build
+from tests.support.procedures import refs
 from tests.test_procedures.test_procedure_measurement_readings import _actor, _world
 from tests.test_procedures.test_procedure_source_runs import (
     RELATIVE_PATH,
@@ -190,16 +191,22 @@ def _slotted_world(tmp_path, *, landed=False):
     )
     declaration = next(m for m in measured.definition.measurements if m.name == "rows-present")
     spec = ProcedureSpec.model_validate(
-        {
-            "procedure": "test.measured-slot",
-            "input": {"value": "integer"},
-            "output": {"value": "integer"},
-            "slots": {"compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}},
-            "steps": [{"call": "result", "slot": "compute", "input": {"value": "$input.value"}}],
-            "returns": "result",
-            "measurements": [declaration.model_dump(mode="json")],
-            "budget": {"provider_calls": 1},
-        }
+        refs(
+            {
+                "procedure": "test.measured-slot",
+                "params": {"value": "int"},
+                "output": {"value": "int"},
+                "slots": {
+                    "compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}
+                },
+                "steps": [
+                    {"call": "result", "slot": "compute", "input": {"value": "$params.value"}}
+                ],
+                "returns": "result",
+                "measurements": [declaration.model_dump(mode="json")],
+                "hard_caps": {"provider_calls": 1},
+            }
+        )
     )
     source_bindings: dict[str, str] = {}
     if landed:
@@ -225,35 +232,34 @@ def _slotted_world(tmp_path, *, landed=False):
             name="slotted-measurement-source-builds",
         )
         spec = ProcedureSpec.model_validate(
-            {
-                **spec.model_dump(mode="json"),
-                "slots": {
-                    "compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"},
-                    "fetch": {
-                        "in": "workspace.file.request@1",
-                        "out": "workspace.file.result@1",
-                        "effect": "pure",
+            refs(
+                {
+                    **spec.model_dump(mode="json"),
+                    "slots": {
+                        "compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"},
+                        "fetch": {
+                            "in": "workspace.file.request@1",
+                            "out": "workspace.file.result@1",
+                            "effect": "pure",
+                        },
                     },
-                },
-                "acquisition_defaults": {
-                    "captured.capture": AcquisitionDefault().model_dump(mode="json")
-                },
-                "steps": [
-                    {
-                        "call": "captured",
-                        "id": "read",
-                        "captures": {"capture": contract.identity.name},
-                        "slot": "fetch",
-                        "input": _source_request(instance, root).model_dump(mode="json"),
-                    },
-                    {
-                        "call": "result",
-                        "slot": "compute",
-                        "input": {"value": "$captured.content.json.value"},
-                    },
-                ],
-                "budget": {"provider_calls": 2, "capture_bytes": 65536},
-            }
+                    "steps": [
+                        {
+                            "call": "captured",
+                            "id": "read",
+                            "captures": {"capture": contract.identity.name},
+                            "slot": "fetch",
+                            "input": _source_request(instance, root).model_dump(mode="json"),
+                        },
+                        {
+                            "call": "result",
+                            "slot": "compute",
+                            "input": {"value": "$captured.content.json.value"},
+                        },
+                    ],
+                    "hard_caps": {"provider_calls": 2, "capture_bytes": 65536},
+                }
+            )
         )
 
     from cruxible_client.contracts.authoring.inputs import LineInput, ProcedureInput
@@ -286,7 +292,14 @@ def _slotted_world(tmp_path, *, landed=False):
                 "max_capture_bytes": caps.max_capture_bytes,
                 "max_items": caps.max_items,
             },
-            **({"trigger_input": "captured"} if landed else {}),
+            **(
+                {
+                    "trigger_input": "captured",
+                    "acquisition": {"captured.capture": LineAcquisitionRule()},
+                }
+                if landed
+                else {}
+            ),
         ),
         name="measured-slot-line",
     )
@@ -313,7 +326,7 @@ def test_measure_replays_explicit_build_and_refuses_retired_build(tmp_path, orig
         service_run_playbill_procedure(
             instance,
             name=accepted.procedure.identity.name,
-            request=ProcedureRunRequest(input={"value": 1}),
+            request=ProcedureRunRequest(input={}, parameters={"value": 1}),
             actor_context=_actor(instance),
         )
     assert ambiguous.value.error_code == "cruxible.line.slot_ambiguous"
@@ -335,7 +348,8 @@ def test_measure_replays_explicit_build_and_refuses_retired_build(tmp_path, orig
             instance,
             name=accepted.procedure.identity.name,
             request=ProcedureRunRequest(
-                input={"value": 1},
+                input={},
+                parameters={"value": 1},
                 bindings={"compute": selected.identity.name},
                 evaluation_time=NOW,
             ),
@@ -480,7 +494,9 @@ def test_measure_replays_line_with_a_landed_slotted_source_and_call(tmp_path):
             instance,
             name=accepted.procedure.identity.name,
             request=ProcedureRunRequest(
-                input={"value": 1}, bindings={"compute": first.provider.identity.name}
+                input={},
+                parameters={"value": 1},
+                bindings={"compute": first.provider.identity.name},
             ),
             actor_context=_actor(instance),
         )
@@ -492,7 +508,8 @@ def test_measure_replays_line_with_a_landed_slotted_source_and_call(tmp_path):
         instance,
         name=accepted.procedure.identity.name,
         request=ProcedureRunRequest(
-            input={"value": 1},
+            input={},
+            parameters={"value": 1},
             evaluation_time=NOW,
             bindings={slot: binding.build.target.name for slot, binding in line.bindings.items()},
         ),

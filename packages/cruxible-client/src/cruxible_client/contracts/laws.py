@@ -326,6 +326,15 @@ PROCEDURE_MANDATE_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="procedure-mandate",
     artifact_tag="cruxible-procedure-mandate-v3",
 )
+#: A Mandate grants authority within the Procedure's hard caps; the Line owns
+#: the operating budget, so no Mandate carries a resource ceiling (B4-0).
+PROCEDURE_MANDATE_V4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.procedure-mandate.v4", "cruxible-procedure-mandate-v4", semantic_revision=1
+    ),
+    artifact_kind="procedure-mandate",
+    artifact_tag="cruxible-procedure-mandate-v4",
+)
 PROCEDURE_MANDATE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=PROCEDURE_MANDATE_LAW,
     artifact_kind="procedure-mandate",
@@ -356,15 +365,16 @@ LINE_V6_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="line",
     artifact_tag="playbill-line-v6",
 )
-# A SubjectKind declares how Subjects of one kind are identified: by key
-# ClaimTypes (live, literal, one-valued, about that kind only) or by minted
-# ids. A retired SubjectKind is never revived.
+# A SubjectKind declares how Subjects of one kind are identified: by key parts
+# (each a key ClaimType -- live, literal, one-valued, about that kind only --
+# and a pinned identity normalizer from the fixed core set) or by minted ids.
+# A retired SubjectKind is never revived.
 SUBJECT_KIND_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
-        "cruxible.subject-kind.v1", "cruxible-subject-kind-v1", semantic_revision=1
+        "cruxible.subject-kind.v2", "cruxible-subject-kind-v2", semantic_revision=1
     ),
     artifact_kind="subject-kind",
-    artifact_tag="cruxible-subject-kind-v1",
+    artifact_tag="cruxible-subject-kind-v2",
 )
 # A Contract is one immutable data shape: a version never changes, a successor
 # names its predecessor's digest, and every nested Contract pin resolves exactly.
@@ -405,7 +415,7 @@ PROVIDER_BUILD_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
 
 NAMED_REFERENCE_FORMATS = {
     "capture-contract": "cruxible-capture-contract-v4",
-    "procedure": "cruxible-procedure-v3",
+    "procedure": "cruxible-procedure-v4",
     "query-definition": "cruxible-query-definition-v3",
     "trigger": "cruxible-trigger-v2",
     "line": "cruxible-line-v8",
@@ -459,6 +469,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         PROCEDURE_MANDATE_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_V3_ACCEPTANCE_LAW,
+        PROCEDURE_MANDATE_V4_ACCEPTANCE_LAW,
         SUBJECT_ACCEPTANCE_LAW,
     )
 )

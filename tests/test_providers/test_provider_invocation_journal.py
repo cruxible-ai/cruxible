@@ -18,9 +18,6 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    GuardPredicate,
-    PredicateOperand,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     RepeatBodyNode,
@@ -53,6 +50,8 @@ from cruxible_client.contracts.provider_execution import (
 )
 from cruxible_client.contracts.provider_operations import ProcedureSlot, operation_signature_digest
 from cruxible_client.contracts.providers import AcceptedProvider, provider_digest, provider_path
+from cruxible_client.contracts.refs import step_ref
+from cruxible_client.contracts.shapes import Presence
 from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.indexes.resident import close_idle_connections
@@ -208,13 +207,12 @@ def _accepted_one_provider(
     effect: str | None = None,
     provider: AcceptedProvider | None = None,
     repeat: bool = False,
-    wall_clock: CanonicalDuration = CanonicalDuration(microseconds=2_000_000),
-    max_wall_clock: CanonicalDuration = CanonicalDuration(microseconds=4_000_000),
+    max_wall_clock: CanonicalDuration = CanonicalDuration(microseconds=2_000_000),
 ) -> AcceptedProcedure:
     """One exact-pinned demo Provider call, direct or as a one-attempt repeat body.
 
-    The 2 s budget is what this file's injected clocks measure against; a caller
-    that runs on the real clock passes the roomy test budget instead. ``effect``
+    The 2 s cap (a direct run's budget) is what this file's injected clocks
+    measure against. ``effect``
     overrides the ``mutation``-derived default, so a caller can match the exact
     effect its paired ``_prepared_acquisition_run`` call will use.
     """
@@ -223,8 +221,8 @@ def _accepted_one_provider(
         effect=effect or ("external_mutation" if mutation else "pure")
     )
     operation_signature = provider.provider.operations[0].signature()
-    contract_in = pin("contract-in", "Contract", "provider-input")
-    contract_out = pin("contract-out", "Contract", "provider-output")
+    contract_in = pin("contract-in", "Contract", "provider-input/v1")
+    contract_out = pin("contract-out", "Contract", "provider-output/v1")
     effect_policy = (
         ArtifactPin(
             role="effect-policy",
@@ -257,11 +255,7 @@ def _accepted_one_provider(
                     as_=node.as_,
                 ),
             ),
-            until=GuardPredicate(
-                left=PredicateOperand(kind="exists", alias=node.as_),
-                operator="eq",
-                right=PredicateOperand(kind="literal", value=True),
-            ),
+            until=Presence(op="present", of=step_ref(node.as_)),
             as_="repeat_result",
         )
         returns = graph_node.as_
@@ -272,12 +266,6 @@ def _accepted_one_provider(
         nodes=(graph_node,),
         returns=returns,
         slots={SLOT: ProcedureSlot.model_validate(operation_signature.model_dump(by_alias=True))},
-        budget=ProcedureBudget(
-            wall_clock=wall_clock,
-            max_provider_calls=2,
-            max_capture_bytes=1024,
-            max_items=10,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=max_wall_clock,
             max_provider_calls=4,

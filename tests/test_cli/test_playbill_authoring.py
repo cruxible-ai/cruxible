@@ -679,21 +679,22 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
             "trigger",
         }
         if name == "procedure-mandate":
-            assert payload["tag"] == "cruxible-procedure-mandate-input-v2"
+            assert payload["tag"] == "cruxible-procedure-mandate-input-v3"
         else:
             assert "tag" not in payload
         if name == "procedure":
             # A literal project feeds closed transforms; a project returns the count.
-            literal, *transforms, returned = payload["definition"]["nodes"]
-            assert (literal["kind"], sorted(literal["literal"])) == ("project", ["items"])
-            assert [node["spec"]["tag"] for node in transforms] == [
-                "cruxible-transform-shape-spec-v1",
-                "cruxible-transform-filter-spec-v1",
-                "cruxible-transform-dedupe-spec-v1",
-                "cruxible-transform-join-spec-v1",
-                "cruxible-transform-aggregate-spec-v1",
+            # The one typed authoring form: a ProcedureSpec of typed steps.
+            literal, *transforms, returned = payload["spec"]["steps"]
+            assert sorted(literal["literal"]) == ["items"]
+            assert [step["kind"] for step in transforms] == [
+                "shape",
+                "filter",
+                "dedupe",
+                "join",
+                "aggregate",
             ]
-            assert returned["kind"] == "project"
+            assert returned["project"] == "result"
         note = authoring_example_note(name)
         assert result.stderr == ("" if note is None else f"# {note}\n")
 

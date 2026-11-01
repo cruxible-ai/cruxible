@@ -38,7 +38,6 @@ from cruxible_client.contracts.procedure_mandates import (
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     procedure_path,
-    render_procedure,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import (
@@ -64,6 +63,7 @@ from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._subject_kind_support import core_assigned
+from tests.support.procedures import procedure_members
 from tests.test_procedures import test_procedure_source_runs as fixtures
 
 SUBJECT_KIND = "security.advisory"
@@ -138,6 +138,7 @@ def terminal_procedure(
     *,
     templates: tuple[object, ...] | None = None,
     wall_clock_seconds: int | None = None,
+    max_items: int | None = None,
     document: bool = False,
 ) -> ProcedureArtifact:
     """The Source Procedure with its shaped row flowing into a rung-2 terminal.
@@ -162,13 +163,17 @@ def terminal_procedure(
     )
     if document:
         nodes = fixtures.severity_from_document(nodes)
-    update: dict[str, object] = {"nodes": fixtures.with_fan_out(nodes, templates)}
+    update: dict[str, object] = {
+        "nodes": fixtures.with_fan_out(nodes, templates),
+        "terminal_capability": 2,
+    }
+    caps = {}
     if wall_clock_seconds is not None:
-        wall_clock = CanonicalDuration(microseconds=wall_clock_seconds * 1_000_000)
-        update["budget"] = procedure.definition.budget.model_copy(update={"wall_clock": wall_clock})
-        update["hard_caps"] = procedure.definition.hard_caps.model_copy(
-            update={"max_wall_clock": wall_clock}
-        )
+        caps["max_wall_clock"] = CanonicalDuration(microseconds=wall_clock_seconds * 1_000_000)
+    if max_items is not None:
+        caps["max_items"] = max_items
+    if caps:
+        update["hard_caps"] = procedure.definition.hard_caps.model_copy(update=caps)
     definition = procedure.definition.model_copy(update=update)
     return procedure.model_copy(
         update={
@@ -192,6 +197,7 @@ def proposal_world(  # type: ignore[no-untyped-def]
     claim_type: ClaimType | None = None,
     requested_terminal_rung: int = 2,
     wall_clock_seconds: int | None = None,
+    max_items: int | None = None,
     document: bool = False,
 ):
     """Accept everything the loop needs; return the instance, owner, root, Line."""
@@ -202,7 +208,11 @@ def proposal_world(  # type: ignore[no-untyped-def]
         **({"contents": fixtures.canonical_bytes({"severity": "high"})} if document else {}),
     )
     with_terminal = terminal_procedure(
-        procedure, templates=templates, wall_clock_seconds=wall_clock_seconds, document=document
+        procedure,
+        templates=templates,
+        wall_clock_seconds=wall_clock_seconds,
+        max_items=max_items,
+        document=document,
     )
     line = _line(instance, with_terminal, policy).model_copy(
         update={"max_authority": RUNG_AUTHORITY[requested_terminal_rung]}
@@ -212,7 +222,7 @@ def proposal_world(  # type: ignore[no-untyped-def]
     members = core_assigned(
         instance,
         {
-            procedure_path(fixtures.PROCEDURE_NAME): render_procedure(with_terminal),
+            **procedure_members(with_terminal),
             line_spec_path(line.identity.name): render_line_spec(line),
             claim_type_path(accepted_claim_type.predicate): render_claim_type(accepted_claim_type),
             subject_path(SUBJECT_KIND, SUBJECT_ID): render_subject(_subject()),
@@ -269,7 +279,7 @@ def test_a_line_terminal_produces_a_proposal_the_manager_accepts_and_reads_back(
     tmp_path: Path,
 ) -> None:
     instance, owner, root, line, procedure = proposal_world(tmp_path)
-    assert procedure.artifact_format == "cruxible-procedure-v3"
+    assert procedure.artifact_format == "cruxible-procedure-v4"
     assert line.artifact_format == "cruxible-line-v8"
     base = instance.accepted_coordinate()
 
@@ -1982,7 +1992,7 @@ def _revising_line(instance, owner, procedure, templates):  # type: ignore[no-un
         instance,
         owner,
         {
-            procedure_path(revising.identity.name): render_procedure(revising),
+            **procedure_members(revising),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
         },

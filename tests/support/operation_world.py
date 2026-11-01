@@ -52,6 +52,7 @@ from cruxible_core.providers.provider_local_runtime import (
     ProviderDriverOutcomeV1,
 )
 from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeResultEnvelope
+from tests.support.procedures import ref
 
 NOW = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
 PROCEDURE = "test.slotted"
@@ -169,18 +170,24 @@ def slotted_spec(
     effect: str = "pure",
     description: str | None = None,
 ) -> ProcedureSpec:
-    """One Call through slot ``compute`` (``test.value@1 -> test.value@1``)."""
+    """One Call through slot ``compute`` (``test.value@1 -> test.value@1``).
+
+    Its ``value`` is a parameter: a Line (or a direct run's ``parameters``)
+    supplies it.
+    """
 
     return ProcedureSpec.model_validate(
         {
             "procedure": name,
             **({} if description is None else {"description": description}),
-            "input": {"value": "integer"},
-            "output": {"value": "integer"},
+            "params": {"value": "int"},
+            "output": {"value": "int"},
             "slots": {"compute": {"in": "test.value@1", "out": "test.value@1", "effect": effect}},
-            "steps": [{"call": "result", "slot": "compute", "input": {"value": "$input.value"}}],
+            "steps": [
+                {"call": "result", "slot": "compute", "input": {"value": ref("$params.value")}}
+            ],
             "returns": "result",
-            "budget": {"provider_calls": 1},
+            "hard_caps": {"provider_calls": 1},
         }
     )
 

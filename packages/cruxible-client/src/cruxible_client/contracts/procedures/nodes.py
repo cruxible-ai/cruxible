@@ -21,123 +21,50 @@ from cruxible_client.contracts.procedures.model_base import (
     _canonical_identifier,
     _StrictProcedureModel,
 )
-from cruxible_client.contracts.shapes import ContractRef, parse_contract_ref
+from cruxible_client.contracts.shapes import (
+    ContractRef,
+    Predicate,
+    PredicateContext,
+    parse_contract_ref,
+    predicate_context_problem,
+    predicate_refs,
+)
 
 PredicateScalar = None | bool | int | str
 
 
-class PredicateOperand(_StrictProcedureModel):
-    """One operand in the closed predicate grammar."""
+def _context_predicate(value: object, context: PredicateContext) -> Predicate:
+    """A typed closed predicate (structured form only), usable where it is read."""
 
-    tag: Literal["playbill-predicate-operand-v1"] = "playbill-predicate-operand-v1"
-    kind: Literal["literal", "input", "step", "parameter", "count", "exists", "truncated"]
-    value: PredicateScalar = None
-    input_name: str | None = None
-    alias: str | None = None
-    path: tuple[str, ...] = ()
-    parameter_name: str | None = None
+    from cruxible_client.contracts.shapes import as_predicate
 
-    @field_validator("input_name", "alias", "parameter_name")
-    @classmethod
-    def _optional_name(cls, value: str | None) -> str | None:
-        if value is not None:
-            _canonical_identifier(value, _ALIAS_RE, label="predicate name")
-        return value
+    try:
+        predicate = as_predicate(value)  # type: ignore[arg-type]
+    except Exception as exc:
+        raise ValueError(
+            f"predicate_outside_closed_grammar: {exc}; a predicate is built only from "
+            "eq/ne/lt/le/gt/ge, in/not_in, present/absent, all_of/any_of/not over typed "
+            "references and literals"
+        ) from exc
+    problem = predicate_context_problem(predicate, context)
+    if problem is not None:
+        raise ValueError(f"predicate_outside_closed_grammar: {problem}")
+    return predicate
 
-    @field_validator("path")
-    @classmethod
-    def _path(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        for member in value:
-            _canonical_identifier(member, _ALIAS_RE, label="predicate path member")
-        return value
 
-    @model_validator(mode="after")
-    def _closed_shape(self) -> "PredicateOperand":
-        expected = {
-            "literal": (True, False, False, False),
-            "input": (False, self.input_name is not None, False, False),
-            "step": (False, False, self.alias is not None, False),
-            "parameter": (False, False, False, self.parameter_name is not None),
-            "count": (False, False, self.alias is not None, False),
-            "exists": (False, self.input_name is not None, self.alias is not None, False),
-            "truncated": (False, False, self.alias is not None, False),
-        }[self.kind]
-        actual = (
-            self.value is not None,
-            self.input_name is not None,
-            self.alias is not None,
-            self.parameter_name is not None,
+def _run_predicate(value: object) -> object:
+    return _context_predicate(value, "run")
+
+
+def predicate_step_aliases(predicate: Predicate) -> tuple[str, ...]:
+    """The step aliases a run predicate reads, sorted."""
+
+    return tuple(
+        sorted(
+            {ref.step for ref in predicate_refs(predicate) if ref.step is not None},
+            key=lambda item: item.encode("utf-8"),
         )
-        if self.kind == "literal" and self.value is None:
-            actual = (True, *actual[1:])
-        if self.kind == "exists":
-            if (self.input_name is None) == (self.alias is None):
-                raise ValueError("exists requires exactly one input_name or alias")
-            expected = actual
-        if actual != expected:
-            raise ValueError(f"predicate operand fields disagree with kind {self.kind!r}")
-        if self.path and self.kind not in {"input", "step", "exists"}:
-            raise ValueError("predicate paths belong only to input, step, or exists operands")
-        return self
-
-
-ComparisonOperator = Literal[
-    "eq", "ne", "gt", "gte", "lt", "lte", "before", "on_or_before", "after", "on_or_after"
-]
-
-
-class GuardPredicate(_StrictProcedureModel):
-    """Closed predicate: exactly one comparison or connective."""
-
-    tag: Literal["playbill-guard-predicate-v1"] = "playbill-guard-predicate-v1"
-    left: PredicateOperand | None = None
-    operator: ComparisonOperator | None = None
-    right: PredicateOperand | None = None
-    all_of: tuple[GuardPredicate, ...] | None = None
-    any_of: tuple[GuardPredicate, ...] | None = None
-    not_of: GuardPredicate | None = None
-
-    @model_validator(mode="after")
-    def _one_production(self) -> "GuardPredicate":
-        comparison_parts = (self.left, self.operator, self.right)
-        set_count = sum(item is not None for item in comparison_parts)
-        if set_count not in {0, 3}:
-            raise ValueError("guard comparison requires left, operator, and right together")
-        productions = sum(
-            (
-                set_count == 3,
-                self.all_of is not None,
-                self.any_of is not None,
-                self.not_of is not None,
-            )
-        )
-        if productions != 1:
-            raise ValueError("guard requires exactly one closed predicate production")
-        if self.all_of is not None and not self.all_of:
-            raise ValueError("all_of must not be empty")
-        if self.any_of is not None and not self.any_of:
-            raise ValueError("any_of must not be empty")
-        return self
-
-    def step_aliases(self) -> tuple[str, ...]:
-        if self.left is not None and self.right is not None:
-            return tuple(
-                sorted(
-                    {
-                        operand.alias
-                        for operand in (self.left, self.right)
-                        if operand.alias is not None
-                    },
-                    key=lambda item: item.encode("utf-8"),
-                )
-            )
-        children = self.all_of or self.any_of or ((self.not_of,) if self.not_of else ())
-        return tuple(
-            sorted(
-                {alias for child in children for alias in child.step_aliases()},
-                key=lambda item: item.encode("utf-8"),
-            )
-        )
+    )
 
 
 def _contract_ref(value: object) -> object:
@@ -253,19 +180,9 @@ CLOSED_TRANSFORM_KINDS = frozenset(
 
 
 def _closed_predicate(value: object) -> object:
-    """A closed predicate from its call form or structured form; anything else refuses."""
+    """A closed record predicate (structured form only); anything else refuses."""
 
-    from cruxible_client.contracts.shapes import as_predicate
-
-    if isinstance(value, BaseModel):
-        return value
-    try:
-        return as_predicate(value)  # type: ignore[arg-type]
-    except Exception as exc:
-        raise ValueError(
-            f"predicate_outside_closed_grammar: {exc}; a predicate is built only from "
-            "eq/ne/lt/le/gt/ge, in/not_in, present/absent, all_of/any_of/not"
-        ) from exc
+    return _context_predicate(value, "record")
 
 
 class ShapeField(_StrictProcedureModel):
@@ -316,7 +233,7 @@ class TransformFilterSpec(_StrictProcedureModel):
 
     tag: Literal["cruxible-transform-filter-spec-v1"] = "cruxible-transform-filter-spec-v1"
     input: object
-    where: object
+    where: Predicate
 
     _input = field_validator("input", mode="before")(normalize_canonical)
     _where = field_validator("where", mode="before")(_closed_predicate)
@@ -348,7 +265,7 @@ class TransformAggregateSpec(_StrictProcedureModel):
     input: object
     op: Literal["count", "any", "all", "min", "max", "first_by"]
     field: str | None = Field(default=None, exclude_if=lambda value: value is None)
-    where: object = Field(default=None, exclude_if=lambda value: value is None)
+    where: Predicate | None = Field(default=None, exclude_if=lambda value: value is None)
 
     _input = field_validator("input", mode="before")(normalize_canonical)
 
@@ -382,7 +299,7 @@ class TransformUnionSpec(_StrictProcedureModel):
 
 
 class DeriveCase(_StrictProcedureModel):
-    when: object
+    when: Predicate
     value: PredicateScalar
 
     _when = field_validator("when", mode="before")(_closed_predicate)
@@ -459,9 +376,15 @@ class TransformNode(_StrictProcedureModel):
 
 
 class GuardNode(_StrictProcedureModel):
+    """Branch on a closed run predicate (the same typed Predicate transforms use).
+
+    ``refusal_code`` and ``message`` are the abort diagnostic: present exactly
+    when an arm is ``$abort``.
+    """
+
     kind: Literal["guard"] = "guard"
     node_id: str
-    predicate: GuardPredicate
+    predicate: Predicate
     on_true: str | None = None
     on_false: str = "$abort"
     refusal_code: str | None = Field(default=None, exclude_if=lambda value: value is None)
@@ -476,12 +399,17 @@ class GuardNode(_StrictProcedureModel):
             else _canonical_identifier(value, _NAME_RE, label="guard refusal_code")
         )
 
+    _predicate = field_validator("predicate", mode="before")(_run_predicate)
+
     @model_validator(mode="after")
     def _abort_diagnostic(self) -> "GuardNode":
-        if "$abort" in {self.on_true, self.on_false} and (
-            self.refusal_code is None or self.message is None
-        ):
+        aborts = "$abort" in {self.on_true, self.on_false}
+        if aborts and (self.refusal_code is None or self.message is None):
             raise ValueError(f"guard {self.node_id!r}: abort requires refusal_code and message")
+        if not aborts and (self.refusal_code is not None or self.message is not None):
+            raise ValueError(
+                f"guard {self.node_id!r}: refusal_code and message belong only to an abort arm"
+            )
         return self
 
 
@@ -497,7 +425,6 @@ class ProjectNode(_StrictProcedureModel):
     node_id: str
     fields: object = Field(default=None, exclude_if=lambda value: value is None)
     literal: object = Field(default=None, exclude_if=lambda value: value is None)
-    contract_out: ArtifactNameRef
     leaf: bool = False
     as_: str = Field(alias="as")
     next: str | None = None
@@ -581,9 +508,11 @@ class RepeatNode(_StrictProcedureModel):
     node_id: str
     max_attempts: int = Field(ge=1, le=2**31 - 1)
     body: tuple[RepeatBodyNode, ...]
-    until: GuardPredicate
+    until: Predicate
     as_: str = Field(alias="as")
     next: str | None = None
+
+    _until = field_validator("until", mode="before")(_run_predicate)
 
     @field_validator("body")
     @classmethod
@@ -696,7 +625,6 @@ class ProposeChangeSetNode(_StrictProcedureModel):
     kind: Literal["propose_change_set"] = "propose_change_set"
     node_id: str
     candidate_templates: tuple[object, ...] | ProposalItemsFanOut
-    claim_types: tuple[ArtifactNameRef, ...] = ()
     result: object
 
     _result = field_validator("result", mode="before")(normalize_canonical)
@@ -857,7 +785,6 @@ class SelectNode(_StrictProcedureModel):
     kind: Literal["select"] = "select"
     node_id: str
     sources: tuple[str, ...]
-    contract_out: ArtifactNameRef
     as_: str = Field(alias="as")
     next: str | None = None
 
@@ -878,10 +805,13 @@ class InvokeNode(_StrictProcedureModel):
     node_id: str
     procedure: ArtifactNameRef
     input: object
+    #: The child's parameter values (templates over this run's values), over
+    #: the child's defaults; checked against the child's params Contract.
+    parameters: object = Field(default_factory=dict, exclude_if=lambda value: not value)
     as_: str = Field(alias="as")
     next: str | None = None
 
-    _input = field_validator("input", mode="before")(normalize_canonical)
+    _input = field_validator("input", "parameters", mode="before")(normalize_canonical)
 
 
 ProcedureNode = Annotated[
@@ -921,16 +851,13 @@ __all__ = [
     "AuthorityVerb",
     "CallNode",
     "CaptureEgressNode",
-    "ComparisonOperator",
     "EffectiveAuthority",
     "EgressNode",
     "ExtractNode",
     "GuardNode",
-    "GuardPredicate",
     "HaltNode",
     "InboxEgressNode",
     "InvokeNode",
-    "PredicateOperand",
     "PredicateScalar",
     "ReadNode",
     "ProcedureNode",
@@ -953,6 +880,7 @@ __all__ = [
     "authority_for_rung",
     "is_terminal_node",
     "derived_terminal_capability",
+    "predicate_step_aliases",
     "refuse_retired_kinds",
     "required_authority",
 ]

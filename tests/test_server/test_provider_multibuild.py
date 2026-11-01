@@ -16,12 +16,12 @@ from cruxible_client.contracts.procedure_mandates import parse_procedure_mandate
 from cruxible_client.contracts.procedures.artifacts import (
     parse_procedure,
     procedure_artifact_digest,
-    render_procedure,
 )
 from cruxible_client.contracts.procedures.line_specs import line_spec_digest, parse_line_spec
 from cruxible_client.contracts.provider_installation import ProviderRetireRequest
 from cruxible_client.contracts.triggers import CadenceSchedule
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
+from tests.support.procedures import procedure_members
 from tests.support.provider_checkout import ProviderCheckout
 from tests.test_server.test_kit_providers import (
     PROCEDURE,
@@ -53,12 +53,18 @@ def _author_user_procedure(world) -> None:
     spec = ProcedureSpec.model_validate(
         {
             "procedure": USER_PROCEDURE,
-            "input": {"n": "integer"},
-            "output": {"n": "integer"},
+            "params": {"n": "int"},
+            "output": {"n": "int"},
             "slots": {"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
-            "steps": [{"call": "result", "slot": "increment", "input": {"n": "$input.n"}}],
+            "steps": [
+                {
+                    "call": "result",
+                    "slot": "increment",
+                    "input": {"n": {"$ref": "param", "path": ["n"]}},
+                }
+            ],
             "returns": "result",
-            "budget": {"wall_clock": "PT30S", "provider_calls": 1},
+            "hard_caps": {"wall_clock": "PT30S", "provider_calls": 1},
         }
     )
     intent = (
@@ -79,7 +85,6 @@ def _mandate(name: str, line: str, caps) -> ProcedureMandateInput:
         name=name,
         line_name=line,
         grants="propose",
-        resource_ceiling=caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),
@@ -176,7 +181,7 @@ def test_kit_101_to_102_is_one_add_and_keep_build_is_per_line(
             _accept_members(
                 get_playbill_manager().get(publisher.instance_id),
                 publisher.reviewer_key,
-                {kit_path: render_procedure(changed)},
+                procedure_members(changed),
                 timestamp="2026-10-15T10:00:00.000000Z",
             )
             publisher.pb.refresh()

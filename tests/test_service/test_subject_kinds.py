@@ -45,6 +45,7 @@ from cruxible_core.service.discovery.orient import service_playbill_orient
 from cruxible_core.service.discovery.query_vocabulary import load_query_vocabulary
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._identity_support import OWNER, identity_claim_type
+from tests.core_support._subject_kind_support import plain_key_rules
 from tests.core_support._support import initialize_local
 
 KIND = "dev.decision"
@@ -112,7 +113,9 @@ def test_a_keyed_subject_kind_and_its_key_claim_type_land_in_one_change(
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     declared = parse_subject_kind(tree[subject_kind_path(KIND)], path=subject_kind_path(KIND))
-    assert declared.identity_rule == SubjectKindKeys(keys=(SLUG,), uniqueness="unique")
+    assert declared.identity_rule == SubjectKindKeys(
+        parts=plain_key_rules(SLUG), uniqueness="unique"
+    )
     assert declared.description == "A recorded decision."
 
     card = service_playbill_get(
@@ -247,7 +250,7 @@ def test_the_law_holds_succession_never_revives_and_reserves_the_pseudo_kinds() 
 
     keyed = SubjectKind(
         identity=ArtifactIdentity(kind="SubjectKind", name=KIND),
-        identity_rule=SubjectKindKeys(keys=(SLUG,), uniqueness="unique"),
+        identity_rule=SubjectKindKeys(parts=plain_key_rules(SLUG), uniqueness="unique"),
     )
     path = subject_kind_path(KIND)
     assert parse_subject_kind(render_subject_kind(keyed), path=path) == keyed
@@ -260,7 +263,7 @@ def test_the_law_holds_succession_never_revives_and_reserves_the_pseudo_kinds() 
     # Changing the keys is a governed successor naming its exact predecessor.
     rekeyed = keyed.model_copy(
         update={
-            "identity_rule": SubjectKindKeys(keys=(SLUG,), uniqueness="hint"),
+            "identity_rule": SubjectKindKeys(parts=plain_key_rules(SLUG), uniqueness="hint"),
             "lifecycle": ArtifactLifecycle(predecessor_digest=subject_kind_digest(keyed).tagged),
         }
     )

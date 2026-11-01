@@ -48,6 +48,11 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.content_memo import request_derive
 from cruxible_client.contracts.errors import CanonicalEncodingError, CruxibleError
+from cruxible_client.contracts.identity_normalizers import (
+    KeyNormalizationRefused,
+    KeyNormalizer,
+    canonical_key_part,
+)
 from cruxible_client.contracts.procedures.reads import ProcedureReadCeiling
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinition,
@@ -381,6 +386,7 @@ class _Evaluator:
         evaluation_time: datetime,
         canonical_forms: Mapping[str, tuple[str, ...]] | None = None,
         resolve_reference: SubjectReferenceResolver | None = None,
+        key_normalizers: Mapping[str, KeyNormalizer] | None = None,
     ) -> None:
         self._definition = definition
         self._backend = backend
@@ -388,6 +394,7 @@ class _Evaluator:
         self._evaluation_time = evaluation_time
         self._canonical_forms = canonical_forms or {}
         self._resolve_reference = resolve_reference
+        self._key_normalizers = key_normalizers or {}
 
     def _form(self, ref: QueryValueRef) -> tuple[str, ...]:
         """The canonical form of the predicate a Claim-value reference reads, if any."""
@@ -411,6 +418,24 @@ class _Evaluator:
             if form:
                 return form
         return ()
+
+    def _operand_key_rule(self, ref: QueryValueRef, *others: QueryValueRef) -> KeyNormalizer | None:
+        """The identity normalizer an operand compared with a key predicate's values takes.
+
+        A key Claim's value is canonical under its SubjectKind's normalizer (the
+        candidate boundary keeps it so); a literal, a parameter or a Subject
+        field compared with one is normalized after the predicate's form, so
+        two raw spellings of one key compare equal (R12).
+        """
+
+        if isinstance(ref, QueryClaimValueRef):
+            return None
+        for other in others:
+            if isinstance(other, QueryClaimValueRef):
+                rule = self._key_normalizers.get(other.predicate)
+                if rule is not None:
+                    return rule
+        return None
 
     @staticmethod
     def _operand_vocabulary(ref: QueryValueRef, *others: QueryValueRef) -> tuple[str, ...]:
@@ -569,6 +594,7 @@ class _Evaluator:
         *,
         form: tuple[str, ...] = (),
         vocabulary: tuple[str, ...] = (),
+        key_rule: KeyNormalizer | None = None,
     ) -> QueryTypedValue | None:
         """Return the one declared-type comparable, or None when there is no one value.
 
@@ -587,7 +613,9 @@ class _Evaluator:
             if len(resolved.many) != 1:
                 return None
             value = resolved.many[0]
-        return self._coerce(ref, value, value_type, form=form, vocabulary=vocabulary)
+        return self._coerce(
+            ref, value, value_type, form=form, vocabulary=vocabulary, key_rule=key_rule
+        )
 
     def typed_values(
         self,
@@ -597,6 +625,7 @@ class _Evaluator:
         *,
         form: tuple[str, ...] = (),
         vocabulary: tuple[str, ...] = (),
+        key_rule: KeyNormalizer | None = None,
     ) -> tuple[QueryTypedValue, ...] | None:
         """Every declared-type comparable an operand holds, or None when it is absent.
 
@@ -612,7 +641,9 @@ class _Evaluator:
         if not values:
             return None
         return tuple(
-            self._coerce(ref, value, value_type, form=form, vocabulary=vocabulary)
+            self._coerce(
+                ref, value, value_type, form=form, vocabulary=vocabulary, key_rule=key_rule
+            )
             for value in values
         )
 
@@ -624,12 +655,20 @@ class _Evaluator:
         *,
         form: tuple[str, ...],
         vocabulary: tuple[str, ...],
+        key_rule: KeyNormalizer | None = None,
     ) -> QueryTypedValue:
-        if form:
+        if form and not (key_rule is not None and isinstance(value, str)):
             try:
                 value = canonicalize_literal(value, form)
             except CanonicalFormDidNotConverge as exc:
                 raise _refuse(VALUE_TYPE_MISMATCH, str(exc)) from exc
+        if key_rule is not None and isinstance(value, str):
+            # The shared key canonicalization (form, normalizer, both checks):
+            # an operand no stored key can equal refuses, never silently misses.
+            try:
+                value = canonical_key_part(value, form, key_rule)
+            except KeyNormalizationRefused as exc:
+                raise _refuse(VALUE_TYPE_MISMATCH, f"not a key of this field: {exc}") from exc
         if (
             value_type == "subject_reference"
             and isinstance(ref, QueryParameterRef)
@@ -696,6 +735,7 @@ class _Evaluator:
                 filter_.value_type,
                 form=self._operand_form(filter_.left, filter_.right),
                 vocabulary=self._operand_vocabulary(filter_.left, filter_.right),
+                key_rule=self._operand_key_rule(filter_.left, filter_.right),
             )
             right = self.typed_values(
                 row,
@@ -703,6 +743,7 @@ class _Evaluator:
                 filter_.value_type,
                 form=self._operand_form(filter_.right, filter_.left),
                 vocabulary=self._operand_vocabulary(filter_.right, filter_.left),
+                key_rule=self._operand_key_rule(filter_.right, filter_.left),
             )
             if left is None or right is None:
                 return False
@@ -723,6 +764,7 @@ class _Evaluator:
             filter_.value_type,
             form=self._operand_form(filter_.left, *filter_.values),
             vocabulary=self._operand_vocabulary(filter_.left, *filter_.values),
+            key_rule=self._operand_key_rule(filter_.left, *filter_.values),
         )
         if left is None:
             return filter_.negated
@@ -734,6 +776,7 @@ class _Evaluator:
                 filter_.value_type,
                 form=self._operand_form(candidate, filter_.left),
                 vocabulary=self._operand_vocabulary(candidate, filter_.left),
+                key_rule=self._operand_key_rule(candidate, filter_.left),
             )
             if right is not None and any(
                 _compare(one.value, other.value, filter_.value_type) == 0
@@ -1002,6 +1045,7 @@ def evaluate_claim_query(
     entry_candidate_count: int | None = None,
     canonical_forms: Mapping[str, tuple[str, ...]] | None = None,
     procedure_read: ProcedureReadCeiling | None = None,
+    key_normalizers: Mapping[str, KeyNormalizer] | None = None,
 ) -> ClaimQueryResult:
     """Evaluate one accepted QueryDefinition against accepted Claim facts.
 
@@ -1047,6 +1091,7 @@ def evaluate_claim_query(
             entry_paths=entry_paths,
             entry_candidate_count=entry_candidate_count,
             canonical_forms=canonical_forms,
+            key_normalizers=key_normalizers,
         )
     except _RefusalSignal as signal:
         return ClaimQueryResult(
@@ -1289,6 +1334,7 @@ def _evaluate(
     entry_paths: tuple[str, ...] | None = None,
     entry_candidate_count: int | None = None,
     canonical_forms: Mapping[str, tuple[str, ...]] | None = None,
+    key_normalizers: Mapping[str, KeyNormalizer] | None = None,
 ) -> ClaimQueryResult:
     query = definition.query
     backend = backend_factory(facts, definition=query, evaluation_time=evaluation_time)
@@ -1313,6 +1359,13 @@ def _evaluate(
             if row.canonical_form
         },
         resolve_reference=resolve_reference,
+        key_normalizers=key_normalizers
+        if key_normalizers is not None
+        else {
+            row.accepted.claim.statement.predicate: row.key_normalizer
+            for row in facts.claims
+            if row.key_normalizer is not None
+        },
     )
     clipped: set[QueryClippedBudget] = set()
 

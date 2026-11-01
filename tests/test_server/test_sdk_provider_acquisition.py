@@ -23,18 +23,13 @@ from cruxible_client.contracts.captures import (
     render_capture_contract,
 )
 from cruxible_client.contracts.named_references import name_provider
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
-    ProcedureOwnedContract,
-    procedure_owned_contract_digest,
 )
-from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.extract import ExtractNode
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
@@ -237,29 +232,28 @@ def acquisition_result():
     ).model_dump(mode="json")
 
 
-def _fetch_procedure(
-    contract: CaptureContract, policy: AcquisitionDefault, *, request: dict[str, object]
-) -> ProcedureArtifact:
+def _fetch_boundaries() -> tuple[object, object]:
+    """The fetch Procedure's generated boundaries (<procedure>.input|output@1)."""
+
+    from tests.support.procedures import boundary_contract
+
+    return (
+        boundary_contract("sdk-fetch-triage.input"),
+        boundary_contract("sdk-fetch-triage.output", {"severity": "string"}),
+    )
+
+
+_FETCH_BOUNDARIES = _fetch_boundaries()
+
+
+def _fetch_procedure(contract: CaptureContract, *, request: dict[str, object]) -> ProcedureArtifact:
     """One accepted Procedure whose Source slot fetches ``request`` and shapes severity."""
 
-    run_input = ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name="sdk-fetch-run-input"),
-        schema=ContractSchema(fields={}, allow_extra=True),
-    )
-    run_output = ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name="sdk-fetch-run-output"),
-        schema=ContractSchema(fields={"severity": PropertySchema(type="string")}),
-    )
-    run_input_pin = ArtifactPin(
-        role="contract-in",
-        target=run_input.identity,
-        artifact_digest=procedure_owned_contract_digest(run_input).tagged,
-    )
-    run_output_pin = ArtifactPin(
-        role="contract-out",
-        target=run_output.identity,
-        artifact_digest=procedure_owned_contract_digest(run_output).tagged,
-    )
+    from tests.support.procedures import contract_pin
+
+    run_input, run_output = _FETCH_BOUNDARIES
+    run_input_pin = contract_pin("contract-in", run_input)
+    run_output_pin = contract_pin("contract-out", run_output)
     capture_pin = ArtifactPin(
         role="capture-contract",
         target=contract.identity,
@@ -301,17 +295,10 @@ def _fetch_procedure(
             ProjectNode(
                 node_id="shape",
                 fields={"severity": "$steps.bundle.rows.0.text"},
-                contract_out=named(run_output_pin),
                 as_="result",
             ),
         ),
         returns="result",
-        budget=ProcedureBudget(
-            wall_clock=source.RUN_WALL_CLOCK,
-            max_provider_calls=2,
-            max_capture_bytes=1_048_576,
-            max_items=None,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=source.MAX_WALL_CLOCK,
             max_provider_calls=4,
@@ -325,14 +312,7 @@ def _fetch_procedure(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        owned_contracts=tuple(
-            sorted(
-                (run_input, run_output),
-                key=lambda item: canonical_bytes(item.model_dump(mode="json", by_alias=True)),
-            )
-        ),
         activation_policy="drain",
-        acquisition_defaults={f"{_ALIAS}.capture": policy},
     )
     from tests.support.procedures import revalidated
 
@@ -455,8 +435,9 @@ def test_sdk_source_retains_and_reads_acquisition(
     request = {"url": URL}
     provider = web_provider(_FETCH_OPERATION, _FETCH_CONTRACTS)
     contract = http_contract(max_bytes=1_000_000, decoding=JSON_DECODING)
-    policy = source._policy()
-    procedure = _fetch_procedure(contract, policy, request=request)
+    # A direct run states no acquisition rule: its capture output runs under the
+    # core default (the Procedure declares none).
+    procedure = _fetch_procedure(contract, request=request)
 
     proposal = source.submit_member_candidate(
         instance,
@@ -480,7 +461,9 @@ def test_sdk_source_retains_and_reads_acquisition(
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http
     pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=tmp_path)
-    intent = pb.procedure(definition=source._sdk_procedure_input(procedure)).prepare()
+    intent = pb.procedure(
+        definition=source._sdk_procedure_input(procedure, _FETCH_BOUNDARIES)
+    ).prepare()
     assert not intent.refused, intent.diagnostics
     intent.submit(accept="never")
     _approve_and_activate(http, instance_id, reviewer, intent.proposal.proposal_id)
@@ -527,9 +510,7 @@ def test_sdk_source_retains_and_reads_acquisition(
 def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     playbill_http, tmp_path, monkeypatch, defaulted
 ):
-    from cruxible_client.authoring.examples import procedure_example
-    from cruxible_client.authoring.inputs import CarriedContractInput
-    from cruxible_client.contracts.procedures.contract_schema import PropertySchema
+    from cruxible_client.authoring.inputs import ProcedureInput
 
     http, instance_id, reviewer = playbill_http
     manager = get_playbill_manager()
@@ -570,49 +551,27 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http
     pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=tmp_path)
-    example = procedure_example()
-
-    def carried(role):
-        return {"kind": "carried_contract", "name": "size", "role": role}
-
-    raw = {
-        **example.definition,
-        "returns": "result",
-        "contract_out": carried("contract-out"),
-        "slots": {
-            "invoke": {
-                "in": f"{call_input.name}@{call_input.version}",
-                "out": f"{call_output.name}@{call_output.version}",
-                "effect": "external_read",
-            }
-        },
-        "nodes": [
-            {
-                "kind": "call",
-                "node_id": "invoke",
-                "as": "result",
-                "input": {"size": 1},
-                "slot": "invoke",
-            }
-        ],
-    }
-    raw["budget"] = {
-        **raw["budget"],
-        "max_items": None,
-        "max_provider_calls": 1,
-        "max_capture_bytes": 65536,
-    }
-    raw["hard_caps"] = {**raw["hard_caps"], "max_provider_calls": 2, "max_capture_bytes": 131072}
-    authored = example.model_copy(
-        update={
-            "definition": raw,
-            "contracts": (
-                next(item for item in example.contracts if item.name == "empty-input"),
-                CarriedContractInput(
-                    name="size",
-                    fields={"size": PropertySchema(type="int")},
-                ),
-            ),
+    authored = ProcedureInput.model_validate(
+        {
+            "kind": "procedure",
+            "procedure": "replace-me",
+            "input": {},
+            "output": {"size": "int"},
+            "slots": {
+                "invoke": {
+                    "in": f"{call_input.name}@{call_input.version}",
+                    "out": f"{call_output.name}@{call_output.version}",
+                    "effect": "external_read",
+                }
+            },
+            "steps": [{"call": "result", "id": "invoke", "slot": "invoke", "input": {"size": 1}}],
+            "returns": "result",
+            "hard_caps": {
+                "wall_clock": "PT30M",
+                "provider_calls": 2,
+                "capture_bytes": 131072,
+                "items": 200,
+            },
         }
     )
     intent = pb.procedure(definition=authored).prepare()

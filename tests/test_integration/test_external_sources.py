@@ -41,6 +41,7 @@ from tests.core_support._pc_c_support import (
     provider_run,
 )
 from tests.core_support._subject_kind_support import core_assigned
+from tests.support.procedures import procedure_members
 from tests.support.provider_builds import capture_provider_build
 from tests.test_claims.test_claims import TIMESTAMP, _claim, _claim_type, _subject
 
@@ -216,7 +217,6 @@ def test_external_capture_admission_refuses_retired_format_or_requires_exact_con
 
         from cruxible_client.contracts.canonical import canonical_bytes
         from cruxible_client.contracts.captures import CaptureEnvelope, parse_capture_envelope
-        from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
         from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
         from cruxible_client.contracts.providers import parse_provider
         from cruxible_core.storage.cas import BodyAccessContext
@@ -244,7 +244,7 @@ def test_external_capture_admission_refuses_retired_format_or_requires_exact_con
         fixtures._accept_more(
             instance,
             owner,
-            {procedure_path(procedure.identity.name): render_procedure(procedure)},
+            procedure_members(procedure),
             name="external-source-mapping",
         )
         state, invoker = fixtures._run(instance, root, evaluation_time=NOW)

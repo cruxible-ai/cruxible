@@ -49,6 +49,7 @@ def query_view_schema() -> ContractSchema:
 
     return ContractSchema(
         fields={
+            "rows": PropertySchema(type="json", json_schema={"type": "array"}),
             "coordinate": PropertySchema(
                 type="json", json_schema=expanded_model_schema(AcceptedProjectionCoordinate)
             ),

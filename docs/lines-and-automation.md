@@ -27,9 +27,8 @@ example from [Concepts](concepts.md#knowledge-as-claims).
 
 A Procedure never reads the clock. Time enters only through Triggers, so
 "every morning" is a cron Trigger, and the same run on the same inputs gives
-the same result. Procedures are written once, in Python with the SDK (see the
-[Procedure source reference](procedure-source.md)), or come ready-made in a
-kit.
+the same result. Procedures are written once, as a typed `ProcedureSpec`
+(or with the SDK's `Sequence` builder over it), or come ready-made in a kit.
 
 ## A worked example: discontinued parts
 
@@ -53,52 +52,53 @@ graduates.
 
 ### Write the Procedure
 
-A Procedure is written once, with the SDK's typed steps, and submitted like
-any definition. This one reads the file, shapes each line into a proposal
-item (`Item()` is the current line), and ends in a settle step:
+A Procedure is written once, in the one typed authoring form (a
+`ProcedureSpec`), and submitted like any definition. The SDK's `Sequence` is a
+thin builder over that spec: each step returns a handle, and `handle["field"]`
+is a typed reference to one of its fields. This one reads the file, extracts
+its records, and ends in a settle step with one item per record
+(`item(...)` is the current record):
 
 ~~~python
-item = ProcedureKeyedClaimProposalItem(
-    statement=ProcedureClaimStatement(
-        subject=SubjectKeyReference(subject_kind="catalog.part", key=Item()),
-        predicate="catalog.part.discontinued",
-        object=LiteralClaimObject(value=True),
-        role="observation",
-    ),
-    rationale="Listed in Acme's discontinued-parts file.",
-)
+from cruxible_client.authoring.procedures import Sequence, gt, halt, item
 
 procedure = Sequence(
-    [
-        Source("list", capture_contract="catalog.supplier-file-v1", next="shape",
-               request=WorkspaceFileSourceRequestV2(
-                   logical_source="acme.discontinued", relative_path="$input.path",
-                   coordinate_type="http-response-v1", coordinate={"revision": "working"},
-                   selector_type="whole-response-v1", selector={"whole": True})),
-        Transform("shape", transform_kind="shape_items", contract_in=SHAPE_IN,
-                  contract_out=SHAPED, next="summary",
-                  spec=TransformShapeItemsSpec(items="$steps.list.content.lines",
-                                               fields=item.model_dump(mode="json"))),
-        Project("summary", contract_out=SUMMARY, next="settle",
-                fields={"listed": "$steps.shape.output_count"}),
-        SettleChangeSet("settle", candidate_templates={"items": "$steps.shape.items"},
-                        result="$steps.summary"),
-    ],
-    name="catalog.acme-discontinued",
-    contract_in=PATH, contract_out=SUMMARY, returns="summary",
-    acquisition_policy="catalog.acquisition",
-    budget=..., hard_caps=...,          # one minute and one read per run
-).bind(list=cx.provider_interface("workspace.file", provider="cruxible-builtin"))
+    "catalog.acme-discontinued",
+    input={"path": "string"},
+    output={"listed": "int"},
+    # The slot's signature; a Line binds it to the built-in workspace.file read.
+    slots={"read": {"in": "workspace.file.request@1", "out": "workspace.file.result@1",
+                    "effect": "external_read"}},
+)
+listing = procedure.call(
+    "listing", slot="read", captures={"capture": "catalog.supplier-file-v1"},
+    input={"logical_source": "acme.discontinued", "relative_path": procedure.input["path"]},
+)
+parts = procedure.extract(
+    "parts", capture=listing["capture"], records="/*", row="catalog.part-line@1",
+    key={"part": {"at": "part"}}, fields={},
+)
+listed = procedure.transform("listed", kind="aggregate",
+                             spec={"input": parts["records"], "op": "count"})
+procedure.guard(gt(listed["result"], 0), else_=halt("empty"))
+summary = procedure.project("summary", fields={"listed": listed["result"]})
+procedure.settle(
+    ({"tag": "playbill-procedure-claim-proposal-item-v3",
+      "statement": {"tag": "playbill-procedure-claim-statement-v1",
+                    "subject": {"subject_kind": "catalog.part", "key": item("key", "part")},
+                    "predicate": "catalog.part.discontinued",
+                    "object": {"kind": "literal", "value": True}, "role": "observation"},
+      "rationale": "Listed in Acme's discontinued-parts file."},),
+    result=summary.whole,
+)
 
 cx.changes(rationale="The Acme discontinued-parts check.") \
-    .procedure(definition=procedure.build()).submit()
+    .procedure(definition=procedure).submit()
 ~~~
 
-The step classes and item builders come from
-`cruxible_client.authoring.procedures`; `PATH`, `SUMMARY`, `SHAPE_IN` and
-`SHAPED` are small input and output contracts, and `catalog.acquisition` is
-the acquisition policy that lets it read the file. The [Procedure source
-reference](procedure-source.md) covers every step.
+`procedure.spec()` is the exact spec every surface submits; `get` shows an
+accepted Procedure in the same form, each typed reference rendered as its
+`$...` text for review.
 
 ### Write the Line, its Trigger and its mandate
 
@@ -131,14 +131,7 @@ go in through authoring as one change set, saved here as `automation.json`:
       "grants": "propose",
       "namespace": ["claims"],
       "valid_from": "2026-10-21T00:00:00Z",
-      "expires_at": "2027-01-19T00:00:00Z",
-      "resource_ceiling": {
-        "max_wall_clock": {"microseconds": 60000000},
-        "max_provider_calls": 1,
-        "max_capture_bytes": 1000000,
-        "max_items": 1000,
-        "max_repeat_attempts": 1
-      }
+      "expires_at": "2027-01-19T00:00:00Z"
     }
   ]
 }
@@ -310,13 +303,6 @@ category:
         "binding_parameter": "part_id",
         "required_fields": ["category"],
         "fallback": "propose"
-      },
-      "resource_ceiling": {
-        "max_wall_clock": {"microseconds": 60000000},
-        "max_provider_calls": 1,
-        "max_capture_bytes": 1000000,
-        "max_items": 1000,
-        "max_repeat_attempts": 1
       }
     },
     {
@@ -508,5 +494,5 @@ See [Kits](kits.md#automation-that-comes-with-a-kit).
 - [Evidence and admission](evidence-and-admission.md): why a Capture a run
   fetched counts where your own words don't.
 - The [CLI reference](cli-reference.md#line) for every `line`, `procedure`
-  and `inbox` option, and the [Procedure source
-  reference](procedure-source.md) for writing Procedures.
+  and `inbox` option, and the [Python SDK](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md)
+  for the `Sequence` builder over the typed `ProcedureSpec`.

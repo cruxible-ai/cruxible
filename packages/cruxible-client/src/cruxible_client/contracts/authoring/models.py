@@ -58,15 +58,15 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampAny,
 )
 from cruxible_client.contracts.doc_sections import SectionPath
+from cruxible_client.contracts.identity_normalizers import NO_NORMALIZER, KeyNormalizer
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_IDENTITY,
     ProcedureRuntimePolicy,
 )
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
-from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
+from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
-from cruxible_client.contracts.procedures.models import ProcedureHardCaps
+from cruxible_client.contracts.procedures.line_specs import LineBudgetsInput
 from cruxible_client.contracts.procedures.windows import (
     CaptureEventNameSelector,
     FixedWindow,
@@ -90,6 +90,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import ContractField, contract_identity, contract_path
 from cruxible_client.contracts.subject_kinds import (
     SubjectKeyPart,
+    SubjectKeyRule,
     SubjectKeyValue,
     key_value_problem,
 )
@@ -130,7 +131,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:a5ad54c6d2a04bf7218f56d9241996961521278c07089651776120ce1e55553e"
+    "sha256:cd4f4077a4d2884c7c2e6060353b974322031be3f5c0b9b49630c826b20a78ad"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -962,13 +963,12 @@ class MandateConditionAuthoring(_StrictAuthoringModel):
 class ProcedureMandateAuthoringPayload(_StrictAuthoringModel):
     """Decision-only grant input; lowering owns every exact digest it pins."""
 
-    tag: Literal["cruxible-procedure-mandate-authoring-payload-v2"] = (
-        "cruxible-procedure-mandate-authoring-payload-v2"
+    tag: Literal["cruxible-procedure-mandate-authoring-payload-v3"] = (
+        "cruxible-procedure-mandate-authoring-payload-v3"
     )
     name: str
     line_name: str
     grants: Literal["propose", "settle"]
-    resource_ceiling: ProcedureHardCaps
     namespace: tuple[str, ...]
     valid_from: datetime
     expires_at: datetime
@@ -999,8 +999,9 @@ class LineAuthoringPayload(_StrictAuthoringModel):
     by slot, or ``<invoke node path>.<slot>`` for an invoked child; a slot left
     out is fitted through the signature index (exactly one live operation must
     serve its signature). Lowering records the exact ``{build, operation}``.
-    ``acquisition`` replaces the Procedure's acquisition defaults per capture
-    output (``<alias>.<field>``). A budget left unset lowers to the Procedure's own hard caps.
+    ``acquisition`` declares the acquisition rule per capture output
+    (``<alias>.<field>``); one it leaves out runs under the stated core default.
+    A budget left unset lowers to the Procedure's own hard caps.
     ``parameters`` is the Procedure's input record, checked against its input
     Contract when the Line lowers. When the Line runs is not its own: Triggers
     aim at it. ``trigger_input`` binds the triggering Capture to one capture
@@ -1011,12 +1012,12 @@ class LineAuthoringPayload(_StrictAuthoringModel):
     name: str
     procedure_name: str
     bindings: ProcedureBindings = Field(default_factory=dict)
-    acquisition: dict[str, AcquisitionDefault] = Field(default_factory=dict)
+    acquisition: dict[str, LineAcquisitionRule] = Field(default_factory=dict)
     # Caps this Line below its Procedure's capability; omitted, it is that capability.
     max_authority: Literal["observe", "propose", "settle"] | None = None
     trigger_input: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
     parameters: object = Field(default_factory=dict)
-    budgets: dict[str, int] | None = None
+    budgets: LineBudgetsInput | None = None
     epsilon: object = Field(default_factory=lambda: {"$decimal": "0.1"})
     occurrence_epoch: int = Field(default=1, ge=1)
     retire: bool = False
@@ -1112,18 +1113,25 @@ class SubjectKindAuthoringPayload(_StrictAuthoringModel):
     """One SubjectKind decision: how core names Subjects of one kind.
 
     Exactly one of ``keys`` (the key ClaimTypes by predicate, in key order, with
-    optional ``uniqueness``, default ``unique``) or ``minted``. Lowering writes
+    optional ``uniqueness``, default ``unique``) or ``minted``. ``normalizers``
+    names, per key part (by predicate or its last name under the kind), the
+    identity normalizer its value takes, pinned by version; a key part it does
+    not name takes ``none@1``, written out in the artifact. Lowering writes
     ``subject-kinds/<name>.json`` as the successor of the accepted one when there
-    is one; changing the keys or uniqueness is that governed successor, and no
-    existing Subject's id moves.
+    is one; changing the keys, a normalizer or uniqueness is that governed
+    successor (a changed normalizer re-keys: the same change re-authors the key
+    values it moves), and no existing Subject's id moves.
     """
 
-    tag: Literal["cruxible-subject-kind-authoring-payload-v1"] = (
-        "cruxible-subject-kind-authoring-payload-v1"
+    tag: Literal["cruxible-subject-kind-authoring-payload-v2"] = (
+        "cruxible-subject-kind-authoring-payload-v2"
     )
     name: str
     description: str | None = Field(default=None, exclude_if=lambda value: value is None)
     keys: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    normalizers: dict[str, KeyNormalizer] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
     uniqueness: Literal["unique", "hint"] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -1143,7 +1151,39 @@ class SubjectKindAuthoringPayload(_StrictAuthoringModel):
             raise ValueError("a SubjectKind names its keys or is minted: exactly one of them")
         if self.minted and self.uniqueness is not None:
             raise ValueError("only a keyed SubjectKind states uniqueness (unique or hint)")
+        if self.minted and self.normalizers:
+            raise ValueError("only a keyed SubjectKind names key normalizers")
+        named: set[str] = set()
+        for given in self.normalizers:
+            predicate = self.key_predicate(given)
+            if predicate is None:
+                raise ValueError(
+                    f"normalizer {given!r} names no key of {self.name}; its keys are "
+                    + ", ".join(self.keys)
+                )
+            if predicate in named:
+                raise ValueError(f"key {predicate!r} is given two normalizers")
+            named.add(predicate)
         return self
+
+    def key_predicate(self, name: str) -> str | None:
+        """The key predicate ``name`` spells: the predicate, or its last name under the kind."""
+
+        for predicate in self.keys:
+            if name == predicate or name == predicate.removeprefix(self.name + "."):
+                return predicate
+        return None
+
+    def key_rules(self) -> tuple[SubjectKeyRule, ...]:
+        """Each key part with its normalizer, in key order (unnamed parts take ``none@1``)."""
+
+        by_predicate = {self.key_predicate(given): rule for given, rule in self.normalizers.items()}
+        return tuple(
+            SubjectKeyRule(
+                claim_type=predicate, normalizer=by_predicate.get(predicate, NO_NORMALIZER)
+            )
+            for predicate in self.keys
+        )
 
 
 class ContractAuthoringPayload(_StrictAuthoringModel):
@@ -1171,20 +1211,35 @@ class ContractAuthoringPayload(_StrictAuthoringModel):
 
 
 class ProcedureAuthoringPayload(_StrictAuthoringModel):
-    """A Procedure input with its acquisition defaults per capture output.
+    """A lowered Procedure: its stored graph and the boundary Contracts core co-proposes.
 
-    A Line's ``acquisition`` replaces a default for any alias it names; the run
-    admission records the resolved rules' digest for replay.
+    ``generated`` holds the inline fields of each boundary (``input``,
+    ``output``, ``params``) the spec declared inline; lowering co-proposes the
+    governed Contract ``<procedure>.<role>@N`` for each, versioned with the
+    Procedure (a successor reuses version N when its fields are unchanged), and
+    points the definition at it. A boundary the spec names (``name@N``) is not
+    here. Acquisition rules are not the Procedure's: its Line declares them.
     """
 
-    tag: Literal["cruxible-procedure-authoring-payload-v3"] = (
-        "cruxible-procedure-authoring-payload-v3"
+    tag: Literal["cruxible-procedure-authoring-payload-v5"] = (
+        "cruxible-procedure-authoring-payload-v5"
     )
     definition: dict[str, object]
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
-    owned_contracts: tuple[ProcedureOwnedContract, ...]
-    acquisition_defaults: dict[str, AcquisitionDefault] = Field(default_factory=dict)
+    generated: dict[Literal["input", "output", "params"], dict[str, ContractField]] = Field(
+        default_factory=dict
+    )
     retire: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _retired(cls, value: object) -> object:
+        if isinstance(value, dict) and "owned_contracts" in value:
+            raise ValueError(
+                "procedure_owned_contracts_retired: a Procedure carries no Contracts; its "
+                "boundaries are governed Contracts lowering co-proposes (generated)"
+            )
+        return value
 
     @field_validator("definition", mode="before")
     @classmethod

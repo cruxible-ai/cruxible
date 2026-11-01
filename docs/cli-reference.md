@@ -59,7 +59,7 @@ stdin, so a heredoc or a pipe works and nothing lands on disk: `write -`,
 --grep-results -`, `coverage resolve --bindings -`, the Procedure and Line input, `--at`,
 `--resolution-contract` and `--trigger-event` files, access profiles and
 cursors, and `body store -`. One command reads stdin for one argument; a second
-`-` is refused. Real artifacts stay files: Procedure source, signed source
+`-` is refused. Real artifacts stay files: signed source
 bundles, kit and provider lock files, key directories, cited workspace files
 and block pages.
 
@@ -1839,6 +1839,33 @@ as `identity` per kind in `orient`) declares how Subjects of one kind are named:
 - **minted**: `{"minted": true}`; core mints `sub-<32 hex>` from the change and
   the member.
 
+**Identity normalizers.** Each key part also takes an identity normalizer, from
+a fixed core set and pinned by version, given as `normalizers` (by key
+predicate or its last name; a part not named takes `none@1`, written out in the
+artifact and shown on `get SubjectKind:<kind>`):
+
+| normalizer | what it does (version 1) |
+|---|---|
+| `{"normalizer": "none", "version": 1}` | the value as it is |
+| `{"normalizer": "lowercase", "version": 1}` | NFC, Unicode lowercase, NFC |
+| `{"normalizer": "pep503", "version": 1}` | a PEP 508 package name in PEP 503 form (`Django_REST` is `django-rest`); anything else refuses |
+| `{"normalizer": "purl-type", "version": 1, "identity": "package" \| "package_variant"}` | a package URL in canonical form, parsed by the purl-spec rules (a malformed percent triplet, qualifier key, type or encoded `/` refuses); a component is lowercased exactly when its purl type definition declares it case-insensitive (for example github, deb and composer namespace and name, the rpm vendor, the pypi version), pypi names take PEP 503 form, and every other component keeps its case (npm scopes and names are case-sensitive); `package` drops the qualifiers (`?arch=amd64` and `?arch=arm64` name one release), `package_variant` keeps them sorted |
+
+A key part's canonical value is its ClaimType's `canonical_form`, then its
+normalizer; its key Claim states that value, and two raw keys with one canonical
+value name the same Subject on every route (`kind/<text>`, writes, authoring,
+Procedure extracts). A value the normalizer cannot read (a malformed purl, a
+purl stating one qualifier twice) refuses `cruxible.subject.key_invalid`; a key
+Claim stating a non-canonical value refuses `cruxible.subject.key_not_canonical`.
+A normalizer other than `none` needs a string key ClaimType, and a lowercasing
+one cannot follow an `upper` canonical form. There is no configurable
+normalization. Changing a part's normalizer (or its version) is a SubjectKind
+successor that re-keys explicitly: the same change re-authors every live key
+value the new rule re-spells (`cruxible.subject_kind.rekey_unhandled` names the
+ones left), and under `unique` two Subjects the new rule gives one key refuse
+`cruxible.subject.key_conflict` (alias and retire all but one first). No
+Subject's id moves.
+
 Every new Subject's id is checked against how core assigns it, at admission,
 readmission and settlement. A keyed first holder's id must be the rendering of
 its key (disambiguated against the parent). A minted Subject, or a further
@@ -2215,8 +2242,8 @@ separate from freeform prose; sync does not render Markdown or HTML.
 ## procedure
 
 ~~~text
-cruxible procedure run NAME INPUT_FILE|- [--evaluation-time TS] [--at FILE|-]
-  [--resolution-contract FILE|-] [--trigger-event FILE|-] [--json]
+cruxible procedure run NAME INPUT_FILE|- [--parameters FILE|-] [--evaluation-time TS]
+  [--at FILE|-] [--resolution-contract FILE|-] [--trigger-event FILE|-] [--json]
 cruxible procedure measure NAME [--run-id RUN_ID] [--measurement NAME]...
   [--evaluation-time TS] [--at FILE] [--json]
 cruxible procedure dispose NAME RESOLUTION_ID --verdict upheld|overturned --reason TEXT [--json]
@@ -2437,9 +2464,12 @@ matched), its pending occurrences and its recent runs.
 
 A Line is authored like any other definition: a `line` input (alone or as a
 change-set member) names its Procedure and `parameters` -- the Procedure's
-input record, which lowering checks against the Procedure's input contract,
-refusing `cruxible.authoring.line_parameters_refused` with the expected
-fields. It may name an `acquisition_policy` to override the instance default. A Procedure with an `exhaust_tap` node
+parameter values, over its `parameter_defaults`, which lowering checks against
+the Procedure's params Contract, refusing
+`cruxible.authoring.line_parameters_refused` with the expected fields. A Line
+run's input is empty, so a Procedure a Line runs declares what a Line supplies
+as `params` and reads it as `$params.<name>`; `procedure run --parameters`
+supplies the same values to a direct run. It may name an `acquisition_policy` to override the instance default. A Procedure with an `exhaust_tap` node
 cannot be a Line's (`cruxible.authoring.line_exhaust_tap_unsupported`): no run
 path admits one. `authoring example line` prints a Line over the `authoring
 example procedure` Procedure, and `authoring example acquisition-policy` a
@@ -2680,15 +2710,15 @@ ProcedureMandate over its exact Procedure; without one each run refuses
 `line_mandate_required`, and `enable` refuses up front with
 `cruxible.line.mandate_required`, both naming `authoring example
 procedure-mandate`. An observe-only Line -- one whose Procedure's terminals, or
-whose `max_authority`, stop at observe -- needs no mandate. A mandate whose
-`resource_ceiling` exceeds the Procedure's hard caps is refused naming each
-widened cap with both values; `authoring example procedure-mandate` uses the
-`authoring example procedure` caps. Every `authoring example` template's own
-`budget.wall_clock` and `hard_caps.max_wall_clock` (`procedure`, `blueprint`,
-and the Procedures `procedure-mandate` and `line` carry forward) are 10
-minutes per run and 30 minutes overall: a wall-clock budget catches an
-obviously bad run, not compute management, so the example leaves a large
-safety factor rather than a tight one.
+whose `max_authority`, stop at observe -- needs no mandate. A mandate grants authority
+only: the Procedure declares `hard_caps`, and the Line owns the operating
+budget (`budgets`) within them -- a Line budget that exceeds a cap is refused
+(`cruxible.authoring.line_budget_exceeds_caps`) naming each widened cap with
+both values, and a Line that states none runs at the caps. A direct run's
+ephemeral Line spec carries the caps as its budget. The `authoring example
+procedure` template's `hard_caps.max_wall_clock` is 30 minutes: a wall-clock
+cap catches an obviously bad run, not compute management, so the example
+leaves a large safety factor rather than a tight one.
 
 A Line whose Procedure ends in a `propose_change_set` terminal produces a
 proposal. Its `candidate_templates` are a fixed list of templates, or

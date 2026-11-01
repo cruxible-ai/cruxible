@@ -392,7 +392,6 @@ _READ_ONLY_POSTS: dict[str, str] = {
     ),
     "/api/v1/{instance_id}/next": "lists the next work for the caller",
     "/api/v1/{instance_id}/predictions/query": "lists predictions",
-    "/api/v1/{instance_id}/procedures/source/preview": "previews Procedure source",
     "/api/v1/{instance_id}/procedures/{name}/readings": "reads measurement standing",
     "/api/v1/{instance_id}/projections/check": "checks projection blocks",
     "/api/v1/{instance_id}/projections/sync-backing": "reads a block's sync backing",

@@ -12,9 +12,7 @@ from typing import Any, Literal, NoReturn, TypeAlias, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
-from cruxible_client.contracts.accepted_attestations import attestation_path
 from cruxible_client.contracts.approval_policy import (
-    APPROVAL_POLICY_IDENTITY,
     APPROVAL_POLICY_PATH,
     approval_policy_digest,
     render_approval_policy,
@@ -33,8 +31,6 @@ from cruxible_client.contracts.authoring.models import (
     MAX_REPAIR_BYTES,
     ApprovalPolicyAuthoringPayload,
     AttestationAuthoringPayload,
-    AuthoringArtifactReference,
-    AuthoringCandidateReference,
     AuthoringChangeSetMember,
     AuthoringClaimStatement,
     AuthoringExactContentObject,
@@ -154,7 +150,6 @@ from cruxible_client.contracts.declared_blocks import (
     projection_window_intersecting,
     stamped_projection_windows,
 )
-from cruxible_client.contracts.documents import document_path
 from cruxible_client.contracts.errors import CruxibleError, FormatError
 from cruxible_client.contracts.procedure_mandates import (
     MANDATE_CHANGE_KIND_ORDER,
@@ -167,25 +162,21 @@ from cruxible_client.contracts.procedure_mandates import (
     render_procedure_mandate,
 )
 from cruxible_client.contracts.procedure_runtime_policy import (
-    PROCEDURE_RUNTIME_POLICY_IDENTITY,
     PROCEDURE_RUNTIME_POLICY_PATH,
     procedure_runtime_policy_digest,
     render_procedure_runtime_policy,
 )
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedure,
     ProcedureArtifact,
-    ProcedureOwnedContract,
-    acquisition_keys,
     parse_procedure,
     procedure_artifact_digest,
-    procedure_owned_contract_digest,
     procedure_path,
     render_procedure,
 )
 from cruxible_client.contracts.procedures.contracts import (
-    OwnedProcedureContractValidator,
+    AcceptedProcedureContractValidator,
     ProcedureContractValidationError,
+    validate_line_parameters,
 )
 from cruxible_client.contracts.procedures.graph import (
     ProcedureGraphFormatError,
@@ -194,6 +185,7 @@ from cruxible_client.contracts.procedures.graph import (
 from cruxible_client.contracts.procedures.line_specs import (
     RUNG_AUTHORITY,
     LineSpec,
+    caps_line_budgets,
     line_spec_digest,
     line_spec_path,
     parse_line_spec,
@@ -202,6 +194,7 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     ProcedureDefinition,
+    ProcedureHardCaps,
 )
 from cruxible_client.contracts.procedures.windows import (
     CaptureEventNameSelector,
@@ -220,14 +213,13 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_path,
     render_query_definition,
 )
-from cruxible_client.contracts.resolution_contracts import resolution_contract_path
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_client.contracts.shapes import (
     ContractRef,
     contract_digest,
     contract_path,
-    contract_path_for_identity,
     parse_contract,
+    tree_contract_resolver,
     type_refs,
 )
 from cruxible_client.contracts.source_references import (
@@ -287,12 +279,8 @@ from cruxible_core.claims.claim_type_migrations import (
     claim_type_migration_inventory,
     resolve_claim_type_succession,
 )
-from cruxible_core.compiler.projection_artifacts import (
-    ParsedProjectionTree,
-    parse_projection_tree,
-)
+from cruxible_core.claims.enum_resolution import tree_enum_resolver
 from cruxible_core.derived.derived_state import CandidateTree, SnapshotTree, fork_tree
-from cruxible_core.exhaust.promotions import exhaust_promotion_path
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_aliases import (
     candidate_creation_collisions,
@@ -577,6 +565,26 @@ def _read_existing_capture(store: CaptureObjectStoreProtocol, digest: str) -> Ca
             repair_kind="replace_capture",
             repair_description="Use a Capture digest returned by a typed Claim/evidence read.",
         )
+
+
+def _line_budgets_within_caps(budgets: Any, caps: ProcedureHardCaps) -> Any:
+    """A Line's operating budget, each unstated required limit the cap, within the caps.
+
+    The Line owns the budget; the Procedure only declares caps.
+    """
+
+    filled = budgets.filled(caps)
+    widened = filled.widened(caps)
+    if widened:
+        _refuse(
+            "cruxible.authoring.line_budget_exceeds_caps",
+            "budgets",
+            "A Line's operating budget may narrow but never widen its Procedure's hard "
+            f"caps; it widens {', '.join(widened)}.",
+            repair_kind="replace_budgets",
+            repair_description="Set each budget to at most the Procedure's hard cap.",
+        )
+    return filled
 
 
 def _refuse_unproduced_capture(gap: CaptureProductionUnproven) -> NoReturn:
@@ -2323,239 +2331,6 @@ def _validation_error_lines(exc: ValidationError, *, root: str) -> tuple[str, ..
     return tuple(lines)
 
 
-def _resolve_authoring_references(
-    value: object,
-    *,
-    accepted: dict[str, tuple[str, str]],
-    candidates: dict[str, tuple[str, str]] | None = None,
-    candidate_identities: frozenset[str] = frozenset(),
-    owned_contracts: dict[str, ProcedureOwnedContract] | None = None,
-    location: str = "definition",
-) -> object:
-    if isinstance(value, dict):
-        if value.get("tag") == "playbill-authoring-artifact-reference-v1":
-            try:
-                reference = AuthoringArtifactReference.model_validate(value)
-            except ValidationError as exc:
-                _refuse(
-                    "cruxible.authoring.artifact_reference_invalid",
-                    location,
-                    "The procedure authoring reference is invalid: "
-                    + " | ".join(_validation_error_lines(exc, root=location)),
-                    repair_kind="replace_reference",
-                    repair_description="Use a valid accepted-at-intent-base artifact reference.",
-                )
-            target_identity = reference.target.qualified
-            resolved = accepted.get(target_identity)
-            if resolved is None:
-                _refuse(
-                    "cruxible.authoring.artifact_reference_unresolved",
-                    location,
-                    "The referenced artifact is not uniquely accepted at the intent base.",
-                    repair_kind="replace_with_pin_slot",
-                    repair_description="Use an explicit Procedure pin-slot reference.",
-                )
-            return ArtifactNameRef(target=reference.target).model_dump(mode="json")
-        if value.get("tag") == "playbill-authoring-candidate-reference-v1":
-            try:
-                candidate_reference = AuthoringCandidateReference.model_validate(value)
-            except ValidationError as exc:
-                _refuse(
-                    "cruxible.authoring.candidate_reference_invalid",
-                    location,
-                    "The change-set candidate reference is invalid: "
-                    + " | ".join(_validation_error_lines(exc, root=location)),
-                    repair_kind="replace_reference",
-                    repair_description="Use a valid candidate member reference.",
-                )
-            if candidate_reference.target.kind == "Procedure":
-                _refuse(
-                    "cruxible.authoring.candidate_procedure_reference_forbidden",
-                    location,
-                    "A Procedure cannot candidate-reference another Procedure in change-set v1.",
-                    repair_kind="replace_reference",
-                    repair_description="Reference a non-Procedure member of this change set.",
-                )
-            if candidate_reference.target.qualified not in candidate_identities:
-                _refuse(
-                    "cruxible.authoring.candidate_reference_outside_change_set",
-                    location,
-                    "The candidate reference does not name a member of this change set.",
-                    repair_kind="add_or_replace_member",
-                    repair_description="Add the referenced artifact or use an accepted reference.",
-                )
-            if candidate_reference.target.qualified not in (candidates or {}):
-                # pragma: no cover - staged-tree invariant
-                raise ValueError("candidate member was not present in its staged tree")
-            return ArtifactNameRef(target=candidate_reference.target).model_dump(mode="json")
-        if value.get("kind") == "carried_contract" and set(value) == {
-            "kind",
-            "name",
-            "role",
-        }:
-            name = value["name"]
-            role = value["role"]
-            contract = None if not isinstance(name, str) else (owned_contracts or {}).get(name)
-            if contract is None or not isinstance(role, str):
-                _refuse(
-                    "cruxible.authoring.carried_contract_unresolved",
-                    location,
-                    "The carried Contract reference has no matching owned declaration.",
-                    repair_kind="replace_reference",
-                    repair_description="Declare the Contract once and reference its exact name.",
-                )
-            return ArtifactNameRef(target=contract.identity).model_dump(mode="json")
-        if set(value) == {"role", "target", "artifact_digest"}:
-            _refuse(
-                "cruxible.authoring.caller_artifact_digest_forbidden",
-                location,
-                "Procedure authoring cannot supply an exact artifact digest.",
-                repair_kind="replace_reference",
-                repair_description=(
-                    "Use an accepted-at-intent-base authoring reference or an explicit pin slot."
-                ),
-            )
-        return {
-            key: _resolve_authoring_references(
-                member,
-                accepted=accepted,
-                candidates=candidates,
-                candidate_identities=candidate_identities,
-                owned_contracts=owned_contracts,
-                location=f"{location}.{key}",
-            )
-            for key, member in value.items()
-        }
-    if isinstance(value, list):
-        return [
-            _resolve_authoring_references(
-                member,
-                accepted=accepted,
-                candidates=candidates,
-                candidate_identities=candidate_identities,
-                owned_contracts=owned_contracts,
-                location=f"{location}[{index}]",
-            )
-            for index, member in enumerate(value)
-        ]
-    return value
-
-
-def _reference_identities(value: object) -> set[ArtifactIdentity]:
-    """Collect only this graph's authoring references; resolution owns refusals."""
-    identities: set[ArtifactIdentity] = set()
-    if isinstance(value, dict):
-        if value.get("tag") in (
-            "playbill-authoring-artifact-reference-v1",
-            "playbill-authoring-candidate-reference-v1",
-        ):
-            try:
-                identities.add(ArtifactIdentity.model_validate(value.get("target")))
-            except ValidationError:
-                # Preserve the resolver's field-specific invalid-reference diagnostic.
-                pass
-        else:
-            for member in value.values():
-                identities.update(_reference_identities(member))
-    elif isinstance(value, list):
-        for member in value:
-            identities.update(_reference_identities(member))
-    return identities
-
-
-def _reference_path(identity: ArtifactIdentity) -> str | None:
-    """Every projected identity has one path, including exact Provider builds.
-
-    Kind-specific path validators reject identities the generic wire grammar
-    permits but no accepted artifact can own. Unknown kinds likewise remain
-    unresolved. Canonical identity/path validation prevents a second placement
-    of the same identity; no population index or sibling enumeration is needed.
-    """
-    singletons = {
-        APPROVAL_POLICY_IDENTITY: APPROVAL_POLICY_PATH,
-        PROCEDURE_RUNTIME_POLICY_IDENTITY: PROCEDURE_RUNTIME_POLICY_PATH,
-    }
-    if identity.qualified in singletons:
-        return singletons[identity.qualified]
-    paths: dict[str, Callable[[str], str]] = {
-        "CaptureContract": capture_contract_path,
-        "Claim": claim_path,
-        "Contract": contract_path_for_identity,
-        "ClaimAttestation": attestation_path,
-        "ClaimType": claim_type_path,
-        "document": document_path,
-        "ExhaustPromotion": exhaust_promotion_path,
-        "Line": line_spec_path,
-        "Procedure": procedure_path,
-        "ProcedureMandate": procedure_mandate_path,
-        "Provider": provider_path,
-        "QueryDefinition": query_definition_path,
-        "ResolutionContract": resolution_contract_path,
-        "SubjectKind": subject_kind_path,
-        "Trigger": trigger_path,
-    }
-    try:
-        if identity.kind == "Subject":
-            kind, subject_id = identity.name.split("/", 1)
-            return subject_path(kind, subject_id)
-        path_of = paths.get(identity.kind)
-        return None if path_of is None else path_of(identity.name)
-    except (CruxibleError, ValueError):
-        return None
-
-
-def _reference_blobs(
-    tree: Mapping[str, bytes],
-    identities: Iterable[ArtifactIdentity],
-    *,
-    base: AcceptedProjectionCoordinate,
-) -> Mapping[str, bytes]:
-    """Read exact paths, with work bounded by the Procedure's reference set."""
-    selected: dict[str, bytes] = {}
-    for identity in sorted(identities, key=lambda item: item.qualified.encode("utf-8")):
-        path = _reference_path(identity)
-        if path is None:
-            continue
-        content = tree.get(path)
-        if content is not None:
-            selected[path] = content
-    return selected
-
-
-def _parse_reference_tree(
-    instance: PlaybillInstance,
-    tree: Mapping[str, bytes],
-    *,
-    base: AcceptedProjectionCoordinate,
-) -> ParsedProjectionTree:
-    """Parse the selected blobs a Procedure's references resolve against.
-
-    The body-metadata resolver is not optional here. A Document is registered
-    with its body's digest and nothing else, so a referenced Document still
-    asks the managed CAS for its metadata. Unrelated Documents are never read.
-    """
-
-    try:
-        return parse_projection_tree(
-            tree,
-            by_name=True,
-            bodies=instance.body_store(),
-        )
-    except CruxibleError as exc:
-        # An accepted tree this instance cannot read is a fault of the
-        # instance, not of the payload -- but the author still asked a question
-        # and is owed a typed answer with a repair rather than a bare 500.
-        _refuse(
-            "cruxible.authoring.lowering_invalid",
-            "definition",
-            f"The accepted artifacts this Procedure resolves against cannot be read: {exc}",
-            repair_kind="restore_accepted_projection",
-            repair_description=(
-                "Restore the instance's body store so the accepted tree parses, then compile again."
-            ),
-        )
-
-
 def _same_revision_content(candidate: BaseModel, previous: BaseModel) -> bool:
     """Compare authored content before introducing a successor link.
 
@@ -2587,8 +2362,6 @@ def _lower_procedure(
     intent: AuthoringIntent,
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
-    accepted_reference_tree: Mapping[str, bytes] | None = None,
-    candidate_identities: frozenset[str] = frozenset(),
     candidate_paths: tuple[str, ...] = (),
 ) -> LoweredAuthoring:
     payload = intent.payload
@@ -2608,225 +2381,56 @@ def _lower_procedure(
             return _procedure_lowered(
                 instance, retired, retained_predecessor, path=target, base=base, base_tree=base_tree
             )
-    if "procedure_spec" in payload.definition:
-        from cruxible_client.contracts.procedures.authored import ProcedureSpec, ProcedureSpecError
-        from cruxible_core.authoring.procedure_spec import resolve_procedure_spec
-
-        try:
-            spec = ProcedureSpec.model_validate(payload.definition["procedure_spec"])
-            retiring = payload.retire
-            payload = resolve_procedure_spec(
-                instance,
-                base,
-                base_tree,
-                spec,
-                candidate_paths,
-            )
-            payload = payload.model_copy(update={"retire": retiring})
-        except ProcedureSpecError as exc:
-            _refuse(
-                exc.code,
-                exc.field_path,
-                exc.message,
-                repair_kind="replace_definition",
-                repair_description=exc.repair,
-            )
-        except ValueError as exc:
-            _refuse(
-                "cruxible.authoring.procedure_definition_invalid",
-                "$.steps",
-                str(exc),
-                repair_kind="replace_definition",
-                repair_description="Repair the authored Procedure.",
-            )
-    if not payload.retire:
-        _refuse_unserved_procedure(payload.definition)
-    if payload.definition.get("graph_format") == 7:
-        return _lower_named_procedure(instance, payload, base=base, base_tree=base_tree)
-    if "graph_format" in payload.definition:
-        # The authored spelling carries no graph coordinate: lowering states the
-        # one current format (7). Any other stated format is a removed one.
+    if "procedure_spec" not in payload.definition:
+        retired_form = (
+            "the retired @procedure Python source (source_request)"
+            if "source_request" in payload.definition
+            else "a graph definition"
+        )
         _refuse(
-            "cruxible.authoring.procedure_definition_invalid",
-            "definition.graph_format",
-            f"Procedure graph format {payload.definition['graph_format']!r} is not "
-            "supported; the one Procedure graph format is 7.",
+            "cruxible.authoring.procedure_authoring_form_retired",
+            "definition",
+            f"A Procedure is authored as one typed ProcedureSpec, not as {retired_form}.",
             repair_kind="replace_definition",
             repair_description=(
-                "Remove graph_format from the authored Procedure; lowering states it."
+                "Submit the Procedure as a ProcedureSpec ({procedure, input, steps, ...})."
             ),
         )
-    source_authoring = "source_request" in payload.definition
-    accepted: dict[str, tuple[str, str]] = {}
-    candidate_artifacts: dict[str, tuple[str, str]] = {}
-    if source_authoring:
-        from cruxible_client.contracts.procedures.source_compiler import SourceCompileError
-        from cruxible_client.contracts.procedures.source_requests import ProcedureSourceRequest
-        from cruxible_core.authoring.procedure_source import resolve_indexed_source
-        from cruxible_core.indexes.evaluated_state import EvaluationRows
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec, ProcedureSpecError
+    from cruxible_core.authoring.procedure_spec import resolve_procedure_spec
 
-        try:
-            if set(payload.definition) != {"name", "source_request"}:
-                raise ValueError("Source authoring accepts a name and source_request only")
-            source_request = ProcedureSourceRequest.model_validate(
-                payload.definition["source_request"]
-            )
-            if source_request.name != payload.definition["name"]:
-                raise ValueError("The Procedure name must match its source request")
-            with instance.bind_accepted_projection(base) as projection:
-                rows = EvaluationRows(projection)
-                # Only already-staged non-Procedure siblings enter this selection.
-                # Child Procedures continue to resolve at the accepted base.
-                edits = {path: base_tree[path] for path in candidate_paths if path in base_tree}
-                selected = rows.overlay(edits) if edits else rows
-                # A bare provider name in a selection binds its most recently
-                # registered live build at the base; the definition pins it exactly.
-                compiled = resolve_indexed_source(source_request, selected)
-            payload = type(payload)(
-                definition=compiled.definition.model_dump(mode="json", by_alias=True),
-                activation_policy=payload.activation_policy,
-                owned_contracts=tuple(
-                    ProcedureOwnedContract(
-                        identity=ArtifactIdentity(kind="Contract", name=contract.name),
-                        schema=contract.schema_,
-                    )
-                    for contract in compiled.contracts
-                ),
-                acquisition_defaults=payload.acquisition_defaults,
-                retire=payload.retire,
-            )
-            _refuse_unserved_procedure(payload.definition)
-            return _lower_named_procedure(instance, payload, base=base, base_tree=base_tree)
-        except (SourceCompileError, ValueError) as exc:
-            diagnostic = exc.diagnostic if isinstance(exc, SourceCompileError) else None
-            _refuse(
-                diagnostic.code if diagnostic else "cruxible.authoring.procedure_source_invalid",
-                "definition.source_request",
-                (
-                    f"{diagnostic.span.filename}:{diagnostic.span.line}:"
-                    f"{diagnostic.span.column + 1}: {diagnostic.message}"
-                    if diagnostic
-                    else str(exc)
-                ),
-                repair_kind="replace_definition",
-                repair_description="Repair the indicated source and prepare again.",
-            )
-    else:
-        references = _reference_identities(payload.definition)
-        parsed = _parse_reference_tree(
+    try:
+        spec = ProcedureSpec.model_validate(payload.definition["procedure_spec"])
+        retiring = payload.retire
+        payload = resolve_procedure_spec(
             instance,
-            _reference_blobs(
-                base_tree if accepted_reference_tree is None else accepted_reference_tree,
-                references,
-                base=base,
-            ),
-            base=base,
+            base,
+            base_tree,
+            spec,
+            candidate_paths,
         )
-        duplicates: set[str] = set()
-        for envelope in parsed.envelopes:
-            if envelope.identity in accepted:
-                duplicates.add(envelope.identity)
-            accepted[envelope.identity] = (envelope.path, envelope.artifact_digest)
-        for duplicate_identity in duplicates:
-            accepted.pop(duplicate_identity, None)
-        if candidate_identities:
-            candidate_parsed = _parse_reference_tree(
-                instance,
-                _reference_blobs(
-                    base_tree,
-                    (item for item in references if item.qualified in candidate_identities),
-                    base=base,
-                ),
-                base=base,
-            )
-            for envelope in candidate_parsed.envelopes:
-                if envelope.identity in candidate_identities:
-                    candidate_artifacts[envelope.identity] = (
-                        envelope.path,
-                        envelope.artifact_digest,
-                    )
-    resolved_definition = _resolve_authoring_references(
-        payload.definition,
-        accepted=accepted,
-        candidates=candidate_artifacts,
-        candidate_identities=candidate_identities,
-        owned_contracts={contract.identity.name: contract for contract in payload.owned_contracts},
-    )
-    assert isinstance(resolved_definition, dict)
-    resolved_definition["graph_format"] = 7
-    referenced_contracts = {
-        reference["target"]["name"]
-        for reference in _named_references(resolved_definition)
-        if reference["target"]["kind"] == "Contract"
-    }
-    unreferenced_contracts = tuple(
-        sorted(
-            (
-                contract.identity.qualified
-                for contract in payload.owned_contracts
-                if contract.identity.name not in referenced_contracts
-            ),
-            key=lambda item: item.encode("utf-8"),
+        payload = payload.model_copy(update={"retire": retiring})
+    except ProcedureSpecError as exc:
+        _refuse(
+            exc.code,
+            exc.field_path,
+            exc.message,
+            repair_kind="replace_definition",
+            repair_description=exc.repair,
         )
-    )
-    if unreferenced_contracts:
+    except ValueError as exc:
         _refuse(
             "cruxible.authoring.procedure_definition_invalid",
-            "owned_contracts",
-            "The Procedure declares owned Contracts that its graph does not reference: "
-            + ", ".join(unreferenced_contracts),
-            repair_kind="replace_contracts_or_definition",
-            repair_description=(
-                "Remove each unused owned Contract or reference it from the Procedure graph."
-            ),
+            "$.steps",
+            " | ".join(_validation_error_lines(exc, root="procedure_spec"))
+            if isinstance(exc, ValidationError)
+            else str(exc),
+            repair_kind="replace_definition",
+            repair_description="Repair the authored Procedure.",
         )
-    budget = resolved_definition.get("budget")
-    if isinstance(budget, dict) and budget.get("max_items") is not None:
-
-        def carries_list(contract: ProcedureOwnedContract) -> bool:
-            pending = list(contract.contract_schema.fields.values())
-            while pending:
-                field = pending.pop()
-                if field.type == "list":
-                    return True
-                if field.item_fields is not None:
-                    pending.extend(field.item_fields.values())
-            return False
-
-        if not any(carries_list(contract) for contract in payload.owned_contracts):
-            _refuse(
-                "cruxible.authoring.procedure_definition_invalid",
-                "definition.budget.max_items",
-                "The lowered Procedure definition declares max_items but none of "
-                "its referenced Contracts declares a list field.",
-                repair_kind="replace_definition",
-                repair_description=(
-                    "Declare a list field on a referenced Contract or remove budget.max_items."
-                ),
-            )
-    return _lower_named_procedure(
-        instance,
-        payload.model_copy(update={"definition": resolved_definition}),
-        base=base,
-        base_tree=base_tree,
-    )
-
-
-def _named_references(value: object) -> list[dict[str, Any]]:
-    """Every ``{"target": ...}`` reference a resolved authoring graph names."""
-
-    found: list[dict[str, Any]] = []
-    if isinstance(value, dict):
-        if set(value) == {"target"} and isinstance(value["target"], dict):
-            found.append(value)
-        else:
-            for key, member in value.items():
-                if key != "source":
-                    found.extend(_named_references(member))
-    elif isinstance(value, list):
-        for member in value:
-            found.extend(_named_references(member))
-    return found
+    if not payload.retire:
+        _refuse_unserved_procedure(payload.definition)
+    return _lower_named_procedure(instance, payload, base=base, base_tree=base_tree)
 
 
 def _lower_named_procedure(
@@ -2836,10 +2440,16 @@ def _lower_named_procedure(
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
 ) -> LoweredAuthoring:
-    """Validate the authored named tree into its one governed envelope."""
+    """Validate the authored named tree into its one governed envelope.
+
+    Each boundary the spec declared inline becomes the governed Contract
+    ``<procedure>.<role>@N``, co-proposed in the same tree: a successor whose
+    fields are unchanged keeps version N; changed fields are version N+1.
+    """
+    generated_files, definition_data = _co_propose_boundary_contracts(payload, base_tree=base_tree)
     try:
         definition = ProcedureDefinition.model_validate(
-            _pin_slot_contracts(payload.definition, base_tree)
+            _pin_slot_contracts(definition_data, base_tree)
         )
     except (ValueError, KeyError, ProcedureGraphFormatError) as exc:
         message = (
@@ -2862,9 +2472,7 @@ def _lower_named_procedure(
                 identity=ArtifactIdentity(kind="Procedure", name=definition.name),
                 definition=definition,
                 definition_digest=compute_procedure_definition_digest(definition).tagged,
-                owned_contracts=payload.owned_contracts,
                 activation_policy=payload.activation_policy,
-                acquisition_defaults=payload.acquisition_defaults,
                 lifecycle=ArtifactLifecycle(
                     state="retired" if payload.retire else "live",
                     predecessor_digest=None
@@ -2879,10 +2487,8 @@ def _lower_named_procedure(
             "procedure",
             "The lowered Procedure artifact is invalid: "
             + " | ".join(_validation_error_lines(exc, root="procedure")),
-            repair_kind="replace_definition_or_contracts",
-            repair_description=(
-                "Repair the Procedure definition or its owned Contract declarations."
-            ),
+            repair_kind="replace_definition",
+            repair_description="Repair the Procedure definition or its boundary fields.",
         )
     return _procedure_lowered(
         instance,
@@ -2891,7 +2497,64 @@ def _lower_named_procedure(
         path=path,
         base=base,
         base_tree=base_tree,
+        co_proposed=generated_files,
     )
+
+
+def _co_propose_boundary_contracts(
+    payload: ProcedureAuthoringPayload, *, base_tree: Mapping[str, bytes]
+) -> tuple[dict[str, bytes], dict[str, object]]:
+    """Each inline boundary's governed Contract and the definition that names it."""
+
+    from cruxible_client.contracts.procedures.authored import (
+        CONTRACT_ROLES,
+        generated_contract_name,
+    )
+    from cruxible_core.authoring.contract_lowering import (
+        ContractLoweringRefusal,
+        render_contract_member,
+    )
+
+    definition = dict(payload.definition)
+    files: dict[str, bytes] = {}
+    for role, fields in sorted(payload.generated.items()):
+        name = generated_contract_name(str(definition["name"]), role)
+        latest = 0
+        while contract_path(name, latest + 1) in base_tree:
+            latest += 1
+        version = latest + 1
+        try:
+            if latest:
+                # Unchanged fields keep the accepted version: it is the same shape.
+                try:
+                    reused = render_contract_member(
+                        ContractAuthoringPayload(name=name, version=latest, fields=fields),
+                        tree=base_tree,
+                    )
+                except ContractLoweringRefusal as exc:
+                    if exc.code != "cruxible.contract.immutable":
+                        raise
+                else:
+                    version = latest
+                    files[reused[0]] = reused[1]
+            if version != latest:
+                rendered = render_contract_member(
+                    ContractAuthoringPayload(name=name, version=version, fields=fields),
+                    tree=base_tree,
+                )
+                files[rendered[0]] = rendered[1]
+        except ContractLoweringRefusal as exc:
+            _refuse(
+                exc.code,
+                f"procedure_spec.{role}",
+                f"The Procedure's {role} Contract {name}@{version}: {exc.message}",
+                repair_kind="replace_definition",
+                repair_description=exc.repair,
+            )
+        definition[CONTRACT_ROLES[role]] = {
+            "target": {"kind": "Contract", "name": f"{name}/v{version}"}
+        }
+    return files, definition
 
 
 def _pin_slot_contracts(definition: Any, tree: Mapping[str, bytes]) -> Any:
@@ -2990,6 +2653,7 @@ def _procedure_lowered(
     path: str,
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
+    co_proposed: Mapping[str, bytes] | None = None,
 ) -> LoweredAuthoring:
     candidate_tree = fork_tree(base_tree)
     if predecessor is not None and _same_revision_content(procedure, predecessor):
@@ -2998,7 +2662,14 @@ def _procedure_lowered(
     else:
         procedure_bytes = render_procedure(procedure)
     candidate_tree[path] = procedure_bytes
-    changed = () if base_tree.get(path) == procedure_bytes else ((path, procedure_bytes),)
+    written = {**dict(co_proposed or {}), path: procedure_bytes}
+    for member_path, content in written.items():
+        candidate_tree[member_path] = content
+    changed = tuple(
+        (member_path, content)
+        for member_path, content in sorted(written.items())
+        if base_tree.get(member_path) != content
+    )
     return LoweredAuthoring(
         proposed_tree=candidate_tree,
         resolved_authoring={
@@ -3317,7 +2988,7 @@ def _render_line_member(
     """
 
     from cruxible_client.contracts.procedures.windows import CaptureEventNameSelector
-    from cruxible_core.providers.operation_index import line_slot_map
+    from cruxible_core.providers.operation_index import line_capture_output_map, line_slot_map
 
     procedure_target = procedure_path(payload.procedure_name)
     procedure_content = tree.get(procedure_target)
@@ -3335,8 +3006,25 @@ def _render_line_member(
         target=procedure.identity,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
-    _check_line_parameters(payload, procedure=procedure, procedure_path_value=procedure_target)
-    aliases = acquisition_keys(procedure.definition)
+    _check_line_parameters(
+        payload, procedure=procedure, procedure_path_value=procedure_target, tree=tree
+    )
+
+    def child(identity: ArtifactIdentity) -> Any:
+        target = procedure_path(identity.name)
+        content = tree.get(target)
+        return None if content is None else parse_procedure(content, path=target).definition
+
+    try:
+        aliases = line_capture_output_map(procedure.definition, child)
+    except ValueError as exc:
+        _refuse(
+            "cruxible.authoring.line_procedure_missing",
+            "procedure_name",
+            str(exc),
+            repair_kind="replace_procedure_name",
+            repair_description="Name a Procedure whose invoked children are accepted.",
+        )
     unknown = sorted(set(payload.acquisition) - aliases)
     if unknown:
         _refuse(
@@ -3345,14 +3033,10 @@ def _render_line_member(
             f"Line acquisition names no capture output of {payload.procedure_name!r}: {unknown}.",
             repair_kind="replace_acquisition",
             repair_description=(
-                f"Key acquisition rules by capture output <alias>.<field>: {sorted(aliases)}."
+                "Key acquisition rules by capture output <alias>.<field> (an invoked "
+                f"child's: <invoke node path>.<alias>.<field>): {sorted(aliases)}."
             ),
         )
-
-    def child(identity: ArtifactIdentity) -> Any:
-        target = procedure_path(identity.name)
-        content = tree.get(target)
-        return None if content is None else parse_procedure(content, path=target).definition
 
     try:
         slots = line_slot_map(procedure.definition, child)
@@ -3375,14 +3059,9 @@ def _render_line_member(
     bindings = {} if not slots else cast(Any, resolve_provider)(slots, dict(payload.bindings))
     caps = procedure.definition.hard_caps
     budgets = (
-        {
-            "max_capture_bytes": caps.max_capture_bytes,
-            "max_items": caps.max_items,
-            "max_provider_calls": caps.max_provider_calls,
-            "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
-        }
+        caps_line_budgets(caps)
         if payload.budgets is None
-        else dict(payload.budgets)
+        else _line_budgets_within_caps(payload.budgets, caps)
     )
     path = line_spec_path(payload.name)
     previous_content = tree.get(path)
@@ -3621,7 +3300,7 @@ def _render_subject_kind_member(
     rule: SubjectKindKeys | SubjectKindMinted = (
         SubjectKindMinted()
         if payload.minted
-        else SubjectKindKeys(keys=payload.keys, uniqueness=payload.uniqueness or "unique")
+        else SubjectKindKeys(parts=payload.key_rules(), uniqueness=payload.uniqueness or "unique")
     )
     declared = SubjectKind(
         identity=ArtifactIdentity(kind="SubjectKind", name=payload.name),
@@ -3663,18 +3342,14 @@ def _render_contract_member(
 
 
 def _contract_fields_summary(
-    procedure: ProcedureArtifact, contract: ArtifactPin | ArtifactNameRef
+    contract: ArtifactPin | ArtifactNameRef, tree: Mapping[str, bytes]
 ) -> dict[str, str]:
-    for owned in procedure.owned_contracts:
-        if owned.identity == contract.target and (
-            isinstance(contract, ArtifactNameRef)
-            or procedure_owned_contract_digest(owned).tagged == contract.artifact_digest
-        ):
-            return {
-                name: field.type + (" (optional)" if field.optional else "")
-                for name, field in sorted(owned.contract_schema.fields.items())
-            }
-    return {}
+    from cruxible_client.contracts.shapes import contract_ref_for_identity
+
+    found = tree_contract_resolver(tree)(contract_ref_for_identity(contract.target))
+    if found is None:
+        return {}
+    return {name: field.spelling for name, field in sorted(found.fields.items())}
 
 
 def _check_line_parameters(
@@ -3682,42 +3357,40 @@ def _check_line_parameters(
     *,
     procedure: ProcedureArtifact,
     procedure_path_value: str,
+    tree: Mapping[str, bytes],
 ) -> None:
-    """Refuse Line parameters the Procedure's input contract would refuse at run time.
+    """Refuse Line parameters the Procedure would refuse at run time.
 
-    Every Line run hands `parameters` to the Procedure as its input record, and
-    the executor validates that record against the Procedure's own input
-    Contract. The same validator runs here, so a mismatch refuses when the Line
-    is authored rather than on every later run.
+    Every Line run hands `parameters` (over the Procedure's defaults) to the
+    Procedure as its parameters, with an empty input; the executor checks both
+    against the Procedure's params and input Contracts. The same check runs
+    here, so a mismatch refuses when the Line is authored rather than on every
+    later run.
     """
 
-    contract = procedure.definition.contract_in
-    if not isinstance(contract, ArtifactPin | ArtifactNameRef):
-        return
-    accepted = AcceptedProcedure(
-        path=procedure_path_value,
-        procedure=procedure,
-        artifact_digest=procedure_artifact_digest(procedure).tagged,
-    )
+    definition = procedure.definition
     try:
-        OwnedProcedureContractValidator(accepted).validate_contract(
-            contract=contract,
-            payload=normalize_canonical(payload.parameters),
-            direction="input",
+        validate_line_parameters(
+            AcceptedProcedureContractValidator(
+                tree_contract_resolver(tree), tree_enum_resolver(tree)
+            ),
+            definition,
+            payload.parameters,
         )
     except ProcedureContractValidationError as exc:
         field_path = exc.field_path
+        contract = definition.parameter_contract
         _refuse(
             "cruxible.authoring.line_parameters_refused",
             "parameters" if not field_path else f"parameters.{field_path}",
-            f"Line parameters are the input record of Procedure {payload.procedure_name!r}, "
-            f"and its input contract {contract.target.name!r} refuses them: {exc}",
+            f"Line parameters are the parameters of Procedure {payload.procedure_name!r}, "
+            f"and it refuses them: {exc}",
             repair_kind="replace_parameters",
             repair_description=(
-                "Set parameters to a record the Procedure's input contract accepts; "
+                "Set parameters to a record the Procedure's params Contract accepts; "
                 "the replacement lists its fields and types."
             ),
-            replacement=_contract_fields_summary(procedure, contract),
+            replacement=None if contract is None else _contract_fields_summary(contract, tree),
         )
 
 
@@ -3877,7 +3550,6 @@ def _render_procedure_mandate_member(
                 artifact_digest=line_spec_digest(granted_line).tagged,
             ),
             grants=payload.grants,
-            resource_ceiling=payload.resource_ceiling,
             namespace=payload.namespace,
             valid_from=payload.valid_from,
             expires_at=payload.expires_at,
@@ -5543,8 +5215,6 @@ def _stage_change_set_member(
             intent=intent.model_copy(update={"payload": member}),
             base=base,
             base_tree=staged_tree,
-            accepted_reference_tree=base_tree,
-            candidate_identities=candidate_identities,
             candidate_paths=candidate_paths,
         )
         return fork_tree(lowered.proposed_tree), dict(lowered.resolved_authoring), set(), {}

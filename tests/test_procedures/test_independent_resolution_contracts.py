@@ -31,6 +31,7 @@ from cruxible_client.contracts.resolution_rules import (
     PredictionEqualityRule,
     PredictionObservationSelector,
 )
+from tests.support.procedures import procedure_members
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 
@@ -233,8 +234,6 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
 
     from cruxible_client.contracts.procedures.artifacts import (
         procedure_artifact_digest,
-        procedure_path,
-        render_procedure,
     )
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 
@@ -248,7 +247,7 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
     )
     one, two = make("one"), make("two")
     tree = instance.tree_at(at.git_oid)
-    tree[procedure_path(other_method.identity.name)] = render_procedure(other_method)
+    tree.update(procedure_members(other_method))
     for c in (one, two):
         tree[resolution_contract_path(c.identity.name)] = render_resolution_contract(c)
     _accept_tree(
@@ -299,7 +298,7 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
     # A new version of the same method must retain the question, while getting
     # its own execution identity. Historical replay still uses the old method.
     definition = procedure.definition.model_copy(
-        update={"budget": procedure.definition.budget.model_copy(update={"max_items": 90})}
+        update={"hard_caps": procedure.definition.hard_caps.model_copy(update={"max_items": 90})}
     )
     successor = procedure.model_copy(
         update={
@@ -311,7 +310,7 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
         }
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    tree[procedure_path(successor.identity.name)] = render_procedure(successor)
+    tree.update(procedure_members(successor))
     _accept_tree(
         instance, owner, tree, timestamp="2026-08-24T16:05:00.000000Z", proposal_name="method-v2"
     )
@@ -486,7 +485,6 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
         procedure_mandate_path,
         render_procedure_mandate,
     )
-    from cruxible_client.contracts.procedures.artifacts import render_procedure
     from cruxible_client.contracts.procedures.line_specs import (
         line_identity_digest,
         line_spec_path,
@@ -521,7 +519,7 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree.update(
         {
-            accepted.path: render_procedure(procedure),
+            **procedure_members(procedure),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
             line_spec_path(line.identity.name): render_line_spec(line),
             resolution_contract_path(contract.identity.name): render_resolution_contract(contract),

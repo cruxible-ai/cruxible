@@ -1,10 +1,10 @@
-"""A run's read budget: one cumulative ceiling its Line, Mandates and parent can only lower.
+"""A run's read budget: one cumulative ceiling its Line and parent can only lower.
 
 ``max_read_rows`` is a hard cap a Procedure declares (authored ``read_rows``).
 A run's reads, Query and Claim alike, draw on one budget: the Line's stated
-``max_read_rows`` (else the cap), lowered by every live Mandate's resource
-ceiling. An invoked child gets what its parent has left, so the parent and its
-children never read past the parent's budget between them. These run on the
+``max_read_rows`` (else the cap). An invoked child gets what its parent has
+left, so the parent and its children never read past the parent's budget
+between them. These run on the
 seeded work-item world: two Subjects, one status Claim each.
 """
 
@@ -45,10 +45,16 @@ def _reading(name: str, subjects: tuple[str, ...], *, caps: dict[str, Any] | Non
         {
             "procedure": name,
             "input": {},
-            "output": {"count": "integer"},
+            "output": {"count": "int"},
             "steps": steps,
             "returns": "out",
-            **({} if caps is None else {"caps": caps, "budget": caps}),
+            **(
+                {}
+                if caps is None
+                else {
+                    "hard_caps": caps,
+                }
+            ),
         }
     )
 
@@ -94,15 +100,14 @@ def test_an_invoked_child_reads_only_what_its_parent_has_left(
         {
             "procedure": "test.parent-read",
             "input": {},
-            "output": {"count": "integer"},
+            "output": {"count": "int"},
             "steps": [
                 {"read": "mine", "claim_type": PREDICATE, "subject": "wi-42"},
                 {"invoke": "test.child-read", "id": "child", "input": {}},
                 {"project": "out", "fields": {"count": 2}},
             ],
             "returns": "out",
-            "caps": {"read_rows": read_rows},
-            "budget": {"read_rows": read_rows},
+            "hard_caps": {"read_rows": read_rows},
         }
     )
     author_procedure(instance, parent, name="parent")
@@ -174,14 +179,17 @@ def test_a_line_states_a_read_budget_no_higher_than_its_procedures_cap(tmp_path:
     author_procedure(
         instance, _reading("test.two-reads", ("wi-42", "wi-43"), caps={"read_rows": 5})
     )
-    with pytest.raises(AssertionError, match="max_read_rows"):
+    from cruxible_core.authoring.lowering import AuthoringLoweringError
+
+    with pytest.raises(AuthoringLoweringError, match="max_read_rows 6 > 5") as refused:
         _line(instance, max_read_rows=6)
+    assert refused.value.code == "cruxible.authoring.line_budget_exceeds_caps"
 
 
-def test_every_live_mandate_lowers_the_lines_read_budget() -> None:
-    """A Mandate's resource ceiling caps the read rows of the Line runs it grants."""
+def test_the_line_owns_its_read_budget_and_an_unstated_one_is_the_cap() -> None:
+    """The Line's operating budget is its own (no Mandate narrows it), within the caps."""
 
-    from cruxible_client.contracts.procedures.models import ProcedureBudget, ProcedureHardCaps
+    from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 
     caps = ProcedureHardCaps.model_validate(
         {
@@ -193,27 +201,21 @@ def test_every_live_mandate_lowers_the_lines_read_budget() -> None:
             "max_read_rows": 500,
         }
     )
-    budget = ProcedureBudget.model_validate(
-        {"wall_clock": {"microseconds": 1}, "max_provider_calls": 1, "max_capture_bytes": 0}
-    )
     procedure = SimpleNamespace(
-        procedure=SimpleNamespace(definition=SimpleNamespace(budget=budget, hard_caps=caps))
+        procedure=SimpleNamespace(definition=SimpleNamespace(hard_caps=caps))
     )
-    budgets = {
-        "max_capture_bytes": 0,
-        "max_items": 10,
-        "max_provider_calls": 1,
-        "max_wall_clock_microseconds": 1,
-        "max_read_rows": 400,
-    }
+    from cruxible_client.contracts.procedures.line_specs import LineBudgets
+
+    budgets = LineBudgets(
+        max_capture_bytes=0,
+        max_items=10,
+        max_provider_calls=1,
+        max_wall_clock_microseconds=1,
+        max_read_rows=400,
+    )
     line = SimpleNamespace(line=SimpleNamespace(budgets=budgets))
-
-    def mandate(rows: int) -> Any:
-        ceiling = caps.model_copy(update={"max_read_rows": rows})
-        return ("sha256:" + "0" * 64, SimpleNamespace(resource_ceiling=ceiling))
-
-    granted = (mandate(300), mandate(450))
     assert _line_budget(line, procedure).max_read_rows == 400  # type: ignore[arg-type]
-    assert _line_budget(line, procedure, granted).max_read_rows == 300  # type: ignore[arg-type]
-    unstated = SimpleNamespace(line=SimpleNamespace(budgets=None))
+    unstated = SimpleNamespace(
+        line=SimpleNamespace(budgets=budgets.model_copy(update={"max_read_rows": None}))
+    )
     assert _line_budget(unstated, procedure).max_read_rows == 500  # type: ignore[arg-type]

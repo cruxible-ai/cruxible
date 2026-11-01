@@ -19,9 +19,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import Cruxible
-from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
+from cruxible_client.authoring.inputs import ProcedureInput
 from cruxible_client.contracts import ClaimViewRecord
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.authoring.models import SubjectKindAuthoringPayload
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import capture_contract_digest
@@ -33,13 +34,11 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
 )
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
-from cruxible_client.contracts.procedures.artifacts import procedure_owned_contract_digest
+from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     CaptureEgressNode,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
@@ -67,14 +66,26 @@ from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._light_capture_support import procedure_contract
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._subject_kind_support import bare_slug_claim_type, create_by_key
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
-from tests.test_procedures.test_procedure_source_runs import _contracts
+from tests.support.procedures import MAX_WALL_CLOCK, named
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
 SUBJECT_KIND = "security.advisory"
 SUBJECT_ID = "osv-2026-0001"
 PREDICATE = "security.advisory.severity"
 PROCEDURE_NAME = "osv-advisory-severity"
+
+
+def _contracts() -> tuple[Any, Any]:
+    """The Procedure's generated boundaries (<procedure>.input|output@1)."""
+
+    from tests.support.procedures import boundary_contract
+
+    return (
+        boundary_contract(f"{PROCEDURE_NAME}.input"),
+        boundary_contract(f"{PROCEDURE_NAME}.output", {"severity": "string"}),
+    )
+
+
 POLICY_NAME = "osv-advisory-reads"
 LINE_NAME = "osv-advisory-hourly"
 MANDATE_NAME = "osv-advisory-mandate"
@@ -165,10 +176,10 @@ def _claim_type(contract: str) -> ClaimType:
     )
 
 
-def _policy() -> AcquisitionDefault:
+def _policy() -> LineAcquisitionRule:
     """The ``advisory`` Source alias's acquisition rule (replaces SourceAcquisitionPolicy)."""
 
-    return AcquisitionDefault.model_validate({"max_age": "PT1H"})
+    return LineAcquisitionRule.model_validate({"max_age": "PT1H"})
 
 
 def _item() -> dict[str, object]:
@@ -198,17 +209,11 @@ def _procedure_definition(
     workspace: Path,
     terminal_kind: str = "propose_change_set",
 ) -> ProcedureDefinition:
+    from tests.support.procedures import contract_pin as boundary_pin
+
     input_contract, output_contract = _contracts()
-    contract_in = ArtifactPin(
-        role="contract-in",
-        target=input_contract.identity,
-        artifact_digest=procedure_owned_contract_digest(input_contract).tagged,
-    )
-    contract_out = ArtifactPin(
-        role="contract-out",
-        target=output_contract.identity,
-        artifact_digest=procedure_owned_contract_digest(output_contract).tagged,
-    )
+    contract_in = boundary_pin("contract-in", input_contract)
+    contract_out = boundary_pin("contract-out", output_contract)
     request = WorkspaceFileSourceRequestV2(
         logical_source="commerce.production.orders",
         relative_path=RELATIVE_PATH,
@@ -251,7 +256,6 @@ def _procedure_definition(
             ProjectNode(
                 node_id="shape",
                 fields={"severity": "$steps.advisory.content.text"},
-                contract_out=named(contract_out),
                 as_="result",
                 next="propose",
             ),
@@ -269,12 +273,6 @@ def _procedure_definition(
             ),
         ),
         returns="result",
-        budget=ProcedureBudget(
-            wall_clock=RUN_WALL_CLOCK,
-            max_provider_calls=2,
-            max_capture_bytes=65_536,
-            max_items=None,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=4,
@@ -282,50 +280,35 @@ def _procedure_definition(
             max_items=200,
             max_repeat_attempts=1,
         ),
-        terminal_capability=2,
+        terminal_capability=2 if terminal_kind == "propose_change_set" else 1,
     )
 
 
-def _authored(definition: ProcedureDefinition, *, same_set_kinds: set[str]) -> dict[str, object]:
-    """Render the graph the way an author names it: references, never caller digests.
+def _authored(
+    definition: ProcedureDefinition, *, contracts: tuple[Any, ...] | None = None
+) -> ProcedureInput:
+    """The graph as an author writes it: the one typed spec it decompiles to.
 
-    Owned Contracts are carried by name; artifacts accepted at the base are
-    referenced for resolution there; artifacts defined in this same change set
-    are referenced as candidates in it.
+    The spec names its dependencies; lowering resolves each at the intent base
+    (or in the change set that stages it), and carries no caller digest.
     """
 
-    # Current authoring names dependencies; exact invocation bindings remain in receipts.
-    definition = definition.model_dump(mode="json", by_alias=True)
+    from cruxible_client.contracts.artifacts import ArtifactIdentity as Identity
+    from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
+    from cruxible_client.contracts.procedures.decompile import decompile_procedure
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+    from tests.support.procedures import contract_resolver
 
-    def rewrite(value: object) -> object:
-        if isinstance(value, dict):
-            if set(value) == {"role", "target", "artifact_digest"}:
-                target = value["target"]
-                if target["kind"] == "Contract":
-                    return {
-                        "kind": "carried_contract",
-                        "name": target["name"],
-                        "role": value["role"],
-                    }
-                if target["kind"] in same_set_kinds:
-                    return {
-                        "tag": "playbill-authoring-candidate-reference-v1",
-                        "role": value["role"],
-                        "target": target,
-                        "resolution": "candidate_in_change_set",
-                    }
-                return {
-                    "tag": "playbill-authoring-artifact-reference-v1",
-                    "role": value["role"],
-                    "target": target,
-                    "resolution": "accepted_at_intent_base",
-                }
-            return {key: rewrite(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [rewrite(item) for item in value]
-        return value
-
-    return rewrite(definition)  # type: ignore[return-value]
+    artifact = ProcedureArtifact(
+        identity=Identity(kind="Procedure", name=definition.name),
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
+        activation_policy="drain",
+    )
+    # Its generated <procedure>.input|output Contracts render inline; lowering
+    # co-proposes them again.
+    spec = decompile_procedure(artifact, contracts=contract_resolver(*(contracts or _contracts())))
+    return ProcedureInput(kind="procedure", spec=spec)
 
 
 def _binding_digest(workspace: Path) -> str:
@@ -441,29 +424,21 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
             name=SUBJECT_KIND, keys=(f"{SUBJECT_KIND}.slug",), uniqueness="unique"
         ).model_dump(mode="json"),
         create_by_key(SUBJECT_KIND, SUBJECT_ID).model_dump(mode="json"),  # type: ignore[attr-defined]
-        {
-            "tag": "cruxible-procedure-authoring-payload-v3",
-            "definition": _authored(definition, same_set_kinds={"CaptureContract"}),
-            "activation_policy": "drain",
-            "owned_contracts": [
-                item.model_dump(mode="json", by_alias=True)
-                for item in (input_contract, output_contract)
-            ],
-            "acquisition_defaults": {"advisory.capture": _policy().model_dump(mode="json")},
-            "retire": False,
-        },
+        lower_authoring_input(_authored(definition)).model_dump(mode="json", by_alias=True),
         {
             "tag": "cruxible-line-authoring-payload-v2",
             "name": LINE_NAME,
             "procedure_name": PROCEDURE_NAME,
-            "max_authority": "propose",
+            # Acquisition rules are the Line's (the Procedure declares none).
+            "acquisition": {"advisory.capture": _policy().model_dump(mode="json")},
+            # A Procedure can do what its terminals do: emitting a Capture observes.
+            "max_authority": "observe" if terminal_kind == "emit_capture" else "propose",
         },
         {
-            "tag": "cruxible-procedure-mandate-authoring-payload-v2",
+            "tag": "cruxible-procedure-mandate-authoring-payload-v3",
             "name": MANDATE_NAME,
             "line_name": LINE_NAME,
             "grants": "propose",
-            "resource_ceiling": definition.hard_caps.model_dump(mode="json"),
             "namespace": ["claims"],
             "valid_from": "2026-01-01T00:00:00Z",
             "expires_at": "2027-01-01T00:00:00Z",
@@ -510,7 +485,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     # in cruxible_core.authoring.lowering stages `line` before
     # `procedure_mandate`, so the Mandate below is accepted together with its
     # Line in one change set.
-    mandate_tag = "cruxible-procedure-mandate-authoring-payload-v2"
+    mandate_tag = "cruxible-procedure-mandate-authoring-payload-v3"
     line_tag = "cruxible-line-authoring-payload-v2"
 
     if terminal_kind == "emit_capture":
@@ -521,26 +496,11 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
                 member
                 for member in members
                 if member["tag"]
-                not in {line_tag, mandate_tag, "cruxible-procedure-authoring-payload-v3"}
+                not in {line_tag, mandate_tag, "cruxible-procedure-authoring-payload-v5"}
             ]
         )
         pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
-        authored = ProcedureInput(
-            kind="procedure",
-            definition=_authored(definition, same_set_kinds=set()),
-            activation_policy="drain",
-            acquisition_defaults={"advisory.capture": _policy()},
-            contracts=tuple(
-                CarriedContractInput(
-                    name=contract.identity.name,
-                    description=contract.contract_schema.description,
-                    fields=contract.contract_schema.fields,
-                    allow_extra=contract.contract_schema.allow_extra,
-                )
-                for contract in (input_contract, output_contract)
-            ),
-        )
-        prepared = pb.procedure(definition=authored).prepare()
+        prepared = pb.procedure(definition=_authored(definition)).prepare()
         assert not prepared.refused, prepared.diagnostics
         submitted_procedure = prepared.submit(accept="never").status()
         assert submitted_procedure.proposal_id is not None

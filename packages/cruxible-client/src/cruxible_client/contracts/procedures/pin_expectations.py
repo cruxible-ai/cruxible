@@ -15,11 +15,8 @@ from cruxible_client.contracts.procedures.models import (
     CaptureEgressNode,
     InvokeNode,
     ProcedureDefinition,
-    ProjectNode,
-    ProposeChangeSetNode,
     ReadNode,
     RepeatNode,
-    SelectNode,
 )
 
 
@@ -101,15 +98,10 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None
                 f"{prefix} claim_type",
             )
             check(node.query, QUERY, f"{prefix} query")
-        elif isinstance(node, ProposeChangeSetNode):
-            for pin in node.claim_types:
-                check(pin, PinExpectation((("claim-type", "ClaimType"),)), f"{prefix} claim_type")
         elif isinstance(node, CallNode):
             check(node.effect_policy, EFFECT_POLICY, f"{prefix} effect_policy")
             for field, capture in node.captures.items():
                 check(capture, CAPTURE_CONTRACT, f"{prefix} captures.{field}")
-        elif isinstance(node, ProjectNode | SelectNode):
-            check(node.contract_out, CONTRACT_OUT, f"{prefix} contract_out")
         elif isinstance(node, RepeatNode):
             for body in node.body:
                 body_prefix = f"{prefix} repeat body {body.node_id!r}"

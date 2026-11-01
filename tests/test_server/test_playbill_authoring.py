@@ -8,10 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
-from cruxible_client.authoring.examples import claim_flow_a_example, procedure_example
-from cruxible_client.contracts.authoring.inputs import CarriedContractInput, lower_authoring_input
-from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayload
-from cruxible_client.contracts.procedures.contract_schema import PropertySchema
+from cruxible_client.authoring.examples import claim_flow_a_example
 from tests.core_support._claim_type_support import claim_type_input_example
 from tests.support.preflight_results import stub_diagnostic, stub_preflight_result
 
@@ -287,96 +284,27 @@ def test_http_compile_flow_a_stub_surfaces_the_bind_refusal(
     )
 
 
-def test_http_unused_procedure_contract_is_a_typed_preflight_refusal(
+def test_http_refuses_a_graph_definition_with_carried_contracts_naming_the_spec(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:
+    """Owned Contracts are lowered from the spec, never authored beside a graph."""
+
     client, instance_id, _private_key = playbill_http
-    example = procedure_example()
-    invalid = example.model_copy(
-        update={
-            "contracts": (
-                *example.contracts,
-                CarriedContractInput(
-                    name="unused-contract",
-                    fields={"unused": PropertySchema(type="string")},
-                ),
-            )
-        }
-    ).model_dump(mode="json")
-
-    created = client.post(
-        f"/api/v1/{instance_id}/authoring/compile",
-        json={
-            "tag": "playbill-authoring-input-compile-request-v1",
-            "input": invalid,
-        },
-    )
-
-    assert created.status_code == 200, created.text
-    intent_id = created.json()["certificate"]["intent_id"]
-    preflight = client.post(
-        f"/api/v1/{instance_id}/authoring/intents/{intent_id}/preflight",
-        json={"tag": "playbill-authoring-intent-preflight-request-v1"},
-    )
-    compiled = client.post(
-        f"/api/v1/{instance_id}/authoring/compile",
-        json={
-            "tag": "playbill-authoring-input-compile-request-v1",
-            "input": invalid,
-            "intent_id": None,
-        },
-    )
-
-    for response in (preflight, compiled):
-        assert response.status_code == 200, response.text
-        result = response.json()
-        assert result["verdict"] == "refused"
-        diagnostic = result["frontier"]["diagnostics"][0]
-        assert diagnostic["code"] == "cruxible.authoring.procedure_definition_invalid"
-        assert diagnostic["stage"] == "lowering"
-        assert diagnostic["offending_element"] == "owned_contracts"
-        assert "Contract:unused-contract" in diagnostic["message"]
-        assert diagnostic["repairs"] == [
-            {
-                "kind": "replace_contracts_or_definition",
-                "description": (
-                    "Remove each unused owned Contract or reference it from the Procedure graph."
-                ),
-                "replacement": None,
-            }
-        ]
-
-
-def test_http_unsorted_owned_contracts_use_the_typed_artifact_validation_refusal(
-    playbill_http: tuple[TestClient, str, Path],
-) -> None:
-    client, instance_id, _private_key = playbill_http
-    payload = lower_authoring_input(procedure_example())
-    assert isinstance(payload, ProcedureAuthoringPayload)
-    assert len(payload.owned_contracts) > 1
-    unsorted = payload.model_copy(
-        update={"owned_contracts": tuple(reversed(payload.owned_contracts))}
-    )
-
     response = client.post(
         f"/api/v1/{instance_id}/authoring/compile",
         json={
-            "tag": "cruxible-authoring-intent-compile-request-v4",
-            "payload": unsorted.model_dump(mode="json"),
-            "intent_id": None,
+            "tag": "playbill-authoring-input-compile-request-v1",
+            "input": {
+                "kind": "procedure",
+                "definition": {"name": "replace-me", "nodes": []},
+                "contracts": [{"name": "unused-contract", "fields": {}}],
+            },
         },
     )
 
-    assert response.status_code == 200, response.text
-    result = response.json()
-    assert result["verdict"] == "refused"
-    diagnostic = result["frontier"]["diagnostics"][0]
-    assert diagnostic["code"] == "cruxible.authoring.procedure_definition_invalid"
-    assert diagnostic["stage"] == "lowering"
-    assert diagnostic["offending_element"] == "procedure"
-    assert "owned Contracts must be canonically byte-sorted" in diagnostic["message"]
-    assert "<ProcedureOwnedContract>" in diagnostic["message"]
-    assert "arrays must be concrete lists" not in diagnostic["message"]
+    assert 400 <= response.status_code < 500, response.text
+    assert "procedure_authoring_form_retired" in response.text
+    assert "ProcedureSpec" in response.text
 
 
 def test_http_authoring_openapi_exposes_frozen_union_and_rejects_removed_brief_input(

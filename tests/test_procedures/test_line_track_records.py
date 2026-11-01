@@ -13,7 +13,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure, render_procedure
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
     LineSpec,
@@ -22,7 +22,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ReadNode,
@@ -61,7 +60,13 @@ from cruxible_core.service.procedures.procedures import (
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import initialize_local
 from tests.support.inbox import contract_members, inbox_node
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
+from tests.support.procedures import (
+    MAX_WALL_CLOCK,
+    RUN_WALL_CLOCK,
+    boundary_contract,
+    named,
+    procedure_members,
+)
 from tests.support.procedures import accepted_procedure as carried_procedure
 from tests.test_indexes.test_resolution_contracts import _accept_tree, _actor
 
@@ -81,9 +86,13 @@ def _pin(role: str, kind: str, name: str, *, digest: str | None = None) -> Artif
     )
 
 
+#: The governed boundaries ``procedure_members`` accepts beside the Procedure.
+_BOUNDARIES = (boundary_contract("run-input"), boundary_contract("run-output"))
+
+
 def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
-    contract_in = _pin("contract-in", "Contract", "run-input")
-    contract_out = _pin("contract-out", "Contract", "run-output")
+    contract_in = _pin("contract-in", "Contract", "run-input/v1")
+    contract_out = _pin("contract-out", "Contract", "run-output/v1")
     query = _pin("query", "QueryDefinition", "open-orders")
     definition = ProcedureDefinition(
         name="orders-triage",
@@ -94,12 +103,6 @@ def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
             inbox_node("emit", fields={"note": "$item.order"}, for_each="$steps.rows.items"),
         ),
         returns="rows",
-        budget=ProcedureBudget(
-            wall_clock=RUN_WALL_CLOCK,
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=100,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=0,
@@ -277,7 +280,7 @@ def test_an_accepted_promotion_projects_its_line_track_record_through_the_floor(
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
             **contract_members(),
-            procedure.path: render_procedure(authored_procedure(procedure)),
+            **procedure_members(authored_procedure(procedure)),
             **subject_query_members("open-orders"),
             line.path: render_line_spec(line.line),
         },

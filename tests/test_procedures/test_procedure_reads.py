@@ -21,6 +21,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     ProcedureRunRequest,
     service_run_playbill_procedure,
 )
+from tests.test_procedures.test_procedure_boundary_contracts import _activate_procedure
 from tests.test_procedures.test_procedure_measurement_readings import (
     OBSERVE_AT,
     RUN_TIME,
@@ -28,7 +29,6 @@ from tests.test_procedures.test_procedure_measurement_readings import (
     _run,
 )
 from tests.test_procedures.test_procedure_measurement_readings import _world as measured_world
-from tests.test_procedures.test_procedure_owned_contracts import _activate_procedure
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor, _world
 
 _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=True)

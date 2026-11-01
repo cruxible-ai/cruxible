@@ -4,8 +4,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from cruxible_client.authoring.inputs import CarriedContractInput
-from cruxible_client.authoring.source import claim_candidate, halt, procedure, propose_change_set
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.authoring.models import (
     ChangeSetAuthoringPayload,
@@ -37,7 +35,6 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
     procedure_path,
 )
-from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
     line_spec_path,
@@ -48,12 +45,12 @@ from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.lowering import lower_authoring
 from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
+from tests.support.procedures import ref
 from tests.test_authoring.test_authoring_preflight import _self_source_payload
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 from tests.test_claims.test_claims import _claim_type
 from tests.test_indexes.test_resolution_contracts import _accept_tree
-from tests.test_procedures.test_nested_source_runs import accept_blueprint
-from tests.test_procedures.test_procedure_execution import _budget, _hard_caps
+from tests.test_procedures.test_nested_source_runs import LIMITS, accept_blueprint
 from tests.test_procedures.test_procedure_proposal_delivery import run_line
 from tests.test_procedures.test_procedure_source_runs import _accept_more, _line_mandate
 
@@ -93,36 +90,53 @@ def derivation_world(tmp_path):
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[claim_type_path(definition.predicate)] = render_claim_type(definition)
     _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="derived-type")
-    Request = CarriedContractInput(name="derive.request", fields={})
-    Result = CarriedContractInput(
-        name="derive.result", fields={"ready": PropertySchema(type="bool")}
-    )
-
-    @procedure(
-        name="derive-ready",
-        input=Request,
-        output=Result,
-        budget=_budget().model_copy(update={"max_items": None}),
-        hard_caps=_hard_caps(),
-    )
-    def derive(request, world):
-        basis = world.project.work_item["wi-42"].status.one()
-        if basis.value != "ready":
-            return halt("The work item is not ready.")
-        candidate = claim_candidate(
-            subject=world.project.work_item["wi-42"],
-            predicate=world.claim_type("project.work_item.ready"),
-            value=True,
-            role="derivation",
-            rationale="Readiness follows from the accepted status.",
-            self_source="Computed from the accepted status.",
-            basis=(basis,),
-        )
-        return propose_change_set(candidates=[candidate], result=Result.value(ready=True))
+    derive = {
+        "procedure": "derive-ready",
+        "input": {},
+        "output": {"ready": "bool"},
+        **LIMITS,
+        "steps": [
+            {
+                "read": "basis",
+                "claim_type": "project.work_item.status",
+                "subject": "wi-42",
+                "subject_kind": "project.work_item",
+            },
+            {
+                "guard": {
+                    "op": "eq",
+                    "left": ref("$steps.basis.value"),
+                    "right": {"literal": "ready"},
+                },
+                "else": {"halt": "The work item is not ready."},
+            },
+            {
+                # The executor binds the basis to the exact admitted Claim read and
+                # mints the derivation for this Procedure; no author supplies it.
+                "propose": [
+                    {
+                        "tag": "playbill-source-claim-candidate-v1",
+                        "subject_kind": "project.work_item",
+                        "subject_id": "wi-42",
+                        "predicate": "project.work_item.ready",
+                        "object_kind": "literal",
+                        "value": True,
+                        "role": "derivation",
+                        "rationale": "Readiness follows from the accepted status.",
+                        "source_kind": "self_source",
+                        "source_value": "Computed from the accepted status.",
+                        "source_alias": None,
+                        "basis": [ref("$steps.basis")],
+                    }
+                ],
+                "result": {"ready": True},
+            },
+        ],
+    }
 
     accept_blueprint(instance, owner, derive)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    path = procedure_path(derive.name)
+    path = procedure_path(derive["procedure"])
     reducer = parse_procedure(tree[path], path=path)
     basis = parse_claim(tree[claim_path(claim_id)], path=claim_path(claim_id))
     template = _self_source_payload()

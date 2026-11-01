@@ -107,10 +107,11 @@ def referenced_identities(path: str, payload: Mapping[str, Any]) -> Iterator[tup
         for steps in fields:
             yield from _identities_at(payload, steps)
     if path.startswith("subject-kinds/"):
-        # A keyed SubjectKind names its key ClaimTypes by predicate.
+        # A keyed SubjectKind names each key part's ClaimType by predicate.
         rule = payload.get("identity_rule")
-        keys = rule.get("keys") if isinstance(rule, dict) else None
-        for predicate in keys if isinstance(keys, list) else ():
+        parts = rule.get("parts") if isinstance(rule, dict) else None
+        for part in parts if isinstance(parts, list) else ():
+            predicate = part.get("claim_type") if isinstance(part, dict) else None
             if isinstance(predicate, str):
                 yield "ClaimType", predicate
 

@@ -8,7 +8,6 @@ from typing import Callable, Final
 from cruxible_client.authoring.inputs import (
     ApprovalPolicyInput,
     AuthoringInput,
-    CarriedContractInput,
     ChangeSetInput,
     ClaimInput,
     ClaimRetirementInput,
@@ -43,8 +42,6 @@ from cruxible_client.contracts.policies import (
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
-from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 from cruxible_client.contracts.query.definitions import (
     QueryDefinitionSpec,
     QueryEvaluationPolicy,
@@ -258,21 +255,6 @@ def claim_type_succession_example() -> ChangeSetInput:
     )
 
 
-#: The `--example procedure` hard caps. A mandate's resource ceiling may narrow
-#: but never widen its Procedure's caps, so the mandate example reuses these and
-#: the two templates are accepted together. The wall-clock caps (and the
-#: per-run default below) are a safety factor against an obviously bad run,
-#: not compute management, so they stay generous: 10 minutes per run, 30
-#: minutes overall.
-_EXAMPLE_PROCEDURE_HARD_CAPS: Final = {
-    "max_wall_clock": {"microseconds": 1_800_000_000},
-    "max_provider_calls": 0,
-    "max_capture_bytes": 0,
-    "max_items": 200,
-    "max_repeat_attempts": 1,
-}
-
-
 def procedure_mandate_example() -> ProcedureMandateInput:
     """A propose grant over the `--example line` Line, within its Procedure's caps.
 
@@ -285,7 +267,6 @@ def procedure_mandate_example() -> ProcedureMandateInput:
         name="replace-me",
         line_name="replace-me",
         grants="propose",
-        resource_ceiling=ProcedureHardCaps.model_validate(_EXAMPLE_PROCEDURE_HARD_CAPS),
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
         expires_at=datetime(2030, 1, 1, tzinfo=timezone.utc),
@@ -296,7 +277,8 @@ def line_example() -> LineInput:
     """A Line over the `--example procedure` Procedure.
 
     That Procedure has no Source nodes, so the Line names no acquisition
-    policy, and its input contract is empty, so `parameters` is `{}`. It only
+    rule, and it declares no params, so `parameters` is `{}` (a Line supplies
+    a Procedure's parameters; a Line run's input is empty). It only
     observes, so it runs without a ProcedureMandate. It runs when run explicitly
     (`line run`); `--example trigger` schedules it, and the Trigger runs it only
     once the Line is enabled (`line enable`).
@@ -444,130 +426,102 @@ def claim_exact_content_example() -> ClaimInput:
 
 
 def procedure_example() -> ProcedureInput:
-    def carried(name: str, role: str) -> dict[str, str]:
-        return {"kind": "carried_contract", "name": name, "role": role}
+    """Shape, filter, dedupe, join and count typed records with closed transforms.
 
-    raw_item = {
-        "id": PropertySchema(type="string"),
-        "keep": PropertySchema(type="bool"),
-    }
-    return ProcedureInput(
-        kind="procedure",
-        definition={
-            "name": "replace-me",
+    The one authoring form: a typed ProcedureSpec. References are ``{"$ref":
+    ...}`` objects and predicates are typed structures, never strings.
+    """
+
+    def step(name: str, *path: str) -> dict[str, object]:
+        return {"$ref": "step", "step": name, **({"path": list(path)} if path else {})}
+
+    def field(name: str) -> dict[str, object]:
+        return {"$ref": "item", "path": ["fields", name]}
+
+    return ProcedureInput.model_validate(
+        {
+            "kind": "procedure",
+            "procedure": "replace-me",
             "description": (
                 "Shape, filter, dedupe, join and count typed records with closed transforms."
             ),
-            "contract_in": carried("empty-input", "contract-in"),
-            "contract_out": carried("count-result", "contract-out"),
-            "nodes": [
+            "input": {},
+            "output": {"count": "int"},
+            # Every run fits these caps; the Line's operating budget may narrow
+            # them. They are a safety factor against an obviously bad run, not
+            # compute management, so they stay generous.
+            "hard_caps": {
+                "wall_clock": "PT30M",
+                "provider_calls": 0,
+                "capture_bytes": 0,
+                "items": 200,
+            },
+            "steps": [
                 {
-                    "kind": "project",
-                    "node_id": "adapt",
-                    "contract_out": carried("collection", "contract-out"),
+                    "project": "adapted",
+                    "id": "adapt",
                     "literal": {
                         "items": [
                             {"id": "one", "keep": True},
                             {"id": "two", "keep": False},
                         ]
                     },
-                    "as": "adapted",
+                    # The records flow as data: an intermediate step pins no Contract.
                 },
                 {
-                    "kind": "transform",
-                    "node_id": "shape",
-                    "transform_kind": "shape",
+                    "transform": "shaped",
+                    "id": "shape",
+                    "kind": "shape",
                     "spec": {
-                        "tag": "cruxible-transform-shape-spec-v1",
-                        "input": "$steps.adapted.items",
+                        "input": step("adapted", "items"),
                         "fields": {
-                            "id": {"from": "$item.fields.id"},
-                            "keep": {"from": "$item.fields.keep"},
-                            "label": {"from": "$item.fields.id"},
+                            "id": {"from": field("id")},
+                            "keep": {"from": field("keep")},
+                            "label": {"from": field("id")},
                         },
                     },
-                    "as": "shaped",
                 },
                 {
-                    "kind": "transform",
-                    "node_id": "filter",
-                    "transform_kind": "filter",
+                    "transform": "filtered",
+                    "id": "filter",
+                    "kind": "filter",
                     "spec": {
-                        "tag": "cruxible-transform-filter-spec-v1",
-                        "input": "$steps.shaped",
-                        "where": "eq($item.fields.keep, true)",
+                        "input": step("shaped"),
+                        "where": {"op": "eq", "left": field("keep"), "right": {"literal": True}},
                     },
-                    "as": "filtered",
                 },
                 {
-                    "kind": "transform",
-                    "node_id": "dedupe",
-                    "transform_kind": "dedupe",
-                    "spec": {
-                        "tag": "cruxible-transform-dedupe-spec-v1",
-                        "input": "$steps.filtered",
-                        "keys": ["id"],
-                    },
-                    "as": "deduped",
+                    "transform": "deduped",
+                    "id": "dedupe",
+                    "kind": "dedupe",
+                    "spec": {"input": step("filtered"), "keys": ["id"]},
                 },
                 {
-                    "kind": "transform",
-                    "node_id": "join",
-                    "transform_kind": "join",
+                    "transform": "joined",
+                    "id": "join",
+                    "kind": "join",
                     "spec": {
-                        "tag": "cruxible-transform-join-spec-v1",
-                        "left": "$steps.deduped",
-                        "right": [
-                            {"id": "one", "rank": 1},
-                            {"id": "two", "rank": 2},
-                        ],
+                        "left": step("deduped"),
+                        "right": [{"id": "one", "rank": 1}, {"id": "two", "rank": 2}],
                         "left_field": "id",
                         "right_field": "id",
                         "right_fields": {"rank": "rank"},
                     },
-                    "as": "joined",
                 },
                 {
-                    "kind": "transform",
-                    "node_id": "aggregate",
-                    "transform_kind": "aggregate",
-                    "spec": {
-                        "tag": "cruxible-transform-aggregate-spec-v1",
-                        "input": "$steps.joined",
-                        "op": "count",
-                    },
-                    "as": "counted",
+                    "transform": "counted",
+                    "id": "aggregate",
+                    "kind": "aggregate",
+                    "spec": {"input": step("joined"), "op": "count"},
                 },
                 {
-                    "kind": "project",
-                    "node_id": "result",
-                    "contract_out": carried("count-result", "contract-out"),
-                    "fields": {"count": "$steps.counted.result"},
-                    "as": "result",
+                    "project": "result",
+                    "fields": {"count": step("counted", "result")},
+                    "output": {"count": "int"},
                 },
             ],
             "returns": "result",
-            "budget": {
-                "wall_clock": {"microseconds": 600_000_000},
-                "max_provider_calls": 0,
-                "max_capture_bytes": 0,
-                "max_items": 100,
-            },
-            "hard_caps": _EXAMPLE_PROCEDURE_HARD_CAPS,
-            "terminal_capability": 1,
-        },
-        activation_policy="snapshot",
-        contracts=(
-            CarriedContractInput(name="empty-input", fields={}),
-            CarriedContractInput(
-                name="collection",
-                fields={"items": PropertySchema(type="list", item_fields=raw_item)},
-            ),
-            CarriedContractInput(
-                name="count-result",
-                fields={"count": PropertySchema(type="int")},
-            ),
-        ),
+        }
     )
 
 

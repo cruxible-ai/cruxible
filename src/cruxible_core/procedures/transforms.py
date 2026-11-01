@@ -34,6 +34,7 @@ from cruxible_client.contracts.shapes import (
     FieldAbsent,
     FieldInvalid,
     FieldPresent,
+    KeyCanonicalizer,
     Predicate,
     Problem,
     Truth,
@@ -187,9 +188,15 @@ def apply_closed_transform(
     *,
     parameters: Mapping[str, object] | None = None,
     enums: EnumResolver | None = None,
-    max_items: int | None = None,
+    keys: KeyCanonicalizer | None = None,
 ) -> tuple[CanonicalValue, bool]:
-    """``(value, complete)`` of one closed transform; ``resolve`` reads a reference."""
+    """``(value, complete)`` of one closed transform; ``resolve`` reads a reference.
+
+    An intermediate value is held to no item budget: ``max_items`` is enforced at
+    the boundaries (Procedure input/output, provider operations, terminal rows).
+    ``keys`` (core's SubjectKind identity rules) lets a ``shape`` cast
+    ``as: key<K>`` canonicalize a key; without it such a cast fails closed.
+    """
 
     if isinstance(spec, TransformShapeSpec):
         source = as_records(resolve(spec.input), label="shape input")
@@ -214,25 +221,23 @@ def apply_closed_transform(
                     result = results.get(member, FieldAbsent())
                 if field.as_ is not None:
                     result = cast_value(
-                        result, parse_type(field.as_), field=name, enum_members=enums
+                        result, parse_type(field.as_), field=name, enum_members=enums, keys=keys
                     )
                 fields[name] = _wire(result)
             shaped.append(
                 {"record": record["record"], "key": record.get("key", {}), "fields": fields}
             )
-        _bound(shaped, max_items)
         return normalize_canonical(records_value(shaped, source.complete)), source.complete
     if isinstance(spec, TransformFilterSpec):
         source = as_records(resolve(spec.input), label="filter input")
         kept: list[Record] = []
         unknown = False
         for record in source.records:
-            truth = _truth(spec.where, record, parameters)  # type: ignore[arg-type]
+            truth = _truth(spec.where, record, parameters)
             if truth == "true":
                 kept.append(record)
             elif truth == "unknown":
                 unknown = True
-        _bound(kept, max_items)
         complete = source.complete and not unknown
         return normalize_canonical(records_value(kept, complete)), complete
     if isinstance(spec, TransformDedupeSpec):
@@ -255,7 +260,6 @@ def apply_closed_transform(
     if isinstance(spec, TransformUnionSpec):
         parts = [as_records(resolve(item), label="union input") for item in spec.inputs]
         merged = [record for part in parts for record in part.records]
-        _bound(merged, max_items)
         complete = all(part.complete for part in parts)
         return normalize_canonical(records_value(merged, complete)), complete
     if isinstance(spec, TransformJoinSpec):
@@ -291,7 +295,6 @@ def apply_closed_transform(
                 joined.append(
                     {"record": record["record"], "key": record.get("key", {}), "fields": fields}
                 )
-        _bound(joined, max_items)
         complete = left.complete and right.complete and not unknown
         return normalize_canonical(records_value(joined, complete)), complete
     if isinstance(spec, TransformAggregateSpec):
@@ -300,18 +303,6 @@ def apply_closed_transform(
     if isinstance(spec, TransformDeriveSpec):
         return _derive(spec, resolve, parameters)
     raise ExecutionError(f"unsupported closed transform {kind!r}")  # pragma: no cover
-
-
-def _bound(records: Sequence[Record], max_items: int | None) -> None:
-    if max_items is not None and len(records) > max_items:
-        raise TransformItemBudgetExceeded(limit=max_items, observed=len(records))
-
-
-class TransformItemBudgetExceeded(ExecutionError):
-    def __init__(self, *, limit: int, observed: int) -> None:
-        self.limit = limit
-        self.observed = observed
-        super().__init__(f"a closed transform produced {observed} records, over {limit}")
 
 
 def _aggregate(
@@ -398,7 +389,7 @@ def _derive(
             fields[name] = _present(value, f"/{name}")
     record: Record = {"record": "/", "key": {}, "fields": fields}
     for case in spec.cases:
-        truth = _truth(case.when, record, parameters)  # type: ignore[arg-type]
+        truth = _truth(case.when, record, parameters)
         if truth == "true":
             return normalize_canonical(
                 scalar_value(_present(case.value, "/derive"), complete)
@@ -415,7 +406,6 @@ def _derive(
 __all__ = [
     "Records",
     "TransformInputInvalid",
-    "TransformItemBudgetExceeded",
     "apply_closed_transform",
     "as_records",
     "records_value",

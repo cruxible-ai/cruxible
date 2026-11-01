@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from typing import Any, Literal
 
@@ -32,7 +32,14 @@ from cruxible_client.contracts.canonical_forms import (
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import ClaimType, effective_canonical_form
 from cruxible_client.contracts.compact_query import QueryFilterOperator
+from cruxible_client.contracts.identity_normalizers import KeyNormalizer
+from cruxible_client.contracts.subject_kinds import SubjectKind
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_identity import (
+    SubjectKeyInvalid,
+    canonical_key_value,
+    key_normalizer_of,
+)
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.field_names import (
@@ -138,6 +145,9 @@ class PredicateInfo:
     cardinality: Literal["one", "many"]
     subject_kinds: tuple[str, ...]
     object_kinds: tuple[str, ...]
+    #: The identity normalizer its SubjectKind pins when this predicate is a key
+    #: part (R12); None for a non-key predicate and for ``none``.
+    key_normalizer: KeyNormalizer | None = None
 
     @property
     def type_name(self) -> str:
@@ -348,6 +358,23 @@ def load_query_vocabulary(
                 "SELECT identity FROM subject_kinds WHERE lifecycle='live'"
             )
         )
+        # A key predicate's operands take its SubjectKind's normalizer (R12).
+        declared_kinds: dict[str, SubjectKind | None] = {}
+
+        def declared(kind: str) -> SubjectKind | None:
+            if kind not in declared_kinds:
+                value = projection.typed.source(f"SubjectKind:{kind}")
+                declared_kinds[kind] = (
+                    value
+                    if isinstance(value, SubjectKind) and value.lifecycle.state == "live"
+                    else None
+                )
+            return declared_kinds[kind]
+
+        for predicate, info in list(predicates.items()):
+            rule = key_normalizer_of(info.claim_type, declared)
+            if rule is not None:
+                predicates[predicate] = replace(info, key_normalizer=rule)
     return QueryVocabulary(predicates=predicates, kinds=tuple(sorted(kinds)))
 
 
@@ -428,6 +455,20 @@ def canonical_operand(info: PredicateInfo, value: object, *, field_path: str) ->
     compare equal, and one distinct under it stays distinct.
     """
 
+    if info.key_normalizer is not None and isinstance(value, str):
+        # A key part's stored value is its form, then its normalizer: an
+        # operand naming the same key by another spelling compares equal.
+        try:
+            return canonical_key_value(
+                value, info.claim_type, info.key_normalizer, predicate=info.predicate
+            )
+        except SubjectKeyInvalid as exc:
+            raise query_refusal(
+                "cruxible.query.value_type_mismatch",
+                str(exc),
+                repair="pass a value that is a key of this field's kind",
+                field_path=field_path,
+            ) from exc
     form = effective_canonical_form(info.claim_type)
     if not form:
         return value

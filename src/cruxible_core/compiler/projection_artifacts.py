@@ -1218,12 +1218,8 @@ def parse_projection_tree(
                     analyze_procedure,
                     compute_procedure_node_digests,
                 )
-                from cruxible_client.contracts.procedures.source_compiler import (
-                    verify_source_graph,
-                )
 
                 procedure = parse_procedure(content, path=path)
-                verify_source_graph(procedure)
                 identity = procedure.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
@@ -1432,14 +1428,6 @@ def parse_projection_tree(
                 )
 
                 line = parse_line_spec(content, path=path)
-                if isinstance(line.budgets, dict):
-                    result_budget = line.budgets.get("max_result_bytes")
-                    if "max_result_bytes" in line.budgets and (
-                        not isinstance(result_budget, int)
-                        or isinstance(result_budget, bool)
-                        or result_budget < 1
-                    ):
-                        raise ProjectionFormatError("Line result budget must be a positive integer")
                 identity = line.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")

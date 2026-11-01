@@ -103,7 +103,9 @@ def test_transfer_install_and_restart_reuse(
     assert again.registered and again.status == "ready"
 
 
-def _author_line(http, instance_id, reviewer, *, spec, line, bindings, parameters, name):
+def _author_line(  # noqa: PLR0913
+    http, instance_id, reviewer, *, spec, line, bindings, parameters, name, acquisition=None
+):
     """Author ``spec`` and a Line binding its slots, each accepted by the reviewer.
 
     The Line binds every slot to one exact ``{build, operation}`` at acceptance.
@@ -118,10 +120,14 @@ def _author_line(http, instance_id, reviewer, *, spec, line, bindings, parameter
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
     from cruxible_core.authoring.lowering import lower_authoring
     from cruxible_core.proposals.proposals import AuthenticatedActor
+    from tests.support.procedures import refs
 
     instance = get_playbill_manager().get(instance_id)
     for kind, payload in (
-        ("procedure", ProcedureInput(kind="procedure", spec=ProcedureSpec.model_validate(spec))),
+        (
+            "procedure",
+            ProcedureInput(kind="procedure", spec=ProcedureSpec.model_validate(refs(spec))),
+        ),
         (
             "line",
             LineInput.model_validate(
@@ -131,6 +137,7 @@ def _author_line(http, instance_id, reviewer, *, spec, line, bindings, parameter
                     "procedure_name": spec["procedure"],
                     "bindings": bindings,
                     "parameters": parameters,
+                    "acquisition": acquisition or {},
                     "occurrence_epoch": 1,
                 }
             ),
@@ -166,12 +173,18 @@ def _run_call(http, instance_id, reviewer, *, build, value, name="installed-pack
         reviewer,
         spec={
             "procedure": f"test.{name}",
-            "input": {"n": "integer"},
-            "output": {"n": "integer"},
+            "params": {"n": "int"},
+            "output": {"n": "int"},
             "slots": {"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
-            "steps": [{"call": "result", "slot": "increment", "input": {"n": "$input.n"}}],
+            "steps": [
+                {
+                    "call": "result",
+                    "slot": "increment",
+                    "input": {"n": {"$ref": "param", "path": ["n"]}},
+                }
+            ],
             "returns": "result",
-            "budget": {"provider_calls": 1},
+            "hard_caps": {"provider_calls": 1},
         },
         line=line,
         bindings={"increment": build},
@@ -549,7 +562,6 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
                     "effect": "external_read",
                 }
             },
-            "acquisition_defaults": {"observation.capture": _policy().model_dump(mode="json")},
             "steps": [
                 {
                     "call": "observation",
@@ -567,9 +579,10 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
                 {"project": "result", "fields": {"text": "$bundle.rows.0.text"}},
             ],
             "returns": "result",
-            "budget": {"provider_calls": 1, "capture_bytes": 1048576},
+            "hard_caps": {"provider_calls": 1, "capture_bytes": 1048576},
         },
         line=line,
+        acquisition={"observation.capture": _policy().model_dump(mode="json")},
         bindings={"fetch": f"{installed.build}#web.fetch"},
         parameters={},
         name="installed-web-fetch",
@@ -862,7 +875,7 @@ def _author_workspace_line(http, instance_id, reviewer, *, build, name):
         spec={
             "procedure": f"test.{name}",
             "input": {},
-            "output": {"lines": "integer"},
+            "output": {"lines": "int"},
             "slots": {
                 "read": {
                     "in": "workspace.file.request@1",
@@ -875,7 +888,7 @@ def _author_workspace_line(http, instance_id, reviewer, *, build, name):
                 {"project": "out", "fields": {"lines": "$structured.content.line_count"}},
             ],
             "returns": "out",
-            "budget": {"provider_calls": 1},
+            "hard_caps": {"provider_calls": 1},
         },
         line=line,
         bindings={"read": f"{build}#workspace.file"},

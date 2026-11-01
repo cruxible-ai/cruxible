@@ -1324,6 +1324,6 @@ def _top_statements(measured: dict[str, dict[str, Any]], shown: int = 5) -> str:
 def test_scale_factories_author_named_procedures_and_lines():
     procedure = _worlds._procedure("scale-native", terminal=None, capability=1)
     line = _worlds._line("scale-native", procedure, authority="observe")
-    assert procedure.procedure.artifact_format == "cruxible-procedure-v3"
-    assert procedure.procedure.definition.graph_format == 7
+    assert procedure.procedure.artifact_format == "cruxible-procedure-v4"
+    assert procedure.procedure.definition.graph_format == 8
     assert line.artifact_format == "cruxible-line-v8"

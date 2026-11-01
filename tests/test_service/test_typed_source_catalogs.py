@@ -21,7 +21,6 @@ from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
 )
-from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.procedures.line_specs import (
     line_identity_digest,
     line_spec_digest,
@@ -46,6 +45,7 @@ from tests.core_support._p2b1_support import accepted_provider
 from tests.core_support._pc_c_support import capture_contract, provider
 from tests.core_support._projection_support import MemoryLedger, accepted_coordinate
 from tests.core_support._support import initialize_local
+from tests.support.procedures import procedure_members  # noqa: E402
 from tests.test_procedures.test_line_specs import _line
 from tests.test_procedures.test_procedure_run_surface import (
     READ_TIME,
@@ -202,7 +202,7 @@ def test_mandates_select_exact_line_lifecycle_and_half_open_time(tmp_path, monke
         ),
     ]
     tree = {
-        accepted.path: render_procedure(authored_procedure(accepted)),
+        **procedure_members(authored_procedure(accepted)),
         line_spec_path(line.identity.name): render_line_spec(line),
         line_spec_path(other_line.identity.name): render_line_spec(other_line),
         **{
@@ -237,7 +237,7 @@ def test_line_identity_and_closure_select_only_bound_sources(tmp_path, monkeypat
         for i in range(unrelated)
     ]
     tree = {
-        procedure.path: render_procedure(authored_procedure(procedure)),
+        **procedure_members(authored_procedure(procedure)),
         **{
             line_spec_path(item.identity.name): render_line_spec(item)
             for item in [selected, *others]
@@ -281,7 +281,7 @@ def test_a_lines_closure_catches_a_procedure_digest_that_no_longer_reproduces(
         update={"identity": ArtifactIdentity(kind="Line", name="selected-2")}
     ).model_copy(update={"procedure": pin, "pins": (pin,)})
     tree = {
-        procedure.path: render_procedure(authored_procedure(procedure)),
+        **procedure_members(authored_procedure(procedure)),
         line_spec_path(selected.identity.name): render_line_spec(selected),
     }
     instance, coordinate, _reads = _published_sources(tmp_path, tree, monkeypatch)
@@ -301,7 +301,7 @@ def test_a_lines_closure_catches_a_procedure_digest_that_no_longer_reproduces(
 
 @pytest.mark.parametrize("unrelated", (2, 17))
 def test_source_catalogs_select_exact_contract_pins(tmp_path, monkeypatch, unrelated):
-    # Acquisition is inline Procedure/Line data now (AcquisitionDefault/
+    # Acquisition is inline Procedure/Line data now (LineAcquisitionRule/
     # AcquisitionRule), never a separately pinned-and-looked-up artifact
     # (SourceAcquisitionPolicy is gone, B2 noun removal) -- only the
     # capture-contract pin lookup from the original test survives.

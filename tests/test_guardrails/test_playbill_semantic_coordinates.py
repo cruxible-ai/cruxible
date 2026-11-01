@@ -36,6 +36,7 @@ from cruxible_client.contracts.laws import (
     PROCEDURE_MANDATE_ACCEPTANCE_LAW,
     PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,
     PROCEDURE_MANDATE_V3_ACCEPTANCE_LAW,
+    PROCEDURE_MANDATE_V4_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
     PROVIDER_ACCEPTANCE_LAW,
     PROVIDER_BUILD_ACCEPTANCE_LAW,
@@ -76,10 +77,10 @@ LAW_COORDINATES: tuple[
     ),
     (
         SUBJECT_KIND_ACCEPTANCE_LAW,
-        "cruxible.subject-kind.v1",
-        "cruxible-subject-kind-v1",
+        "cruxible.subject-kind.v2",
+        "cruxible-subject-kind-v2",
         1,
-        "sha256:5f8e0ef33e854fc3355bc02a3cac0a6c08f216c59175b0a53ee2195bdc819510",
+        "sha256:96d751b5c1a67e2ea7d437a5e309c303b82cb514373f3339d621a93f9f0d6cd8",
     ),
     (
         CONTRACT_ACCEPTANCE_LAW,
@@ -225,9 +226,9 @@ LAW_COORDINATES += (
     (
         NAMED_REFERENCE_LAWS[1],
         "cruxible.procedure.named.v1",
-        "cruxible-procedure-v3",
+        "cruxible-procedure-v4",
         1,
-        "sha256:43266f5543258472166c75b9c7ab202e48104873eded063bf95ee1b84fcffef7",
+        "sha256:cde6301632d7fd5a692b98987a82e88546e2e796f8f569f4c9e59ffed9e5b251",
     ),
     (
         NAMED_REFERENCE_LAWS[2],
@@ -263,6 +264,13 @@ LAW_COORDINATES += (
         "cruxible-procedure-mandate-v3",
         1,
         "sha256:dc26f33bab27da535fe802668a957e8218c5ce5c39347cee07992965255b0522",
+    ),
+    (
+        PROCEDURE_MANDATE_V4_ACCEPTANCE_LAW,
+        "cruxible.procedure-mandate.v4",
+        "cruxible-procedure-mandate-v4",
+        1,
+        "sha256:eada1592c6e4bd4e10f8b9935e0f1f273a7a5ca63916ced3bb0f38afe579797b",
     ),
     (
         NAMED_PROVIDER_IDENTITY_LAW,
@@ -303,16 +311,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:d190704d4c9b2a48f778902f1222b1c97640800aca52f354bd30499cd760c7db"
+    expected = "sha256:89769ca0c70bb3d0ac6b10302109afbf6ee89c2a9778cfff63f196943c9434a5"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 40,
+            "semantic_revision": 42,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "claim-grammar-nodes-v1",
+            "revision_name": "typed-authoring-identity-v1",
         },
     )
     assert computed == expected
@@ -357,8 +365,8 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "claim-grammar-nodes-v1"
-    assert compiler_revision_label(CURRENT_COMPILER) == "claim-grammar-nodes-v1"
+    assert CURRENT_COMPILER_REVISION == "typed-authoring-identity-v1"
+    assert compiler_revision_label(CURRENT_COMPILER) == "typed-authoring-identity-v1"
     for earlier_digest in (
         "sha256:56542b566100db8fadfd4bfcea8f0fe58e37de444885906f3914ec1cc225d085",
         # Revision 36 (light-artifacts-v1): flat-manifest sroot-v1 genesis.
@@ -371,6 +379,10 @@ def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
         "sha256:014d2d38585615a14144eda7f57ff500421d98a411b25014f10f0b64f405dd90",
         # Revision 39 (nodes-extract-v1): B3's node union and extract alone.
         "sha256:1b6fc46fd55f755f6974866cb22703a58d27ebff523efb74e0761b6514886279",
+        # Revision 40 (claim-grammar-nodes-v1): C4's grammar with B3's nodes.
+        "sha256:d190704d4c9b2a48f778902f1222b1c97640800aca52f354bd30499cd760c7db",
+        # Revision 41 (typed-authoring-foundations-v1): D10 and limits, before R12.
+        "sha256:69b0cf5b8b0f9397311bd7516369ef0952364801a45f50966f8a307ad73a8e78",
     ):
         earlier = CompilerCoordinate(rule_digest=earlier_digest)
         assert compiler_revision_label(earlier) is None

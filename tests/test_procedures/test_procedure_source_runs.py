@@ -23,7 +23,7 @@ from typing import Any, cast, get_args
 
 import pytest
 
-from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
+from cruxible_client.authoring.inputs import ProcedureInput
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
@@ -40,18 +40,15 @@ from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
 )
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
+from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
 from cruxible_client.contracts.procedures.artifacts import (
     DIRECT_NODE_KINDS,
     LINE_NODE_KINDS,
     ProcedureArtifact,
-    ProcedureOwnedContract,
     procedure_artifact_digest,
-    procedure_owned_contract_digest,
     procedure_path,
     render_procedure,
 )
-from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
@@ -62,7 +59,6 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
@@ -119,7 +115,7 @@ from tests.core_support._candidate_support import submit_member_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._support import initialize_local
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
+from tests.support.procedures import MAX_WALL_CLOCK, named, procedure_members
 
 NOW = datetime(2026, 9, 12, 12, 0, tzinfo=UTC)
 SEED_STAMP = "2026-09-12T11:00:00.000000Z"
@@ -230,16 +226,14 @@ class _Operator:
         )
 
 
-def _contracts() -> tuple[ProcedureOwnedContract, ProcedureOwnedContract]:
+def _contracts() -> tuple[Any, Any]:
+    """The Source Procedure's governed input and output Contracts."""
+
+    from tests.support.procedures import boundary_contract
+
     return (
-        ProcedureOwnedContract(
-            identity=ArtifactIdentity(kind="Contract", name=f"{PROCEDURE_NAME}-input"),
-            schema=ContractSchema(fields={}),
-        ),
-        ProcedureOwnedContract(
-            identity=ArtifactIdentity(kind="Contract", name=f"{PROCEDURE_NAME}-output"),
-            schema=ContractSchema(fields={"severity": PropertySchema(type="string")}),
-        ),
+        boundary_contract(f"{PROCEDURE_NAME}.input"),
+        boundary_contract(f"{PROCEDURE_NAME}.output", {"severity": "string"}),
     )
 
 
@@ -262,19 +256,12 @@ def _procedure(  # noqa: PLR0913
     root: Path,
     contract: CaptureContract,
     relative_path: str = RELATIVE_PATH,
-    acquisition_defaults: dict[str, AcquisitionDefault] | None = None,
 ) -> ProcedureArtifact:
+    from tests.support.procedures import contract_pin
+
     input_contract, output_contract = _contracts()
-    contract_in = ArtifactPin(
-        role="contract-in",
-        target=input_contract.identity,
-        artifact_digest=procedure_owned_contract_digest(input_contract).tagged,
-    )
-    contract_out = ArtifactPin(
-        role="contract-out",
-        target=output_contract.identity,
-        artifact_digest=procedure_owned_contract_digest(output_contract).tagged,
-    )
+    contract_in = contract_pin("contract-in", input_contract)
+    contract_out = contract_pin("contract-out", output_contract)
     capture_pin = ArtifactPin(
         role="capture-contract",
         target=contract.identity,
@@ -333,19 +320,10 @@ def _procedure(  # noqa: PLR0913
             ProjectNode(
                 node_id="shape",
                 fields={"severity": f"$steps.{SOURCE_ALIAS}.content.text"},
-                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
         returns="result",
-        budget=ProcedureBudget(
-            wall_clock=RUN_WALL_CLOCK,
-            max_provider_calls=2,
-            max_capture_bytes=65_536,
-            # No max_items: the authoring law ties a declared item budget to a
-            # pinned Contract with a list field, and this graph shapes one row.
-            max_items=None,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=4,
@@ -353,20 +331,13 @@ def _procedure(  # noqa: PLR0913
             max_items=200,
             max_repeat_attempts=1,
         ),
-        terminal_capability=2,
+        terminal_capability=1,
     )
     procedure = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=PROCEDURE_NAME),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        owned_contracts=tuple(
-            sorted(
-                (input_contract, output_contract),
-                key=lambda item: canonical_bytes(item.model_dump(mode="json", by_alias=True)),
-            )
-        ),
         activation_policy="drain",
-        acquisition_defaults=acquisition_defaults or {},
     )
 
     from tests.support.procedures import revalidated
@@ -378,24 +349,73 @@ def _procedure(  # noqa: PLR0913
 PROPOSALS_ALIAS = "proposals"
 #: A terminal fan-out over the items that extract read, one row per item.
 FAN_OUT = {"items": f"$steps.{PROPOSALS_ALIAS}.rows"}
-#: The Contracts a fan-out item row is typed by. Each nested record is read
-#: whole: its Contract declares no fields, so the item's own model decides it.
-_FAN_OUT_NESTED = ("test.fan-out-record",)
+#: The Contracts a fan-out item row is typed by: each nested record declares
+#: the members the item model consumes (Contracts are closed: an undeclared
+#: member is not read), in pin order -- a Contract after those it nests.
+_FAN_OUT_NESTED: tuple[dict[str, object], ...] = (
+    {
+        "name": "test.fan-out-selector",
+        "version": 1,
+        "description": "A Subject address's selector.",
+        "fields": {"scheme": "string", "value": "string?"},
+    },
+    {
+        "name": "test.fan-out-address",
+        "version": 1,
+        "description": "A Subject address: the artifact and its selector.",
+        "fields": {
+            "tag": "string",
+            "artifact_path": "string",
+            "selector": "test.fan-out-selector@1",
+        },
+    },
+    {
+        "name": "test.fan-out-object",
+        "version": 1,
+        "description": "A statement's object: its kind and literal value.",
+        "fields": {"kind": "string", "value": "string?"},
+    },
+    {
+        "name": "test.fan-out-statement",
+        "version": 1,
+        "description": "One authored Claim statement.",
+        "fields": {
+            "tag": "string",
+            "subject": "test.fan-out-address@1",
+            "predicate": "string",
+            "qualifier": "string?",
+            "object": "test.fan-out-object@1",
+            "role": "string",
+            "effective_from": "string?",
+            "effective_until": "string?",
+        },
+    },
+    {
+        "name": "test.fan-out-source",
+        "version": 1,
+        "description": "A self-sourced body: the author's own words.",
+        "fields": {"tag": "string", "content_base64": "string"},
+    },
+    {
+        "name": "test.fan-out-key",
+        "version": 1,
+        "description": "A Subject creation's key, by its key part.",
+        "fields": {"slug": "string"},
+    },
+)
 _FAN_OUT_ROW: dict[str, object] = {
     "name": "test.fan-out-item",
     "version": 1,
-    "description": "One proposal item a feed states, read whole for a terminal fan-out.",
+    "description": "One proposal item a feed states, typed for a terminal fan-out.",
     "fields": {
         "tag": "string",
-        "statement": "test.fan-out-record@1?",
+        "statement": "test.fan-out-statement@1?",
         "rationale": "string?",
         "revises": "string?",
-        "source": "test.fan-out-record@1?",
+        "source": "test.fan-out-source@1?",
         "citation_role": "string?",
-        "derivation": "test.fan-out-record@1?",
-        "existing_claim_dispositions": "list<test.fan-out-record@1>{max_items: 64}?",
         "subject_kind": "string?",
-        "key": "test.fan-out-record@1?",
+        "key": "test.fan-out-key@1?",
         "create_new": "bool?",
         "retires": "string?",
         "reason": "string?",
@@ -415,7 +435,7 @@ DOCUMENT_ALIAS = "document"
 
 
 def fan_out_contracts() -> tuple[Any, ...]:
-    """The fan-out row Contract and the open record it nests, digests pinned."""
+    """The nested record Contracts, then the fan-out row Contract, every pin's digest set."""
 
     from cruxible_client.contracts.shapes import (
         contract_digest,
@@ -423,14 +443,14 @@ def fan_out_contracts() -> tuple[Any, ...]:
         validate_contract,
     )
 
-    record = validate_contract(
-        {"name": "test.fan-out-record", "version": 1, "fields": {}, "description": "Any record."}
-    )
-    row = pin_contract_refs(
-        validate_contract(_FAN_OUT_ROW),
-        lambda ref: ref.model_copy(update={"digest": contract_digest(record).tagged}),
-    )
-    return record, row
+    pinned: dict[str, Any] = {}
+    for spec in (*_FAN_OUT_NESTED, _FAN_OUT_ROW):
+        contract = pin_contract_refs(
+            validate_contract(spec),
+            lambda ref: ref.model_copy(update={"digest": contract_digest(pinned[ref.name]).tagged}),
+        )
+        pinned[contract.name] = contract
+    return tuple(pinned.values())
 
 
 def document_contract() -> Any:
@@ -444,7 +464,7 @@ def fan_out_members() -> dict[str, bytes]:
 
     return {
         contract_path(contract.name, contract.version): render_contract(contract)
-        for contract in (*fan_out_contracts(), document_contract())
+        for contract in (*fan_out_contracts(), document_contract(), *_contracts())
     }
 
 
@@ -454,7 +474,7 @@ def proposals_extract(*, next_node: str | None = None) -> Any:
     from cruxible_client.contracts.procedures.extract import ExtractNode
     from cruxible_client.contracts.shapes import contract_digest
 
-    _record, row = fan_out_contracts()
+    *_nested, row = fan_out_contracts()
     return ExtractNode.model_validate(
         {
             "kind": "extract",
@@ -534,9 +554,9 @@ def json_text(value: object) -> str:
 
 def _policy(
     *, name: str = "default", overrides: dict[str, CanonicalDuration | None] | None = None
-) -> AcquisitionDefault:
+) -> LineAcquisitionRule:
     del name  # Acquisition defaults are inline data now, not a named artifact.
-    return AcquisitionDefault(max_age=CanonicalDuration(microseconds=3_600_000_000))
+    return LineAcquisitionRule(max_age=CanonicalDuration(microseconds=3_600_000_000))
 
 
 def _world(  # noqa: PLR0913
@@ -544,7 +564,7 @@ def _world(  # noqa: PLR0913
     *,
     contents: bytes | None = None,
     contract: CaptureContract | None = None,
-    policy: AcquisitionDefault | None = None,
+    policy: LineAcquisitionRule | None = None,
     accept_procedure: bool = True,
     relative_path: str = RELATIVE_PATH,
     write_at: str = RELATIVE_PATH,
@@ -568,7 +588,6 @@ def _world(  # noqa: PLR0913
         root=workspace_root,
         contract=accepted_contract,
         relative_path=relative_path,
-        acquisition_defaults={SOURCE_CAPTURE: accepted_policy},
     )
     if document:
         definition = procedure.definition.model_copy(
@@ -591,7 +610,7 @@ def _world(  # noqa: PLR0913
         **fan_out_members(),
     }
     if accept_procedure:
-        members[procedure_path(PROCEDURE_NAME)] = render_procedure(procedure)
+        members.update(procedure_members(procedure))
     inspection = submit_member_candidate(
         instance,
         members=members,
@@ -630,13 +649,23 @@ def _run(  # type: ignore[no-untyped-def]
     invoker: _WorkspaceInvoker | None = None,
     reader: WorkspaceFileReader | None = None,
     evaluation_time: datetime = NOW,
+    acquisition: dict[str, LineAcquisitionRule] | None = None,
 ):
+    """A direct run; its request states the world's acquisition rule (a Line's own).
+
+    Acquisition rules live on the Line only, so a direct run's ephemeral Line
+    spec carries them from the request.
+    """
+
     spawned = _WorkspaceInvoker() if invoker is None else invoker
+    rules = {SOURCE_CAPTURE: _policy()} if acquisition is None else acquisition
     return (
         service_run_playbill_procedure(
             instance,
             name=PROCEDURE_NAME,
-            request=ProcedureRunRequest(input={}, evaluation_time=evaluation_time),
+            request=ProcedureRunRequest(
+                input={}, evaluation_time=evaluation_time, acquisition=rules
+            ),
             actor_context=_actor(instance).model_copy(update={"timestamp": evaluation_time}),
             provider_runtime_operator=_Operator(spawned),  # type: ignore[arg-type]
             workspace_file_reader=_reader(instance, root) if reader is None else reader,
@@ -790,7 +819,7 @@ LINE_NAME = "advisory-hourly"
 def _served_line(
     instance: PlaybillInstance,
     procedure: ProcedureArtifact,
-    policy: AcquisitionDefault,
+    policy: LineAcquisitionRule,
 ) -> LineSpec:
     """A Line over the same Source Procedure the direct lane runs."""
 
@@ -840,7 +869,6 @@ def _line_mandate(line: LineSpec, procedure: ProcedureArtifact) -> ProcedureMand
             artifact_digest=line_spec_digest(line).tagged,
         ),
         grants="propose",
-        resource_ceiling=procedure.definition.hard_caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),
@@ -1351,7 +1379,7 @@ def test_a_direct_run_reaches_a_terminal_under_an_ephemeral_propose_capped_line(
     _accept_more(
         instance,
         owner,
-        {procedure_path(PROCEDURE_NAME): render_procedure(with_terminal)},
+        procedure_members(with_terminal),
         name="terminal-procedure",
     )
     journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
@@ -1604,64 +1632,34 @@ def test_the_authoring_path_produces_the_exact_artifact_the_run_lane_executes(
     assert lowered.resolved_authoring["artifact_digest"] == (
         procedure_artifact_digest(procedure).tagged
     )
-    assert lowered.resolved_authoring["definition"]["graph_format"] == 7
+    assert lowered.resolved_authoring["definition"]["graph_format"] == 8
     assert lowered.proposed_tree[procedure_path(PROCEDURE_NAME)] == render_procedure(procedure)
 
 
-def _authored_definition(procedure: ProcedureArtifact) -> dict[str, object]:
-    """Render the same graph the way an author names it, not the way it resolved."""
+def _sdk_procedure_input(
+    procedure: ProcedureArtifact, contracts: tuple[Any, ...] | None = None
+) -> ProcedureInput:
+    """The stored graph as an author writes it: the one typed spec it decompiles to.
 
-    def rewrite(value: object) -> object:
-        if isinstance(value, dict):
-            if set(value) == {"role", "target", "artifact_digest"}:
-                target = cast(dict[str, str], value["target"])
-                if target["kind"] == "Contract":
-                    return {
-                        "kind": "carried_contract",
-                        "name": target["name"],
-                        "role": value["role"],
-                    }
-                return {
-                    "tag": "playbill-authoring-artifact-reference-v1",
-                    "role": value["role"],
-                    "target": target,
-                    "resolution": "accepted_at_intent_base",
-                }
-            return {key: rewrite(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [rewrite(item) for item in value]
-        return value
+    Its generated ``<procedure>.input|output`` Contracts render inline, so
+    lowering co-proposes them again.
+    """
 
-    rendered = procedure.definition.model_dump(mode="json", by_alias=True)
-    return cast(dict[str, object], rewrite(rendered))
+    from cruxible_client.contracts.procedures.decompile import decompile_procedure
+    from tests.support.procedures import contract_resolver
 
-
-def _sdk_procedure_input(procedure: ProcedureArtifact) -> ProcedureInput:
-    return ProcedureInput(
-        kind="procedure",
-        definition=_authored_definition(procedure),
-        activation_policy=procedure.activation_policy,
-        contracts=tuple(
-            CarriedContractInput(
-                name=contract.identity.name,
-                description=contract.contract_schema.description,
-                fields=contract.contract_schema.fields,
-                allow_extra=contract.contract_schema.allow_extra,
-            )
-            for contract in procedure.owned_contracts
-        ),
-        acquisition_defaults=dict(procedure.acquisition_defaults),
-    )
+    resolve = contract_resolver(*(_contracts() if contracts is None else contracts))
+    return ProcedureInput(kind="procedure", spec=decompile_procedure(procedure, contracts=resolve))
 
 
 def test_a_line_over_a_source_procedure_authors_without_an_acquisition_override(
     tmp_path: Path,
 ) -> None:
-    """A Line authored with no `acquisition` override still lowers and binds its slot.
+    """A Line authored with no `acquisition` rule still lowers and binds its slot.
 
-    Acquisition rules resolve per run from the Procedure's `acquisition_defaults`
-    and the Line's `acquisition` override (C2/F05); a Line need not declare an
-    override to run -- there is no separate pinned policy artifact to require.
+    Acquisition rules live on the Line (C2/F05); a capture output it names no
+    rule for runs under the stated core default -- there is no separate pinned
+    policy artifact to require.
     """
 
     from cruxible_client.contracts.authoring.models import LineAuthoringPayload

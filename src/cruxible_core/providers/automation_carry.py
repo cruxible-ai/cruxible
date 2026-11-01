@@ -7,10 +7,9 @@ grant never follows a changed Line (ruling C3). Literal digest-looking
 parameters and conditions are data, never reference replacement targets.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
-from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactNameRef, ArtifactPin
-from cruxible_client.contracts.canonical import normalize_canonical
+from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandate,
@@ -22,8 +21,9 @@ from cruxible_client.contracts.procedure_mandates import (
 )
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.contracts import (
-    OwnedProcedureContractValidator,
+    AcceptedProcedureContractValidator,
     ProcedureContractValidationError,
+    validate_line_parameters,
 )
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
@@ -36,6 +36,7 @@ from cruxible_client.contracts.provider_installation import (
     CarriedLineV1,
     CarriedMandateV1,
 )
+from cruxible_client.contracts.shapes import Contract, ContractRef, EnumResolver
 
 # These newly selected families have no contract-level parse memo yet. Share the
 # exact-byte models between upgrade planning and the generation findings worker.
@@ -49,21 +50,25 @@ def parse_carry_line(content: bytes, *, path: str) -> LineSpec:
     return _LINES.parse(content, path, None, lambda: parse_line_spec(content, path=path))
 
 
-def validate_carried_line(content: bytes, *, path: str, procedure: AcceptedProcedure) -> None:
-    """Apply ordinary Line-authoring input semantics to the exact final Procedure.
+def validate_carried_line(
+    content: bytes,
+    *,
+    path: str,
+    procedure: AcceptedProcedure,
+    contracts: Callable[[ContractRef], Contract | None],
+    enum_members: EnumResolver | None = None,
+) -> None:
+    """Apply ordinary Line-authoring parameter semantics to the exact final Procedure.
 
     Called once per affected Line at settlement; parameters remain unchanged.
     """
 
     line = parse_carry_line(content, path=path)
-    contract = procedure.procedure.definition.contract_in
-    if not isinstance(contract, ArtifactPin | ArtifactNameRef):
-        return
     try:
-        OwnedProcedureContractValidator(procedure).validate_contract(
-            contract=contract,
-            payload=normalize_canonical(line.parameters),
-            direction="input",
+        validate_line_parameters(
+            AcceptedProcedureContractValidator(contracts, enum_members),
+            procedure.procedure.definition,
+            line.parameters,
         )
     except ProcedureContractValidationError as exc:
         field = "parameters" if not exc.field_path else f"parameters.{exc.field_path}"
@@ -71,7 +76,7 @@ def validate_carried_line(content: bytes, *, path: str, procedure: AcceptedProce
             f"{line.identity.qualified}: final {procedure.procedure.identity.qualified} "
             f"at {procedure.artifact_digest} refuses {field}: {exc}; "
             "explicitly author compatible Line parameters against the final Procedure's "
-            "input contract before retrying the upgrade"
+            "params Contract before retrying the upgrade"
         ) from exc
 
 
@@ -121,7 +126,6 @@ def carry_mandate(
             identity=mandate.identity,
             line=mandate.line.model_copy(update={"artifact_digest": target}),
             grants="propose",
-            resource_ceiling=mandate.resource_ceiling,
             namespace=mandate.namespace,
             valid_from=mandate.valid_from,
             expires_at=mandate.expires_at,

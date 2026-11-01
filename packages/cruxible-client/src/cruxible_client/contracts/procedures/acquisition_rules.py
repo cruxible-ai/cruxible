@@ -1,10 +1,13 @@
 """Acquisition rules: how fresh and how replayable a Source's Capture must
 be, and what unavailability, staleness and an oversized read each do.
 
-A Procedure declares ``acquisition_defaults`` per capture output, keyed
-``<alias>.<capture field>``; a Line's ``acquisition`` replaces the default for
-any capture output it names. The rule a run admits for one capture output is
-:class:`AcquisitionRule`; each field of a call is decided by its own rule. ``on_unavailable``,
+Acquisition rules live on the Line only: a Line's ``acquisition`` declares a
+rule per capture output, keyed ``<alias>.<capture field>``. The Procedure keeps
+only what is intrinsic (each capture field's CaptureContract). A capture output
+the Line names no rule for runs under :data:`CORE_DEFAULT_ACQUISITION_RULE`,
+stated here and recorded on the admitted rule (``declared_by:
+"core_default"``), never silently. The rule a run admits for one capture output
+is :class:`AcquisitionRule`; each field of a call is decided by its own rule. ``on_unavailable``,
 ``on_stale`` and ``on_oversized`` each choose ``refuse`` (the default) or
 ``omit``: an absorbable typed refusal, a Capture older than ``max_age``, or
 one over the bound operation's byte budget, omits the Source from the run
@@ -30,9 +33,13 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.temporal import parse_iso_duration_microseconds
 
-#: A capture output: ``<acquiring call alias>.<capture field>``.
-_CAPTURE_OUTPUT_RE = re.compile(r"^[a-z][a-z0-9_]{0,127}\.[a-z][a-z0-9_]{0,127}$")
-ACQUISITION_RULES_DIGEST_DOMAIN = "cruxible-acquisition-rules-v1"
+#: A capture output: ``<acquiring call alias>.<capture field>``, or for an
+#: invoked child's, ``<invoke node path>.<alias>.<field>`` (as Line bindings key
+#: a child's slots).
+_CAPTURE_OUTPUT_RE = re.compile(
+    r"^(?:[a-z][a-z0-9_.-]{0,127}\.)*[a-z][a-z0-9_]{0,127}\.[a-z][a-z0-9_]{0,127}$"
+)
+ACQUISITION_RULES_DIGEST_DOMAIN = "cruxible-acquisition-rules-v2"
 
 UnavailableBehavior = Literal["refuse", "omit"]
 SourceReplayability = Literal["exact", "attested_only"]
@@ -67,8 +74,8 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class AcquisitionDefault(_Strict):
-    """One capture output's rule as a Procedure or Line declares it."""
+class LineAcquisitionRule(_Strict):
+    """One capture output's rule as a Line declares it."""
 
     max_age: CanonicalDuration | None = None
     on_unavailable: UnavailableBehavior = "refuse"
@@ -105,21 +112,55 @@ class AcquisitionDefault(_Strict):
         return _sorted_unique_origins(value)
 
 
+#: The documented core default for a capture output its Line names no rule for:
+#: any age (no ``max_age``); refuse the run when the Source is unavailable,
+#: stale or oversized; any replay class; any network origin.
+CORE_DEFAULT_ACQUISITION_RULE: LineAcquisitionRule = LineAcquisitionRule(
+    max_age=None,
+    on_unavailable="refuse",
+    on_stale="refuse",
+    on_oversized="refuse",
+    permitted_replayability=None,
+    origins=None,
+)
+
+#: Who declared an admitted rule: the run's Line, or the core default.
+AcquisitionRuleOrigin = Literal["line", "core_default"]
+
+
 def validate_acquisition_keys(
-    value: Mapping[str, AcquisitionDefault],
-) -> dict[str, AcquisitionDefault]:
+    value: Mapping[str, LineAcquisitionRule],
+) -> dict[str, LineAcquisitionRule]:
     for key in value:
         if not _CAPTURE_OUTPUT_RE.fullmatch(key):
             raise ValueError(
-                f"acquisition rules are keyed by capture output <alias>.<field>, not {key!r}"
+                "acquisition rules are keyed by capture output <alias>.<field> (an invoked "
+                f"child's: <invoke node path>.<alias>.<field>), not {key!r}"
             )
     return dict(sorted(value.items(), key=lambda item: item[0].encode("utf-8")))
 
 
+def child_acquisition(
+    rules: Mapping[str, LineAcquisitionRule], prefix: str
+) -> dict[str, LineAcquisitionRule]:
+    """The Line's rules for one invoked child's capture outputs, keyed by its own aliases."""
+
+    return {
+        key[len(prefix) :]: value
+        for key, value in rules.items()
+        if key.startswith(prefix) and key[len(prefix) :].count(".") == 1
+    }
+
+
 class AcquisitionRule(_Strict):
-    """The rule one run admits for one capture output (``input_name`` is ``<alias>.<field>``)."""
+    """The rule one run admits for one capture output (``input_name`` is ``<alias>.<field>``).
+
+    ``declared_by`` records whether the run's Line declared it or the capture
+    output ran under :data:`CORE_DEFAULT_ACQUISITION_RULE`.
+    """
 
     input_name: str
+    declared_by: AcquisitionRuleOrigin
     max_age: CanonicalDuration | None = None
     on_unavailable: UnavailableBehavior = "refuse"
     on_stale: UnavailableBehavior = "refuse"
@@ -143,16 +184,17 @@ class AcquisitionRule(_Strict):
 def resolve_acquisition_rules(
     aliases: tuple[str, ...],
     *,
-    defaults: Mapping[str, AcquisitionDefault],
-    overrides: Mapping[str, AcquisitionDefault],
+    line_rules: Mapping[str, LineAcquisitionRule],
 ) -> dict[str, AcquisitionRule]:
-    """Every capture output's rule: the Line's override, else the Procedure's default."""
+    """Every capture output's rule: the Line's, else the stated core default."""
 
     rules: dict[str, AcquisitionRule] = {}
     for alias in aliases:
-        declared = overrides.get(alias) or defaults.get(alias) or AcquisitionDefault()
+        line_rule = line_rules.get(alias)
+        declared = CORE_DEFAULT_ACQUISITION_RULE if line_rule is None else line_rule
         rules[alias] = AcquisitionRule(
             input_name=alias,
+            declared_by="core_default" if line_rule is None else "line",
             max_age=declared.max_age,
             on_unavailable=declared.on_unavailable,
             on_stale=declared.on_stale,
@@ -193,11 +235,14 @@ class AcquisitionInputDecision(_Strict):
 
 __all__ = [
     "ACQUISITION_RULES_DIGEST_DOMAIN",
-    "AcquisitionDefault",
+    "CORE_DEFAULT_ACQUISITION_RULE",
+    "AcquisitionRuleOrigin",
+    "LineAcquisitionRule",
     "AcquisitionInputDecision",
     "AcquisitionRule",
     "UnavailableBehavior",
     "acquisition_rules_digest",
+    "child_acquisition",
     "resolve_acquisition_rules",
     "validate_acquisition_keys",
 ]

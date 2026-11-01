@@ -18,7 +18,6 @@ from cruxible_client.contracts.procedure_mandates import (
 )
 from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
-    render_procedure,
 )
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
@@ -48,6 +47,7 @@ from cruxible_core.authoring import lowering
 from cruxible_core.proposals import proposals
 from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
 from tests.core_support._support import initialize_local
+from tests.support.procedures import procedure_members
 from tests.test_authoring.test_authoring_change_set_intents import (
     SUBJECT_KIND,
     TIMESTAMP,
@@ -57,7 +57,6 @@ from tests.test_authoring.test_authoring_change_set_intents import (
 from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
-from tests.test_procedures.test_procedure_mandates import _caps
 
 STATUS = "project.work_item.status"
 
@@ -153,7 +152,6 @@ def _world(tmp_path, *, only_subject: str | None = None, change_kinds=("create",
             artifact_digest=line_spec_digest(line).tagged,
         ),
         grants="settle",
-        resource_ceiling=_caps(),
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),
@@ -183,7 +181,7 @@ def _world(tmp_path, *, only_subject: str | None = None, change_kinds=("create",
         owner,
         {
             **tree,
-            "procedures/triage.json": render_procedure(procedure),
+            **procedure_members(procedure),
             query_definition_path(query.identity.name): render_query_definition(query),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path("triage"): render_procedure_mandate(mandate),

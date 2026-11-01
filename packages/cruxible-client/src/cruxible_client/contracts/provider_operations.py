@@ -37,12 +37,15 @@ from cruxible_client.contracts.shapes import (
     FieldInvalid,
     FieldResultType,
     FieldType,
+    KeyCanonicalizer,
     ListType,
     NestedType,
+    NumberType,
     RecordType,
     RefusalType,
     ResultType,
     VariantType,
+    canonical_number,
     check_value,
     contract_digest,
     parse_contract_ref,
@@ -267,11 +270,89 @@ class OperationValueRefused(ValueError):
 ContractLookup = Callable[[ContractRef], Contract | None]
 
 
-def _list_lengths(value: object, field_type: object, path: str) -> Iterable[tuple[int, str]]:
+def _typed_members(
+    value: object, field_type: FieldType, path: str, resolve: ContractLookup
+) -> Iterable[tuple[object, FieldType, str]]:
+    """Visit this value and its declared closure, including typed envelopes."""
+    yield value, field_type, path
     if isinstance(field_type, ListType) and isinstance(value, list | tuple):
-        yield len(value), path
         for index, item in enumerate(value):
-            yield from _list_lengths(item, field_type.item, f"{path}[{index}]")
+            yield from _typed_members(item, field_type.item, f"{path}[{index}]", resolve)
+        return
+    if not isinstance(value, Mapping):
+        return
+    if isinstance(field_type, FieldResultType):
+        if value.get("tag") == "present":
+            yield from _typed_members(
+                value.get("value"), field_type.value, f"{path}.value", resolve
+            )
+        return
+    if isinstance(field_type, ResultType):
+        if value.get("tag") == "record":
+            yield from _typed_members(
+                value.get("record"),
+                RecordType(contract=field_type.contract),
+                f"{path}.record",
+                resolve,
+            )
+        return
+    if isinstance(field_type, NestedType | RecordType | RefusalType | VariantType):
+        if isinstance(field_type, VariantType):
+            tag = value.get("tag")
+            ref = field_type.arms.get(tag) if isinstance(tag, str) else None
+        else:
+            ref = field_type.contract
+        target = None if ref is None else resolve(ref)
+        if target is None:
+            return
+        if isinstance(field_type, RecordType):
+            fields = value.get("fields")
+            if isinstance(fields, Mapping):
+                for name, declared in target.fields.items():
+                    if name in fields:
+                        yield from _typed_members(
+                            fields[name],
+                            FieldResultType(value=declared.type),
+                            f"{path}.fields.{name}",
+                            resolve,
+                        )
+            return
+        if isinstance(field_type, RefusalType):
+            value = value.get("body")
+            path = f"{path}.body"
+            if not isinstance(value, Mapping):
+                return
+        for name, declared in target.fields.items():
+            if name in value:
+                yield from _typed_members(value[name], declared.type, f"{path}.{name}", resolve)
+
+
+def _number_encoding_problem(value: object, field_type: FieldType, path: str) -> str | None:
+    if isinstance(field_type, NumberType):
+        try:
+            canonical = canonical_number(value)
+        except ValueError:
+            return None  # The ordinary type checker supplies the mismatch.
+        if type(value) is not type(canonical) or value != canonical:
+            return f"{path}: noncanonical number; use {canonical!r}"
+    return None
+
+
+def validate_typed_number_encoding(
+    value: object, field_type: FieldType, *, resolve: ContractLookup, path: str
+) -> None:
+    """Refuse noncanonical number wire forms before a typed value is stored or hashed.
+
+    The scalar checker can normalize numbers for callers that request conversion;
+    wire boundaries require the canonical int-or-decimal-text representation.
+    """
+    problems = [
+        problem
+        for member, declared, member_path in _typed_members(value, field_type, path, resolve)
+        if (problem := _number_encoding_problem(member, declared, member_path)) is not None
+    ]
+    if problems:
+        raise OperationValueRefused(tuple(problems))
 
 
 def validate_operation_value(
@@ -283,13 +364,16 @@ def validate_operation_value(
     max_items: int | None = None,
     observe_items: Callable[[int, str], None] | None = None,
     allow_captures: bool = True,
+    keys: KeyCanonicalizer | None = None,
 ) -> dict[str, object]:
     """``value`` exactly as ``contract`` declares it, or :class:`OperationValueRefused`.
 
     Undeclared keys refuse; a missing required field refuses; every present
-    field is checked by the Contract type grammar. Nested Contracts are closed
-    the same way. List lengths are reported to ``observe_items`` and bounded by
-    ``max_items`` when given. The value is returned unchanged (never coerced).
+    field is checked by the Contract type grammar (a ``key<K>`` field through
+    ``keys``, core's SubjectKind identity rules: it states its canonical key).
+    Nested Contracts are closed the same way. List lengths are reported to
+    ``observe_items`` and bounded by ``max_items`` when given. The value is
+    returned unchanged (never coerced).
     """
 
     if not isinstance(value, Mapping):
@@ -311,11 +395,18 @@ def validate_operation_value(
             field=name,
             resolve=resolve,
             enum_members=enum_members,
+            keys=keys,
         )
         if isinstance(checked, FieldInvalid):
             problems.append(f"{checked.problem.field or name}: {checked.problem.code}")
             continue
-        for count, path in _list_lengths(value[name], declared.type, name):
+        for member, member_type, path in _typed_members(value[name], declared.type, name, resolve):
+            problem = _number_encoding_problem(member, member_type, path)
+            if problem is not None:
+                problems.append(problem)
+            if not isinstance(member_type, ListType) or not isinstance(member, list | tuple):
+                continue
+            count = len(member)
             if observe_items is not None:
                 observe_items(count, path)
             if max_items is not None and count > max_items:
@@ -684,6 +775,7 @@ __all__ = [
     "operation_signature_digest",
     "refusal_detail_contract",
     "validate_operation_value",
+    "validate_typed_number_encoding",
     "validate_operations",
     "validate_slot_name",
 ]

@@ -16,6 +16,7 @@ from cruxible_client.errors import CoreError as CruxibleError
 from cruxible_core.cli.commands import playbill as commands
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from tests.support.inbox import contract_members, listed_inbox_procedure
+from tests.support.procedures import procedure_members  # noqa: E402
 from tests.test_procedures.test_manual_line_runs import manual_run
 from tests.test_procedures.test_procedure_source_runs import NOW
 
@@ -36,7 +37,6 @@ def _inbox_world(tmp_path):
     from cruxible_client.contracts.procedures.artifacts import (
         AcceptedProcedure,
         procedure_artifact_digest,
-        render_procedure,
     )
     from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
     from cruxible_core.service.authoring.documents import service_propose_playbill_document
@@ -62,7 +62,7 @@ def _inbox_world(tmp_path):
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
             **contract_members(CVE),
-            accepted.path: render_procedure(procedure),
+            **procedure_members(procedure),
             line_spec_path(line.identity.name): render_line_spec(line),
         },
         timestamp="2026-08-21T12:00:00.000000Z",

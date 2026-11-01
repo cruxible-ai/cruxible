@@ -31,6 +31,7 @@ from tests.support.operation_world import (
     slotted_spec,
     world,
 )
+from tests.support.procedures import refs
 
 
 @dataclass(frozen=True)
@@ -94,12 +95,8 @@ def author_mandate(instance, *, grants="propose", name="test.grant"):  # type: i
     from datetime import timedelta
 
     from cruxible_client.contracts.authoring.inputs import ProcedureMandateInput
-    from cruxible_client.contracts.procedures.artifacts import parse_procedure
-    from tests.support.operation_world import PROCEDURE, author
+    from tests.support.operation_world import author
 
-    path = f"procedures/{PROCEDURE}.json"
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    caps = parse_procedure(tree[path], path=path).definition.hard_caps
     return author(
         instance,
         ProcedureMandateInput(
@@ -107,7 +104,6 @@ def author_mandate(instance, *, grants="propose", name="test.grant"):  # type: i
             name=name,
             line_name=LINE,
             grants=grants,
-            resource_ceiling=caps,
             namespace=("claims",),
             valid_from=NOW - timedelta(days=1),
             expires_at=NOW + timedelta(days=1),
@@ -257,14 +253,12 @@ def test_a_line_change_carries_its_mandate_and_the_old_grant_never_follows(tmp_p
     assert carried.lifecycle.predecessor_digest == procedure_mandate_digest(granted).tagged
 
     # The D1 grant does not cover a run of D2.
-    caps = granted.resource_ceiling
     verdict = evaluate_procedure_mandate(
         granted.model_copy(update={"grants": "settle"}),
         ProcedureMandateInvocation(
             line_identity=granted.line.target,
             line_artifact_digest=d2,
             requested_rung=3,
-            requested_authority=caps,
             target_paths=("claims/x.json",),
             evaluation_time=NOW,
             accepted_mandate_digest=procedure_mandate_digest(
@@ -370,7 +364,7 @@ def test_a_direct_run_records_its_ephemeral_spec_digest(tmp_path, monkeypatch):
     result = service_run_playbill_procedure(
         instance,
         name="test.slotted",
-        request=ProcedureRunRequest(input={"value": 4}, evaluation_time=NOW),
+        request=ProcedureRunRequest(input={}, parameters={"value": 4}, evaluation_time=NOW),
         actor_context=actor(),
         provider_runtime_operator=Operator(Invoker()),  # type: ignore[arg-type]
     )
@@ -415,7 +409,7 @@ def test_a_direct_run_reaches_its_terminal_under_an_ephemeral_line(tmp_path):
     result = service_run_playbill_procedure(
         instance,
         name="test.slotted",
-        request=ProcedureRunRequest(input={"value": 4}, evaluation_time=NOW),
+        request=ProcedureRunRequest(input={}, parameters={"value": 4}, evaluation_time=NOW),
         actor_context=actor(),
         provider_runtime_operator=Operator(Invoker()),  # type: ignore[arg-type]
     )
@@ -477,14 +471,16 @@ def plain_spec(*, name="test.plain"):  # type: ignore[no-untyped-def]
     from cruxible_client.contracts.procedures.authored import ProcedureSpec
 
     return ProcedureSpec.model_validate(
-        {
-            "procedure": name,
-            "input": {"value": "integer"},
-            "output": {"value": "integer"},
-            "steps": [{"project": "result", "fields": {"value": "$input.value"}}],
-            "returns": "result",
-            "budget": {"provider_calls": 0},
-        }
+        refs(
+            {
+                "procedure": name,
+                "input": {"value": "int"},
+                "output": {"value": "int"},
+                "steps": [{"project": "result", "fields": {"value": "$input.value"}}],
+                "returns": "result",
+                "hard_caps": {"provider_calls": 0},
+            }
+        )
     )
 
 
@@ -518,6 +514,11 @@ def test_a_plain_direct_run_also_records_its_ephemeral_spec_digest(tmp_path):
     assert isinstance(payload, dict)
     recorded_digest = payload["ephemeral_spec_digest"]
     assert isinstance(recorded_digest, str) and recorded_digest.startswith("sha256:")
+    from cruxible_client.contracts.procedures.artifacts import parse_procedure
+    from cruxible_client.contracts.procedures.models import caps_budget
+
+    path = "procedures/test.plain.json"
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     expected = ephemeral_line_spec_digest(
         EphemeralLineSpec(
             procedure=ArtifactPin(
@@ -525,9 +526,13 @@ def test_a_plain_direct_run_also_records_its_ephemeral_spec_digest(tmp_path):
                 target=result.procedure_identity,
                 artifact_digest=result.procedure_artifact_digest,
             ),
-            parameters={"value": 9},
+            # The spec records the run's parameters, not its input: this
+            # Procedure declares none.
+            parameters={},
             bindings={},
             acquisition={},
+            # A direct run states no budget: it runs at its Procedure's caps.
+            budget=caps_budget(parse_procedure(tree[path], path=path).definition.hard_caps),
         )
     )
     assert recorded_digest == expected
@@ -574,17 +579,19 @@ def _plain_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
     from cruxible_client.contracts.procedures.authored import ProcedureSpec
 
     return ProcedureSpec.model_validate(
-        {
-            "procedure": name,
-            "input": {},
-            "output": {"value": "integer"},
-            "steps": [
-                {"project": "shaped", "fields": {"value": 1}},
-                {verb: (_self_sourced_subject_item(f"Plain direct {verb}."),)},
-            ],
-            "returns": "shaped",
-            "budget": {"provider_calls": 0},
-        }
+        refs(
+            {
+                "procedure": name,
+                "input": {},
+                "output": {"value": "int"},
+                "steps": [
+                    {"project": "shaped", "fields": {"value": 1}},
+                    {verb: (_self_sourced_subject_item(f"Plain direct {verb}."),)},
+                ],
+                "returns": "shaped",
+                "hard_caps": {"provider_calls": 0},
+            }
+        )
     )
 
 
@@ -594,18 +601,22 @@ def _call_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
     from cruxible_client.contracts.procedures.authored import ProcedureSpec
 
     return ProcedureSpec.model_validate(
-        {
-            "procedure": name,
-            "input": {"value": "integer"},
-            "output": {"value": "integer"},
-            "slots": {"compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}},
-            "steps": [
-                {"call": "result", "slot": "compute", "input": {"value": "$input.value"}},
-                {verb: (_self_sourced_subject_item(f"Called direct {verb}."),)},
-            ],
-            "returns": "result",
-            "budget": {"provider_calls": 1},
-        }
+        refs(
+            {
+                "procedure": name,
+                "input": {"value": "int"},
+                "output": {"value": "int"},
+                "slots": {
+                    "compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}
+                },
+                "steps": [
+                    {"call": "result", "slot": "compute", "input": {"value": "$input.value"}},
+                    {verb: (_self_sourced_subject_item(f"Called direct {verb}."),)},
+                ],
+                "returns": "result",
+                "hard_caps": {"provider_calls": 1},
+            }
+        )
     )
 
 
@@ -714,17 +725,25 @@ def test_an_invoked_child_uses_the_parent_lines_binding_under_its_node_path(tmp_
     first, second = operation_build(build="a"), operation_build(build="d")
     instance = slotted_world(tmp_path, first, second)
     parent = ProcedureSpec.model_validate(
-        {
-            "procedure": "test.parent",
-            "input": {"value": "integer"},
-            "output": {"value": "integer"},
-            "steps": [
-                {"invoke": "test.slotted", "id": "child", "input": {"value": "$input.value"}},
-                {"project": "finished", "fields": {"value": "$input.value"}},
-            ],
-            "returns": "finished",
-            "budget": {"provider_calls": 1},
-        }
+        refs(
+            {
+                "procedure": "test.parent",
+                "params": {"value": "int"},
+                "output": {"value": "int"},
+                "steps": [
+                    # The parent maps its parameter into the child's.
+                    {
+                        "invoke": "test.slotted",
+                        "id": "child",
+                        "input": {},
+                        "params": {"value": "$params.value"},
+                    },
+                    {"project": "finished", "fields": {"value": "$params.value"}},
+                ],
+                "returns": "finished",
+                "hard_caps": {"provider_calls": 1},
+            }
+        )
     )
     author_procedure(instance, parent, name="parent")
     # The child's slot is keyed under the invoke node; the parent Line names its build.
@@ -747,51 +766,48 @@ def test_an_invoked_child_uses_the_parent_lines_binding_under_its_node_path(tmp_
 SOURCE_LINE = "test.sourced-line"
 
 
-def sourced_spec(*, description=None, acquisition_defaults=None):  # type: ignore[no-untyped-def]
+def sourced_spec(*, description=None):  # type: ignore[no-untyped-def]
     from cruxible_client.contracts.procedures.authored import ProcedureSpec
 
     return ProcedureSpec.model_validate(
-        {
-            "procedure": "test.sourced",
-            **({} if description is None else {"description": description}),
-            **(
-                {}
-                if acquisition_defaults is None
-                else {"acquisition_defaults": acquisition_defaults}
-            ),
-            "input": {},
-            "output": {"length": "integer"},
-            "slots": {
-                "read": {
-                    "in": "workspace.file.request@1",
-                    "out": "workspace.file.result@1",
-                    "effect": "pure",
-                }
-            },
-            "steps": [
-                {
-                    "call": "doc",
-                    "captures": {"capture": "test.orders-v1"},
-                    "slot": "read",
-                    "input": {
-                        "logical_source": "commerce.production.orders",
-                        "relative_path": "data/doc.json",
-                        "coordinate_type": "database-snapshot-v1",
-                        "coordinate": {"lsn": "workspace"},
-                        "selector_type": "relation-primary-key-v1",
-                        "selector": {"id": 7, "relation": "orders"},
-                    },
+        refs(
+            {
+                "procedure": "test.sourced",
+                **({} if description is None else {"description": description}),
+                "input": {},
+                "output": {"length": "int"},
+                "slots": {
+                    "read": {
+                        "in": "workspace.file.request@1",
+                        "out": "workspace.file.result@1",
+                        "effect": "pure",
+                    }
                 },
-                {"project": "out", "fields": {"length": "$doc.source.byte_length"}},
-            ],
-            "returns": "out",
-            "budget": {"provider_calls": 1, "capture_bytes": 65536},
-        }
+                "steps": [
+                    {
+                        "call": "doc",
+                        "captures": {"capture": "test.orders-v1"},
+                        "slot": "read",
+                        "input": {
+                            "logical_source": "commerce.production.orders",
+                            "relative_path": "data/doc.json",
+                            "coordinate_type": "database-snapshot-v1",
+                            "coordinate": {"lsn": "workspace"},
+                            "selector_type": "relation-primary-key-v1",
+                            "selector": {"id": 7, "relation": "orders"},
+                        },
+                    },
+                    {"project": "out", "fields": {"length": "$doc.source.byte_length"}},
+                ],
+                "returns": "out",
+                "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
+            }
+        )
     )
 
 
 def sourced_world(  # type: ignore[no-untyped-def]
-    tmp_path, *, acquisition=None, acquisition_defaults=None, bindings=None, builds=()
+    tmp_path, *, acquisition=None, bindings=None, builds=()
 ):
     from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
     from tests.core_support._identity_support import accept_tree
@@ -807,7 +823,7 @@ def sourced_world(  # type: ignore[no-untyped-def]
         {capture_contract_path(contract.identity.name): render_capture_contract(contract)},
         name="capture-contract",
     )
-    author_procedure(instance, sourced_spec(acquisition_defaults=acquisition_defaults))
+    author_procedure(instance, sourced_spec())
     author_line(
         instance,
         name=SOURCE_LINE,
@@ -1098,23 +1114,25 @@ def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
     author_procedure(
         instance,
         ProcedureSpec.model_validate(
-            {
-                "procedure": "test.slotted",
-                "input": {"value": "integer"},
-                "output": {"severity": "string"},
-                "slots": {
-                    "compute": {
-                        "in": "test.value@1",
-                        "out": "test.severity_value@1",
-                        "effect": "pure",
-                    }
-                },
-                "steps": [
-                    {"call": "result", "slot": "compute", "input": {"value": "$input.value"}}
-                ],
-                "returns": "result",
-                "budget": {"provider_calls": 1},
-            }
+            refs(
+                {
+                    "procedure": "test.slotted",
+                    "params": {"value": "int"},
+                    "output": {"severity": {"type": "enum_of:test.severity"}},
+                    "slots": {
+                        "compute": {
+                            "in": "test.value@1",
+                            "out": "test.severity_value@1",
+                            "effect": "pure",
+                        }
+                    },
+                    "steps": [
+                        {"call": "result", "slot": "compute", "input": {"value": "$params.value"}}
+                    ],
+                    "returns": "result",
+                    "hard_caps": {"provider_calls": 1},
+                }
+            )
         ),
     )
     author_line(instance)
@@ -1301,29 +1319,31 @@ def _fetch_world(
     author_procedure(
         instance,
         ProcedureSpec.model_validate(
-            {
-                "procedure": "test.fetched",
-                "input": {},
-                "output": {"ok": "bool"},
-                "slots": {
-                    "fetch": {
-                        "in": "demo.fetch.request@1",
-                        "out": "demo.fetch.result@1",
-                        "effect": "external_read",
-                    }
-                },
-                "steps": [
-                    {
-                        "call": "doc",
-                        "captures": {"capture": capture_contract.identity.name},
-                        "slot": "fetch",
-                        "input": request,
+            refs(
+                {
+                    "procedure": "test.fetched",
+                    "input": {},
+                    "output": {"ok": "bool"},
+                    "slots": {
+                        "fetch": {
+                            "in": "demo.fetch.request@1",
+                            "out": "demo.fetch.result@1",
+                            "effect": "external_read",
+                        }
                     },
-                    {"project": "out", "fields": {"ok": True}},
-                ],
-                "returns": "out",
-                "budget": {"provider_calls": 1, "capture_bytes": 65536},
-            }
+                    "steps": [
+                        {
+                            "call": "doc",
+                            "captures": {"capture": capture_contract.identity.name},
+                            "slot": "fetch",
+                            "input": request,
+                        },
+                        {"project": "out", "fields": {"ok": True}},
+                    ],
+                    "returns": "out",
+                    "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
+                }
+            )
         ),
     )
     author_line(
@@ -1547,7 +1567,7 @@ def _line_input(instance, name, **updates):  # type: ignore[no-untyped-def]
             "parameters": line.parameters,
             "max_authority": line.max_authority,
             "acquisition": line.acquisition,
-            "budgets": line.budgets,
+            "budgets": line.budgets.model_dump(mode="json"),
             "occurrence_epoch": line.occurrence_epoch,
             "trigger_input": line.trigger_input,
             **updates,
@@ -1605,8 +1625,8 @@ def test_a_capture_keeps_verifying_across_procedure_and_line_succession(tmp_path
             instance,
             SOURCE_LINE,
             budgets={
-                **line.budgets,
-                "max_capture_bytes": line.budgets["max_capture_bytes"] - 1,
+                **line.budgets.model_dump(mode="json"),
+                "max_capture_bytes": line.budgets.max_capture_bytes - 1,
             },
         ),
         name="line-v2",
@@ -1631,7 +1651,7 @@ def test_a_line_acquisition_max_age_violation_refuses_like_the_old_policy(tmp_pa
     from types import SimpleNamespace
 
     from cruxible_client.contracts.procedures.acquisition_rules import (
-        AcquisitionDefault,
+        CORE_DEFAULT_ACQUISITION_RULE,
         resolve_acquisition_rules,
     )
     from cruxible_core.procedures.acquisition import (
@@ -1641,18 +1661,20 @@ def test_a_line_acquisition_max_age_violation_refuses_like_the_old_policy(tmp_pa
 
     instance, _root = sourced_world(
         tmp_path,
-        acquisition_defaults={"doc.capture": {"max_age": "P1D"}},
         acquisition={"doc.capture": {"max_age": "PT1S", "on_unavailable": "refuse"}},
     )
     line = accepted_line(instance, SOURCE_LINE)
     assert line.acquisition["doc.capture"].max_age.microseconds == 1_000_000
-    # The Line's override replaces the Procedure's default for that alias.
-    rules = resolve_acquisition_rules(
-        ("doc.capture",),
-        defaults={"doc.capture": AcquisitionDefault.model_validate({"max_age": "P1D"})},
-        overrides=line.acquisition,
-    )
+    # The Line's rule is the run's rule for that capture output.
+    rules = resolve_acquisition_rules(("doc.capture",), line_rules=line.acquisition)
     assert rules["doc.capture"].max_age.microseconds == 1_000_000
+    assert rules["doc.capture"].declared_by == "line"
+    # A capture output the Line names no rule for runs under the stated core default.
+    unstated = resolve_acquisition_rules(("doc.capture",), line_rules={})["doc.capture"]
+    assert unstated.declared_by == "core_default"
+    assert unstated.model_dump(exclude={"input_name", "declared_by"}) == (
+        CORE_DEFAULT_ACQUISITION_RULE.model_dump()
+    )
     # The same eligibility law the policy's max_age used: an older Capture is stale.
     stale = SimpleNamespace(observed_at=NOW - timedelta(seconds=10))
     fresh = SimpleNamespace(observed_at=NOW)
@@ -1673,8 +1695,8 @@ def test_a_format_7_slotted_procedure_is_accepted_and_executes(tmp_path):
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     path = "procedures/test.slotted.json"
     procedure = parse_procedure(tree[path], path=path)
-    assert procedure.artifact_format == "cruxible-procedure-v3"
-    assert int(procedure.definition.graph_format) == 7
+    assert procedure.artifact_format == "cruxible-procedure-v4"
+    assert int(procedure.definition.graph_format) == 8
     assert set(procedure.definition.slots) == {"compute"}
     (node,) = procedure.definition.nodes
     assert node.slot == "compute"
@@ -1707,18 +1729,20 @@ def emitting_spec(*, description=None):  # type: ignore[no-untyped-def]
     from cruxible_client.contracts.procedures.authored import ProcedureSpec
 
     return ProcedureSpec.model_validate(
-        {
-            **slotted_spec(description=description).model_dump(mode="json", by_alias=True),
-            "steps": [
-                {"call": "result", "slot": "compute", "input": {"value": "$input.value"}},
-                {
-                    "emit": "test.procedure-output",
-                    "input": {"value": "$input.value"},
-                    "result": {"value": "$result.value"},
-                },
-            ],
-            "budget": {"provider_calls": 1, "capture_bytes": 65536},
-        }
+        refs(
+            {
+                **slotted_spec(description=description).model_dump(mode="json", by_alias=True),
+                "steps": [
+                    {"call": "result", "slot": "compute", "input": {"value": "$params.value"}},
+                    {
+                        "emit": "test.procedure-output",
+                        "input": {"value": "$params.value"},
+                        "result": {"value": "$result.value"},
+                    },
+                ],
+                "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
+            }
+        )
     )
 
 

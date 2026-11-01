@@ -23,6 +23,10 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
 )
 from cruxible_client.contracts.claim_verdicts import EvidenceRelativeClaimVerdictV1
+from cruxible_client.contracts.identity_normalizers import (
+    KeyNormalizationRefused,
+    canonical_key_part,
+)
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.query.grammar import (
     QueryArtifactsEntry,
@@ -39,6 +43,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryValueRef,
 )
 from cruxible_core.indexes.sql_batch import select_in
+from cruxible_core.indexes.subject_identity import key_normalizer_of, tree_subject_kind_reader
 from cruxible_core.query.engine import _RefusalSignal, resolve_query_parameters
 
 
@@ -232,12 +237,19 @@ def select_query_facts(
             or schema.get("type") != scalar
         ):
             return None
+        rule = key_normalizer_of(claim_type, tree_subject_kind_reader(source))
+        form = effective_canonical_form(claim_type)
         try:
+            # A key predicate's operand takes the shared key canonicalization
+            # (R12). One it refuses is not pushed down: the full evaluation
+            # refuses it (value_type_mismatch).
             values = [
-                canonicalize_literal(value, effective_canonical_form(claim_type))
+                canonical_key_part(value, form, rule)
+                if rule is not None and isinstance(value, str)
+                else canonicalize_literal(value, form)
                 for value in values
             ]
-        except CanonicalFormDidNotConverge:
+        except (CanonicalFormDidNotConverge, KeyNormalizationRefused):
             return None
         expected = {"string": str, "integer": int, "boolean": bool}[scalar]
         if not all(type(value) is expected for value in values):
