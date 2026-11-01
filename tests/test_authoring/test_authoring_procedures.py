@@ -29,6 +29,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     parse_procedure,
     procedure_path,
 )
+from cruxible_client.contracts.procedures.authored import GuardStep, HaltStep, ProjectStep, ReadStep
 from cruxible_client.contracts.procedures.results import (
     ProcedureHaltTerminal,
     ProcedureRunReceipt,
@@ -54,7 +55,13 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_procedure,
 )
 from tests.core_support._support import initialize_local
-from tests.support.procedures import MAX_WALL_CLOCK, ref, spec_payload
+from tests.support.procedures import (
+    MAX_WALL_CLOCK,
+    procedure_limits,
+    procedure_spec_data,
+    ref,
+    spec_payload,
+)
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_ledger.test_activation import _sign
 
@@ -69,15 +76,13 @@ def _digest(label: str) -> str:
 ROWS = {"complete": "bool"}
 
 #: The run limits every triage spec declares (one minute, no provider calls).
-LIMITS = {
-    "hard_caps": {
-        "wall_clock": f"PT{MAX_WALL_CLOCK.microseconds // 1_000_000}S",
-        "provider_calls": 0,
-        "capture_bytes": 0,
-        "items": 200,
-        "repeat_attempts": 1,
-    },
-}
+LIMITS = procedure_limits(
+    wall_clock=f"PT{MAX_WALL_CLOCK.microseconds // 1_000_000}S",
+    provider_calls=0,
+    capture_bytes=0,
+    items=200,
+    repeat_attempts=1,
+)
 
 
 def _triage_definition(*, query: str | None = None) -> dict[str, object]:
@@ -89,49 +94,42 @@ def _triage_definition(*, query: str | None = None) -> dict[str, object]:
 
     steps: list[dict[str, object]] = []
     if query is not None:
-        steps.append({"read": "rows", "id": "read", "query": query})
+        steps.append(ReadStep(read="rows", id="read", query=query))
     steps.append(
-        {
-            "project": "result",
-            "id": "shape",
-            "fields": {"complete": ref("$steps.rows.completed") if query is not None else True},
-            "output": ROWS,
-        }
+        ProjectStep(
+            project="result",
+            id="shape",
+            fields={"complete": ref("$steps.rows.completed") if query is not None else True},
+            output=ROWS,
+        )
     )
-    return {
-        "procedure": "triage",
-        "description": "Read accepted claims and shape a bounded result.",
-        "input": {},
-        "output": ROWS,
-        "activation": "drain",
-        "steps": steps,
-        "returns": "result",
-        **LIMITS,
-    }
+    return procedure_spec_data(
+        procedure="triage",
+        description="Read accepted claims and shape a bounded result.",
+        input={},
+        output=ROWS,
+        activation="drain",
+        steps=steps,
+        returns="result",
+        hard_caps=LIMITS,
+    )
 
 
 def _layout_definition(*, halt_before_return: bool) -> dict[str, object]:
     base = _triage_definition()
-    read = {
-        "project": "rows",
-        "id": "read",
-        "fields": {"complete": True},
-        "output": ROWS,
-    }
-    gate = {
-        "guard": {"op": "eq", "left": {"literal": True}, "right": {"literal": True}},
-        "id": "gate",
-        "then": {"goto": "result"},
-        "else": {"goto": "stop"},
-    }
-    result = {
-        "project": "result",
-        "fields": {"complete": ref("$steps.rows.complete")},
-        "output": ROWS,
-    }
-    stop = {"halt": "No rows are available.", "id": "stop"}
+    read = ProjectStep(project="rows", id="read", fields={"complete": True}, output=ROWS)
+    gate = GuardStep(
+        guard={"op": "eq", "left": {"literal": True}, "right": {"literal": True}},
+        id="gate",
+        then={"goto": "result"},
+        else_={"goto": "stop"},
+    )
+    result = ProjectStep(
+        project="result", fields={"complete": ref("$steps.rows.complete")}, output=ROWS
+    )
+    stop = HaltStep(halt="No rows are available.", id="stop")
     tail = [stop, result] if halt_before_return else [result, stop]
-    return {**base, "steps": [read, gate, *tail]}
+    return procedure_spec_data(base=base, steps=[read, gate, *tail])
 
 
 def _coordinator(tmp_path: Path) -> tuple[AuthoringIntentCoordinator, AuthenticatedActor]:
@@ -260,19 +258,13 @@ def _world_holding_a_document(
 def _list_contract_payload() -> ProcedureAuthoringPayload:
     listed = {"rows": "list<string>{max_items: 10}"}
     return _payload(
-        {
-            **_triage_definition(),
-            "procedure": "bounded-projection",
-            "output": listed,
-            "activation": "snapshot",
-            "steps": [
-                {
-                    "project": "result",
-                    "fields": {"rows": []},
-                    "output": listed,
-                }
-            ],
-        }
+        procedure_spec_data(
+            base=_triage_definition(),
+            procedure="bounded-projection",
+            output=listed,
+            activation="snapshot",
+            steps=[ProjectStep(project="result", fields={"rows": []}, output=listed)],
+        )
     )
 
 
@@ -674,25 +666,22 @@ def test_coordinator_authored_halt_reason_reaches_terminal_and_receipt(
     actor = AuthenticatedActor(actor_id="owner")
     reason = "No eligible work remains."
     payload = _payload(
-        {
-            "procedure": "halt-with-reason",
-            "input": {},
-            "output": {},
-            "activation": "snapshot",
-            **LIMITS,
-            "steps": [
-                {
-                    "guard": {"op": "eq", "left": {"literal": False}, "right": {"literal": True}},
-                    "id": "gate",
-                    "else": {"halt": reason, "id": "stop"},
-                },
-                {
-                    "project": "result",
-                    "fields": {},
-                },
+        procedure_spec_data(
+            procedure="halt-with-reason",
+            input={},
+            output={},
+            activation="snapshot",
+            hard_caps=LIMITS,
+            steps=[
+                GuardStep(
+                    guard={"op": "eq", "left": {"literal": False}, "right": {"literal": True}},
+                    id="gate",
+                    else_={"halt": reason, "id": "stop"},
+                ),
+                ProjectStep(project="result", fields={}),
             ],
-            "returns": "result",
-        }
+            returns="result",
+        )
     )
     created = coordinator.create(
         actor=actor,

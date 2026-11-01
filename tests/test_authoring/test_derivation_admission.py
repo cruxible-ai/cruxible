@@ -35,8 +35,8 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
     procedure_path,
 )
+from cruxible_client.contracts.procedures.authored import GuardStep, ProposeStep, ReadStep
 from cruxible_client.contracts.procedures.line_specs import (
-    LineSpec,
     line_spec_path,
     render_line_spec,
 )
@@ -45,7 +45,8 @@ from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.lowering import lower_authoring
 from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
-from tests.support.procedures import ref
+from tests.support.lines import line_budgets, line_spec
+from tests.support.procedures import procedure_spec_data, ref
 from tests.test_authoring.test_authoring_preflight import _self_source_payload
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 from tests.test_claims.test_claims import _claim_type
@@ -90,30 +91,28 @@ def derivation_world(tmp_path):
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[claim_type_path(definition.predicate)] = render_claim_type(definition)
     _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="derived-type")
-    derive = {
-        "procedure": "derive-ready",
-        "input": {},
-        "output": {"ready": "bool"},
-        **LIMITS,
-        "steps": [
-            {
-                "read": "basis",
-                "claim_type": "project.work_item.status",
-                "subject": "wi-42",
-                "subject_kind": "project.work_item",
-            },
-            {
-                "guard": {
+    derive = procedure_spec_data(
+        procedure="derive-ready",
+        input={},
+        output={"ready": "bool"},
+        hard_caps=LIMITS,
+        steps=[
+            ReadStep(
+                read="basis",
+                claim_type="project.work_item.status",
+                subject="wi-42",
+                subject_kind="project.work_item",
+            ),
+            GuardStep(
+                guard={
                     "op": "eq",
                     "left": ref("$steps.basis.value"),
                     "right": {"literal": "ready"},
                 },
-                "else": {"halt": "The work item is not ready."},
-            },
-            {
-                # The executor binds the basis to the exact admitted Claim read and
-                # mints the derivation for this Procedure; no author supplies it.
-                "propose": [
+                else_={"halt": "The work item is not ready."},
+            ),
+            ProposeStep(
+                propose=[
                     {
                         "tag": "playbill-source-claim-candidate-v1",
                         "subject_kind": "project.work_item",
@@ -129,10 +128,10 @@ def derivation_world(tmp_path):
                         "basis": [ref("$steps.basis")],
                     }
                 ],
-                "result": {"ready": True},
-            },
+                result={"ready": True},
+            ),
         ],
-    }
+    )
 
     accept_blueprint(instance, owner, derive)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
@@ -272,7 +271,7 @@ def _install_line(world):
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
     caps = procedure.definition.hard_caps
-    line = LineSpec(
+    line = line_spec(
         identity=ArtifactIdentity(kind="Line", name="derive-ready-line"),
         occurrence_epoch=1,
         procedure=procedure_pin,
@@ -280,12 +279,12 @@ def _install_line(world):
         bindings={},
         acquisition={},
         max_authority="propose",
-        budgets={
-            "max_capture_bytes": caps.max_capture_bytes,
-            "max_items": caps.max_items,
-            "max_provider_calls": caps.max_provider_calls,
-            "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
-        },
+        budgets=line_budgets(
+            max_capture_bytes=caps.max_capture_bytes,
+            max_items=caps.max_items,
+            max_provider_calls=caps.max_provider_calls,
+            max_wall_clock_microseconds=caps.max_wall_clock.microseconds,
+        ),
         epsilon={"$decimal": "0.1"},
     )
     # No conversion to a "named" Line format: cruxible-line-v8 is the only

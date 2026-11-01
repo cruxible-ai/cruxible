@@ -8,10 +8,11 @@ from cruxible_client.contracts.authoring.models import (
     ProcedureAuthoringPayload,
     QueryDefinitionAuthoringPayload,
 )
+from cruxible_client.contracts.procedures.authored import ProjectStep, ReadStep
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from tests.core_support._support import initialize_local
-from tests.support.procedures import ref, spec_payload
+from tests.support.procedures import procedure_spec_data, ref, spec_payload
 
 TIMESTAMP = "2026-08-21T12:00:00.000000Z"
 
@@ -51,26 +52,22 @@ def test_a_retired_payload_form_refuses_typed_naming_the_spec(tmp_path, definiti
 
 
 def _status_reader(query_name: str) -> dict[str, object]:
-    return {
-        "procedure": "assessment",
-        "input": {},
-        "output": {"positive": "bool"},
-        "steps": [
-            {"read": "rows", "query": query_name},
-            {
-                "read": "status",
-                "claim_type": "project.work_item.status",
-                "subject": "wi-42",
-                "subject_kind": "project.work_item",
-            },
-            {
-                "project": "result",
-                "fields": {"positive": True},
-                "output": {"positive": "bool"},
-            },
+    return procedure_spec_data(
+        procedure="assessment",
+        input={},
+        output={"positive": "bool"},
+        steps=[
+            ReadStep(read="rows", query=query_name),
+            ReadStep(
+                read="status",
+                claim_type="project.work_item.status",
+                subject="wi-42",
+                subject_kind="project.work_item",
+            ),
+            ProjectStep(project="result", fields={"positive": True}, output={"positive": "bool"}),
         ],
-        "returns": "result",
-    }
+        returns="result",
+    )
 
 
 def test_a_spec_prepares_against_the_claim_type_and_query_staged_beside_it(tmp_path):
