@@ -209,3 +209,23 @@ def test_a_line_advances_its_epoch_exactly_when_its_accepted_event_changes() -> 
         {**first.model_dump(mode="python"), "trigger_event": selector, "trigger_input": "feed"}
     )
     assert verdict(stray).verdict == "refused"
+
+
+def test_line_budgets_are_a_declared_model_checked_against_the_caps() -> None:
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.procedures.line_specs import LineBudgets, LineBudgetsInput
+
+    line, accepted, _interfaces = _line()
+    assert isinstance(line.budgets, LineBudgets)
+    with pytest.raises(ValidationError):
+        line.model_copy(update={"budgets": None}).model_validate(
+            {**line.model_dump(mode="json", by_alias=True), "budgets": {"max_items": "10"}}
+        )
+    with pytest.raises(ValidationError):
+        LineBudgetsInput.model_validate({"max_wall_clock": 1})
+    caps = accepted.procedure.definition.hard_caps
+    wide = line.budgets.model_copy(update={"max_items": caps.max_items + 1})
+    assert wide.widened(caps) == (f"max_items {caps.max_items + 1} > {caps.max_items}",)
+    filled = LineBudgetsInput(max_items=1).filled(caps)
+    assert filled.max_provider_calls == caps.max_provider_calls and filled.max_items == 1

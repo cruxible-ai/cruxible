@@ -66,6 +66,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
+from cruxible_client.contracts.procedures.line_specs import LineBudgetsInput
 from cruxible_client.contracts.procedures.windows import (
     CaptureEventNameSelector,
     FixedWindow,
@@ -129,7 +130,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:fedb0d228f860afa6d06fa56ed874f0bbb7daa69b7e57b1d117a66d496c9c1bc"
+    "sha256:9f18ccebebf90546d4bbed4f5212a03c4357724f41a3bace1e5c97d6a385f4d5"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -1015,7 +1016,7 @@ class LineAuthoringPayload(_StrictAuthoringModel):
     max_authority: Literal["observe", "propose", "settle"] | None = None
     trigger_input: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
     parameters: object = Field(default_factory=dict)
-    budgets: dict[str, int] | None = None
+    budgets: LineBudgetsInput | None = None
     epsilon: object = Field(default_factory=lambda: {"$decimal": "0.1"})
     occurrence_epoch: int = Field(default=1, ge=1)
     retire: bool = False

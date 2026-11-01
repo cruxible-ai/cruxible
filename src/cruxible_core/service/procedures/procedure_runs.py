@@ -25,11 +25,10 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
-    CanonicalDuration,
-    capture_retention_policy,
+    CaptureContractAny as CaptureContract,
 )
 from cruxible_client.contracts.captures import (
-    CaptureContractAny as CaptureContract,
+    capture_retention_policy,
 )
 from cruxible_client.contracts.dependencies import dependency_pins
 from cruxible_client.contracts.errors import (
@@ -1463,21 +1462,7 @@ def _line_budget(
     (and returns) under the Procedure's hard cap.
     """
 
-    caps = accepted_procedure.procedure.definition.hard_caps
-    budgets = accepted_line.line.budgets
-    if not isinstance(budgets, dict):
-        return caps_budget(caps)
-    stated = budgets.get("max_read_rows")
-    return ProcedureBudget(
-        wall_clock=CanonicalDuration(microseconds=budgets["max_wall_clock_microseconds"]),
-        max_provider_calls=budgets["max_provider_calls"],
-        max_capture_bytes=budgets["max_capture_bytes"],
-        max_items=budgets.get("max_items"),
-        max_result_bytes=budgets.get("max_result_bytes", caps.max_result_bytes),
-        max_read_rows=effective_read_rows(
-            stated if isinstance(stated, int) else None, caps.max_read_rows
-        ),
-    )
+    return accepted_line.line.budgets.budget(accepted_procedure.procedure.definition.hard_caps)
 
 
 def _line_state_materials(

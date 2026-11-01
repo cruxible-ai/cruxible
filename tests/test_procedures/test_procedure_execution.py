@@ -53,6 +53,7 @@ from cruxible_client.contracts.procedures.graph import (
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
     LineSpec,
+    caps_line_budgets,
     line_spec_digest,
     line_spec_path,
 )
@@ -998,7 +999,7 @@ def _accepted_line_for_admission(
         procedure=procedure_pin,
         parameters={},
         max_authority="observe",
-        budgets={},
+        budgets=caps_line_budgets(accepted_procedure.procedure.definition.hard_caps),
         epsilon={"$decimal": "0"},
     )
     return AcceptedLineSpec(

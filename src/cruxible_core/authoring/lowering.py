@@ -186,6 +186,7 @@ from cruxible_client.contracts.procedures.graph import (
 from cruxible_client.contracts.procedures.line_specs import (
     RUNG_AUTHORITY,
     LineSpec,
+    caps_line_budgets,
     line_spec_digest,
     line_spec_path,
     parse_line_spec,
@@ -565,47 +566,14 @@ def _read_existing_capture(store: CaptureObjectStoreProtocol, digest: str) -> Ca
         )
 
 
-#: The operating-budget keys a Line may state, each bounded by one hard cap.
-_LINE_BUDGET_CAPS: dict[str, str] = {
-    "max_wall_clock_microseconds": "max_wall_clock",
-    "max_provider_calls": "max_provider_calls",
-    "max_capture_bytes": "max_capture_bytes",
-    "max_items": "max_items",
-    "max_result_bytes": "max_result_bytes",
-    "max_read_rows": "max_read_rows",
-}
-_LINE_BUDGET_REQUIRED = (
-    "max_wall_clock_microseconds",
-    "max_provider_calls",
-    "max_capture_bytes",
-)
+def _line_budgets_within_caps(budgets: Any, caps: ProcedureHardCaps) -> Any:
+    """A Line's operating budget, each unstated required limit the cap, within the caps.
 
-
-def _line_budgets_within_caps(budgets: dict[str, int], caps: ProcedureHardCaps) -> dict[str, int]:
-    """A Line's operating budget: known keys only, each within its Procedure hard cap.
-
-    The Line owns the budget; the Procedure only declares caps. A budget the Line
-    leaves out of the required keys defaults to the cap.
+    The Line owns the budget; the Procedure only declares caps.
     """
 
-    unknown = sorted(set(budgets) - set(_LINE_BUDGET_CAPS))
-    if unknown:
-        _refuse(
-            "cruxible.authoring.line_budget_unknown",
-            "budgets",
-            f"Line budgets name unknown keys {unknown}.",
-            repair_kind="replace_budgets",
-            repair_description=f"Use only {sorted(_LINE_BUDGET_CAPS)}.",
-        )
-    widened: list[str] = []
-    for key, cap_name in _LINE_BUDGET_CAPS.items():
-        cap = getattr(caps, cap_name)
-        cap_value = cap.microseconds if key == "max_wall_clock_microseconds" else cap
-        if key not in budgets:
-            continue
-        value = budgets[key]
-        if value < 0 or (cap_value is not None and value > cap_value):
-            widened.append(f"{key} {value} > {cap_value}")
+    filled = budgets.filled(caps)
+    widened = filled.widened(caps)
     if widened:
         _refuse(
             "cruxible.authoring.line_budget_exceeds_caps",
@@ -615,11 +583,6 @@ def _line_budgets_within_caps(budgets: dict[str, int], caps: ProcedureHardCaps) 
             repair_kind="replace_budgets",
             repair_description="Set each budget to at most the Procedure's hard cap.",
         )
-    filled = dict(budgets)
-    for key in _LINE_BUDGET_REQUIRED:
-        if key not in filled:
-            cap = getattr(caps, _LINE_BUDGET_CAPS[key])
-            filled[key] = cap.microseconds if key == "max_wall_clock_microseconds" else cap
     return filled
 
 
@@ -3025,14 +2988,9 @@ def _render_line_member(
     bindings = {} if not slots else cast(Any, resolve_provider)(slots, dict(payload.bindings))
     caps = procedure.definition.hard_caps
     budgets = (
-        {
-            "max_capture_bytes": caps.max_capture_bytes,
-            "max_items": caps.max_items,
-            "max_provider_calls": caps.max_provider_calls,
-            "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
-        }
+        caps_line_budgets(caps)
         if payload.budgets is None
-        else _line_budgets_within_caps(dict(payload.budgets), caps)
+        else _line_budgets_within_caps(payload.budgets, caps)
     )
     path = line_spec_path(payload.name)
     previous_content = tree.get(path)

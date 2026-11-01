@@ -73,6 +73,7 @@ from cruxible_client.contracts.procedures.authored import (
 )
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
+from cruxible_client.contracts.procedures.line_specs import LineBudgetsInput
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
     validate_change_set_rationale,
@@ -472,7 +473,7 @@ class LineInput(_StrictInputModel):
             "The Procedure's input record, checked against its input contract at authoring."
         ),
     )
-    budgets: dict[str, int] | None = Field(
+    budgets: LineBudgetsInput | None = Field(
         default=None,
         description="Per-run budgets; omit to use the Procedure's hard caps.",
     )

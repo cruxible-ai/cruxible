@@ -221,6 +221,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     procedure_artifact_digest,
 )
+from cruxible_client.contracts.procedures.line_specs import LineBudgetsInput
 from cruxible_client.contracts.procedures.results import ProcedureTerminalEgress
 from cruxible_client.contracts.procedures.windows import (
     TriggerEventReference,
@@ -1247,7 +1248,9 @@ class ChangeSetDraft:
                     max_authority=max_authority,
                     trigger_input=trigger_input,
                     parameters={} if parameters is None else parameters,
-                    budgets=None if budgets is None else dict(budgets),
+                    budgets=None
+                    if budgets is None
+                    else LineBudgetsInput.model_validate(dict(budgets)),
                     occurrence_epoch=occurrence_epoch,
                     retire=retire,
                 ),

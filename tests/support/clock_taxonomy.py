@@ -435,6 +435,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ProcedureAdmissionMaterialMember", "retain_until"): "VALIDITY WINDOW",
     ("ProcedureBudget", "wall_clock"): "VALIDITY WINDOW",
     ("ProcedureHardCaps", "max_wall_clock"): "VALIDITY WINDOW",
+    ("LineBudgets", "max_wall_clock_microseconds"): "VALIDITY WINDOW",
+    ("LineBudgetsInput", "max_wall_clock_microseconds"): "VALIDITY WINDOW",
     ("ProcedureJournalCoordinate", "sequence"): "SETTLEMENT ORDER",
     ("ProcedureJournalRecordDraftV1", "recorded_at"): "ASSERTION TIME",
     ("ProcedureJournalRecordV1", "recorded_at"): "ASSERTION TIME",

@@ -204,14 +204,18 @@ def test_the_line_owns_its_read_budget_and_an_unstated_one_is_the_cap() -> None:
     procedure = SimpleNamespace(
         procedure=SimpleNamespace(definition=SimpleNamespace(hard_caps=caps))
     )
-    budgets = {
-        "max_capture_bytes": 0,
-        "max_items": 10,
-        "max_provider_calls": 1,
-        "max_wall_clock_microseconds": 1,
-        "max_read_rows": 400,
-    }
+    from cruxible_client.contracts.procedures.line_specs import LineBudgets
+
+    budgets = LineBudgets(
+        max_capture_bytes=0,
+        max_items=10,
+        max_provider_calls=1,
+        max_wall_clock_microseconds=1,
+        max_read_rows=400,
+    )
     line = SimpleNamespace(line=SimpleNamespace(budgets=budgets))
     assert _line_budget(line, procedure).max_read_rows == 400  # type: ignore[arg-type]
-    unstated = SimpleNamespace(line=SimpleNamespace(budgets=None))
+    unstated = SimpleNamespace(
+        line=SimpleNamespace(budgets=budgets.model_copy(update={"max_read_rows": None}))
+    )
     assert _line_budget(unstated, procedure).max_read_rows == 500  # type: ignore[arg-type]

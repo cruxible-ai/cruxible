@@ -8014,6 +8014,98 @@
             "title": "LineAcquisitionRule",
             "type": "object"
           },
+          "LineBudgetsInput": {
+            "additionalProperties": false,
+            "description": "The budget a Line author states; each unstated required limit defaults to the cap.",
+            "properties": {
+              "max_capture_bytes": {
+                "anyOf": [
+                  {
+                    "maximum": 9223372036854775807,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Capture Bytes"
+              },
+              "max_items": {
+                "anyOf": [
+                  {
+                    "maximum": 9223372036854775807,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Items"
+              },
+              "max_provider_calls": {
+                "anyOf": [
+                  {
+                    "maximum": 9223372036854775807,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Provider Calls"
+              },
+              "max_read_rows": {
+                "anyOf": [
+                  {
+                    "maximum": 9223372036854775807,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Read Rows"
+              },
+              "max_result_bytes": {
+                "anyOf": [
+                  {
+                    "maximum": 9223372036854775807,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Result Bytes"
+              },
+              "max_wall_clock_microseconds": {
+                "anyOf": [
+                  {
+                    "maximum": 9223372036854775807,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Wall Clock Microseconds"
+              }
+            },
+            "title": "LineBudgetsInput",
+            "type": "object"
+          },
           "LineInput": {
             "additionalProperties": false,
             "description": "One Line: a stable instantiation of an accepted or same-set Procedure.\n\nLowering pins the named Procedure's exact version and binds every slot to\none exact ``{build, operation}``: ``bindings`` names\n``provider[/build]#operation`` (or ``provider[/build]``) per slot, and a\nslot left out is fitted (exactly one live operation must serve its\nsignature). A Line runs when run explicitly (`line run`, one manual occurrence),\nor, once it is enabled (`line enable`), when a Trigger aimed at it fires; a\nTrigger aimed at a Line that is not enabled does nothing. Enabling needs\ngoverned write even for an observe-only Line. A Line that proposes or\nsettles also needs a live ProcedureMandate pinning this exact Line before it\ncan run or be enabled; an observe-only Line needs none.",
@@ -8044,18 +8136,14 @@
               "budgets": {
                 "anyOf": [
                   {
-                    "additionalProperties": {
-                      "type": "integer"
-                    },
-                    "type": "object"
+                    "$ref": "#/$defs/LineBudgetsInput"
                   },
                   {
                     "type": "null"
                   }
                 ],
                 "default": null,
-                "description": "Per-run budgets; omit to use the Procedure's hard caps.",
-                "title": "Budgets"
+                "description": "Per-run budgets; omit to use the Procedure's hard caps."
               },
               "kind": {
                 "const": "line",
