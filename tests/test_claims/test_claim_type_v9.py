@@ -23,6 +23,7 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
+from tests.support.claim_types import claim_type_changes
 from tests.test_claims.test_claim_type_v7 import v7
 from tests.test_claims.test_claim_type_v8 import v8
 
@@ -37,6 +38,8 @@ def slot_inverse(**update: object) -> ClaimInverse:
 
 
 def v9(inverse: ClaimInverse | None = None, **update: object) -> ClaimType:
+    if "value_type" in update:
+        update = claim_type_changes(value_type=update.pop("value_type"), **update)
     base = v8(()).model_dump(mode="python")
     base.update(inverse=inverse or slot_inverse())
     base.update(update)
@@ -279,24 +282,23 @@ def test_a_subject_kind_cannot_drop_a_key_an_inverse_names(tmp_path: Path) -> No
     form = ("nfkc", "trim", "collapse_whitespace", "casefold")
     slug = identity_claim_type(
         "slug",
+        value_type={"type": "string"},
         canonical_form=form,
-        literal_schema={"type": "string"},
         predicate="dev.decision.slug",
         subject_kinds=("dev.decision",),
     )
     code = identity_claim_type(
         "code",
+        value_type={"type": "string"},
         canonical_form=form,
-        literal_schema={"type": "string"},
         predicate="dev.decision.code",
         subject_kinds=("dev.decision",),
     )
     decided_by = identity_claim_type(
         "decided_by",
+        value_type=("dev.decision",),
         canonical_form=(),
-        object_kind="subject",
         cardinality="many",
-        object_kinds=("dev.decision",),
         predicate="dev.item.decided_by",
         subject_kinds=("dev.item",),
     ).model_dump(mode="python")

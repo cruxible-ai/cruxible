@@ -37,37 +37,25 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
-    ClaimResolutionPolicy,
 )
 from cruxible_core.compiler.compiler import current_compiler_coordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.service.proposals.review import service_review_playbill_proposal
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import initialize_local
+from tests.support.claim_types import claim_type as build_claim_type
+from tests.support.claim_types import claim_type_changes
 
 
 def literal_claim_type() -> ClaimType:
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.status"),
+    return build_claim_type(
         predicate="project.work_item.status",
-        allowed_subject_kinds=("project.work_item",),
-        object_kind="literal",
-        literal_schema={
+        value_type={
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "enum": ["blocked", "done", "ready"],
             "type": "string",
         },
-        cardinality="one",
-        permitted_roles=("normative", "observation"),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality="one",
-            eligible_verdicts=("supported",),
-            selector="only_contender",
-        ),
     )
 
 
@@ -362,7 +350,6 @@ def test_a_horizon_proposal_uses_the_frozen_refusal_code(tmp_path: Path) -> None
 
 
 def test_compact_ordinary_profile_and_expert_input_expand_to_identical_bytes() -> None:
-    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicy
 
     direct = literal_claim_type().model_copy(
         update={
@@ -506,7 +493,6 @@ def test_profile_evidence_and_complete_expansion_are_visible_in_atomic_review(
     tmp_path: Path,
 ) -> None:
     instance, _owner = initialize_local(tmp_path)
-    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicy
 
     direct = literal_claim_type().model_copy(
         update={
@@ -557,14 +543,12 @@ def test_profile_evidence_and_complete_expansion_are_visible_in_atomic_review(
 
 def test_current_claim_type_has_no_producer_dependencies():
     from cruxible_client.contracts.artifacts import ArtifactPin
-    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicy
     from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 
     definition = literal_claim_type().model_copy(
-        update={
-            "literal_schema": {"type": "string"},
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(),
-        }
+        update=claim_type_changes(
+            value_type={"type": "string"}, evidence_admission_policy=ClaimEvidenceAdmissionPolicy()
+        )
     )
     definition = ClaimType.model_validate(definition.model_dump())
     producer = ArtifactPin(

@@ -41,10 +41,8 @@ from cruxible_client.contracts.claims import (
     render_claim,
 )
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
-    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_client.contracts.subjects import (
@@ -57,6 +55,7 @@ from tests.core_support._support import initialize_local
 from tests.core_support.legacy_capture_builders import (
     build_direct_claim_capture,
 )
+from tests.support.claim_types import claim_type as build_claim_type
 
 TIMESTAMP = "2026-08-16T18:30:00.000000Z"
 OBSERVED_AT = datetime(2026, 8, 16, 18, 30, tzinfo=timezone.utc)
@@ -73,14 +72,9 @@ def _subject() -> SubjectShell:
 def _claim_type(
     *, contract: CaptureContractAny = DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
 ) -> ClaimType:
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.status"),
+    return build_claim_type(
         predicate="project.work_item.status",
-        allowed_subject_kinds=("project.work_item",),
-        object_kind="literal",
-        literal_schema={"enum": ["blocked", "done", "ready"], "type": "string"},
-        cardinality="one",
-        permitted_roles=("normative", "observation"),
+        value_type={"enum": ["blocked", "done", "ready"], "type": "string"},
         evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
             rules=(
                 ClaimEvidenceAdmissionRule(
@@ -91,12 +85,6 @@ def _claim_type(
                     subject_binding="exact_claim_subject",
                 ),
             )
-        ),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality="one",
-            eligible_verdicts=("supported",),
-            selector="only_contender",
         ),
     )
 

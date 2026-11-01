@@ -56,6 +56,7 @@ from tests.core_support._retirement_support import (
 )
 from tests.core_support._retirement_support import candidate_tree as _candidate_tree
 from tests.core_support._support import client_material, initialize_local
+from tests.support.claim_types import claim_type_changes
 from tests.test_claims.test_claim_type_migrations import (
     _accepted_claim_world,
     _decision_only_input,
@@ -602,7 +603,7 @@ def test_live_target_successor_cannot_advance_a_retiring_dependent_pin(tmp_path:
     type_path = claim_type_path(middle_before.statement.predicate)
     current_type = parse_claim_type(tree[type_path], path=type_path)
     successor = _decision_only_input(current_type).model_copy(
-        update={"literal_schema": {"type": "string", "minLength": 1}}
+        update=claim_type_changes(value_type={"type": "string", "minLength": 1})
     )
     dispositions = (
         ClaimTypeDependentDisposition(

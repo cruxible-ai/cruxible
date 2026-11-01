@@ -39,10 +39,8 @@ from cruxible_client.contracts.claims import (
     evaluate_claim_law,
 )
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
-    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -51,6 +49,7 @@ from cruxible_client.contracts.subjects import SubjectShell, subject_digest, sub
 from cruxible_client.contracts.types import PrincipalRecord
 from tests.core_support._pc_c_support import body_store
 from tests.core_support._pc_c_support import capture_contract as build_capture_contract
+from tests.support.claim_types import claim_type as build_claim_type
 
 OBSERVED_AT = datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc)
 PROCEDURE_IDENTITY = ArtifactIdentity(kind="Procedure", name="test.proc")
@@ -113,14 +112,9 @@ def _subject() -> SubjectShell:
 
 
 def _claim_type(contract: str) -> ClaimType:
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.status"),
+    return build_claim_type(
         predicate="project.work_item.status",
-        allowed_subject_kinds=("project.work_item",),
-        object_kind="literal",
-        literal_schema={"enum": ["blocked", "done", "ready"], "type": "string"},
-        cardinality="one",
-        permitted_roles=("normative", "observation"),
+        value_type={"enum": ["blocked", "done", "ready"], "type": "string"},
         evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
             rules=(
                 ClaimEvidenceAdmissionRule(
@@ -131,12 +125,6 @@ def _claim_type(contract: str) -> ClaimType:
                     subject_binding="exact_claim_subject",
                 ),
             )
-        ),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality="one",
-            eligible_verdicts=("supported",),
-            selector="only_contender",
         ),
     )
 

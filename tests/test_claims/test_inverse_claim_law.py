@@ -55,7 +55,6 @@ from cruxible_client.contracts.claims import (
     evaluate_claim_law,
 )
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
@@ -70,6 +69,8 @@ from cruxible_client.contracts.subjects import (
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from tests.core_support._support import initialize_local
 from tests.core_support.legacy_capture_builders import build_direct_claim_capture
+from tests.support.claim_types import claim_type as build_claim_type
+from tests.support.claim_types import claim_type_changes
 
 OBSERVED_AT = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
 CLAIM_ID = "CLM-0123456789abcdef0123456789abcdef"
@@ -99,30 +100,17 @@ def _rule(rule_id: str) -> ClaimEvidenceAdmissionRule:
 
 
 def _claim_type(*, inverse_rules: tuple[str, ...] | None = ("scan",)) -> ClaimType:
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name=PREDICATE),
+    return build_claim_type(
         predicate=PREDICATE,
         allowed_subject_kinds=("project.work_item",),
-        object_kind="literal",
-        literal_schema={"type": "string"},
-        cardinality="one",
         permitted_roles=("observation",),
         evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
             rules=(_rule("other"), _rule("scan"))
         ),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality="one", eligible_verdicts=("supported",), selector="only_contender"
-        ),
-        evidence_requirement="self",
-        revision_evidence="accumulate",
-        canonical_form=(),
-        inverse=(
-            None
-            if inverse_rules is None
-            else ClaimInverse.model_validate(
-                {"key": {"kind": "slot"}, "evidence_rules": list(inverse_rules)}
-            )
+        inverse=None
+        if inverse_rules is None
+        else ClaimInverse.model_validate(
+            {"key": {"kind": "slot"}, "evidence_rules": list(inverse_rules)}
         ),
     )
 
@@ -474,20 +462,18 @@ def test_retiring_a_subject_inverse_after_the_type_drops_its_inverse(world: _Wor
         subject_id="r-1",
     )
     blocks = _claim_type().model_copy(
-        update={
-            "identity": ArtifactIdentity(kind="ClaimType", name="project.work_item.blocks"),
-            "predicate": "project.work_item.blocks",
-            "object_kind": "subject",
-            "literal_schema": None,
-            "allowed_object_subject_kinds": ("project.release",),
-            "cardinality": "many",
-            "resolution_policy": ClaimResolutionPolicy(
+        update=claim_type_changes(
+            predicate="project.work_item.blocks",
+            value_type=("project.release",),
+            identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.blocks"),
+            cardinality="many",
+            resolution_policy=ClaimResolutionPolicy(
                 cardinality="many", eligible_verdicts=("supported",), selector="all"
             ),
-            "inverse": ClaimInverse.model_validate(
+            inverse=ClaimInverse.model_validate(
                 {"key": {"kind": "object"}, "evidence_rules": ["scan"]}
             ),
-        }
+        )
     )
     none_of = NoneClaimObject(
         of=SubjectClaimObject(

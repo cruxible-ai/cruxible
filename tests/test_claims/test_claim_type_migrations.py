@@ -71,6 +71,7 @@ from cruxible_core.service.claims.claims import _claim_law_evidence
 from cruxible_core.service.discovery.next import NextRequest, service_playbill_next
 from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import client_material, initialize_local
+from tests.support.claim_types import claim_type_changes
 from tests.test_authoring.test_authoring_preflight import TIMESTAMP, _seed_claim_surface
 from tests.test_claims.test_claims import _claim_type, _subject
 from tests.test_indexes.test_projection_next import _accepted_procedure
@@ -129,11 +130,11 @@ def _accepted_affects_package_world(tmp_path: Path):  # type: ignore[no-untyped-
     template_path = claim_type_path(_claim_type().predicate)
     template = parse_claim_type(tree[template_path], path=template_path)
     claim_type = template.model_copy(
-        update={
-            "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
-            "predicate": predicate,
-            "literal_schema": {"type": "string"},
-        }
+        update=claim_type_changes(
+            predicate=predicate,
+            value_type={"type": "string"},
+            identity=ArtifactIdentity(kind="ClaimType", name=predicate),
+        )
     )
     package = _subject().model_copy(
         update={
@@ -218,13 +219,7 @@ def _subject_valued_affects_package_successor(instance):  # type: ignore[no-unty
         path=path,
     )
     values = _decision_only_input(current).model_dump(mode="json")
-    values.update(
-        {
-            "object_kind": "subject",
-            "literal_schema": None,
-            "allowed_object_subject_kinds": ("package",),
-        }
-    )
+    values.update(claim_type_changes(value_type=("package",)))
     return ClaimTypeInputRecord.model_validate(values)
 
 
@@ -235,10 +230,10 @@ def _successor(instance):  # type: ignore[no-untyped-def]
         path=path,
     )
     return current.model_copy(
-        update={
-            "literal_schema": {"type": "string", "enum": ["blocked", "ready"]},
-            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(current).tagged),
-        }
+        update=claim_type_changes(
+            value_type={"type": "string", "enum": ["blocked", "ready"]},
+            lifecycle=ArtifactLifecycle(predecessor_digest=claim_type_digest(current).tagged),
+        )
     )
 
 
@@ -534,7 +529,7 @@ def _decision_only_successor(instance, *, enum: list[str]):  # type: ignore[no-u
         path=path,
     )
     return _decision_only_input(current).model_copy(
-        update={"literal_schema": {"type": "string", "enum": enum}}
+        update=claim_type_changes(value_type={"type": "string", "enum": enum})
     )
 
 
