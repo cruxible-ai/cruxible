@@ -61,6 +61,7 @@ from tests.core_support._write_support import (
     report_evidence,
     seed_write_surface,
 )
+from tests.support.mandates import procedure_mandate
 from tests.support.procedures import procedure_members
 from tests.test_floor.test_floor_index import _set, _write, accept_edit, add_lead_field
 from tests.test_floor.test_floor_notes_and_retention import _revise_rationale
@@ -170,14 +171,13 @@ def _mandate(
     from cruxible_client.contracts.procedure_mandates import (
         MandateClaimScope,
         MandateCondition,
-        ProcedureMandate,
         procedure_mandate_digest,
     )
     from cruxible_client.contracts.query.definitions import query_definition_digest
     from tests.test_scale import _worlds
 
     condition = _worlds._condition()
-    mandate = ProcedureMandate(
+    mandate = procedure_mandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name=name),
         line=_worlds._line_pin(line),
         grants="settle",
