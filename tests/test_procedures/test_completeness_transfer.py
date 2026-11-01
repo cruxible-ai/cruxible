@@ -23,7 +23,17 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.procedures.authored import ProcedureSpec
+from cruxible_client.contracts.procedures.authored import (
+    CallStep,
+    ExtractStep,
+    InboxStep,
+    InvokeStep,
+    ProcedureSpec,
+    ProjectStep,
+    RepeatStep,
+    RepeatTransform,
+    TransformStep,
+)
 from cruxible_client.contracts.shapes import Contract, contract_path
 from cruxible_client.contracts.shapes import render_contract as render
 from cruxible_core.procedures.execution import ProcedureExecutor
@@ -41,7 +51,7 @@ from tests.support.operation_world import (
     operation_build,
     world,
 )
-from tests.support.procedures import refs
+from tests.support.procedures import procedure_limits, procedure_spec_data, refs
 
 ENTRY = Contract.model_validate(
     {
@@ -126,18 +136,21 @@ _READ = {
 _SLOT = {"in": "workspace.file.request@1", "out": "workspace.file.result@1", "effect": "pure"}
 
 
-def _transform(node_id: str, kind: str, spec: dict[str, Any], next_node: str) -> dict[str, Any]:
-    return {"transform": node_id, "kind": kind, "spec": spec, "next": next_node}
+def _transform(node_id: str, kind: str, spec: dict[str, Any], next_node: str) -> TransformStep:
+    return TransformStep(transform=node_id, kind=kind, spec=refs(spec), next=next_node)
 
 
-def _typed(node: dict[str, Any]) -> dict[str, Any]:
-    """A closed-transform node as its typed spec step (or repeat body member)."""
+def _typed(node: dict[str, Any], *, repeat: bool = False, next: str | None = None) -> Any:
+    """A native transform test case as a typed step or repeat body member."""
 
-    spec = {key: value for key, value in node["spec"].items() if key != "tag"}
-    typed = {"transform": node["as"], "kind": node["transform_kind"], "spec": spec}
-    if node["node_id"] != node["as"]:
-        typed["id"] = node["node_id"]
-    return typed
+    spec = refs({key: value for key, value in node["spec"].items() if key != "tag"})
+    options = dict(
+        transform=node["as"],
+        kind=node["transform_kind"],
+        spec=spec,
+        id=node["node_id"] if node["node_id"] != node["as"] else None,
+    )
+    return RepeatTransform(**options) if repeat else TransformStep(**options, next=next)
 
 
 def _spec(data: dict[str, Any]) -> ProcedureSpec:
@@ -169,34 +182,35 @@ def _workspace_world(tmp_path: Path, documents: dict[str, object]) -> tuple[Any,
     return instance, root
 
 
-def _entries(capture: str, *, node_id: str = "entries", **extra: Any) -> dict[str, Any]:
-    return {
-        "extract": node_id,
-        "capture": capture,
-        "records": "/entries/*",
-        "row": f"{ENTRY.name}@{ENTRY.version}",
-        "key": {"id": {"at": "id"}},
-        "fields": {"status": {"at": "status"}, "note": {"at": "note"}},
-        **extra,
-    }
+def _entries(capture: str, *, node_id: str = "entries", **extra: Any) -> ExtractStep:
+    return ExtractStep(
+        extract=node_id,
+        capture=refs(capture),
+        records="/entries/*",
+        row=f"{ENTRY.name}@{ENTRY.version}",
+        key={"id": {"at": "id"}},
+        fields={"status": {"at": "status"}, "note": {"at": "note"}},
+        **refs(extra),
+    )
 
 
 def _count_fixed(instance: Any, *, kept_from: str) -> None:
     """call -> extract -> filter present(status) over ``kept_from`` -> count -> derive -> leaf."""
 
     spec = _spec(
-        {
-            "procedure": "test.rows",
-            "input": {},
-            "output": {"verdict": "string"},
-            "slots": {"read": _SLOT},
-            "steps": [
-                {
-                    "call": "doc",
-                    "captures": {"capture": "test.orders-v1"},
-                    "slot": "read",
-                    "input": {**_READ, "relative_path": "data/doc.json"},
-                },
+        procedure_spec_data(
+            reference_text=True,
+            procedure="test.rows",
+            input={},
+            output={"verdict": "string"},
+            slots={"read": _SLOT},
+            steps=[
+                CallStep(
+                    call="doc",
+                    captures={"capture": "test.orders-v1"},
+                    slot="read",
+                    input=refs({**_READ, "relative_path": "data/doc.json"}),
+                ),
                 _entries("$steps.doc.capture", next="kept"),
                 _transform(
                     "kept",
@@ -232,11 +246,11 @@ def _count_fixed(instance: Any, *, kept_from: str) -> None:
                     },
                     "out",
                 ),
-                {"project": "out", "fields": {"verdict": "$steps.verdict.result"}},
+                ProjectStep(project="out", fields=refs({"verdict": "$steps.verdict.result"})),
             ],
-            "returns": "out",
-            "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
-        }
+            returns="out",
+            hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
+        )
     )
     author_procedure(instance, spec)
     author_line(instance, name="test.rows-line", procedure="test.rows", parameters={})
@@ -300,28 +314,29 @@ def _row_read(tmp_path: Path, field: str) -> Any:
     document = {"entries": [{"id": "a", "status": "Maybe"}, {"id": "b", "status": "open"}]}
     instance, root = _workspace_world(tmp_path, {"doc.json": document})
     spec = _spec(
-        {
-            "procedure": "test.row-read",
-            "input": {},
-            "output": {"row": "test.entry-view@1"},
-            "slots": {"read": _SLOT},
-            "steps": [
-                {
-                    "call": "doc",
-                    "captures": {"capture": "test.orders-v1"},
-                    "slot": "read",
-                    "input": {**_READ, "relative_path": "data/doc.json"},
-                },
+        procedure_spec_data(
+            reference_text=True,
+            procedure="test.row-read",
+            input={},
+            output={"row": "test.entry-view@1"},
+            slots={"read": _SLOT},
+            steps=[
+                CallStep(
+                    call="doc",
+                    captures={"capture": "test.orders-v1"},
+                    slot="read",
+                    input=refs({**_READ, "relative_path": "data/doc.json"}),
+                ),
                 _entries("$steps.doc.capture"),
-                {
-                    "project": "out",
-                    "fields": {"row": f"$steps.entries.rows.{field}"},
-                    "output": {"row": "test.entry-view@1"},
-                },
+                ProjectStep(
+                    project="out",
+                    fields=refs({"row": f"$steps.entries.rows.{field}"}),
+                    output={"row": "test.entry-view@1"},
+                ),
             ],
-            "returns": "out",
-            "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
-        }
+            returns="out",
+            hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
+        )
     )
     author_procedure(instance, spec)
     author_line(instance, name="test.row-line", procedure="test.row-read", parameters={})
@@ -361,40 +376,41 @@ def test_an_acquiring_call_over_an_incomplete_request_is_incomplete(
     document = {"entries": [{"id": "b", "status": "open"}]}
     instance, root = _workspace_world(tmp_path, {"index.json": index, "doc.json": document})
     spec = _spec(
-        {
-            "procedure": "test.chained",
-            "input": {},
-            "output": {"status": {"type": "string", "optional": True}},
-            "slots": {"first": _SLOT, "second": _SLOT},
-            "steps": [
-                {
-                    "call": "index",
-                    "captures": {"capture": "test.orders-v1"},
-                    "slot": "first",
-                    "input": {**_READ, "relative_path": "data/index.json"},
-                },
+        procedure_spec_data(
+            reference_text=True,
+            procedure="test.chained",
+            input={},
+            output={"status": {"type": "string", "optional": True}},
+            slots={"first": _SLOT, "second": _SLOT},
+            steps=[
+                CallStep(
+                    call="index",
+                    captures={"capture": "test.orders-v1"},
+                    slot="first",
+                    input=refs({**_READ, "relative_path": "data/index.json"}),
+                ),
                 _entries(
                     "$steps.index.capture",
                     node_id="listing",
                     complete_when={"count_at": "/count"},
                     header={"next": {"at": "/next", "presence": "required"}},
                 ),
-                {
-                    "call": "doc",
-                    "captures": {"capture": "test.orders-v1"},
-                    "slot": "second",
-                    "input": {**_READ, "relative_path": "$steps.listing.header.next.value"},
-                },
+                CallStep(
+                    call="doc",
+                    captures={"capture": "test.orders-v1"},
+                    slot="second",
+                    input=refs({**_READ, "relative_path": "$steps.listing.header.next.value"}),
+                ),
                 _entries("$steps.doc.capture"),
-                {
-                    "project": "out",
-                    "fields": {"status": "$steps.entries.rows.0.status"},
-                    "output": {"status": {"type": "string", "optional": True}},
-                },
+                ProjectStep(
+                    project="out",
+                    fields=refs({"status": "$steps.entries.rows.0.status"}),
+                    output={"status": {"type": "string", "optional": True}},
+                ),
             ],
-            "returns": "out",
-            "hard_caps": {"provider_calls": 2, "capture_bytes": 65536},
-        }
+            returns="out",
+            hard_caps=procedure_limits(provider_calls=2, capture_bytes=65536),
+        )
     )
     author_procedure(instance, spec)
     author_line(instance, name="test.chained-line", procedure="test.chained", parameters={})
@@ -415,28 +431,29 @@ def _child(instance: Any) -> None:
     author_procedure(
         instance,
         _spec(
-            {
-                "procedure": "test.child",
-                "input": {},
-                "output": {"status": {"type": "string", "optional": True}},
-                "slots": {"read": _SLOT},
-                "steps": [
-                    {
-                        "call": "doc",
-                        "captures": {"capture": "test.orders-v1"},
-                        "slot": "read",
-                        "input": {**_READ, "relative_path": "data/doc.json"},
-                    },
+            procedure_spec_data(
+                reference_text=True,
+                procedure="test.child",
+                input={},
+                output={"status": {"type": "string", "optional": True}},
+                slots={"read": _SLOT},
+                steps=[
+                    CallStep(
+                        call="doc",
+                        captures={"capture": "test.orders-v1"},
+                        slot="read",
+                        input=refs({**_READ, "relative_path": "data/doc.json"}),
+                    ),
                     _entries("$steps.doc.capture", complete_when={"count_at": "/count"}),
-                    {
-                        "project": "result",
-                        "fields": {"status": "$steps.entries.rows.0.status"},
-                        "output": {"status": {"type": "string", "optional": True}},
-                    },
+                    ProjectStep(
+                        project="result",
+                        fields=refs({"status": "$steps.entries.rows.0.status"}),
+                        output={"status": {"type": "string", "optional": True}},
+                    ),
                 ],
-                "returns": "result",
-                "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
-            }
+                returns="result",
+                hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
+            )
         ),
         name="child",
     )
@@ -454,23 +471,24 @@ def test_an_invoke_carries_its_childs_incomplete_return_past_complete_parent_inp
     author_procedure(
         instance,
         _spec(
-            {
-                "procedure": "test.parent",
-                "input": {},
-                "output": {"child": "test.child.output@1"},
-                "steps": [
-                    {"invoke": "test.child", "id": "child", "input": {}},
+            procedure_spec_data(
+                reference_text=True,
+                procedure="test.parent",
+                input={},
+                output={"child": "test.child.output@1"},
+                steps=[
+                    InvokeStep(invoke="test.child", id="child", input={}),
                     # The invoke's value is {succeeded, status, receipt, value}; the
                     # authored typing reads the child's output, so the path is explicit.
-                    {
-                        "project": "finished",
-                        "fields": {"child": "$steps.child.value"},
-                        "output": {"child": "test.child.output@1"},
-                    },
+                    ProjectStep(
+                        project="finished",
+                        fields=refs({"child": "$steps.child.value"}),
+                        output={"child": "test.child.output@1"},
+                    ),
                 ],
-                "returns": "finished",
-                "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
-            }
+                returns="finished",
+                hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
+            )
         ),
         name="parent",
     )
@@ -509,41 +527,51 @@ def test_a_repeat_is_the_and_over_the_attempts_it_used(
     author_procedure(
         instance,
         _spec(
-            {
-                "procedure": "test.repeated",
-                "input": {},
-                "output": {"kept": "int"},
-                "steps": [
-                    {
-                        "repeat": "retry",
-                        "max_attempts": 1,
-                        "body": [
+            procedure_spec_data(
+                reference_text=True,
+                procedure="test.repeated",
+                input={},
+                output={"kept": "int"},
+                steps=[
+                    RepeatStep(
+                        repeat="retry",
+                        max_attempts=1,
+                        body=refs(
+                            [
+                                RepeatTransform(
+                                    transform="attempt",
+                                    kind="filter",
+                                    spec=refs(
+                                        {
+                                            "input": [_record("open", invalid=invalid)],
+                                            "where": {
+                                                "op": "present",
+                                                "of": {
+                                                    "$ref": "item",
+                                                    "path": ["fields", "status"],
+                                                },
+                                            },
+                                        }
+                                    ),
+                                )
+                            ]
+                        ),
+                        until=refs(
                             {
-                                "transform": "attempt",
-                                "kind": "filter",
-                                "spec": {
-                                    "input": [_record("open", invalid=invalid)],
-                                    "where": {
-                                        "op": "present",
-                                        "of": {"$ref": "item", "path": ["fields", "status"]},
-                                    },
-                                },
+                                "op": "ge",
+                                "left": {"$ref": "step", "step": "attempt", "path": ["count"]},
+                                "right": {"literal": 0},
                             }
-                        ],
-                        "until": {
-                            "op": "ge",
-                            "left": {"$ref": "step", "step": "attempt", "path": ["count"]},
-                            "right": {"literal": 0},
-                        },
-                    },
-                    {
-                        "project": "finished",
-                        "fields": {"kept": "$steps.retry.final.attempt.count"},
-                    },
+                        ),
+                    ),
+                    ProjectStep(
+                        project="finished",
+                        fields=refs({"kept": "$steps.retry.final.attempt.count"}),
+                    ),
                 ],
-                "returns": "finished",
-                "hard_caps": {"provider_calls": 0},
-            }
+                returns="finished",
+                hard_caps=procedure_limits(provider_calls=0),
+            )
         ),
     )
     author_line(instance, name="test.repeat-line", procedure="test.repeated", parameters={})
@@ -569,18 +597,19 @@ def test_a_closed_transforms_rows_view_also_taints_a_read_reaching_a_dropped_fie
         else "list<record<test.entry@1>>{max_items: 10}"
     )
     spec = _spec(
-        {
-            "procedure": "test.kept-rows",
-            "input": {},
-            "output": {"kept": kept_type},
-            "slots": {"read": _SLOT},
-            "steps": [
-                {
-                    "call": "doc",
-                    "captures": {"capture": "test.orders-v1"},
-                    "slot": "read",
-                    "input": {**_READ, "relative_path": "data/doc.json"},
-                },
+        procedure_spec_data(
+            reference_text=True,
+            procedure="test.kept-rows",
+            input={},
+            output={"kept": kept_type},
+            slots={"read": _SLOT},
+            steps=[
+                CallStep(
+                    call="doc",
+                    captures={"capture": "test.orders-v1"},
+                    slot="read",
+                    input=refs({**_READ, "relative_path": "data/doc.json"}),
+                ),
                 _entries("$steps.doc.capture", next="kept"),
                 _transform(
                     "kept",
@@ -594,15 +623,15 @@ def test_a_closed_transforms_rows_view_also_taints_a_read_reaching_a_dropped_fie
                     },
                     "out",
                 ),
-                {
-                    "project": "out",
-                    "fields": {"kept": f"$steps.kept.{view}"},
-                    "output": {"kept": kept_type},
-                },
+                ProjectStep(
+                    project="out",
+                    fields=refs({"kept": f"$steps.kept.{view}"}),
+                    output=refs({"kept": kept_type}),
+                ),
             ],
-            "returns": "out",
-            "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
-        }
+            returns="out",
+            hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
+        )
     )
     author_procedure(instance, spec)
     author_line(instance, name="test.kept-line", procedure="test.kept-rows", parameters={})
@@ -633,29 +662,30 @@ def test_an_inbox_item_reading_an_invalid_field_reaches_its_sink_incomplete(
 
     accept_tree(instance, contract_members(status_item), name="status-item")
     spec = _spec(
-        {
-            "procedure": "test.inbox-statuses",
-            "input": {},
-            "output": {"posted": "int"},
-            "slots": {"read": _SLOT},
-            "steps": [
-                {
-                    "call": "doc",
-                    "captures": {"capture": "test.orders-v1"},
-                    "slot": "read",
-                    "input": {**_READ, "relative_path": "data/doc.json"},
-                },
+        procedure_spec_data(
+            reference_text=True,
+            procedure="test.inbox-statuses",
+            input={},
+            output={"posted": "int"},
+            slots={"read": _SLOT},
+            steps=[
+                CallStep(
+                    call="doc",
+                    captures={"capture": "test.orders-v1"},
+                    slot="read",
+                    input=refs({**_READ, "relative_path": "data/doc.json"}),
+                ),
                 _entries("$steps.doc.capture"),
-                {"project": "out", "fields": {"posted": 1}},
-                {
-                    "inbox": "test.status-item@1",
-                    "for_each": "$steps.entries.records",
-                    "fields": {"id": "$item.key.id", "status": "$item.fields.status"},
-                },
+                ProjectStep(project="out", fields={"posted": 1}),
+                InboxStep(
+                    inbox="test.status-item@1",
+                    for_each=refs("$steps.entries.records"),
+                    fields=refs({"id": "$item.key.id", "status": "$item.fields.status"}),
+                ),
             ],
-            "returns": "out",
-            "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
-        }
+            returns="out",
+            hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
+        )
     )
     author_procedure(instance, spec)
     author_line(
@@ -743,42 +773,45 @@ def _repeat_world(tmp_path: Path, body: list[dict[str, Any]], after: list[dict[s
     explicit_after = []
     for index, step in enumerate(after):
         following = after[index + 1]["node_id"] if index + 1 < len(after) else "finished"
-        explicit_after.append({**_typed(step), "next": following})
+        explicit_after.append(_typed(step, next=following))
     author_procedure(
         instance,
         _spec(
-            {
-                "procedure": "test.repeat-rows",
-                "input": {},
-                "output": {"verdict": "string"},
-                "steps": [
-                    {
-                        "repeat": "retry",
-                        "max_attempts": 1,
-                        "body": [_typed(item) for item in body],
-                        "until": {
+            procedure_spec_data(
+                reference_text=True,
+                procedure="test.repeat-rows",
+                input={},
+                output={"verdict": "string"},
+                steps=[
+                    RepeatStep(
+                        repeat="retry",
+                        max_attempts=1,
+                        body=[_typed(item, repeat=True) for item in body],
+                        until={
                             "op": "ge",
                             "left": {"$ref": "step", "step": "shaped", "path": ["count"]},
                             "right": {"literal": 0},
                         },
-                        **({"next": after[0]["node_id"]} if after else {}),
-                    },
+                        next=after[0]["node_id"] if after else None,
+                    ),
                     *explicit_after,
-                    {
-                        "project": "finished",
-                        "fields": {
-                            "verdict": (
-                                "$steps.verdict.result"
-                                if after
-                                else "$steps.retry.final.verdict.result"
-                            )
-                        },
-                        "output": {"verdict": "string"},
-                    },
+                    ProjectStep(
+                        project="finished",
+                        fields=refs(
+                            {
+                                "verdict": (
+                                    "$steps.verdict.result"
+                                    if after
+                                    else "$steps.retry.final.verdict.result"
+                                )
+                            }
+                        ),
+                        output={"verdict": "string"},
+                    ),
                 ],
-                "returns": "finished",
-                "hard_caps": {"provider_calls": 0},
-            }
+                returns="finished",
+                hard_caps=procedure_limits(provider_calls=0),
+            )
         ),
     )
     author_line(instance, name="test.repeat-rows-line", procedure="test.repeat-rows", parameters={})

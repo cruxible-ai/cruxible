@@ -46,21 +46,18 @@ def _rows_extract(*, next_node: str) -> ExtractNode:
     from cruxible_client.contracts.shapes import contract_digest
 
     row = _row_contract()
-    return ExtractNode.model_validate(
-        {
-            "kind": "extract",
-            "node_id": "rows",
-            "capture": f"$steps.{SOURCE_ALIAS}.capture",
-            "records": "/rows/*",
-            "row": {
-                "name": row.name,
-                "version": row.version,
-                "digest": contract_digest(row).tagged,
-            },
-            "fields": {"cve": {"at": "cve"}},
-            "as": ROWS_ALIAS,
-            "next": next_node,
-        }
+    return ExtractNode(
+        node_id="rows",
+        capture=f"$steps.{SOURCE_ALIAS}.capture",
+        records="/rows/*",
+        row={
+            "name": row.name,
+            "version": row.version,
+            "digest": contract_digest(row).tagged,
+        },
+        fields={"cve": {"at": "cve"}},
+        as_=ROWS_ALIAS,
+        next=next_node,
     )
 
 

@@ -22,7 +22,6 @@ from cruxible_client.contracts.procedures.models import (
     GuardNode,
     HaltNode,
     ProcedureDefinition,
-    ProcedureHardCaps,
     ProjectNode,
     ProposeChangeSetNode,
     ReadNode,
@@ -33,7 +32,7 @@ from cruxible_client.contracts.procedures.models import (
 from cruxible_client.contracts.refs import step_ref
 from cruxible_client.contracts.shapes import Comparison, LiteralOperand, Predicate
 from tests.support.inbox import inbox_node
-from tests.support.procedures import named
+from tests.support.procedures import named, procedure_definition, procedure_hard_caps
 
 
 def _digest(label: str) -> str:
@@ -64,7 +63,7 @@ def _definition(
     slots: dict[str, object] | None = None,
     parameter_contract: ArtifactPin | None = None,
 ) -> ProcedureDefinition:
-    return ProcedureDefinition(
+    return procedure_definition(
         name="static-laws",
         contract_in=named(_pin("contract-in", "Contract", "definition-input/v1")),
         contract_out=named(_pin("contract-out", "Contract", "definition-output/v1")),
@@ -72,7 +71,7 @@ def _definition(
         nodes=tuple(nodes),  # type: ignore[arg-type]
         returns=returns,
         slots=slots or {},
-        hard_caps=ProcedureHardCaps(
+        hard_caps=procedure_hard_caps(
             max_wall_clock=CanonicalDuration(microseconds=4_000_000),
             max_provider_calls=20,
             max_capture_bytes=20_000,

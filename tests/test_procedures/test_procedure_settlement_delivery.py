@@ -62,6 +62,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_line,
 )
 from tests.core_support._light_capture_support import record_contract as capture_contract
+from tests.support.mandates import procedure_mandate
 from tests.support.procedures import procedure_members
 from tests.test_procedures import test_procedure_source_runs as fixtures
 from tests.test_procedures.test_procedure_proposal_delivery import (
@@ -318,7 +319,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
         **(_level_kind_members(rules=level_rules) if subject_items else {}),
     }
     for index in range(mandates):
-        mandate = ProcedureMandate(
+        mandate = procedure_mandate(
             identity=ArtifactIdentity(kind="ProcedureMandate", name=f"settle-{index}"),
             line=ArtifactPin(
                 role="line",
@@ -362,7 +363,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
         # The propose grant's digest sorts after every settle grant's, so a
         # digest-order choice between them would pick the settle grant.
         for day in range(256):
-            grant = ProcedureMandate(
+            grant = procedure_mandate(
                 identity=ArtifactIdentity(kind="ProcedureMandate", name="propose-grant"),
                 line=ArtifactPin(
                     role="line",

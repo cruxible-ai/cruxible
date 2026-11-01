@@ -8,7 +8,6 @@ import pytest
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.procedures.models import (
-    ProcedureDefinition,
     ReadNode,
 )
 from cruxible_client.contracts.procedures.results import ProcedureNodeRefusal
@@ -24,7 +23,7 @@ from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.support.inbox import inbox_node
-from tests.support.procedures import named
+from tests.support.procedures import named, procedure_definition
 from tests.test_procedures.test_procedure_execution import (
     _accepted,
     _Authority,
@@ -48,7 +47,7 @@ def _terminal_procedure():
     contract_in = _pin("contract-in", "Contract", "terminal-input/v1")
     contract_out = _pin("contract-out", "Contract", "terminal-output/v1")
     query = _pin("query", "QueryDefinition", "terminal-items")
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name="terminal-procedure",
         contract_in=named(contract_in),
         contract_out=named(contract_out),

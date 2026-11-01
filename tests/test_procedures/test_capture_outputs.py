@@ -24,13 +24,14 @@ from typing import Any
 
 import pytest
 
+from cruxible_client.contracts.procedures.authored import CallStep, ProjectStep
 from cruxible_client.contracts.procedures.capture_outputs import (
     TriggerTargetRefused,
     capture_output_descriptors,
     trigger_capture_output,
 )
 from tests.support.operation_world import Invoker
-from tests.support.procedures import refs
+from tests.support.procedures import procedure_limits, procedure_spec_data, refs
 from tests.test_procedures.test_b2_operations import run_line
 
 LINE_NAME = "test.paired-line"
@@ -146,32 +147,33 @@ def _paired_world(
         instance,
         ProcedureSpec.model_validate(
             refs(
-                {
-                    "procedure": "test.paired",
-                    "input": {},
-                    "output": {name: result.fields[name].spelling for name in returned},
-                    "slots": {
+                procedure_spec_data(
+                    reference_text=True,
+                    procedure="test.paired",
+                    input={},
+                    output={name: result.fields[name].spelling for name in returned},
+                    slots={
                         "pair": {
                             "in": "demo.pair.request@1",
                             "out": "demo.pair.result@1",
                             "effect": "external_read",
                         }
                     },
-                    "steps": [
-                        {
-                            "call": "doc",
-                            "captures": {"left": "test.events-v1", "right": "test.other-v1"},
-                            "slot": "pair",
-                            "input": {"query": "orders"},
-                        },
-                        {
-                            "project": "out",
-                            "fields": {name: f"$doc.{name}" for name in returned},
-                        },
+                    steps=[
+                        CallStep(
+                            call="doc",
+                            captures={"left": "test.events-v1", "right": "test.other-v1"},
+                            slot="pair",
+                            input={"query": "orders"},
+                        ),
+                        ProjectStep(
+                            project="out",
+                            fields=refs({name: f"$doc.{name}" for name in returned}),
+                        ),
                     ],
-                    "returns": "out",
-                    "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
-                }
+                    returns="out",
+                    hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
+                )
             )
         ),
     )

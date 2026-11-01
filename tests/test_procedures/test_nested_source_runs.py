@@ -6,6 +6,12 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.authoring.inputs import lower_authoring_input
+from cruxible_client.contracts.procedures.authored import (
+    GuardStep,
+    InvokeStep,
+    ProjectStep,
+    ReadStep,
+)
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import compute_preflight
 from cruxible_core.exhaust.records import parse_journal_payload
@@ -20,19 +26,15 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import initialize_local
-from tests.support.procedures import ref, spec_input
+from tests.support.lines import line_budgets, line_spec
+from tests.support.mandates import procedure_mandate
+from tests.support.procedures import procedure_limits, procedure_spec_data, ref, spec_input
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 
 #: The run limits every spec below declares (60 s, no provider calls).
-LIMITS = {
-    "hard_caps": {
-        "wall_clock": "PT120S",
-        "provider_calls": 0,
-        "capture_bytes": 0,
-        "items": 100,
-        "repeat_attempts": 3,
-    },
-}
+LIMITS = procedure_limits(
+    wall_clock="PT120S", provider_calls=0, capture_bytes=0, items=100, repeat_attempts=3
+)
 
 
 def _succeeded(step: str) -> dict[str, object]:
@@ -42,47 +44,38 @@ def _succeeded(step: str) -> dict[str, object]:
 def blueprints():
     """A child that halts unless positive, and a parent that invokes it twice."""
 
-    child = {
-        "procedure": "child",
-        "input": {"positive": "bool"},
-        "output": {"label": "string"},
-        **LIMITS,
-        "steps": [
-            {
-                "guard": {"op": "eq", "left": ref("$input.positive"), "right": {"literal": True}},
-                "else": {"halt": "No work"},
-            },
-            {
-                "project": "label",
-                "fields": {"label": "ready"},
-                "leaf": True,
-            },
+    child = procedure_spec_data(
+        procedure="child",
+        input={"positive": "bool"},
+        output={"label": "string"},
+        hard_caps=LIMITS,
+        steps=[
+            GuardStep(
+                guard={"op": "eq", "left": ref("$input.positive"), "right": {"literal": True}},
+                else_={"halt": "No work"},
+            ),
+            ProjectStep(project="label", fields={"label": "ready"}, leaf=True),
         ],
-    }
-    parent = {
-        "procedure": "parent",
-        # A Line supplies ``positive``; the parent hands it to its first child.
-        "params": {"positive": "bool"},
-        "output": {"label": "string"},
-        **LIMITS,
-        "steps": [
-            {"invoke": "child", "as": "first", "input": {"positive": ref("$params.positive")}},
-            {"guard": _succeeded("first"), "else": {"goto": "halted"}},
-            {"invoke": "child", "as": "second", "input": {"positive": True}},
-            {"guard": _succeeded("second"), "else": {"halt": "Second child failed"}},
-            {
-                "project": "relabelled",
-                "fields": {"label": ref("$steps.second.value.label")},
-                "output": {"label": "string"},
-                "leaf": True,
-            },
-            {
-                "project": "halted",
-                "fields": {"label": "child halted"},
-                "leaf": True,
-            },
+    )
+    parent = procedure_spec_data(
+        procedure="parent",
+        params={"positive": "bool"},
+        output={"label": "string"},
+        hard_caps=LIMITS,
+        steps=[
+            InvokeStep(invoke="child", as_="first", input={"positive": ref("$params.positive")}),
+            GuardStep(guard=_succeeded("first"), else_={"goto": "halted"}),
+            InvokeStep(invoke="child", as_="second", input={"positive": True}),
+            GuardStep(guard=_succeeded("second"), else_={"halt": "Second child failed"}),
+            ProjectStep(
+                project="relabelled",
+                fields={"label": ref("$steps.second.value.label")},
+                output={"label": "string"},
+                leaf=True,
+            ),
+            ProjectStep(project="halted", fields={"label": "child halted"}, leaf=True),
         ],
-    }
+    )
     return child, parent
 
 
@@ -244,12 +237,10 @@ def test_line_child_inherits_authority_and_recovery_rebuilds_only_the_recorded_d
     from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
     from cruxible_client.contracts.errors import ExecutionError
     from cruxible_client.contracts.procedure_mandates import (
-        ProcedureMandate,
         procedure_mandate_path,
         render_procedure_mandate,
     )
     from cruxible_client.contracts.procedures.line_specs import (
-        LineSpec,
         line_spec_digest,
         line_spec_path,
         render_line_spec,
@@ -271,7 +262,7 @@ def test_line_child_inherits_authority_and_recovery_rebuilds_only_the_recorded_d
     # "parent"/"child" are a pure invoke-chain graph (no provider slots at
     # all), unlike the workspace.file advisory procedure _served_line/
     # _line_mandate are built for -- a plain, slot-free Line and Mandate here.
-    line = LineSpec(
+    line = line_spec(
         identity=ArtifactIdentity(kind="Line", name="nested-line"),
         occurrence_epoch=1,
         procedure=ArtifactPin(
@@ -281,15 +272,15 @@ def test_line_child_inherits_authority_and_recovery_rebuilds_only_the_recorded_d
         ),
         parameters={"positive": True},
         max_authority="observe",
-        budgets={
-            "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
-            "max_provider_calls": caps.max_provider_calls,
-            "max_capture_bytes": caps.max_capture_bytes,
-            "max_items": caps.max_items,
-        },
+        budgets=line_budgets(
+            max_wall_clock_microseconds=caps.max_wall_clock.microseconds,
+            max_provider_calls=caps.max_provider_calls,
+            max_capture_bytes=caps.max_capture_bytes,
+            max_items=caps.max_items,
+        ),
         epsilon={"$decimal": "0"},
     )
-    mandate = ProcedureMandate(
+    mandate = procedure_mandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="nested-line-mandate"),
         line=ArtifactPin(
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
@@ -366,21 +357,21 @@ def test_a_spec_combines_a_typed_claim_read_and_an_existing_query(tmp_path):
     accept_blueprint(
         instance,
         owner,
-        {
-            "procedure": "assess-work",
-            "input": {"item": "string"},
-            "output": {"status": "string", "count": "int"},
-            **LIMITS,
-            "steps": [
-                {
-                    "read": "status",
-                    "claim_type": "project.work_item.status",
-                    "subject": ref("$input.item"),
-                    "subject_kind": "project.work_item",
-                },
-                {"read": "work", "query": definition.identity.name},
-                {
-                    "guard": {
+        procedure_spec_data(
+            procedure="assess-work",
+            input={"item": "string"},
+            output={"status": "string", "count": "int"},
+            hard_caps=LIMITS,
+            steps=[
+                ReadStep(
+                    read="status",
+                    claim_type="project.work_item.status",
+                    subject=ref("$input.item"),
+                    subject_kind="project.work_item",
+                ),
+                ReadStep(read="work", query=definition.identity.name),
+                GuardStep(
+                    guard={
                         "op": "all_of",
                         "of": [
                             {
@@ -395,19 +386,19 @@ def test_a_spec_combines_a_typed_claim_read_and_an_existing_query(tmp_path):
                             },
                         ],
                     },
-                    "else": incomplete,
-                },
-                {
-                    "project": "assessed",
-                    "fields": {
+                    else_=incomplete,
+                ),
+                ProjectStep(
+                    project="assessed",
+                    fields={
                         "status": ref("$steps.status.value"),
                         "count": ref("$steps.work.result.truncation.returned_result_count"),
                     },
-                    "output": {"status": "string", "count": "int"},
-                    "leaf": True,
-                },
+                    output={"status": "string", "count": "int"},
+                    leaf=True,
+                ),
             ],
-        },
+        ),
     )
     actor = GovernedActorContext(
         actor_id="owner",

@@ -49,7 +49,6 @@ from cruxible_client.contracts.procedures.graph import (
 )
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
-    LineSpec,
     caps_line_budgets,
     line_spec_digest,
     line_spec_path,
@@ -149,6 +148,7 @@ from cruxible_core.procedures.run_index import ProcedureRunIndex
 from cruxible_core.service.procedures.procedure_runs import service_prepare_playbill_line_admission
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 from tests.core_support._support import initialize_local
+from tests.support.lines import line_spec
 from tests.support.operation_world import contract_files
 from tests.support.procedures import (
     MAX_WALL_CLOCK,
@@ -160,6 +160,9 @@ from tests.support.procedures import (
     contract_pin,
     contract_resolver,
     named,
+    procedure_budget,
+    procedure_definition,
+    procedure_hard_caps,
 )
 
 NOW = datetime(2026, 8, 17, 13, 0, tzinfo=timezone.utc)
@@ -209,7 +212,7 @@ def _actor() -> GovernedActorContext:
 
 
 def _budget(*, providers: int = 0, items: int = 100) -> ProcedureBudget:
-    return ProcedureBudget(
+    return procedure_budget(
         wall_clock=RUN_WALL_CLOCK,
         max_provider_calls=providers,
         max_capture_bytes=0,
@@ -218,7 +221,7 @@ def _budget(*, providers: int = 0, items: int = 100) -> ProcedureBudget:
 
 
 def _hard_caps(*, providers: int = 0, items: int = 100) -> ProcedureHardCaps:
-    return ProcedureHardCaps(
+    return procedure_hard_caps(
         max_wall_clock=MAX_WALL_CLOCK,
         max_provider_calls=providers,
         max_capture_bytes=0,
@@ -255,7 +258,7 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
         left=step_ref("rows", *("result", "truncation", "returned_result_count")),
         right=LiteralOperand(literal=100 if false_branch else 0),
     )
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name="state-procedure",
         contract_in=named(contract_in),
         contract_out=named(contract_out),
@@ -349,7 +352,7 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
         fields={"items": "$steps.listed.items"},
         as_="result",
     )
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name=f"owned-{boundary}",
         contract_in=named(entry_pin),
         contract_out=named(typed_out),
@@ -364,7 +367,7 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
 def _repeat_transform_procedure(*, max_items: int = 100) -> AcceptedProcedure:
     contract_in = _pin("contract-in", "Contract", "input/v1")
     contract_out = _pin("contract-out", "Contract", "output/v1")
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name="repeat-transform-procedure",
         contract_in=named(contract_in),
         contract_out=named(contract_out),
@@ -407,7 +410,7 @@ def _guarded_filter_procedure(
     count_result = _owned_contract("guard-count-result", {"count": "int"})
     entry_pin = _owned_pin("contract-in", empty)
     result_pin = _owned_pin("contract-out", count_result)
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name=f"guarded-filter-{operator}{'-explicit-next' if result_next else ''}",
         contract_in=named(entry_pin),
         contract_out=named(result_pin),
@@ -483,7 +486,7 @@ def _guarded_scalar_procedure(
     count_result = _owned_contract("scalar-count-result", {"count": "int"})
     entry_pin = _owned_pin("contract-in", empty)
     count_out = _owned_pin("contract-out", count_result)
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name="guarded-scalar-" + alias + "-" + "-".join(path),
         contract_in=named(entry_pin),
         contract_out=named(count_out),
@@ -976,7 +979,7 @@ def _accepted_line_for_admission(
         artifact_digest=accepted_procedure.artifact_digest,
     )
     assert admission.line_identity is not None
-    line = LineSpec(
+    line = line_spec(
         identity=admission.line_identity,
         occurrence_epoch=1,
         procedure=procedure_pin,
@@ -1509,7 +1512,7 @@ def test_executor_recognizes_a_source_node_as_a_landed_capture_input(tmp_path) -
         input={},
         as_="capture",
     )
-    source_definition = ProcedureDefinition(
+    source_definition = procedure_definition(
         name="source-landed-capture",
         contract_in=named(_pin("contract-in", "Contract", "provider-input/v1")),
         contract_out=named(_pin("contract-out", "Contract", "provider-output/v1")),

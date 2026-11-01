@@ -8,11 +8,18 @@ from datetime import datetime
 
 import pytest
 
+from cruxible_client.contracts.procedures.authored import (
+    CallStep,
+    EmitStep,
+    InvokeStep,
+    ProjectStep,
+)
 from cruxible_client.contracts.procedures.line_specs import parse_line_spec
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
     service_run_playbill_line,
 )
+from tests.support.lines import line_budgets_input
 from tests.support.operation_world import (
     LINE,
     NOW,
@@ -31,7 +38,7 @@ from tests.support.operation_world import (
     slotted_spec,
     world,
 )
-from tests.support.procedures import refs
+from tests.support.procedures import procedure_limits, procedure_spec, procedure_spec_data, refs
 
 
 @dataclass(frozen=True)
@@ -472,14 +479,15 @@ def plain_spec(*, name="test.plain"):  # type: ignore[no-untyped-def]
 
     return ProcedureSpec.model_validate(
         refs(
-            {
-                "procedure": name,
-                "input": {"value": "int"},
-                "output": {"value": "int"},
-                "steps": [{"project": "result", "fields": {"value": "$input.value"}}],
-                "returns": "result",
-                "hard_caps": {"provider_calls": 0},
-            }
+            procedure_spec_data(
+                reference_text=True,
+                procedure=name,
+                input={"value": "int"},
+                output={"value": "int"},
+                steps=[ProjectStep(project="result", fields=refs({"value": "$input.value"}))],
+                returns="result",
+                hard_caps=procedure_limits(provider_calls=0),
+            )
         )
     )
 
@@ -580,17 +588,18 @@ def _plain_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
 
     return ProcedureSpec.model_validate(
         refs(
-            {
-                "procedure": name,
-                "input": {},
-                "output": {"value": "int"},
-                "steps": [
-                    {"project": "shaped", "fields": {"value": 1}},
+            procedure_spec_data(
+                reference_text=True,
+                procedure=name,
+                input={},
+                output={"value": "int"},
+                steps=[
+                    ProjectStep(project="shaped", fields={"value": 1}),
                     {verb: (_self_sourced_subject_item(f"Plain direct {verb}."),)},
                 ],
-                "returns": "shaped",
-                "hard_caps": {"provider_calls": 0},
-            }
+                returns="shaped",
+                hard_caps=procedure_limits(provider_calls=0),
+            )
         )
     )
 
@@ -602,20 +611,23 @@ def _call_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
 
     return ProcedureSpec.model_validate(
         refs(
-            {
-                "procedure": name,
-                "input": {"value": "int"},
-                "output": {"value": "int"},
-                "slots": {
-                    "compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}
-                },
-                "steps": [
-                    {"call": "result", "slot": "compute", "input": {"value": "$input.value"}},
+            procedure_spec_data(
+                reference_text=True,
+                procedure=name,
+                input={"value": "int"},
+                output={"value": "int"},
+                slots={"compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}},
+                steps=[
+                    CallStep(
+                        call="result",
+                        slot="compute",
+                        input=refs({"value": "$input.value"}),
+                    ),
                     {verb: (_self_sourced_subject_item(f"Called direct {verb}."),)},
                 ],
-                "returns": "result",
-                "hard_caps": {"provider_calls": 1},
-            }
+                returns="result",
+                hard_caps=procedure_limits(provider_calls=1),
+            )
         )
     )
 
@@ -726,23 +738,24 @@ def test_an_invoked_child_uses_the_parent_lines_binding_under_its_node_path(tmp_
     instance = slotted_world(tmp_path, first, second)
     parent = ProcedureSpec.model_validate(
         refs(
-            {
-                "procedure": "test.parent",
-                "params": {"value": "int"},
-                "output": {"value": "int"},
-                "steps": [
+            procedure_spec_data(
+                reference_text=True,
+                procedure="test.parent",
+                params={"value": "int"},
+                output={"value": "int"},
+                steps=[
                     # The parent maps its parameter into the child's.
-                    {
-                        "invoke": "test.slotted",
-                        "id": "child",
-                        "input": {},
-                        "params": {"value": "$params.value"},
-                    },
-                    {"project": "finished", "fields": {"value": "$params.value"}},
+                    InvokeStep(
+                        invoke="test.slotted",
+                        id="child",
+                        input={},
+                        params=refs({"value": "$params.value"}),
+                    ),
+                    ProjectStep(project="finished", fields=refs({"value": "$params.value"})),
                 ],
-                "returns": "finished",
-                "hard_caps": {"provider_calls": 1},
-            }
+                returns="finished",
+                hard_caps=procedure_limits(provider_calls=1),
+            )
         )
     )
     author_procedure(instance, parent, name="parent")
@@ -771,24 +784,25 @@ def sourced_spec(*, description=None):  # type: ignore[no-untyped-def]
 
     return ProcedureSpec.model_validate(
         refs(
-            {
-                "procedure": "test.sourced",
-                **({} if description is None else {"description": description}),
-                "input": {},
-                "output": {"length": "int"},
-                "slots": {
+            procedure_spec_data(
+                reference_text=True,
+                procedure="test.sourced",
+                description=description,
+                input={},
+                output={"length": "int"},
+                slots={
                     "read": {
                         "in": "workspace.file.request@1",
                         "out": "workspace.file.result@1",
                         "effect": "pure",
                     }
                 },
-                "steps": [
-                    {
-                        "call": "doc",
-                        "captures": {"capture": "test.orders-v1"},
-                        "slot": "read",
-                        "input": {
+                steps=[
+                    CallStep(
+                        call="doc",
+                        captures={"capture": "test.orders-v1"},
+                        slot="read",
+                        input={
                             "logical_source": "commerce.production.orders",
                             "relative_path": "data/doc.json",
                             "coordinate_type": "database-snapshot-v1",
@@ -796,12 +810,12 @@ def sourced_spec(*, description=None):  # type: ignore[no-untyped-def]
                             "selector_type": "relation-primary-key-v1",
                             "selector": {"id": 7, "relation": "orders"},
                         },
-                    },
-                    {"project": "out", "fields": {"length": "$doc.source.byte_length"}},
+                    ),
+                    ProjectStep(project="out", fields=refs({"length": "$doc.source.byte_length"})),
                 ],
-                "returns": "out",
-                "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
-            }
+                returns="out",
+                hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
+            )
         )
     )
 
@@ -1115,23 +1129,28 @@ def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
         instance,
         ProcedureSpec.model_validate(
             refs(
-                {
-                    "procedure": "test.slotted",
-                    "params": {"value": "int"},
-                    "output": {"severity": {"type": "enum_of:test.severity"}},
-                    "slots": {
+                procedure_spec_data(
+                    reference_text=True,
+                    procedure="test.slotted",
+                    params={"value": "int"},
+                    output={"severity": {"type": "enum_of:test.severity"}},
+                    slots={
                         "compute": {
                             "in": "test.value@1",
                             "out": "test.severity_value@1",
                             "effect": "pure",
                         }
                     },
-                    "steps": [
-                        {"call": "result", "slot": "compute", "input": {"value": "$params.value"}}
+                    steps=[
+                        CallStep(
+                            call="result",
+                            slot="compute",
+                            input=refs({"value": "$params.value"}),
+                        )
                     ],
-                    "returns": "result",
-                    "hard_caps": {"provider_calls": 1},
-                }
+                    returns="result",
+                    hard_caps=procedure_limits(provider_calls=1),
+                )
             )
         ),
     )
@@ -1320,29 +1339,30 @@ def _fetch_world(
         instance,
         ProcedureSpec.model_validate(
             refs(
-                {
-                    "procedure": "test.fetched",
-                    "input": {},
-                    "output": {"ok": "bool"},
-                    "slots": {
+                procedure_spec_data(
+                    reference_text=True,
+                    procedure="test.fetched",
+                    input={},
+                    output={"ok": "bool"},
+                    slots={
                         "fetch": {
                             "in": "demo.fetch.request@1",
                             "out": "demo.fetch.result@1",
                             "effect": "external_read",
                         }
                     },
-                    "steps": [
-                        {
-                            "call": "doc",
-                            "captures": {"capture": capture_contract.identity.name},
-                            "slot": "fetch",
-                            "input": request,
-                        },
-                        {"project": "out", "fields": {"ok": True}},
+                    steps=[
+                        CallStep(
+                            call="doc",
+                            captures=refs({"capture": capture_contract.identity.name}),
+                            slot="fetch",
+                            input=refs(request),
+                        ),
+                        ProjectStep(project="out", fields={"ok": True}),
                     ],
-                    "returns": "out",
-                    "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
-                }
+                    returns="out",
+                    hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
+                )
             )
         ),
     )
@@ -1624,10 +1644,12 @@ def test_a_capture_keeps_verifying_across_procedure_and_line_succession(tmp_path
         _line_input(
             instance,
             SOURCE_LINE,
-            budgets={
-                **line.budgets.model_dump(mode="json"),
-                "max_capture_bytes": line.budgets.max_capture_bytes - 1,
-            },
+            budgets=line_budgets_input(
+                **{
+                    **line.budgets.model_dump(mode="json"),
+                    "max_capture_bytes": line.budgets.max_capture_bytes - 1,
+                }
+            ),
         ),
         name="line-v2",
     )
@@ -1726,23 +1748,18 @@ def _produced_captures(instance, run_id):  # type: ignore[no-untyped-def]
 
 
 def emitting_spec(*, description=None):  # type: ignore[no-untyped-def]
-    from cruxible_client.contracts.procedures.authored import ProcedureSpec
 
-    return ProcedureSpec.model_validate(
-        refs(
-            {
-                **slotted_spec(description=description).model_dump(mode="json", by_alias=True),
-                "steps": [
-                    {"call": "result", "slot": "compute", "input": {"value": "$params.value"}},
-                    {
-                        "emit": "test.procedure-output",
-                        "input": {"value": "$params.value"},
-                        "result": {"value": "$result.value"},
-                    },
-                ],
-                "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
-            }
-        )
+    return procedure_spec(
+        base=slotted_spec(description=description).model_dump(mode="json", by_alias=True),
+        steps=[
+            CallStep(call="result", slot="compute", input=refs({"value": "$params.value"})),
+            EmitStep(
+                emit="test.procedure-output",
+                input=refs({"value": "$params.value"}),
+                result=refs({"value": "$result.value"}),
+            ),
+        ],
+        hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
     )
 
 

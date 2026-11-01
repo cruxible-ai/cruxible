@@ -16,14 +16,11 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
-    LineSpec,
     line_spec_digest,
     line_spec_path,
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
-    ProcedureDefinition,
-    ProcedureHardCaps,
     ReadNode,
 )
 from cruxible_core.compiler.compiler import PROJECTION_REGISTRY
@@ -60,11 +57,14 @@ from cruxible_core.service.procedures.procedures import (
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import initialize_local
 from tests.support.inbox import contract_members, inbox_node
+from tests.support.lines import line_budgets, line_spec
 from tests.support.procedures import (
     MAX_WALL_CLOCK,
     RUN_WALL_CLOCK,
     boundary_contract,
     named,
+    procedure_definition,
+    procedure_hard_caps,
     procedure_members,
 )
 from tests.support.procedures import accepted_procedure as carried_procedure
@@ -94,7 +94,7 @@ def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
     contract_in = _pin("contract-in", "Contract", "run-input/v1")
     contract_out = _pin("contract-out", "Contract", "run-output/v1")
     query = _pin("query", "QueryDefinition", "open-orders")
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name="orders-triage",
         contract_in=named(contract_in),
         contract_out=named(contract_out),
@@ -103,7 +103,7 @@ def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
             inbox_node("emit", fields={"note": "$item.order"}, for_each="$steps.rows.items"),
         ),
         returns="rows",
-        hard_caps=ProcedureHardCaps(
+        hard_caps=procedure_hard_caps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=0,
             max_capture_bytes=0,
@@ -119,18 +119,18 @@ def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
     procedure_pin = _pin(
         "procedure", "Procedure", definition.name, digest=accepted_procedure.artifact_digest
     )
-    line = LineSpec(
+    line = line_spec(
         identity=ArtifactIdentity(kind="Line", name="orders-triage"),
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={},
         max_authority="observe",
-        budgets={
-            "max_capture_bytes": 0,
-            "max_items": 100,
-            "max_provider_calls": 0,
-            "max_wall_clock_microseconds": RUN_WALL_CLOCK.microseconds,
-        },
+        budgets=line_budgets(
+            max_capture_bytes=0,
+            max_items=100,
+            max_provider_calls=0,
+            max_wall_clock_microseconds=RUN_WALL_CLOCK.microseconds,
+        ),
         epsilon={"$decimal": "0.1"},
     )
     return accepted_procedure, AcceptedLineSpec(

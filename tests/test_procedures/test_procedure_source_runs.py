@@ -59,8 +59,6 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ProcedureDefinition,
-    ProcedureHardCaps,
     ProjectNode,
 )
 from cruxible_client.contracts.procedures.results import (
@@ -115,7 +113,15 @@ from tests.core_support._candidate_support import submit_member_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._support import initialize_local
-from tests.support.procedures import MAX_WALL_CLOCK, named, procedure_members
+from tests.support.lines import line_budgets, line_spec
+from tests.support.mandates import procedure_mandate
+from tests.support.procedures import (
+    MAX_WALL_CLOCK,
+    named,
+    procedure_definition,
+    procedure_hard_caps,
+    procedure_members,
+)
 
 NOW = datetime(2026, 9, 12, 12, 0, tzinfo=UTC)
 SEED_STAMP = "2026-09-12T11:00:00.000000Z"
@@ -288,7 +294,7 @@ def _procedure(  # noqa: PLR0913
     from cruxible_client.contracts.workspace_file import workspace_file_contracts
 
     _wf_source, _wf_content, wf_request, wf_result = workspace_file_contracts()
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name=PROCEDURE_NAME,
         description="Read one accepted advisory document and shape its severity.",
         contract_in=named(contract_in),
@@ -324,7 +330,7 @@ def _procedure(  # noqa: PLR0913
             ),
         ),
         returns="result",
-        hard_caps=ProcedureHardCaps(
+        hard_caps=procedure_hard_caps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=4,
             max_capture_bytes=131_072,
@@ -475,24 +481,21 @@ def proposals_extract(*, next_node: str | None = None) -> Any:
     from cruxible_client.contracts.shapes import contract_digest
 
     *_nested, row = fan_out_contracts()
-    return ExtractNode.model_validate(
-        {
-            "kind": "extract",
-            "node_id": "items",
-            "capture": f"$steps.{SOURCE_ALIAS}.capture",
-            "records": "/proposals/*",
-            "row": {
-                "name": row.name,
-                "version": row.version,
-                "digest": contract_digest(row).tagged,
-            },
-            "fields": {
-                name: {"at": name}
-                for name in _FAN_OUT_ROW["fields"]  # type: ignore[union-attr]
-            },
-            "as": PROPOSALS_ALIAS,
-            **({} if next_node is None else {"next": next_node}),
-        }
+    return ExtractNode(
+        node_id="items",
+        capture=f"$steps.{SOURCE_ALIAS}.capture",
+        records="/proposals/*",
+        row={
+            "name": row.name,
+            "version": row.version,
+            "digest": contract_digest(row).tagged,
+        },
+        fields={
+            name: {"at": name}
+            for name in _FAN_OUT_ROW["fields"]  # type: ignore[union-attr]
+        },
+        as_=PROPOSALS_ALIAS,
+        next=next_node,
     )
 
 
@@ -520,21 +523,18 @@ def severity_from_document(nodes: tuple[Any, ...]) -> tuple[Any, ...]:
 
     row = document_contract()
     source, shape, *rest = nodes
-    extract = ExtractNode.model_validate(
-        {
-            "kind": "extract",
-            "node_id": "document_read",
-            "capture": f"$steps.{SOURCE_ALIAS}.capture",
-            "records": "/",
-            "row": {
-                "name": row.name,
-                "version": row.version,
-                "digest": contract_digest(row).tagged,
-            },
-            "fields": {"severity": {"at": "severity"}, "advisory_id": {"at": "advisory_id"}},
-            "as": DOCUMENT_ALIAS,
-            "next": shape.node_id,
-        }
+    extract = ExtractNode(
+        node_id="document_read",
+        capture=f"$steps.{SOURCE_ALIAS}.capture",
+        records="/",
+        row={
+            "name": row.name,
+            "version": row.version,
+            "digest": contract_digest(row).tagged,
+        },
+        fields={"severity": {"at": "severity"}, "advisory_id": {"at": "advisory_id"}},
+        as_=DOCUMENT_ALIAS,
+        next=shape.node_id,
     )
     return (
         source.model_copy(update={"next": extract.node_id}),
@@ -836,7 +836,7 @@ def _served_line(
         path=provider_path(WORKSPACE_FILE_BUILTIN_PROVIDER_ID),
     )
     caps = procedure.definition.hard_caps
-    line = LineSpec(
+    line = line_spec(
         identity=ArtifactIdentity(kind="Line", name=LINE_NAME),
         occurrence_epoch=1,
         procedure=procedure_pin,
@@ -849,19 +849,19 @@ def _served_line(
         },
         acquisition={SOURCE_CAPTURE: policy},
         max_authority="observe",
-        budgets={
-            "max_capture_bytes": caps.max_capture_bytes,
-            "max_items": caps.max_items,
-            "max_provider_calls": caps.max_provider_calls,
-            "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
-        },
+        budgets=line_budgets(
+            max_capture_bytes=caps.max_capture_bytes,
+            max_items=caps.max_items,
+            max_provider_calls=caps.max_provider_calls,
+            max_wall_clock_microseconds=caps.max_wall_clock.microseconds,
+        ),
         epsilon={"$decimal": "0.1"},
     )
     return line
 
 
 def _line_mandate(line: LineSpec, procedure: ProcedureArtifact) -> ProcedureMandate:
-    return ProcedureMandate(
+    return procedure_mandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="advisory-line-mandate"),
         line=ArtifactPin(
             role="line",
