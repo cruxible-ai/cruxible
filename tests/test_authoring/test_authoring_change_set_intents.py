@@ -70,6 +70,7 @@ from tests.core_support._subject_kind_support import (
     key_by_slug,
 )
 from tests.core_support._support import initialize_local
+from tests.support.claim_types import claim_type_changes
 from tests.test_authoring.test_authoring_preflight import (
     TIMESTAMP,
     _seed_claim_surface,
@@ -771,7 +772,7 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
 
     # Succession, ClaimType: rewriting an accepted ClaimType in place.
     rewritten = _predicate_type("project.work_item.status").model_copy(
-        update={"literal_schema": {"type": "string"}}
+        update=claim_type_changes(value_type={"type": "string"})
     )
     claim_type_member = ClaimTypeAuthoringPayload(claim_type=rewritten)
     # Succession, Subject: rewriting an accepted Subject in place.

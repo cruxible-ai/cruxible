@@ -64,6 +64,7 @@ from cruxible_core.storage.read_positions import (
 )
 from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import client_material, initialize_local
+from tests.support.claim_types import claim_type_changes
 from tests.test_claims.test_claims import _claim_type, _subject
 from tests.test_ledger.test_activation import _sign
 
@@ -250,11 +251,7 @@ def test_subject_claim_object_requires_matching_type_and_existing_allowed_subjec
 ) -> None:
     instance, owner = initialize_local(tmp_path)
     relationship_type = _claim_type().model_copy(
-        update={
-            "object_kind": "subject",
-            "literal_schema": None,
-            "allowed_object_subject_kinds": ("project.work_item",),
-        }
+        update=claim_type_changes(value_type=("project.work_item",))
     )
     _seed_claim_surface(instance, owner, claim_type_override=relationship_type)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
@@ -322,7 +319,7 @@ def test_subject_claim_object_requires_matching_type_and_existing_allowed_subjec
 def test_address_shaped_literal_preflights_for_a_literal_claim_type(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
     literal_type = _claim_type().model_copy(
-        update={"literal_schema": {"enum": ["docs/readme"], "type": "string"}}
+        update=claim_type_changes(value_type={"enum": ["docs/readme"], "type": "string"})
     )
     _seed_claim_surface(instance, owner, claim_type_override=literal_type)
     coordinator = _coordinator(instance)
@@ -403,18 +400,16 @@ def accept_cve_affects_package_relation(
     )
     predicate = AFFECTS_PACKAGE
     relationship_type = _claim_type().model_copy(
-        update={
-            "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
-            "predicate": predicate,
-            "allowed_subject_kinds": ("sec.vulnerability",),
-            "object_kind": "subject",
-            "literal_schema": None,
-            "allowed_object_subject_kinds": ("sec.package",),
-            "cardinality": "many",
-            "resolution_policy": _claim_type().resolution_policy.model_copy(
+        update=claim_type_changes(
+            predicate=predicate,
+            value_type=("sec.package",),
+            identity=ArtifactIdentity(kind="ClaimType", name=predicate),
+            allowed_subject_kinds=("sec.vulnerability",),
+            cardinality="many",
+            resolution_policy=_claim_type().resolution_policy.model_copy(
                 update={"cardinality": "many", "selector": "all"}
             ),
-        }
+        )
     )
     _seed_claim_surface(
         instance,
