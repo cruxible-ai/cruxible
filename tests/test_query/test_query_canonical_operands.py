@@ -224,3 +224,14 @@ def test_an_operand_no_key_can_equal_refuses_in_every_operator(
     # A canonical operand still matches through the parameter path.
     matched = run(_param_query("eq"), rows, parameters={"value": stored})  # type: ignore[arg-type]
     assert [row.fields[0].value for row in matched.rows] == ["wi-1"]
+
+
+def test_key_operands_apply_the_form_only_through_the_shared_canonicalizer(monkeypatch):
+    from cruxible_core.query import engine
+
+    def redundant_form(*args):
+        pytest.fail("the key canonicalizer owns both form passes")
+
+    monkeypatch.setattr(engine, "canonicalize_literal", redundant_form)
+    stored = _ruled(status_claim(1, "wi-1", "ready"), *_LOWER_TRIM)
+    assert _rows(_eq(" READY "), stored) == ["wi-1"]

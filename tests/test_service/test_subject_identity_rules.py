@@ -684,3 +684,89 @@ def test_a_served_operand_no_key_can_equal_refuses(
         _compact(
             ruled, kind=kind, where=[{"field": predicate.rsplit(".", 1)[1], "in": [stored, bad]}]
         )
+
+
+@pytest.mark.parametrize(
+    ("kind", "predicate", "stored", "bad"),
+    [
+        ("pkg.lower", "pkg.lower.label", "ready", "   "),
+        ("pkg.purl", "pkg.purl.purl", "pkg:generic/x", "pkg:generic/%C3%A9"),
+    ],
+    ids=["empty-key", "second-form-disagreement"],
+)
+def test_key_pushdown_declines_invalid_operands_and_full_evaluation_refuses(
+    ruled: PlaybillInstance,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    predicate: str,
+    stored: str,
+    bad: str,
+) -> None:
+    from cruxible_client.contracts.query.definitions import (
+        QueryDefinition,
+        query_definition_path,
+        render_query_definition,
+    )
+    from cruxible_core.service.discovery import query as served
+    from cruxible_core.service.discovery import query_pushdown
+    from cruxible_core.service.discovery.query_definitions import accepted_query_definition
+    from tests.core_support._identity_support import accept_tree
+
+    name = _param_query_on(ruled, kind, predicate, "==")
+    accepted = accepted_query_definition(ruled, name=name, coordinate=ruled.accepted_coordinate())
+    query = accepted.query.model_copy(
+        update={
+            "lifecycle": accepted.query.lifecycle.model_copy(
+                update={"predecessor_digest": accepted.artifact_digest}
+            ),
+            "evaluation_policy": accepted.query.evaluation_policy.model_copy(
+                update={
+                    "visible_verdicts": (
+                        "contradicted",
+                        "stale",
+                        "supported",
+                        "uncovered",
+                        "unresolved",
+                    ),
+                    "conflict_behavior": "surface_conflicts",
+                }
+            ),
+        }
+    )
+    query = QueryDefinition.model_validate(query.model_dump(mode="python", by_alias=True))
+    accept_tree(
+        ruled, {query_definition_path(name): render_query_definition(query)}, name="pushdown"
+    )
+    selections, operands = [], []
+    select = served.select_query_facts
+    canonicalize = query_pushdown.canonical_key_part
+
+    def observed_selection(*args, **kwargs):
+        selected = select(*args, **kwargs)
+        selections.append(selected)
+        return selected
+
+    def observed_key(value, form, rule):
+        operands.append(value)
+        return canonicalize(value, form, rule)
+
+    monkeypatch.setattr(served, "select_query_facts", observed_selection)
+    monkeypatch.setattr(query_pushdown, "canonical_key_part", observed_key)
+
+    def run(value):
+        return served.service_run_playbill_query(
+            ruled,
+            name=name,
+            evaluation_time=datetime(2026, 10, 9, 13, tzinfo=UTC),
+            parameters={"value": value},
+        ).result
+
+    refused = run(bad)
+    assert operands == [bad]  # The policy admitted the key branch of pushdown.
+    assert selections == [None]  # Refusal falls back to the full evaluator.
+    assert refused.verdict == "refused"
+    assert refused.refusal is not None
+    assert refused.refusal.code == "cruxible.query.value_type_mismatch"
+    matched = run(stored)
+    assert matched.verdict == "completed" and len(matched.rows) == 1
+    assert selections[-1] is not None and selections[-1].paths

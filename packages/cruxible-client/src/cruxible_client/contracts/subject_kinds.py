@@ -57,6 +57,9 @@ from cruxible_client.contracts.identity_normalizers import (
     NoneNormalizer,
     normalizer_spelling,
 )
+from cruxible_client.contracts.identity_normalizers import (
+    key_value_problem as key_value_problem,
+)
 from cruxible_client.contracts.semantic import SemanticAddress
 
 SUBJECT_KIND_ARTIFACT_FORMAT: Final = "cruxible-subject-kind-v2"
@@ -549,16 +552,6 @@ def minted_subject_id(*, operation: str, member: str) -> str:
 
 
 # -- key values and references -------------------------------------------------------
-
-
-def key_value_problem(value: object) -> str | None:
-    """Why a value cannot be a key part, or None: keys are strings, integers or booleans."""
-
-    if isinstance(value, bool | int):
-        return None
-    if isinstance(value, str):
-        return None if value else "a key part is never empty"
-    return f"a key part is a string, an integer or a boolean, not {type(value).__name__}"
 
 
 class SubjectKeyPart(_StrictSubjectKindModel):

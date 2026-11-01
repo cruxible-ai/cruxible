@@ -657,7 +657,7 @@ class _Evaluator:
         vocabulary: tuple[str, ...],
         key_rule: KeyNormalizer | None = None,
     ) -> QueryTypedValue:
-        if form:
+        if form and not (key_rule is not None and isinstance(value, str)):
             try:
                 value = canonicalize_literal(value, form)
             except CanonicalFormDidNotConverge as exc:

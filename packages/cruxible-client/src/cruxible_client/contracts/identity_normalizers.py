@@ -381,6 +381,16 @@ def normalize_key_value(rule: KeyNormalizer, value: object) -> object:
     return identity.package if rule.identity == "package" else identity.variant
 
 
+def key_value_problem(value: object) -> str | None:
+    """Why a value cannot be a key part, or None: keys are strings, integers or booleans."""
+
+    if isinstance(value, bool | int):
+        return None
+    if isinstance(value, str):
+        return None if value else "a key part is never empty"
+    return f"a key part is a string, an integer or a boolean, not {type(value).__name__}"
+
+
 def canonical_key_part(value: object, form: Iterable[str], rule: KeyNormalizer) -> object:
     """One key part's canonical value: the ClaimType ``form``, then ``rule`` (R12, D4).
 
@@ -408,14 +418,9 @@ def canonical_key_part(value: object, form: Iterable[str], rule: KeyNormalizer) 
             f"{normalizer_spelling(rule)} gives {normalized!r}, which the key ClaimType's "
             "canonical form re-spells; the two rules disagree on this value"
         )
-    if isinstance(normalized, bool | int):
-        return normalized
-    if not isinstance(normalized, str):
-        raise KeyNormalizationRefused(
-            f"a key part is a string, an integer or a boolean, not {type(normalized).__name__}"
-        )
-    if not normalized:
-        raise KeyNormalizationRefused("a key part is never empty")
+    problem = key_value_problem(normalized)
+    if problem is not None:
+        raise KeyNormalizationRefused(problem)
     return normalized
 
 
@@ -432,6 +437,7 @@ __all__ = [
     "PurlIdentity",
     "PurlTypeRule",
     "canonical_key_part",
+    "key_value_problem",
     "PurlTypeNormalizer",
     "lowercase_v1",
     "normalize_key_value",
