@@ -5097,7 +5097,7 @@ class ProcedureExecutor:
             ),
             claims_evidence={
                 child.item_key: receipt
-                for child, receipt in zip(children, claims_evidence)
+                for child, receipt in zip(children, claims_evidence, strict=True)
                 if receipt is not None
             },
             prepared_at=self.clock.now(),
