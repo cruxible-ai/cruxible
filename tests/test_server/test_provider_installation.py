@@ -103,7 +103,9 @@ def test_transfer_install_and_restart_reuse(
     assert again.registered and again.status == "ready"
 
 
-def _author_line(http, instance_id, reviewer, *, spec, line, bindings, parameters, name):
+def _author_line(  # noqa: PLR0913
+    http, instance_id, reviewer, *, spec, line, bindings, parameters, name, acquisition=None
+):
     """Author ``spec`` and a Line binding its slots, each accepted by the reviewer.
 
     The Line binds every slot to one exact ``{build, operation}`` at acceptance.
@@ -135,6 +137,7 @@ def _author_line(http, instance_id, reviewer, *, spec, line, bindings, parameter
                     "procedure_name": spec["procedure"],
                     "bindings": bindings,
                     "parameters": parameters,
+                    "acquisition": acquisition or {},
                     "occurrence_epoch": 1,
                 }
             ),
@@ -559,7 +562,6 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
                     "effect": "external_read",
                 }
             },
-            "acquisition_defaults": {"observation.capture": _policy().model_dump(mode="json")},
             "steps": [
                 {
                     "call": "observation",
@@ -580,6 +582,7 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
             "hard_caps": {"provider_calls": 1, "capture_bytes": 1048576},
         },
         line=line,
+        acquisition={"observation.capture": _policy().model_dump(mode="json")},
         bindings={"fetch": f"{installed.build}#web.fetch"},
         parameters={},
         name="installed-web-fetch",

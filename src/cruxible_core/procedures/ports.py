@@ -2,8 +2,8 @@
 
 The executor consumes these two ports only. A bound operation is the admitted
 occurrence's exact build and operation (the Line's binding for its slot); the
-acquisition rules are the run's resolved rules (its Line's ``acquisition``
-over its Procedure's ``acquisition_defaults``), keyed by capture output (``<alias>.<field>``).
+acquisition rules are the run's resolved rules (its Line's ``acquisition``, else
+the stated core default), keyed by capture output (``<alias>.<field>``).
 """
 
 from __future__ import annotations

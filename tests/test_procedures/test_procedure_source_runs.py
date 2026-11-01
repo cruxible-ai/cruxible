@@ -40,7 +40,7 @@ from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
 )
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
+from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
 from cruxible_client.contracts.procedures.artifacts import (
     DIRECT_NODE_KINDS,
     LINE_NODE_KINDS,
@@ -261,7 +261,6 @@ def _procedure(  # noqa: PLR0913
     root: Path,
     contract: CaptureContract,
     relative_path: str = RELATIVE_PATH,
-    acquisition_defaults: dict[str, AcquisitionDefault] | None = None,
 ) -> ProcedureArtifact:
     input_contract, output_contract = _contracts()
     contract_in = ArtifactPin(
@@ -357,7 +356,6 @@ def _procedure(  # noqa: PLR0913
             )
         ),
         activation_policy="drain",
-        acquisition_defaults=acquisition_defaults or {},
     )
 
     from tests.support.procedures import revalidated
@@ -525,9 +523,9 @@ def json_text(value: object) -> str:
 
 def _policy(
     *, name: str = "default", overrides: dict[str, CanonicalDuration | None] | None = None
-) -> AcquisitionDefault:
+) -> LineAcquisitionRule:
     del name  # Acquisition defaults are inline data now, not a named artifact.
-    return AcquisitionDefault(max_age=CanonicalDuration(microseconds=3_600_000_000))
+    return LineAcquisitionRule(max_age=CanonicalDuration(microseconds=3_600_000_000))
 
 
 def _world(  # noqa: PLR0913
@@ -535,7 +533,7 @@ def _world(  # noqa: PLR0913
     *,
     contents: bytes | None = None,
     contract: CaptureContract | None = None,
-    policy: AcquisitionDefault | None = None,
+    policy: LineAcquisitionRule | None = None,
     accept_procedure: bool = True,
     relative_path: str = RELATIVE_PATH,
     write_at: str = RELATIVE_PATH,
@@ -559,7 +557,6 @@ def _world(  # noqa: PLR0913
         root=workspace_root,
         contract=accepted_contract,
         relative_path=relative_path,
-        acquisition_defaults={SOURCE_CAPTURE: accepted_policy},
     )
     if document:
         definition = procedure.definition.model_copy(
@@ -621,13 +618,23 @@ def _run(  # type: ignore[no-untyped-def]
     invoker: _WorkspaceInvoker | None = None,
     reader: WorkspaceFileReader | None = None,
     evaluation_time: datetime = NOW,
+    acquisition: dict[str, LineAcquisitionRule] | None = None,
 ):
+    """A direct run; its request states the world's acquisition rule (a Line's own).
+
+    Acquisition rules live on the Line only, so a direct run's ephemeral Line
+    spec carries them from the request.
+    """
+
     spawned = _WorkspaceInvoker() if invoker is None else invoker
+    rules = {SOURCE_CAPTURE: _policy()} if acquisition is None else acquisition
     return (
         service_run_playbill_procedure(
             instance,
             name=PROCEDURE_NAME,
-            request=ProcedureRunRequest(input={}, evaluation_time=evaluation_time),
+            request=ProcedureRunRequest(
+                input={}, evaluation_time=evaluation_time, acquisition=rules
+            ),
             actor_context=_actor(instance).model_copy(update={"timestamp": evaluation_time}),
             provider_runtime_operator=_Operator(spawned),  # type: ignore[arg-type]
             workspace_file_reader=_reader(instance, root) if reader is None else reader,
@@ -781,7 +788,7 @@ LINE_NAME = "advisory-hourly"
 def _served_line(
     instance: PlaybillInstance,
     procedure: ProcedureArtifact,
-    policy: AcquisitionDefault,
+    policy: LineAcquisitionRule,
 ) -> LineSpec:
     """A Line over the same Source Procedure the direct lane runs."""
 
@@ -1609,11 +1616,11 @@ def _sdk_procedure_input(procedure: ProcedureArtifact) -> ProcedureInput:
 def test_a_line_over_a_source_procedure_authors_without_an_acquisition_override(
     tmp_path: Path,
 ) -> None:
-    """A Line authored with no `acquisition` override still lowers and binds its slot.
+    """A Line authored with no `acquisition` rule still lowers and binds its slot.
 
-    Acquisition rules resolve per run from the Procedure's `acquisition_defaults`
-    and the Line's `acquisition` override (C2/F05); a Line need not declare an
-    override to run -- there is no separate pinned policy artifact to require.
+    Acquisition rules live on the Line (C2/F05); a capture output it names no
+    rule for runs under the stated core default -- there is no separate pinned
+    policy artifact to require.
     """
 
     from cruxible_client.contracts.authoring.models import LineAuthoringPayload

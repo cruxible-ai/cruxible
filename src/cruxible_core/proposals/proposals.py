@@ -384,8 +384,8 @@ REMOVED_NOUNS: Final[Mapping[str, str]] = {
         "a Procedure slot names the signature {in, out, effect} it needs."
     ),
     "source-acquisition-policies/": (
-        "SourceAcquisitionPolicies are removed; declare acquisition_defaults on the "
-        "Procedure, or acquisition per capture output (<alias>.<field>) on the Line."
+        "SourceAcquisitionPolicies are removed; declare acquisition per capture output "
+        "(<alias>.<field>) on the Line."
     ),
 }
 
@@ -2202,7 +2202,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
             )
         accepted_procedure = pinned
     from cruxible_core.errors import RequestRefusedError
-    from cruxible_core.providers.operation_index import line_slot_map
+    from cruxible_core.providers.operation_index import line_capture_output_map, line_slot_map
 
     def child(identity: ArtifactIdentity) -> Any:
         accepted = context.resolved.procedures.get(identity.qualified)
@@ -2210,6 +2210,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
 
     try:
         slots = line_slot_map(accepted_procedure.procedure.definition, child)
+        capture_outputs = line_capture_output_map(accepted_procedure.procedure.definition, child)
     except RequestRefusedError as exc:
         return _MemberVerdict(diagnostics=(_diagnostic(exc.error_code, str(exc), context.path),))
     law = evaluate_line_spec_law(
@@ -2224,6 +2225,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
             if (provider := context.resolved.providers.get(binding.build.target.qualified))
             is not None
         },
+        capture_outputs=capture_outputs,
         by_name=True,
     )
     if law.verdict == "refused":

@@ -301,7 +301,7 @@ def test_a_lines_closure_catches_a_procedure_digest_that_no_longer_reproduces(
 
 @pytest.mark.parametrize("unrelated", (2, 17))
 def test_source_catalogs_select_exact_contract_pins(tmp_path, monkeypatch, unrelated):
-    # Acquisition is inline Procedure/Line data now (AcquisitionDefault/
+    # Acquisition is inline Procedure/Line data now (LineAcquisitionRule/
     # AcquisitionRule), never a separately pinned-and-looked-up artifact
     # (SourceAcquisitionPolicy is gone, B2 noun removal) -- only the
     # capture-contract pin lookup from the original test survives.

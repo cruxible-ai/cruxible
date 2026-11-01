@@ -344,10 +344,6 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
             measurements=definition.measurements,
             annotations=definition.annotations,
             activation=procedure.activation_policy,
-            acquisition_defaults={
-                alias: rule.model_dump(mode="json")
-                for alias, rule in procedure.acquisition_defaults.items()
-            },
             contracts=contracts,
             steps=steps,
             hard_caps=dict(

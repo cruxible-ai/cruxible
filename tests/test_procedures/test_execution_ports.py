@@ -34,13 +34,14 @@ def _operation(
     )
 
 
-def test_resolved_rules_answer_as_the_defaults_and_overrides_did() -> None:
+def test_resolved_rules_answer_as_the_line_and_the_core_default_did() -> None:
     from cruxible_client.contracts.captures import CanonicalDuration
-    from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
+    from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
 
-    defaults = {"feed": AcquisitionDefault(max_age=CanonicalDuration(microseconds=1_000_000))}
-    overrides: dict[str, AcquisitionDefault] = {}
-    rules = resolve_acquisition_rules(("feed", "other"), defaults=defaults, overrides=overrides)
+    line_rules = {"feed": LineAcquisitionRule(max_age=CanonicalDuration(microseconds=1_000_000))}
+    rules = resolve_acquisition_rules(("feed", "other"), line_rules=line_rules)
+    assert rules["feed"].declared_by == "line"
+    assert rules["other"].declared_by == "core_default"
     resolved = ResolvedAcquisitionRules(rules=rules)
     assert isinstance(resolved.rule_for("node-a", "feed"), AcquisitionRule)
     assert resolved.rule_for("node-a", "feed") == rules["feed"]

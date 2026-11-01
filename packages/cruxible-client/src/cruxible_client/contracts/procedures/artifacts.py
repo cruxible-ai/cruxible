@@ -32,8 +32,7 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.acquisition_rules import (
-    AcquisitionDefault,
-    validate_acquisition_keys,
+    LineAcquisitionRule,
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.graph import (
@@ -118,10 +117,8 @@ class ProcedureArtifact(_StrictProcedureArtifactModel):
     """The one Procedure envelope: one named graph and the Contracts it carries.
 
     Every dependency the graph names resolves at the accepted coordinate; the
-    envelope itself pins nothing. ``acquisition_defaults`` holds the
-    Procedure's acquisition rule per capture output, ``<alias>.<field>``
-    (``max_age``, ``on_unavailable``...); a Line's ``acquisition`` overrides
-    them output by output.
+    envelope itself pins nothing. Acquisition rules are not the Procedure's:
+    its Line declares them per capture output (``<alias>.<field>``).
     """
 
     artifact_format: Literal["cruxible-procedure-v3"] = "cruxible-procedure-v3"
@@ -131,18 +128,19 @@ class ProcedureArtifact(_StrictProcedureArtifactModel):
     owned_contracts: tuple[ProcedureOwnedContract, ...]
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
-    acquisition_defaults: dict[str, AcquisitionDefault] = Field(
-        default_factory=dict, exclude_if=lambda value: not value
-    )
     #: The envelope carries no exact pins; its dependencies are named.
     pins: ClassVar[tuple[ArtifactPin, ...]] = ()
-
-    _defaults = field_validator("acquisition_defaults")(validate_acquisition_keys)
 
     @model_validator(mode="before")
     @classmethod
     def _stored(cls, value: object) -> object:
         if isinstance(value, dict):
+            if "acquisition_defaults" in value:
+                raise ValueError(
+                    "procedure_acquisition_defaults_retired: acquisition rules live on the "
+                    "Line only; declare them as the Line's acquisition per capture output "
+                    "(<alias>.<field>)"
+                )
             definition = value.get("definition")
             if isinstance(definition, dict) and any(
                 isinstance(node, dict) and "id" in node for node in definition.get("nodes", ())
@@ -193,12 +191,6 @@ class ProcedureArtifact(_StrictProcedureArtifactModel):
         if referenced != contracts:
             raise ValueError(
                 "every owned Contract must be referenced by name exactly within its owner"
-            )
-        keys = acquisition_keys(self.definition)
-        unknown = sorted(set(self.acquisition_defaults) - keys)
-        if unknown:
-            raise ValueError(
-                f"acquisition_defaults name no capture output (<alias>.<field>): {unknown}"
             )
         guard_halts = procedure_guard_halt_targets(self.definition)
         nodes = []
@@ -417,7 +409,6 @@ def evaluate_procedure_law(
             procedure.definition_digest == predecessor.procedure.definition_digest
             and procedure.activation_policy == predecessor.procedure.activation_policy
             and procedure.owned_contracts == predecessor.procedure.owned_contracts
-            and procedure.acquisition_defaults == predecessor.procedure.acquisition_defaults
             and procedure.lifecycle.state == predecessor.procedure.lifecycle.state
         ):
             return _refusal(
@@ -555,6 +546,6 @@ __all__ = [
     "procedure_path",
     "provider_occurrences",
     "slot_contract_problem",
-    "AcquisitionDefault",
+    "LineAcquisitionRule",
     "render_procedure",
 ]

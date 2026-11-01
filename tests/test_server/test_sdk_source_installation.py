@@ -5,7 +5,7 @@ from typing import Any
 
 from cruxible_client import Cruxible
 from cruxible_client.authoring.procedures import ProcedureLimits, Sequence, eq, halt
-from cruxible_client.contracts.authoring.inputs import ProcedureInput, ProcedureMandateInput
+from cruxible_client.contracts.authoring.inputs import ProcedureMandateInput
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
@@ -167,15 +167,9 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     assert "sha256:" not in authored.model_dump_json()
     preview = observer.preview()
     assert preview.ready_for_prepare, preview.errors
-    # The Source's acquisition rule is the child Procedure's own default: a
-    # Line's acquisition rules name only its root Procedure's Sources.
-    built = ProcedureInput(
-        kind="procedure",
-        spec=authored.spec.model_copy(
-            update={"acquisition_defaults": {"observation.capture": _policy()}}
-        ),
-    )
-    accept(pb.procedure(definition=built))
+    # The Procedure declares no acquisition rule: each Line over a parent
+    # names the child's capture output by invoke path.
+    accept(pb.procedure(definition=authored))
 
     knowledge = pb.changes(rationale="Describe the advisory observation.")
     # Core assigns a new Subject's id from its declared kind's key (identity D1).
@@ -256,6 +250,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
             name="source-line",
             procedure="observe-parent",
             bindings={"observed.fetch": fetch},
+            acquisition={"observed.observation.capture": _policy().model_dump(mode="json")},
             max_authority="propose",
             parameters={"url": URL},
         )
@@ -332,6 +327,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
             procedure="verify-parent",
             # The child's one slot binds under the invoke step's node path.
             bindings={"observed.fetch": fetch},
+            acquisition={"observed.observation.capture": _policy().model_dump(mode="json")},
             max_authority="propose",
             parameters={"url": URL},
         )

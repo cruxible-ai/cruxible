@@ -52,9 +52,9 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 )
 from cruxible_client.contracts.procedures.acquisition_rules import (
     ACQUISITION_RULES_DIGEST_DOMAIN,
-    AcquisitionDefault,
     AcquisitionInputDecision,
     AcquisitionRule,
+    LineAcquisitionRule,
     acquisition_rules_digest,
     resolve_acquisition_rules,
 )
@@ -575,11 +575,12 @@ class ProcedureRunRequest(_StrictProcedureSurfaceModel):
             "'<invoke node>.<slot>'. Omitted slots are fitted when the run is admitted."
         ),
     )
-    acquisition: dict[str, AcquisitionDefault] = Field(
+    acquisition: dict[str, LineAcquisitionRule] = Field(
         default_factory=dict,
         description=(
-            "Per capture output <alias>.<field>: {max_age, on_unavailable}; replaces the "
-            "Procedure default."
+            "Per capture output <alias>.<field> (an invoked child's: <invoke node "
+            "path>.<alias>.<field>): {max_age, on_unavailable, ...}. The direct run's "
+            "ephemeral Line spec carries them; one left out runs under the core default."
         ),
     )
     input: object
@@ -893,7 +894,21 @@ def line_slot_map_at(
 ) -> dict[str, Any]:
     """Every slot a Line over ``accepted`` binds, invoked children's included."""
 
-    from cruxible_core.providers.operation_index import line_slot_map
+    return _line_shape_at(instance, coordinate, accepted)[0]
+
+
+def _line_shape_at(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    accepted: AcceptedProcedure,
+) -> tuple[dict[str, Any], frozenset[str]]:
+    """Every slot a Line over ``accepted`` binds and every capture output it may rule."""
+
+    from cruxible_client.contracts.procedures.line_specs import (
+        line_capture_outputs,
+        line_slot_signatures,
+    )
+    from cruxible_core.providers.operation_index import line_child_definitions
 
     with instance.bind_accepted_projection(coordinate) as projection:
 
@@ -901,7 +916,12 @@ def line_slot_map_at(
             source = projection.typed.source(identity.qualified)
             return None if source is None else source.definition
 
-        return line_slot_map(authored_procedure(accepted).definition, child)
+        definition = authored_procedure(accepted).definition
+        children = line_child_definitions(definition, child)
+    return (
+        line_slot_signatures(definition, child=children),
+        line_capture_outputs(definition, child=children),
+    )
 
 
 def _accepted_runtime_policy(
@@ -1699,16 +1719,11 @@ def _accepted_capture_contracts(
 
 def procedure_acquisition_rules(
     accepted: AcceptedProcedure,
-    overrides: Mapping[str, AcquisitionDefault] | None = None,
+    line_rules: Mapping[str, LineAcquisitionRule] | None = None,
 ) -> dict[str, AcquisitionRule]:
-    """The run's acquisition rule per capture output: the Line's, else the Procedure's."""
+    """The run's acquisition rule per capture output: the Line's, else the core default."""
 
-    procedure = authored_procedure(accepted)
-    return resolve_acquisition_rules(
-        _source_input_names(accepted),
-        defaults=getattr(procedure, "acquisition_defaults", {}),
-        overrides=overrides or {},
-    )
+    return resolve_acquisition_rules(_source_input_names(accepted), line_rules=line_rules or {})
 
 
 def _plan_selection_decision(
@@ -2865,7 +2880,7 @@ def _plan_direct_external_run(
     evaluation_time: datetime,
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
     budget: ProcedureBudget,
-    acquisition: Mapping[str, AcquisitionDefault] | None = None,
+    acquisition: Mapping[str, LineAcquisitionRule] | None = None,
     ephemeral_spec_digest: str | None = None,
 ) -> (
     tuple[
@@ -2897,7 +2912,7 @@ def _plan_direct_external_run(
     source_names = _source_input_names(accepted)
     # Calls bind the accepted runtime output cap, with no evidence selection.
     # Source occurrences additionally bind the run's acquisition rules (the
-    # Procedure's defaults under the request's overrides) through the same plan.
+    # request's, else the core default) through the same plan.
     policy_digest = procedure_runtime_policy_digest(runtime_policy).tagged
     policy_format: str = runtime_policy.tag
     if source_names:
@@ -3005,7 +3020,7 @@ def _prepare_direct_external_run(
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
     effective_budget: ProcedureBudget | None = None,
     effective_caps: ProcedureHardCaps | None = None,
-    acquisition: Mapping[str, AcquisitionDefault] | None = None,
+    acquisition: Mapping[str, LineAcquisitionRule] | None = None,
     ephemeral_spec_digest: str | None = None,
 ) -> (
     tuple[
@@ -3362,6 +3377,7 @@ def service_run_playbill_procedure(
                 workspace_file_reader,
                 _DeterministicClock(evaluation_time),
                 bindings=spec_bindings,
+                acquisition=dict(request.acquisition),
             ),
         )
     except ProcedureBoundaryRefused as exc:
@@ -3679,6 +3695,7 @@ def _run_playbill_line(
     providers = _line_catalogs(
         instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
     )
+    slots, capture_outputs = _line_shape_at(instance, coordinate, accepted)
     law = evaluate_line_spec_law(
         accepted_line.line,
         path=accepted_line.path,
@@ -3688,8 +3705,9 @@ def _run_playbill_line(
             artifact_digest=accepted.artifact_digest,
         ),
         predecessor=_accepted_line_predecessor(instance, accepted_line, coordinate),
-        slots=line_slot_map_at(instance, coordinate, accepted),
+        slots=slots,
         providers={item.provider.identity.qualified: item for item in providers.values()},
+        capture_outputs=capture_outputs,
     )
     if law.verdict != "accepted":
         return _line_refusal_state(
@@ -4465,6 +4483,7 @@ def _run_playbill_line(
                     _DeterministicClock(evaluation_time),
                     mandates=dict(mandates),
                     bindings=dict(accepted_line.line.bindings),
+                    acquisition=dict(accepted_line.line.acquisition),
                 ),
             )
         except ProcedureBoundaryRefused as exc:

@@ -169,7 +169,6 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
-    acquisition_keys,
     parse_procedure,
     procedure_artifact_digest,
     procedure_owned_contract_digest,
@@ -2505,7 +2504,6 @@ def _lower_named_procedure(
                 definition_digest=compute_procedure_definition_digest(definition).tagged,
                 owned_contracts=payload.owned_contracts,
                 activation_policy=payload.activation_policy,
-                acquisition_defaults=payload.acquisition_defaults,
                 lifecycle=ArtifactLifecycle(
                     state="retired" if payload.retire else "live",
                     predecessor_digest=None
@@ -2958,7 +2956,7 @@ def _render_line_member(
     """
 
     from cruxible_client.contracts.procedures.windows import CaptureEventNameSelector
-    from cruxible_core.providers.operation_index import line_slot_map
+    from cruxible_core.providers.operation_index import line_capture_output_map, line_slot_map
 
     procedure_target = procedure_path(payload.procedure_name)
     procedure_content = tree.get(procedure_target)
@@ -2977,7 +2975,22 @@ def _render_line_member(
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
     _check_line_parameters(payload, procedure=procedure, procedure_path_value=procedure_target)
-    aliases = acquisition_keys(procedure.definition)
+
+    def child(identity: ArtifactIdentity) -> Any:
+        target = procedure_path(identity.name)
+        content = tree.get(target)
+        return None if content is None else parse_procedure(content, path=target).definition
+
+    try:
+        aliases = line_capture_output_map(procedure.definition, child)
+    except ValueError as exc:
+        _refuse(
+            "cruxible.authoring.line_procedure_missing",
+            "procedure_name",
+            str(exc),
+            repair_kind="replace_procedure_name",
+            repair_description="Name a Procedure whose invoked children are accepted.",
+        )
     unknown = sorted(set(payload.acquisition) - aliases)
     if unknown:
         _refuse(
@@ -2986,14 +2999,10 @@ def _render_line_member(
             f"Line acquisition names no capture output of {payload.procedure_name!r}: {unknown}.",
             repair_kind="replace_acquisition",
             repair_description=(
-                f"Key acquisition rules by capture output <alias>.<field>: {sorted(aliases)}."
+                "Key acquisition rules by capture output <alias>.<field> (an invoked "
+                f"child's: <invoke node path>.<alias>.<field>): {sorted(aliases)}."
             ),
         )
-
-    def child(identity: ArtifactIdentity) -> Any:
-        target = procedure_path(identity.name)
-        content = tree.get(target)
-        return None if content is None else parse_procedure(content, path=target).definition
 
     try:
         slots = line_slot_map(procedure.definition, child)

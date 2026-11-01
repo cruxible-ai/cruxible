@@ -352,9 +352,7 @@ def test_trigger_input_refuses_before_admission_without_refetch(tmp_path, failur
             bind_references=True,
         )
         contract = capture_contract()
-        rules = resolve_acquisition_rules(
-            (SOURCE_CAPTURE,), defaults={SOURCE_CAPTURE: _policy()}, overrides={}
-        )
+        rules = resolve_acquisition_rules((SOURCE_CAPTURE,), line_rules={SOURCE_CAPTURE: _policy()})
         with pytest.raises(ExecutionError, match="bound read budget") as error:
             bind_trigger_capture(
                 instance,

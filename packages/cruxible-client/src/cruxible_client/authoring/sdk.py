@@ -216,7 +216,7 @@ from cruxible_client.contracts.predictions import (
     TerminalSettlementEvidence,
 )
 from cruxible_client.contracts.principals import PRINCIPAL_KEY_ENV
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
+from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     procedure_artifact_digest,
@@ -1241,7 +1241,7 @@ class ChangeSetDraft:
                     procedure_name=procedure,
                     bindings={} if bindings is None else dict(bindings),
                     acquisition={
-                        alias: AcquisitionDefault.model_validate(rule)
+                        alias: LineAcquisitionRule.model_validate(rule)
                         for alias, rule in (acquisition or {}).items()
                     },
                     max_authority=max_authority,
@@ -4125,7 +4125,6 @@ class Cruxible:
                             "definition",
                             "owned_contracts",
                             "activation_policy",
-                            "acquisition_defaults",
                             "retire",
                         ),
                     },

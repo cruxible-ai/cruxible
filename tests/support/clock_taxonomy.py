@@ -280,7 +280,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("_SubjectRender", "changed_at"): "SETTLEMENT ORDER",
     ("_SubjectRender", "own_changed_at"): "SETTLEMENT ORDER",
     ("GovernedActorContext", "timestamp"): "ASSERTION TIME",
-    ("AcquisitionDefault", "max_age"): "VALIDITY WINDOW",
+    ("LineAcquisitionRule", "max_age"): "VALIDITY WINDOW",
     ("AcquisitionRule", "max_age"): "VALIDITY WINDOW",
     ("JournalHeadStatementV1", "asserted_at"): "ASSERTION TIME",
     ("JournalPartitionHeadV1", "sequence"): "SETTLEMENT ORDER",

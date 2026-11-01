@@ -37,7 +37,7 @@ from cruxible_client.contracts.errors import (
     JournalError,
 )
 from cruxible_client.contracts.procedures.acquisition_rules import (
-    AcquisitionDefault,
+    LineAcquisitionRule,
     acquisition_rules_digest,
     resolve_acquisition_rules,
 )
@@ -318,11 +318,11 @@ class _SourceInvoker:
         )
 
 
-def _acquisition_rules(policy: AcquisitionDefault, *, alias: str = "source_result.capture"):
+def _acquisition_rules(policy: LineAcquisitionRule, *, alias: str = "source_result.capture"):
     from cruxible_core.procedures.ports import ResolvedAcquisitionRules
 
     return ResolvedAcquisitionRules(
-        rules=resolve_acquisition_rules((alias,), defaults={alias: policy}, overrides={})
+        rules=resolve_acquisition_rules((alias,), line_rules={alias: policy})
     )
 
 
@@ -337,7 +337,7 @@ def _source_fixture(
     AcceptedProcedure,
     PreparedProcedureRun,
     object,
-    AcquisitionDefault,
+    LineAcquisitionRule,
     CaptureContract,
 ]:
     # Runs on the real clock: a budget a loaded CI runner cannot run out.
@@ -405,7 +405,7 @@ def _source_fixture(
             ),
         )
     )
-    policy = AcquisitionDefault(max_age=CanonicalDuration(microseconds=60_000_000))
+    policy = LineAcquisitionRule(max_age=CanonicalDuration(microseconds=60_000_000))
     (source_field,) = source_node.captures
     source_output = f"{source_node.as_}.{source_field}"
     procedure = authored.model_copy(
@@ -413,7 +413,6 @@ def _source_fixture(
             "definition": definition,
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
             "pins": pins,
-            "acquisition_defaults": {source_output: policy},
         }
     )
     # New Procedure artifacts are accepted only in the named (v3) format at the
@@ -452,7 +451,7 @@ def _source_fixture(
         },
     )
     policy_digest = acquisition_rules_digest(
-        resolve_acquisition_rules((source_output,), defaults={source_output: policy}, overrides={})
+        resolve_acquisition_rules((source_output,), line_rules={source_output: policy})
     )
     old_plan = provider_prepared.acquisition_plan
     old_occurrence = old_plan.external_occurrences[0]

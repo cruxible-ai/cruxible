@@ -64,7 +64,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
+from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 from cruxible_client.contracts.procedures.authored import (
     ProcedureSpec,
@@ -273,7 +273,6 @@ def lowered_procedure_payload(
     *,
     definition: dict[str, object],
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"],
-    acquisition_defaults: dict[str, AcquisitionDefault],
     contracts: tuple[CarriedContractInput, ...],
 ) -> ProcedureAuthoringPayload:
     """The lowered spec: its stored graph and the Contracts the graph names."""
@@ -298,7 +297,6 @@ def lowered_procedure_payload(
         definition=definition,
         activation_policy=activation_policy,
         owned_contracts=owned,
-        acquisition_defaults=acquisition_defaults,
     )
 
 
@@ -453,11 +451,14 @@ class LineInput(_StrictInputModel):
             "child's slot is '<invoke node>.<slot>'. Omitted slots are fitted."
         ),
     )
-    acquisition: dict[str, AcquisitionDefault] = Field(
+    acquisition: dict[str, LineAcquisitionRule] = Field(
         default_factory=dict,
         description=(
-            "Per capture output <alias>.<field>: {max_age, on_unavailable}; replaces the "
-            "Procedure default."
+            "Per capture output <alias>.<field> (an invoked child's: <invoke node "
+            "path>.<alias>.<field>): {max_age, on_unavailable, on_stale, "
+            "on_oversized, permitted_replayability, origins}. A capture output left out runs "
+            "under the core default: any age, refuse when unavailable, stale or oversized, "
+            "any replay class, any origin."
         ),
     )
     max_authority: Literal["observe", "propose", "settle"] | None = Field(
@@ -849,7 +850,6 @@ def _procedure_payload(
         },
         owned_contracts=(),
         activation_policy=value.spec.activation,
-        acquisition_defaults=value.spec.acquisition_defaults,
         retire=value.retire,
     )
 

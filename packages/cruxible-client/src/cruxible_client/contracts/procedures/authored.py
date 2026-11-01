@@ -41,7 +41,6 @@ from pydantic_core import PydanticUndefined
 from typing_extensions import TypeAliasType
 
 from cruxible_client.contracts.captures import CanonicalDuration
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 from cruxible_client.contracts.procedures.contract_schema import (
     ContractSchema,
     PropertySchema,
@@ -602,12 +601,6 @@ class ProcedureSpec(_Model):
         default_factory=dict,
         description="Each slot's signature {in: name@N, out: name@N, effect}; a Line binds it.",
     )
-    acquisition_defaults: dict[str, AcquisitionDefault] = Field(
-        default_factory=dict,
-        description=(
-            "Default acquisition rule per capture output <alias>.<field>; a Line overrides it."
-        ),
-    )
     steps: tuple[Step, ...] = Field(min_length=1)
     # Names/schema details are optional: retained owners can preserve their
     # contract identities; ordinary new Procedures derive them from their name.
@@ -659,6 +652,12 @@ class ProcedureSpec(_Model):
             raise ValueError(
                 "procedure_budget_retired: a Procedure declares hard_caps only; the "
                 "operating budget is its Line's, within those caps"
+            )
+        if isinstance(value, Mapping) and "acquisition_defaults" in value:
+            raise ValueError(
+                "procedure_acquisition_defaults_retired: acquisition rules live on the "
+                "Line only; declare them as the Line's acquisition per capture output "
+                "(<alias>.<field>)"
             )
         return value
 
@@ -1440,7 +1439,6 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
     return lowered_procedure_payload(
         definition=definition,
         activation_policy=spec.activation,
-        acquisition_defaults=dict(spec.acquisition_defaults),
         contracts=tuple(
             CarriedContractInput(
                 name=name,

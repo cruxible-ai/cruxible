@@ -63,7 +63,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_IDENTITY,
     ProcedureRuntimePolicy,
 )
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
+from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
 from cruxible_client.contracts.procedures.windows import (
@@ -129,7 +129,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:658d5c0fb92b631a9c53221ea7f828a0388286c7512539d914f1e88654394aa0"
+    "sha256:3f7adc481d6bed89f08dba04a682e2fbea369ce5476900144ed9954bd320c6c5"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -997,8 +997,9 @@ class LineAuthoringPayload(_StrictAuthoringModel):
     by slot, or ``<invoke node path>.<slot>`` for an invoked child; a slot left
     out is fitted through the signature index (exactly one live operation must
     serve its signature). Lowering records the exact ``{build, operation}``.
-    ``acquisition`` replaces the Procedure's acquisition defaults per capture
-    output (``<alias>.<field>``). A budget left unset lowers to the Procedure's own hard caps.
+    ``acquisition`` declares the acquisition rule per capture output
+    (``<alias>.<field>``); one it leaves out runs under the stated core default.
+    A budget left unset lowers to the Procedure's own hard caps.
     ``parameters`` is the Procedure's input record, checked against its input
     Contract when the Line lowers. When the Line runs is not its own: Triggers
     aim at it. ``trigger_input`` binds the triggering Capture to one capture
@@ -1009,7 +1010,7 @@ class LineAuthoringPayload(_StrictAuthoringModel):
     name: str
     procedure_name: str
     bindings: ProcedureBindings = Field(default_factory=dict)
-    acquisition: dict[str, AcquisitionDefault] = Field(default_factory=dict)
+    acquisition: dict[str, LineAcquisitionRule] = Field(default_factory=dict)
     # Caps this Line below its Procedure's capability; omitted, it is that capability.
     max_authority: Literal["observe", "propose", "settle"] | None = None
     trigger_input: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
@@ -1169,19 +1170,17 @@ class ContractAuthoringPayload(_StrictAuthoringModel):
 
 
 class ProcedureAuthoringPayload(_StrictAuthoringModel):
-    """A Procedure input with its acquisition defaults per capture output.
+    """A lowered Procedure: its stored graph and the Contracts the graph names.
 
-    A Line's ``acquisition`` replaces a default for any alias it names; the run
-    admission records the resolved rules' digest for replay.
+    Acquisition rules are not the Procedure's: its Line declares them.
     """
 
-    tag: Literal["cruxible-procedure-authoring-payload-v3"] = (
-        "cruxible-procedure-authoring-payload-v3"
+    tag: Literal["cruxible-procedure-authoring-payload-v4"] = (
+        "cruxible-procedure-authoring-payload-v4"
     )
     definition: dict[str, object]
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
     owned_contracts: tuple[ProcedureOwnedContract, ...]
-    acquisition_defaults: dict[str, AcquisitionDefault] = Field(default_factory=dict)
     retire: bool = False
 
     @field_validator("definition", mode="before")

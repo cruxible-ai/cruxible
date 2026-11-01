@@ -758,7 +758,7 @@ def test_an_invoked_child_uses_the_parent_lines_binding_under_its_node_path(tmp_
 SOURCE_LINE = "test.sourced-line"
 
 
-def sourced_spec(*, description=None, acquisition_defaults=None):  # type: ignore[no-untyped-def]
+def sourced_spec(*, description=None):  # type: ignore[no-untyped-def]
     from cruxible_client.contracts.procedures.authored import ProcedureSpec
 
     return ProcedureSpec.model_validate(
@@ -766,11 +766,6 @@ def sourced_spec(*, description=None, acquisition_defaults=None):  # type: ignor
             {
                 "procedure": "test.sourced",
                 **({} if description is None else {"description": description}),
-                **(
-                    {}
-                    if acquisition_defaults is None
-                    else {"acquisition_defaults": acquisition_defaults}
-                ),
                 "input": {},
                 "output": {"length": "integer"},
                 "slots": {
@@ -804,7 +799,7 @@ def sourced_spec(*, description=None, acquisition_defaults=None):  # type: ignor
 
 
 def sourced_world(  # type: ignore[no-untyped-def]
-    tmp_path, *, acquisition=None, acquisition_defaults=None, bindings=None, builds=()
+    tmp_path, *, acquisition=None, bindings=None, builds=()
 ):
     from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
     from tests.core_support._identity_support import accept_tree
@@ -820,7 +815,7 @@ def sourced_world(  # type: ignore[no-untyped-def]
         {capture_contract_path(contract.identity.name): render_capture_contract(contract)},
         name="capture-contract",
     )
-    author_procedure(instance, sourced_spec(acquisition_defaults=acquisition_defaults))
+    author_procedure(instance, sourced_spec())
     author_line(
         instance,
         name=SOURCE_LINE,
@@ -1648,7 +1643,7 @@ def test_a_line_acquisition_max_age_violation_refuses_like_the_old_policy(tmp_pa
     from types import SimpleNamespace
 
     from cruxible_client.contracts.procedures.acquisition_rules import (
-        AcquisitionDefault,
+        CORE_DEFAULT_ACQUISITION_RULE,
         resolve_acquisition_rules,
     )
     from cruxible_core.procedures.acquisition import (
@@ -1658,18 +1653,20 @@ def test_a_line_acquisition_max_age_violation_refuses_like_the_old_policy(tmp_pa
 
     instance, _root = sourced_world(
         tmp_path,
-        acquisition_defaults={"doc.capture": {"max_age": "P1D"}},
         acquisition={"doc.capture": {"max_age": "PT1S", "on_unavailable": "refuse"}},
     )
     line = accepted_line(instance, SOURCE_LINE)
     assert line.acquisition["doc.capture"].max_age.microseconds == 1_000_000
-    # The Line's override replaces the Procedure's default for that alias.
-    rules = resolve_acquisition_rules(
-        ("doc.capture",),
-        defaults={"doc.capture": AcquisitionDefault.model_validate({"max_age": "P1D"})},
-        overrides=line.acquisition,
-    )
+    # The Line's rule is the run's rule for that capture output.
+    rules = resolve_acquisition_rules(("doc.capture",), line_rules=line.acquisition)
     assert rules["doc.capture"].max_age.microseconds == 1_000_000
+    assert rules["doc.capture"].declared_by == "line"
+    # A capture output the Line names no rule for runs under the stated core default.
+    unstated = resolve_acquisition_rules(("doc.capture",), line_rules={})["doc.capture"]
+    assert unstated.declared_by == "core_default"
+    assert unstated.model_dump(exclude={"input_name", "declared_by"}) == (
+        CORE_DEFAULT_ACQUISITION_RULE.model_dump()
+    )
     # The same eligibility law the policy's max_age used: an older Capture is stale.
     stale = SimpleNamespace(observed_at=NOW - timedelta(seconds=10))
     fresh = SimpleNamespace(observed_at=NOW)

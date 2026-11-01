@@ -33,7 +33,7 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.acquisition_rules import (
-    AcquisitionDefault,
+    LineAcquisitionRule,
     validate_acquisition_keys,
 )
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
@@ -141,8 +141,10 @@ class LineSpec(_StrictLineModel):
     ``procedure`` pins the exact Procedure version the Line runs. ``bindings``
     holds one exact ``{build, operation}`` per slot, including the slots of
     invoked children (keyed ``<invoke node path>.<slot>``); core records them
-    when the Line is accepted, and runs never rebind. ``acquisition`` replaces
-    the Procedure's ``acquisition_defaults`` per capture output (``<alias>.<field>``).
+    when the Line is accepted, and runs never rebind. ``acquisition`` declares
+    the run's acquisition rule per capture output (``<alias>.<field>``); a
+    capture output it names no rule for runs under the core default
+    (``CORE_DEFAULT_ACQUISITION_RULE``).
 
     When it runs is not the Line's to say: every Trigger aimed at it is its own
     governed artifact, and Triggers drive it only while the Line is enabled.
@@ -164,7 +166,7 @@ class LineSpec(_StrictLineModel):
     bindings: dict[str, LineBinding] = Field(
         default_factory=dict, exclude_if=lambda value: not value
     )
-    acquisition: dict[str, AcquisitionDefault] = Field(
+    acquisition: dict[str, LineAcquisitionRule] = Field(
         default_factory=dict, exclude_if=lambda value: not value
     )
     max_authority: LineAuthority
@@ -211,7 +213,7 @@ class EphemeralLineSpec(_StrictLineModel):
     procedure: ArtifactPin
     parameters: object
     bindings: dict[str, LineBinding] = Field(default_factory=dict)
-    acquisition: dict[str, AcquisitionDefault] = Field(default_factory=dict)
+    acquisition: dict[str, LineAcquisitionRule] = Field(default_factory=dict)
     #: The run's operating budget: a direct run states none, so it runs under
     #: its Procedure's hard caps (``caps_budget``), recorded here by digest.
     budget: ProcedureBudget
@@ -259,6 +261,26 @@ def line_slot_signatures(
                 line_slot_signatures(nested, child=child, prefix=path + ".", depth=depth + 1)
             )
     return found
+
+
+def line_capture_outputs(
+    definition: ProcedureDefinition,
+    *,
+    child: Mapping[str, ProcedureDefinition] | None = None,
+) -> frozenset[str]:
+    """Every capture output a Line may name an acquisition rule for.
+
+    The Procedure's own are ``<alias>.<field>``; an invoked child's are keyed
+    ``<invoke node path>.<alias>.<field>`` (``child`` maps each invoke node
+    path to the definition it invokes, as for :func:`line_slot_signatures`).
+    """
+
+    from cruxible_client.contracts.procedures.artifacts import acquisition_keys
+
+    found = set(acquisition_keys(definition))
+    for path, nested in (child or {}).items():
+        found.update(f"{path}.{key}" for key in acquisition_keys(nested))
+    return frozenset(found)
 
 
 def line_requested_rung(line: LineSpec) -> Literal[1, 2, 3]:
@@ -370,13 +392,16 @@ def evaluate_line_spec_law(
     predecessor: AcceptedLineSpec | None,
     slots: Mapping[str, OperationSignature] | None = None,
     providers: Mapping[str, AcceptedProvider] | None = None,
+    capture_outputs: frozenset[str] | None = None,
     by_name: bool = True,
 ) -> LineSpecLawResult:
     """The Line law.
 
     ``procedure`` is the exact accepted version the Line pins. ``slots`` is
     every slot the Line must bind (:func:`line_slot_signatures`), and
-    ``providers`` the accepted builds by qualified identity.
+    ``providers`` the accepted builds by qualified identity. ``capture_outputs``
+    is every capture output the Line may name a rule for, invoked children's
+    included (:func:`line_capture_outputs`); omitted, the Procedure's own.
     """
 
     del by_name
@@ -423,14 +448,13 @@ def evaluate_line_spec_law(
     )
     if binding_problem is not None:
         return _refusal(binding_problem[0], binding_problem[1], path=path)
-    from cruxible_client.contracts.procedures.artifacts import acquisition_keys
-
-    unknown_keys = sorted(set(line.acquisition) - acquisition_keys(definition))
+    known = line_capture_outputs(definition) if capture_outputs is None else capture_outputs
+    unknown_keys = sorted(set(line.acquisition) - known)
     if unknown_keys:
         return _refusal(
             "cruxible.line.acquisition_unknown_source",
-            "Line acquisition names no capture output (<alias>.<field>) of its Procedure: "
-            f"{unknown_keys}.",
+            "Line acquisition names no capture output (<alias>.<field>, or an invoked "
+            f"child's <invoke node path>.<alias>.<field>) of its Procedure: {unknown_keys}.",
             path=path,
         )
     if line_requested_rung(line) > definition.terminal_capability:

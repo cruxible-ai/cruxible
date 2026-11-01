@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts import provider_operations
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
+from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlan,
     ProcedureAdmissionMaterialManifest,
@@ -334,7 +334,7 @@ def test_a_declared_input_with_no_planned_occurrence_is_not_scored(tmp_path: Pat
     """
 
     plan, _admission = _plan_and_admission(tmp_path)
-    rules: dict[str, AcquisitionDefault] = {}
+    rules: dict[str, LineAcquisitionRule] = {}
     assert all(item.occurrence_kind != "source" for item in plan.external_occurrences)
 
     selection = _plan_selection_decision(

@@ -234,6 +234,27 @@ def line_slot_map(
     """
 
     from cruxible_client.contracts.procedures.line_specs import line_slot_signatures
+
+    return line_slot_signatures(definition, child=line_child_definitions(definition, child))
+
+
+def line_capture_output_map(
+    definition: Any,
+    child: Callable[[ArtifactIdentity], Any],
+) -> frozenset[str]:
+    """Every capture output a Line over ``definition`` may name a rule for."""
+
+    from cruxible_client.contracts.procedures.line_specs import line_capture_outputs
+
+    return line_capture_outputs(definition, child=line_child_definitions(definition, child))
+
+
+def line_child_definitions(
+    definition: Any,
+    child: Callable[[ArtifactIdentity], Any],
+) -> dict[str, Any]:
+    """Each invoked child's definition, keyed by its invoke node path (``a``, ``a.b``)."""
+
     from cruxible_client.contracts.procedures.nodes import InvokeNode
 
     children: dict[str, Any] = {}
@@ -259,7 +280,7 @@ def line_slot_map(
                 visit(nested, prefix + node.node_id + ".", depth + 1)
 
     visit(definition, "", 0)
-    return line_slot_signatures(definition, child=children)
+    return children
 
 
 def child_bindings(bindings: Mapping[str, LineBinding], prefix: str) -> dict[str, LineBinding]:
@@ -279,6 +300,8 @@ __all__ = [
     "fitting_operations",
     "operation_index_rows",
     "child_bindings",
+    "line_capture_output_map",
+    "line_child_definitions",
     "line_slot_map",
     "parse_binding_reference",
     "resolve_slot_bindings",

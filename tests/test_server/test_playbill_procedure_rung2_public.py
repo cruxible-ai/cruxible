@@ -34,7 +34,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
 )
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
+from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
 from cruxible_client.contracts.procedures.artifacts import procedure_owned_contract_digest
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.procedures.models import (
@@ -165,10 +165,10 @@ def _claim_type(contract: str) -> ClaimType:
     )
 
 
-def _policy() -> AcquisitionDefault:
+def _policy() -> LineAcquisitionRule:
     """The ``advisory`` Source alias's acquisition rule (replaces SourceAcquisitionPolicy)."""
 
-    return AcquisitionDefault.model_validate({"max_age": "PT1H"})
+    return LineAcquisitionRule.model_validate({"max_age": "PT1H"})
 
 
 def _item() -> dict[str, object]:
@@ -304,10 +304,7 @@ def _authored(
         ),
         activation_policy="drain",
     )
-    spec = decompile_procedure(artifact).model_copy(
-        update={"acquisition_defaults": {"advisory.capture": _policy()}}
-    )
-    return ProcedureInput(kind="procedure", spec=spec)
+    return ProcedureInput(kind="procedure", spec=decompile_procedure(artifact))
 
 
 def _binding_digest(workspace: Path) -> str:
@@ -428,6 +425,8 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
             "tag": "cruxible-line-authoring-payload-v2",
             "name": LINE_NAME,
             "procedure_name": PROCEDURE_NAME,
+            # Acquisition rules are the Line's (the Procedure declares none).
+            "acquisition": {"advisory.capture": _policy().model_dump(mode="json")},
             # A Procedure can do what its terminals do: emitting a Capture observes.
             "max_authority": "observe" if terminal_kind == "emit_capture" else "propose",
         },
@@ -493,7 +492,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
                 member
                 for member in members
                 if member["tag"]
-                not in {line_tag, mandate_tag, "cruxible-procedure-authoring-payload-v3"}
+                not in {line_tag, mandate_tag, "cruxible-procedure-authoring-payload-v4"}
             ]
         )
         pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)

@@ -19,7 +19,6 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.errors import ExecutionError
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
@@ -89,7 +88,6 @@ class ProcedureExecutionPlan(BaseModel):
     resolved: dict[str, str]
     owned_contracts: tuple[ProcedureOwnedContract, ...]
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
-    acquisition_defaults: dict[str, AcquisitionDefault]
     #: Each bound slot, by slot name: the run uses these and never refits.
     slot_bindings: tuple[ResolvedSlotBinding, ...] = ()
     lifecycle: ArtifactLifecycle
@@ -317,7 +315,6 @@ def bind_procedure_references(
         resolved=references,
         owned_contracts=authored.owned_contracts,
         activation_policy=authored.activation_policy,
-        acquisition_defaults=dict(authored.acquisition_defaults),
         slot_bindings=tuple(slot_bindings),
         lifecycle=authored.lifecycle,
     )

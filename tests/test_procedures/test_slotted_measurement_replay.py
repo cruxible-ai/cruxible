@@ -11,7 +11,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
+from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     procedure_artifact_digest,
@@ -243,9 +243,6 @@ def _slotted_world(tmp_path, *, landed=False):
                             "effect": "pure",
                         },
                     },
-                    "acquisition_defaults": {
-                        "captured.capture": AcquisitionDefault().model_dump(mode="json")
-                    },
                     "steps": [
                         {
                             "call": "captured",
@@ -295,7 +292,14 @@ def _slotted_world(tmp_path, *, landed=False):
                 "max_capture_bytes": caps.max_capture_bytes,
                 "max_items": caps.max_items,
             },
-            **({"trigger_input": "captured"} if landed else {}),
+            **(
+                {
+                    "trigger_input": "captured",
+                    "acquisition": {"captured.capture": LineAcquisitionRule()},
+                }
+                if landed
+                else {}
+            ),
         ),
         name="measured-slot-line",
     )

@@ -10,6 +10,10 @@ from typing import TYPE_CHECKING, Any
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateAny
+from cruxible_client.contracts.procedures.acquisition_rules import (
+    LineAcquisitionRule,
+    child_acquisition,
+)
 from cruxible_client.contracts.procedures.artifacts import (
     DIRECT_NODE_KINDS,
     AcceptedProcedure,
@@ -206,6 +210,10 @@ class ServedNestedProcedureRunner:
     #: The root run's bindings (its Line's, or a direct run's ephemeral spec),
     #: keyed by slot or ``<invoke node path>.<slot>``; a child binds through it.
     bindings: Mapping[str, LineBinding] = field(default_factory=dict)
+    #: The root run's acquisition rules (its Line's, or a direct run's request),
+    #: keyed by capture output or ``<invoke node path>.<alias>.<field>``; a
+    #: child runs its own capture outputs under the rules keyed by its path.
+    acquisition: Mapping[str, LineAcquisitionRule] = field(default_factory=dict)
     #: The invoke node path of the Procedure this runner runs children for.
     prefix: str = ""
 
@@ -289,6 +297,7 @@ class ServedNestedProcedureRunner:
                     evaluation_time=self.evaluation_time,
                     provider_runtime_operator=self.provider_runtime_operator,
                     budget=child_budget,
+                    acquisition=child_acquisition(self.acquisition, child_prefix),
                 )
                 if isinstance(plan, ProcedureRunStateV2):
                     raise ProcedureBoundaryRefused(
@@ -358,6 +367,7 @@ class ServedNestedProcedureRunner:
             provider_runtime_operator=self.provider_runtime_operator,
             effective_budget=budget,
             effective_caps=caps,
+            acquisition=child_acquisition(self.acquisition, child_prefix),
         )
         if isinstance(planned, ProcedureRunStateV2):
             raise ProcedureBoundaryRefused(

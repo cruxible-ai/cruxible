@@ -23,7 +23,6 @@ from cruxible_client.contracts.captures import (
     render_capture_contract,
 )
 from cruxible_client.contracts.named_references import name_provider
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     ProcedureOwnedContract,
@@ -236,9 +235,7 @@ def acquisition_result():
     ).model_dump(mode="json")
 
 
-def _fetch_procedure(
-    contract: CaptureContract, policy: AcquisitionDefault, *, request: dict[str, object]
-) -> ProcedureArtifact:
+def _fetch_procedure(contract: CaptureContract, *, request: dict[str, object]) -> ProcedureArtifact:
     """One accepted Procedure whose Source slot fetches ``request`` and shapes severity."""
 
     run_input = ProcedureOwnedContract(
@@ -325,7 +322,6 @@ def _fetch_procedure(
             )
         ),
         activation_policy="drain",
-        acquisition_defaults={f"{_ALIAS}.capture": policy},
     )
     from tests.support.procedures import revalidated
 
@@ -448,8 +444,9 @@ def test_sdk_source_retains_and_reads_acquisition(
     request = {"url": URL}
     provider = web_provider(_FETCH_OPERATION, _FETCH_CONTRACTS)
     contract = http_contract(max_bytes=1_000_000, decoding=JSON_DECODING)
-    policy = source._policy()
-    procedure = _fetch_procedure(contract, policy, request=request)
+    # A direct run states no acquisition rule: its capture output runs under the
+    # core default (the Procedure declares none).
+    procedure = _fetch_procedure(contract, request=request)
 
     proposal = source.submit_member_candidate(
         instance,

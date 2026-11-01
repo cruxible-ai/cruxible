@@ -160,7 +160,7 @@ def test_friendly_change_set_sorts_members_and_typed_refuses_duplicate_identity(
     )
 
     assert [member.tag for member in lowered.members] == [
-        "cruxible-procedure-authoring-payload-v3",
+        "cruxible-procedure-authoring-payload-v4",
         "playbill-query-definition-authoring-payload-v1",
     ]
     with pytest.raises(AuthoringInputError) as raised:
@@ -245,7 +245,7 @@ def test_a_spec_lowers_with_the_contracts_its_graph_names_and_no_digests(
     payload = (
         coordinator.list_pending(actor=AuthenticatedActor(actor_id="owner")).intents[0].payload
     )
-    assert payload.tag == "cruxible-procedure-authoring-payload-v3"
+    assert payload.tag == "cruxible-procedure-authoring-payload-v4"
     encoded = payload.model_dump_json(by_alias=True)
     assert '"procedure_spec"' in encoded
     assert "artifact_digest" not in encoded
@@ -566,48 +566,26 @@ def test_claim_type_source_intent_produces_an_actionable_per_source_warning(
     ]
 
 
-def test_a_procedure_input_carries_acquisition_defaults_and_refuses_an_unknown_source(
-    tmp_path: Path,
-) -> None:
-    """Inline acquisition rules stay typed and must name a declared Source alias."""
+def test_a_procedure_input_refuses_acquisition_rules_naming_the_line() -> None:
+    """Acquisition rules live on the Line only; a Procedure declaring them is refused."""
+
+    from pydantic import ValidationError
 
     from tests.support.procedures import spec_input
 
-    instance, _owner = initialize_local(tmp_path)
-    coordinator = _coordinator(instance)
-    member = spec_input(
-        {
-            **_triage_definition(),
-            "acquisition_defaults": {
-                "advisory.capture": {"max_age": "PT10M", "on_unavailable": "refuse"}
-            },
-        }
-    )
-    payload = lower_authoring_input(member)
-    # The payload carries the rule itself; no standalone policy or digest relay.
-    assert payload.tag == "cruxible-procedure-authoring-payload-v3"
-    assert payload.acquisition_defaults["advisory.capture"].max_age.microseconds == 600_000_000
-    assert payload.acquisition_defaults["advisory.capture"].on_unavailable == "refuse"
-
-    result = coordinator.compile_input(
-        actor=AuthenticatedActor(actor_id="owner"),
-        input=member,
-        canonical_timestamp=TIMESTAMP,
-    )
-
-    assert result.verdict == "refused"
-    diagnostics = {item.code for item in result.frontier.diagnostics}
-    assert "cruxible.authoring.procedure_definition_invalid" in diagnostics
-    offending = {
-        item.offending_element
-        for item in result.frontier.diagnostics
-        if item.code == "cruxible.authoring.procedure_definition_invalid"
-    }
-    assert offending == {"procedure"}
-    assert any(
-        "acquisition_defaults name no capture output" in item.message
-        for item in result.frontier.diagnostics
-    )
+    with pytest.raises(ValidationError, match="procedure_acquisition_defaults_retired") as caught:
+        spec_input(
+            {
+                **_triage_definition(),
+                "acquisition_defaults": {
+                    "advisory.capture": {"max_age": "PT10M", "on_unavailable": "refuse"}
+                },
+            }
+        )
+    assert "the Line's acquisition per capture output" in str(caught.value)
+    payload = lower_authoring_input(spec_input(_triage_definition()))
+    assert payload.tag == "cruxible-procedure-authoring-payload-v4"
+    assert "acquisition_defaults" not in type(payload).model_fields
 
 
 def test_a_zero_attestation_threshold_lints_as_a_disabled_rule(tmp_path: Path) -> None:

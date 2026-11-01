@@ -4801,86 +4801,6 @@
             "title": "AcceptedQueryProcedureMeasurement",
             "type": "object"
           },
-          "AcquisitionDefault": {
-            "additionalProperties": false,
-            "description": "One capture output's rule as a Procedure or Line declares it.",
-            "properties": {
-              "max_age": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/CanonicalDuration"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "on_oversized": {
-                "default": "refuse",
-                "enum": [
-                  "refuse",
-                  "omit"
-                ],
-                "title": "On Oversized",
-                "type": "string"
-              },
-              "on_stale": {
-                "default": "refuse",
-                "enum": [
-                  "refuse",
-                  "omit"
-                ],
-                "title": "On Stale",
-                "type": "string"
-              },
-              "on_unavailable": {
-                "default": "refuse",
-                "enum": [
-                  "refuse",
-                  "omit"
-                ],
-                "title": "On Unavailable",
-                "type": "string"
-              },
-              "origins": {
-                "anyOf": [
-                  {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Origins"
-              },
-              "permitted_replayability": {
-                "anyOf": [
-                  {
-                    "items": {
-                      "enum": [
-                        "exact",
-                        "attested_only"
-                      ],
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Permitted Replayability"
-              }
-            },
-            "title": "AcquisitionDefault",
-            "type": "object"
-          },
           "AggregateSpec": {
             "additionalProperties": false,
             "properties": {
@@ -8014,15 +7934,95 @@
             "type": "object"
           },
           "JsonValue": {},
+          "LineAcquisitionRule": {
+            "additionalProperties": false,
+            "description": "One capture output's rule as a Line declares it.",
+            "properties": {
+              "max_age": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDuration"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "on_oversized": {
+                "default": "refuse",
+                "enum": [
+                  "refuse",
+                  "omit"
+                ],
+                "title": "On Oversized",
+                "type": "string"
+              },
+              "on_stale": {
+                "default": "refuse",
+                "enum": [
+                  "refuse",
+                  "omit"
+                ],
+                "title": "On Stale",
+                "type": "string"
+              },
+              "on_unavailable": {
+                "default": "refuse",
+                "enum": [
+                  "refuse",
+                  "omit"
+                ],
+                "title": "On Unavailable",
+                "type": "string"
+              },
+              "origins": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Origins"
+              },
+              "permitted_replayability": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "exact",
+                        "attested_only"
+                      ],
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Permitted Replayability"
+              }
+            },
+            "title": "LineAcquisitionRule",
+            "type": "object"
+          },
           "LineInput": {
             "additionalProperties": false,
             "description": "One Line: a stable instantiation of an accepted or same-set Procedure.\n\nLowering pins the named Procedure's exact version and binds every slot to\none exact ``{build, operation}``: ``bindings`` names\n``provider[/build]#operation`` (or ``provider[/build]``) per slot, and a\nslot left out is fitted (exactly one live operation must serve its\nsignature). A Line runs when run explicitly (`line run`, one manual occurrence),\nor, once it is enabled (`line enable`), when a Trigger aimed at it fires; a\nTrigger aimed at a Line that is not enabled does nothing. Enabling needs\ngoverned write even for an observe-only Line. A Line that proposes or\nsettles also needs a live ProcedureMandate pinning this exact Line before it\ncan run or be enabled; an observe-only Line needs none.",
             "properties": {
               "acquisition": {
                 "additionalProperties": {
-                  "$ref": "#/$defs/AcquisitionDefault"
+                  "$ref": "#/$defs/LineAcquisitionRule"
                 },
-                "description": "Per capture output <alias>.<field>: {max_age, on_unavailable}; replaces the Procedure default.",
+                "description": "Per capture output <alias>.<field> (an invoked child's: <invoke node path>.<alias>.<field>): {max_age, on_unavailable, on_stale, on_oversized, permitted_replayability, origins}. A capture output left out runs under the core default: any age, refuse when unavailable, stale or oversized, any replay class, any origin.",
                 "title": "Acquisition",
                 "type": "object"
               },
@@ -9128,14 +9128,6 @@
           "ProcedureSpec": {
             "additionalProperties": false,
             "properties": {
-              "acquisition_defaults": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/AcquisitionDefault"
-                },
-                "description": "Default acquisition rule per capture output <alias>.<field>; a Line overrides it.",
-                "title": "Acquisition Defaults",
-                "type": "object"
-              },
               "activation": {
                 "default": "snapshot",
                 "enum": [
@@ -50401,86 +50393,6 @@
             "title": "AcceptedQueryProcedureMeasurement",
             "type": "object"
           },
-          "AcquisitionDefault": {
-            "additionalProperties": false,
-            "description": "One capture output's rule as a Procedure or Line declares it.",
-            "properties": {
-              "max_age": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/CanonicalDuration"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "on_oversized": {
-                "default": "refuse",
-                "enum": [
-                  "refuse",
-                  "omit"
-                ],
-                "title": "On Oversized",
-                "type": "string"
-              },
-              "on_stale": {
-                "default": "refuse",
-                "enum": [
-                  "refuse",
-                  "omit"
-                ],
-                "title": "On Stale",
-                "type": "string"
-              },
-              "on_unavailable": {
-                "default": "refuse",
-                "enum": [
-                  "refuse",
-                  "omit"
-                ],
-                "title": "On Unavailable",
-                "type": "string"
-              },
-              "origins": {
-                "anyOf": [
-                  {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Origins"
-              },
-              "permitted_replayability": {
-                "anyOf": [
-                  {
-                    "items": {
-                      "enum": [
-                        "exact",
-                        "attested_only"
-                      ],
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Permitted Replayability"
-              }
-            },
-            "title": "AcquisitionDefault",
-            "type": "object"
-          },
           "AllOf": {
             "additionalProperties": false,
             "properties": {
@@ -51719,15 +51631,8 @@
           },
           "ProcedureArtifact": {
             "additionalProperties": false,
-            "description": "The one Procedure envelope: one named graph and the Contracts it carries.\n\nEvery dependency the graph names resolves at the accepted coordinate; the\nenvelope itself pins nothing. ``acquisition_defaults`` holds the\nProcedure's acquisition rule per capture output, ``<alias>.<field>``\n(``max_age``, ``on_unavailable``...); a Line's ``acquisition`` overrides\nthem output by output.",
+            "description": "The one Procedure envelope: one named graph and the Contracts it carries.\n\nEvery dependency the graph names resolves at the accepted coordinate; the\nenvelope itself pins nothing. Acquisition rules are not the Procedure's:\nits Line declares them per capture output (``<alias>.<field>``).",
             "properties": {
-              "acquisition_defaults": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/AcquisitionDefault"
-                },
-                "title": "Acquisition Defaults",
-                "type": "object"
-              },
               "activation_policy": {
                 "enum": [
                   "drain",
@@ -74371,86 +74276,6 @@
             "title": "AcceptedQueryProcedureMeasurement",
             "type": "object"
           },
-          "AcquisitionDefault": {
-            "additionalProperties": false,
-            "description": "One capture output's rule as a Procedure or Line declares it.",
-            "properties": {
-              "max_age": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/CanonicalDuration"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "on_oversized": {
-                "default": "refuse",
-                "enum": [
-                  "refuse",
-                  "omit"
-                ],
-                "title": "On Oversized",
-                "type": "string"
-              },
-              "on_stale": {
-                "default": "refuse",
-                "enum": [
-                  "refuse",
-                  "omit"
-                ],
-                "title": "On Stale",
-                "type": "string"
-              },
-              "on_unavailable": {
-                "default": "refuse",
-                "enum": [
-                  "refuse",
-                  "omit"
-                ],
-                "title": "On Unavailable",
-                "type": "string"
-              },
-              "origins": {
-                "anyOf": [
-                  {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Origins"
-              },
-              "permitted_replayability": {
-                "anyOf": [
-                  {
-                    "items": {
-                      "enum": [
-                        "exact",
-                        "attested_only"
-                      ],
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Permitted Replayability"
-              }
-            },
-            "title": "AcquisitionDefault",
-            "type": "object"
-          },
           "AllOf": {
             "additionalProperties": false,
             "properties": {
@@ -76684,15 +76509,8 @@
           },
           "ProcedureArtifact": {
             "additionalProperties": false,
-            "description": "The one Procedure envelope: one named graph and the Contracts it carries.\n\nEvery dependency the graph names resolves at the accepted coordinate; the\nenvelope itself pins nothing. ``acquisition_defaults`` holds the\nProcedure's acquisition rule per capture output, ``<alias>.<field>``\n(``max_age``, ``on_unavailable``...); a Line's ``acquisition`` overrides\nthem output by output.",
+            "description": "The one Procedure envelope: one named graph and the Contracts it carries.\n\nEvery dependency the graph names resolves at the accepted coordinate; the\nenvelope itself pins nothing. Acquisition rules are not the Procedure's:\nits Line declares them per capture output (``<alias>.<field>``).",
             "properties": {
-              "acquisition_defaults": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/AcquisitionDefault"
-                },
-                "title": "Acquisition Defaults",
-                "type": "object"
-              },
               "activation_policy": {
                 "enum": [
                   "drain",
@@ -82226,86 +82044,6 @@
             "title": "AcceptedQueryProcedureMeasurement",
             "type": "object"
           },
-          "AcquisitionDefault": {
-            "additionalProperties": false,
-            "description": "One capture output's rule as a Procedure or Line declares it.",
-            "properties": {
-              "max_age": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/CanonicalDuration"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "on_oversized": {
-                "default": "refuse",
-                "enum": [
-                  "refuse",
-                  "omit"
-                ],
-                "title": "On Oversized",
-                "type": "string"
-              },
-              "on_stale": {
-                "default": "refuse",
-                "enum": [
-                  "refuse",
-                  "omit"
-                ],
-                "title": "On Stale",
-                "type": "string"
-              },
-              "on_unavailable": {
-                "default": "refuse",
-                "enum": [
-                  "refuse",
-                  "omit"
-                ],
-                "title": "On Unavailable",
-                "type": "string"
-              },
-              "origins": {
-                "anyOf": [
-                  {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Origins"
-              },
-              "permitted_replayability": {
-                "anyOf": [
-                  {
-                    "items": {
-                      "enum": [
-                        "exact",
-                        "attested_only"
-                      ],
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Permitted Replayability"
-              }
-            },
-            "title": "AcquisitionDefault",
-            "type": "object"
-          },
           "AllOf": {
             "additionalProperties": false,
             "properties": {
@@ -84576,15 +84314,8 @@
           },
           "ProcedureArtifact": {
             "additionalProperties": false,
-            "description": "The one Procedure envelope: one named graph and the Contracts it carries.\n\nEvery dependency the graph names resolves at the accepted coordinate; the\nenvelope itself pins nothing. ``acquisition_defaults`` holds the\nProcedure's acquisition rule per capture output, ``<alias>.<field>``\n(``max_age``, ``on_unavailable``...); a Line's ``acquisition`` overrides\nthem output by output.",
+            "description": "The one Procedure envelope: one named graph and the Contracts it carries.\n\nEvery dependency the graph names resolves at the accepted coordinate; the\nenvelope itself pins nothing. Acquisition rules are not the Procedure's:\nits Line declares them per capture output (``<alias>.<field>``).",
             "properties": {
-              "acquisition_defaults": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/AcquisitionDefault"
-                },
-                "title": "Acquisition Defaults",
-                "type": "object"
-              },
               "activation_policy": {
                 "enum": [
                   "drain",
