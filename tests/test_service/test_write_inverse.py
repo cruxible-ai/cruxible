@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactRef
+from cruxible_client.contracts.artifacts import ArtifactRef
 from cruxible_client.contracts.claim_types import (
     ClaimEvidenceFreshness,
     ClaimFreshnessDuration,
@@ -28,10 +28,8 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
-    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
-    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.subjects import subject_path
 from cruxible_client.contracts.temporal import utc_now
@@ -50,6 +48,8 @@ from tests.core_support._write_support import (
     report_evidence,
     seed_write_surface,
 )
+from tests.support.claim_types import ClaimValueType
+from tests.support.claim_types import claim_type as build_claim_type
 
 WI1 = f"{KIND}/wi-1"
 WI2 = f"{KIND}/wi-2"
@@ -61,23 +61,18 @@ def _v9(
     inverse: dict[str, Any],
     *,
     cardinality: str = "one",
-    object_kind: str = "literal",
-    literal_schema: dict[str, Any] | None = None,
-    object_kinds: tuple[str, ...] = (),
+    value_type: ClaimValueType | None = None,
 ) -> ClaimType:
     """A ClaimType v9 of ``project.work_item`` whose evidence (and inverse) is repo.reports."""
 
     predicate = f"{KIND}.{field}"
     roles = ("observation",)
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name=predicate),
+    return build_claim_type(
         predicate=predicate,
         allowed_subject_kinds=(KIND,),
-        object_kind=object_kind,  # type: ignore[arg-type]
-        literal_schema=literal_schema,
-        allowed_object_subject_kinds=object_kinds,
-        cardinality=cardinality,  # type: ignore[arg-type]
-        permitted_roles=roles,  # type: ignore[arg-type]
+        value_type=value_type,
+        cardinality=cardinality,
+        permitted_roles=roles,
         evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
             rules=(
                 ClaimEvidenceAdmissionRule(
@@ -91,18 +86,10 @@ def _v9(
                 ),
             )
         ),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality=cardinality,  # type: ignore[arg-type]
-            eligible_verdicts=("supported",),
-            selector="all" if cardinality == "many" else "only_contender",
-        ),
         evidence_freshness=ClaimEvidenceFreshness(
             stale_after=ClaimFreshnessDuration(microseconds=30 * 24 * HOUR)
         ),
-        evidence_requirement="self",
         revision_evidence="replace",
-        canonical_form=(),
         inverse=ClaimInverse.model_validate({"evidence_rules": ["source"], **inverse}),
     )
 
@@ -113,21 +100,10 @@ INVERSE_TYPES = (
     _v9(
         "state",
         {"key": {"kind": "slot"}, "stale_after": {"microseconds": HOUR}},
-        literal_schema={"enum": ["open", "shut"], "type": "string"},
+        value_type={"enum": ["open", "shut"], "type": "string"},
     ),
-    _v9(
-        "tags",
-        {"key": {"kind": "object"}},
-        cardinality="many",
-        literal_schema={"type": "string"},
-    ),
-    _v9(
-        "blocks",
-        {"key": {"kind": "object"}},
-        cardinality="many",
-        object_kind="subject",
-        object_kinds=(KIND,),
-    ),
+    _v9("tags", {"key": {"kind": "object"}}, value_type={"type": "string"}, cardinality="many"),
+    _v9("blocks", {"key": {"kind": "object"}}, value_type=(KIND,), cardinality="many"),
 )
 
 

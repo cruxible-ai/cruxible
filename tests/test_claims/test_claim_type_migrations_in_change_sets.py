@@ -68,6 +68,7 @@ from cruxible_core.service.discovery.next import (
     service_playbill_next,
 )
 from tests.core_support._support import initialize_local
+from tests.support.claim_types import claim_type_changes
 from tests.test_authoring.test_authoring_change_set_intents import accepted_change_set_record
 from tests.test_authoring.test_authoring_preflight import TIMESTAMP, _seed_claim_surface
 from tests.test_claims.test_claims import _claim_type
@@ -107,13 +108,17 @@ def _literal_affects_package(enum: list[str] | None = None) -> ClaimType:
     values = _claim_type().model_dump(mode="python")
     values["identity"] = ArtifactIdentity(kind="ClaimType", name=PREDICATE)
     values["predicate"] = PREDICATE
-    values["literal_schema"] = (
-        {"type": "string"}
-        if enum is None
-        else {
-            "type": "string",
-            "enum": enum,
-        }
+    values.update(
+        claim_type_changes(
+            value_type=(
+                {"type": "string"}
+                if enum is None
+                else {
+                    "type": "string",
+                    "enum": enum,
+                }
+            )
+        )
     )
     return ClaimType.model_validate(values)
 
@@ -127,26 +132,24 @@ def _accepted_type(instance: PlaybillInstance) -> ClaimType:
 def _subject_valued_successor(instance: PlaybillInstance) -> ClaimType:
     current = _accepted_type(instance)
     return current.model_copy(
-        update={
-            "object_kind": "subject",
-            "literal_schema": None,
-            "allowed_object_subject_kinds": ("package",),
-            "lifecycle": ArtifactLifecycle(
+        update=claim_type_changes(
+            value_type=("package",),
+            lifecycle=ArtifactLifecycle(
                 predecessor_digest=claim_type_digest(current).tagged,
             ),
-        }
+        )
     )
 
 
 def _enum_successor(instance: PlaybillInstance, *, enum: list[str]) -> ClaimType:
     current = _accepted_type(instance)
     return current.model_copy(
-        update={
-            "literal_schema": {"type": "string", "enum": enum},
-            "lifecycle": ArtifactLifecycle(
+        update=claim_type_changes(
+            value_type={"type": "string", "enum": enum},
+            lifecycle=ArtifactLifecycle(
                 predecessor_digest=claim_type_digest(current).tagged,
             ),
-        }
+        )
     )
 
 
@@ -699,10 +702,10 @@ def test_a_set_cannot_define_a_claim_type_and_succeed_it(tmp_path: Path) -> None
         }
     )
     succeeded = defined.model_copy(
-        update={
-            "literal_schema": {"type": "string", "enum": ["ready"]},
-            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(defined).tagged),
-        }
+        update=claim_type_changes(
+            value_type={"type": "string", "enum": ["ready"]},
+            lifecycle=ArtifactLifecycle(predecessor_digest=claim_type_digest(defined).tagged),
+        )
     )
     payload = _change_set(
         ClaimTypeAuthoringPayload(claim_type=defined),

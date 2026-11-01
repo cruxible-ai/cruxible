@@ -22,6 +22,7 @@ from tests.core_support._write_support import (
     caller,
     seed_write_surface,
 )
+from tests.support.claim_types import claim_type_changes
 
 WI1 = f"{KIND}/wi-1"
 WI2 = f"{KIND}/wi-2"
@@ -77,6 +78,8 @@ def migrate_claim_type(instance: PlaybillInstance, predicate: str, **update: Any
     current = parse_claim_type(
         instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
     )
+    if "value_type" in update:
+        update = claim_type_changes(value_type=update.pop("value_type"), **update)
     state = update.pop("state", "live")
     successor = current.model_copy(
         update={
@@ -122,7 +125,7 @@ def migrate_claim_type(instance: PlaybillInstance, predicate: str, **update: Any
     assert receipt.status == "accepted"
 
 
-LEAD = _claim_type("lead", object_kind="subject", roles=("normative",), object_kinds=(KIND,))
+LEAD = _claim_type("lead", value_type=(KIND,), roles=("normative",))
 
 
 def add_lead_field(instance: PlaybillInstance) -> None:
@@ -282,7 +285,7 @@ def test_a_claim_type_revision_restamps_subjects_only_when_it_changes_what_they_
     from cruxible_core.service.floor import floor_index
 
     instance, _owner = seed_write_surface(tmp_path)
-    note = _claim_type("ext.note", literal_schema={"type": "string"})
+    note = _claim_type("ext.note", value_type={"type": "string"})
     accept_edit(instance, "ext-note", {claim_type_path(note.predicate): render_claim_type(note)})
     _write(instance, _set(WI1, "ext.note", "Hello"), _set(WI2, "title", "Two"))
     shadow = note.model_copy(

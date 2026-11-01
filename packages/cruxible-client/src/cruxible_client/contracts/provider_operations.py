@@ -221,6 +221,8 @@ def validate_operations(operations: tuple[ProviderOperation, ...]) -> tuple[Prov
 class ProcedureSlot(OperationSignature):
     """One binding point a Procedure declares: the signature its operation must serve."""
 
+    may_truncate: bool = False
+
 
 def validate_slot_name(value: str) -> str:
     if not _SLOT_NAME_RE.fullmatch(value):

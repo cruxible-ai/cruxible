@@ -1220,7 +1220,7 @@ def _accept_type(world: World, field: str, **update: Any) -> None:
     instance = world.instance
     held = instance.immutable_tree_at(instance.accepted_coordinate().git_oid).get(path)
     if held is None:
-        claim_type = _claim_type(field, literal_schema={"type": "string"})
+        claim_type = _claim_type(field, value_type={"type": "string"})
     else:
         current = parse_claim_type(held, path=path)
         claim_type = current.model_copy(

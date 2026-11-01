@@ -33,8 +33,6 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
 )
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicy,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.query.definitions import (
@@ -57,6 +55,7 @@ from cruxible_client.contracts.subjects import (
 from cruxible_core.compiler.compiler import CURRENT_COMPILER
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
+from tests.support.claim_types import claim_type as build_claim_type
 
 AUTHORITY_BASIS = ("authority:owner",)
 OBSERVED_AT = datetime(2026, 8, 1, 0, 0, tzinfo=UTC)
@@ -100,17 +99,12 @@ def claim_type(
 
     relation = bool(object_subject_kinds)
     cardinality = "many" if relation else "one"
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name=predicate),
+    return build_claim_type(
         predicate=predicate,
         allowed_subject_kinds=byte_sorted(subject_kinds),
-        object_kind="subject" if relation else "literal",
-        literal_schema=None if relation else {"type": "string"},
-        allowed_object_subject_kinds=byte_sorted(object_subject_kinds),
+        value_type=byte_sorted(object_subject_kinds) if relation else {"type": "string"},
         cardinality=cardinality,
         permitted_roles=("normative",),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
-        admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality=cardinality,
             eligible_verdicts=("supported",),

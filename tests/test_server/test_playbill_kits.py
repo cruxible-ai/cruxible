@@ -42,10 +42,8 @@ from cruxible_client.contracts.kits import (
     KitRemoveRequest,
 )
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
-    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
@@ -75,6 +73,8 @@ from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._subject_kind_support import declare_by_slug
 from tests.core_support._support import build_inputs, restamp_state_root
 from tests.core_support._world_templates import TEMPLATES, copy_template
+from tests.support.claim_types import claim_type as build_claim_type
+from tests.support.claim_types import claim_type_changes
 
 SEATS = "acme.account.seats"
 PLAN = "acme.account.plan"
@@ -167,12 +167,10 @@ class _World:
     ) -> None:
         current = self.claim_type(predicate)
         successor = current.model_copy(
-            update={
-                "literal_schema": schema,
-                "lifecycle": ArtifactLifecycle(
-                    predecessor_digest=claim_type_digest(current).tagged
-                ),
-            }
+            update=claim_type_changes(
+                value_type=schema,
+                lifecycle=ArtifactLifecycle(predecessor_digest=claim_type_digest(current).tagged),
+            )
         )
         self.author(successions=(successor,), dependents=dependents)
 
@@ -203,22 +201,7 @@ def _kit_preview(world, request):
 
 def _claim_type(predicate: str, schema: dict[str, object]) -> ClaimType:
     kind = predicate.rpartition(".")[0]
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name=predicate),
-        predicate=predicate,
-        allowed_subject_kinds=(kind,),
-        object_kind="literal",
-        literal_schema=schema,
-        cardinality="one",
-        permitted_roles=("normative", "observation"),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality="one",
-            eligible_verdicts=("supported",),
-            selector="only_contender",
-        ),
-    )
+    return build_claim_type(predicate=predicate, value_type=schema, allowed_subject_kinds=(kind,))
 
 
 def _workspace(root: Path) -> Path:

@@ -135,7 +135,7 @@ def test_a_pending_proposal_survives_unrelated_writes_and_approval_lands_it(
     elif move == "same_subject_other_field":
         _accept_write(instance, reviewer, _set(f"{KIND}/wi-1", "status", "ready"))
     else:
-        notes = _claim_type("notes", literal_schema={"type": "string"})
+        notes = _claim_type("notes", value_type={"type": "string"})
         _accept_members(
             instance,
             reviewer,

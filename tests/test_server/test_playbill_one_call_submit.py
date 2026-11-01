@@ -10,10 +10,11 @@ from fastapi.testclient import TestClient
 from cruxible_client import Cruxible
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.authoring import coordinator as authoring_coordinator
+from tests.support.claim_types import claim_type as build_claim_type
 from tests.test_server.test_playbill_change_set_surfaces import (
+    PREDICATE,
     _add_parity_claim,
     _add_parity_subject,
-    _claim_type,
     _subject_inputs,
 )
 
@@ -56,7 +57,7 @@ def test_draft_submit_is_one_request_with_one_preflight(
     preflights = _count_preflights(monkeypatch)
     draft = pb.changes(rationale="Open the parity slot and state its first value.")
     _add_parity_subject(draft)
-    draft.claim_type(_claim_type())
+    draft.claim_type(build_claim_type(PREDICATE))
     _add_parity_claim(draft)
     requests.clear()
 
@@ -91,7 +92,7 @@ def test_staged_submit_costs_two_preflights_and_a_replay_costs_none(
     def draft():
         changes = pb.changes(rationale="Open the parity slot and state its first value.")
         _add_parity_subject(changes)
-        changes.claim_type(_claim_type())
+        changes.claim_type(build_claim_type(PREDICATE))
         _add_parity_claim(changes)
         return changes
 
@@ -143,7 +144,7 @@ def _change_set_input() -> dict[str, object]:
         kind="change_set",
         members=(
             *_subject_inputs(),
-            ClaimTypeInput(kind="claim_type", claim_type=_claim_type()),
+            ClaimTypeInput(kind="claim_type", claim_type=build_claim_type(PREDICATE)),
         ),
         rationale="Define the parity Subject and its ClaimType.",
     ).model_dump(mode="json")

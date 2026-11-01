@@ -43,6 +43,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.claim_attestations import ClaimAttestation
+from cruxible_client.contracts.claim_evidence import ClaimEvidenceReceipt
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import (
@@ -131,7 +132,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:cd4f4077a4d2884c7c2e6060353b974322031be3f5c0b9b49630c826b20a78ad"
+    "sha256:4aa2ea9cd9d8d2fddc1bb632de78e2f11446bb58054cefdc83de1d1e8c2152aa"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -732,6 +733,9 @@ class ClaimAuthoringPayload(_StrictAuthoringModel):
     #: revision drops, each replaced by the new source's citation; the statement
     #: is unchanged. Omitted unless set.
     replaces_citations: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    procedure_evidence: ClaimEvidenceReceipt | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     _replaces = field_validator("replaces_citations")(_replaced_citations)
 

@@ -38,6 +38,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
 )
+from tests.support.claim_types import claim_type_changes
 from tests.test_claims.test_claim_verdicts import (
     STATEMENT_DIGEST,
     _attestation,
@@ -64,6 +65,8 @@ _FRESHNESS = ClaimEvidenceFreshness(stale_after=ClaimFreshnessDuration(microseco
 def v7(**update: object) -> ClaimType:
     """A ClaimType naming a foreign source by identity, stating ``self`` and ``replace``."""
 
+    if "value_type" in update:
+        update = claim_type_changes(value_type=update.pop("value_type"), **update)
     base = _claim_type().model_dump(mode="python")
     base.update(
         evidence_admission_policy=ClaimEvidenceAdmissionPolicy(

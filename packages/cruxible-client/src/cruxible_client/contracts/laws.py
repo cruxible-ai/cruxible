@@ -161,7 +161,7 @@ PROCEDURE_RUNTIME_POLICY_LAW = _artifact_law_coordinate(
 CLAIM_LAW = _artifact_law_coordinate(
     CLAIM_LAW_IDENTIFIER,
     "playbill-claim-v4",
-    semantic_revision=1,
+    semantic_revision=2,
 )
 # The one ClaimType law: a default role must be permitted and never derivation,
 # a declared evidence requirement must be satisfiable by the type's rules, and
@@ -170,7 +170,7 @@ CLAIM_LAW = _artifact_law_coordinate(
 # SubjectKind; succession names the exact live predecessor and changes it.
 CLAIM_TYPE_LAW = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_IDENTIFIER,
-    "cruxible-claim-type-v10",
+    "cruxible-claim-type-v11",
     semantic_revision=1,
 )
 PROVIDER_LAW = _artifact_law_coordinate(
@@ -273,7 +273,7 @@ SUBJECT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
 CLAIM_TYPE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_TYPE_LAW,
     artifact_kind="claim-type",
-    artifact_tag="cruxible-claim-type-v10",
+    artifact_tag="cruxible-claim-type-v11",
 )
 CAPTURE_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CAPTURE_CONTRACT_LAW_REVISION_4,

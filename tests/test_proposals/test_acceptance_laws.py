@@ -89,7 +89,7 @@ def test_one_claim_law_is_installed_and_removed_claim_formats_have_none() -> Non
             ACCEPTANCE_LAWS.resolve_member(artifact_tag=removed)
     # Another revision is not installed: replay refuses it.
     earlier = _artifact_law_coordinate(
-        CLAIM_LAW.identifier, "playbill-claim-v4", semantic_revision=2
+        CLAIM_LAW.identifier, "playbill-claim-v4", semantic_revision=1
     )
     with pytest.raises(ProposalIntegrityError, match="cannot be reproduced"):
         ACCEPTANCE_LAWS.require_historical(identifier=earlier.identifier, digest=earlier.digest)
@@ -97,7 +97,7 @@ def test_one_claim_law_is_installed_and_removed_claim_formats_have_none() -> Non
 
 def test_one_claim_type_law_is_installed_and_removed_claim_type_formats_have_none() -> None:
     assert (
-        ACCEPTANCE_LAWS.resolve_member(artifact_tag="cruxible-claim-type-v10").coordinate
+        ACCEPTANCE_LAWS.resolve_member(artifact_tag="cruxible-claim-type-v11").coordinate
         == CLAIM_TYPE_LAW
     )
     for removed in (
@@ -110,12 +110,13 @@ def test_one_claim_type_law_is_installed_and_removed_claim_type_formats_have_non
         "playbill-claim-type-v7",
         "playbill-claim-type-v8",
         "cruxible-claim-type-v9",
+        "cruxible-claim-type-v10",
     ):
         with pytest.raises(ProposalIntegrityError, match="no acceptance law"):
             ACCEPTANCE_LAWS.resolve_member(artifact_tag=removed)
     # Another revision is not installed: replay refuses it.
     earlier = _artifact_law_coordinate(
-        CLAIM_TYPE_LAW.identifier, "cruxible-claim-type-v10", semantic_revision=2
+        CLAIM_TYPE_LAW.identifier, "cruxible-claim-type-v11", semantic_revision=2
     )
     with pytest.raises(ProposalIntegrityError, match="cannot be reproduced"):
         ACCEPTANCE_LAWS.require_historical(identifier=earlier.identifier, digest=earlier.digest)

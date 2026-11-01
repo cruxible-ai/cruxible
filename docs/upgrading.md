@@ -213,7 +213,7 @@ another genesis and is refused, never converted: the daemon answers
 `reseed_required` (`compiler_lineage_not_writable`). Move it aside and re-import
 its content into a fresh instance.
 
-A ClaimType has one format (`cruxible-claim-type-v10`) with one evidence
+A ClaimType has one format (`cruxible-claim-type-v11`) with one evidence
 policy (`cruxible-claim-evidence-admission-policy-v4`), and a Claim one artifact
 (`playbill-claim-v4`). A Procedure has one format (`cruxible-procedure-v4`): its
 input, params and output name governed Contracts, and a Procedure carries no

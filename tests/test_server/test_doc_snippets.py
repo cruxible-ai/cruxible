@@ -40,6 +40,7 @@ from cruxible_client.contracts.write import WriteRequest
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord, lower_claim_type_input
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
+from tests.support.claim_types import claim_type_changes
 
 DOCS = Path(__file__).resolve().parents[2] / "docs"
 _FENCE = re.compile(r"^(~~~|```)(\w*)\s*$")
@@ -201,15 +202,12 @@ def _field(
     key: bool = False,
 ) -> dict[str, object]:
     record: dict[str, object] = {"predicate": predicate, "cardinality": "many" if many else "one"}
-    if objects:
-        record["allowed_object_subject_kinds"] = list(objects)
-    else:
-        record["literal_schema"] = schema or {"type": "string"}
+    record.update(claim_type_changes(value_type=objects or schema or {"type": "string"}))
     if roles:
         record["permitted_roles"] = list(roles)
         record["default_role"] = roles[0]
     if key:
-        record["literal_schema"] = {"type": "string", "minLength": 1}
+        record.update(claim_type_changes(value_type={"type": "string", "minLength": 1}))
         record["canonical_form"] = _KEY_FORM
     return record
 

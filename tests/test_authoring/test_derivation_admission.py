@@ -45,6 +45,7 @@ from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.lowering import lower_authoring
 from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
+from tests.support.claim_types import claim_type_changes
 from tests.support.lines import line_budgets, line_spec
 from tests.support.procedures import procedure_spec_data, ref
 from tests.test_authoring.test_authoring_preflight import _self_source_payload
@@ -70,12 +71,12 @@ def derivation_world(tmp_path):
 
     profile = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
     definition = _claim_type().model_copy(
-        update={
-            "identity": ArtifactIdentity(kind="ClaimType", name="project.work_item.ready"),
-            "predicate": "project.work_item.ready",
-            "literal_schema": {"type": "boolean"},
-            "permitted_roles": ("derivation",),
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+        update=claim_type_changes(
+            predicate="project.work_item.ready",
+            value_type={"type": "boolean"},
+            identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.ready"),
+            permitted_roles=("derivation",),
+            evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
                 rules=(
                     ClaimEvidenceAdmissionRule(
                         rule_id="derived",
@@ -86,7 +87,7 @@ def derivation_world(tmp_path):
                     ),
                 )
             ),
-        }
+        )
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[claim_type_path(definition.predicate)] = render_claim_type(definition)

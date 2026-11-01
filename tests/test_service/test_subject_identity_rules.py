@@ -376,7 +376,7 @@ def test_the_law_refuses_a_text_normalizer_on_a_non_string_key(tmp_path: Path) -
             ClaimTypeInput(
                 kind="claim_type",
                 claim_type=_key(
-                    PACKAGE, "number", literal_schema={"type": "integer"}, canonical_form=None
+                    PACKAGE, "number", value_type={"type": "integer"}, canonical_form=None
                 ),
             ),
             SubjectKindInput(

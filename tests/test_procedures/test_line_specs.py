@@ -114,7 +114,7 @@ def _line(
 def test_line_spec_round_trip_and_digest_golden() -> None:
     line, accepted, _interfaces = _line()
 
-    expected = "sha256:cf17c48a92a3d7defc66e6756fa649d20881f62675660f3a92b249642aecbe0b"
+    expected = "sha256:78feb986a84643f72ff3054ffcba856e0ff3dc9258b679d1635e8fdb4399a082"
     assert line_spec_digest(line).tagged == expected
     content = render_line_spec(line)
     assert parse_line_spec(content, path=line_spec_path("triage-hourly")) == line

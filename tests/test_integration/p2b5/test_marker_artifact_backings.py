@@ -24,6 +24,7 @@ from cruxible_core.service.authoring.projection_sync import (
     service_read_playbill_block_sync_backing,
 )
 from tests.core_support._knowledge_loop_support import TIMESTAMP
+from tests.support.claim_types import claim_type_changes
 from tests.test_claims.test_claims import vocabulary_claim_type
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_query.test_query_execution_service import _instance_with_query
@@ -53,12 +54,12 @@ def test_claim_type_block_sync_checks_current_artifact_without_rendering(
     instance, owner = _instance_with_query(tmp_path)
     predicate = "sec.vuln.severity"
     claim_type = vocabulary_claim_type().model_copy(
-        update={
-            "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
-            "predicate": predicate,
-            "allowed_subject_kinds": ("sec.vulnerability",),
-            "literal_schema": {"enum": ["high", "low", "medium"], "type": "string"},
-        }
+        update=claim_type_changes(
+            predicate=predicate,
+            value_type={"enum": ["high", "low", "medium"], "type": "string"},
+            identity=ArtifactIdentity(kind="ClaimType", name=predicate),
+            allowed_subject_kinds=("sec.vulnerability",),
+        )
     )
     path = claim_type_path(predicate)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
@@ -87,13 +88,13 @@ def test_claim_type_block_sync_checks_current_artifact_without_rendering(
     )
 
     successor = claim_type.model_copy(
-        update={
-            "literal_schema": {
+        update=claim_type_changes(
+            value_type={
                 "enum": ["critical", "high", "low", "medium"],
                 "type": "string",
             },
-            "lifecycle": ArtifactLifecycle(predecessor_digest=original_digest),
-        }
+            lifecycle=ArtifactLifecycle(predecessor_digest=original_digest),
+        )
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[path] = render_claim_type(successor)

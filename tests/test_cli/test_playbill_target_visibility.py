@@ -15,6 +15,7 @@ from cruxible_client.authoring.world_stub import render_world_stub_for
 from cruxible_core.cli.commands import playbill as playbill_commands
 from cruxible_core.cli.context import CliContextState, save_cli_context
 from cruxible_core.cli.main import MUTATING_COMMAND_TARGETS, cli
+from tests.support.claim_types import claim_type_changes
 
 
 @pytest.fixture(autouse=True)
@@ -746,19 +747,17 @@ def test_the_world_stub_leaf_is_a_read_and_stays_out_of_the_mutating_inventory(
         compiler_digest="sha256:" + "bb" * 32,
     )
 
-    envelope = {
-        "artifact_format": "cruxible-claim-type-v10",
-        "identity": {"kind": "ClaimType", "name": "sec.vuln.severity"},
-        "predicate": "sec.vuln.severity",
-        "allowed_subject_kinds": ("sec.vulnerability",),
-        "object_kind": "literal",
-        "literal_schema": {"type": "string", "enum": ["high"]},
-        "allowed_object_subject_kinds": (),
-        "cardinality": "one",
-        "permitted_roles": ("observation",),
-        "referent_sensitivity": "identity",
-        "lifecycle": {"state": "live"},
-    }
+    envelope = claim_type_changes(
+        value_type={"type": "string", "enum": ["high"]},
+        artifact_format="cruxible-claim-type-v11",
+        identity={"kind": "ClaimType", "name": "sec.vuln.severity"},
+        predicate="sec.vuln.severity",
+        allowed_subject_kinds=("sec.vulnerability",),
+        cardinality="one",
+        permitted_roles=("observation",),
+        referent_sensitivity="identity",
+        lifecycle={"state": "live"},
+    )
 
     class StubClient:
         """The world stub reads the head, the ClaimType and SubjectKind sections, one batch."""

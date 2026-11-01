@@ -29,10 +29,8 @@ from cruxible_client.contracts.captures import capture_contract_digest
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
-    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
@@ -65,6 +63,7 @@ from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._light_capture_support import procedure_contract
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._subject_kind_support import bare_slug_claim_type, create_by_key
+from tests.support.claim_types import claim_type as build_claim_type
 from tests.support.procedures import (
     named,
     procedure_definition,
@@ -151,13 +150,9 @@ def installed_host(
 
 
 def _claim_type(contract: str) -> ClaimType:
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name=PREDICATE),
+    return build_claim_type(
         predicate=PREDICATE,
         allowed_subject_kinds=(SUBJECT_KIND,),
-        object_kind="literal",
-        literal_schema={"type": "string"},
-        cardinality="one",
         permitted_roles=("observation",),
         evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
             rules=(
@@ -169,12 +164,6 @@ def _claim_type(contract: str) -> ClaimType:
                     subject_binding="exact_claim_subject",
                 ),
             )
-        ),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality="one",
-            eligible_verdicts=("supported",),
-            selector="only_contender",
         ),
     )
 

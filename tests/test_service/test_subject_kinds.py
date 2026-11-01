@@ -54,12 +54,12 @@ _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=True)
 
 
 def slug_claim_type(**changes: Any) -> Any:
-    fields: dict[str, Any] = {
-        "canonical_form": ("nfkc", "trim", "collapse_whitespace", "casefold"),
-        "literal_schema": {"type": "string"},
-        "predicate": SLUG,
-        "subject_kinds": (KIND,),
-    }
+    fields: dict[str, Any] = dict(
+        predicate=SLUG,
+        value_type={"type": "string"},
+        canonical_form=("nfkc", "trim", "collapse_whitespace", "casefold"),
+        subject_kinds=(KIND,),
+    )
     fields.update(changes)
     return identity_claim_type("slug", **fields)
 
@@ -169,8 +169,8 @@ def test_a_minted_kind_needs_no_key_and_an_undeclared_kind_says_so(
                         kind="claim_type",
                         claim_type=identity_claim_type(
                             "note",
+                            value_type={"type": "string"},
                             canonical_form=(),
-                            literal_schema={"type": "string"},
                             predicate="dev.other.note",
                             subject_kinds=("dev.other",),
                         ),
@@ -236,7 +236,7 @@ def _shape(**changes: Any) -> KeyClaimTypeShape:
     values: dict[str, Any] = {
         "predicate": SLUG,
         "live": True,
-        "artifact_format": "cruxible-claim-type-v10",
+        "artifact_format": "cruxible-claim-type-v11",
         "object_kind": "literal",
         "cardinality": "one",
         "allowed_subject_kinds": (KIND,),

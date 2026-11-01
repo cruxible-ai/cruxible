@@ -370,8 +370,17 @@ def _claim_static_facts(
 ) -> tuple[ProjectionFact, ...]:
     """Compile only byte-dependent Claim facts; acceptance proofs stay per-build."""
     from cruxible_client.contracts.claims import claim_statement_address
+    from cruxible_client.contracts.projection_extensions import normalized_projection_value
 
     identity = claim.identity.qualified
+    # Each mapping occurs both in backing and as its own fact. Normalize its
+    # immutable subtree once, then compose the exact same value into both rows.
+    mappings = [
+        normalized_projection_value(m.model_dump(mode="json"))
+        for m in claim.backing.source_mappings
+    ]
+    backing = claim.backing.model_dump(mode="json")
+    backing["source_mappings"] = mappings
     facts: list[ProjectionFact] = []
     facts.extend(
         (
@@ -400,7 +409,7 @@ def _claim_static_facts(
                 schema_version=1,
                 subject_identity=identity,
                 fact_key="evidence",
-                value=claim.backing.model_dump(mode="json"),
+                value=backing,
             ),
             ProjectionFact(
                 schema_id="cruxible.claim.lifecycle",
@@ -419,14 +428,14 @@ def _claim_static_facts(
             ),
         )
     )
-    for index, source_mapping in enumerate(claim.backing.source_mappings):
+    for index, source_mapping in enumerate(mappings):
         facts.append(
             ProjectionFact(
                 schema_id="cruxible.claim.source_mapping",
                 schema_version=1,
                 subject_identity=identity,
                 fact_key=f"source_{index:04d}",
-                value=source_mapping.model_dump(mode="json"),
+                value=source_mapping,
             )
         )
     return tuple(facts)

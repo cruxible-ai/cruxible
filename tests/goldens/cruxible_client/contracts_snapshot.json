@@ -6067,6 +6067,51 @@
             "title": "ClaimInverseSlotKey",
             "type": "object"
           },
+          "ClaimPrecedence": {
+            "additionalProperties": false,
+            "description": "Highest role first; one policy governs every Procedure replacement.",
+            "properties": {
+              "revisable_by_procedures": {
+                "default": [
+                  "environment_binding",
+                  "observation",
+                  "derivation"
+                ],
+                "items": {
+                  "enum": [
+                    "normative",
+                    "observation",
+                    "environment_binding",
+                    "derivation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Revisable By Procedures",
+                "type": "array"
+              },
+              "roles": {
+                "default": [
+                  "normative",
+                  "environment_binding",
+                  "observation",
+                  "derivation"
+                ],
+                "items": {
+                  "enum": [
+                    "normative",
+                    "observation",
+                    "environment_binding",
+                    "derivation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Roles",
+                "type": "array"
+              }
+            },
+            "title": "ClaimPrecedence",
+            "type": "object"
+          },
           "ClaimResolutionPolicy": {
             "additionalProperties": false,
             "properties": {
@@ -6282,6 +6327,137 @@
             "title": "ClaimStatementProcedureMeasurement",
             "type": "object"
           },
+          "ClaimTemplateSpec": {
+            "additionalProperties": false,
+            "properties": {
+              "effective_from": {
+                "$ref": "#/$defs/Template",
+                "default": null
+              },
+              "effective_until": {
+                "$ref": "#/$defs/Template",
+                "default": null
+              },
+              "inputs": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/Ref"
+                },
+                "title": "Inputs",
+                "type": "array"
+              },
+              "qualifier": {
+                "$ref": "#/$defs/Template",
+                "default": null
+              },
+              "rationale": {
+                "default": "Claim from declared Procedure template.",
+                "title": "Rationale",
+                "type": "string"
+              },
+              "replaces": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "normative",
+                        "observation",
+                        "environment_binding",
+                        "derivation"
+                      ],
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Replaces"
+              },
+              "role": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "normative",
+                      "observation",
+                      "environment_binding",
+                      "derivation"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Role"
+              },
+              "type": {
+                "title": "Type",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/$defs/Template"
+              },
+              "when": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "absent": "#/$defs/Presence",
+                        "all_of": "#/$defs/AllOf",
+                        "any_of": "#/$defs/AnyOf",
+                        "eq": "#/$defs/Comparison",
+                        "ge": "#/$defs/Comparison",
+                        "gt": "#/$defs/Comparison",
+                        "in": "#/$defs/Membership",
+                        "le": "#/$defs/Comparison",
+                        "lt": "#/$defs/Comparison",
+                        "ne": "#/$defs/Comparison",
+                        "not": "#/$defs/Not",
+                        "not_in": "#/$defs/Membership",
+                        "present": "#/$defs/Presence"
+                      },
+                      "propertyName": "op"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/Comparison"
+                      },
+                      {
+                        "$ref": "#/$defs/Membership"
+                      },
+                      {
+                        "$ref": "#/$defs/Presence"
+                      },
+                      {
+                        "$ref": "#/$defs/AllOf"
+                      },
+                      {
+                        "$ref": "#/$defs/AnyOf"
+                      },
+                      {
+                        "$ref": "#/$defs/Not"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "When"
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ],
+            "title": "ClaimTemplateSpec",
+            "type": "object"
+          },
           "ClaimType": {
             "additionalProperties": false,
             "description": "The one ClaimType: what a predicate means, admits and settles.\n\nOptional members are omitted from the wire when absent, so absence and a\nstated value never share a spelling.",
@@ -6305,8 +6481,8 @@
                 "type": "array"
               },
               "artifact_format": {
-                "const": "cruxible-claim-type-v10",
-                "default": "cruxible-claim-type-v10",
+                "const": "cruxible-claim-type-v11",
+                "default": "cruxible-claim-type-v11",
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -6442,6 +6618,11 @@
                 "title": "Member Descriptions",
                 "type": "array"
               },
+              "negative": {
+                "default": false,
+                "title": "Negative",
+                "type": "boolean"
+              },
               "object_kind": {
                 "enum": [
                   "literal",
@@ -6472,6 +6653,22 @@
                 "title": "Pins",
                 "type": "array"
               },
+              "precedence": {
+                "$ref": "#/$defs/ClaimPrecedence",
+                "default": {
+                  "revisable_by_procedures": [
+                    "environment_binding",
+                    "observation",
+                    "derivation"
+                  ],
+                  "roles": [
+                    "normative",
+                    "environment_binding",
+                    "observation",
+                    "derivation"
+                  ]
+                }
+              },
               "predicate": {
                 "title": "Predicate",
                 "type": "string"
@@ -6497,6 +6694,24 @@
                 "title": "Revision Evidence",
                 "type": "string"
               },
+              "unknown_member": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Unknown Member"
+              },
               "unsure_hold_for": {
                 "anyOf": [
                   {
@@ -6507,6 +6722,108 @@
                   }
                 ],
                 "default": null
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "bool": "#/$defs/BoolType",
+                        "capture": "#/$defs/CaptureType",
+                        "contract": "#/$defs/NestedType",
+                        "date": "#/$defs/DateType",
+                        "datetime": "#/$defs/DateTimeType",
+                        "decimal": "#/$defs/DecimalType",
+                        "duration": "#/$defs/DurationType",
+                        "enum": "#/$defs/EnumType",
+                        "enum_of": "#/$defs/EnumOfType",
+                        "field_result": "#/$defs/FieldResultType",
+                        "int": "#/$defs/IntType",
+                        "key": "#/$defs/KeyType",
+                        "key_part": "#/$defs/KeyPartType",
+                        "list": "#/$defs/ListType",
+                        "number": "#/$defs/NumberType",
+                        "record": "#/$defs/RecordType",
+                        "refusal": "#/$defs/RefusalType",
+                        "result": "#/$defs/ResultType",
+                        "string": "#/$defs/StringType",
+                        "subject": "#/$defs/SubjectType",
+                        "variant": "#/$defs/VariantType"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/StringType"
+                      },
+                      {
+                        "$ref": "#/$defs/IntType"
+                      },
+                      {
+                        "$ref": "#/$defs/DecimalType"
+                      },
+                      {
+                        "$ref": "#/$defs/NumberType"
+                      },
+                      {
+                        "$ref": "#/$defs/BoolType"
+                      },
+                      {
+                        "$ref": "#/$defs/DateType"
+                      },
+                      {
+                        "$ref": "#/$defs/DateTimeType"
+                      },
+                      {
+                        "$ref": "#/$defs/DurationType"
+                      },
+                      {
+                        "$ref": "#/$defs/EnumType"
+                      },
+                      {
+                        "$ref": "#/$defs/EnumOfType"
+                      },
+                      {
+                        "$ref": "#/$defs/ListType"
+                      },
+                      {
+                        "$ref": "#/$defs/NestedType"
+                      },
+                      {
+                        "$ref": "#/$defs/VariantType"
+                      },
+                      {
+                        "$ref": "#/$defs/KeyType"
+                      },
+                      {
+                        "$ref": "#/$defs/KeyPartType"
+                      },
+                      {
+                        "$ref": "#/$defs/SubjectType"
+                      },
+                      {
+                        "$ref": "#/$defs/CaptureType"
+                      },
+                      {
+                        "$ref": "#/$defs/FieldResultType"
+                      },
+                      {
+                        "$ref": "#/$defs/RecordType"
+                      },
+                      {
+                        "$ref": "#/$defs/ResultType"
+                      },
+                      {
+                        "$ref": "#/$defs/RefusalType"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Value"
               }
             },
             "required": [
@@ -6681,6 +6998,149 @@
             "title": "ClaimTypeSuccessionInput",
             "type": "object"
           },
+          "ClaimsStep": {
+            "additionalProperties": false,
+            "properties": {
+              "claims": {
+                "items": {
+                  "$ref": "#/$defs/ClaimTemplateSpec"
+                },
+                "minItems": 1,
+                "title": "Claims",
+                "type": "array"
+              },
+              "for_each": {
+                "$ref": "#/$defs/Ref"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "subject": {
+                "$ref": "#/$defs/ClaimsSubjectSpec"
+              },
+              "where": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "absent": "#/$defs/Presence",
+                        "all_of": "#/$defs/AllOf",
+                        "any_of": "#/$defs/AnyOf",
+                        "eq": "#/$defs/Comparison",
+                        "ge": "#/$defs/Comparison",
+                        "gt": "#/$defs/Comparison",
+                        "in": "#/$defs/Membership",
+                        "le": "#/$defs/Comparison",
+                        "lt": "#/$defs/Comparison",
+                        "ne": "#/$defs/Comparison",
+                        "not": "#/$defs/Not",
+                        "not_in": "#/$defs/Membership",
+                        "present": "#/$defs/Presence"
+                      },
+                      "propertyName": "op"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/Comparison"
+                      },
+                      {
+                        "$ref": "#/$defs/Membership"
+                      },
+                      {
+                        "$ref": "#/$defs/Presence"
+                      },
+                      {
+                        "$ref": "#/$defs/AllOf"
+                      },
+                      {
+                        "$ref": "#/$defs/AnyOf"
+                      },
+                      {
+                        "$ref": "#/$defs/Not"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Where"
+              }
+            },
+            "required": [
+              "claims",
+              "for_each",
+              "subject"
+            ],
+            "title": "ClaimsStep",
+            "type": "object"
+          },
+          "ClaimsSubjectSpec": {
+            "additionalProperties": false,
+            "properties": {
+              "create": {
+                "default": "never",
+                "enum": [
+                  "never",
+                  "if_absent"
+                ],
+                "title": "Create",
+                "type": "string"
+              },
+              "key": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/Template"
+                },
+                "title": "Key",
+                "type": "object"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "within": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/Ref"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "kind",
+              "key"
+            ],
+            "title": "ClaimsSubjectSpec",
+            "type": "object"
+          },
           "Comparison": {
             "additionalProperties": false,
             "properties": {
@@ -6765,6 +7225,11 @@
                 ],
                 "default": null,
                 "title": "Description"
+              },
+              "negative": {
+                "default": false,
+                "title": "Negative",
+                "type": "boolean"
               },
               "optional": {
                 "default": false,
@@ -6864,6 +7329,24 @@
                   }
                 ],
                 "title": "Type"
+              },
+              "unknown_member": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Unknown Member"
               }
             },
             "required": [
@@ -7487,6 +7970,19 @@
                 ],
                 "default": null,
                 "title": "Presence"
+              },
+              "project": {
+                "anyOf": [
+                  {
+                    "const": "utc_date",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Project"
               },
               "type": {
                 "anyOf": [
@@ -9760,6 +10256,11 @@
               "in": {
                 "$ref": "#/$defs/ContractRef"
               },
+              "may_truncate": {
+                "default": false,
+                "title": "May Truncate",
+                "type": "boolean"
+              },
               "out": {
                 "$ref": "#/$defs/ContractRef"
               }
@@ -9952,6 +10453,9 @@
                     },
                     {
                       "$ref": "#/$defs/InboxStep"
+                    },
+                    {
+                      "$ref": "#/$defs/ClaimsStep"
                     },
                     {
                       "$ref": "#/$defs/ProposeStep"
@@ -43324,7 +43828,7 @@
           },
           "OrientPredicate": {
             "additionalProperties": false,
-            "description": "One predicate of a kind: compact by default, in full under ``orient(kind=...)``.\n\n``name`` is the short name a query field uses against this kind; ``predicate``\nis the full ClaimType predicate. ``type`` is the value type: a JSON type,\n``date``/``datetime``, ``enum`` (with ``members``), ``subject`` or\n``subject:<kinds>`` for a Subject-valued predicate, or ``exact_content``.\n``evidence`` names the CaptureContracts the ClaimType admits; a digest that\nnames no accepted contract shows as ``unresolved:<short digest>``.\n``None`` (omitted on the wire) inherits the kind's evidence set; an empty\ntuple (``[]`` on the wire) explicitly admits no contracts. Standalone\ndescriptors always carry an explicit set.\n\n``description`` is the ClaimType's (v7) description: its first sentence, at\nmost 160 characters, in a compact descriptor; all of it in full.\n``evidence_requirement`` appears only when it is not ``self`` (``none``: the\nClaim's own origin supports it; ``captured``: a Capture under a declared\ncontract is required). A full descriptor also carries each described enum\nmember, the role a write defaults to, and ``revision_evidence``: what a\nstatement-changing revision keeps.\nA full descriptor also names how the ClaimType settles rival Claims\n(``contention``), its format version (``format``: 10 for\n``cruxible-claim-type-v10``), its accepted ``revision`` and its ledger\n``path``, which a kit's drifted paths name. Under ``orient(kind=K)`` a\ndescriptor counts the kind's ``live_claims`` of the predicate and\n``subjects_with_value``: its live Subjects with at least one, both read\nfrom counters Claim writes maintain.\n``kit`` (claim_types section only) is the installed kit that owns the\nClaimType: its receipt records the definition. Absent when no kit owns it.",
+            "description": "One predicate of a kind: compact by default, in full under ``orient(kind=...)``.\n\n``name`` is the short name a query field uses against this kind; ``predicate``\nis the full ClaimType predicate. ``type`` is the value type: a JSON type,\n``date``/``datetime``, ``enum`` (with ``members``), ``subject`` or\n``subject:<kinds>`` for a Subject-valued predicate, or ``exact_content``.\n``evidence`` names the CaptureContracts the ClaimType admits; a digest that\nnames no accepted contract shows as ``unresolved:<short digest>``.\n``None`` (omitted on the wire) inherits the kind's evidence set; an empty\ntuple (``[]`` on the wire) explicitly admits no contracts. Standalone\ndescriptors always carry an explicit set.\n\n``description`` is the ClaimType's (v7) description: its first sentence, at\nmost 160 characters, in a compact descriptor; all of it in full.\n``evidence_requirement`` appears only when it is not ``self`` (``none``: the\nClaim's own origin supports it; ``captured``: a Capture under a declared\ncontract is required). A full descriptor also carries each described enum\nmember, the role a write defaults to, and ``revision_evidence``: what a\nstatement-changing revision keeps.\nA full descriptor also names how the ClaimType settles rival Claims\n(``contention``), its format version (``format``: 10 for\n``cruxible-claim-type-v11``), its accepted ``revision`` and its ledger\n``path``, which a kit's drifted paths name. Under ``orient(kind=K)`` a\ndescriptor counts the kind's ``live_claims`` of the predicate and\n``subjects_with_value``: its live Subjects with at least one, both read\nfrom counters Claim writes maintain.\n``kit`` (claim_types section only) is the installed kit that owns the\nClaimType: its receipt records the definition. Absent when no kit owns it.",
             "properties": {
               "cardinality": {
                 "enum": [
@@ -51488,6 +51992,261 @@
             "title": "ClaimStatementProcedureMeasurement",
             "type": "object"
           },
+          "ClaimTemplate": {
+            "additionalProperties": false,
+            "properties": {
+              "effective_from": {
+                "default": null,
+                "title": "Effective From"
+              },
+              "effective_until": {
+                "default": null,
+                "title": "Effective Until"
+              },
+              "inputs": {
+                "default": [],
+                "items": {},
+                "title": "Inputs",
+                "type": "array"
+              },
+              "qualifier": {
+                "default": null,
+                "title": "Qualifier"
+              },
+              "rationale": {
+                "default": "Claim from declared Procedure template.",
+                "title": "Rationale",
+                "type": "string"
+              },
+              "replaces": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "normative",
+                        "observation",
+                        "environment_binding",
+                        "derivation"
+                      ],
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Replaces"
+              },
+              "role": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "normative",
+                      "observation",
+                      "environment_binding",
+                      "derivation"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Role"
+              },
+              "type": {
+                "$ref": "#/$defs/ArtifactNameRef"
+              },
+              "value": {
+                "title": "Value"
+              },
+              "when": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "absent": "#/$defs/Presence",
+                        "all_of": "#/$defs/AllOf",
+                        "any_of": "#/$defs/AnyOf",
+                        "eq": "#/$defs/Comparison",
+                        "ge": "#/$defs/Comparison",
+                        "gt": "#/$defs/Comparison",
+                        "in": "#/$defs/Membership",
+                        "le": "#/$defs/Comparison",
+                        "lt": "#/$defs/Comparison",
+                        "ne": "#/$defs/Comparison",
+                        "not": "#/$defs/Not",
+                        "not_in": "#/$defs/Membership",
+                        "present": "#/$defs/Presence"
+                      },
+                      "propertyName": "op"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/Comparison"
+                      },
+                      {
+                        "$ref": "#/$defs/Membership"
+                      },
+                      {
+                        "$ref": "#/$defs/Presence"
+                      },
+                      {
+                        "$ref": "#/$defs/AllOf"
+                      },
+                      {
+                        "$ref": "#/$defs/AnyOf"
+                      },
+                      {
+                        "$ref": "#/$defs/Not"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "When"
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ],
+            "title": "ClaimTemplate",
+            "type": "object"
+          },
+          "ClaimsNode": {
+            "additionalProperties": false,
+            "properties": {
+              "claims": {
+                "items": {
+                  "$ref": "#/$defs/ClaimTemplate"
+                },
+                "maxItems": 256,
+                "minItems": 1,
+                "title": "Claims",
+                "type": "array"
+              },
+              "for_each": {
+                "title": "For Each"
+              },
+              "kind": {
+                "const": "claims",
+                "default": "claims",
+                "title": "Kind",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "subject": {
+                "$ref": "#/$defs/ClaimsSubject"
+              },
+              "where": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "absent": "#/$defs/Presence",
+                        "all_of": "#/$defs/AllOf",
+                        "any_of": "#/$defs/AnyOf",
+                        "eq": "#/$defs/Comparison",
+                        "ge": "#/$defs/Comparison",
+                        "gt": "#/$defs/Comparison",
+                        "in": "#/$defs/Membership",
+                        "le": "#/$defs/Comparison",
+                        "lt": "#/$defs/Comparison",
+                        "ne": "#/$defs/Comparison",
+                        "not": "#/$defs/Not",
+                        "not_in": "#/$defs/Membership",
+                        "present": "#/$defs/Presence"
+                      },
+                      "propertyName": "op"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/Comparison"
+                      },
+                      {
+                        "$ref": "#/$defs/Membership"
+                      },
+                      {
+                        "$ref": "#/$defs/Presence"
+                      },
+                      {
+                        "$ref": "#/$defs/AllOf"
+                      },
+                      {
+                        "$ref": "#/$defs/AnyOf"
+                      },
+                      {
+                        "$ref": "#/$defs/Not"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Where"
+              }
+            },
+            "required": [
+              "node_id",
+              "for_each",
+              "subject",
+              "claims"
+            ],
+            "title": "ClaimsNode",
+            "type": "object"
+          },
+          "ClaimsSubject": {
+            "additionalProperties": false,
+            "properties": {
+              "create": {
+                "default": "never",
+                "enum": [
+                  "never",
+                  "if_absent"
+                ],
+                "title": "Create",
+                "type": "string"
+              },
+              "key": {
+                "additionalProperties": true,
+                "minProperties": 1,
+                "title": "Key",
+                "type": "object"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "within": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Within"
+              }
+            },
+            "required": [
+              "kind",
+              "key"
+            ],
+            "title": "ClaimsSubject",
+            "type": "object"
+          },
           "Comparison": {
             "additionalProperties": false,
             "properties": {
@@ -51634,6 +52393,11 @@
                 "default": null,
                 "title": "Description"
               },
+              "negative": {
+                "default": false,
+                "title": "Negative",
+                "type": "boolean"
+              },
               "optional": {
                 "default": false,
                 "title": "Optional",
@@ -51732,6 +52496,24 @@
                   }
                 ],
                 "title": "Type"
+              },
+              "unknown_member": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Unknown Member"
               }
             },
             "required": [
@@ -52037,6 +52819,19 @@
                 ],
                 "default": null,
                 "title": "Presence"
+              },
+              "project": {
+                "anyOf": [
+                  {
+                    "const": "utc_date",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Project"
               },
               "type": {
                 "anyOf": [
@@ -53048,6 +53843,7 @@
                   "discriminator": {
                     "mapping": {
                       "call": "#/$defs/CallNode",
+                      "claims": "#/$defs/ClaimsNode",
                       "emit_capture": "#/$defs/CaptureEgressNode",
                       "extract": "#/$defs/ExtractNode",
                       "guard": "#/$defs/GuardNode",
@@ -53094,6 +53890,9 @@
                     },
                     {
                       "$ref": "#/$defs/InboxEgressNode"
+                    },
+                    {
+                      "$ref": "#/$defs/ClaimsNode"
                     },
                     {
                       "$ref": "#/$defs/ProposeChangeSetNode"
@@ -53566,6 +54365,11 @@
               },
               "in": {
                 "$ref": "#/$defs/ContractRef"
+              },
+              "may_truncate": {
+                "default": false,
+                "title": "May Truncate",
+                "type": "boolean"
               },
               "out": {
                 "$ref": "#/$defs/ContractRef"
@@ -61024,6 +61828,104 @@
             "title": "ClaimVersionReference",
             "type": "object"
           },
+          "ClaimsDiagnostic": {
+            "additionalProperties": false,
+            "properties": {
+              "claim": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim"
+              },
+              "field": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Field"
+              },
+              "input": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Input"
+              },
+              "kind": {
+                "enum": [
+                  "extract_refused",
+                  "incomplete_source",
+                  "held_by_precedence",
+                  "slot_contested"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "lexeme": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Lexeme"
+              },
+              "problem": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Problem"
+              },
+              "role": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Role"
+              },
+              "target": {
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "target"
+            ],
+            "title": "ClaimsDiagnostic",
+            "type": "object"
+          },
           "HandEditInstruction": {
             "additionalProperties": false,
             "properties": {
@@ -63461,6 +64363,37 @@
                 "title": "Children",
                 "type": "array"
               },
+              "claims_diagnostics": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ClaimsDiagnostic"
+                },
+                "title": "Claims Diagnostics",
+                "type": "array"
+              },
+              "claims_diagnostics_count": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Claims Diagnostics Count",
+                "type": "integer"
+              },
+              "claims_diagnostics_inbox_truncation": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/InboxPostTruncation"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "claims_diagnostics_truncated": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Claims Diagnostics Truncated",
+                "type": "integer"
+              },
               "effective_authority": {
                 "anyOf": [
                   {
@@ -63515,6 +64448,7 @@
               },
               "kind": {
                 "enum": [
+                  "claims",
                   "emit_capture",
                   "post_inbox",
                   "propose_change_set",
@@ -64697,6 +65631,69 @@
             "type": "array"
           }
         },
+        "claims_diagnostics": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claims_diagnostics",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ClaimsDiagnostic"
+            },
+            "title": "Claims Diagnostics",
+            "type": "array"
+          }
+        },
+        "claims_diagnostics_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claims_diagnostics_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Claims Diagnostics Count",
+            "type": "integer"
+          }
+        },
+        "claims_diagnostics_inbox_truncation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claims_diagnostics_inbox_truncation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InboxPostTruncation"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "claims_diagnostics_truncated": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claims_diagnostics_truncated",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Claims Diagnostics Truncated",
+            "type": "integer"
+          }
+        },
         "effective_authority": {
           "default": null,
           "default_json_serializable": true,
@@ -64788,6 +65785,7 @@
           "required": true,
           "schema": {
             "enum": [
+              "claims",
               "emit_capture",
               "post_inbox",
               "propose_change_set",
@@ -65098,6 +66096,104 @@
               "artifact_digest"
             ],
             "title": "ArtifactPin",
+            "type": "object"
+          },
+          "ClaimsDiagnostic": {
+            "additionalProperties": false,
+            "properties": {
+              "claim": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim"
+              },
+              "field": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Field"
+              },
+              "input": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Input"
+              },
+              "kind": {
+                "enum": [
+                  "extract_refused",
+                  "incomplete_source",
+                  "held_by_precedence",
+                  "slot_contested"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "lexeme": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Lexeme"
+              },
+              "problem": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Problem"
+              },
+              "role": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Role"
+              },
+              "target": {
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "target"
+            ],
+            "title": "ClaimsDiagnostic",
             "type": "object"
           },
           "InboxPostTruncation": {
@@ -65457,6 +66553,37 @@
             "title": "Children",
             "type": "array"
           },
+          "claims_diagnostics": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ClaimsDiagnostic"
+            },
+            "title": "Claims Diagnostics",
+            "type": "array"
+          },
+          "claims_diagnostics_count": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Claims Diagnostics Count",
+            "type": "integer"
+          },
+          "claims_diagnostics_inbox_truncation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InboxPostTruncation"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "claims_diagnostics_truncated": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Claims Diagnostics Truncated",
+            "type": "integer"
+          },
           "effective_authority": {
             "anyOf": [
               {
@@ -65511,6 +66638,7 @@
           },
           "kind": {
             "enum": [
+              "claims",
               "emit_capture",
               "post_inbox",
               "propose_change_set",
@@ -75813,6 +76941,19 @@
             "title": "ArtifactPin",
             "type": "object"
           },
+          "BoolType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "bool",
+                "default": "bool",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "BoolType",
+            "type": "object"
+          },
           "CallNode": {
             "additionalProperties": false,
             "description": "A typed call: the slot names the signature; the Line names the operation.\n\n``captures`` pins, for each ``capture<K>`` field of the slot's out Contract,\nthe accepted CaptureContract the field's bytes are committed as (``K``\nitself, or any CaptureContract for the generic ``capture<workspace.file>``\nof the core-served read). A call with captures acquires: its capture\nfields are committed byte-exact as Captures and its other fields are\nnormalized, and its value names each Capture by digest.",
@@ -75956,6 +77097,27 @@
               "result"
             ],
             "title": "CaptureEgressNode",
+            "type": "object"
+          },
+          "CaptureType": {
+            "additionalProperties": false,
+            "description": "Retained bytes of one CaptureKind, by Capture digest.",
+            "properties": {
+              "capture_kind": {
+                "title": "Capture Kind",
+                "type": "string"
+              },
+              "kind": {
+                "const": "capture",
+                "default": "capture",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "capture_kind"
+            ],
+            "title": "CaptureType",
             "type": "object"
           },
           "ClaimAdmissionPolicy": {
@@ -76363,6 +77525,51 @@
             "title": "ClaimInverseSlotKey",
             "type": "object"
           },
+          "ClaimPrecedence": {
+            "additionalProperties": false,
+            "description": "Highest role first; one policy governs every Procedure replacement.",
+            "properties": {
+              "revisable_by_procedures": {
+                "default": [
+                  "environment_binding",
+                  "observation",
+                  "derivation"
+                ],
+                "items": {
+                  "enum": [
+                    "normative",
+                    "observation",
+                    "environment_binding",
+                    "derivation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Revisable By Procedures",
+                "type": "array"
+              },
+              "roles": {
+                "default": [
+                  "normative",
+                  "environment_binding",
+                  "observation",
+                  "derivation"
+                ],
+                "items": {
+                  "enum": [
+                    "normative",
+                    "observation",
+                    "environment_binding",
+                    "derivation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Roles",
+                "type": "array"
+              }
+            },
+            "title": "ClaimPrecedence",
+            "type": "object"
+          },
           "ClaimQueryResult": {
             "additionalProperties": false,
             "description": "One replayable canonical read of accepted Claim state.",
@@ -76635,6 +77842,134 @@
             "title": "ClaimStatementProcedureMeasurement",
             "type": "object"
           },
+          "ClaimTemplate": {
+            "additionalProperties": false,
+            "properties": {
+              "effective_from": {
+                "default": null,
+                "title": "Effective From"
+              },
+              "effective_until": {
+                "default": null,
+                "title": "Effective Until"
+              },
+              "inputs": {
+                "default": [],
+                "items": {},
+                "title": "Inputs",
+                "type": "array"
+              },
+              "qualifier": {
+                "default": null,
+                "title": "Qualifier"
+              },
+              "rationale": {
+                "default": "Claim from declared Procedure template.",
+                "title": "Rationale",
+                "type": "string"
+              },
+              "replaces": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "normative",
+                        "observation",
+                        "environment_binding",
+                        "derivation"
+                      ],
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Replaces"
+              },
+              "role": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "normative",
+                      "observation",
+                      "environment_binding",
+                      "derivation"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Role"
+              },
+              "type": {
+                "$ref": "#/$defs/ArtifactNameRef"
+              },
+              "value": {
+                "title": "Value"
+              },
+              "when": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "absent": "#/$defs/Presence",
+                        "all_of": "#/$defs/AllOf",
+                        "any_of": "#/$defs/AnyOf",
+                        "eq": "#/$defs/Comparison",
+                        "ge": "#/$defs/Comparison",
+                        "gt": "#/$defs/Comparison",
+                        "in": "#/$defs/Membership",
+                        "le": "#/$defs/Comparison",
+                        "lt": "#/$defs/Comparison",
+                        "ne": "#/$defs/Comparison",
+                        "not": "#/$defs/Not",
+                        "not_in": "#/$defs/Membership",
+                        "present": "#/$defs/Presence"
+                      },
+                      "propertyName": "op"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/Comparison"
+                      },
+                      {
+                        "$ref": "#/$defs/Membership"
+                      },
+                      {
+                        "$ref": "#/$defs/Presence"
+                      },
+                      {
+                        "$ref": "#/$defs/AllOf"
+                      },
+                      {
+                        "$ref": "#/$defs/AnyOf"
+                      },
+                      {
+                        "$ref": "#/$defs/Not"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "When"
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ],
+            "title": "ClaimTemplate",
+            "type": "object"
+          },
           "ClaimType": {
             "additionalProperties": false,
             "description": "The one ClaimType: what a predicate means, admits and settles.\n\nOptional members are omitted from the wire when absent, so absence and a\nstated value never share a spelling.",
@@ -76658,8 +77993,8 @@
                 "type": "array"
               },
               "artifact_format": {
-                "const": "cruxible-claim-type-v10",
-                "default": "cruxible-claim-type-v10",
+                "const": "cruxible-claim-type-v11",
+                "default": "cruxible-claim-type-v11",
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -76795,6 +78130,11 @@
                 "title": "Member Descriptions",
                 "type": "array"
               },
+              "negative": {
+                "default": false,
+                "title": "Negative",
+                "type": "boolean"
+              },
               "object_kind": {
                 "enum": [
                   "literal",
@@ -76825,6 +78165,22 @@
                 "title": "Pins",
                 "type": "array"
               },
+              "precedence": {
+                "$ref": "#/$defs/ClaimPrecedence",
+                "default": {
+                  "revisable_by_procedures": [
+                    "environment_binding",
+                    "observation",
+                    "derivation"
+                  ],
+                  "roles": [
+                    "normative",
+                    "environment_binding",
+                    "observation",
+                    "derivation"
+                  ]
+                }
+              },
               "predicate": {
                 "title": "Predicate",
                 "type": "string"
@@ -76850,6 +78206,24 @@
                 "title": "Revision Evidence",
                 "type": "string"
               },
+              "unknown_member": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Unknown Member"
+              },
               "unsure_hold_for": {
                 "anyOf": [
                   {
@@ -76860,6 +78234,108 @@
                   }
                 ],
                 "default": null
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "bool": "#/$defs/BoolType",
+                        "capture": "#/$defs/CaptureType",
+                        "contract": "#/$defs/NestedType",
+                        "date": "#/$defs/DateType",
+                        "datetime": "#/$defs/DateTimeType",
+                        "decimal": "#/$defs/DecimalType",
+                        "duration": "#/$defs/DurationType",
+                        "enum": "#/$defs/EnumType",
+                        "enum_of": "#/$defs/EnumOfType",
+                        "field_result": "#/$defs/FieldResultType",
+                        "int": "#/$defs/IntType",
+                        "key": "#/$defs/KeyType",
+                        "key_part": "#/$defs/KeyPartType",
+                        "list": "#/$defs/ListType",
+                        "number": "#/$defs/NumberType",
+                        "record": "#/$defs/RecordType",
+                        "refusal": "#/$defs/RefusalType",
+                        "result": "#/$defs/ResultType",
+                        "string": "#/$defs/StringType",
+                        "subject": "#/$defs/SubjectType",
+                        "variant": "#/$defs/VariantType"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/StringType"
+                      },
+                      {
+                        "$ref": "#/$defs/IntType"
+                      },
+                      {
+                        "$ref": "#/$defs/DecimalType"
+                      },
+                      {
+                        "$ref": "#/$defs/NumberType"
+                      },
+                      {
+                        "$ref": "#/$defs/BoolType"
+                      },
+                      {
+                        "$ref": "#/$defs/DateType"
+                      },
+                      {
+                        "$ref": "#/$defs/DateTimeType"
+                      },
+                      {
+                        "$ref": "#/$defs/DurationType"
+                      },
+                      {
+                        "$ref": "#/$defs/EnumType"
+                      },
+                      {
+                        "$ref": "#/$defs/EnumOfType"
+                      },
+                      {
+                        "$ref": "#/$defs/ListType"
+                      },
+                      {
+                        "$ref": "#/$defs/NestedType"
+                      },
+                      {
+                        "$ref": "#/$defs/VariantType"
+                      },
+                      {
+                        "$ref": "#/$defs/KeyType"
+                      },
+                      {
+                        "$ref": "#/$defs/KeyPartType"
+                      },
+                      {
+                        "$ref": "#/$defs/SubjectType"
+                      },
+                      {
+                        "$ref": "#/$defs/CaptureType"
+                      },
+                      {
+                        "$ref": "#/$defs/FieldResultType"
+                      },
+                      {
+                        "$ref": "#/$defs/RecordType"
+                      },
+                      {
+                        "$ref": "#/$defs/ResultType"
+                      },
+                      {
+                        "$ref": "#/$defs/RefusalType"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Value"
               }
             },
             "required": [
@@ -76907,6 +78383,133 @@
               "description"
             ],
             "title": "ClaimTypeMemberDescription",
+            "type": "object"
+          },
+          "ClaimsNode": {
+            "additionalProperties": false,
+            "properties": {
+              "claims": {
+                "items": {
+                  "$ref": "#/$defs/ClaimTemplate"
+                },
+                "maxItems": 256,
+                "minItems": 1,
+                "title": "Claims",
+                "type": "array"
+              },
+              "for_each": {
+                "title": "For Each"
+              },
+              "kind": {
+                "const": "claims",
+                "default": "claims",
+                "title": "Kind",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "subject": {
+                "$ref": "#/$defs/ClaimsSubject"
+              },
+              "where": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "absent": "#/$defs/Presence",
+                        "all_of": "#/$defs/AllOf",
+                        "any_of": "#/$defs/AnyOf",
+                        "eq": "#/$defs/Comparison",
+                        "ge": "#/$defs/Comparison",
+                        "gt": "#/$defs/Comparison",
+                        "in": "#/$defs/Membership",
+                        "le": "#/$defs/Comparison",
+                        "lt": "#/$defs/Comparison",
+                        "ne": "#/$defs/Comparison",
+                        "not": "#/$defs/Not",
+                        "not_in": "#/$defs/Membership",
+                        "present": "#/$defs/Presence"
+                      },
+                      "propertyName": "op"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/Comparison"
+                      },
+                      {
+                        "$ref": "#/$defs/Membership"
+                      },
+                      {
+                        "$ref": "#/$defs/Presence"
+                      },
+                      {
+                        "$ref": "#/$defs/AllOf"
+                      },
+                      {
+                        "$ref": "#/$defs/AnyOf"
+                      },
+                      {
+                        "$ref": "#/$defs/Not"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Where"
+              }
+            },
+            "required": [
+              "node_id",
+              "for_each",
+              "subject",
+              "claims"
+            ],
+            "title": "ClaimsNode",
+            "type": "object"
+          },
+          "ClaimsSubject": {
+            "additionalProperties": false,
+            "properties": {
+              "create": {
+                "default": "never",
+                "enum": [
+                  "never",
+                  "if_absent"
+                ],
+                "title": "Create",
+                "type": "string"
+              },
+              "key": {
+                "additionalProperties": true,
+                "minProperties": 1,
+                "title": "Key",
+                "type": "object"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "within": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Within"
+              }
+            },
+            "required": [
+              "kind",
+              "key"
+            ],
+            "title": "ClaimsSubject",
             "type": "object"
           },
           "Comparison": {
@@ -77090,6 +78693,70 @@
             "title": "CountOperand",
             "type": "object"
           },
+          "DateTimeType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "datetime",
+                "default": "datetime",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "DateTimeType",
+            "type": "object"
+          },
+          "DateType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "date",
+                "default": "date",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "DateType",
+            "type": "object"
+          },
+          "DecimalType": {
+            "additionalProperties": false,
+            "description": "A decimal; bounds are canonical decimal strings, never floats.",
+            "properties": {
+              "kind": {
+                "const": "decimal",
+                "default": "decimal",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max"
+              },
+              "min": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min"
+              }
+            },
+            "title": "DecimalType",
+            "type": "object"
+          },
           "DeriveCase": {
             "additionalProperties": false,
             "properties": {
@@ -77159,6 +78826,65 @@
             "title": "DeriveCase",
             "type": "object"
           },
+          "DurationType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "duration",
+                "default": "duration",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "DurationType",
+            "type": "object"
+          },
+          "EnumOfType": {
+            "additionalProperties": false,
+            "description": "The members a ClaimType's enum value admits, read from that ClaimType.",
+            "properties": {
+              "claim_type": {
+                "title": "Claim Type",
+                "type": "string"
+              },
+              "kind": {
+                "const": "enum_of",
+                "default": "enum_of",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_type"
+            ],
+            "title": "EnumOfType",
+            "type": "object"
+          },
+          "EnumType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "enum",
+                "default": "enum",
+                "title": "Kind",
+                "type": "string"
+              },
+              "members": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 1024,
+                "minItems": 1,
+                "title": "Members",
+                "type": "array"
+              }
+            },
+            "required": [
+              "members"
+            ],
+            "title": "EnumType",
+            "type": "object"
+          },
           "ExtractField": {
             "additionalProperties": false,
             "description": "Where one field is read, and how its lexeme becomes a typed value.\n\n``at`` is a JSON Pointer relative to the record (or to the document, for a\nheader field), or a CSV column name. ``parse`` converts a text lexeme\n(``date``, ``datetime``, ``int``, ``decimal``, ``bool``); ``type`` states\nthe field's type where no row Contract does (keys and header fields);\n``canonicalize: claim_type`` matches an enum member case-insensitively.\n``presence`` overrides the row Contract's optionality.",
@@ -77216,6 +78942,19 @@
                 ],
                 "default": null,
                 "title": "Presence"
+              },
+              "project": {
+                "anyOf": [
+                  {
+                    "const": "utc_date",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Project"
               },
               "type": {
                 "anyOf": [
@@ -77337,6 +79076,117 @@
               "as"
             ],
             "title": "ExtractNode",
+            "type": "object"
+          },
+          "FieldResultType": {
+            "additionalProperties": false,
+            "description": "``variant{present: {value: T, at}, absent: {}, invalid: {problem}}``.",
+            "properties": {
+              "kind": {
+                "const": "field_result",
+                "default": "field_result",
+                "title": "Kind",
+                "type": "string"
+              },
+              "value": {
+                "discriminator": {
+                  "mapping": {
+                    "bool": "#/$defs/BoolType",
+                    "capture": "#/$defs/CaptureType",
+                    "contract": "#/$defs/NestedType",
+                    "date": "#/$defs/DateType",
+                    "datetime": "#/$defs/DateTimeType",
+                    "decimal": "#/$defs/DecimalType",
+                    "duration": "#/$defs/DurationType",
+                    "enum": "#/$defs/EnumType",
+                    "enum_of": "#/$defs/EnumOfType",
+                    "field_result": "#/$defs/FieldResultType",
+                    "int": "#/$defs/IntType",
+                    "key": "#/$defs/KeyType",
+                    "key_part": "#/$defs/KeyPartType",
+                    "list": "#/$defs/ListType",
+                    "number": "#/$defs/NumberType",
+                    "record": "#/$defs/RecordType",
+                    "refusal": "#/$defs/RefusalType",
+                    "result": "#/$defs/ResultType",
+                    "string": "#/$defs/StringType",
+                    "subject": "#/$defs/SubjectType",
+                    "variant": "#/$defs/VariantType"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/StringType"
+                  },
+                  {
+                    "$ref": "#/$defs/IntType"
+                  },
+                  {
+                    "$ref": "#/$defs/DecimalType"
+                  },
+                  {
+                    "$ref": "#/$defs/NumberType"
+                  },
+                  {
+                    "$ref": "#/$defs/BoolType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateTimeType"
+                  },
+                  {
+                    "$ref": "#/$defs/DurationType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumOfType"
+                  },
+                  {
+                    "$ref": "#/$defs/ListType"
+                  },
+                  {
+                    "$ref": "#/$defs/NestedType"
+                  },
+                  {
+                    "$ref": "#/$defs/VariantType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyPartType"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectType"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureType"
+                  },
+                  {
+                    "$ref": "#/$defs/FieldResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RecordType"
+                  },
+                  {
+                    "$ref": "#/$defs/ResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RefusalType"
+                  }
+                ],
+                "title": "Value"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "FieldResultType",
             "type": "object"
           },
           "FreezeRequirement": {
@@ -77594,6 +79444,43 @@
             "title": "InboxEgressNode",
             "type": "object"
           },
+          "IntType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "int",
+                "default": "int",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max"
+              },
+              "min": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min"
+              }
+            },
+            "title": "IntType",
+            "type": "object"
+          },
           "InvokeNode": {
             "additionalProperties": false,
             "description": "A call to a named accepted Procedure under the enclosing run's limits.",
@@ -77641,6 +79528,170 @@
               "as"
             ],
             "title": "InvokeNode",
+            "type": "object"
+          },
+          "KeyPartType": {
+            "additionalProperties": false,
+            "description": "``key_part<K:part>``: one key part of kind ``K``, canonicalized by that part's rule.\n\n``part`` names the key ClaimType by predicate or by its last name under the\nkind (``key_part<security.vulnerability:cve_id>``).",
+            "properties": {
+              "kind": {
+                "const": "key_part",
+                "default": "key_part",
+                "title": "Kind",
+                "type": "string"
+              },
+              "part": {
+                "title": "Part",
+                "type": "string"
+              },
+              "subject_kind": {
+                "title": "Subject Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject_kind",
+              "part"
+            ],
+            "title": "KeyPartType",
+            "type": "object"
+          },
+          "KeyType": {
+            "additionalProperties": false,
+            "description": "A Subject key of one kind; core canonicalizes it with the kind's identity rule.\n\nThe value is the key: the bare value for a one-key kind, or a mapping of\nevery key part to its value for a composite one (canonically keyed by each\npart's last name under the kind; a conversion also reads full predicates).\nCore canonicalizes each part with its key ClaimType's canonical form and the\nSubjectKind's normalizer for it.",
+            "properties": {
+              "kind": {
+                "const": "key",
+                "default": "key",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject_kind": {
+                "title": "Subject Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject_kind"
+            ],
+            "title": "KeyType",
+            "type": "object"
+          },
+          "ListType": {
+            "additionalProperties": false,
+            "properties": {
+              "item": {
+                "discriminator": {
+                  "mapping": {
+                    "bool": "#/$defs/BoolType",
+                    "capture": "#/$defs/CaptureType",
+                    "contract": "#/$defs/NestedType",
+                    "date": "#/$defs/DateType",
+                    "datetime": "#/$defs/DateTimeType",
+                    "decimal": "#/$defs/DecimalType",
+                    "duration": "#/$defs/DurationType",
+                    "enum": "#/$defs/EnumType",
+                    "enum_of": "#/$defs/EnumOfType",
+                    "field_result": "#/$defs/FieldResultType",
+                    "int": "#/$defs/IntType",
+                    "key": "#/$defs/KeyType",
+                    "key_part": "#/$defs/KeyPartType",
+                    "list": "#/$defs/ListType",
+                    "number": "#/$defs/NumberType",
+                    "record": "#/$defs/RecordType",
+                    "refusal": "#/$defs/RefusalType",
+                    "result": "#/$defs/ResultType",
+                    "string": "#/$defs/StringType",
+                    "subject": "#/$defs/SubjectType",
+                    "variant": "#/$defs/VariantType"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/StringType"
+                  },
+                  {
+                    "$ref": "#/$defs/IntType"
+                  },
+                  {
+                    "$ref": "#/$defs/DecimalType"
+                  },
+                  {
+                    "$ref": "#/$defs/NumberType"
+                  },
+                  {
+                    "$ref": "#/$defs/BoolType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateTimeType"
+                  },
+                  {
+                    "$ref": "#/$defs/DurationType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumOfType"
+                  },
+                  {
+                    "$ref": "#/$defs/ListType"
+                  },
+                  {
+                    "$ref": "#/$defs/NestedType"
+                  },
+                  {
+                    "$ref": "#/$defs/VariantType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyPartType"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectType"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureType"
+                  },
+                  {
+                    "$ref": "#/$defs/FieldResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RecordType"
+                  },
+                  {
+                    "$ref": "#/$defs/ResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RefusalType"
+                  }
+                ],
+                "title": "Item"
+              },
+              "kind": {
+                "const": "list",
+                "default": "list",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max_items": {
+                "maximum": 1000000,
+                "minimum": 1,
+                "title": "Max Items",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "item",
+              "max_items"
+            ],
+            "title": "ListType",
             "type": "object"
           },
           "LiteralOperand": {
@@ -77726,6 +79777,26 @@
             "title": "Membership",
             "type": "object"
           },
+          "NestedType": {
+            "additionalProperties": false,
+            "description": "A field holding one record of another Contract version.",
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "kind": {
+                "const": "contract",
+                "default": "contract",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract"
+            ],
+            "title": "NestedType",
+            "type": "object"
+          },
           "Not": {
             "additionalProperties": false,
             "properties": {
@@ -77781,6 +79852,44 @@
               "of"
             ],
             "title": "Not",
+            "type": "object"
+          },
+          "NumberType": {
+            "additionalProperties": false,
+            "description": "A number, integral or not. Its canonical encoding is an integer when the value\nis integral and canonical decimal text otherwise, so ``1`` and ``1.0`` are equal\n(:func:`canonical_number`). Bounds are canonical decimal strings, never floats.",
+            "properties": {
+              "kind": {
+                "const": "number",
+                "default": "number",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max"
+              },
+              "min": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min"
+              }
+            },
+            "title": "NumberType",
             "type": "object"
           },
           "Presence": {
@@ -77904,6 +80013,7 @@
                   "discriminator": {
                     "mapping": {
                       "call": "#/$defs/CallNode",
+                      "claims": "#/$defs/ClaimsNode",
                       "emit_capture": "#/$defs/CaptureEgressNode",
                       "extract": "#/$defs/ExtractNode",
                       "guard": "#/$defs/GuardNode",
@@ -77950,6 +80060,9 @@
                     },
                     {
                       "$ref": "#/$defs/InboxEgressNode"
+                    },
+                    {
+                      "$ref": "#/$defs/ClaimsNode"
                     },
                     {
                       "$ref": "#/$defs/ProposeChangeSetNode"
@@ -78393,6 +80506,11 @@
               },
               "in": {
                 "$ref": "#/$defs/ContractRef"
+              },
+              "may_truncate": {
+                "default": false,
+                "title": "May Truncate",
+                "type": "boolean"
               },
               "out": {
                 "$ref": "#/$defs/ContractRef"
@@ -79453,6 +81571,26 @@
             "title": "ReadNode",
             "type": "object"
           },
+          "RecordType": {
+            "additionalProperties": false,
+            "description": "``{record: <locator>, key, fields: {f: field_result<C.f>}}``.",
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "kind": {
+                "const": "record",
+                "default": "record",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract"
+            ],
+            "title": "RecordType",
+            "type": "object"
+          },
           "Ref": {
             "additionalProperties": false,
             "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, or list positions as digits. A ``param`` reference names the\nparameter as its first path member.",
@@ -79492,6 +81630,26 @@
               "$ref"
             ],
             "title": "Ref",
+            "type": "object"
+          },
+          "RefusalType": {
+            "additionalProperties": false,
+            "description": "One operation refusal code's typed body.",
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "kind": {
+                "const": "refusal",
+                "default": "refusal",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract"
+            ],
+            "title": "RefusalType",
             "type": "object"
           },
           "RepeatBodyNode": {
@@ -79705,6 +81863,26 @@
             "title": "RepeatNode",
             "type": "object"
           },
+          "ResultType": {
+            "additionalProperties": false,
+            "description": "``variant{record: record<C>, invalid_record, duplicate}``; consumed via ``.records``.",
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "kind": {
+                "const": "result",
+                "default": "result",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract"
+            ],
+            "title": "ResultType",
+            "type": "object"
+          },
           "SelectNode": {
             "additionalProperties": false,
             "description": "Join mutually exclusive record producers without guessing a winner.",
@@ -79881,6 +82059,78 @@
               }
             },
             "title": "ShapeField",
+            "type": "object"
+          },
+          "StringType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "string",
+                "default": "string",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max_len": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Len"
+              },
+              "min_len": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min Len"
+              },
+              "pattern": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Pattern"
+              }
+            },
+            "title": "StringType",
+            "type": "object"
+          },
+          "SubjectType": {
+            "additionalProperties": false,
+            "description": "A Subject of one kind. Reads produce it; an operation may only echo its input's.",
+            "properties": {
+              "kind": {
+                "const": "subject",
+                "default": "subject",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject_kind": {
+                "title": "Subject Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject_kind"
+            ],
+            "title": "SubjectType",
             "type": "object"
           },
           "TransformAggregateSpec": {
@@ -80306,6 +82556,32 @@
               "inputs"
             ],
             "title": "TransformUnionSpec",
+            "type": "object"
+          },
+          "VariantType": {
+            "additionalProperties": false,
+            "description": "A tagged choice; each arm is one Contract version.",
+            "properties": {
+              "arms": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/ContractRef"
+                },
+                "maxProperties": 64,
+                "minProperties": 1,
+                "title": "Arms",
+                "type": "object"
+              },
+              "kind": {
+                "const": "variant",
+                "default": "variant",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "arms"
+            ],
+            "title": "VariantType",
             "type": "object"
           }
         },
@@ -83389,6 +85665,19 @@
             "title": "ArtifactPin",
             "type": "object"
           },
+          "BoolType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "bool",
+                "default": "bool",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "BoolType",
+            "type": "object"
+          },
           "CallNode": {
             "additionalProperties": false,
             "description": "A typed call: the slot names the signature; the Line names the operation.\n\n``captures`` pins, for each ``capture<K>`` field of the slot's out Contract,\nthe accepted CaptureContract the field's bytes are committed as (``K``\nitself, or any CaptureContract for the generic ``capture<workspace.file>``\nof the core-served read). A call with captures acquires: its capture\nfields are committed byte-exact as Captures and its other fields are\nnormalized, and its value names each Capture by digest.",
@@ -83532,6 +85821,27 @@
               "result"
             ],
             "title": "CaptureEgressNode",
+            "type": "object"
+          },
+          "CaptureType": {
+            "additionalProperties": false,
+            "description": "Retained bytes of one CaptureKind, by Capture digest.",
+            "properties": {
+              "capture_kind": {
+                "title": "Capture Kind",
+                "type": "string"
+              },
+              "kind": {
+                "const": "capture",
+                "default": "capture",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "capture_kind"
+            ],
+            "title": "CaptureType",
             "type": "object"
           },
           "ClaimAdmissionPolicy": {
@@ -83939,6 +86249,51 @@
             "title": "ClaimInverseSlotKey",
             "type": "object"
           },
+          "ClaimPrecedence": {
+            "additionalProperties": false,
+            "description": "Highest role first; one policy governs every Procedure replacement.",
+            "properties": {
+              "revisable_by_procedures": {
+                "default": [
+                  "environment_binding",
+                  "observation",
+                  "derivation"
+                ],
+                "items": {
+                  "enum": [
+                    "normative",
+                    "observation",
+                    "environment_binding",
+                    "derivation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Revisable By Procedures",
+                "type": "array"
+              },
+              "roles": {
+                "default": [
+                  "normative",
+                  "environment_binding",
+                  "observation",
+                  "derivation"
+                ],
+                "items": {
+                  "enum": [
+                    "normative",
+                    "observation",
+                    "environment_binding",
+                    "derivation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Roles",
+                "type": "array"
+              }
+            },
+            "title": "ClaimPrecedence",
+            "type": "object"
+          },
           "ClaimQueryResult": {
             "additionalProperties": false,
             "description": "One replayable canonical read of accepted Claim state.",
@@ -84211,6 +86566,134 @@
             "title": "ClaimStatementProcedureMeasurement",
             "type": "object"
           },
+          "ClaimTemplate": {
+            "additionalProperties": false,
+            "properties": {
+              "effective_from": {
+                "default": null,
+                "title": "Effective From"
+              },
+              "effective_until": {
+                "default": null,
+                "title": "Effective Until"
+              },
+              "inputs": {
+                "default": [],
+                "items": {},
+                "title": "Inputs",
+                "type": "array"
+              },
+              "qualifier": {
+                "default": null,
+                "title": "Qualifier"
+              },
+              "rationale": {
+                "default": "Claim from declared Procedure template.",
+                "title": "Rationale",
+                "type": "string"
+              },
+              "replaces": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "normative",
+                        "observation",
+                        "environment_binding",
+                        "derivation"
+                      ],
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Replaces"
+              },
+              "role": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "normative",
+                      "observation",
+                      "environment_binding",
+                      "derivation"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Role"
+              },
+              "type": {
+                "$ref": "#/$defs/ArtifactNameRef"
+              },
+              "value": {
+                "title": "Value"
+              },
+              "when": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "absent": "#/$defs/Presence",
+                        "all_of": "#/$defs/AllOf",
+                        "any_of": "#/$defs/AnyOf",
+                        "eq": "#/$defs/Comparison",
+                        "ge": "#/$defs/Comparison",
+                        "gt": "#/$defs/Comparison",
+                        "in": "#/$defs/Membership",
+                        "le": "#/$defs/Comparison",
+                        "lt": "#/$defs/Comparison",
+                        "ne": "#/$defs/Comparison",
+                        "not": "#/$defs/Not",
+                        "not_in": "#/$defs/Membership",
+                        "present": "#/$defs/Presence"
+                      },
+                      "propertyName": "op"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/Comparison"
+                      },
+                      {
+                        "$ref": "#/$defs/Membership"
+                      },
+                      {
+                        "$ref": "#/$defs/Presence"
+                      },
+                      {
+                        "$ref": "#/$defs/AllOf"
+                      },
+                      {
+                        "$ref": "#/$defs/AnyOf"
+                      },
+                      {
+                        "$ref": "#/$defs/Not"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "When"
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ],
+            "title": "ClaimTemplate",
+            "type": "object"
+          },
           "ClaimType": {
             "additionalProperties": false,
             "description": "The one ClaimType: what a predicate means, admits and settles.\n\nOptional members are omitted from the wire when absent, so absence and a\nstated value never share a spelling.",
@@ -84234,8 +86717,8 @@
                 "type": "array"
               },
               "artifact_format": {
-                "const": "cruxible-claim-type-v10",
-                "default": "cruxible-claim-type-v10",
+                "const": "cruxible-claim-type-v11",
+                "default": "cruxible-claim-type-v11",
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -84371,6 +86854,11 @@
                 "title": "Member Descriptions",
                 "type": "array"
               },
+              "negative": {
+                "default": false,
+                "title": "Negative",
+                "type": "boolean"
+              },
               "object_kind": {
                 "enum": [
                   "literal",
@@ -84401,6 +86889,22 @@
                 "title": "Pins",
                 "type": "array"
               },
+              "precedence": {
+                "$ref": "#/$defs/ClaimPrecedence",
+                "default": {
+                  "revisable_by_procedures": [
+                    "environment_binding",
+                    "observation",
+                    "derivation"
+                  ],
+                  "roles": [
+                    "normative",
+                    "environment_binding",
+                    "observation",
+                    "derivation"
+                  ]
+                }
+              },
               "predicate": {
                 "title": "Predicate",
                 "type": "string"
@@ -84426,6 +86930,24 @@
                 "title": "Revision Evidence",
                 "type": "string"
               },
+              "unknown_member": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Unknown Member"
+              },
               "unsure_hold_for": {
                 "anyOf": [
                   {
@@ -84436,6 +86958,108 @@
                   }
                 ],
                 "default": null
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "bool": "#/$defs/BoolType",
+                        "capture": "#/$defs/CaptureType",
+                        "contract": "#/$defs/NestedType",
+                        "date": "#/$defs/DateType",
+                        "datetime": "#/$defs/DateTimeType",
+                        "decimal": "#/$defs/DecimalType",
+                        "duration": "#/$defs/DurationType",
+                        "enum": "#/$defs/EnumType",
+                        "enum_of": "#/$defs/EnumOfType",
+                        "field_result": "#/$defs/FieldResultType",
+                        "int": "#/$defs/IntType",
+                        "key": "#/$defs/KeyType",
+                        "key_part": "#/$defs/KeyPartType",
+                        "list": "#/$defs/ListType",
+                        "number": "#/$defs/NumberType",
+                        "record": "#/$defs/RecordType",
+                        "refusal": "#/$defs/RefusalType",
+                        "result": "#/$defs/ResultType",
+                        "string": "#/$defs/StringType",
+                        "subject": "#/$defs/SubjectType",
+                        "variant": "#/$defs/VariantType"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/StringType"
+                      },
+                      {
+                        "$ref": "#/$defs/IntType"
+                      },
+                      {
+                        "$ref": "#/$defs/DecimalType"
+                      },
+                      {
+                        "$ref": "#/$defs/NumberType"
+                      },
+                      {
+                        "$ref": "#/$defs/BoolType"
+                      },
+                      {
+                        "$ref": "#/$defs/DateType"
+                      },
+                      {
+                        "$ref": "#/$defs/DateTimeType"
+                      },
+                      {
+                        "$ref": "#/$defs/DurationType"
+                      },
+                      {
+                        "$ref": "#/$defs/EnumType"
+                      },
+                      {
+                        "$ref": "#/$defs/EnumOfType"
+                      },
+                      {
+                        "$ref": "#/$defs/ListType"
+                      },
+                      {
+                        "$ref": "#/$defs/NestedType"
+                      },
+                      {
+                        "$ref": "#/$defs/VariantType"
+                      },
+                      {
+                        "$ref": "#/$defs/KeyType"
+                      },
+                      {
+                        "$ref": "#/$defs/KeyPartType"
+                      },
+                      {
+                        "$ref": "#/$defs/SubjectType"
+                      },
+                      {
+                        "$ref": "#/$defs/CaptureType"
+                      },
+                      {
+                        "$ref": "#/$defs/FieldResultType"
+                      },
+                      {
+                        "$ref": "#/$defs/RecordType"
+                      },
+                      {
+                        "$ref": "#/$defs/ResultType"
+                      },
+                      {
+                        "$ref": "#/$defs/RefusalType"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Value"
               }
             },
             "required": [
@@ -84483,6 +87107,133 @@
               "description"
             ],
             "title": "ClaimTypeMemberDescription",
+            "type": "object"
+          },
+          "ClaimsNode": {
+            "additionalProperties": false,
+            "properties": {
+              "claims": {
+                "items": {
+                  "$ref": "#/$defs/ClaimTemplate"
+                },
+                "maxItems": 256,
+                "minItems": 1,
+                "title": "Claims",
+                "type": "array"
+              },
+              "for_each": {
+                "title": "For Each"
+              },
+              "kind": {
+                "const": "claims",
+                "default": "claims",
+                "title": "Kind",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "subject": {
+                "$ref": "#/$defs/ClaimsSubject"
+              },
+              "where": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "absent": "#/$defs/Presence",
+                        "all_of": "#/$defs/AllOf",
+                        "any_of": "#/$defs/AnyOf",
+                        "eq": "#/$defs/Comparison",
+                        "ge": "#/$defs/Comparison",
+                        "gt": "#/$defs/Comparison",
+                        "in": "#/$defs/Membership",
+                        "le": "#/$defs/Comparison",
+                        "lt": "#/$defs/Comparison",
+                        "ne": "#/$defs/Comparison",
+                        "not": "#/$defs/Not",
+                        "not_in": "#/$defs/Membership",
+                        "present": "#/$defs/Presence"
+                      },
+                      "propertyName": "op"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/Comparison"
+                      },
+                      {
+                        "$ref": "#/$defs/Membership"
+                      },
+                      {
+                        "$ref": "#/$defs/Presence"
+                      },
+                      {
+                        "$ref": "#/$defs/AllOf"
+                      },
+                      {
+                        "$ref": "#/$defs/AnyOf"
+                      },
+                      {
+                        "$ref": "#/$defs/Not"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Where"
+              }
+            },
+            "required": [
+              "node_id",
+              "for_each",
+              "subject",
+              "claims"
+            ],
+            "title": "ClaimsNode",
+            "type": "object"
+          },
+          "ClaimsSubject": {
+            "additionalProperties": false,
+            "properties": {
+              "create": {
+                "default": "never",
+                "enum": [
+                  "never",
+                  "if_absent"
+                ],
+                "title": "Create",
+                "type": "string"
+              },
+              "key": {
+                "additionalProperties": true,
+                "minProperties": 1,
+                "title": "Key",
+                "type": "object"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "within": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Within"
+              }
+            },
+            "required": [
+              "kind",
+              "key"
+            ],
+            "title": "ClaimsSubject",
             "type": "object"
           },
           "Comparison": {
@@ -84666,6 +87417,70 @@
             "title": "CountOperand",
             "type": "object"
           },
+          "DateTimeType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "datetime",
+                "default": "datetime",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "DateTimeType",
+            "type": "object"
+          },
+          "DateType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "date",
+                "default": "date",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "DateType",
+            "type": "object"
+          },
+          "DecimalType": {
+            "additionalProperties": false,
+            "description": "A decimal; bounds are canonical decimal strings, never floats.",
+            "properties": {
+              "kind": {
+                "const": "decimal",
+                "default": "decimal",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max"
+              },
+              "min": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min"
+              }
+            },
+            "title": "DecimalType",
+            "type": "object"
+          },
           "DeriveCase": {
             "additionalProperties": false,
             "properties": {
@@ -84733,6 +87548,65 @@
               "value"
             ],
             "title": "DeriveCase",
+            "type": "object"
+          },
+          "DurationType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "duration",
+                "default": "duration",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "DurationType",
+            "type": "object"
+          },
+          "EnumOfType": {
+            "additionalProperties": false,
+            "description": "The members a ClaimType's enum value admits, read from that ClaimType.",
+            "properties": {
+              "claim_type": {
+                "title": "Claim Type",
+                "type": "string"
+              },
+              "kind": {
+                "const": "enum_of",
+                "default": "enum_of",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_type"
+            ],
+            "title": "EnumOfType",
+            "type": "object"
+          },
+          "EnumType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "enum",
+                "default": "enum",
+                "title": "Kind",
+                "type": "string"
+              },
+              "members": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 1024,
+                "minItems": 1,
+                "title": "Members",
+                "type": "array"
+              }
+            },
+            "required": [
+              "members"
+            ],
+            "title": "EnumType",
             "type": "object"
           },
           "ExactContentRef": {
@@ -84829,6 +87703,19 @@
                 ],
                 "default": null,
                 "title": "Presence"
+              },
+              "project": {
+                "anyOf": [
+                  {
+                    "const": "utc_date",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Project"
               },
               "type": {
                 "anyOf": [
@@ -84950,6 +87837,117 @@
               "as"
             ],
             "title": "ExtractNode",
+            "type": "object"
+          },
+          "FieldResultType": {
+            "additionalProperties": false,
+            "description": "``variant{present: {value: T, at}, absent: {}, invalid: {problem}}``.",
+            "properties": {
+              "kind": {
+                "const": "field_result",
+                "default": "field_result",
+                "title": "Kind",
+                "type": "string"
+              },
+              "value": {
+                "discriminator": {
+                  "mapping": {
+                    "bool": "#/$defs/BoolType",
+                    "capture": "#/$defs/CaptureType",
+                    "contract": "#/$defs/NestedType",
+                    "date": "#/$defs/DateType",
+                    "datetime": "#/$defs/DateTimeType",
+                    "decimal": "#/$defs/DecimalType",
+                    "duration": "#/$defs/DurationType",
+                    "enum": "#/$defs/EnumType",
+                    "enum_of": "#/$defs/EnumOfType",
+                    "field_result": "#/$defs/FieldResultType",
+                    "int": "#/$defs/IntType",
+                    "key": "#/$defs/KeyType",
+                    "key_part": "#/$defs/KeyPartType",
+                    "list": "#/$defs/ListType",
+                    "number": "#/$defs/NumberType",
+                    "record": "#/$defs/RecordType",
+                    "refusal": "#/$defs/RefusalType",
+                    "result": "#/$defs/ResultType",
+                    "string": "#/$defs/StringType",
+                    "subject": "#/$defs/SubjectType",
+                    "variant": "#/$defs/VariantType"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/StringType"
+                  },
+                  {
+                    "$ref": "#/$defs/IntType"
+                  },
+                  {
+                    "$ref": "#/$defs/DecimalType"
+                  },
+                  {
+                    "$ref": "#/$defs/NumberType"
+                  },
+                  {
+                    "$ref": "#/$defs/BoolType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateTimeType"
+                  },
+                  {
+                    "$ref": "#/$defs/DurationType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumOfType"
+                  },
+                  {
+                    "$ref": "#/$defs/ListType"
+                  },
+                  {
+                    "$ref": "#/$defs/NestedType"
+                  },
+                  {
+                    "$ref": "#/$defs/VariantType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyPartType"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectType"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureType"
+                  },
+                  {
+                    "$ref": "#/$defs/FieldResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RecordType"
+                  },
+                  {
+                    "$ref": "#/$defs/ResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RefusalType"
+                  }
+                ],
+                "title": "Value"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "FieldResultType",
             "type": "object"
           },
           "FreezeRequirement": {
@@ -85207,6 +88205,43 @@
             "title": "InboxEgressNode",
             "type": "object"
           },
+          "IntType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "int",
+                "default": "int",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max"
+              },
+              "min": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min"
+              }
+            },
+            "title": "IntType",
+            "type": "object"
+          },
           "InvokeNode": {
             "additionalProperties": false,
             "description": "A call to a named accepted Procedure under the enclosing run's limits.",
@@ -85254,6 +88289,170 @@
               "as"
             ],
             "title": "InvokeNode",
+            "type": "object"
+          },
+          "KeyPartType": {
+            "additionalProperties": false,
+            "description": "``key_part<K:part>``: one key part of kind ``K``, canonicalized by that part's rule.\n\n``part`` names the key ClaimType by predicate or by its last name under the\nkind (``key_part<security.vulnerability:cve_id>``).",
+            "properties": {
+              "kind": {
+                "const": "key_part",
+                "default": "key_part",
+                "title": "Kind",
+                "type": "string"
+              },
+              "part": {
+                "title": "Part",
+                "type": "string"
+              },
+              "subject_kind": {
+                "title": "Subject Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject_kind",
+              "part"
+            ],
+            "title": "KeyPartType",
+            "type": "object"
+          },
+          "KeyType": {
+            "additionalProperties": false,
+            "description": "A Subject key of one kind; core canonicalizes it with the kind's identity rule.\n\nThe value is the key: the bare value for a one-key kind, or a mapping of\nevery key part to its value for a composite one (canonically keyed by each\npart's last name under the kind; a conversion also reads full predicates).\nCore canonicalizes each part with its key ClaimType's canonical form and the\nSubjectKind's normalizer for it.",
+            "properties": {
+              "kind": {
+                "const": "key",
+                "default": "key",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject_kind": {
+                "title": "Subject Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject_kind"
+            ],
+            "title": "KeyType",
+            "type": "object"
+          },
+          "ListType": {
+            "additionalProperties": false,
+            "properties": {
+              "item": {
+                "discriminator": {
+                  "mapping": {
+                    "bool": "#/$defs/BoolType",
+                    "capture": "#/$defs/CaptureType",
+                    "contract": "#/$defs/NestedType",
+                    "date": "#/$defs/DateType",
+                    "datetime": "#/$defs/DateTimeType",
+                    "decimal": "#/$defs/DecimalType",
+                    "duration": "#/$defs/DurationType",
+                    "enum": "#/$defs/EnumType",
+                    "enum_of": "#/$defs/EnumOfType",
+                    "field_result": "#/$defs/FieldResultType",
+                    "int": "#/$defs/IntType",
+                    "key": "#/$defs/KeyType",
+                    "key_part": "#/$defs/KeyPartType",
+                    "list": "#/$defs/ListType",
+                    "number": "#/$defs/NumberType",
+                    "record": "#/$defs/RecordType",
+                    "refusal": "#/$defs/RefusalType",
+                    "result": "#/$defs/ResultType",
+                    "string": "#/$defs/StringType",
+                    "subject": "#/$defs/SubjectType",
+                    "variant": "#/$defs/VariantType"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/StringType"
+                  },
+                  {
+                    "$ref": "#/$defs/IntType"
+                  },
+                  {
+                    "$ref": "#/$defs/DecimalType"
+                  },
+                  {
+                    "$ref": "#/$defs/NumberType"
+                  },
+                  {
+                    "$ref": "#/$defs/BoolType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateTimeType"
+                  },
+                  {
+                    "$ref": "#/$defs/DurationType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumOfType"
+                  },
+                  {
+                    "$ref": "#/$defs/ListType"
+                  },
+                  {
+                    "$ref": "#/$defs/NestedType"
+                  },
+                  {
+                    "$ref": "#/$defs/VariantType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyPartType"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectType"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureType"
+                  },
+                  {
+                    "$ref": "#/$defs/FieldResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RecordType"
+                  },
+                  {
+                    "$ref": "#/$defs/ResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RefusalType"
+                  }
+                ],
+                "title": "Item"
+              },
+              "kind": {
+                "const": "list",
+                "default": "list",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max_items": {
+                "maximum": 1000000,
+                "minimum": 1,
+                "title": "Max Items",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "item",
+              "max_items"
+            ],
+            "title": "ListType",
             "type": "object"
           },
           "LiteralOperand": {
@@ -85339,6 +88538,26 @@
             "title": "Membership",
             "type": "object"
           },
+          "NestedType": {
+            "additionalProperties": false,
+            "description": "A field holding one record of another Contract version.",
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "kind": {
+                "const": "contract",
+                "default": "contract",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract"
+            ],
+            "title": "NestedType",
+            "type": "object"
+          },
           "Not": {
             "additionalProperties": false,
             "properties": {
@@ -85394,6 +88613,44 @@
               "of"
             ],
             "title": "Not",
+            "type": "object"
+          },
+          "NumberType": {
+            "additionalProperties": false,
+            "description": "A number, integral or not. Its canonical encoding is an integer when the value\nis integral and canonical decimal text otherwise, so ``1`` and ``1.0`` are equal\n(:func:`canonical_number`). Bounds are canonical decimal strings, never floats.",
+            "properties": {
+              "kind": {
+                "const": "number",
+                "default": "number",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max"
+              },
+              "min": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min"
+              }
+            },
+            "title": "NumberType",
             "type": "object"
           },
           "Presence": {
@@ -85517,6 +88774,7 @@
                   "discriminator": {
                     "mapping": {
                       "call": "#/$defs/CallNode",
+                      "claims": "#/$defs/ClaimsNode",
                       "emit_capture": "#/$defs/CaptureEgressNode",
                       "extract": "#/$defs/ExtractNode",
                       "guard": "#/$defs/GuardNode",
@@ -85563,6 +88821,9 @@
                     },
                     {
                       "$ref": "#/$defs/InboxEgressNode"
+                    },
+                    {
+                      "$ref": "#/$defs/ClaimsNode"
                     },
                     {
                       "$ref": "#/$defs/ProposeChangeSetNode"
@@ -86006,6 +89267,11 @@
               },
               "in": {
                 "$ref": "#/$defs/ContractRef"
+              },
+              "may_truncate": {
+                "default": false,
+                "title": "May Truncate",
+                "type": "boolean"
               },
               "out": {
                 "$ref": "#/$defs/ContractRef"
@@ -87342,6 +90608,26 @@
             "title": "ReadNode",
             "type": "object"
           },
+          "RecordType": {
+            "additionalProperties": false,
+            "description": "``{record: <locator>, key, fields: {f: field_result<C.f>}}``.",
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "kind": {
+                "const": "record",
+                "default": "record",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract"
+            ],
+            "title": "RecordType",
+            "type": "object"
+          },
           "Ref": {
             "additionalProperties": false,
             "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, or list positions as digits. A ``param`` reference names the\nparameter as its first path member.",
@@ -87381,6 +90667,26 @@
               "$ref"
             ],
             "title": "Ref",
+            "type": "object"
+          },
+          "RefusalType": {
+            "additionalProperties": false,
+            "description": "One operation refusal code's typed body.",
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "kind": {
+                "const": "refusal",
+                "default": "refusal",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract"
+            ],
+            "title": "RefusalType",
             "type": "object"
           },
           "RepeatBodyNode": {
@@ -87592,6 +90898,26 @@
               "as"
             ],
             "title": "RepeatNode",
+            "type": "object"
+          },
+          "ResultType": {
+            "additionalProperties": false,
+            "description": "``variant{record: record<C>, invalid_record, duplicate}``; consumed via ``.records``.",
+            "properties": {
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "kind": {
+                "const": "result",
+                "default": "result",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract"
+            ],
+            "title": "ResultType",
             "type": "object"
           },
           "SelectNode": {
@@ -87821,6 +91147,78 @@
                 "type": "null"
               }
             ]
+          },
+          "StringType": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "string",
+                "default": "string",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max_len": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Len"
+              },
+              "min_len": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min Len"
+              },
+              "pattern": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Pattern"
+              }
+            },
+            "title": "StringType",
+            "type": "object"
+          },
+          "SubjectType": {
+            "additionalProperties": false,
+            "description": "A Subject of one kind. Reads produce it; an operation may only echo its input's.",
+            "properties": {
+              "kind": {
+                "const": "subject",
+                "default": "subject",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject_kind": {
+                "title": "Subject Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject_kind"
+            ],
+            "title": "SubjectType",
+            "type": "object"
           },
           "TransformAggregateSpec": {
             "additionalProperties": false,
@@ -88283,6 +91681,32 @@
               "length"
             ],
             "title": "TruncatedText",
+            "type": "object"
+          },
+          "VariantType": {
+            "additionalProperties": false,
+            "description": "A tagged choice; each arm is one Contract version.",
+            "properties": {
+              "arms": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/ContractRef"
+                },
+                "maxProperties": 64,
+                "minProperties": 1,
+                "title": "Arms",
+                "type": "object"
+              },
+              "kind": {
+                "const": "variant",
+                "default": "variant",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "arms"
+            ],
+            "title": "VariantType",
             "type": "object"
           },
           "WholeValueRead": {

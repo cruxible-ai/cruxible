@@ -6,7 +6,8 @@ item it settles stays near its floor (one Claim built, its digests taken once,
 its bytes written once, one journal record, one entry in the change set), so a
 re-encode or re-hash of one item's payloads cannot creep back unnoticed.
 
-One world runs a fan-out settle Line four times, each on fresh Subjects:
+Each case includes subject.within. One creates Claims in empty slots; the other
+pre-seeds live Claims and measures eligible revisions. Each runs four batches:
 
 1. a warm-up of ``N`` items (first parses of the accepted artifacts);
 2. ``N`` items;
@@ -47,6 +48,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -63,7 +65,6 @@ from pydantic import BaseModel
 
 from cruxible_client.contracts import candidates, canonical, claims, projection_extensions
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.exhaust.backends import LocalJournalBackend
 from cruxible_core.ledger import activation, recovery
@@ -76,7 +77,6 @@ from tests.test_procedures import test_procedure_settlement_delivery as settle_s
 from tests.test_procedures import test_procedure_source_runs as fixtures
 from tests.test_procedures.test_procedure_proposal_delivery import (
     SUBJECT_KIND,
-    item_template,
 )
 from tests.test_scale._counters import _database_path, _prefixes, _under
 
@@ -127,8 +127,6 @@ FLAT_SLACK = {
     "journal_file_opens": 16,
     "journal_appends": 1,
 }
-
-_FAN_OUT = fixtures.FAN_OUT
 
 
 class _Counts:
@@ -209,6 +207,8 @@ def _flushing(original: Callable[..., Any]) -> Callable[..., Any]:
     def counted(*args: Any, **kwargs: Any) -> Any:
         if _COUNTS.measuring():
             _COUNTS.counts["fsyncs"] += 1
+            caller = sys._getframe(1)
+            _COUNTS.counts[f"fsync_site:{caller.f_code.co_filename}:{caller.f_lineno}"] += 1
             if _COUNTS.in_acceptance_flush:
                 _COUNTS.counts["acceptance_fsyncs"] += 1
             else:
@@ -296,9 +296,13 @@ def _hashing(original: Callable[..., Any]) -> Callable[..., Any]:
     return counted
 
 
-def _statement(_sql: str) -> None:
+def _statement(sql: str) -> None:
     if _COUNTS.measuring():
         _COUNTS.counts["sql_statements"] += 1
+        # Report executions by shape as well as the strict total, so a newly
+        # measured revise path names its indexed per-Claim work explicitly.
+        shape = re.sub(r"'(?:[^']|'')*'|\b\d+\b", "?", sql)
+        _COUNTS.counts["sql:" + shape] += 1
 
 
 @contextmanager
@@ -403,20 +407,19 @@ def _create_subjects(instance: Any, owner: Any, count: int) -> None:
     )
 
 
-def _item(index: int) -> dict[str, object]:
-    statement = {
-        **item_template()["statement"],  # type: ignore[dict-item]
-        "subject": SemanticAddress.whole_artifact(
-            subject_path(SUBJECT_KIND, _subject_id(index))
-        ).model_dump(mode="json"),
-        "object": {"kind": "literal", "value": ("high", "low", "medium")[index % 3]},
+def _item(index: int, *, revise: bool = False) -> dict[str, object]:
+    """Recorded source rows carry facts; the core Claims template owns writes."""
+    return {
+        "id": _subject_id(index),
+        "severity": ("high", "low", "medium")[(index + int(revise)) % 3],
     }
-    return item_template(statement=statement, rationale=f"The feed reports {index}.")
 
 
-def _settle(world: Any, first: int, count: int, batch: int) -> Counter[str]:
+def _settle(
+    world: Any, first: int, count: int, batch: int, *, revise: bool = False
+) -> Counter[str]:
     instance, root, line = world
-    proposals = [_item(index) for index in range(first, first + count)]
+    proposals = [_item(index, revise=revise) for index in range(first, first + count)]
     (root / fixtures.RELATIVE_PATH).write_bytes(canonical.canonical_bytes({"proposals": proposals}))
     with _counted() as counts, _journal_counted(), _objects_counted():
         state = settle_support.run_settle(
@@ -449,21 +452,46 @@ def _roomy_selection_budget(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.setattr(module, "capture_contract", roomy)
 
 
+@pytest.mark.parametrize(
+    "revise",
+    [
+        False,
+        pytest.param(
+            True,
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "revise path cost (dev.roadmap_item/claim-revise-path-cost): a revised "
+                    "Claim costs 82 SQL statements and ~770 KB encoded vs 35 / ~78 KB for a "
+                    "creation (citation/pin/claim index replacement and a whole-run records "
+                    "read per Claim); first measured in B4a(a), predates it"
+                ),
+            ),
+        ),
+    ],
+    ids=["create-within", "revise-within"],
+)
 def test_a_settles_work_per_item_stays_at_its_floor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, revise: bool
 ) -> None:
     _roomy_selection_budget(monkeypatch)
     with _sql_traced(tmp_path):
-        instance, root, line = settle_support.settle_world(tmp_path, candidate_templates=_FAN_OUT)
+        instance, root, line = settle_support.settle_world(
+            tmp_path,
+            claims_terminal=True,
+            claims_within=tuple(subject_path(SUBJECT_KIND, _subject_id(i)) for i in range(5 * N)),
+        )
         _create_subjects(instance, settle_support.OWNERS[instance.root], 5 * N)
         world = (instance, root, line)
         _settle(world, 0, N, 0)
+        if revise:
+            _settle(world, N, 4 * N, 5)
         _forget_parsed_receipts()
-        small = _settle(world, N, N, 1)
+        small = _settle(world, N, N, 1, revise=revise)
         _forget_parsed_receipts()
-        large = _settle(world, 2 * N, 2 * N, 2)
+        large = _settle(world, 2 * N, 2 * N, 2, revise=revise)
         _forget_parsed_receipts()
-        after_large = _settle(world, 4 * N, N, 3)
+        after_large = _settle(world, 4 * N, N, 3, revise=revise)
 
     assert small["journal_records"] == N
     assert large["journal_records"] == 2 * N
@@ -488,7 +516,8 @@ def test_a_settles_work_per_item_stays_at_its_floor(
     )
     destination = os.environ.get("CRUXIBLE_PER_ITEM_REPORT")
     if destination:
-        Path(destination).write_text(report + "\n")
+        suffix = ".revise" if revise else ".create"
+        Path(destination + suffix).write_text(report + "\n")
     violations = [
         f"{name} grew to {slope[name]:.1f} per item (ceiling {ceiling})"
         for name, ceiling in PER_ITEM.items()

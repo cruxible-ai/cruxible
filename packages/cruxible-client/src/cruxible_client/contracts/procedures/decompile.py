@@ -25,6 +25,7 @@ from cruxible_client.contracts.procedures.graph import (
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     CaptureEgressNode,
+    ClaimsNode,
     ExtractNode,
     GuardNode,
     HaltNode,
@@ -307,6 +308,25 @@ def decompile_procedure(
             step["else"] = action(node, "on_false")
         elif isinstance(node, HaltNode):
             step = dict(halt=node.reason, message=node.message)
+        elif isinstance(node, ClaimsNode):
+            step = dict(
+                for_each=typed_template(node.for_each),
+                subject={
+                    **node.subject.model_dump(mode="json"),
+                    "key": typed_template(node.subject.key),
+                    "within": typed_template(node.subject.within),
+                },
+                where=None
+                if node.where is None
+                else node.where.model_dump(mode="json", by_alias=True),
+                claims=[
+                    {
+                        **typed_template(claim.model_dump(mode="json", by_alias=True)),
+                        "type": _name(claim.claim_type),
+                    }
+                    for claim in node.claims
+                ],
+            )
         elif isinstance(node, ProposeChangeSetNode):
             templates = node.candidate_templates
             candidates = (

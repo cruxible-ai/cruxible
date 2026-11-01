@@ -74,10 +74,8 @@ from cruxible_client.contracts.documents import (
     render_document,
 )
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
-    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
@@ -120,6 +118,7 @@ from cruxible_core.proposals.settlement import (
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.core_support._subject_kind_support import history_before_identity
 from tests.core_support._support import client_material
+from tests.support.claim_types import claim_type as build_claim_type
 
 SELF_SOURCE = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
 
@@ -241,14 +240,10 @@ def _subject(index: int) -> SubjectShell:
 
 def _claim_type(index: int) -> ClaimType:
     predicate = _predicate(index)
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name=predicate),
+    return build_claim_type(
         predicate=predicate,
+        value_type={"enum": list(CLAIM_VALUES), "type": "string"},
         allowed_subject_kinds=(SUBJECT_KIND,),
-        object_kind="literal",
-        literal_schema={"enum": list(CLAIM_VALUES), "type": "string"},
-        cardinality="one",
-        permitted_roles=("normative", "observation"),
         evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
             rules=(
                 ClaimEvidenceAdmissionRule(
@@ -259,12 +254,6 @@ def _claim_type(index: int) -> ClaimType:
                     subject_binding="exact_claim_subject",
                 ),
             )
-        ),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality="one",
-            eligible_verdicts=("supported",),
-            selector="only_contender",
         ),
     )
 

@@ -528,8 +528,8 @@ def _vulnerability_rules(normalizer: str = "lowercase") -> Any:
     )
     claim_type = identity_claim_type(
         "cve_id",
+        value_type={"type": "string"},
         canonical_form=("nfc", "trim"),
-        literal_schema={"type": "string"},
         predicate="security.vulnerability.cve_id",
         subject_kinds=("security.vulnerability",),
     )

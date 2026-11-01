@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from cruxible_client.contracts.artifacts import ArtifactNameRef
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_MAX
+from cruxible_client.contracts.procedures.claims import ClaimsNode
 from cruxible_client.contracts.procedures.extract import ExtractNode
 from cruxible_client.contracts.procedures.model_base import (
     _ALIAS_RE,
@@ -601,6 +602,18 @@ class InboxEgressNode(_StrictProcedureModel):
         return self
 
 
+def _candidate_items(value: object) -> object:
+    """Authoring refuses a literal attempt to supply a core-produced receipt."""
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            if isinstance(item, dict) and "procedure_evidence" in item:
+                raise ValueError(
+                    "claims_evidence_core_only: procedure_evidence is produced by the claims "
+                    "terminal, never supplied in a candidate item; use a claims template"
+                )
+    return normalize_canonical(value)
+
+
 class ProposalItemsFanOut(_StrictProcedureModel):
     """Candidates from data: each element of ``items`` is one Claim proposal item.
 
@@ -612,7 +625,7 @@ class ProposalItemsFanOut(_StrictProcedureModel):
 
     items: object
 
-    _items = field_validator("items", mode="before")(normalize_canonical)
+    _items = field_validator("items", mode="before")(_candidate_items)
 
 
 class ProposeChangeSetNode(_StrictProcedureModel):
@@ -640,7 +653,9 @@ class ProposeChangeSetNode(_StrictProcedureModel):
             return ProposalItemsFanOut(items=value["items"])
         if not isinstance(value, (list, tuple)) or not value:
             raise ValueError("propose_change_set requires at least one candidate template")
-        return tuple(normalize_canonical(item) for item in value)
+        normalized = _candidate_items(list(value))
+        assert isinstance(normalized, list)
+        return tuple(normalized)
 
 
 class SettleChangeSetNode(ProposeChangeSetNode):
@@ -666,6 +681,7 @@ class HaltNode(_StrictProcedureModel):
 TERMINAL_REQUIRED_RUNGS = {
     "emit_capture": 0,
     "post_inbox": 1,
+    "claims": 3,
     "propose_change_set": 2,
     "settle_change_set": 3,
 }
@@ -825,6 +841,7 @@ ProcedureNode = Annotated[
     | RepeatNode
     | CaptureEgressNode
     | InboxEgressNode
+    | ClaimsNode
     | ProposeChangeSetNode
     | SettleChangeSetNode
     | HaltNode
@@ -864,6 +881,7 @@ __all__ = [
     "ProcedureTransformSpec",
     "ProjectNode",
     "ProposalItemsFanOut",
+    "ClaimsNode",
     "ProposeChangeSetNode",
     "RETIRED_NODE_KINDS",
     "RETIRED_TRANSFORM_KINDS",

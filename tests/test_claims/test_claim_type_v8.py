@@ -21,12 +21,15 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
+from tests.support.claim_types import claim_type_changes
 from tests.test_claims.test_claim_type_v7 import v7
 
 PATH = claim_type_path("project.work_item.status")
 
 
 def v8(form: tuple[str, ...] = ("trim", "casefold"), **update: object) -> ClaimType:
+    if "value_type" in update:
+        update = claim_type_changes(value_type=update.pop("value_type"), **update)
     base = v7().model_dump(mode="python")
     base.update(canonical_form=form)
     base.update(update)

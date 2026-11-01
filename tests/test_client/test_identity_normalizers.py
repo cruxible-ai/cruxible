@@ -139,7 +139,7 @@ def _shape(**update: Any) -> KeyClaimTypeShape:
     base: dict[str, Any] = {
         "predicate": "pkg.package.name",
         "live": True,
-        "artifact_format": "cruxible-claim-type-v10",
+        "artifact_format": "cruxible-claim-type-v11",
         "object_kind": "literal",
         "cardinality": "one",
         "allowed_subject_kinds": ("pkg.package",),

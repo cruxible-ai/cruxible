@@ -33,6 +33,7 @@ from cruxible_core.query.engine import claim_query_result_digest
 from cruxible_core.service.discovery.query import service_run_playbill_query
 from tests.core_support._knowledge_loop_support import TIMESTAMP, accept_proposal, work_item_query
 from tests.core_support._support import initialize_local
+from tests.support.claim_types import claim_type_changes
 from tests.test_authoring.test_authoring_change_set_intents import _predicate_type
 
 NOW = datetime(2026, 9, 16, tzinfo=UTC)
@@ -155,10 +156,10 @@ def test_scope_membership_versions_history_and_empty_result(tmp_path, monkeypatc
         == before
     )
     changed = selected.model_copy(
-        update={
-            "literal_schema": {"enum": ["blocked", "done", "ready", "waiting"], "type": "string"},
-            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(selected).tagged),
-        }
+        update=claim_type_changes(
+            value_type={"enum": ["blocked", "done", "ready", "waiting"], "type": "string"},
+            lifecycle=ArtifactLifecycle(predecessor_digest=claim_type_digest(selected).tagged),
+        )
     )
     accept(instance, owner, changed)
     assert (

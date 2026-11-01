@@ -45,10 +45,10 @@ def test_identity_fixture_compiles_its_typed_evidence_dependencies(tmp_path):
     instance, _ = initialize_local(tmp_path)
     key = identity_claim_type(
         "name",
+        value_type={"type": "string"},
         predicate="catalog.part.name",
         subject_kinds=("catalog.part",),
         canonical_form=("nfc", "trim"),
-        literal_schema={"type": "string"},
     )
     compiled = AuthoringIntentCoordinator.for_instance(instance).compile(
         actor=AuthenticatedActor(actor_id="owner"),

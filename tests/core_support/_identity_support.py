@@ -26,10 +26,8 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
-    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
-    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -37,6 +35,8 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import initialize_local
+from tests.support.claim_types import ClaimValueType
+from tests.support.claim_types import claim_type as build_claim_type
 
 KIND = "inv.package"
 SUBJECTS = ("alpha", "beta")
@@ -49,10 +49,8 @@ def identity_claim_type(
     field: str,
     *,
     canonical_form: tuple[str, ...] | None,
-    object_kind: str = "literal",
-    literal_schema: dict[str, object] | None = None,
+    value_type: ClaimValueType | None = None,
     cardinality: str = "one",
-    object_kinds: tuple[str, ...] = (),
     predicate: str | None = None,
     subject_kinds: tuple[str, ...] = (KIND,),
 ) -> ClaimType:
@@ -60,63 +58,45 @@ def identity_claim_type(
 
     name = predicate or f"{KIND}.{field}"
     roles = ("observation",)
-    return ClaimType.model_validate(
-        {
-            "identity": ArtifactIdentity(kind="ClaimType", name=name),
-            "predicate": name,
-            "allowed_subject_kinds": subject_kinds,
-            "object_kind": object_kind,
-            "literal_schema": literal_schema,
-            "allowed_object_subject_kinds": object_kinds,
-            "cardinality": cardinality,
-            "permitted_roles": roles,
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
-                rules=(
-                    ClaimEvidenceAdmissionRule(
-                        rule_id="self",
-                        claim_roles=roles,
-                        capture_contracts=(
-                            ArtifactRef(
-                                role=CAPTURE_CONTRACT_REF_ROLE,
-                                target=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity,
-                            ),
+    return build_claim_type(
+        predicate=name,
+        allowed_subject_kinds=subject_kinds,
+        value_type=value_type,
+        cardinality=cardinality,
+        permitted_roles=roles,
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
+            rules=(
+                ClaimEvidenceAdmissionRule(
+                    rule_id="self",
+                    claim_roles=roles,
+                    capture_contracts=(
+                        ArtifactRef(
+                            role=CAPTURE_CONTRACT_REF_ROLE,
+                            target=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity,
                         ),
-                        admission="direct",
-                        subject_binding="exact_claim_subject",
                     ),
-                )
-            ),
-            "admission_policy": ClaimAdmissionPolicy(),
-            "resolution_policy": ClaimResolutionPolicy(
-                cardinality=cardinality,  # type: ignore[arg-type]
-                eligible_verdicts=("supported",),
-                selector="all" if cardinality == "many" else "only_contender",
-            ),
-            "evidence_requirement": "self",
-            "revision_evidence": "replace",
-            "canonical_form": () if canonical_form is None else canonical_form,
-        }
+                    admission="direct",
+                    subject_binding="exact_claim_subject",
+                ),
+            )
+        ),
+        revision_evidence="replace",
+        canonical_form=() if canonical_form is None else canonical_form,
     )
 
 
 IDENTITY_CLAIM_TYPES = (
-    identity_claim_type("code", canonical_form=CODE_FORM, literal_schema={"type": "string"}),
+    identity_claim_type("code", value_type={"type": "string"}, canonical_form=CODE_FORM),
     identity_claim_type(
         "state",
+        value_type={"enum": ["closed", "open"], "type": "string"},
         canonical_form=STATE_FORM,
-        literal_schema={"enum": ["closed", "open"], "type": "string"},
     ),
     identity_claim_type(
-        "tags", canonical_form=STATE_FORM, literal_schema={"type": "string"}, cardinality="many"
+        "tags", value_type={"type": "string"}, canonical_form=STATE_FORM, cardinality="many"
     ),
-    identity_claim_type("plain", canonical_form=None, literal_schema={"type": "string"}),
-    identity_claim_type(
-        "depends_on",
-        canonical_form=None,
-        object_kind="subject",
-        cardinality="many",
-        object_kinds=(KIND,),
-    ),
+    identity_claim_type("plain", value_type={"type": "string"}, canonical_form=None),
+    identity_claim_type("depends_on", value_type=(KIND,), canonical_form=None, cardinality="many"),
 )
 
 

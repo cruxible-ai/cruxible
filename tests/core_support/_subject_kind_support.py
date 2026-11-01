@@ -219,8 +219,8 @@ def slug_claim_type(kind: str) -> object:
 
     return identity_claim_type(
         "slug",
+        value_type={"minLength": 1, "type": "string"},
         canonical_form=SLUG_FORM,
-        literal_schema={"minLength": 1, "type": "string"},
         predicate=f"{kind}.slug",
         subject_kinds=(kind,),
     )

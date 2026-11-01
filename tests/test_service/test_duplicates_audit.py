@@ -129,7 +129,7 @@ def test_the_duplicate_statement_detector_compares_canonical_statements(
     assert detections == ()
     # Under a form that folds case the two statements are one.
     folded = identity_claim_type(
-        "plain", canonical_form=("casefold",), literal_schema={"type": "string"}
+        "plain", value_type={"type": "string"}, canonical_form=("casefold",)
     )
     tree[claim_type_path(folded.predicate)] = render_claim_type(folded)
     (detection,) = _duplicate_statements(tree=tree, generation=1)[0]

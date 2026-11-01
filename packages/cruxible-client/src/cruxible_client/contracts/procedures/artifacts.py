@@ -167,7 +167,7 @@ DIRECT_NODE_KINDS = frozenset(
 )
 #: Node kinds only a Line runs: they egress under the Line's authority.
 LINE_NODE_KINDS = frozenset(
-    {"emit_capture", "post_inbox", "propose_change_set", "settle_change_set"}
+    {"claims", "emit_capture", "post_inbox", "propose_change_set", "settle_change_set"}
 )
 
 

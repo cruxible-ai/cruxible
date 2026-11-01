@@ -32,6 +32,7 @@ from cruxible_core.exhaust import (
     evaluate_exhaust_promotion_law,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.procedures.claims_context import ClaimsContext
 from cruxible_core.procedures.egress import (
     EffectiveRungV1,
     TerminalEgressSinkProtocol,
@@ -508,6 +509,7 @@ def service_execute_direct_procedure(
     enum_resolver: EnumResolver | None = None,
     contract_resolver: Callable[[ContractRef], Contract | None] | None = None,
     key_rules: KeyCanonicalizer | None = None,
+    claims_context: ClaimsContext | None = None,
 ) -> ProcedureRunResultV1:
     """Execute through the shared runtime; no transport duplicates orchestration."""
 
@@ -540,6 +542,7 @@ def service_execute_direct_procedure(
             enum_resolver=enum_resolver,
             contract_resolver=contract_resolver,
             key_rules=key_rules,
+            claims_context=claims_context,
             ephemeral_spec_digest=ephemeral_spec_digest,
         ).execute(prepared, accepted)
     finally:

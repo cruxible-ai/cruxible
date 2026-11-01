@@ -94,7 +94,7 @@ def _document(instance: PlaybillInstance, body: bytes, previous: DocumentShell |
 def _shadow_and_cardinality(instance: PlaybillInstance) -> None:
     """A field whose short name a new ClaimType shadows, then a cardinality migration."""
 
-    note = _claim_type("ext.note", literal_schema={"type": "string"})
+    note = _claim_type("ext.note", value_type={"type": "string"})
     accept_edit(instance, "ext-note", {claim_type_path(note.predicate): render_claim_type(note)})
     _write(instance, _set(WI1, "ext.note", "Hello"))
     shadow = note.model_copy(
@@ -253,8 +253,8 @@ def _ontology_history(instance: PlaybillInstance) -> None:
 
     declare_note_kind(instance, "A note.")
     install_receipt(instance, version="1.0.0", fields=("priority", "status"), revision=1)
-    revise_claim_type(instance, "priority", literal_schema={"type": "string", "minLength": 1})
-    tag = _claim_type("tag", literal_schema={"type": "string"}, captured_only=True)
+    revise_claim_type(instance, "priority", value_type={"type": "string", "minLength": 1})
+    tag = _claim_type("tag", value_type={"type": "string"}, captured_only=True)
     accept_edit(instance, "onto-tag", {claim_type_path(tag.predicate): render_claim_type(tag)})
     moved = tag.model_copy(
         update={
@@ -271,7 +271,7 @@ def _ontology_history(instance: PlaybillInstance) -> None:
         "onto-contract",
         {capture_contract_path(notes.identity.name): render_capture_contract(notes)},
     )
-    revise_claim_type(instance, "priority", literal_schema={"type": "string"})
+    revise_claim_type(instance, "priority", value_type={"type": "string"})
     procedure = _worlds._procedure("onto-tick", terminal=None, capability=3)
     line = _worlds._line("onto-tick-line", procedure, authority="observe")
     condition = _worlds._condition()

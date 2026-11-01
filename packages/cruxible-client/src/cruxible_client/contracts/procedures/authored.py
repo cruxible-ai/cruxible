@@ -43,6 +43,7 @@ from typing_extensions import TypeAliasType
 
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.captures import CanonicalDuration
+from cruxible_client.contracts.procedures.claims import refuse_absence
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.extract import CompleteWhen, ExtractField
 from cruxible_client.contracts.procedures.measurements import ProcedureMeasurementDeclaration
@@ -128,12 +129,11 @@ def _spelled_fields(value: Mapping[str, ContractField] | None) -> dict[str, obje
 
     if value is None:
         return None
-    return {
-        name: field.spelling
-        if field.description is None
-        else {"type": field.spelling, "description": field.description}
-        for name, field in value.items()
-    }
+    result: dict[str, Any] = {}
+    for name, field in value.items():
+        metadata = field.model_dump(mode="json", exclude={"type", "optional"})
+        result[name] = {"type": field.spelling, **metadata} if metadata else field.spelling
+    return result
 
 
 def _template_tag(value: Any) -> str:
@@ -487,6 +487,41 @@ class InboxStep(StepOptions):
     max_items: Annotated[int, Field(strict=True, ge=1)] | None = None
 
 
+class ClaimsSubjectSpec(_Model):
+    kind: str
+    key: dict[str, Template]
+    create: Literal["never", "if_absent"] = "never"
+    within: Ref | None = None
+
+
+class ClaimTemplateSpec(_Model):
+    type: str
+    value: Template
+    qualifier: Template = None
+    effective_from: Template = None
+    effective_until: Template = None
+    when: Predicate | None = None
+    role: Literal["normative", "observation", "environment_binding", "derivation"] | None = None
+    replaces: (
+        tuple[Literal["normative", "observation", "environment_binding", "derivation"], ...] | None
+    ) = None
+    inputs: tuple[Ref, ...] = ()
+    rationale: str = "Claim from declared Procedure template."
+
+    _absence = model_validator(mode="before")(refuse_absence)
+    _when = field_validator("when", mode="before")(_record_predicate)
+
+
+class ClaimsStep(StepOptions):
+    claims: tuple[ClaimTemplateSpec, ...] = Field(min_length=1)
+    for_each: Ref
+    where: Predicate | None = None
+    subject: ClaimsSubjectSpec
+
+    _absence = model_validator(mode="before")(refuse_absence)
+    _where = field_validator("where", mode="before")(_record_predicate)
+
+
 class ProposeStep(StepOptions):
     """Propose Claims: a fixed tuple of item templates, or one item per element of a list."""
 
@@ -608,6 +643,7 @@ _VERBS = (
     "transform",
     "guard",
     "inbox",
+    "claims",
     "propose",
     "settle",
     "emit",
@@ -624,6 +660,7 @@ Step: TypeAlias = Annotated[
     | Annotated[TransformStep, Tag("transform")]
     | Annotated[GuardStep, Tag("guard")]
     | Annotated[InboxStep, Tag("inbox")]
+    | Annotated[ClaimsStep, Tag("claims")]
     | Annotated[ProposeStep, Tag("propose")]
     | Annotated[SettleStep, Tag("settle")]
     | Annotated[EmitStep, Tag("emit")]
@@ -1061,7 +1098,9 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
     aliases = {
         _output_alias(step, i)
         for i, step in enumerate(spec.steps)
-        if not isinstance(step, (GuardStep, HaltStep, InboxStep, ProposeStep, SettleStep, EmitStep))
+        if not isinstance(
+            step, (GuardStep, HaltStep, InboxStep, ClaimsStep, ProposeStep, SettleStep, EmitStep)
+        )
     }
     collection_aliases = {
         step.read
@@ -1454,6 +1493,43 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                 node["dedupe_key"] = list(step.dedupe_key)
             if step.max_items is not None:
                 node["max_items"] = step.max_items
+        elif isinstance(step, ClaimsStep):
+            node.update(
+                kind="claims",
+                for_each=template(step.for_each, path + ".for_each"),
+                subject={
+                    "kind": step.subject.kind,
+                    "key": template(step.subject.key, path + ".subject.key"),
+                    "create": step.subject.create,
+                    "within": None
+                    if step.subject.within is None
+                    else template(step.subject.within, path + ".subject.within"),
+                },
+                where=None
+                if step.where is None
+                else step.where.model_dump(mode="json", by_alias=True),
+                claims=[
+                    {
+                        "type": _ref("ClaimType", claim.type),
+                        "value": template(claim.value, path + ".claims.value"),
+                        "qualifier": template(claim.qualifier, path + ".claims.qualifier"),
+                        "effective_from": template(
+                            claim.effective_from, path + ".claims.effective_from"
+                        ),
+                        "effective_until": template(
+                            claim.effective_until, path + ".claims.effective_until"
+                        ),
+                        "when": None
+                        if claim.when is None
+                        else claim.when.model_dump(mode="json", by_alias=True),
+                        "role": claim.role,
+                        "replaces": None if claim.replaces is None else list(claim.replaces),
+                        "inputs": [template(ref, path + ".claims.inputs") for ref in claim.inputs],
+                        "rationale": claim.rationale,
+                    }
+                    for claim in step.claims
+                ],
+            )
         elif isinstance(step, (ProposeStep, SettleStep)):
             candidates: Any = step.propose if isinstance(step, ProposeStep) else step.settle
             if isinstance(candidates, Ref):
@@ -1549,7 +1625,10 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             previous = alias
         nodes.append(node)
     leaves = any(isinstance(step, ProjectStep) and step.leaf for step in spec.steps)
-    returns: Any = None if leaves and spec.returns is None else spec.returns or previous
+    claims_terminal = any(isinstance(step, ClaimsStep) for step in spec.steps)
+    returns: Any = (
+        None if (leaves or claims_terminal) and spec.returns is None else spec.returns or previous
+    )
     if isinstance(returns, (ReturnFrom, ReturnFields)):
         fields_template: Any = (
             returns.fields
@@ -1626,7 +1705,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         None if spec.output_contract is not None else spec.output
     )
     if root_shape is None and spec.output_contract is None:
-        root_shape = shapes.get(returns or "")
+        root_shape = {} if claims_terminal and returns is None else shapes.get(returns or "")
         if root_shape is None:
             if resolve is not None and not leaves:
                 raise ProcedureSpecError(
@@ -1950,6 +2029,7 @@ __all__ = [
     "HaltAction",
     "HaltStep",
     "InboxStep",
+    "ClaimsStep",
     "InvokeStep",
     "JoinSpec",
     "CONTRACT_ROLES",

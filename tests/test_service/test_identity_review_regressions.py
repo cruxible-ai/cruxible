@@ -273,10 +273,9 @@ def test_a_creation_reference_reaches_composites_and_further_holders(
 
     paired = identity_claim_type(
         "pair",
+        value_type=(PAIR,),
         canonical_form=None,
-        object_kind="subject",
         cardinality="many",
-        object_kinds=(PAIR,),
         predicate=f"{DECISION}.pair",
         subject_kinds=(DECISION,),
     )
@@ -1599,7 +1598,7 @@ def test_a_non_claim_subject_pin_still_closes_over_a_succession(
             )
         }
     )
-    assert notes.artifact_format == "cruxible-claim-type-v10"
+    assert notes.artifact_format == "cruxible-claim-type-v11"
     accept(instance, change_set(ClaimTypeInput(kind="claim_type", claim_type=notes)))
 
     refused = compile_(instance, change_set(_succession(instance, pinned, retire=retire)))

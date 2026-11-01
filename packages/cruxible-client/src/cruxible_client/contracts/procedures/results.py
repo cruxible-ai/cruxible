@@ -16,6 +16,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
+from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic
 from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionInputDecision
 from cruxible_client.contracts.procedures.models import (
@@ -1103,6 +1104,7 @@ class ProcedureTerminalEgress(_StrictResultModel):
     tag: Literal["playbill-procedure-terminal-egress-v1"] = "playbill-procedure-terminal-egress-v1"
     node_id: str
     kind: Literal[
+        "claims",
         "emit_capture",
         "post_inbox",
         "propose_change_set",
@@ -1134,6 +1136,15 @@ class ProcedureTerminalEgress(_StrictResultModel):
     # Present only while the earlier-refusal index is catching up: the
     # children's receipts reflect retirements through the generation named.
     prior_refusal_coverage: PriorRefusalCoverage | None = None
+    # Per-node bounded reasons: total count plus the first 100 details.
+    claims_diagnostics: tuple[ClaimsDiagnostic, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    claims_diagnostics_count: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
+    claims_diagnostics_truncated: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
+    claims_diagnostics_inbox_truncation: InboxPostTruncation | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     # A post_inbox terminal that selected more items than its run may post.
     inbox_truncation: InboxPostTruncation | None = Field(
         default=None, exclude_if=lambda value: value is None
@@ -1176,13 +1187,19 @@ class ProcedureTerminalEgress(_StrictResultModel):
             self.verdict != "delivered" or self.kind != "propose_change_set"
         ):
             raise ValueError("only a delivered Line proposal terminal weighs its open proposal")
-        changed_nothing = changed_nothing or still_current
+        changed_nothing = (
+            changed_nothing
+            or still_current
+            or (self.kind == "claims" and not self.children and not self.proposal_id)
+        )
         delivered_settle = (
-            self.verdict == "delivered" and self.kind == "settle_change_set" and not changed_nothing
+            self.verdict == "delivered"
+            and self.kind in {"claims", "settle_change_set"}
+            and not changed_nothing
         )
         if (
             self.verdict == "delivered"
-            and self.kind in {"propose_change_set", "settle_change_set"}
+            and self.kind in {"claims", "propose_change_set", "settle_change_set"}
             and not changed_nothing
         ):
             if self.proposal_id is None or self.candidate_digest is None:
@@ -1198,7 +1215,7 @@ class ProcedureTerminalEgress(_StrictResultModel):
         if (self.verdict in {"refused", "failed"}) != (self.refusal_code is not None):
             raise ValueError("a refused or failed egress carries exactly its refusal code")
         if self.capped_by is not None and (
-            self.kind != "settle_change_set" or self.settle_outcome == "settled"
+            self.kind not in {"claims", "settle_change_set"} or self.settle_outcome == "settled"
         ):
             raise ValueError("only a settle terminal that did not settle is capped")
         if self.inbox_truncation is not None and self.kind != "post_inbox":

@@ -93,7 +93,12 @@ def resolve_procedure_spec(
                     )
                 pins[side] = ref.model_copy(update={"digest": digest})
             return ProcedureSlot.model_validate(
-                {"in": pins["in"], "out": pins["out"], "effect": slot.effect}
+                {
+                    "in": pins["in"],
+                    "out": pins["out"],
+                    "effect": slot.effect,
+                    "may_truncate": slot.may_truncate,
+                }
             )
 
         def resolve_ref(ref: ContractRef) -> Contract | None:
@@ -234,4 +239,36 @@ def resolve_procedure_spec(
                 "output_contract": output_contract,
             }
 
-        return lower_procedure_spec(spec, resolve=resolve)
+        def maybe_source_identity(identity: Any) -> Any:
+            # Inline boundaries are co-proposed after this check. Type their
+            # declared fields now, rather than reading the previous version.
+            from cruxible_client.contracts.procedures.authored import generated_contract_name
+
+            if identity.kind == "Contract":
+                for role, fields in lowered.generated.items():
+                    name = generated_contract_name(spec.procedure, role)
+                    if identity.name == name + "/v1":
+                        return Contract(name=name, version=1, fields=fields)
+            return maybe_source(identity.qualified)
+
+        lowered = lower_procedure_spec(spec, resolve=resolve)
+        from cruxible_client.contracts.procedures.graph import ProcedureGraphFormatError
+        from cruxible_client.contracts.procedures.models import ProcedureDefinition
+        from cruxible_core.procedures.claims_typing import (
+            ClaimsTypingRefused,
+            validate_claims_templates,
+        )
+
+        # Definition/graph errors retain the ordinary authoring refusal; only
+        # Claims vocabulary errors belong to claims_type_invalid.
+        try:
+            definition = ProcedureDefinition.model_validate(lowered.definition)
+        except (ValueError, ProcedureGraphFormatError):
+            # The ordinary definition lowerer validates again after boundary
+            # Contracts are co-proposed and supplies the typed refusal/repair.
+            return lowered
+        try:
+            validate_claims_templates(definition, maybe_source_identity)
+        except (ClaimsTypingRefused, ValueError) as exc:
+            raise ProcedureSpecError("claims_type_invalid", "$.steps", str(exc)) from exc
+        return lowered

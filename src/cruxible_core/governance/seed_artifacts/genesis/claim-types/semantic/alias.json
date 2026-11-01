@@ -8,7 +8,7 @@
   "allowed_subject_kinds": [
     "semantic.subject"
   ],
-  "artifact_format": "cruxible-claim-type-v10",
+  "artifact_format": "cruxible-claim-type-v11",
   "canonical_form": [
     "nfc",
     "casefold",
@@ -58,12 +58,26 @@
     "type": "string"
   },
   "member_descriptions": [],
+  "negative": false,
   "object_kind": "literal",
   "permitted_roles": [
     "normative",
     "observation"
   ],
   "pins": [],
+  "precedence": {
+    "revisable_by_procedures": [
+      "environment_binding",
+      "observation",
+      "derivation"
+    ],
+    "roles": [
+      "normative",
+      "environment_binding",
+      "observation",
+      "derivation"
+    ]
+  },
   "predicate": "semantic.alias",
   "referent_sensitivity": "identity",
   "resolution_policy": {

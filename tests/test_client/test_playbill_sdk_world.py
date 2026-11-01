@@ -37,6 +37,7 @@ from cruxible_client.authoring.world import (
 )
 from cruxible_client.authoring.world_stub import STUB_HEADER_TAG, stub_vocabulary_digest
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from tests.support.claim_types import ClaimValueType, claim_type_changes
 from tests.test_client._read_fakes import ClaimTypeListing, ClaimTypeRead
 
 _DIGEST = "sha256:" + "1" * 64
@@ -58,20 +59,22 @@ AFFECTS = "sec.vuln.affects_package"
 LANDED_AT = "dev.batch.landed_at"
 
 
-def _claim_type(predicate: str, **overrides: object) -> ClaimTypeRead:
-    envelope: dict[str, Any] = {
-        "artifact_format": "cruxible-claim-type-v10",
-        "identity": {"kind": "ClaimType", "name": predicate},
-        "predicate": predicate,
-        "allowed_subject_kinds": ("sec.vulnerability",),
-        "object_kind": "literal",
-        "literal_schema": {"type": "string", "enum": ["high", "low"]},
-        "allowed_object_subject_kinds": (),
-        "cardinality": "one",
-        "permitted_roles": ("observation",),
-        "referent_sensitivity": "identity",
-        "lifecycle": {"state": "live"},
-    }
+def _claim_type(
+    predicate: str, *, value_type: ClaimValueType | None = None, **overrides: object
+) -> ClaimTypeRead:
+    envelope: dict[str, Any] = claim_type_changes(
+        value_type={"type": "string", "enum": ["high", "low"]}
+        if value_type is None
+        else value_type,
+        artifact_format="cruxible-claim-type-v11",
+        identity={"kind": "ClaimType", "name": predicate},
+        predicate=predicate,
+        allowed_subject_kinds=("sec.vulnerability",),
+        cardinality="one",
+        permitted_roles=("observation",),
+        referent_sensitivity="identity",
+        lifecycle={"state": "live"},
+    )
     envelope.update(overrides)
     return ClaimTypeRead(
         coordinate=_COORDINATE,
@@ -167,16 +170,11 @@ class _WorldClient:
                     lifecycle={"state": "retired" if self.retired_severity else "live"},
                     **self.severity_overrides,
                 ),
-                _claim_type(
-                    AFFECTS,
-                    object_kind="subject",
-                    literal_schema=None,
-                    allowed_object_subject_kinds=("sec.package",),
-                ),
+                _claim_type(AFFECTS, value_type=("sec.package",)),
                 _claim_type(
                     LANDED_AT,
+                    value_type={"type": "string", "pattern": "^[0-9a-f]{40}$"},
                     allowed_subject_kinds=("dev.batch",),
-                    literal_schema={"type": "string", "pattern": "^[0-9a-f]{40}$"},
                 ),
             ],
         )
@@ -1226,7 +1224,7 @@ def test_a_v7_predicate_carries_its_meaning_into_the_world_and_the_stub(
     assert "\u2014" not in plain.stub()
 
     client.severity_overrides = {
-        "artifact_format": "cruxible-claim-type-v10",
+        "artifact_format": "cruxible-claim-type-v11",
         "description": "How bad the vulnerability is.\nRead it before patching.",
         "member_descriptions": [
             {"member": "high", "description": "Patch now."},
@@ -1560,7 +1558,7 @@ class _CollidingClient(_WorldClient):
             claim_types=[
                 _claim_type(
                     SEVERITY,
-                    literal_schema={
+                    value_type={
                         "type": "string",
                         "enum": ["cardinality", "high", "low"],
                     },
@@ -1568,12 +1566,7 @@ class _CollidingClient(_WorldClient):
                 # The predicate leaf collides with `WorldSubject.claims`.
                 _claim_type("sec.vuln.claims"),
                 # The dotted name is an accepted predicate AND an accepted kind.
-                _claim_type(
-                    "sec.package",
-                    object_kind="subject",
-                    literal_schema=None,
-                    allowed_object_subject_kinds=("sec.package",),
-                ),
+                _claim_type("sec.package", value_type=("sec.package",)),
             ],
         )
 

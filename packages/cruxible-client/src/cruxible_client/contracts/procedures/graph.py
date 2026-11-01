@@ -17,6 +17,7 @@ from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
     CallNode,
     CaptureEgressNode,
+    ClaimsNode,
     ExtractNode,
     GuardNode,
     InboxEgressNode,
@@ -92,6 +93,19 @@ def _reference_templates(
 
     if isinstance(node, CaptureEgressNode | ProposeChangeSetNode):
         yield "result", node.result
+    if isinstance(node, ClaimsNode):
+        yield "for_each", node.for_each
+        yield "subject", node.subject
+        yield "claims", node.claims
+        from cruxible_client.contracts.procedures.claims import rationale_references
+
+        yield (
+            "rationale",
+            tuple(
+                ref for mapping in node.claims for ref in rationale_references(mapping.rationale)
+            ),
+        )
+        yield "where", node.where
     if isinstance(node, ReadNode):
         if node.reads_claims:
             yield "subject_id", node.subject_id
@@ -204,6 +218,10 @@ def _validate_node_references(
     *,
     available: frozenset[str],
 ) -> None:
+    if isinstance(node, ClaimsNode):
+        for predicate in (node.where, *(mapping.when for mapping in node.claims)):
+            if predicate is not None and set(predicate_step_aliases(predicate)) - available:
+                raise ProcedureGraphFormatError("Claims predicate reads an unavailable alias")
     if isinstance(node, GuardNode):
         missing = set(predicate_step_aliases(node.predicate)) - available
         if missing:
@@ -442,7 +460,7 @@ def _procedure_node_digests(
         node = nodes[node_id]
         local = typed_digest(
             ArtifactDigest,
-            "cruxible-procedure-node-local-v10",
+            "cruxible-procedure-node-local-v11",
             _node_local_payload(node),
         ).tagged
         successor_digests = {
@@ -451,7 +469,7 @@ def _procedure_node_digests(
         }
         subtree = typed_digest(
             ArtifactDigest,
-            "cruxible-procedure-node-subtree-v10",
+            "cruxible-procedure-node-subtree-v11",
             {"local_digest": local, "successors": successor_digests},
         ).tagged
         result[node_id] = ProcedureNodeDigests(
@@ -472,7 +490,7 @@ def compute_procedure_definition_digest(definition: ProcedureDefinition) -> Arti
     payload.pop("nodes")
     return typed_digest(
         ArtifactDigest,
-        "cruxible-procedure-definition-v10",
+        "cruxible-procedure-definition-v11",
         {
             "definition": payload,
             "entry_node_id": definition.nodes[0].node_id,

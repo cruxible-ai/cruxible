@@ -37,7 +37,7 @@ from cruxible_client.contracts.subject_kinds import (
     SubjectKindFormatError,
     key_value_problem,
     live_subject_kind,
-    ordered_key_parts,
+    ordered_key_values,
 )
 from cruxible_core.indexes.sql_batch import execute_in, insert_rows, select_in
 
@@ -110,21 +110,21 @@ def canonical_key(
     """
 
     try:
-        parts = ordered_key_parts(subject_kind, key)  # type: ignore[arg-type]
+        parts = ordered_key_values(subject_kind, key)  # type: ignore[arg-type]
     except ValueError as exc:
         raise SubjectKeyInvalid(str(exc)) from exc
     found: list[tuple[str, SubjectKeyValue]] = []
-    for part in parts:
-        definition = claim_type(part.predicate)
+    for predicate, raw_value in parts:
+        definition = claim_type(predicate)
         if definition is None:
-            raise SubjectKeyInvalid(f"key ClaimType {part.predicate!r} is not accepted")
+            raise SubjectKeyInvalid(f"key ClaimType {predicate!r} is not accepted")
         value = canonical_key_value(
-            part.value,
+            raw_value,
             definition,
-            subject_kind.normalizer(part.predicate),
-            predicate=part.predicate,
+            subject_kind.normalizer(predicate),
+            predicate=predicate,
         )
-        found.append((part.predicate, value))
+        found.append((predicate, value))
     return tuple(found)
 
 

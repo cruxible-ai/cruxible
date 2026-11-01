@@ -21,6 +21,7 @@ from cruxible_client.contracts.claims import (
 from cruxible_core.authoring.lowering import lower_authoring
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from tests.core_support._support import initialize_local
+from tests.support.claim_types import claim_type_changes
 from tests.test_authoring.test_authoring_preflight import (
     TIMESTAMP,
     _coordinator,
@@ -126,7 +127,7 @@ def test_exact_content_body_digest_and_span_are_daemon_derived(tmp_path: Path) -
         instance,
         owner,
         claim_type_override=_claim_type().model_copy(
-            update={"object_kind": "exact_content", "literal_schema": None}
+            update=claim_type_changes(value_type="exact_content")
         ),
     )
     coordinator = _coordinator(instance)

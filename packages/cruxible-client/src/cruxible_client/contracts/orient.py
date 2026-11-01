@@ -128,7 +128,7 @@ class OrientPredicate(_StrictOrientModel):
     statement-changing revision keeps.
     A full descriptor also names how the ClaimType settles rival Claims
     (``contention``), its format version (``format``: 10 for
-    ``cruxible-claim-type-v10``), its accepted ``revision`` and its ledger
+    ``cruxible-claim-type-v11``), its accepted ``revision`` and its ledger
     ``path``, which a kit's drifted paths name. Under ``orient(kind=K)`` a
     descriptor counts the kind's ``live_claims`` of the predicate and
     ``subjects_with_value``: its live Subjects with at least one, both read

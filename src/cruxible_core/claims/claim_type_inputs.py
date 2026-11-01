@@ -39,6 +39,7 @@ from cruxible_client.contracts.claim_types import (
     ClaimFreshnessDuration,
     ClaimInverse,
     ClaimInverseKey,
+    ClaimPrecedence,
     ClaimType,
     EvidenceRequirement,
     RevisionEvidence,
@@ -55,6 +56,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
 )
 from cruxible_client.contracts.public_names import public_name, stored_contract_name
+from cruxible_client.contracts.shapes import FieldType, coerce_field_type
 from cruxible_client.contracts.subject_kinds import SubjectKind
 from cruxible_client.contracts.temporal import parse_iso_duration_microseconds
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -94,6 +96,10 @@ _MERGED_INPUT_FIELDS = (
 
 #: The structural fields an edit keeps from its predecessor when left out.
 _STRUCTURAL_INPUT_FIELDS = (
+    "value",
+    "precedence",
+    "negative",
+    "unknown_member",
     "allowed_subject_kinds",
     "object_kind",
     "literal_schema",
@@ -244,6 +250,16 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
             return cast(CoreSchema, result)
 
         return handler(declared(schema))
+
+    value: FieldType | None = None
+    precedence: ClaimPrecedence = ClaimPrecedence()
+    negative: bool = False
+    unknown_member: str | int | bool | None = None
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _value_type(cls, value: Any) -> object:
+        return None if value is None else coerce_field_type(value)
 
     predicate: str
     allowed_subject_kinds: tuple[str, ...] | None = None

@@ -74,6 +74,7 @@ from tests.core_support._knowledge_loop_support import (
     subject_address,
 )
 from tests.core_support._subject_kind_support import fixture_claim_paths
+from tests.support.claim_types import claim_type_changes
 from tests.test_claims.test_claims import vocabulary_claim_type as _work_item_claim_type
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_query.test_query_execution_service import _instance_with_query
@@ -395,11 +396,11 @@ def _presence_claim_type() -> ClaimType:
 
     base = _work_item_claim_type()
     return base.model_copy(
-        update={
-            "identity": ArtifactIdentity(kind="ClaimType", name=PRESENCE_PREDICATE),
-            "predicate": PRESENCE_PREDICATE,
-            "literal_schema": {"enum": [False, True, None]},
-        }
+        update=claim_type_changes(
+            predicate=PRESENCE_PREDICATE,
+            value_type={"enum": [False, True, None]},
+            identity=ArtifactIdentity(kind="ClaimType", name=PRESENCE_PREDICATE),
+        )
     )
 
 
@@ -547,7 +548,7 @@ def test_attempt_without_settlement_preserves_binding_and_stays_unresolved(
 def test_unevaluable_observation_stays_unresolved_until_replaced(tmp_path: Path):
     instance, owner, capture = _world(tmp_path)
     claim_type = _presence_claim_type().model_copy(
-        update={"literal_schema": {"enum": [False, True, None, 4]}}
+        update=claim_type_changes(value_type={"enum": [False, True, None, 4]})
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[claim_type_path(PRESENCE_PREDICATE)] = render_claim_type(claim_type)
