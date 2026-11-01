@@ -149,7 +149,7 @@ def _paired_world(
                 {
                     "procedure": "test.paired",
                     "input": {},
-                    "output": {name: "string" for name in returned},
+                    "output": {name: result.fields[name].spelling for name in returned},
                     "slots": {
                         "pair": {
                             "in": "demo.pair.request@1",
