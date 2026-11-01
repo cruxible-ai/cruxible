@@ -34,7 +34,6 @@ from cruxible_client.contracts.authoring.models import (
     ExistingCaptureCitationSource,
     SelfSourceBody,
 )
-from cruxible_client.contracts.claim_evidence import ClaimEvidenceReceipt
 from cruxible_client.contracts.claims import (
     ClaimFormatError,
     ClaimRetirementReason,
@@ -104,9 +103,6 @@ class ProcedureClaimProposalItem(ProcedureClaimProposalItemV1):
     citation_role: Literal["evidence", "copy"] | None = None
     derivation: ClaimDerivationBinding | None = None
     existing_claim_dispositions: tuple[AuthoringExistingClaimDisposition, ...] = ()
-    procedure_evidence: ClaimEvidenceReceipt | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
 
 
 class SubjectKeyClaimObject(_StrictProposalItemModel):

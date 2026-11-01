@@ -71,7 +71,7 @@ def test_incomplete_negative_is_downgraded_or_skipped_at_claims(
     assert state.status == "succeeded", state.terminal
     egress = state.terminal_egress[0]
     assert egress.claims_diagnostics[0].kind == "incomplete_source"
-    assert "doc" in egress.claims_diagnostics[0].input
+    assert egress.claims_diagnostics[0].input == "entries"
     if unknown:
         (claim,) = candidate_claims(instance, state)
         assert claim.statement.object.value == "unknown"
@@ -115,7 +115,7 @@ def test_incomplete_negative_is_downgraded_or_skipped_at_inbox(
     # With no unknown member, the negative item is not posted at all, and
     # its skipped write still names the incomplete input in the run report.
     assert state.terminal_egress[0].claims_diagnostics[0].kind == "incomplete_source"
-    assert "doc" in state.terminal_egress[0].claims_diagnostics[0].input
+    assert state.terminal_egress[0].claims_diagnostics[0].input == "entries"
     if unknown:
         assert {"status": "unknown"} in payloads
     else:
@@ -153,13 +153,30 @@ def test_derived_input_binds_the_exact_version_read(read_claim: dict[str, Any]) 
     assert captures
 
 
-def test_derived_input_refuses_a_forged_claim_id(read_claim: dict[str, Any]) -> None:
+def test_derived_input_refuses_an_input_that_is_not_the_exact_read(
+    read_claim: dict[str, Any],
+) -> None:
     supplied = {**read_claim, "path": "claims/forged.json"}
     token = accepted_state_token("sha256:" + "a" * 64)
     with pytest.raises(ValueError, match="claims_inputs_invalid"):
         bind_claim_input(
             supplied,
             outputs={"read": read_claim},
+            provenance={"read": AliasProvenanceV1(whole=frozenset({token}))},
+            read_aliases=frozenset({"read"}),
+            own_tokens=frozenset({token}),
+        )
+
+
+def test_derived_input_refuses_a_forged_version_even_on_an_equal_read(
+    read_claim: dict[str, Any],
+) -> None:
+    supplied = {**read_claim, "artifact_digest": "sha256:" + "f" * 64}
+    token = accepted_state_token("sha256:" + "a" * 64)
+    with pytest.raises(ValueError, match="forged Claim version"):
+        bind_claim_input(
+            supplied,
+            outputs={"read": supplied},
             provenance={"read": AliasProvenanceV1(whole=frozenset({token}))},
             read_aliases=frozenset({"read"}),
             own_tokens=frozenset({token}),

@@ -606,7 +606,7 @@ def claim_type_contention(claim_type: ClaimType) -> ClaimTypeContention:
 
 
 def claim_type_format_version(claim_type: ClaimType) -> int:
-    """The ClaimType format's version number: ``cruxible-claim-type-v11`` is 10."""
+    """The ClaimType format's version number: ``cruxible-claim-type-v11`` is 11."""
 
     return int(claim_type.artifact_format.rpartition("-v")[2])
 

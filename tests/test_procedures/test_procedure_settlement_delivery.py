@@ -237,6 +237,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
     change_kinds: tuple[str, ...] = ("create", "revise"),
     level_rules: bool = True,
     claims_terminal: bool = False,
+    claims_within: tuple[str, ...] = (),
 ):
     instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
     source, shape = procedure.definition.nodes
@@ -290,7 +291,11 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
                 ClaimsNode(
                     node_id="settle",
                     for_each="$steps.entries.records",
-                    subject={"kind": SUBJECT_KIND, "key": {"slug": "$item.key.slug"}},
+                    subject={
+                        "kind": SUBJECT_KIND,
+                        "key": {"slug": "$item.key.slug"},
+                        **({"within": list(claims_within)} if claims_within else {}),
+                    },
                     claims=[
                         {
                             "type": ArtifactNameRef(

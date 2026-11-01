@@ -549,3 +549,13 @@ Mandate basis scopes are available. Cruxible does not infer attestations.
 Absence handling (`when_absent`, `covers`, `enumeration` and `mirror`) is
 refused until B4b supplies its coverage, completeness and witness rails. An
 omitted source record never produces a negative Claim.
+
+
+A derived Claims mapping currently binds whole cardinality-one Claim reads.
+Each input must equal the exact read result in the same row's dependency
+closure; that closure must cite exactly one Capture. List-valued reads and
+multi-Capture derivations are refused. Read one Claim explicitly for each
+input; do not substitute an id or a separately fetched version.
+
+`subject.within` is a run-wide Subject set, resolved once before mapping rows;
+it must be independent of `$item`. Project the eligible Subjects before `claims`.

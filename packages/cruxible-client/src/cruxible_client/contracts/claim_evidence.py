@@ -78,3 +78,14 @@ class ClaimsDiagnostic(_Receipt):
     input: str | None = None
     claim: str | None = None
     role: str | None = None
+
+
+class ExtractRefusedInboxItem(_Receipt):
+    """The core diagnostic inbox Contract; other outcomes stay in the run report."""
+
+    tag: Literal["cruxible-extract-refused-inbox-v1"] = "cruxible-extract-refused-inbox-v1"
+    kind: Literal["extract_refused"] = "extract_refused"
+    target: str
+    field: str
+    problem: str
+    lexeme: str | None = Field(default=None, max_length=512)

@@ -429,6 +429,8 @@ def _claim_members(
     no Claim it revises, that restates a live Claim, targets that Claim's
     lineage (``restated``): on new content its evidence is refreshed, on content
     it already cites nothing changes. Never a second Claim of the statement.
+    Claims-terminal members carry core metadata: their eligibility law has
+    already chosen any revision/refresh, so this legacy restatement is skipped.
     """
 
     members: list[ClaimAuthoringPayload] = []
@@ -451,9 +453,7 @@ def _claim_members(
             source = ExistingCaptureCitationSource(capture_digest=evidence[egress_item.item_key])
             citation_role = "evidence"
         member = ClaimAuthoringPayload(
-            procedure_evidence=item.procedure_evidence
-            if isinstance(item, ProcedureClaimProposalItem)
-            else None,
+            procedure_evidence=request.claims_evidence.get(egress_item.item_key),
             statement=statement_of(item),
             rationale=item.rationale,
             source=source,
@@ -468,7 +468,7 @@ def _claim_members(
             dependency_drafts=ClaimDependencyDrafts(),
         )
         member = resolve(canonical_authored_claims(member, read))
-        if member.revises is None:
+        if member.revises is None and egress_item.item_key not in request.claims_evidence:
             refreshed = restated(member)
             if refreshed is not None:
                 member = member.model_copy(update={"revises": refreshed})
@@ -1026,7 +1026,7 @@ def _lowered_subject_paths(
 
 
 def _restated_lineage(tree: SnapshotTree, member: ClaimAuthoringPayload) -> str | None:
-    """The one live Claim a terminal item restates, if exactly one.
+    """The one live Claim a legacy proposal item restates, if exactly one.
 
     Re-observation (identity-design-1009): an item restating a live Claim's
     canonical statement targets that Claim's lineage. Shared lowering then

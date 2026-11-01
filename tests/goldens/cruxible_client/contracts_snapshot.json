@@ -64371,6 +64371,29 @@
                 "title": "Claims Diagnostics",
                 "type": "array"
               },
+              "claims_diagnostics_count": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Claims Diagnostics Count",
+                "type": "integer"
+              },
+              "claims_diagnostics_inbox_truncation": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/InboxPostTruncation"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "claims_diagnostics_truncated": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Claims Diagnostics Truncated",
+                "type": "integer"
+              },
               "effective_authority": {
                 "anyOf": [
                   {
@@ -65624,6 +65647,53 @@
             "type": "array"
           }
         },
+        "claims_diagnostics_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claims_diagnostics_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Claims Diagnostics Count",
+            "type": "integer"
+          }
+        },
+        "claims_diagnostics_inbox_truncation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claims_diagnostics_inbox_truncation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InboxPostTruncation"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "claims_diagnostics_truncated": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claims_diagnostics_truncated",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Claims Diagnostics Truncated",
+            "type": "integer"
+          }
+        },
         "effective_authority": {
           "default": null,
           "default_json_serializable": true,
@@ -66490,6 +66560,29 @@
             },
             "title": "Claims Diagnostics",
             "type": "array"
+          },
+          "claims_diagnostics_count": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Claims Diagnostics Count",
+            "type": "integer"
+          },
+          "claims_diagnostics_inbox_truncation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InboxPostTruncation"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "claims_diagnostics_truncated": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Claims Diagnostics Truncated",
+            "type": "integer"
           },
           "effective_authority": {
             "anyOf": [

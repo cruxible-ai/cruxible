@@ -188,7 +188,7 @@ def test_g18_invalid_status_filter_count_derive_cannot_launder_a_negative(tmp_pa
     claims = candidate_claims(instance, state)
     assert {c.statement.object.value for c in claims} == {"unknown"}
     assert {d.kind for d in state.terminal_egress[0].claims_diagnostics} == {"incomplete_source"}
-    assert all("kept" in d.input for d in state.terminal_egress[0].claims_diagnostics)
+    assert all(d.input == "verdict" for d in state.terminal_egress[0].claims_diagnostics)
 
 
 def test_g20_epss_header_datetime_is_projected_to_utc_date(tmp_path: Path) -> None:
@@ -241,24 +241,6 @@ def test_g5_delisting_has_a_mirror_witness(tmp_path: Path) -> None:
     path.write_text(json.dumps(doc))
     second = run(instance, root, minute=1)
     assert all(c.lifecycle.state == "retired" for c in candidate_claims(instance, second))
-
-
-@pytest.mark.xfail(
-    strict=True, reason="needs B4c: provider move invalidates the exact scoped settle grant"
-)
-def test_g9_provider_move_requires_a_new_grant() -> None:
-    # This stage is deliberately propose-only. B4c owns value/basis scope and
-    # all-or-nothing settlement, so no pilot settle assertion is admitted yet.
-    from cruxible_client.contracts.procedure_mandates import MandateClaimScope
-
-    assert "basis" in MandateClaimScope.model_fields
-
-
-@pytest.mark.xfail(strict=True, reason="needs B5: restricted Capture body exposes inventory only")
-def test_g13_restricted_capture_body_is_inventory_only() -> None:
-    from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
-
-    assert "body_access" in CaptureContractInputRecord.model_fields
 
 
 def test_g8_watched_read_ceiling_refuses_before_writes(tmp_path: Path) -> None:

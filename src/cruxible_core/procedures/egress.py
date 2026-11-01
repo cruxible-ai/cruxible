@@ -54,6 +54,7 @@ from cruxible_client.contracts.captures import (
     contract_materialization_modes,
     contract_source_kinds,
 )
+from cruxible_client.contracts.claim_evidence import ClaimEvidenceReceipt, ExtractRefusedInboxItem
 from cruxible_client.contracts.errors import FormatError, ProjectionIntegrityError
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandate,
@@ -582,6 +583,10 @@ class TerminalEgressRequestV1(_StrictEgressModel):
     #: A typed post_inbox's dedupe_key: the item fields that are an item's
     #: identity in the inbox (absent: the whole item).
     inbox_dedupe_key: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: Core-produced Claims receipts, outside provider/authored item values.
+    claims_evidence: dict[str, ClaimEvidenceReceipt] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
 
     _digests = field_validator("procedure_artifact_digest", "admission_binding_digest")(_tagged)
 
@@ -971,9 +976,13 @@ def build_terminal_egress_request_v2(
     operation_key = (
         terminal_operation_key(provisional) if request.kind in EFFECTFUL_TERMINAL_KINDS else None
     )
-    return TerminalEgressRequestV2.model_validate(
-        provisional.model_copy(update={"operation_key": operation_key}).model_dump(mode="python")
+    wire = provisional.model_copy(update={"operation_key": operation_key}).model_dump(
+        mode="python", exclude={"claims_evidence"}
     )
+    # These immutable core-produced models were validated at expansion; do not
+    # serialize and rebuild every receipt just to successor the request.
+    wire["claims_evidence"] = request.claims_evidence
+    return TerminalEgressRequestV2.model_validate(wire)
 
 
 class TerminalEgressReceiptV2(TerminalEgressReceiptV1):
@@ -1562,6 +1571,20 @@ def producer_receipt_for_request(
         item_manifest_digests=tuple(item.manifest_digest for item in request.items),
         capture_contract_digest=request.bound_artifact_pin.artifact_digest,
     )
+
+
+@runtime_checkable
+class ClaimsDiagnosticSinkProtocol(Protocol):
+    """Post bounded core diagnostics after successful terminal delivery."""
+
+    def post_claims_diagnostics(
+        self,
+        *,
+        admission: ProcedureRunAdmission,
+        node_id: str,
+        diagnostics: tuple[ExtractRefusedInboxItem, ...],
+        at: datetime,
+    ) -> None: ...
 
 
 @runtime_checkable

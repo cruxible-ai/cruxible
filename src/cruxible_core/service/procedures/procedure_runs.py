@@ -30,7 +30,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.captures import (
     capture_retention_policy,
 )
-from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic
+from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic, ExtractRefusedInboxItem
 from cruxible_client.contracts.dependencies import dependency_pins
 from cruxible_client.contracts.errors import (
     CruxibleError,
@@ -2113,6 +2113,13 @@ def _fold_terminal_egress(
             for d in cast(list[object], payload.get("claims_diagnostics", []))
         )
         or (() if current is None else current.claims_diagnostics),
+        claims_diagnostics_count=int(cast(int, payload.get("claims_diagnostics_count", 0))),
+        claims_diagnostics_truncated=int(cast(int, payload.get("claims_diagnostics_truncated", 0))),
+        claims_diagnostics_inbox_truncation=(
+            InboxPostTruncation.model_validate(payload["claims_diagnostics_inbox_truncation"])
+            if isinstance(payload.get("claims_diagnostics_inbox_truncation"), dict)
+            else None
+        ),
     )
 
 
@@ -3563,9 +3570,18 @@ class _LineTerminalEgressSink:
             raise TerminalEgressError("post_inbox is delivered only under a Line")
         return self.inbox.deliver_inbox_egress(request=request, manifests=manifests)
 
-    def post_claims_diagnostics(self, **kwargs: Any) -> None:
+    def post_claims_diagnostics(
+        self,
+        *,
+        admission: ProcedureRunAdmission,
+        node_id: str,
+        diagnostics: tuple[ExtractRefusedInboxItem, ...],
+        at: datetime,
+    ) -> None:
         if self.inbox is not None:
-            self.inbox.post_claims_diagnostics(**kwargs)
+            self.inbox.post_claims_diagnostics(
+                admission=admission, node_id=node_id, diagnostics=diagnostics, at=at
+            )
 
     def grants_settle(self) -> bool:
         return self.proposal.grants_settle()

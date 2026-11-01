@@ -9,10 +9,12 @@ Posting is inert: nothing here reads or writes accepted state.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from typing import TYPE_CHECKING, cast
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import CanonicalValue
+from cruxible_client.contracts.claim_evidence import ExtractRefusedInboxItem
 from cruxible_core.procedures.egress import (
     TerminalEgressChildReceiptV1,
     TerminalEgressError,
@@ -26,6 +28,7 @@ from cruxible_core.procedures.terminal_dependencies import (
 
 if TYPE_CHECKING:
     from cruxible_core.exhaust.line_inbox import LineInboxStore
+    from cruxible_core.procedures.execution import ProcedureRunAdmission
 
 
 class InboxTerminalEgressSink:
@@ -35,7 +38,15 @@ class InboxTerminalEgressSink:
         self.store = store
         self.line = line
 
-    def post_claims_diagnostics(self, *, admission, node_id, diagnostics, at) -> None:  # type: ignore[no-untyped-def]
+    def post_claims_diagnostics(
+        self,
+        *,
+        admission: ProcedureRunAdmission,
+        node_id: str,
+        diagnostics: tuple[ExtractRefusedInboxItem, ...],
+        at: datetime,
+    ) -> None:
+        """Post typed extraction refusals once per finding, after terminal delivery."""
         from cruxible_core.exhaust.line_inbox import InboxPosting
 
         self.store.post(
@@ -50,6 +61,7 @@ class InboxTerminalEgressSink:
                     payload=d.model_dump(mode="json"),
                     source_capture_digests=(),
                     posted_at=at,
+                    only_if_new=True,
                 )
                 for index, d in enumerate(diagnostics)
             ],

@@ -602,6 +602,18 @@ class InboxEgressNode(_StrictProcedureModel):
         return self
 
 
+def _candidate_items(value: object) -> object:
+    """Authoring refuses a literal attempt to supply a core-produced receipt."""
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            if isinstance(item, dict) and "procedure_evidence" in item:
+                raise ValueError(
+                    "claims_evidence_core_only: procedure_evidence is produced by the claims "
+                    "terminal, never supplied in a candidate item; use a claims template"
+                )
+    return normalize_canonical(value)
+
+
 class ProposalItemsFanOut(_StrictProcedureModel):
     """Candidates from data: each element of ``items`` is one Claim proposal item.
 
@@ -613,7 +625,7 @@ class ProposalItemsFanOut(_StrictProcedureModel):
 
     items: object
 
-    _items = field_validator("items", mode="before")(normalize_canonical)
+    _items = field_validator("items", mode="before")(_candidate_items)
 
 
 class ProposeChangeSetNode(_StrictProcedureModel):
@@ -641,7 +653,9 @@ class ProposeChangeSetNode(_StrictProcedureModel):
             return ProposalItemsFanOut(items=value["items"])
         if not isinstance(value, (list, tuple)) or not value:
             raise ValueError("propose_change_set requires at least one candidate template")
-        return tuple(normalize_canonical(item) for item in value)
+        normalized = _candidate_items(list(value))
+        assert isinstance(normalized, list)
+        return tuple(normalized)
 
 
 class SettleChangeSetNode(ProposeChangeSetNode):

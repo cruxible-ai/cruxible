@@ -114,6 +114,11 @@ class Completeness:
 
         return self.control_complete and self.reads_complete(reads)
 
+    def incomplete_inputs(self, reads: Iterable[Read]) -> list[str]:
+        """Only this value's incomplete aliases, including lossy view reads."""
+
+        return sorted({alias for alias, path in reads if not self.reads_complete(((alias, path),))})
+
     def guard(self, reads: Iterable[Read]) -> None:
         """A guard over an incomplete operand taints the branch it selects."""
 

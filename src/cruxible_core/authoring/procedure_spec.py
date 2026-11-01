@@ -240,6 +240,15 @@ def resolve_procedure_spec(
             }
 
         def maybe_source_identity(identity: Any) -> Any:
+            # Inline boundaries are co-proposed after this check. Type their
+            # declared fields now, rather than reading the previous version.
+            from cruxible_client.contracts.procedures.authored import generated_contract_name
+
+            if identity.kind == "Contract":
+                for role, fields in lowered.generated.items():
+                    name = generated_contract_name(spec.procedure, role)
+                    if identity.name == name + "/v1":
+                        return Contract(name=name, version=1, fields=fields)
             return maybe_source(identity.qualified)
 
         lowered = lower_procedure_spec(spec, resolve=resolve)

@@ -12,9 +12,12 @@ from cruxible_client.contracts.canonical import (
     canonical_bytes,
     pretty_canonical_bytes,
 )
+from cruxible_client.contracts.canonical_forms import canonicalize_literal
 from cruxible_client.contracts.claim_evidence import (
+    ClaimEvidenceReceipt,
     ClaimsDiagnostic,
 )
+from cruxible_client.contracts.claim_types import effective_canonical_form
 from cruxible_client.contracts.claims import claim_artifact_digest, parse_claim
 from cruxible_client.contracts.content_memo import sealed_memo
 from cruxible_client.contracts.procedures.claims import ClaimsNode, rationale_references
@@ -32,6 +35,7 @@ from cruxible_client.contracts.procedures.proposal_items import (
 )
 from cruxible_client.contracts.shapes import FieldInvalid, SubjectType, check_value
 from cruxible_core.procedures.claims_context import ClaimsContext
+from cruxible_core.procedures.claims_diagnostics import ClaimsDiagnostics
 from cruxible_core.procedures.terminal_dependencies import DependencyToken
 
 if TYPE_CHECKING:
@@ -52,7 +56,8 @@ def _receipt_extract_digest(node: ExtractNode) -> str:
 class ExpandedClaims:
     values: list[CanonicalValue]
     tokens: tuple[frozenset[DependencyToken], ...]
-    diagnostics: tuple[ClaimsDiagnostic, ...]
+    diagnostics: ClaimsDiagnostics
+    evidence: tuple[ClaimEvidenceReceipt | None, ...]
 
 
 def expand_claims(
@@ -67,6 +72,7 @@ def expand_claims(
         _budget_refusal,
         _exact_evidence,
         _fan_out_list,
+        _mentions_item_reference,
         _referenced_aliases,
         _referenced_reads,
         _resolve_template,
@@ -103,7 +109,8 @@ def expand_claims(
             boundary=f"terminal:{node.node_id}",
             field_path="for_each",
         )
-    diagnostics: list[ClaimsDiagnostic] = []
+    diagnostics = ClaimsDiagnostics()
+    evidence: list[ClaimEvidenceReceipt | None] = []
     values: list[CanonicalValue] = []
     tokens: list[frozenset[DependencyToken]] = []
     created: set[bytes] = set()
@@ -113,33 +120,50 @@ def expand_claims(
         else {getattr(n, "as_", None): n for n in executor.plan.definition.nodes}
     )
     # Runtime execution plans carry their accepted artifact separately on some paths.
-    source_cache: dict[str, tuple[tuple[Any, ...], tuple[str, ...]]] = {}
+    source_cache: dict[str, tuple[tuple[Any, ...], tuple[str, ...], bool]] = {}
     extract_digests = {
         n.node_id: _receipt_extract_digest(n) for n in nodes.values() if isinstance(n, ExtractNode)
     }
 
-    def lineage(alias: str) -> tuple[tuple[Any, ...], tuple[str, ...]]:
+    def includes_input(value: object) -> bool:
+        from pydantic import BaseModel
+
+        if isinstance(value, str):
+            return value == "$input" or value.startswith("$input.")
+        if isinstance(value, dict):
+            return any(includes_input(v) for v in value.values())
+        if isinstance(value, list | tuple):
+            return any(includes_input(v) for v in value)
+        if isinstance(value, BaseModel):
+            return includes_input(value.model_dump(mode="python"))
+        return False
+
+    def lineage(alias: str) -> tuple[tuple[Any, ...], tuple[str, ...], bool]:
         if alias in source_cache:
             return source_cache[alias]
         producer = nodes.get(alias)
-        if isinstance(producer, ExtractNode | CallNode):
-            found: tuple[tuple[Any, ...], tuple[str, ...]] = ((producer,), ())
-        elif producer is None or isinstance(producer, InvokeNode | RepeatNode):
-            # Input lineage alone cannot prove how a child/repeat computed its
-            # returned value. Never relabel that computation as extraction.
-            found = ((), ())
+        if isinstance(producer, ExtractNode):
+            found: tuple[tuple[Any, ...], tuple[str, ...], bool] = ((producer,), (), False)
+        elif producer is None or isinstance(producer, ReadNode | InvokeNode | RepeatNode):
+            # Accepted-state reads and opaque computations cannot be receipted
+            # as extraction. A derivation must bind its exact Claim inputs.
+            found = ((), (), True)
         else:
             from cruxible_core.procedures.execution import _node_reads
 
             sources: dict[str, Any] = {}
             transforms: dict[str, None] = {}
+            unsupported = includes_input(producer)
             for parent, _ in _node_reads(producer):
-                s, t = lineage(parent)
-                sources.update((n.node_id, n) for n in s)
-                transforms.update(dict.fromkeys(t))
-            if isinstance(producer, TransformNode):
+                parents, chain, blocked = lineage(parent)
+                sources.update((n.node_id, n) for n in parents)
+                transforms.update(dict.fromkeys(chain))
+                unsupported |= blocked
+            if isinstance(producer, CallNode):
+                sources = {producer.node_id: producer}
+            elif isinstance(producer, TransformNode):
                 transforms[producer.node_id] = None
-            found = (tuple(sources.values()), tuple(transforms))
+            found = (tuple(sources.values()), tuple(transforms), unsupported)
         source_cache[alias] = found
         return found
 
@@ -150,7 +174,7 @@ def expand_claims(
         target: str,
         **details: Any,
     ) -> None:
-        diagnostics.append(ClaimsDiagnostic(kind=kind, target=target, **details))
+        diagnostics.add(ClaimsDiagnostic(kind=kind, target=target, **details))
 
     shared = _exact_evidence(
         [node.subject.key, node.subject.within, node.where],
@@ -158,6 +182,39 @@ def expand_claims(
         node_id=node.node_id,
         field="subject",
     )
+    within_paths: set[object] | None = None
+    if node.subject.within is not None:
+        if _mentions_item_reference(node.subject.within):
+            raise _RunRefusal(
+                "proposal_item_invalid",
+                "subject.within must be independent of $item; project the Subject set first",
+                node_id=node.node_id,
+            )
+        within = resolve(node.subject.within)
+        if not isinstance(within, list):
+            raise _RunRefusal(
+                "proposal_item_invalid",
+                "subject.within must be a Subject list",
+                node_id=node.node_id,
+            )
+
+        def path_of(item: object) -> object:
+            if isinstance(item, str):
+                if item.startswith("subjects/"):
+                    return item
+                return (
+                    "subjects/"
+                    + (item if "/" in item else node.subject.kind + "/" + item)
+                    + ".json"
+                )
+            if isinstance(item, dict):
+                if "path" in item:
+                    return item["path"]
+                if "subject_kind" in item and "subject_id" in item:
+                    return f"subjects/{item['subject_kind']}/{item['subject_id']}.json"
+            return None
+
+        within_paths = {path_of(item) for item in within}
     attempted = 0
     for row_index, (row, own_tokens) in enumerate(zip(rows, row_tokens, strict=True)):
         record = _record(row, row_index, "claims")
@@ -176,33 +233,10 @@ def expand_claims(
             raise _RunRefusal("proposal_item_invalid", str(exc), node_id=node.node_id) from exc
         if subject is None and node.subject.create == "never":
             continue
-        if node.subject.within is not None:
-            within = resolve(node.subject.within, row)
-            if not isinstance(within, list):
-                raise _RunRefusal(
-                    "proposal_item_invalid",
-                    "subject.within must be a Subject list",
-                    node_id=node.node_id,
-                )
-
-            def path_of(item: object) -> object:
-                if isinstance(item, str):
-                    if item.startswith("subjects/"):
-                        return item
-                    return (
-                        "subjects/"
-                        + (item if "/" in item else node.subject.kind + "/" + item)
-                        + ".json"
-                    )
-                if isinstance(item, dict):
-                    if "path" in item:
-                        return item["path"]
-                    if "subject_kind" in item and "subject_id" in item:
-                        return f"subjects/{item['subject_kind']}/{item['subject_id']}.json"
-                return None
-
-            if subject is None or subject.artifact_path not in {path_of(s) for s in within}:
-                continue
+        if within_paths is not None and (
+            subject is None or subject.artifact_path not in within_paths
+        ):
+            continue
         subject_wire = (
             subject.model_dump(mode="json")
             if subject is not None
@@ -223,7 +257,11 @@ def expand_claims(
                     boundary=f"terminal:{node.node_id}",
                     field_path="claims",
                 )
-            target = f"{node.subject.kind}:{key!r}:{mapping.claim_type.target.name}"
+            target = (
+                f"{node.subject.kind}:"
+                + canonical_bytes(key).decode("utf-8")
+                + f":{mapping.claim_type.target.name}"
+            )
             # An invalid mapped field is reported even when present(...) is false.
             raw = resolve(mapping.value, row)
             if isinstance(raw, dict) and raw.get("tag") == "invalid":
@@ -310,22 +348,21 @@ def expand_claims(
 
                 value = value if checked is None else wire_value(checked.value)
                 obj = {"kind": "literal", "value": value}
-            complete = state.completeness.at_sink(
-                _referenced_reads(
-                    [
-                        node.for_each,
-                        node.where,
-                        node.subject.key,
-                        node.subject.within,
-                        mapping.value,
-                        mapping.when,
-                        mapping.qualifier,
-                        mapping.effective_from,
-                        mapping.effective_until,
-                        mapping.inputs,
-                    ]
-                )
+            value_reads = _referenced_reads(
+                [
+                    node.for_each,
+                    node.where,
+                    node.subject.key,
+                    node.subject.within,
+                    mapping.value,
+                    mapping.when,
+                    mapping.qualifier,
+                    mapping.effective_from,
+                    mapping.effective_until,
+                    mapping.inputs,
+                ]
             )
+            complete = state.completeness.at_sink(value_reads)
             # An invalid used field makes a record incomplete independently of an alias flag.
             metadata: dict[str, Any] = {}
             metadata_invalid = False
@@ -355,13 +392,15 @@ def expand_claims(
             qualifier = metadata["qualifier"]
             held = () if subject is None else context.slot(subject, ct.predicate, qualifier)
             if ct.negative and value != ct.unknown_member and not complete:
-                incomplete = sorted(state.completeness.incomplete)
+                incomplete = state.completeness.incomplete_inputs(value_reads)
                 report("incomplete_source", target, input=",".join(incomplete) or "control lineage")
                 # No destructive replacement over incomplete input, including a downgrade.
                 if ct.unknown_member is None or held:
                     continue
                 value = ct.unknown_member
                 obj = {"kind": "literal", "value": value}
+            if obj["kind"] == "literal":
+                obj["value"] = canonicalize_literal(obj["value"], effective_canonical_form(ct))
             blocked = [c for c in held if c.statement.role not in replaces]
             blocked_refresh = any(
                 c.statement.object.model_dump(mode="json") == obj and c.statement.role == role
@@ -380,6 +419,21 @@ def expand_claims(
             if ct.cardinality == "one" and len(eligible) > 1:
                 report("slot_contested", target)
                 continue
+            refresh = [
+                c
+                for c in eligible
+                if c.statement.object.model_dump(mode="json") == obj
+                and c.statement.role == role
+                and c.statement.effective_from == metadata["effective_from"]
+                and c.statement.effective_until == metadata["effective_until"]
+            ]
+            revises = (
+                eligible[0].identity.name
+                if ct.cardinality == "one" and eligible
+                else refresh[0].identity.name
+                if len(refresh) == 1
+                else None
+            )
             item_templates = [
                 mapping.value,
                 mapping.qualifier,
@@ -427,6 +481,30 @@ def expand_claims(
                     "claims_inputs_invalid: inputs must be distinct",
                     node_id=node.node_id,
                 )
+            direct_aliases = _referenced_aliases(mapping.value)
+            source_aliases = direct_aliases or _referenced_aliases(node.for_each)
+            # The interim ruling leaves literal/$params attribution unchanged:
+            # those templates still cite the selected record's extract. $item,
+            # explicit step reads and $input must prove their own data lineage.
+            record_constant = (
+                not direct_aliases
+                and not _mentions_item_reference(mapping.value)
+                and not includes_input(mapping.value)
+            )
+            sources: dict[str, Any] = {}
+            transforms: dict[str, None] = {}
+            unsupported = includes_input(mapping.value)
+            for alias in source_aliases:
+                s, t, blocked_basis = lineage(alias)
+                sources.update((n.node_id, n) for n in s)
+                transforms.update(dict.fromkeys(t))
+                unsupported |= blocked_basis and not record_constant
+            if unsupported and not inputs:
+                report(
+                    "extract_refused", target, field=str(mapping.value), problem="basis_unsupported"
+                )
+                continue
+            extractors = [n for n in sources.values() if isinstance(n, ExtractNode)]
             if inputs and not any(t.slot in {"produced_capture", "admitted_capture"} for t in own):
                 from cruxible_core.procedures.terminal_dependencies import admitted_capture_token
 
@@ -441,16 +519,6 @@ def expand_claims(
                     node_id=node.node_id,
                 )
             capture = captures[0]
-            source_aliases = _referenced_aliases(mapping.value) or _referenced_aliases(
-                node.for_each
-            )
-            sources: dict[str, Any] = {}
-            transforms: dict[str, None] = {}
-            for alias in source_aliases:
-                s, t = lineage(alias)
-                sources.update((n.node_id, n) for n in s)
-                transforms.update(dict.fromkeys(t))
-            extractors = [n for n in sources.values() if isinstance(n, ExtractNode)]
             basis: dict[str, Any]
             if inputs:
                 basis = {
@@ -461,7 +529,7 @@ def expand_claims(
                     ],
                     "transform_node_ids": list(transforms),
                 }
-            elif len(extractors) == 1:
+            elif len(extractors) == 1 and len(sources) == 1:
                 extracting = extractors[0]
                 contract = executor.capture_contracts.get(state.capture_contracts.get(capture, ""))
                 basis = {
@@ -535,6 +603,7 @@ def expand_claims(
                     )
                 )
                 tokens.append(own)
+                evidence.append(None)
             item: dict[str, Any] = {
                 "tag": "playbill-procedure-claim-proposal-item-v3"
                 if subject is None
@@ -554,10 +623,7 @@ def expand_claims(
                     "effective_until": metadata["effective_until"],
                 },
                 "rationale": rationale,
-                "revises": eligible[0].identity.name
-                if ct.cardinality == "one" and eligible
-                else None,
-                "procedure_evidence": {"law": "claim-evidence-v2", "value": basis},
+                "revises": revises,
                 "derivation": None
                 if not inputs
                 else ClaimDerivationBinding(
@@ -575,7 +641,8 @@ def expand_claims(
                 item["derivation"] = item["derivation"].model_dump(mode="json")
             values.append(cast(CanonicalValue, item))
             tokens.append(own)
-    return ExpandedClaims(values, tuple(tokens), tuple(diagnostics))
+            evidence.append(ClaimEvidenceReceipt.model_validate({"value": basis}))
+    return ExpandedClaims(values, tuple(tokens), diagnostics, tuple(evidence))
 
 
 def bind_claim_input(
@@ -586,7 +653,12 @@ def bind_claim_input(
     read_aliases: frozenset[str],
     own_tokens: frozenset[DependencyToken],
 ) -> tuple[ArtifactPin, tuple[str, ...]]:
-    """A Claim reference is an exact admitted read in this row's dependency closure."""
+    """Bind one cardinality-one Claim read, whole-output equal, in this row's closure.
+
+    The terminal currently requires exactly one Capture across that closure.
+    List/cardinality-many reads and multi-Capture derivations fail closed; callers
+    must project a supported one-Claim read rather than select an arbitrary id.
+    """
     matches = [
         name
         for name in read_aliases

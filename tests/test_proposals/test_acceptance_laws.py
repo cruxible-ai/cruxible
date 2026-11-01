@@ -110,6 +110,7 @@ def test_one_claim_type_law_is_installed_and_removed_claim_type_formats_have_non
         "playbill-claim-type-v7",
         "playbill-claim-type-v8",
         "cruxible-claim-type-v9",
+        "cruxible-claim-type-v10",
     ):
         with pytest.raises(ProposalIntegrityError, match="no acceptance law"):
             ACCEPTANCE_LAWS.resolve_member(artifact_tag=removed)

@@ -174,6 +174,8 @@ class InboxPosting:
     #: What the item's dedupe key reads, when its terminal declares a
     #: dedupe_key (those fields of the payload); absent, the whole payload.
     dedupe_payload: CanonicalValue | None = None
+    #: Core diagnostic findings are posted only once, including across runs.
+    only_if_new: bool = False
 
 
 @dataclass(frozen=True)
@@ -572,6 +574,7 @@ class LineInboxStore:
 
         keys: list[str] = []
         fresh: list[dict[str, Any]] = []
+        new_items: set[str] = set()
         with self.locked(create=True) as conn:
             for posting in postings:
                 size = len(canonical_bytes(posting.payload))
@@ -592,12 +595,20 @@ class LineInboxStore:
                     ),
                 )
                 keys.append(key)
+                item_id = inbox_item_id(key)
+                if posting.only_if_new and (
+                    item_id in new_items
+                    or conn.execute("SELECT 1 FROM items WHERE item_id=?", (item_id,)).fetchone()
+                    is not None
+                ):
+                    continue
                 seen = conn.execute(
                     "SELECT 1 FROM postings WHERE run_id=? AND node_id=? AND item_key=?",
                     (posting.run_id, posting.node_id, posting.item_key),
                 ).fetchone()
                 if seen is not None:
                     continue
+                new_items.add(item_id)
                 fresh.append(
                     {
                         "item_id": inbox_item_id(key),

@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable, Final, Literal, NoReturn, Protocol, cast
 
 from cruxible_client.contracts.captures import capture_retention_policy, parse_capture_envelope
-from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic
+from cruxible_client.contracts.claim_evidence import ClaimEvidenceReceipt, ClaimsDiagnostic
 from cruxible_client.contracts.procedures.claims import ClaimsNode
 from cruxible_client.contracts.refs import Ref
 from cruxible_client.contracts.shapes import (
@@ -66,6 +66,7 @@ from cruxible_client.contracts.errors import (
 from cruxible_client.contracts.line_inbox import (
     INBOX_ITEM_MAX_BYTES,
     INBOX_RUN_ITEM_CAP_DEFAULT,
+    INBOX_RUN_ITEM_CAP_MAX,
     INBOX_RUN_MAX_BYTES,
 )
 from cruxible_client.contracts.procedure_runtime_policy import (
@@ -203,6 +204,7 @@ from cruxible_core.procedures.acquisition import (
     apply_acquisition_result,
     disallowed_origin,
 )
+from cruxible_core.procedures.claims_diagnostics import ClaimsDiagnostics
 from cruxible_core.procedures.completeness import (
     Completeness,
     CompletenessProbe,
@@ -211,6 +213,7 @@ from cruxible_core.procedures.completeness import (
 )
 from cruxible_core.procedures.egress import (
     SERVED_AUTHORITY_TERMS,
+    ClaimsDiagnosticSinkProtocol,
     EffectiveRungTermV1,
     EffectiveRungV1,
     InboxEgressSinkProtocol,
@@ -2217,7 +2220,10 @@ class _RunState:
     claims_items: dict[str, tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]] = (
         dataclass_field(default_factory=dict)
     )
-    claims_diagnostics: tuple[ClaimsDiagnostic, ...] = ()
+    claims_diagnostics: dict[str, ClaimsDiagnostics] = dataclass_field(default_factory=dict)
+    claims_evidence: dict[str, tuple[ClaimEvidenceReceipt | None, ...]] = dataclass_field(
+        default_factory=dict
+    )
 
     def observe_items(self, observed: int, boundary: str, field_path: str) -> None:
         candidate = (boundary.encode("utf-8"), field_path.encode("utf-8"))
@@ -4619,16 +4625,8 @@ class ProcedureExecutor:
             expanded.values,
             tuple(t | policy for t in expanded.tokens),
         )
-        state.claims_diagnostics = expanded.diagnostics
-        if expanded.diagnostics:
-            post = getattr(self.egress_sink, "post_claims_diagnostics", None)
-            if post is not None:
-                post(
-                    admission=admission,
-                    node_id=node.node_id,
-                    diagnostics=expanded.diagnostics,
-                    at=self.clock.now(),
-                )
+        state.claims_diagnostics[node.node_id] = expanded.diagnostics
+        state.claims_evidence[node.node_id] = expanded.evidence
         self._run_terminal(
             SettleChangeSetNode(
                 node_id=node.node_id,
@@ -4663,6 +4661,35 @@ class ProcedureExecutor:
             enums=self.enum_resolver,
             keys=self.key_rules,
         )
+
+    def _diagnostic_report(self, node_id: str, state: _RunState) -> dict[str, object]:
+        diagnostics = state.claims_diagnostics.get(node_id)
+        if diagnostics is None:
+            return {}
+        report = diagnostics.report()
+        remaining = max(INBOX_RUN_ITEM_CAP_MAX - state.inbox_items, 0)
+        if diagnostics.inbox_selected > remaining:
+            report["claims_diagnostics_inbox_truncation"] = InboxPostTruncation(
+                cap=INBOX_RUN_ITEM_CAP_MAX,
+                cap_source="default",
+                selected=diagnostics.inbox_selected,
+                posted=min(len(diagnostics.inbox), remaining),
+            ).model_dump(mode="json")
+        return report
+
+    def _post_diagnostics(
+        self, node_id: str, admission: ProcedureRunAdmission, state: _RunState
+    ) -> None:
+        diagnostics = state.claims_diagnostics.get(node_id)
+        if diagnostics is None or not diagnostics.inbox:
+            return
+        remaining = max(INBOX_RUN_ITEM_CAP_MAX - state.inbox_items, 0)
+        items = tuple(diagnostics.inbox[:remaining])
+        if items and isinstance(self.egress_sink, ClaimsDiagnosticSinkProtocol):
+            self.egress_sink.post_claims_diagnostics(
+                admission=admission, node_id=node_id, diagnostics=items, at=self.clock.now()
+            )
+            state.inbox_items += len(items)
 
     def _run_terminal(
         self,
@@ -4704,7 +4731,9 @@ class ProcedureExecutor:
             ).model_dump(mode="json")
         )
         if not values and truncation is None:
-            if node.node_id in state.claims_items or state.claims_diagnostics:
+            if node.node_id in state.claims_items or node.node_id in state.claims_diagnostics:
+                diagnostic_report = self._diagnostic_report(node.node_id, state)
+                self._post_diagnostics(node.node_id, admission, state)
                 self._append_event(
                     admission,
                     records,
@@ -4715,9 +4744,7 @@ class ProcedureExecutor:
                         "required_rung": TERMINAL_REQUIRED_RUNGS[node.kind],
                         "verdict": "delivered",
                         "children": [],
-                        "claims_diagnostics": [
-                            d.model_dump(mode="json") for d in state.claims_diagnostics
-                        ],
+                        **diagnostic_report,
                     },
                 )
             # A fan-out over an empty list has nothing to emit: no egress is
@@ -4728,7 +4755,7 @@ class ProcedureExecutor:
         payload: dict[str, object] = {
             "node_id": node.node_id,
             "kind": "claims" if node.node_id in state.claims_items else node.kind,
-            "claims_diagnostics": [d.model_dump(mode="json") for d in state.claims_diagnostics],
+            **self._diagnostic_report(node.node_id, state),
             "required_rung": required,
             "children": [item.model_dump(mode="json") for item in children],
         }
@@ -4801,6 +4828,7 @@ class ProcedureExecutor:
                 values=values,
                 manifests=manifests,
                 capped_by=capped_by,
+                claims_evidence=state.claims_evidence.get(node.node_id, ()),
             )
         except TerminalEgressError as exc:
             refusal = self._terminal_refusal(exc, node_id=node.node_id)
@@ -4911,6 +4939,7 @@ class ProcedureExecutor:
                 str(exc),
                 node_id=node.node_id,
             ) from exc
+        self._post_diagnostics(node.node_id, admission, state)
         self._append_event(
             admission,
             records,
@@ -5020,6 +5049,7 @@ class ProcedureExecutor:
         values: tuple[CanonicalValue, ...],
         manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
         capped_by: EffectiveRungTermV1 | None = None,
+        claims_evidence: tuple[ClaimEvidenceReceipt | None, ...] = (),
     ) -> tuple[TerminalEgressRequestV1, PreparedTerminalEgressV1 | None]:
         """Hand the sink the exact pins this terminal kind's law traverses.
 
@@ -5065,6 +5095,11 @@ class ProcedureExecutor:
                 )
                 for child, value in zip(children, values, strict=True)
             ),
+            claims_evidence={
+                child.item_key: receipt
+                for child, receipt in zip(children, claims_evidence)
+                if receipt is not None
+            },
             prepared_at=self.clock.now(),
         )
         # Ruling C4: a direct run's admission is never a V5+ Line carrier (it
@@ -6622,13 +6657,18 @@ def _inbox_items(
                 and value != declared.unknown_member
                 and not complete
             ):
-                state.claims_diagnostics += (
+                state.claims_diagnostics.setdefault(node.node_id, ClaimsDiagnostics()).add(
                     ClaimsDiagnostic(
                         kind="incomplete_source",
                         target=f"{node.contract.spelling}.{name}",
                         field=name,
-                        input=",".join(sorted(state.completeness.incomplete)) or "control lineage",
-                    ),
+                        input=",".join(
+                            state.completeness.incomplete_inputs(
+                                _referenced_reads([node.for_each, template])
+                            )
+                        )
+                        or "control lineage",
+                    )
                 )
                 if declared.unknown_member is None:
                     skip_item = True

@@ -1136,10 +1136,16 @@ class ProcedureTerminalEgress(_StrictResultModel):
     # Present only while the earlier-refusal index is catching up: the
     # children's receipts reflect retirements through the generation named.
     prior_refusal_coverage: PriorRefusalCoverage | None = None
-    # A post_inbox terminal that selected more items than its run may post.
+    # Per-node bounded reasons: total count plus the first 100 details.
     claims_diagnostics: tuple[ClaimsDiagnostic, ...] = Field(
         default=(), exclude_if=lambda value: not value
     )
+    claims_diagnostics_count: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
+    claims_diagnostics_truncated: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
+    claims_diagnostics_inbox_truncation: InboxPostTruncation | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # A post_inbox terminal that selected more items than its run may post.
     inbox_truncation: InboxPostTruncation | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
