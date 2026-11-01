@@ -121,7 +121,6 @@ def carry_mandate(
             identity=mandate.identity,
             line=mandate.line.model_copy(update={"artifact_digest": target}),
             grants="propose",
-            resource_ceiling=mandate.resource_ceiling,
             namespace=mandate.namespace,
             valid_from=mandate.valid_from,
             expires_at=mandate.expires_at,

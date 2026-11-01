@@ -73,7 +73,6 @@ from cruxible_client.contracts.procedures.authored import (
 )
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
-from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
     validate_change_set_rationale,
@@ -395,12 +394,11 @@ class ProcedureMandateInput(_StrictInputModel):
     each target; lowering pins every exact digest.
     """
 
-    tag: Literal["cruxible-procedure-mandate-input-v2"] = "cruxible-procedure-mandate-input-v2"
+    tag: Literal["cruxible-procedure-mandate-input-v3"] = "cruxible-procedure-mandate-input-v3"
     kind: Literal["procedure_mandate"]
     name: str
     line_name: str
     grants: Literal["propose", "settle"]
-    resource_ceiling: ProcedureHardCaps
     namespace: tuple[str, ...]
     valid_from: datetime
     expires_at: datetime
@@ -417,6 +415,17 @@ class ProcedureMandateInput(_StrictInputModel):
     )
     suspended: bool = False
     retire: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _retired_ceiling(cls, value: object) -> object:
+        if isinstance(value, dict) and "resource_ceiling" in value:
+            raise ValueError(
+                "procedure_mandate_ceiling_retired: a Mandate grants authority only; the "
+                "Procedure's hard_caps bound every run and the Line owns the operating "
+                "budget (Line budgets)"
+            )
+        return value
 
 
 class LineInput(_StrictInputModel):

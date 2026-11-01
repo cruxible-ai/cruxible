@@ -49,7 +49,7 @@ def authored_policy_call():
     raw = base.definition.model_dump(mode="json", by_alias=True)
     raw["nodes"] = [node]
     raw["slots"] = {"act": {"in": value, "out": value, "effect": "external_mutation"}}
-    raw["budget"]["max_provider_calls"] = raw["hard_caps"]["max_provider_calls"] = 1
+    raw["hard_caps"]["max_provider_calls"] = 1
     definition = ProcedureDefinition.model_validate(raw)
     artifact = ProcedureArtifact.model_validate(
         {

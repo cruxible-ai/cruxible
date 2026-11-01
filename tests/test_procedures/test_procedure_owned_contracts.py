@@ -31,7 +31,6 @@ from cruxible_client.contracts.procedures.contracts import (
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
@@ -67,7 +66,7 @@ from tests.core_support._knowledge_loop_support import (
     work_item_query,
 )
 from tests.core_support._support import client_material
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, bind_fixture, named
+from tests.support.procedures import MAX_WALL_CLOCK, bind_fixture, named
 from tests.test_ledger.test_activation import _sign
 
 READ_TIME = datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
@@ -244,12 +243,6 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
             ),
         ),
         returns="result",
-        budget=ProcedureBudget(
-            wall_clock=RUN_WALL_CLOCK,
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=100,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=0,

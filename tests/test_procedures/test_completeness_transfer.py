@@ -230,7 +230,7 @@ def _count_fixed(instance: Any, *, kept_from: str) -> None:
                 {"project": "out", "fields": {"verdict": "$steps.verdict.result"}},
             ],
             "returns": "out",
-            "budget": {"provider_calls": 1, "capture_bytes": 65536},
+            "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
         }
     )
     author_procedure(instance, spec)
@@ -315,7 +315,7 @@ def _row_read(tmp_path: Path, field: str) -> Any:
                 },
             ],
             "returns": "out",
-            "budget": {"provider_calls": 1, "capture_bytes": 65536},
+            "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
         }
     )
     author_procedure(instance, spec)
@@ -388,7 +388,7 @@ def test_an_acquiring_call_over_an_incomplete_request_is_incomplete(
                 },
             ],
             "returns": "out",
-            "budget": {"provider_calls": 2, "capture_bytes": 65536},
+            "hard_caps": {"provider_calls": 2, "capture_bytes": 65536},
         }
     )
     author_procedure(instance, spec)
@@ -430,7 +430,7 @@ def _child(instance: Any) -> None:
                     },
                 ],
                 "returns": "result",
-                "budget": {"provider_calls": 1, "capture_bytes": 65536},
+                "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
             }
         ),
         name="child",
@@ -465,7 +465,7 @@ def test_an_invoke_carries_its_childs_incomplete_return_past_complete_parent_inp
                     },
                 ],
                 "returns": "finished",
-                "budget": {"provider_calls": 1, "capture_bytes": 65536},
+                "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
             }
         ),
         name="parent",
@@ -538,7 +538,7 @@ def test_a_repeat_is_the_and_over_the_attempts_it_used(
                     },
                 ],
                 "returns": "finished",
-                "budget": {"provider_calls": 0},
+                "hard_caps": {"provider_calls": 0},
             }
         ),
     )
@@ -592,7 +592,7 @@ def test_a_closed_transforms_rows_view_also_taints_a_read_reaching_a_dropped_fie
                 },
             ],
             "returns": "out",
-            "budget": {"provider_calls": 1, "capture_bytes": 65536},
+            "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
         }
     )
     author_procedure(instance, spec)
@@ -645,7 +645,7 @@ def test_an_inbox_item_reading_an_invalid_field_reaches_its_sink_incomplete(
                 },
             ],
             "returns": "out",
-            "budget": {"provider_calls": 1, "capture_bytes": 65536},
+            "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
         }
     )
     author_procedure(instance, spec)
@@ -768,7 +768,7 @@ def _repeat_world(tmp_path: Path, body: list[dict[str, Any]], after: list[dict[s
                     },
                 ],
                 "returns": "finished",
-                "budget": {"provider_calls": 0},
+                "hard_caps": {"provider_calls": 0},
             }
         ),
     )

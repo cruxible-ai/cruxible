@@ -166,7 +166,6 @@ def _propose_line(
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
         grants="propose",
-        resource_ceiling=procedure.procedure.definition.hard_caps,
         namespace=namespace,
         valid_from=_worlds._FAR_PAST,  # noqa: SLF001
         expires_at=_worlds._FAR_FUTURE,  # noqa: SLF001

@@ -3,13 +3,6 @@
     "activation_policy": "snapshot",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 1048576,
-        "max_provider_calls": 1,
-        "wall_clock": {
-          "microseconds": 60000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -92,7 +85,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:d45933c0c28557af9c6c38d05c19a54cee4a6fedb4221a93d871c4bf98a21f99",
+    "definition_digest": "sha256:fa373ed816ca51e6b40debc3035da431d38b8f38918ea210500d7de78b5c8ba1",
     "identity": {
       "kind": "Procedure",
       "name": "security.credential-acquire"
@@ -133,13 +126,6 @@
     "activation_policy": "drain",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 1048576,
-        "max_provider_calls": 2,
-        "wall_clock": {
-          "microseconds": 60000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -323,7 +309,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:af24ba55bc8d7d65dd41b5c34d1906ea83d4f3e033a5205aa2d4df4c92d53d7e",
+    "definition_digest": "sha256:a11c158dee6bce81bdd46ed0de24d074dae57a2b504625d719e63e349a0676ad",
     "identity": {
       "kind": "Procedure",
       "name": "security.credential-import"
@@ -384,13 +370,6 @@
     "activation_policy": "drain",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 16777216,
-        "max_provider_calls": 2,
-        "wall_clock": {
-          "microseconds": 120000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -668,7 +647,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:ee421df10b0fea862c189094f8dcd070a4e8f7b8bd27878eb0729c2be159aab5",
+    "definition_digest": "sha256:5d363487224688479e201abda95e2edc95501d09c2257f7a6bc4a17ef6a12696",
     "identity": {
       "kind": "Procedure",
       "name": "security.cve-applicability"
@@ -720,13 +699,6 @@
     "activation_policy": "drain",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 33554432,
-        "max_provider_calls": 2,
-        "wall_clock": {
-          "microseconds": 120000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -860,7 +832,7 @@
       },
       "terminal_capability": 3
     },
-    "definition_digest": "sha256:baad15d4e0853d0fc2ad8218629a416215fb7fdd04acd58cc17b74b3559b0e11",
+    "definition_digest": "sha256:3be6aee4f07d07014e3af217f513ca9b3b6f51f5c504fe0c0664b915b44c3236",
     "identity": {
       "kind": "Procedure",
       "name": "security.epss-triage"
@@ -906,13 +878,6 @@
     "activation_policy": "snapshot",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 1048576,
-        "max_provider_calls": 1,
-        "wall_clock": {
-          "microseconds": 60000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -995,7 +960,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:4e1c3c836c76a5e2fbc7ad213cf8e89daaa6aa1d1314b07c1da3bee63613aa14",
+    "definition_digest": "sha256:141c24f4d07c3c5cf66b3931938bd2943516166e2ab6e5899d72a622b4346242",
     "identity": {
       "kind": "Procedure",
       "name": "security.evidence-acquire"
@@ -1036,13 +1001,6 @@
     "activation_policy": "drain",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 1048576,
-        "max_provider_calls": 1,
-        "wall_clock": {
-          "microseconds": 120000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -1221,7 +1179,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:d23ed323dd440b1e3acff30461ba3f3ff60dce8099e03ab607aa6ea2149db28f",
+    "definition_digest": "sha256:b30bb31884c70aef967553d865c99e658a266a91d3926eff89a7e70ed90512a5",
     "identity": {
       "kind": "Procedure",
       "name": "security.harden"
@@ -1289,13 +1247,6 @@
     "activation_policy": "snapshot",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 1048576,
-        "max_provider_calls": 1,
-        "wall_clock": {
-          "microseconds": 60000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -1378,7 +1329,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:c574ad9dd99a05d42ff041c8a68b678e9634da03ed62223a380a4ddb606c6e90",
+    "definition_digest": "sha256:306b938cc034f67d49fb966ae89a8276a35286a63a6b96e65afcfb03fc0de374",
     "identity": {
       "kind": "Procedure",
       "name": "security.inventory-acquire"
@@ -1419,13 +1370,6 @@
     "activation_policy": "drain",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 1048576,
-        "max_provider_calls": 2,
-        "wall_clock": {
-          "microseconds": 120000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -1645,7 +1589,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:b9863286318d1f82fa28e3450ef9c627dcb850d3c2b5693478f976a9b41e256f",
+    "definition_digest": "sha256:6a72689e71b5498db6f711a6eb0d18c356ff12b57e9f7859d28c6daa8b18d146",
     "identity": {
       "kind": "Procedure",
       "name": "security.inventory-import"
@@ -1734,13 +1678,6 @@
     "activation_policy": "drain",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 16777216,
-        "max_provider_calls": 2,
-        "wall_clock": {
-          "microseconds": 120000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -1906,7 +1843,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:8284e00f5beacc0498df52f7e99cc20f0cd8279c89bac9099802f946f5270006",
+    "definition_digest": "sha256:9b4a0bc1f10330768c1140b2a19f8de2232ed344b7b69a105fea622d86864e1c",
     "identity": {
       "kind": "Procedure",
       "name": "security.kev-attention"
@@ -1946,13 +1883,6 @@
     "activation_policy": "drain",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 16777216,
-        "max_provider_calls": 2,
-        "wall_clock": {
-          "microseconds": 120000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -2129,7 +2059,7 @@
       },
       "terminal_capability": 3
     },
-    "definition_digest": "sha256:8f79a653edffaa847435d06bf565c6393611586cacad98e46d62381065130322",
+    "definition_digest": "sha256:c89dffaf703b8fe541948e28e0b7777ff94b845130ce0179b89dbac71a8eee33",
     "identity": {
       "kind": "Procedure",
       "name": "security.kev-triage"
@@ -2172,13 +2102,6 @@
     "activation_policy": "snapshot",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 1048576,
-        "max_provider_calls": 1,
-        "wall_clock": {
-          "microseconds": 60000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -2261,7 +2184,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:86373708fc26f17c883a7c919b48ac42eb33cbf224e8349328bbc88a8515268d",
+    "definition_digest": "sha256:9c5239a3078c0dd298d10415bd3dfe63676dc3dd91a19366c0d6031399c09193",
     "identity": {
       "kind": "Procedure",
       "name": "security.log-acquire"
@@ -2302,13 +2225,6 @@
     "activation_policy": "drain",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 1048576,
-        "max_provider_calls": 2,
-        "wall_clock": {
-          "microseconds": 60000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -2519,7 +2435,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:5e6d9157259d5a10e0bb95a86dafa673464eb7a60783bb2f5daf52a3c5dbae89",
+    "definition_digest": "sha256:ec31c64328544545ca5fda51e5033744488995b4c532035123b9f7aaa380c381",
     "identity": {
       "kind": "Procedure",
       "name": "security.log-import"
@@ -2584,13 +2500,6 @@
     "activation_policy": "drain",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 16777216,
-        "max_provider_calls": 2,
-        "wall_clock": {
-          "microseconds": 120000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -2752,7 +2661,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:6a524882f2a866fb96aae36a40b2e41743898acc8c829ffc698fa53c4dc7f924",
+    "definition_digest": "sha256:af8861499690a80f36772cf4ceb7eaaa49f60ad0c94234e5b608200013a2a339",
     "identity": {
       "kind": "Procedure",
       "name": "security.registry-parse"
@@ -2817,13 +2726,6 @@
     "activation_policy": "drain",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 16777216,
-        "max_provider_calls": 2,
-        "wall_clock": {
-          "microseconds": 120000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -3020,7 +2922,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:a81903fb4a71c633d34c1f37b21a6e0f84ace75d8e9deb47dc5791558dacde1d",
+    "definition_digest": "sha256:004a2dcdc48c219fd3f8659eb915e179716be7e5cc1d7e53e585ae6c9a4bbe58",
     "identity": {
       "kind": "Procedure",
       "name": "security.repo-parse"
@@ -3106,13 +3008,6 @@
     "activation_policy": "snapshot",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 1048576,
-        "max_provider_calls": 1,
-        "wall_clock": {
-          "microseconds": 60000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -3195,7 +3090,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:185ad74a54ca2352faa9f411c6a2f75be6584324219d6375b726483515e3dae1",
+    "definition_digest": "sha256:97ff02853e558066a5b3aa35607065b33f94c76c2e668844ec6cb8b1a317b399",
     "identity": {
       "kind": "Procedure",
       "name": "security.reproduction-acquire"
@@ -3236,13 +3131,6 @@
     "activation_policy": "drain",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 1048576,
-        "max_provider_calls": 1,
-        "wall_clock": {
-          "microseconds": 120000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -3464,7 +3352,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:04ee3622f02921991197e7e063bbec30bdba3058ad0ffba15d229f019a8d0c3a",
+    "definition_digest": "sha256:2d0b47d37cf5c5f4b25e887a1ac21e7ead69df96ff28bfac3ba4d076bf573983",
     "identity": {
       "kind": "Procedure",
       "name": "security.respond"
@@ -3539,13 +3427,6 @@
     "activation_policy": "snapshot",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 1048576,
-        "max_provider_calls": 1,
-        "wall_clock": {
-          "microseconds": 60000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -3628,7 +3509,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:33fb2be99a6c4a22c0a1d1d4a1f73f743039ae96d88c9605576f083fc8720e5d",
+    "definition_digest": "sha256:3b8b7fecaa7faa96509be37709fc30f8b922825c5b42bc1d9364fd0e249a9906",
     "identity": {
       "kind": "Procedure",
       "name": "security.sarif-acquire"
@@ -3669,13 +3550,6 @@
     "activation_policy": "drain",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 16777216,
-        "max_provider_calls": 2,
-        "wall_clock": {
-          "microseconds": 120000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -3865,7 +3739,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:8810bed61b5520eb34ba48bdcf5e0749d268e72ce45688c13f2223abca08239d",
+    "definition_digest": "sha256:164c9d325fd4e50e244746b659a924387d13ec45c7d42d519f04c3170b28b4ed",
     "identity": {
       "kind": "Procedure",
       "name": "security.sarif-attention"
@@ -3945,13 +3819,6 @@
     "activation_policy": "drain",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 16777216,
-        "max_provider_calls": 2,
-        "wall_clock": {
-          "microseconds": 120000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -4136,7 +4003,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:7ac54b88e3ef764ae35835273b3b8fb5c548cffccde9d671dc528f289a5d55cb",
+    "definition_digest": "sha256:328d4407b97d6b69623b8c20dd06229e1bfd45ea80779b5e8b8d44c69a86b28a",
     "identity": {
       "kind": "Procedure",
       "name": "security.sarif-import"
@@ -4216,13 +4083,6 @@
     "activation_policy": "snapshot",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 1048576,
-        "max_provider_calls": 1,
-        "wall_clock": {
-          "microseconds": 60000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -4305,7 +4165,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:61211f7c006e249eb21dcd0d99ae157f13f68e68c192cd6892c07450c6e794a8",
+    "definition_digest": "sha256:f88a874e3b6994942f047932733036c067bbe2c6f987a61457acbe99f2665370",
     "identity": {
       "kind": "Procedure",
       "name": "security.sbom-acquire"
@@ -4346,13 +4206,6 @@
     "activation_policy": "drain",
     "artifact_format": "cruxible-procedure-v3",
     "definition": {
-      "budget": {
-        "max_capture_bytes": 16777216,
-        "max_provider_calls": 2,
-        "wall_clock": {
-          "microseconds": 120000000
-        }
-      },
       "contract_in": {
         "target": {
           "kind": "Contract",
@@ -4500,7 +4353,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:a06da03dc606492661cc5d8ee27915e8d5a05c03ce529bad55a2b70d09c232d6",
+    "definition_digest": "sha256:5f20b5df7bf185fc5e721d06decb87a8ed56ed40abdf46ee7ab9223f2d218d06",
     "identity": {
       "kind": "Procedure",
       "name": "security.sbom-import"

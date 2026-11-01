@@ -297,7 +297,8 @@ class Sequence:
     ``slots`` declares each slot's ``{in, out, effect}`` signature; a Line binds
     it. ``contracts`` optionally supplies accepted Contracts by ``name@N`` (a
     slot's out Contract) so call handles check their field names; without one,
-    a call's fields are checked at prepare.
+    a call's fields are checked at prepare. ``hard_caps`` is the most any run
+    may use; the operating budget is the Line's.
     """
 
     def __init__(
@@ -311,8 +312,7 @@ class Sequence:
         contracts: Mapping[str, Contract] | None = None,
         description: str | None = None,
         activation: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot",
-        budget: ProcedureLimits | None = None,
-        caps: ProcedureLimits | None = None,
+        hard_caps: ProcedureLimits | None = None,
     ) -> None:
         self.procedure = procedure
         self._input = dict(input)
@@ -324,8 +324,7 @@ class Sequence:
         self._contracts = dict(contracts or {})
         self._description = description
         self._activation = activation
-        self._budget = budget
-        self._caps = caps
+        self._hard_caps = hard_caps
         self._steps: list[Step] = []
         self._returns: str | ReturnFrom | ReturnFields | None = None
         self.input = Handle("input", fields=tuple(self._input))
@@ -640,10 +639,8 @@ class Sequence:
             steps=tuple(self._steps),
             returns=self._returns,
         )
-        if self._budget is not None:
-            data["budget"] = self._budget
-        if self._caps is not None:
-            data["caps"] = self._caps
+        if self._hard_caps is not None:
+            data["hard_caps"] = self._hard_caps
         return ProcedureSpec.model_validate(data)
 
     def preview(self) -> ProcedurePreview:

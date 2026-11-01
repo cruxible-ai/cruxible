@@ -131,14 +131,7 @@ go in through authoring as one change set, saved here as `automation.json`:
       "grants": "propose",
       "namespace": ["claims"],
       "valid_from": "2026-10-21T00:00:00Z",
-      "expires_at": "2027-01-19T00:00:00Z",
-      "resource_ceiling": {
-        "max_wall_clock": {"microseconds": 60000000},
-        "max_provider_calls": 1,
-        "max_capture_bytes": 1000000,
-        "max_items": 1000,
-        "max_repeat_attempts": 1
-      }
+      "expires_at": "2027-01-19T00:00:00Z"
     }
   ]
 }
@@ -310,13 +303,6 @@ category:
         "binding_parameter": "part_id",
         "required_fields": ["category"],
         "fallback": "propose"
-      },
-      "resource_ceiling": {
-        "max_wall_clock": {"microseconds": 60000000},
-        "max_provider_calls": 1,
-        "max_capture_bytes": 1000000,
-        "max_items": 1000,
-        "max_repeat_attempts": 1
       }
     },
     {

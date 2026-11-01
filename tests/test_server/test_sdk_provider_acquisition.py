@@ -34,7 +34,6 @@ from cruxible_client.contracts.procedures.extract import ExtractNode
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
@@ -306,12 +305,6 @@ def _fetch_procedure(
             ),
         ),
         returns="result",
-        budget=ProcedureBudget(
-            wall_clock=source.RUN_WALL_CLOCK,
-            max_provider_calls=2,
-            max_capture_bytes=1_048_576,
-            max_items=None,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=source.MAX_WALL_CLOCK,
             max_provider_calls=4,
@@ -585,8 +578,7 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
             },
             "steps": [{"call": "result", "id": "invoke", "slot": "invoke", "input": {"size": 1}}],
             "returns": "result",
-            "budget": {"wall_clock": "PT10M", "provider_calls": 1, "capture_bytes": 65536},
-            "caps": {
+            "hard_caps": {
                 "wall_clock": "PT30M",
                 "provider_calls": 2,
                 "capture_bytes": 131072,

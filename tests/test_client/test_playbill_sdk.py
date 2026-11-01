@@ -440,7 +440,6 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
     from cruxible_client.contracts.procedures.contract_schema import PropertySchema
     from cruxible_client.contracts.procedures.models import ProcedureDefinition, ProjectNode
     from tests.test_procedures.test_procedure_execution import (
-        _budget,
         _hard_caps,
         _owned_accepted,
         _owned_contract,
@@ -461,7 +460,6 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
                 ),
             ),
             returns="result",
-            budget=_budget(),
             hard_caps=_hard_caps(),
             terminal_capability=1,
         ),

@@ -18,7 +18,6 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     RepeatBodyNode,
@@ -208,13 +207,12 @@ def _accepted_one_provider(
     effect: str | None = None,
     provider: AcceptedProvider | None = None,
     repeat: bool = False,
-    wall_clock: CanonicalDuration = CanonicalDuration(microseconds=2_000_000),
-    max_wall_clock: CanonicalDuration = CanonicalDuration(microseconds=4_000_000),
+    max_wall_clock: CanonicalDuration = CanonicalDuration(microseconds=2_000_000),
 ) -> AcceptedProcedure:
     """One exact-pinned demo Provider call, direct or as a one-attempt repeat body.
 
-    The 2 s budget is what this file's injected clocks measure against; a caller
-    that runs on the real clock passes the roomy test budget instead. ``effect``
+    The 2 s cap (a direct run's budget) is what this file's injected clocks
+    measure against. ``effect``
     overrides the ``mutation``-derived default, so a caller can match the exact
     effect its paired ``_prepared_acquisition_run`` call will use.
     """
@@ -268,12 +266,6 @@ def _accepted_one_provider(
         nodes=(graph_node,),
         returns=returns,
         slots={SLOT: ProcedureSlot.model_validate(operation_signature.model_dump(by_alias=True))},
-        budget=ProcedureBudget(
-            wall_clock=wall_clock,
-            max_provider_calls=2,
-            max_capture_bytes=1024,
-            max_items=10,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=max_wall_clock,
             max_provider_calls=4,

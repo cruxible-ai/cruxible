@@ -83,7 +83,6 @@ def _line_mandate(accepted: AcceptedProcedure, line: LineSpec) -> ProcedureManda
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
         grants="propose",
-        resource_ceiling=accepted.procedure.definition.hard_caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),

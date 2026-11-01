@@ -216,12 +216,6 @@ def authored_procedure(name="reader", query="definitions"):
             }
         ],
         "returns": "result",
-        "budget": {
-            "wall_clock": {"microseconds": 1_000_000},
-            "max_provider_calls": 0,
-            "max_capture_bytes": 0,
-            "max_items": 100,
-        },
         "hard_caps": {
             "max_wall_clock": {"microseconds": 1_000_000},
             "max_provider_calls": 0,

@@ -13,6 +13,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
+    caps_budget,
 )
 from cruxible_client.contracts.procedures.results import procedure_acquisition_plan_digest
 from cruxible_core.procedures.egress import EffectiveRungV1
@@ -200,7 +201,8 @@ class ParentInvocationContext:
             or child.actor_context != self.admission.actor_context
             or child.invocation_origin != self.admission.invocation_origin
             or child.hard_caps != caps
-            or child.budget != constrained_budget(definition.budget, self.remaining, caps)
+            or child.budget
+            != constrained_budget(caps_budget(definition.hard_caps), self.remaining, caps)
         ):
             raise ExecutionError("nested admission differs from its executing parent")
         for name in (

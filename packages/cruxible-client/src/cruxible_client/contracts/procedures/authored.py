@@ -561,6 +561,8 @@ Step: TypeAlias = Annotated[
 
 
 class ProcedureLimits(_Model):
+    """A Procedure's hard caps as authored (lowered to ``ProcedureHardCaps``)."""
+
     wall_clock: str = "PT1M"
     provider_calls: Annotated[int, Field(strict=True, ge=0)] = 100
     capture_bytes: Annotated[int, Field(strict=True, ge=0)] | str = 1048576
@@ -589,8 +591,13 @@ class ProcedureSpec(_Model):
     params: dict[str, FieldType] = Field(default_factory=dict)
     returns: StepId | ReturnFrom | ReturnFields | None = None
     activation: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
-    budget: ProcedureLimits = ProcedureLimits()
-    caps: ProcedureLimits | None = None
+    hard_caps: ProcedureLimits = Field(
+        default=ProcedureLimits(),
+        description=(
+            "The most any run of this Procedure may use. The operating budget is the "
+            "Line's (a direct run's ephemeral Line spec), within these caps."
+        ),
+    )
     slots: dict[str, ProcedureSlot] = Field(
         default_factory=dict,
         description="Each slot's signature {in: name@N, out: name@N, effect}; a Line binds it.",
@@ -647,6 +654,11 @@ class ProcedureSpec(_Model):
             raise ValueError(
                 "procedure_source_retired: a ProcedureSpec carries no retained source; "
                 "the typed spec is the one authoring form"
+            )
+        if isinstance(value, Mapping) and ("budget" in value or "caps" in value):
+            raise ValueError(
+                "procedure_budget_retired: a Procedure declares hard_caps only; the "
+                "operating budget is its Line's, within those caps"
             )
         return value
 
@@ -1385,8 +1397,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             )
         output = {}  # deferred at the daemon; never submitted as a resolved graph
     root_out = contract(spec.output_contract or spec.procedure + "-output", output, "contract-out")
-    limits = spec.budget
-    caps = spec.caps or limits
+    caps = spec.hard_caps
     definition: dict[str, Any] = dict(
         graph_format=7,
         name=spec.procedure,
@@ -1396,11 +1407,6 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         nodes=nodes + generated,
         returns=returns,
         terminal_capability=derived_terminal_capability(nodes),
-        budget={
-            "wall_clock": _duration(limits.wall_clock),
-            "max_provider_calls": limits.provider_calls,
-            "max_capture_bytes": _bytes(limits.capture_bytes),
-        },
         hard_caps={
             "max_wall_clock": _duration(caps.wall_clock),
             "max_provider_calls": caps.provider_calls,
@@ -1413,14 +1419,8 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         definition["measurements"] = [m.model_dump(mode="json") for m in spec.measurements]
     if spec.annotations:
         definition["annotations"] = spec.annotations
-    if limits.items is not None:
-        definition["budget"]["max_items"] = limits.items
-    if limits.result_bytes is not None:
-        definition["budget"]["max_result_bytes"] = limits.result_bytes
     if caps.read_rows is not None:
         definition["hard_caps"]["max_read_rows"] = caps.read_rows
-    if spec.caps is not None and limits.read_rows is not None:
-        definition["budget"]["max_read_rows"] = limits.read_rows
     if caps.result_bytes is not None:
         definition["hard_caps"]["max_result_bytes"] = caps.result_bytes
     if spec.slots:

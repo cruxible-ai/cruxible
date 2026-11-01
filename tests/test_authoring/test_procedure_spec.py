@@ -65,7 +65,18 @@ def test_typed_extra_forbidden_and_no_numeric_coercion():
             steps=[{"call": "result", "slot": "compute", "input": {}, "typo": 1}],
         )
     with pytest.raises(ValidationError):
-        spec(budget={"provider_calls": True})
+        spec(hard_caps={"provider_calls": True})
+
+
+@pytest.mark.parametrize("retired", ["budget", "caps"])
+def test_a_procedure_declares_hard_caps_only(retired):
+    # The operating budget is the Line's (a direct run's ephemeral Line spec),
+    # within the Procedure's hard caps.
+    with pytest.raises(ValidationError, match="procedure_budget_retired"):
+        spec(**{retired: {"provider_calls": 1}})
+    lowered = lower_procedure_spec(spec(hard_caps={"provider_calls": 1})).definition
+    assert "budget" not in lowered
+    assert lowered["hard_caps"]["max_provider_calls"] == 1
     with pytest.raises(ValidationError):
         spec(steps=[{"project": "result", "fields": {}, "read": "other", "query": "q"}])
 
@@ -318,8 +329,7 @@ def _inventory_import_worked_example():
         output_contract="security-runtime-inventory-summary",
         returns={"from": "parse", "omit": ["items"]},
         activation="drain",
-        budget={"wall_clock": "PT2M", "provider_calls": 2, "capture_bytes": "1MiB"},
-        caps={
+        hard_caps={
             "wall_clock": "PT5M",
             "provider_calls": 2,
             "capture_bytes": "1MiB",
@@ -410,7 +420,7 @@ def test_inventory_import_worked_example_has_eleven_nodes():
     assert lowered.definition["nodes"][8]["result"] == "$steps.summary"
     assert lowered.definition["nodes"][6]["on_false"] == "other"
     assert "refusal_code" not in lowered.definition["nodes"][6]
-    assert lowered.definition["budget"]["max_capture_bytes"] == 1048576
+    assert lowered.definition["hard_caps"]["max_capture_bytes"] == 1048576
 
 
 def test_stored_v3_keeps_template_data():
@@ -445,7 +455,7 @@ def test_stored_v3_keeps_template_data():
     assert "node_id" not in compact
 
 
-def test_decompile_shows_budget_durations_compactly_without_moving_stored_bytes():
+def test_decompile_shows_cap_durations_compactly_without_moving_stored_bytes():
     from cruxible_client.contracts.temporal import (
         format_iso_duration_microseconds,
         parse_iso_duration_microseconds,
@@ -453,12 +463,11 @@ def test_decompile_shows_budget_durations_compactly_without_moving_stored_bytes(
 
     original = ProcedureArtifact.model_validate(CORPUS["security.inventory-import.json"])
     authored = decompile_procedure(original)
-    assert authored.budget.wall_clock == "PT120S"
-    assert authored.caps is not None and authored.caps.wall_clock == "PT300S"
+    assert authored.hard_caps.wall_clock == "PT300S"
     # Display only: each text parses back to the stored microseconds (the corpus
     # round trip above keeps every Procedure's stored bytes and digest).
-    assert parse_iso_duration_microseconds(authored.budget.wall_clock) == (
-        original.definition.budget.wall_clock.microseconds
+    assert parse_iso_duration_microseconds(authored.hard_caps.wall_clock) == (
+        original.definition.hard_caps.max_wall_clock.microseconds
     )
     for value, text in [
         (0, "PT0S"),
@@ -879,8 +888,7 @@ def test_repeat_bodies_are_typed_calls_and_transforms():
                 "effect": "pure",
             }
         },
-        caps={"repeat_attempts": 3, "provider_calls": 3},
-        budget={"provider_calls": 3},
+        hard_caps={"repeat_attempts": 3, "provider_calls": 3},
         steps=[
             {
                 "repeat": "loop",

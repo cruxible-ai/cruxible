@@ -183,7 +183,7 @@ def slotted_spec(
                 {"call": "result", "slot": "compute", "input": {"value": ref("$input.value")}}
             ],
             "returns": "result",
-            "budget": {"provider_calls": 1},
+            "hard_caps": {"provider_calls": 1},
         }
     )
 

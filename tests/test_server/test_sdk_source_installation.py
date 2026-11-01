@@ -6,15 +6,11 @@ from typing import Any
 from cruxible_client import Cruxible
 from cruxible_client.authoring.procedures import ProcedureLimits, Sequence, eq, halt
 from cruxible_client.contracts.authoring.inputs import ProcedureInput, ProcedureMandateInput
-from cruxible_client.contracts.captures import (
-    CanonicalDuration,
-)
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
-from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
 from tests.core_support._light_capture_support import (
@@ -122,7 +118,6 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         "status": "int",
         "text": {"type": "json", "json_schema": {"type": ["string", "null"]}},
     }
-    budget = ProcedureLimits(wall_clock="PT30S", provider_calls=1, capture_bytes=2_097_152)
     limits = ProcedureLimits(
         wall_clock="PT60S",
         provider_calls=2,
@@ -130,16 +125,9 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         repeat_attempts=1,
         items=100,
     )
-    caps = ProcedureHardCaps(
-        max_wall_clock=CanonicalDuration(microseconds=60_000_000),
-        max_provider_calls=2,
-        max_capture_bytes=4_194_304,
-        max_repeat_attempts=1,
-        max_items=100,
-    )
 
     def sequence(name: str, **extra: Any) -> Sequence:
-        return Sequence(name, input=request, output=result, budget=budget, caps=limits, **extra)
+        return Sequence(name, input=request, output=result, hard_caps=limits, **extra)
 
     observer = sequence(
         "observe-web",
@@ -277,7 +265,6 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
                 name="source-authority",
                 line_name="source-line",
                 grants="propose",
-                resource_ceiling=caps,
                 namespace=("claims",),
                 valid_from=now - timedelta(days=1),
                 expires_at=now + timedelta(days=1),
@@ -363,7 +350,6 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
                 name="verify-authority",
                 line_name="verify-line",
                 grants="propose",
-                resource_ceiling=caps,
                 namespace=("claims",),
                 valid_from=now - timedelta(days=1),
                 expires_at=now + timedelta(days=1),

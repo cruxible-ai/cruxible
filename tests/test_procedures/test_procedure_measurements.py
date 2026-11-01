@@ -31,7 +31,6 @@ from cruxible_client.contracts.procedures.measurements import (
 )
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
@@ -161,12 +160,6 @@ def _definition(
         ),
         returns="result",
         measurements=measurements,
-        budget=ProcedureBudget(
-            wall_clock=_duration(1_000_000),
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=100,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=_duration(2_000_000),
             max_provider_calls=0,
@@ -193,7 +186,7 @@ def test_measurement_declaration_moves_only_the_definition_envelope_digest() -> 
         compute_procedure_definition_digest(measured)
     )
     assert compute_procedure_definition_digest(measured).tagged == (
-        "sha256:59820660f3b4d1b312b47f0add35458eb4b3c74f685173614bac4070adac3ce5"
+        "sha256:de1505c6ff11eb4dc15a1f24a37e99e65c04cf7034e41198237cf76876e5aac2"
     )
     payload = measured.model_dump(mode="json", by_alias=True)
     assert payload["annotations"] == {}

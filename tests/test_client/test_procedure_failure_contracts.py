@@ -128,7 +128,6 @@ def test_node_refusal_vocabulary_covers_every_executor_code() -> None:
         "procedure_mandate_expired",
         "procedure_mandate_procedure_mismatch",
         "procedure_mandate_grant_insufficient",
-        "procedure_mandate_authority_ceiling_insufficient",
         "procedure_mandate_namespace_mismatch",
         "procedure_mandate_not_applicable",
         "procedure_authority_admission_invalid",

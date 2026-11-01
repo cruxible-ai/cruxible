@@ -95,12 +95,8 @@ def author_mandate(instance, *, grants="propose", name="test.grant"):  # type: i
     from datetime import timedelta
 
     from cruxible_client.contracts.authoring.inputs import ProcedureMandateInput
-    from cruxible_client.contracts.procedures.artifacts import parse_procedure
-    from tests.support.operation_world import PROCEDURE, author
+    from tests.support.operation_world import author
 
-    path = f"procedures/{PROCEDURE}.json"
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    caps = parse_procedure(tree[path], path=path).definition.hard_caps
     return author(
         instance,
         ProcedureMandateInput(
@@ -108,7 +104,6 @@ def author_mandate(instance, *, grants="propose", name="test.grant"):  # type: i
             name=name,
             line_name=LINE,
             grants=grants,
-            resource_ceiling=caps,
             namespace=("claims",),
             valid_from=NOW - timedelta(days=1),
             expires_at=NOW + timedelta(days=1),
@@ -258,14 +253,12 @@ def test_a_line_change_carries_its_mandate_and_the_old_grant_never_follows(tmp_p
     assert carried.lifecycle.predecessor_digest == procedure_mandate_digest(granted).tagged
 
     # The D1 grant does not cover a run of D2.
-    caps = granted.resource_ceiling
     verdict = evaluate_procedure_mandate(
         granted.model_copy(update={"grants": "settle"}),
         ProcedureMandateInvocation(
             line_identity=granted.line.target,
             line_artifact_digest=d2,
             requested_rung=3,
-            requested_authority=caps,
             target_paths=("claims/x.json",),
             evaluation_time=NOW,
             accepted_mandate_digest=procedure_mandate_digest(
@@ -485,7 +478,7 @@ def plain_spec(*, name="test.plain"):  # type: ignore[no-untyped-def]
                 "output": {"value": "integer"},
                 "steps": [{"project": "result", "fields": {"value": "$input.value"}}],
                 "returns": "result",
-                "budget": {"provider_calls": 0},
+                "hard_caps": {"provider_calls": 0},
             }
         )
     )
@@ -521,6 +514,11 @@ def test_a_plain_direct_run_also_records_its_ephemeral_spec_digest(tmp_path):
     assert isinstance(payload, dict)
     recorded_digest = payload["ephemeral_spec_digest"]
     assert isinstance(recorded_digest, str) and recorded_digest.startswith("sha256:")
+    from cruxible_client.contracts.procedures.artifacts import parse_procedure
+    from cruxible_client.contracts.procedures.models import caps_budget
+
+    path = "procedures/test.plain.json"
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     expected = ephemeral_line_spec_digest(
         EphemeralLineSpec(
             procedure=ArtifactPin(
@@ -531,6 +529,8 @@ def test_a_plain_direct_run_also_records_its_ephemeral_spec_digest(tmp_path):
             parameters={"value": 9},
             bindings={},
             acquisition={},
+            # A direct run states no budget: it runs at its Procedure's caps.
+            budget=caps_budget(parse_procedure(tree[path], path=path).definition.hard_caps),
         )
     )
     assert recorded_digest == expected
@@ -587,7 +587,7 @@ def _plain_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
                     {verb: (_self_sourced_subject_item(f"Plain direct {verb}."),)},
                 ],
                 "returns": "shaped",
-                "budget": {"provider_calls": 0},
+                "hard_caps": {"provider_calls": 0},
             }
         )
     )
@@ -612,7 +612,7 @@ def _call_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
                     {verb: (_self_sourced_subject_item(f"Called direct {verb}."),)},
                 ],
                 "returns": "result",
-                "budget": {"provider_calls": 1},
+                "hard_caps": {"provider_calls": 1},
             }
         )
     )
@@ -733,7 +733,7 @@ def test_an_invoked_child_uses_the_parent_lines_binding_under_its_node_path(tmp_
                     {"project": "finished", "fields": {"value": "$input.value"}},
                 ],
                 "returns": "finished",
-                "budget": {"provider_calls": 1},
+                "hard_caps": {"provider_calls": 1},
             }
         )
     )
@@ -797,7 +797,7 @@ def sourced_spec(*, description=None, acquisition_defaults=None):  # type: ignor
                     {"project": "out", "fields": {"length": "$doc.source.byte_length"}},
                 ],
                 "returns": "out",
-                "budget": {"provider_calls": 1, "capture_bytes": 65536},
+                "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
             }
         )
     )
@@ -1127,7 +1127,7 @@ def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
                         {"call": "result", "slot": "compute", "input": {"value": "$input.value"}}
                     ],
                     "returns": "result",
-                    "budget": {"provider_calls": 1},
+                    "hard_caps": {"provider_calls": 1},
                 }
             )
         ),
@@ -1338,7 +1338,7 @@ def _fetch_world(
                         {"project": "out", "fields": {"ok": True}},
                     ],
                     "returns": "out",
-                    "budget": {"provider_calls": 1, "capture_bytes": 65536},
+                    "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
                 }
             )
         ),
@@ -1735,7 +1735,7 @@ def emitting_spec(*, description=None):  # type: ignore[no-untyped-def]
                         "result": {"value": "$result.value"},
                     },
                 ],
-                "budget": {"provider_calls": 1, "capture_bytes": 65536},
+                "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
             }
         )
     )

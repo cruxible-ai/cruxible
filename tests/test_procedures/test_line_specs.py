@@ -26,7 +26,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
@@ -69,12 +68,6 @@ def _definition(query: ArtifactPin) -> ProcedureDefinition:
             ),
         ),
         returns="result",
-        budget=ProcedureBudget(
-            wall_clock=CanonicalDuration(microseconds=1_000_000),
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=100,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=CanonicalDuration(microseconds=2_000_000),
             max_provider_calls=0,
@@ -130,7 +123,7 @@ def _line(
 def test_line_spec_round_trip_and_digest_golden() -> None:
     line, accepted, _interfaces = _line()
 
-    expected = "sha256:262426b41be78797cd3b54854aac3581805ff10342e1366b482348c0e2e24cc8"
+    expected = "sha256:680726182d9815f203f5efe36147b7d9ce482a348c5a009e5ea487c1ec0f46b1"
     assert line_spec_digest(line).tagged == expected
     content = render_line_spec(line)
     assert parse_line_spec(content, path=line_spec_path("triage-hourly")) == line

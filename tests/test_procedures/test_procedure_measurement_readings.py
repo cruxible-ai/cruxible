@@ -62,7 +62,6 @@ from cruxible_client.contracts.procedures.measurements import (
 )
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
@@ -119,7 +118,7 @@ from tests.core_support._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
+from tests.support.procedures import MAX_WALL_CLOCK, named
 from tests.test_claims.test_claim_attestation_service import _request as _attestation_request
 from tests.test_procedures.test_procedure_owned_contracts import _activate_procedure, _contract
 
@@ -293,12 +292,6 @@ def _procedure(
         ),
         returns="result",
         measurements=tuple(sorted(declarations, key=lambda item: item.name.encode())),
-        budget=ProcedureBudget(
-            wall_clock=RUN_WALL_CLOCK,
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=100,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=0,
@@ -1359,7 +1352,6 @@ def _line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
         grants="propose",
-        resource_ceiling=caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),

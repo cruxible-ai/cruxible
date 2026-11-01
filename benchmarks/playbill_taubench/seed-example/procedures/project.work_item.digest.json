@@ -1,19 +1,13 @@
 {
   "activation": "abort",
-  "budget": {
-    "capture_bytes": 0,
-    "items": 100,
-    "provider_calls": 0,
-    "wall_clock": "PT1S"
-  },
-  "caps": {
+  "description": "Read governed work-item state through the accepted query.",
+  "hard_caps": {
     "capture_bytes": 0,
     "items": 200,
     "provider_calls": 0,
     "repeat_attempts": 1,
     "wall_clock": "PT2S"
   },
-  "description": "Read governed work-item state through the accepted query.",
   "input": {},
   "input_contract": "empty-input",
   "kind": "procedure",

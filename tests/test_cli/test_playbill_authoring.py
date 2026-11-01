@@ -679,7 +679,7 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
             "trigger",
         }
         if name == "procedure-mandate":
-            assert payload["tag"] == "cruxible-procedure-mandate-input-v2"
+            assert payload["tag"] == "cruxible-procedure-mandate-input-v3"
         else:
             assert "tag" not in payload
         if name == "procedure":

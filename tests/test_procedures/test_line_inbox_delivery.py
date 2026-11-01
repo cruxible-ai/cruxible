@@ -21,7 +21,7 @@ from cruxible_client.contracts.shapes import Contract
 from cruxible_core.exhaust.line_inbox import LineInboxStore
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.support.inbox import NOTE, contract_members, inbox_node
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
+from tests.support.procedures import MAX_WALL_CLOCK
 from tests.test_procedures.test_manual_line_runs import manual_run
 from tests.test_procedures.test_procedure_source_runs import (
     NOW,
@@ -451,12 +451,7 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
         "sdk-inbox",
         input={},
         output={"severity": "string"},
-        budget=ProcedureLimits(
-            wall_clock=f"PT{RUN_WALL_CLOCK.microseconds // 1_000_000}S",
-            provider_calls=2,
-            capture_bytes=65_536,
-        ),
-        caps=ProcedureLimits(
+        hard_caps=ProcedureLimits(
             wall_clock=f"PT{MAX_WALL_CLOCK.microseconds // 1_000_000}S",
             provider_calls=4,
             capture_bytes=131_072,

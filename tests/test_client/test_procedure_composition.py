@@ -17,11 +17,9 @@ from cruxible_client.authoring.procedures import (
     lower_procedure_spec,
 )
 from cruxible_client.authoring.sdk import Cruxible
-from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 from cruxible_client.contracts.provider_operations import ProcedureSlot
 from cruxible_client.contracts.refs import Ref, step_ref
 from cruxible_client.contracts.shapes import Contract
-from tests.support.procedures import RUN_WALL_CLOCK
 
 LIMITS = ProcedureLimits(wall_clock="PT60S", provider_calls=1, capture_bytes=1024)
 CAPS = ProcedureLimits(
@@ -42,8 +40,8 @@ SLOTS = {
 
 
 def sequence(**kwargs):
-    kwargs.setdefault("budget", LIMITS)
-    return Sequence("demo", input={}, output={"count": "int"}, caps=CAPS, **kwargs)
+    kwargs.setdefault("hard_caps", CAPS)
+    return Sequence("demo", input={}, output={"count": "int"}, **kwargs)
 
 
 def test_a_sequence_states_one_spec_and_previews_it_with_the_shared_lowering():
@@ -241,10 +239,13 @@ def test_conflicting_contracts_refused():
         plan.build()
 
 
-def test_contract_budget_checked_by_existing_graph_model():
-    plan = sequence(budget=LIMITS.model_copy(update={"provider_calls": 2}))
+def test_a_sequence_declares_hard_caps_only():
+    # The operating budget is the Line's, within these caps (B4-0 limits).
+    plan = sequence(hard_caps=LIMITS)
     plan.project("result", fields={"count": 1})
-    assert any("hard cap" in d.message for d in plan.preview().errors)
+    lowered = lower_procedure_spec(plan.build().spec).definition
+    assert "budget" not in lowered
+    assert lowered["hard_caps"]["max_provider_calls"] == LIMITS.provider_calls
 
 
 def test_sdk_changeset_carries_procedure_line_and_mandate_together():
@@ -257,13 +258,6 @@ def test_sdk_changeset_carries_procedure_line_and_mandate_together():
     pb = object.__new__(Cruxible)  # These public builders do not require transport.
     plan = sequence()
     plan.project("result", fields={"count": 1})
-    caps = ProcedureHardCaps(
-        max_wall_clock=RUN_WALL_CLOCK,
-        max_provider_calls=1,
-        max_capture_bytes=1024,
-        max_items=100,
-        max_repeat_attempts=1,
-    )
     changes = (
         ChangeSetDraft(pb)
         .procedure(definition=plan)
@@ -275,7 +269,6 @@ def test_sdk_changeset_carries_procedure_line_and_mandate_together():
             name="demo",
             line_name="demo",
             grants="propose",
-            resource_ceiling=caps,
             namespace=("captures",),
             valid_from=datetime(2026, 9, 19, tzinfo=UTC),
             expires_at=datetime(2026, 10, 19, tzinfo=UTC),

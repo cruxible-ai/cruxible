@@ -222,7 +222,6 @@ class _CeilingReader:
 
 def _two_reads(max_read_rows: int) -> Any:
     from tests.test_procedures.test_procedure_execution import (
-        _budget,
         _hard_caps,
         _owned_accepted,
         _owned_contract,
@@ -249,7 +248,6 @@ def _two_reads(max_read_rows: int) -> Any:
             ProjectNode(node_id="result", literal={}, contract_out=named(out), as_="result"),
         ),
         returns="result",
-        budget=_budget(),
         hard_caps=_hard_caps().model_copy(update={"max_read_rows": max_read_rows}),
         terminal_capability=1,
     )

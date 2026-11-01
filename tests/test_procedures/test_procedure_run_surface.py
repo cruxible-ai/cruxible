@@ -41,12 +41,12 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
     HaltNode,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
     ReadNode,
     TransformNode,
+    caps_budget,
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionRefusal,
@@ -307,12 +307,6 @@ def _slotless_procedure(name: str) -> AcceptedProcedure:
             ),
         ),
         returns="result",
-        budget=ProcedureBudget(
-            wall_clock=RUN_WALL_CLOCK,
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=100,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=0,
@@ -742,7 +736,7 @@ def _list_output_successor(procedure, *, max_items: int):  # type: ignore[no-unt
                 *procedure.definition.nodes[:-1],
                 project.model_copy(update={"contract_out": named(list_output_pin)}),
             ),
-            "budget": procedure.definition.budget.model_copy(update={"max_items": max_items}),
+            "hard_caps": procedure.definition.hard_caps.model_copy(update={"max_items": max_items}),
         }
     )
     successor = procedure.model_copy(
@@ -805,7 +799,8 @@ def test_readiness_and_idempotent_run_use_the_accepted_query_engine(tmp_path: Pa
     assert isinstance(first.receipt, ProcedureRunReceipt)
     assert first.receipt.status == "succeeded"
     assert first.receipt.terminal is None
-    assert first.receipt.budget.declared.budget == procedure.definition.budget
+    # A direct run states no budget: its operating budget is the hard caps.
+    assert first.receipt.budget.declared.budget == caps_budget(procedure.definition.hard_caps)
     assert first.receipt.budget.declared.hard_caps == procedure.definition.hard_caps
     assert first.receipt.budget.observed.max_items.high_water == 0
     assert first.receipt.budget.observed.max_items.boundary is None
@@ -1202,7 +1197,7 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
     definition = procedure.definition.model_copy(
         update={
             "nodes": nodes,
-            "budget": procedure.definition.budget.model_copy(update={"max_items": 2}),
+            "hard_caps": procedure.definition.hard_caps.model_copy(update={"max_items": 2}),
         }
     )
     pipeline = procedure.model_copy(
@@ -1519,7 +1514,6 @@ def _line_mandate(
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
         grants="propose",
-        resource_ceiling=accepted.procedure.definition.hard_caps,
         namespace=("claims", "documents"),
         valid_from=valid_from,
         expires_at=expires_at,

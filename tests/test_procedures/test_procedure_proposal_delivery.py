@@ -162,10 +162,12 @@ def terminal_procedure(
     )
     if document:
         nodes = fixtures.severity_from_document(nodes)
-    update: dict[str, object] = {"nodes": fixtures.with_fan_out(nodes, templates)}
+    update: dict[str, object] = {
+        "nodes": fixtures.with_fan_out(nodes, templates),
+        "terminal_capability": 2,
+    }
     if wall_clock_seconds is not None:
         wall_clock = CanonicalDuration(microseconds=wall_clock_seconds * 1_000_000)
-        update["budget"] = procedure.definition.budget.model_copy(update={"wall_clock": wall_clock})
         update["hard_caps"] = procedure.definition.hard_caps.model_copy(
             update={"max_wall_clock": wall_clock}
         )

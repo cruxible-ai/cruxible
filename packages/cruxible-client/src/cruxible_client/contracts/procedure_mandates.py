@@ -37,7 +37,6 @@ from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
-from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 
@@ -140,50 +139,6 @@ def _law_refusal(code: str, message: str, *, path: str) -> ProcedureMandateLawRe
     )
 
 
-def _ceiling_widenings(
-    ceiling: ProcedureHardCaps,
-    hard_caps: ProcedureHardCaps,
-) -> tuple[str, ...]:
-    """Name each cap ``ceiling`` sets above ``hard_caps``, with both values."""
-
-    pairs: tuple[tuple[str, int | None, int | None], ...] = (
-        (
-            "max_wall_clock.microseconds",
-            ceiling.max_wall_clock.microseconds,
-            hard_caps.max_wall_clock.microseconds,
-        ),
-        ("max_provider_calls", ceiling.max_provider_calls, hard_caps.max_provider_calls),
-        ("max_capture_bytes", ceiling.max_capture_bytes, hard_caps.max_capture_bytes),
-        ("max_result_bytes", ceiling.max_result_bytes, hard_caps.max_result_bytes),
-        ("max_items", ceiling.max_items, hard_caps.max_items),
-        ("max_repeat_attempts", ceiling.max_repeat_attempts, hard_caps.max_repeat_attempts),
-        ("max_read_rows", ceiling.max_read_rows, hard_caps.max_read_rows),
-    )
-    widened: list[str] = []
-    for name, value, cap in pairs:
-        if cap is None:
-            continue
-        if value is None or value > cap:
-            shown = "unbounded" if value is None else str(value)
-            widened.append(f"{name} {shown} > {cap}")
-    return tuple(widened)
-
-
-def _ceiling_within(
-    ceiling: ProcedureHardCaps,
-    hard_caps: ProcedureHardCaps,
-) -> bool:
-    return not _ceiling_widenings(ceiling, hard_caps)
-
-
-def _widen_message(field: str, widenings: tuple[str, ...]) -> str:
-    return (
-        f"ProcedureMandate {field} may narrow but never widen Procedure hard caps; "
-        f"it widens {', '.join(widenings)} (mandate > Procedure). Set each to at most "
-        "the Procedure's hard cap."
-    )
-
-
 class ScopedClaimType(_StrictProcedureMandateModel):
     """What the v2 law needs to know about one accepted ClaimType a scope pins."""
 
@@ -234,13 +189,6 @@ def evaluate_procedure_mandate_v2_law(
             path=path,
         )
     definition = procedure.procedure.definition
-    widenings = _ceiling_widenings(mandate.resource_ceiling, definition.hard_caps)
-    if widenings:
-        return _law_refusal(
-            "cruxible.procedure_mandate.resource_ceiling_widens_procedure",
-            _widen_message("resource_ceiling", widenings),
-            path=path,
-        )
     # A settle grant over a Procedure that cannot settle is incoherent authority.
     if mandate.grants == "settle" and definition.terminal_capability < 3:
         return _law_refusal(
@@ -322,7 +270,6 @@ class ProcedureMandateInvocation(_StrictProcedureMandateModel):
     line_identity: ArtifactIdentity
     line_artifact_digest: str
     requested_rung: Literal[2, 3]
-    requested_authority: ProcedureHardCaps
     target_paths: tuple[str, ...]
     evaluation_time: datetime
     accepted_mandate_digest: str
@@ -408,8 +355,6 @@ def evaluate_procedure_mandate(
         refusals.add("procedure_mandate_line_mismatch")
     if invocation.requested_rung > mandate_rung(mandate):
         refusals.add("procedure_mandate_grant_insufficient")
-    if not _ceiling_within(invocation.requested_authority, _resources(mandate)):
-        refusals.add("procedure_mandate_authority_ceiling_insufficient")
     if any(
         not _path_is_in_namespace(path, mandate.namespace)
         and not mandate_creates_subject(mandate, path)
@@ -513,11 +458,12 @@ class MandateCondition(_StrictProcedureMandateModel):
 class ProcedureMandate(_StrictProcedureMandateModel):
     """A propose or conditional settle grant pinned to one exact Line."""
 
-    artifact_format: Literal["cruxible-procedure-mandate-v3"] = "cruxible-procedure-mandate-v3"
+    artifact_format: Literal["cruxible-procedure-mandate-v4"] = "cruxible-procedure-mandate-v4"
     identity: ArtifactIdentity
+    #: The exact Line, which carries the operating budget the grant runs under
+    #: (within its Procedure's hard caps): a Mandate states no resource ceiling.
     line: ArtifactPin
     grants: MandateGrant
-    resource_ceiling: ProcedureHardCaps
     namespace: tuple[str, ...]
     valid_from: datetime
     expires_at: datetime
@@ -604,10 +550,6 @@ def _within_window(new: ProcedureMandateAny, old: ProcedureMandateAny) -> bool:
     return new.valid_from >= old.valid_from and new.expires_at <= old.expires_at
 
 
-def _resources(mandate: ProcedureMandateAny) -> ProcedureHardCaps:
-    return mandate.resource_ceiling
-
-
 def mandate_change_is_narrowing(new: ProcedureMandateAny, old: ProcedureMandateAny) -> bool:
     """Whether a successor only removes authority, so it may take the fast path.
 
@@ -624,8 +566,6 @@ def mandate_change_is_narrowing(new: ProcedureMandateAny, old: ProcedureMandateA
     if new.lifecycle.state == "retired":
         return True
     if _GRANT_ORDER[mandate_grant(new)] > _GRANT_ORDER[mandate_grant(old)]:
-        return False
-    if not _ceiling_within(_resources(new), _resources(old)):
         return False
     if not set(new.namespace) <= set(old.namespace) or not _within_window(new, old):
         return False
@@ -666,10 +606,11 @@ def parse_procedure_mandate_any(
         raw = json.loads(content)
     except (UnicodeDecodeError, ValueError) as exc:
         raise ProcedureMandateError("ProcedureMandate is not JSON") from exc
-    if not isinstance(raw, dict) or raw.get("artifact_format") != "cruxible-procedure-mandate-v3":
+    if not isinstance(raw, dict) or raw.get("artifact_format") != "cruxible-procedure-mandate-v4":
         raise ProcedureMandateError(
-            "A Mandate pins a Line (cruxible-procedure-mandate-v3); an earlier generation "
-            "pinned a Procedure and is no longer read. Re-author it against its Line."
+            "A Mandate pins a Line and carries no resource ceiling "
+            "(cruxible-procedure-mandate-v4); earlier generations are no longer read. "
+            "Re-author it against its Line; the Line owns the operating budget."
         )
     try:
         mandate = ProcedureMandate.model_validate(raw)

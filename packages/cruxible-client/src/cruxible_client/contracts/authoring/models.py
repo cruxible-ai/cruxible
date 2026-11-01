@@ -66,7 +66,6 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
-from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 from cruxible_client.contracts.procedures.windows import (
     CaptureEventNameSelector,
     FixedWindow,
@@ -130,7 +129,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:81f7a9ae2cc2e9b68fcc1cdd91017f202e02a52f34862d447d46ee00d9365ed5"
+    "sha256:658d5c0fb92b631a9c53221ea7f828a0388286c7512539d914f1e88654394aa0"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -962,13 +961,12 @@ class MandateConditionAuthoring(_StrictAuthoringModel):
 class ProcedureMandateAuthoringPayload(_StrictAuthoringModel):
     """Decision-only grant input; lowering owns every exact digest it pins."""
 
-    tag: Literal["cruxible-procedure-mandate-authoring-payload-v2"] = (
-        "cruxible-procedure-mandate-authoring-payload-v2"
+    tag: Literal["cruxible-procedure-mandate-authoring-payload-v3"] = (
+        "cruxible-procedure-mandate-authoring-payload-v3"
     )
     name: str
     line_name: str
     grants: Literal["propose", "settle"]
-    resource_ceiling: ProcedureHardCaps
     namespace: tuple[str, ...]
     valid_from: datetime
     expires_at: datetime

@@ -326,6 +326,15 @@ PROCEDURE_MANDATE_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="procedure-mandate",
     artifact_tag="cruxible-procedure-mandate-v3",
 )
+#: A Mandate grants authority within the Procedure's hard caps; the Line owns
+#: the operating budget, so no Mandate carries a resource ceiling (B4-0).
+PROCEDURE_MANDATE_V4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.procedure-mandate.v4", "cruxible-procedure-mandate-v4", semantic_revision=1
+    ),
+    artifact_kind="procedure-mandate",
+    artifact_tag="cruxible-procedure-mandate-v4",
+)
 PROCEDURE_MANDATE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=PROCEDURE_MANDATE_LAW,
     artifact_kind="procedure-mandate",
@@ -459,6 +468,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         PROCEDURE_MANDATE_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_V3_ACCEPTANCE_LAW,
+        PROCEDURE_MANDATE_V4_ACCEPTANCE_LAW,
         SUBJECT_ACCEPTANCE_LAW,
     )
 )

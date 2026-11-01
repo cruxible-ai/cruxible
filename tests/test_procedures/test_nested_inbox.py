@@ -49,7 +49,6 @@ def _roomy(artifact: ProcedureArtifact, *, seconds: int = 60) -> ProcedureArtifa
     wall_clock = CanonicalDuration(microseconds=seconds * 1_000_000)
     definition = artifact.definition.model_copy(
         update={
-            "budget": artifact.definition.budget.model_copy(update={"wall_clock": wall_clock}),
             "hard_caps": artifact.definition.hard_caps.model_copy(
                 update={"max_wall_clock": wall_clock}
             ),
@@ -191,7 +190,6 @@ def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) ->
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
         grants="propose",
-        resource_ceiling=caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
         expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc),

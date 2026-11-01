@@ -22,7 +22,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ReadNode,
@@ -94,12 +93,6 @@ def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
             inbox_node("emit", fields={"note": "$item.order"}, for_each="$steps.rows.items"),
         ),
         returns="rows",
-        budget=ProcedureBudget(
-            wall_clock=RUN_WALL_CLOCK,
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=100,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=0,

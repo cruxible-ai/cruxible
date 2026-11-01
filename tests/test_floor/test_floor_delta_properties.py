@@ -180,7 +180,6 @@ def _mandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name=name),
         line=_worlds._line_pin(line),
         grants="settle",
-        resource_ceiling=procedure.procedure.definition.hard_caps,
         namespace=("claims",),
         valid_from=_worlds._FAR_PAST,
         expires_at=_worlds._FAR_FUTURE,

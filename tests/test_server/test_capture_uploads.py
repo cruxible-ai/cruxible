@@ -21,6 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.captures import capture_contract_digest
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureOwnedContract,
@@ -28,7 +29,6 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
@@ -53,8 +53,8 @@ from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.service.uploads import CaptureUploadRefused, CaptureUploadStore, UploadLimits
 from tests.core_support._light_capture_support import record_contract as capture_contract
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
-from tests.test_server.test_playbill_procedure_rung2_public import _authored, _policy
+from tests.support.procedures import MAX_WALL_CLOCK, named
+from tests.test_server.test_playbill_procedure_rung2_public import _authored
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
 NOW = datetime(2026, 10, 22, 12, tzinfo=UTC)
@@ -597,12 +597,6 @@ def _definition(contract_pin: ArtifactPin) -> ProcedureDefinition:
             ),
         ),
         returns="result",
-        budget=ProcedureBudget(
-            wall_clock=RUN_WALL_CLOCK,
-            max_provider_calls=2,
-            max_capture_bytes=65_536,
-            max_items=None,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=4,
@@ -690,16 +684,9 @@ def _author_acquire(transport: CruxibleClient, instance_id: str) -> None:
             "tag": "playbill-capture-contract-authoring-payload-v1",
             "capture_contract": contract.model_dump(mode="json"),
         },
-        {
-            "tag": "cruxible-procedure-authoring-payload-v3",
-            "definition": _authored(definition, same_set_kinds={"CaptureContract"}),
-            "activation_policy": "drain",
-            "owned_contracts": [
-                item.model_dump(mode="json", by_alias=True) for item in _contracts()
-            ],
-            "acquisition_defaults": {"advisory.capture": _policy().model_dump(mode="json")},
-            "retire": False,
-        },
+        lower_authoring_input(_authored(definition, contracts=_contracts())).model_dump(
+            mode="json", by_alias=True
+        ),
     ]
     adapter = TypeAdapter(AuthoringChangeSetMember)
     members.sort(

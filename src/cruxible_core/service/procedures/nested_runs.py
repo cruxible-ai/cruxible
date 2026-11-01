@@ -20,6 +20,7 @@ from cruxible_client.contracts.procedures.models import (
     InvokeNode,
     ProcedureBudget,
     ProcedureHardCaps,
+    caps_budget,
 )
 from cruxible_client.contracts.provider_operations import LineBinding
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
@@ -277,7 +278,9 @@ class ServedNestedProcedureRunner:
                         "pin_binding_mismatch", "The child exceeds the parent terminal capability."
                     )
                 child_caps = constrained_caps(definition.hard_caps, caps)
-                child_budget = constrained_budget(definition.budget, budget, child_caps)
+                child_budget = constrained_budget(
+                    caps_budget(definition.hard_caps), budget, child_caps
+                )
                 plan = _plan_direct_external_run(
                     self.instance,
                     child,
@@ -336,7 +339,9 @@ class ServedNestedProcedureRunner:
             resolved_pin(context.accepted, context.node.procedure), prefix=child_prefix
         )
         caps = constrained_caps(accepted.procedure.definition.hard_caps, parent.hard_caps)
-        budget = constrained_budget(accepted.procedure.definition.budget, context.remaining, caps)
+        budget = constrained_budget(
+            caps_budget(accepted.procedure.definition.hard_caps), context.remaining, caps
+        )
         planned = _prepare_direct_external_run(
             self.instance,
             accepted,

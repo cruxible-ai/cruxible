@@ -228,7 +228,7 @@ def _graph(world: Any, *, provider: str | None) -> Any:
                 }
             ],
             "returns": "result",
-            "budget": {"wall_clock": "PT30S", "provider_calls": 1},
+            "hard_caps": {"wall_clock": "PT30S", "provider_calls": 1},
         }
     )
 
@@ -361,7 +361,7 @@ def test_fresh_consumer_provisions_the_operation_contract_before_bundled_install
                     "output": {"n": "integer"},
                     "steps": [{"project": "result", "fields": {"n": 2}}],
                     "returns": "result",
-                    "budget": {"provider_calls": 0},
+                    "hard_caps": {"provider_calls": 0},
                 }
             ),
         )

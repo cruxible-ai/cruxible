@@ -21,7 +21,6 @@ from cruxible_client.contracts.procedures.models import (
     CaptureEgressNode,
     GuardNode,
     HaltNode,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
@@ -73,12 +72,6 @@ def _definition(
         nodes=tuple(nodes),  # type: ignore[arg-type]
         returns=returns,
         slots=slots or {},
-        budget=ProcedureBudget(
-            wall_clock=CanonicalDuration(microseconds=2_000_000),
-            max_provider_calls=10,
-            max_capture_bytes=10_000,
-            max_items=100,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=CanonicalDuration(microseconds=4_000_000),
             max_provider_calls=20,

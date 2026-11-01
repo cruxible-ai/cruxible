@@ -49,7 +49,6 @@ from cruxible_client.contracts.query.grammar import (
 )
 from tests.test_procedures.test_procedure_mandates import (
     _accepted_line,
-    _caps,
     _line,
     _mandate,
     _procedure,
@@ -135,7 +134,6 @@ def _settle(
             artifact_digest=line_spec_digest(bound_line).tagged,
         ),
         grants="settle",
-        resource_ceiling=_caps(),
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
         expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc),
@@ -429,7 +427,6 @@ def test_a_settle_grant_names_the_subject_kinds_it_may_create() -> None:
                 line_identity=base.line.target,
                 line_artifact_digest=base.line.artifact_digest,
                 requested_rung=3,
-                requested_authority=_caps(),
                 target_paths=targets,
                 evaluation_time=datetime(2026, 6, 1, tzinfo=timezone.utc),
                 accepted_mandate_digest=procedure_mandate_digest(base).tagged,
@@ -716,7 +713,6 @@ def test_settle_authoring_names_its_scope_and_condition_and_lowering_pins_them(t
         name="triage",
         line_name=mandate.line.target.name,
         grants="settle",
-        resource_ceiling=mandate.resource_ceiling,
         namespace=("claims",),
         valid_from=mandate.valid_from,
         expires_at=mandate.expires_at,

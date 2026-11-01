@@ -108,6 +108,8 @@ from cruxible_client.contracts.procedures.models import (
     SettleChangeSetNode,
     TransformNode,
     authority_for_rung,
+    budget_within_caps,
+    caps_budget,
     is_terminal_node,
     iter_references,
     iter_role_references,
@@ -1890,14 +1892,17 @@ def prepare_direct_procedure_run(
     admitted_at: datetime,
     attempt: int = 1,
     runtime_policy: ProcedureRuntimePolicy | None = None,
+    budget: ProcedureBudget | None = None,
 ) -> PreparedProcedureRun:
     """Bind exact accepted state and all pins for an actor's pure direct run.
 
     A pure run plans no Provider occurrence, so it binds no acquisition plan,
     Provider binding or deployment; its admission material manifest is empty.
+    ``budget`` is the run's ephemeral Line budget (default: the hard caps).
     """
 
     procedure = accepted.procedure
+    budget = caps_budget(procedure.definition.hard_caps) if budget is None else budget
     from cruxible_core.procedures.reference_binding import authored_procedure
 
     if procedure_artifact_digest(authored_procedure(accepted)).tagged != accepted.artifact_digest:
@@ -1909,7 +1914,7 @@ def prepare_direct_procedure_run(
         state_reader=state_reader,
         bodies=bodies,
         read_ceiling=effective_read_rows(
-            procedure.definition.budget.max_read_rows,
+            budget.max_read_rows,
             procedure.definition.hard_caps.max_read_rows,
         ),
         invocation_input=invocation_input,
@@ -1936,12 +1941,12 @@ def prepare_direct_procedure_run(
             "accepted_state_inputs": tuple(item.input for item in materials),
             "resource_budget": (
                 resolve_procedure_resource_budget(
-                    procedure.definition.budget, procedure.definition.hard_caps, runtime_policy
+                    budget, procedure.definition.hard_caps, runtime_policy
                 )
                 if runtime_policy is not None
                 else None
             ),
-            "budget": procedure.definition.budget,
+            "budget": budget,
             "hard_caps": procedure.definition.hard_caps,
             "actor_context": actor_context,
             "invocation_origin": "actor",
@@ -2869,21 +2874,10 @@ class ProcedureExecutor:
                 "pin_binding_mismatch",
                 "Line run pins must close the accepted Procedure pins exactly.",
             )
-        if admission.invocation_origin == "actor" and admission.parent_binding is None:
-            if procedure.definition.budget != admission.budget:
-                raise ExecutionError("Procedure admission and accepted artifact differ")
-        else:
-            caps = procedure.definition.hard_caps
-            if (
-                admission.budget.wall_clock.microseconds > caps.max_wall_clock.microseconds
-                or admission.budget.max_provider_calls > caps.max_provider_calls
-                or admission.budget.max_capture_bytes > caps.max_capture_bytes
-                or (
-                    admission.budget.max_items is not None
-                    and admission.budget.max_items > caps.max_items
-                )
-            ):
-                raise ExecutionError("Line run budget exceeds the Procedure hard caps")
+        # Every run's operating budget is its Line's (a direct run's ephemeral
+        # Line spec's): it never exceeds the Procedure's hard caps.
+        if not budget_within_caps(admission.budget, procedure.definition.hard_caps):
+            raise ExecutionError("the run budget exceeds the Procedure hard caps")
         if _node_pin_sets(accepted) != admission.node_pin_sets:
             raise ProcedureBoundaryRefused(
                 "pin_binding_mismatch",

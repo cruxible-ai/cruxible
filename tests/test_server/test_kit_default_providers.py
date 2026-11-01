@@ -172,13 +172,6 @@ def _author(world: Any) -> None:
                 "artifact_kind": "Provider",
             }
         ],
-        "budget": {
-            **example.definition["budget"],  # type: ignore[dict-item]
-            "wall_clock": {"microseconds": 30_000_000},
-            "max_items": None,
-            "max_provider_calls": 1,
-            "max_capture_bytes": 1048576,
-        },
         "hard_caps": {
             **example.definition["hard_caps"],  # type: ignore[dict-item]
             "max_wall_clock": {"microseconds": 60_000_000},

@@ -64,7 +64,7 @@ from tests.core_support._claim_type_support import (
     claim_type_input_example,
     defaulted_claim_type_input_example,
 )
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
+from tests.support.procedures import MAX_WALL_CLOCK
 from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
 
 
@@ -409,12 +409,7 @@ def _assess_procedure(query: str) -> ProcedureInput:
                 },
             ],
             "returns": "result",
-            "budget": {
-                "wall_clock": f"PT{RUN_WALL_CLOCK.microseconds // 1_000_000}S",
-                "provider_calls": 0,
-                "capture_bytes": 0,
-            },
-            "caps": {
+            "hard_caps": {
                 "wall_clock": f"PT{MAX_WALL_CLOCK.microseconds // 1_000_000}S",
                 "provider_calls": 0,
                 "capture_bytes": 0,

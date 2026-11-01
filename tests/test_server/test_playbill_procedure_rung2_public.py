@@ -40,7 +40,6 @@ from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     CaptureEgressNode,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
@@ -68,7 +67,7 @@ from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._light_capture_support import procedure_contract
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._subject_kind_support import bare_slug_claim_type, create_by_key
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
+from tests.support.procedures import MAX_WALL_CLOCK, named
 from tests.test_procedures.test_procedure_source_runs import _contracts
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
@@ -270,12 +269,6 @@ def _procedure_definition(
             ),
         ),
         returns="result",
-        budget=ProcedureBudget(
-            wall_clock=RUN_WALL_CLOCK,
-            max_provider_calls=2,
-            max_capture_bytes=65_536,
-            max_items=None,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=4,
@@ -287,7 +280,9 @@ def _procedure_definition(
     )
 
 
-def _authored(definition: ProcedureDefinition) -> ProcedureInput:
+def _authored(
+    definition: ProcedureDefinition, *, contracts: tuple[Any, ...] | None = None
+) -> ProcedureInput:
     """The graph as an author writes it: the one typed spec it decompiles to.
 
     The spec names its dependencies; lowering resolves each at the intent base
@@ -299,7 +294,7 @@ def _authored(definition: ProcedureDefinition) -> ProcedureInput:
     from cruxible_client.contracts.procedures.decompile import decompile_procedure
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 
-    input_contract, output_contract = _contracts()
+    input_contract, output_contract = contracts or _contracts()
     artifact = ProcedureArtifact(
         identity=Identity(kind="Procedure", name=definition.name),
         definition=definition,
@@ -437,11 +432,10 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
             "max_authority": "observe" if terminal_kind == "emit_capture" else "propose",
         },
         {
-            "tag": "cruxible-procedure-mandate-authoring-payload-v2",
+            "tag": "cruxible-procedure-mandate-authoring-payload-v3",
             "name": MANDATE_NAME,
             "line_name": LINE_NAME,
             "grants": "propose",
-            "resource_ceiling": definition.hard_caps.model_dump(mode="json"),
             "namespace": ["claims"],
             "valid_from": "2026-01-01T00:00:00Z",
             "expires_at": "2027-01-01T00:00:00Z",
@@ -488,7 +482,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     # in cruxible_core.authoring.lowering stages `line` before
     # `procedure_mandate`, so the Mandate below is accepted together with its
     # Line in one change set.
-    mandate_tag = "cruxible-procedure-mandate-authoring-payload-v2"
+    mandate_tag = "cruxible-procedure-mandate-authoring-payload-v3"
     line_tag = "cruxible-line-authoring-payload-v2"
 
     if terminal_kind == "emit_capture":

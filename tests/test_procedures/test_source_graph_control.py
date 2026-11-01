@@ -28,7 +28,6 @@ from cruxible_core.procedures.execution import ProcedureExecutor
 from tests.support.procedures import bind_fixture, named
 from tests.test_procedures.test_procedure_execution import (
     _Authority,
-    _budget,
     _fixture,
     _hard_caps,
     _owned_contract,
@@ -85,7 +84,6 @@ def definition(*, early=False):
         contract_out=named(po),
         nodes=tuple(nodes),
         returns="yes" if early else "result",
-        budget=_budget(),
         hard_caps=_hard_caps(),
         terminal_capability=1,
     )

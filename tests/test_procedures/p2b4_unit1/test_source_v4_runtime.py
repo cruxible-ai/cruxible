@@ -112,7 +112,7 @@ from cruxible_core.storage.material_reservations import (
     ReservedCaptureStore,
 )
 from tests.core_support._pc_c_support import capture_contract, digest
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
+from tests.support.procedures import MAX_WALL_CLOCK, named
 from tests.test_procedures.test_procedure_execution import _Authority, _Contracts
 from tests.test_providers.test_provider_invocation_journal import (
     _accepted_one_provider,
@@ -350,7 +350,6 @@ def _source_fixture(
 
     historical_provider = _source_provider()
     provider_accepted = _accepted_one_provider(
-        wall_clock=RUN_WALL_CLOCK,
         max_wall_clock=MAX_WALL_CLOCK,
         provider=historical_provider,
     )

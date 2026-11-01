@@ -170,7 +170,7 @@ def _paired_world(
                         },
                     ],
                     "returns": "out",
-                    "budget": {"provider_calls": 1, "capture_bytes": 65536},
+                    "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
                 }
             )
         ),

@@ -321,7 +321,7 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
         if verb_alias == node.node_id:
             common.pop("id")  # the default: a value step's node is named by its output
         steps.append({**common, **step})
-    budget, caps = definition.budget, definition.hard_caps
+    caps = definition.hard_caps
     return ProcedureSpec.model_validate(
         dict(
             procedure=definition.name,
@@ -350,15 +350,7 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
             },
             contracts=contracts,
             steps=steps,
-            budget=dict(
-                wall_clock=format_iso_duration_microseconds(budget.wall_clock.microseconds),
-                provider_calls=budget.max_provider_calls,
-                capture_bytes=budget.max_capture_bytes,
-                result_bytes=budget.max_result_bytes,
-                items=budget.max_items,
-                read_rows=budget.max_read_rows,
-            ),
-            caps=dict(
+            hard_caps=dict(
                 wall_clock=format_iso_duration_microseconds(caps.max_wall_clock.microseconds),
                 provider_calls=caps.max_provider_calls,
                 capture_bytes=caps.max_capture_bytes,

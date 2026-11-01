@@ -276,7 +276,6 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
             ),
         ),
         returns="result",
-        budget=_budget(items=max_items),
         hard_caps=_hard_caps(items=max_items),
         terminal_capability=1,
     )
@@ -361,7 +360,6 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
         contract_out=named(typed_out),
         nodes=(listed, compute),
         returns="result",
-        budget=_budget(items=1),
         hard_caps=_hard_caps(items=1),
         terminal_capability=1,
     )
@@ -399,7 +397,6 @@ def _repeat_transform_procedure(*, max_items: int = 100) -> AcceptedProcedure:
             ),
         ),
         returns="repeated",
-        budget=_budget(items=max_items),
         hard_caps=_hard_caps(items=max_items),
         terminal_capability=1,
     )
@@ -478,7 +475,6 @@ def _guarded_filter_procedure(
             HaltNode(node_id="stop", reason="No filtered items."),
         ),
         returns="result",
-        budget=_budget(),
         hard_caps=_hard_caps(),
         terminal_capability=1,
     )
@@ -530,7 +526,6 @@ def _guarded_scalar_procedure(
             HaltNode(node_id="stop", reason="Summary count was not positive."),
         ),
         returns="result",
-        budget=_budget(),
         hard_caps=_hard_caps(),
         terminal_capability=1,
     )
@@ -1537,7 +1532,6 @@ def test_executor_recognizes_a_source_node_as_a_landed_capture_input(tmp_path) -
         slots={"fetch": {"in": "test.value@1", "out": "test.value@1", "effect": "external_read"}},
         nodes=(source,),
         returns="capture",
-        budget=_budget(),
         hard_caps=_hard_caps(),
         terminal_capability=1,
     )
@@ -2194,8 +2188,9 @@ class _ExpiredBudgetClock:
 
     def monotonic_ns(self):
         self.calls += 1
-        # Every reading after the first is one second past the run's budget.
-        return 0 if self.calls == 1 else (RUN_WALL_CLOCK.microseconds + 1_000_000) * 1_000
+        # Every reading after the first is one second past the run's budget
+        # (a direct run's budget is its Procedure's hard caps).
+        return 0 if self.calls == 1 else (MAX_WALL_CLOCK.microseconds + 1_000_000) * 1_000
 
 
 def test_wall_clock_exhaustion_uses_typed_classification(tmp_path) -> None:
@@ -2389,7 +2384,6 @@ def test_json_escape_hatch_is_not_charged_as_a_typed_collection(tmp_path) -> Non
             ),
         ),
         returns="result",
-        budget=_budget(items=1),
         hard_caps=_hard_caps(items=1),
         terminal_capability=1,
     )

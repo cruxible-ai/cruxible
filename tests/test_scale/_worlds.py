@@ -72,7 +72,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
@@ -305,12 +304,6 @@ def _procedure(
             *(() if terminal is None else (terminal,)),
         ),
         returns="result",
-        budget=ProcedureBudget(
-            wall_clock=CanonicalDuration(microseconds=600_000_000),
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=100,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=CanonicalDuration(microseconds=600_000_000),
             max_provider_calls=0,
@@ -489,7 +482,6 @@ def definitions(world: World) -> dict[str, bytes]:
         identity=ArtifactIdentity(kind="ProcedureMandate", name=f"{PROPOSE}-mandate"),
         line=_line_pin(propose_line),
         grants="propose",
-        resource_ceiling=propose.procedure.definition.hard_caps,
         namespace=("claims",),
         valid_from=_FAR_PAST,
         expires_at=_FAR_FUTURE,
@@ -498,7 +490,6 @@ def definitions(world: World) -> dict[str, bytes]:
         identity=ArtifactIdentity(kind="ProcedureMandate", name=f"{SETTLE}-mandate"),
         line=_line_pin(settle_line),
         grants="settle",
-        resource_ceiling=settle.procedure.definition.hard_caps,
         namespace=("claims",),
         valid_from=_FAR_PAST,
         expires_at=_FAR_FUTURE,

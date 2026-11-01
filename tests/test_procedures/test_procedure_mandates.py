@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -35,7 +36,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
     render_line_spec,
 )
-from cruxible_client.contracts.procedures.models import CanonicalDuration, ProcedureHardCaps
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import compute_preflight
 from cruxible_core.authoring.store import AuthoringIntentStore
@@ -47,16 +47,6 @@ from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
 
 _D0 = "sha256:" + "0" * 64
-
-
-def _caps(*, calls: int = 0) -> ProcedureHardCaps:
-    return ProcedureHardCaps(
-        max_wall_clock=CanonicalDuration(microseconds=2_000_000),
-        max_provider_calls=calls,
-        max_capture_bytes=0,
-        max_items=200,
-        max_repeat_attempts=1,
-    )
 
 
 def _closed_definition(*, terminal_capability=3):
@@ -162,7 +152,6 @@ def _mandate(
             artifact_digest=line_spec_digest(bound_line).tagged,
         ),
         grants=grants,
-        resource_ceiling=_caps(),
         namespace=namespace,
         valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
         expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc),
@@ -181,7 +170,7 @@ def test_procedure_mandate_round_trip_and_digest() -> None:
         parse_procedure_mandate(content + b"\n", path=procedure_mandate_path("triage"))
 
 
-def test_procedure_mandate_law_checks_exact_procedure_and_ceiling() -> None:
+def test_procedure_mandate_law_checks_exact_procedure_and_carries_no_ceiling() -> None:
     procedure = _procedure()
     line = _line(procedure=procedure)
     accepted_line = _accepted_line(line)
@@ -197,19 +186,14 @@ def test_procedure_mandate_law_checks_exact_procedure_and_ceiling() -> None:
     )
     assert accepted.verdict == "accepted"
 
-    widened = mandate.model_copy(update={"resource_ceiling": _caps(calls=1)})
-    refused = evaluate_procedure_mandate_v2_law(
-        widened,
-        path=procedure_mandate_path("triage"),
-        predecessor=None,
-        line=accepted_line,
-        procedure=procedure,
-        claim_types={},
-        condition_query=None,
-    )
-    assert refused.diagnostics[0].code == (
-        "cruxible.procedure_mandate.resource_ceiling_widens_procedure"
-    )
+    # A Mandate grants authority only: the Procedure's hard caps bound every
+    # run and the Line owns the operating budget, so no Mandate carries a
+    # resource ceiling and an earlier generation that did is no longer read.
+    assert "resource_ceiling" not in ProcedureMandate.model_fields
+    earlier = json.loads(render_procedure_mandate(mandate))
+    earlier["artifact_format"] = "cruxible-procedure-mandate-v3"
+    with pytest.raises(ProcedureMandateError, match="no resource ceiling"):
+        parse_procedure_mandate(json.dumps(earlier).encode(), path=procedure_mandate_path("triage"))
 
 
 def test_procedure_mandate_runtime_refusals_are_complete_and_deterministic() -> None:
@@ -220,7 +204,6 @@ def test_procedure_mandate_runtime_refusals_are_complete_and_deterministic() -> 
         line_identity=mandate.line.target,
         line_artifact_digest=mandate.line.artifact_digest,
         requested_rung=3,
-        requested_authority=_caps(),
         target_paths=("claims/aa/CLM-" + "a" * 32 + ".json",),
         evaluation_time=datetime(2026, 6, 1, tzinfo=timezone.utc),
         accepted_mandate_digest=digest,
@@ -236,13 +219,11 @@ def test_procedure_mandate_runtime_refusals_are_complete_and_deterministic() -> 
                 "accepted_mandate_digest": _D0,
                 "evaluation_time": mandate.expires_at + timedelta(seconds=1),
                 "line_artifact_digest": _D0,
-                "requested_authority": _caps(calls=1),
                 "target_paths": ("principals/root.json",),
             }
         ),
     )
     assert refused.refusal_codes == (
-        "procedure_mandate_authority_ceiling_insufficient",
         "procedure_mandate_expired",
         "procedure_mandate_line_mismatch",
         "procedure_mandate_namespace_mismatch",
@@ -427,7 +408,6 @@ def test_procedure_mandate_authoring_resolves_machine_owned_digests(tmp_path) ->
         name="triage",
         line_name=line.identity.name,
         grants="propose",
-        resource_ceiling=_caps(),
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
         expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc),

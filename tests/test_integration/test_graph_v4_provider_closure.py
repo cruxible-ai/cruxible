@@ -24,7 +24,6 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
 )
@@ -60,12 +59,6 @@ def _definition() -> ProcedureDefinition:
                 ),
             ),
             "returns": "result",
-            "budget": ProcedureBudget(
-                wall_clock=RUN_WALL_CLOCK,
-                max_provider_calls=2,
-                max_capture_bytes=1024,
-                max_items=10,
-            ),
             "hard_caps": ProcedureHardCaps(
                 max_wall_clock=MAX_WALL_CLOCK,
                 max_provider_calls=4,

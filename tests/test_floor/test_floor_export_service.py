@@ -252,7 +252,6 @@ def test_procedure_floor_card_keeps_runnability_governance_and_track_record_sepa
         "output_contract",
         "runnable",
         "capabilities",
-        "budget",
         "hard_caps",
         "governance",
         "track_record",

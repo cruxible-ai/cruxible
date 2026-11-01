@@ -50,7 +50,6 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProcedureSlot,
@@ -119,7 +118,7 @@ from cruxible_core.service.procedures.procedures import service_execute_direct_p
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._provider_seal_support import write_test_provider_seal_v2
 from tests.support.invocation_ids import unique_invocation_id
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
+from tests.support.procedures import MAX_WALL_CLOCK, named
 from tests.support.short_temporary_root import short_temporary_directory
 from tests.test_procedures.test_procedure_execution import (
     _accepted_line_for_admission,
@@ -311,10 +310,10 @@ def _complete_line_for_admission(
                 for slot in definition.slots
             },
             "budgets": {
-                "max_capture_bytes": definition.budget.max_capture_bytes,
-                "max_items": definition.budget.max_items,
-                "max_provider_calls": definition.budget.max_provider_calls,
-                "max_wall_clock_microseconds": definition.budget.wall_clock.microseconds,
+                "max_capture_bytes": definition.hard_caps.max_capture_bytes,
+                "max_items": definition.hard_caps.max_items,
+                "max_provider_calls": definition.hard_caps.max_provider_calls,
+                "max_wall_clock_microseconds": definition.hard_caps.max_wall_clock.microseconds,
             },
         }
     )
@@ -914,12 +913,6 @@ def _provider_line_procedure(accepted_provider: AcceptedProvider) -> AcceptedPro
         slots={
             "ask": ProcedureSlot.model_validate(operation.signature().model_dump(by_alias=True))
         },
-        budget=ProcedureBudget(
-            wall_clock=RUN_WALL_CLOCK,
-            max_provider_calls=2,
-            max_capture_bytes=1024,
-            max_items=10,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=4,
@@ -1108,10 +1101,10 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
         },
         max_authority="propose",
         budgets={
-            "max_capture_bytes": definition.budget.max_capture_bytes,
-            "max_items": definition.budget.max_items,
-            "max_provider_calls": definition.budget.max_provider_calls,
-            "max_wall_clock_microseconds": definition.budget.wall_clock.microseconds,
+            "max_capture_bytes": definition.hard_caps.max_capture_bytes,
+            "max_items": definition.hard_caps.max_items,
+            "max_provider_calls": definition.hard_caps.max_provider_calls,
+            "max_wall_clock_microseconds": definition.hard_caps.max_wall_clock.microseconds,
         },
         epsilon={"$decimal": "0"},
     )
@@ -1121,7 +1114,6 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
         grants="propose",
-        resource_ceiling=definition.hard_caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),

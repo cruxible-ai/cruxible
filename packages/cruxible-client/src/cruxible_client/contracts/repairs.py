@@ -220,9 +220,6 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "procedure_mandate_grant_insufficient": (
         "accept_a_procedure_mandate_granting_the_required_authority"
     ),
-    "procedure_mandate_authority_ceiling_insufficient": (
-        "accept_a_procedure_mandate_whose_ceiling_covers_the_admitted_hard_caps"
-    ),
     "procedure_mandate_namespace_mismatch": (
         "accept_a_procedure_mandate_whose_namespace_covers_the_target_paths"
     ),

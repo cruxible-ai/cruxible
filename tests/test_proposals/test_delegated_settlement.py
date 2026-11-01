@@ -57,7 +57,6 @@ from tests.test_authoring.test_authoring_change_set_intents import (
 from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
-from tests.test_procedures.test_procedure_mandates import _caps
 
 STATUS = "project.work_item.status"
 
@@ -153,7 +152,6 @@ def _world(tmp_path, *, only_subject: str | None = None, change_kinds=("create",
             artifact_digest=line_spec_digest(line).tagged,
         ),
         grants="settle",
-        resource_ceiling=_caps(),
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),

@@ -32,7 +32,6 @@ from cruxible_client.contracts.procedures.graph import (
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
     HaltNode,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
@@ -80,12 +79,6 @@ def _definition(
         contract_out=named(contract_out),
         nodes=default_nodes if nodes is None else nodes,  # type: ignore[arg-type]
         returns="result",
-        budget=ProcedureBudget(
-            wall_clock=CanonicalDuration(microseconds=1_000_000),
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=100,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=CanonicalDuration(microseconds=2_000_000),
             max_provider_calls=0,
@@ -136,7 +129,7 @@ def test_procedure_round_trip_digest_and_node_golden() -> None:
     assert definition.graph_format == 7
     assert procedure_runnability(definition) == ("direct", ())
     assert procedure.definition_digest == (
-        "sha256:80ef842fe7bd3f72f1584080fecd3e5c5c4f85ee6fab8075dfeb0e07f7967821"
+        "sha256:63e2e03ea0bffe9deb728af178768bea5043e2efdc81cecfc810e7933c50e20b"
     )
     nodes = compute_procedure_node_digests(definition)
     assert nodes["read"].subtree_digest == (

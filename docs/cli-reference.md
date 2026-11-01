@@ -2680,15 +2680,15 @@ ProcedureMandate over its exact Procedure; without one each run refuses
 `line_mandate_required`, and `enable` refuses up front with
 `cruxible.line.mandate_required`, both naming `authoring example
 procedure-mandate`. An observe-only Line -- one whose Procedure's terminals, or
-whose `max_authority`, stop at observe -- needs no mandate. A mandate whose
-`resource_ceiling` exceeds the Procedure's hard caps is refused naming each
-widened cap with both values; `authoring example procedure-mandate` uses the
-`authoring example procedure` caps. Every `authoring example` template's own
-`budget.wall_clock` and `hard_caps.max_wall_clock` (`procedure`, `blueprint`,
-and the Procedures `procedure-mandate` and `line` carry forward) are 10
-minutes per run and 30 minutes overall: a wall-clock budget catches an
-obviously bad run, not compute management, so the example leaves a large
-safety factor rather than a tight one.
+whose `max_authority`, stop at observe -- needs no mandate. A mandate grants authority
+only: the Procedure declares `hard_caps`, and the Line owns the operating
+budget (`budgets`) within them -- a Line budget that exceeds a cap is refused
+(`cruxible.authoring.line_budget_exceeds_caps`) naming each widened cap with
+both values, and a Line that states none runs at the caps. A direct run's
+ephemeral Line spec carries the caps as its budget. The `authoring example
+procedure` template's `hard_caps.max_wall_clock` is 30 minutes: a wall-clock
+cap catches an obviously bad run, not compute management, so the example
+leaves a large safety factor rather than a tight one.
 
 A Line whose Procedure ends in a `propose_change_set` terminal produces a
 proposal. Its `candidate_templates` are a fixed list of templates, or

@@ -85,6 +85,7 @@ from cruxible_client.contracts.procedures.models import (
     RepeatBodyNode,
     RepeatNode,
     authority_for_rung,
+    caps_budget,
     required_authority,
 )
 from cruxible_client.contracts.procedures.reads import effective_read_rows
@@ -1435,35 +1436,27 @@ def _line_occurrence(
 def _line_budget(
     accepted_line: AcceptedLineSpec,
     accepted_procedure: AcceptedProcedure,
-    mandates: Sequence[tuple[str, ProcedureMandateAny]] = (),
 ) -> ProcedureBudget:
-    """The Line occurrence's budget: the Line's, its read rows lowered by its Mandates.
+    """The Line occurrence's operating budget: the Line's own, within the hard caps.
 
-    A Line that states no ``max_read_rows`` reads under the Procedure's hard
-    cap; every live Mandate granting the Line caps it by its resource ceiling.
+    A Line that states no ``max_read_rows`` (or ``max_result_bytes``) reads
+    (and returns) under the Procedure's hard cap.
     """
 
-    definition = accepted_procedure.procedure.definition
+    caps = accepted_procedure.procedure.definition.hard_caps
     budgets = accepted_line.line.budgets
-    stated = budgets.get("max_read_rows") if isinstance(budgets, dict) else None
-    read_rows = min(
-        (
-            effective_read_rows(
-                stated if isinstance(stated, int) else definition.budget.max_read_rows,
-                definition.hard_caps.max_read_rows,
-            ),
-            *(mandate.resource_ceiling.max_read_rows for _digest, mandate in mandates),
-        )
-    )
     if not isinstance(budgets, dict):
-        return definition.budget.model_copy(update={"max_read_rows": read_rows})
+        return caps_budget(caps)
+    stated = budgets.get("max_read_rows")
     return ProcedureBudget(
         wall_clock=CanonicalDuration(microseconds=budgets["max_wall_clock_microseconds"]),
         max_provider_calls=budgets["max_provider_calls"],
         max_capture_bytes=budgets["max_capture_bytes"],
         max_items=budgets.get("max_items"),
-        max_result_bytes=budgets.get("max_result_bytes", definition.budget.max_result_bytes),
-        max_read_rows=read_rows,
+        max_result_bytes=budgets.get("max_result_bytes", caps.max_result_bytes),
+        max_read_rows=effective_read_rows(
+            stated if isinstance(stated, int) else None, caps.max_read_rows
+        ),
     )
 
 
@@ -3024,7 +3017,7 @@ def _prepare_direct_external_run(
 ):
     """Bind state and external inputs through the same planner for root and child runs."""
     definition = accepted.procedure.definition
-    budget = effective_budget or definition.budget
+    budget = effective_budget or caps_budget(definition.hard_caps)
     caps = effective_caps or definition.hard_caps
     planned = _plan_direct_external_run(
         instance,
@@ -3172,6 +3165,7 @@ def service_run_playbill_procedure(
             parameters=request.input,
             bindings=spec_bindings,
             acquisition=request.acquisition,
+            budget=caps_budget(accepted.procedure.definition.hard_caps),
         )
     )
     if caller_rung is not None:
@@ -4021,7 +4015,7 @@ def _run_playbill_line(
     if investigation is not None:
         require_current_investigation(instance, investigation)
     runtime_policy = _accepted_runtime_policy(instance, coordinate)
-    budget = _line_budget(accepted_line, accepted, mandates)
+    budget = _line_budget(accepted_line, accepted)
     capture_contracts = _accepted_capture_contracts(
         instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
     )

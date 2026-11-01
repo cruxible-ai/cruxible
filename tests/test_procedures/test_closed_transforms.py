@@ -32,7 +32,6 @@ from cruxible_core.procedures.execution import ProcedureExecutor
 from tests.support.procedures import named
 from tests.test_procedures.test_procedure_execution import (
     _Authority,
-    _budget,
     _fixture,
     _hard_caps,
     _owned_accepted,
@@ -89,7 +88,6 @@ def _run(nodes: tuple[Any, ...], tmp_path: Path, *, returns: str = "result") -> 
         contract_out=named(out_pin),
         nodes=tuple(rebound),
         returns=returns,
-        budget=_budget(),
         hard_caps=_hard_caps(),
         terminal_capability=1,
     )

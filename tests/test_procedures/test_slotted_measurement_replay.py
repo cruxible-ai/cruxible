@@ -204,7 +204,7 @@ def _slotted_world(tmp_path, *, landed=False):
                 ],
                 "returns": "result",
                 "measurements": [declaration.model_dump(mode="json")],
-                "budget": {"provider_calls": 1},
+                "hard_caps": {"provider_calls": 1},
             }
         )
     )
@@ -260,7 +260,7 @@ def _slotted_world(tmp_path, *, landed=False):
                             "input": {"value": "$captured.content.json.value"},
                         },
                     ],
-                    "budget": {"provider_calls": 2, "capture_bytes": 65536},
+                    "hard_caps": {"provider_calls": 2, "capture_bytes": 65536},
                 }
             )
         )

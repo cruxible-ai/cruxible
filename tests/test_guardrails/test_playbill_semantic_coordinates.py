@@ -36,6 +36,7 @@ from cruxible_client.contracts.laws import (
     PROCEDURE_MANDATE_ACCEPTANCE_LAW,
     PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,
     PROCEDURE_MANDATE_V3_ACCEPTANCE_LAW,
+    PROCEDURE_MANDATE_V4_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
     PROVIDER_ACCEPTANCE_LAW,
     PROVIDER_BUILD_ACCEPTANCE_LAW,
@@ -263,6 +264,13 @@ LAW_COORDINATES += (
         "cruxible-procedure-mandate-v3",
         1,
         "sha256:dc26f33bab27da535fe802668a957e8218c5ce5c39347cee07992965255b0522",
+    ),
+    (
+        PROCEDURE_MANDATE_V4_ACCEPTANCE_LAW,
+        "cruxible.procedure-mandate.v4",
+        "cruxible-procedure-mandate-v4",
+        1,
+        "sha256:eada1592c6e4bd4e10f8b9935e0f1f273a7a5ca63916ced3bb0f38afe579797b",
     ),
     (
         NAMED_PROVIDER_IDENTITY_LAW,

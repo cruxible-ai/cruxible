@@ -64,7 +64,7 @@ def _author_user_procedure(world) -> None:
                 }
             ],
             "returns": "result",
-            "budget": {"wall_clock": "PT30S", "provider_calls": 1},
+            "hard_caps": {"wall_clock": "PT30S", "provider_calls": 1},
         }
     )
     intent = (
@@ -85,7 +85,6 @@ def _mandate(name: str, line: str, caps) -> ProcedureMandateInput:
         name=name,
         line_name=line,
         grants="propose",
-        resource_ceiling=caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),

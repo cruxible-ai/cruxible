@@ -26,7 +26,6 @@ from tests.support.procedures import named
 from tests.test_procedures.test_procedure_execution import (
     _accepted,
     _Authority,
-    _budget,
     _Contracts,
     _digest,
     _fixture,
@@ -66,7 +65,6 @@ def _terminal_procedure():
             ),
         ),
         returns="rows",
-        budget=_budget(items=100),
         hard_caps=_hard_caps(items=100),
         terminal_capability=1,
     )

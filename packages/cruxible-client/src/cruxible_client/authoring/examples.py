@@ -42,7 +42,6 @@ from cruxible_client.contracts.policies import (
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
-from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 from cruxible_client.contracts.query.definitions import (
     QueryDefinitionSpec,
     QueryEvaluationPolicy,
@@ -256,21 +255,6 @@ def claim_type_succession_example() -> ChangeSetInput:
     )
 
 
-#: The `--example procedure` hard caps. A mandate's resource ceiling may narrow
-#: but never widen its Procedure's caps, so the mandate example reuses these and
-#: the two templates are accepted together. The wall-clock caps (and the
-#: per-run default below) are a safety factor against an obviously bad run,
-#: not compute management, so they stay generous: 10 minutes per run, 30
-#: minutes overall.
-_EXAMPLE_PROCEDURE_HARD_CAPS: Final = {
-    "max_wall_clock": {"microseconds": 1_800_000_000},
-    "max_provider_calls": 0,
-    "max_capture_bytes": 0,
-    "max_items": 200,
-    "max_repeat_attempts": 1,
-}
-
-
 def procedure_mandate_example() -> ProcedureMandateInput:
     """A propose grant over the `--example line` Line, within its Procedure's caps.
 
@@ -283,7 +267,6 @@ def procedure_mandate_example() -> ProcedureMandateInput:
         name="replace-me",
         line_name="replace-me",
         grants="propose",
-        resource_ceiling=ProcedureHardCaps.model_validate(_EXAMPLE_PROCEDURE_HARD_CAPS),
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
         expires_at=datetime(2030, 1, 1, tzinfo=timezone.utc),
@@ -463,13 +446,10 @@ def procedure_example() -> ProcedureInput:
             ),
             "input": {},
             "output": {"count": "int"},
-            "budget": {
-                "wall_clock": "PT10M",
-                "provider_calls": 0,
-                "capture_bytes": 0,
-                "items": 100,
-            },
-            "caps": {
+            # Every run fits these caps; the Line's operating budget may narrow
+            # them. They are a safety factor against an obviously bad run, not
+            # compute management, so they stay generous.
+            "hard_caps": {
                 "wall_clock": "PT30M",
                 "provider_calls": 0,
                 "capture_bytes": 0,

@@ -20,17 +20,12 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import initialize_local
-from tests.support.procedures import RUN_WALL_CLOCK, ref, spec_input
+from tests.support.procedures import ref, spec_input
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 
 #: The run limits every spec below declares (60 s, no provider calls).
 LIMITS = {
-    "budget": {
-        "wall_clock": f"PT{RUN_WALL_CLOCK.microseconds // 1_000_000}S",
-        "provider_calls": 0,
-        "capture_bytes": 0,
-    },
-    "caps": {
+    "hard_caps": {
         "wall_clock": "PT120S",
         "provider_calls": 0,
         "capture_bytes": 0,
@@ -305,7 +300,6 @@ def test_line_child_inherits_authority_and_recovery_rebuilds_only_the_recorded_d
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
         grants="propose",
-        resource_ceiling=caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
         expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc),

@@ -299,7 +299,7 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
     # A new version of the same method must retain the question, while getting
     # its own execution identity. Historical replay still uses the old method.
     definition = procedure.definition.model_copy(
-        update={"budget": procedure.definition.budget.model_copy(update={"max_items": 90})}
+        update={"hard_caps": procedure.definition.hard_caps.model_copy(update={"max_items": 90})}
     )
     successor = procedure.model_copy(
         update={

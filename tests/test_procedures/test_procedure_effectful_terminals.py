@@ -163,7 +163,6 @@ def _runtime_mandate(
     line_identity = admission.line_identity
     line_digest = admission.line_spec_digest
     update: dict[str, object] = {
-        "resource_ceiling": admission.hard_caps,
         "namespace": namespace,
     }
     if line_identity is not None and line_digest is not None:
@@ -286,15 +285,11 @@ def test_v2_builder_derives_authority_and_uses_monotone_prepared_time(tmp_path) 
         mandate_digest=_digest("procedure-mandate"),
         prepared_at=prepared_at,
     )
-    assert request.requested_authority == admission.hard_caps
+    assert not hasattr(request, "requested_authority")
     assert request.evaluation_time == prepared_at
     assert request.mandate_pin is None and request.mandate_basis_digests == ()
 
-    forged = request.model_copy(
-        update={
-            "requested_authority": request.requested_authority.model_copy(update={"max_items": 1})
-        }
-    )
+    forged = request.model_copy(update={"evaluation_time": prepared_at + timedelta(seconds=1)})
     with pytest.raises(TerminalAuthorityRefusal) as caught:
         require_procedure_mandate(forged, admission=admission, accepted_mandates={})
     assert caught.value.codes == ("procedure_authority_admission_mismatch",)
@@ -588,7 +583,6 @@ def test_procedure_mandate_refusal_reports_every_failed_law_and_repair(tmp_path)
         update={
             "line": base.line.model_copy(update={"artifact_digest": _digest("other-line")}),
             "grants": "propose",
-            "resource_ceiling": base.resource_ceiling.model_copy(update={"max_items": 1}),
             "namespace": ("documents",),
             "expires_at": NOW - timedelta(days=1),
             "lifecycle": base.lifecycle.model_copy(update={"state": "retired"}),
@@ -609,7 +603,6 @@ def test_procedure_mandate_refusal_reports_every_failed_law_and_repair(tmp_path)
             accepted_mandates={refused_digest: refused},
         )
     assert caught.value.codes == (
-        "procedure_mandate_authority_ceiling_insufficient",
         "procedure_mandate_expired",
         "procedure_mandate_grant_insufficient",
         "procedure_mandate_line_mismatch",

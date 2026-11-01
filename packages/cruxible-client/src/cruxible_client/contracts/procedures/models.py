@@ -130,6 +130,40 @@ class ProcedureHardCaps(_StrictProcedureModel):
         return self
 
 
+def caps_budget(caps: ProcedureHardCaps) -> ProcedureBudget:
+    """The operating budget of a run whose Line states none: the hard caps themselves.
+
+    A direct run's ephemeral Line spec records this budget; an accepted Line
+    states its own ``budgets``, which must fit within the caps.
+    """
+
+    return ProcedureBudget(
+        wall_clock=caps.max_wall_clock,
+        max_provider_calls=caps.max_provider_calls,
+        max_capture_bytes=caps.max_capture_bytes,
+        max_result_bytes=caps.max_result_bytes,
+        max_items=caps.max_items,
+        max_read_rows=caps.max_read_rows,
+    )
+
+
+def budget_within_caps(budget: ProcedureBudget, caps: ProcedureHardCaps) -> bool:
+    """Whether an operating budget fits within a Procedure's hard caps."""
+
+    return (
+        budget.wall_clock.microseconds <= caps.max_wall_clock.microseconds
+        and budget.max_provider_calls <= caps.max_provider_calls
+        and budget.max_capture_bytes <= caps.max_capture_bytes
+        and (budget.max_items is None or budget.max_items <= caps.max_items)
+        and (
+            budget.max_result_bytes is None
+            or caps.max_result_bytes is None
+            or budget.max_result_bytes <= caps.max_result_bytes
+        )
+        and (budget.max_read_rows is None or budget.max_read_rows <= caps.max_read_rows)
+    )
+
+
 class ProcedureDefinition(_StrictProcedureModel):
     """The one Procedure graph: explicit value joins and typed return paths.
 
@@ -152,7 +186,8 @@ class ProcedureDefinition(_StrictProcedureModel):
         default_factory=dict, exclude_if=lambda value: not value
     )
     measurements: tuple[ProcedureMeasurementDeclaration, ...] = ()
-    budget: ProcedureBudget
+    #: The Procedure's limits are its hard caps alone: the operating budget of a
+    #: run is its Line's (a direct run's ephemeral Line spec), within these caps.
     hard_caps: ProcedureHardCaps
     terminal_capability: Literal[1, 2, 3]
     annotations: object = Field(default_factory=dict)
@@ -162,6 +197,11 @@ class ProcedureDefinition(_StrictProcedureModel):
     def _retired_kinds(cls, value: object) -> object:
         if isinstance(value, dict):
             refuse_retired_kinds(value.get("nodes"))
+            if "budget" in value:
+                raise ValueError(
+                    "procedure_budget_retired: a Procedure declares hard_caps only; the "
+                    "operating budget is its Line's (budgets), within those caps"
+                )
         return value
 
     @field_validator("name")
@@ -247,25 +287,6 @@ class ProcedureDefinition(_StrictProcedureModel):
                         f"node {getattr(item, 'node_id', '?')!r}: an effect policy is declared "
                         "exactly when its slot's effect is external_mutation"
                     )
-        if self.budget.wall_clock.microseconds > self.hard_caps.max_wall_clock.microseconds:
-            raise ValueError("Procedure budget exceeds its wall-clock hard cap")
-        if self.budget.max_provider_calls > self.hard_caps.max_provider_calls:
-            raise ValueError("Procedure budget exceeds its provider-call hard cap")
-        if (
-            self.budget.max_result_bytes is not None
-            and self.hard_caps.max_result_bytes is not None
-            and self.budget.max_result_bytes > self.hard_caps.max_result_bytes
-        ):
-            raise ValueError("Procedure result budget exceeds hard caps")
-        if self.budget.max_capture_bytes > self.hard_caps.max_capture_bytes:
-            raise ValueError("Procedure budget exceeds its capture-byte hard cap")
-        if self.budget.max_items is not None and self.budget.max_items > self.hard_caps.max_items:
-            raise ValueError("Procedure budget exceeds its item hard cap")
-        if (
-            self.budget.max_read_rows is not None
-            and self.budget.max_read_rows > self.hard_caps.max_read_rows
-        ):
-            raise ValueError("Procedure budget exceeds its read-row hard cap")
         if any(
             isinstance(node, RepeatNode) and node.max_attempts > self.hard_caps.max_repeat_attempts
             for node in self.nodes
@@ -401,6 +422,8 @@ __all__ = [
     "TransformKind",
     "TransformNode",
     "authority_for_rung",
+    "budget_within_caps",
+    "caps_budget",
     "is_terminal_node",
     "derived_terminal_capability",
     "REFERENCE_ROLES",

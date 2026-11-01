@@ -29,9 +29,6 @@ from cruxible_client.contracts.procedures.artifacts import (
     parse_procedure,
     procedure_path,
 )
-from cruxible_client.contracts.procedures.models import (
-    ProcedureHardCaps,
-)
 from cruxible_client.contracts.procedures.results import (
     ProcedureHaltTerminal,
     ProcedureRunReceipt,
@@ -57,7 +54,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_procedure,
 )
 from tests.core_support._support import initialize_local
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, ref, spec_payload
+from tests.support.procedures import MAX_WALL_CLOCK, ref, spec_payload
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_ledger.test_activation import _sign
 
@@ -73,12 +70,7 @@ ROWS = {"rows": "json"}
 
 #: The run limits every triage spec declares (one minute, no provider calls).
 LIMITS = {
-    "budget": {
-        "wall_clock": f"PT{RUN_WALL_CLOCK.microseconds // 1_000_000}S",
-        "provider_calls": 0,
-        "capture_bytes": 0,
-    },
-    "caps": {
+    "hard_caps": {
         "wall_clock": f"PT{MAX_WALL_CLOCK.microseconds // 1_000_000}S",
         "provider_calls": 0,
         "capture_bytes": 0,
@@ -777,13 +769,6 @@ def _accepted_authoring_trio(tmp_path):
         name=name,
         line_name=name,
         grants="propose",
-        resource_ceiling=ProcedureHardCaps(
-            max_wall_clock=MAX_WALL_CLOCK,
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
         namespace=("captures",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),

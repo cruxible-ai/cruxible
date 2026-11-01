@@ -14,7 +14,6 @@ from cruxible_client.authoring.inputs import (
     ProcedureInput,
     ProcedureMandateInput,
 )
-from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 from cruxible_client.transport.http import CruxibleClient
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
@@ -108,7 +107,7 @@ def test_line_parameters_are_checked_against_the_procedure_input_at_authoring(
     assert "count" in frontier
 
 
-def test_example_templates_agree_on_names_and_caps() -> None:
+def test_example_templates_agree_on_names() -> None:
     procedure = authoring_example("procedure")
     mandate = authoring_example("procedure-mandate")
     line = authoring_example("line")
@@ -117,37 +116,34 @@ def test_example_templates_agree_on_names_and_caps() -> None:
     assert isinstance(line, LineInput)
     assert procedure.spec.procedure == line.procedure_name
     assert mandate.line_name == line.name
-    from cruxible_client.contracts.procedures.authored import lower_procedure_spec
-
-    lowered = lower_procedure_spec(procedure.spec).definition
-    caps = ProcedureHardCaps.model_validate(lowered["hard_caps"])
-    assert mandate.resource_ceiling == caps
+    # A Mandate grants authority only; the Procedure's hard caps bound every
+    # run and the Line owns the operating budget within them.
+    assert "resource_ceiling" not in type(mandate).model_fields
 
 
-def test_a_mandate_wider_than_its_procedure_names_each_widened_cap(
+def test_a_mandate_naming_a_resource_ceiling_is_refused_naming_the_line_budget() -> None:
+    mandate = authoring_example("procedure-mandate")
+    assert isinstance(mandate, ProcedureMandateInput)
+    data = mandate.model_dump(mode="json")
+    data["resource_ceiling"] = {"max_items": 1}
+    with pytest.raises(ValueError, match="procedure_mandate_ceiling_retired"):
+        ProcedureMandateInput.model_validate(data)
+
+
+def test_a_line_budget_wider_than_its_procedure_names_each_widened_cap(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:
     http, instance_id, key = playbill_http
-    mandate = authoring_example("procedure-mandate")
-    assert isinstance(mandate, ProcedureMandateInput)
-    wide = mandate.model_copy(
-        update={
-            "resource_ceiling": mandate.resource_ceiling.model_copy(
-                update={"max_items": 1000, "max_provider_calls": 100}
-            )
-        }
-    )
-    # The Mandate names an *accepted* Line (see the docstring above on the
-    # same-set staging-order limitation): accept the Procedure and Line first,
-    # then submit the widened Mandate on its own so the widen law -- not the
-    # same-set line_missing check -- is what refuses it.
-    _accept(http, instance_id, key, _members("procedure", "line"))
+    line = authoring_example("line")
+    assert isinstance(line, LineInput)
+    wide = line.model_copy(update={"budgets": {"max_items": 1000, "max_provider_calls": 100}})
+    _accept(http, instance_id, key, _members("procedure"))
     compiled = _transport(http).compile_authoring_input(
         instance_id, input=wide.model_dump(mode="json")
     )
     assert compiled.verdict != "passed"
     frontier = str(compiled.frontier)
-    assert "resource_ceiling_widens_procedure" in frontier
+    assert "cruxible.authoring.line_budget_exceeds_caps" in frontier
     assert "max_items 1000 > 200" in frontier
     assert "max_provider_calls 100 > 0" in frontier
 

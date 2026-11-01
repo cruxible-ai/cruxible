@@ -41,6 +41,7 @@ from cruxible_client.contracts.procedures.models import (
     AUTHORITY_RUNG,
     RUNG_AUTHORITY,
     AuthorityVerb,
+    ProcedureBudget,
     ProcedureDefinition,
 )
 from cruxible_client.contracts.procedures.trigger_rules import (
@@ -148,6 +149,8 @@ class LineSpec(_StrictLineModel):
     ``trigger_input`` binds the triggering Capture to one named Source input,
     and ``trigger_event`` declares the exact Capture event that input accepts.
     ``occurrence_epoch`` advances exactly when that acceptance changes.
+    ``budgets`` is the Line's operating budget; it must fit within the
+    Procedure's hard caps (the Procedure declares no budget of its own).
 
     A Mandate pins the Line's exact digest, so changing the Procedure version,
     the parameters or any binding is a new Line digest and renews the grant.
@@ -204,11 +207,14 @@ class EphemeralLineSpec(_StrictLineModel):
     propose would allow and in practice observes.
     """
 
-    tag: Literal["cruxible-ephemeral-line-spec-v1"] = "cruxible-ephemeral-line-spec-v1"
+    tag: Literal["cruxible-ephemeral-line-spec-v2"] = "cruxible-ephemeral-line-spec-v2"
     procedure: ArtifactPin
     parameters: object
     bindings: dict[str, LineBinding] = Field(default_factory=dict)
     acquisition: dict[str, AcquisitionDefault] = Field(default_factory=dict)
+    #: The run's operating budget: a direct run states none, so it runs under
+    #: its Procedure's hard caps (``caps_budget``), recorded here by digest.
+    budget: ProcedureBudget
 
     _canonical_parameters = field_validator("parameters", mode="before")(normalize_canonical)
     _bindings = field_validator("bindings")(_binding_keys)
@@ -218,7 +224,7 @@ class EphemeralLineSpec(_StrictLineModel):
 def ephemeral_line_spec_digest(spec: EphemeralLineSpec) -> str:
     return typed_digest(
         ArtifactDigest,
-        "cruxible-ephemeral-line-spec-v1",
+        "cruxible-ephemeral-line-spec-v2",
         spec.model_dump(mode="json", exclude={"tag"}),
     ).tagged
 

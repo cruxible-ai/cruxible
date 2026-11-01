@@ -62,7 +62,6 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
@@ -119,7 +118,7 @@ from tests.core_support._candidate_support import submit_member_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._support import initialize_local
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
+from tests.support.procedures import MAX_WALL_CLOCK, named
 
 NOW = datetime(2026, 9, 12, 12, 0, tzinfo=UTC)
 SEED_STAMP = "2026-09-12T11:00:00.000000Z"
@@ -338,14 +337,6 @@ def _procedure(  # noqa: PLR0913
             ),
         ),
         returns="result",
-        budget=ProcedureBudget(
-            wall_clock=RUN_WALL_CLOCK,
-            max_provider_calls=2,
-            max_capture_bytes=65_536,
-            # No max_items: the authoring law ties a declared item budget to a
-            # pinned Contract with a list field, and this graph shapes one row.
-            max_items=None,
-        ),
         hard_caps=ProcedureHardCaps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=4,
@@ -840,7 +831,6 @@ def _line_mandate(line: LineSpec, procedure: ProcedureArtifact) -> ProcedureMand
             artifact_digest=line_spec_digest(line).tagged,
         ),
         grants="propose",
-        resource_ceiling=procedure.definition.hard_caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),
