@@ -79,7 +79,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:62f113d24bed2617595a031d5b64f29405c1bedb5340c64eb121e4e46d87d3a3",
+    "definition_digest": "sha256:b1ccec59b78bd859e8e9c893d1d0cdc91139cda5bc946de316952a3c3ed25ad5",
     "identity": {
       "kind": "Procedure",
       "name": "security.credential-acquire"
@@ -266,7 +266,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:23ca5044d2a6341f9b2dedc35a85db2893992fcecf18746c5bc8e2a7c2c77ff9",
+    "definition_digest": "sha256:a36f2d561fe24761edd0c7161e8b62135013f2e971dee7ae6e374c5c654a07ca",
     "identity": {
       "kind": "Procedure",
       "name": "security.credential-import"
@@ -547,7 +547,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:9ded0fe2f486fdece2cff7c581a024b6031fcbaa300c32f18fe76cef97192377",
+    "definition_digest": "sha256:b9a45c7e554cd9d953918d6ae622f79e653639578ca99537161ea1a17f953dc8",
     "identity": {
       "kind": "Procedure",
       "name": "security.cve-applicability"
@@ -684,7 +684,7 @@
       },
       "terminal_capability": 3
     },
-    "definition_digest": "sha256:0a6b48a4a4709d9dc62f89bb3ac4915b875c2575699b7979ef2f19fb97558d56",
+    "definition_digest": "sha256:b442dcc4fdda70c73a04ae2e2663a1db0e200188ae0e1f3a18294cdba4e261eb",
     "identity": {
       "kind": "Procedure",
       "name": "security.epss-triage"
@@ -770,7 +770,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:b7e2246c4cf3c37f21f9e0d523d326340e1ea789d692fe4e7144b456718f3d54",
+    "definition_digest": "sha256:2ecbabc5eb6160d17bf25e343973930abde298ff2d999f41149676a89f0e1a0f",
     "identity": {
       "kind": "Procedure",
       "name": "security.evidence-acquire"
@@ -856,7 +856,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:f3481a3f29335972b36edb59bdbd415bf263450f1c9511ecce3aa8ca18b401e7",
+    "definition_digest": "sha256:e5a9b8942d597bae77b71ec79e6a97a3f8472b7a3cb8644e8cad1db5c24a3c91",
     "identity": {
       "kind": "Procedure",
       "name": "security.inventory-acquire"
@@ -1079,7 +1079,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:750a05e391fc2fa242086cef35c77605544fd3e1096e74801cb81106e3b51f24",
+    "definition_digest": "sha256:80c157c5703448e392de07e5e3ab500cb4cfa5dc67db5fb56a5909d98a2eb731",
     "identity": {
       "kind": "Procedure",
       "name": "security.inventory-import"
@@ -1248,7 +1248,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:831ef01a8a2f9a75ee254b58c1282278be5cb1683c6bfce5285d27ec307773cd",
+    "definition_digest": "sha256:8745fff454223bfe7b1798fdcca3399e820a24500624d81983ef5e11bf7e8f1e",
     "identity": {
       "kind": "Procedure",
       "name": "security.kev-attention"
@@ -1428,7 +1428,7 @@
       },
       "terminal_capability": 3
     },
-    "definition_digest": "sha256:221541c6ec5c8c0c3511d4b475d5a2a21ff601231cd2ca4fcd2be4ef01e7a184",
+    "definition_digest": "sha256:8e2ad97e9c0fa64adb1d58accd6cf17ec7f07534cd8e2f0bb985b41ce1f8ae11",
     "identity": {
       "kind": "Procedure",
       "name": "security.kev-triage"
@@ -1514,7 +1514,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:0e74c63121c799622c1a16e07799fa8e1cd3154680d7c14cfcfc19d67caa7b52",
+    "definition_digest": "sha256:283c1043c41de83ad603e2ff5bbb1fc045bb3e3ba92df74050e2bd6c5f54bd38",
     "identity": {
       "kind": "Procedure",
       "name": "security.log-acquire"
@@ -1728,7 +1728,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:e42feee9b6bdf8ba7ae080305f7776387c43440d85a3c227c41fd4f06a9f6b74",
+    "definition_digest": "sha256:6943c19beeb78e53a4cfa5e7ce6b2714e3d45eba3e2b68307bfe67c37b2b8053",
     "identity": {
       "kind": "Procedure",
       "name": "security.log-import"
@@ -1893,7 +1893,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:071ded52ece117244216513bb39e858d2c2fd249c232a0ceac8158b1c38d6738",
+    "definition_digest": "sha256:2fbcb6f897bd6b37f9ae2dc62c98364aca70e3d9b305cdc20dfbc2574d3efc3a",
     "identity": {
       "kind": "Procedure",
       "name": "security.registry-parse"
@@ -1979,7 +1979,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:d1a18d38d9fe193a35a608b7785164ef291e64f17f48af459761be2cb2cbd9e4",
+    "definition_digest": "sha256:9b3722466a966df8e1cf91d2fcba0006de4fdb23a6754836377d78f4bce73855",
     "identity": {
       "kind": "Procedure",
       "name": "security.reproduction-acquire"
@@ -2065,7 +2065,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:859a05859a095adbe8c35a0d7a676b7affeb56a4dadf22f9134ec9024752cd5c",
+    "definition_digest": "sha256:4c6962b453830d89ea4570417b7cbdf55ed79f2d2f9403ee4fd3244746f0a984",
     "identity": {
       "kind": "Procedure",
       "name": "security.sarif-acquire"
@@ -2151,7 +2151,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:952e8aa0d6f4690a10d532037e72829308e74569af401ff753b528c1feced0df",
+    "definition_digest": "sha256:77f243efc319a4b9d79cef6143770398a45298e125dc328d0279fb2ff57c5a78",
     "identity": {
       "kind": "Procedure",
       "name": "security.sbom-acquire"
@@ -2302,7 +2302,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:ef773450ed08a1605adb1217069d5fe332e89acb6bee50485a18189e6b54ef91",
+    "definition_digest": "sha256:e851773a7230e074cbaf86f4c704f9910ac5a647fb7642e09aa89866f8aa54f5",
     "identity": {
       "kind": "Procedure",
       "name": "security.sbom-import"

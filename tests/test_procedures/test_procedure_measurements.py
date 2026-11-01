@@ -181,7 +181,7 @@ def test_measurement_declaration_moves_only_the_definition_envelope_digest() -> 
         compute_procedure_definition_digest(measured)
     )
     assert compute_procedure_definition_digest(measured).tagged == (
-        "sha256:253e64125fec37cace80fcae986ec3483f7d8676b17887d870c9d126ce9ec2be"
+        "sha256:c5a37e9300dc34ea9e354c9233773a10cc8158244cbe8467e2d2ac20ea72cc3e"
     )
     payload = measured.model_dump(mode="json", by_alias=True)
     assert payload["annotations"] == {}

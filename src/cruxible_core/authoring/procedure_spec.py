@@ -252,16 +252,23 @@ def resolve_procedure_spec(
             return maybe_source(identity.qualified)
 
         lowered = lower_procedure_spec(spec, resolve=resolve)
+        from cruxible_client.contracts.procedures.graph import ProcedureGraphFormatError
         from cruxible_client.contracts.procedures.models import ProcedureDefinition
         from cruxible_core.procedures.claims_typing import (
             ClaimsTypingRefused,
             validate_claims_templates,
         )
 
+        # Definition/graph errors retain the ordinary authoring refusal; only
+        # Claims vocabulary errors belong to claims_type_invalid.
         try:
-            validate_claims_templates(
-                ProcedureDefinition.model_validate(lowered.definition), maybe_source_identity
-            )
+            definition = ProcedureDefinition.model_validate(lowered.definition)
+        except (ValueError, ProcedureGraphFormatError):
+            # The ordinary definition lowerer validates again after boundary
+            # Contracts are co-proposed and supplies the typed refusal/repair.
+            return lowered
+        try:
+            validate_claims_templates(definition, maybe_source_identity)
         except (ClaimsTypingRefused, ValueError) as exc:
             raise ProcedureSpecError("claims_type_invalid", "$.steps", str(exc)) from exc
         return lowered

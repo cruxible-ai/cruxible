@@ -169,7 +169,13 @@ def _manifest(*, produced: tuple[str, ...] = (), admitted: tuple[str, ...] = ())
 
 
 def _request(value: object = None):  # type: ignore[no-untyped-def]
-    return SimpleNamespace(items=(SimpleNamespace(item_key="item-0", child_index=0, value=value),))
+    return SimpleNamespace(
+        items=(
+            SimpleNamespace(
+                item_key="item-0", child_index=0, value=item_template() if value is None else value
+            ),
+        )
+    )
 
 
 def _selected(capture: str) -> dict[str, object]:
