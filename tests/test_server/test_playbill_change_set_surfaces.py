@@ -23,12 +23,9 @@ from cruxible_client.authoring.sdk import ChangeSetDraft, carry, re_author, resc
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependent
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
-from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicy,
-    ClaimResolutionPolicy,
-)
 from cruxible_client.transport.http import CruxibleClient
+from tests.support.claim_types import claim_type as build_claim_type
+from tests.support.claim_types import claim_type_changes
 
 PREDICATE = "project.work_item.parity"
 SUBJECT_NAME = "project.work_item/parity-1"
@@ -69,25 +66,6 @@ def _add_parity_subject(draft: ChangeSetDraft) -> None:
         description=kind.description,  # type: ignore[union-attr]
     )
     draft.subject(draft._playbill.new_subject("project.work_item", key="parity-1"))
-
-
-def _claim_type() -> ClaimType:
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name=PREDICATE),
-        predicate=PREDICATE,
-        allowed_subject_kinds=("project.work_item",),
-        object_kind="literal",
-        literal_schema={"type": "string"},
-        cardinality="one",
-        permitted_roles=("normative", "observation"),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality="one",
-            eligible_verdicts=("supported",),
-            selector="only_contender",
-        ),
-    )
 
 
 def _payload_digest(intent: dict[str, object]) -> str:
@@ -187,7 +165,7 @@ def test_one_changeset_has_one_intent_identity_across_sdk_cli_and_mcp(
         kind="change_set",
         members=(
             *_subject_inputs(),
-            ClaimTypeInput(kind="claim_type", claim_type=_claim_type()),
+            ClaimTypeInput(kind="claim_type", claim_type=build_claim_type(PREDICATE)),
         ),
         # The author's own summary crosses all three surfaces, and the payload
         # identity ignores it on all three: describing a set is not a different
@@ -212,7 +190,7 @@ def test_one_changeset_has_one_intent_identity_across_sdk_cli_and_mcp(
 
     sdk_draft = pb.changes(rationale="Define the parity Subject and its ClaimType.")
     _add_parity_subject(sdk_draft)
-    sdk_draft.claim_type(_claim_type())
+    sdk_draft.claim_type(build_claim_type(PREDICATE))
     sdk_prepared = sdk_draft.prepare()
     assert not sdk_prepared.refused, sdk_prepared.diagnostics
     sdk_intent = sdk_prepared._raw
@@ -257,7 +235,7 @@ def test_one_changeset_has_one_intent_identity_across_sdk_cli_and_mcp(
 
     sdk_claim_draft = pb.changes(rationale="Open the parity slot and state its first value.")
     _add_parity_subject(sdk_claim_draft)
-    sdk_claim_draft.claim_type(_claim_type())
+    sdk_claim_draft.claim_type(build_claim_type(PREDICATE))
     _add_parity_claim(sdk_claim_draft)
     sdk_claim_prepared = sdk_claim_draft.prepare()
     assert not sdk_claim_prepared.refused, sdk_claim_prepared.diagnostics
@@ -344,7 +322,7 @@ def test_the_sdk_builder_authors_a_mixed_changeset_that_preflights_clean(
 
     draft = pb.changes(rationale="Open the parity slot and state its first value.")
     _add_parity_subject(draft)
-    draft.claim_type(_claim_type())
+    draft.claim_type(build_claim_type(PREDICATE))
     draft.claim(
         subject=SUBJECT_NAME,
         predicate=PREDICATE,
@@ -379,14 +357,14 @@ def test_the_sdk_builder_authors_a_mixed_changeset_that_preflights_clean(
 def _succession_type() -> ClaimType:
     """The parity ClaimType, narrowed, naming the digest it succeeds."""
 
-    current = _claim_type()
+    current = build_claim_type(PREDICATE)
     return current.model_copy(
-        update={
-            "literal_schema": {"type": "string", "enum": ["ready"]},
-            "lifecycle": ArtifactLifecycle(
+        update=claim_type_changes(
+            value_type={"type": "string", "enum": ["ready"]},
+            lifecycle=ArtifactLifecycle(
                 predecessor_digest=claim_type_digest(current).tagged,
             ),
-        }
+        )
     )
 
 

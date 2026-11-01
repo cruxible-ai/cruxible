@@ -43,7 +43,7 @@ def _accept_extra_fields(instance: PlaybillInstance, *, actor_id: str) -> None:
     base = instance.accepted_coordinate()
     tree = instance.tree_at(base.git_oid)
     for field in EXTRA_FIELDS:
-        claim_type = _claim_type(field, literal_schema={"type": "string"})
+        claim_type = _claim_type(field, value_type={"type": "string"})
         tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
     proposed = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id),
@@ -230,7 +230,7 @@ MARKER_SHAPED = {
 def _accept_object_field(instance: PlaybillInstance, *, actor_id: str) -> None:
     base = instance.accepted_coordinate()
     tree = instance.tree_at(base.git_oid)
-    claim_type = _claim_type("meta", literal_schema={"type": "object"})
+    claim_type = _claim_type("meta", value_type={"type": "object"})
     tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
     proposed = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id),

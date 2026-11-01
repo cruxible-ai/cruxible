@@ -27,16 +27,13 @@ from cruxible_client.authoring.world_stub import (
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.claim_types import ClaimType
-from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicy,
-    ClaimResolutionPolicy,
-)
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.cli.main import cli
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
 from tests.core_support._subject_kind_support import declare_by_slug
+from tests.support.claim_types import claim_type as build_claim_type
+from tests.support.claim_types import claim_type_changes
 
 PACKAGE_KIND = "sec.package"
 VULNERABILITY_KIND = "sec.vulnerability"
@@ -66,40 +63,21 @@ def _workspace(root: Path) -> Path:
 
 
 def _severity_type() -> ClaimType:
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name=SEVERITY),
+    return build_claim_type(
         predicate=SEVERITY,
+        value_type={"type": "string", "enum": ["high", "low"]},
         allowed_subject_kinds=(VULNERABILITY_KIND,),
-        object_kind="literal",
-        literal_schema={"type": "string", "enum": ["high", "low"]},
-        cardinality="one",
         permitted_roles=("observation",),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality="one",
-            eligible_verdicts=("supported",),
-            selector="only_contender",
-        ),
     )
 
 
 def _affects_type() -> ClaimType:
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name=AFFECTS),
+    return build_claim_type(
         predicate=AFFECTS,
+        value_type=(PACKAGE_KIND,),
         allowed_subject_kinds=(VULNERABILITY_KIND,),
-        object_kind="subject",
-        allowed_object_subject_kinds=(PACKAGE_KIND,),
         cardinality="many",
         permitted_roles=("observation",),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality="many",
-            eligible_verdicts=("supported",),
-            selector="all",
-        ),
     )
 
 
@@ -264,11 +242,11 @@ def test_a_same_set_claim_type_ref_states_a_claim_under_the_type_it_defines(
 
     draft = playbill.changes(rationale="Open the severity note slot and use it once.")
     note_type = _severity_type().model_copy(
-        update={
-            "identity": ArtifactIdentity(kind="ClaimType", name="sec.vuln.note"),
-            "predicate": "sec.vuln.note",
-            "literal_schema": {"type": "string"},
-        }
+        update=claim_type_changes(
+            predicate="sec.vuln.note",
+            value_type={"type": "string"},
+            identity=ArtifactIdentity(kind="ClaimType", name="sec.vuln.note"),
+        )
     )
     predicate = draft.claim_type(note_type)
     assert isinstance(predicate, PendingClaimTypeRef)
