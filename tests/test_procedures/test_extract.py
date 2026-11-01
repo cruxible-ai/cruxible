@@ -611,3 +611,77 @@ def test_a_changed_identity_rule_rebuilds_the_record_index() -> None:
         "cve_id": "cve-2026-0001"
     }
     assert extract.STATS.decodes == 2
+
+
+def test_nested_and_listed_nested_keys_are_extracted_canonical() -> None:
+    """A nested Contract's key fields emit their canonical keys, which a Contract boundary takes."""
+
+    from cruxible_client.contracts.provider_operations import validate_operation_value
+    from cruxible_client.contracts.shapes import ContractRef
+
+    content = json.dumps(
+        {
+            "count": 1,
+            "vulnerabilities": [
+                {
+                    "cveID": "CVE-2026-0001",
+                    "primary": {"cve": "CVE-2026-0009", "note": "x"},
+                    "related": [{"cve": " CVE-2026-0002 "}, {"cve": "cve-2026-0003"}],
+                }
+            ],
+        }
+    ).encode()
+    ref_row = validate_contract(
+        {
+            "name": "security.vuln-ref",
+            "version": 1,
+            "fields": {
+                "cve": "key_part<security.vulnerability:cve_id>",
+                "note": "string?",
+            },
+        }
+    )
+    row = validate_contract(
+        {
+            "name": "security.kev-entry",
+            "version": 1,
+            "fields": {
+                "primary": "security.vuln-ref@1",
+                "related": "list<security.vuln-ref@1>{max_items: 10}",
+            },
+        }
+    )
+
+    def resolve(ref: ContractRef) -> Any:
+        return ref_row if ref.name == "security.vuln-ref" else None
+
+    node = _node(
+        fields={
+            "primary": {"at": "primary", "presence": "required"},
+            "related": {"at": "related", "presence": "required"},
+        },
+        header={},
+        complete_when=None,
+    )
+    rules = _vulnerability_rules()
+    (record,) = run_extract(
+        node,
+        capture_digest="sha256:" + "2" * 64,
+        content=content,
+        decoding=JSON,
+        row=row,
+        resolve=resolve,
+        keys=rules,
+    ).records
+    primary, related = record.fields["primary"], record.fields["related"]
+    assert isinstance(primary, FieldPresent) and isinstance(related, FieldPresent)
+    # Each declared nested field carries its checked (canonical) value.
+    assert primary.value == {"cve": "cve-2026-0009", "note": "x"}
+    assert related.value == [{"cve": "cve-2026-0002"}, {"cve": "cve-2026-0003"}]
+    # The emitted record passes a later Contract boundary, which checks keys canonical.
+    validate_operation_value(
+        {"primary": primary.value, "related": related.value},
+        row,
+        resolve=resolve,
+        keys=rules,
+    )

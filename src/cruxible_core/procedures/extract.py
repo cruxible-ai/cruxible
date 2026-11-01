@@ -461,6 +461,10 @@ def _check(
         target = None if resolve is None else resolve(field_type.contract)
         if target is None:
             return _bad("type_mismatch", field, value)
+        # Each declared field carries its checked value (a key canonicalized, a
+        # date parsed): what a later Contract boundary reads is the typed value,
+        # never the raw lexeme. Undeclared members pass through as before.
+        nested: dict[str, object] = dict(value)
         for name, declared in target.fields.items():
             if name not in value:
                 if not declared.optional:
@@ -477,7 +481,8 @@ def _check(
             )
             if checked[0] == "invalid":
                 return ("invalid", checked[1], f"{field or ''}.{checked[2] or name}", checked[3])
-        return ("present", dict(value), at)
+            nested[name] = checked[1]
+        return ("present", nested, at)
     if isinstance(field_type, KeyType | KeyPartType):
         # Two raw keys that canonicalize to one key are one key.
         checked_key = check_key_value(
