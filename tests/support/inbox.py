@@ -11,6 +11,7 @@ from cruxible_client.contracts.shapes import (
     contract_path,
     render_contract,
 )
+from tests.support.procedures import procedure_definition
 
 #: The inbox item most tests post: one note.
 NOTE = Contract.model_validate(
@@ -63,24 +64,22 @@ def listed_inbox_procedure(template: Any, rows: list[dict[str, Any]], contract: 
     from cruxible_client.contracts.procedures.models import ProjectNode
 
     (shape,) = template.definition.nodes
-    definition = template.definition.model_copy(
-        update={
-            "nodes": (
-                shape.model_copy(update={"next": "listed"}),
-                ProjectNode(
-                    node_id="listed",
-                    literal={"items": rows},
-                    as_="listed",
-                    next="inbox",
-                ),
-                inbox_node(
-                    fields={name: f"$item.{name}" for name in contract.fields},
-                    for_each="$steps.listed.items",
-                    contract=contract,
-                ),
+    definition = procedure_definition(
+        base=template.definition,
+        nodes=(
+            shape.model_copy(update={"next": "listed"}),
+            ProjectNode(
+                node_id="listed",
+                literal={"items": rows},
+                as_="listed",
+                next="inbox",
             ),
-            "terminal_capability": 1,
-        }
+            inbox_node(
+                fields={name: f"$item.{name}" for name in contract.fields},
+                for_each="$steps.listed.items",
+                contract=contract,
+            ),
+        ),
     )
     return template.model_copy(
         update={

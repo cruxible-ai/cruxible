@@ -18,8 +18,6 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ProcedureDefinition,
-    ProcedureHardCaps,
     RepeatBodyNode,
     RepeatNode,
 )
@@ -73,7 +71,12 @@ from cruxible_core.providers.provider_runtime_contract import (
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._p2b1_support import accepted_provider, pin
 from tests.support.operation_world import VALUE, operation, operation_build
-from tests.support.procedures import accepted_procedure, named
+from tests.support.procedures import (
+    accepted_procedure,
+    named,
+    procedure_definition,
+    procedure_hard_caps,
+)
 from tests.test_procedures.test_procedure_execution import (
     _Authority,
     _Contracts,
@@ -259,21 +262,14 @@ def _accepted_one_provider(
             as_="repeat_result",
         )
         returns = graph_node.as_
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name="provider-call",
         contract_in=named(contract_in),
         contract_out=named(contract_out),
         nodes=(graph_node,),
         returns=returns,
         slots={SLOT: ProcedureSlot.model_validate(operation_signature.model_dump(by_alias=True))},
-        hard_caps=ProcedureHardCaps(
-            max_wall_clock=max_wall_clock,
-            max_provider_calls=4,
-            max_capture_bytes=2048,
-            max_items=20,
-            max_repeat_attempts=2,
-        ),
-        terminal_capability=1,
+        hard_caps=procedure_hard_caps(preset="provider", max_wall_clock=max_wall_clock),
     )
     return _bind(accepted_procedure(definition, activation_policy="drain", bound=False), provider)
 

@@ -27,11 +27,16 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
-    ProcedureHardCaps,
     ProjectNode,
     ReadNode,
 )
-from tests.support.procedures import accepted_procedure, named
+from tests.support.lines import line_budgets, line_spec
+from tests.support.procedures import (
+    accepted_procedure,
+    named,
+    procedure_definition,
+    procedure_hard_caps,
+)
 
 
 def _digest(label: str) -> str:
@@ -49,7 +54,7 @@ def _pin(role: str, kind: str, name: str, *, digest: str | None = None) -> Artif
 def _definition(query: ArtifactPin) -> ProcedureDefinition:
     contract_in = named(_pin("contract-in", "Contract", "empty-input/v1"))
     contract_out = named(_pin("contract-out", "Contract", "claim-rows/v1"))
-    return ProcedureDefinition(
+    return procedure_definition(
         name="triage",
         contract_in=named(contract_in),
         contract_out=named(contract_out),
@@ -66,14 +71,7 @@ def _definition(query: ArtifactPin) -> ProcedureDefinition:
                 as_="result",
             ),
         ),
-        returns="result",
-        hard_caps=ProcedureHardCaps(
-            max_wall_clock=CanonicalDuration(microseconds=2_000_000),
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
+        hard_caps=procedure_hard_caps(max_wall_clock=CanonicalDuration(microseconds=2_000_000)),
         terminal_capability=2,
     )
 
@@ -101,18 +99,12 @@ def _line(
         "triage",
         digest=accepted.artifact_digest,
     )
-    line = LineSpec(
-        identity=ArtifactIdentity(kind="Line", name="triage-hourly"),
+    line = line_spec(
+        "triage-hourly",
         occurrence_epoch=epoch,
         procedure=procedure_pin,
-        parameters={},
         max_authority=RUNG_AUTHORITY[requested_rung],
-        budgets={
-            "max_capture_bytes": 0,
-            "max_items": 100,
-            "max_provider_calls": 0,
-            "max_wall_clock_microseconds": 1_000_000,
-        },
+        budgets=line_budgets(max_items=100, max_wall_clock_microseconds=1_000_000),
         epsilon={"$decimal": "0.1"},
         lifecycle=ArtifactLifecycle(predecessor_digest=predecessor_digest),
     )

@@ -23,6 +23,7 @@ from cruxible_client.contracts.kits import (
     KitChangeResult,
 )
 from cruxible_client.contracts.procedures.artifacts import parse_procedure
+from cruxible_client.contracts.procedures.authored import CallStep, ProjectStep
 from cruxible_client.contracts.providers import (
     Provider,
     parse_provider,
@@ -41,7 +42,7 @@ from cruxible_core.errors import RequestRefusedError
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.runtime.provider_runtime import PROVIDER_RUNTIME_CONFIG_PATH
-from tests.support.procedures import procedure_members
+from tests.support.procedures import procedure_limits, procedure_members, procedure_spec
 from tests.support.provider_checkout import ProviderCheckout
 
 
@@ -212,26 +213,18 @@ def _install(world: Any, project: Path, *, control_domain: str = "operator") -> 
 
 def _graph(world: Any, *, provider: str | None) -> Any:
     """One open operation slot; provider selection belongs to a consumer Line."""
-    from cruxible_client.contracts.procedures.authored import ProcedureSpec
     from tests.support.provider_installation import LOCAL_CALL_IN, LOCAL_CALL_OUT
 
-    return ProcedureSpec.model_validate(
-        {
-            "procedure": PROCEDURE if provider is not None else BLUEPRINT,
-            # A consumer Line supplies ``n``: the Procedure's one parameter.
-            "params": {"n": "int"},
-            "output": {"n": "int"},
-            "slots": {"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
-            "steps": [
-                {
-                    "call": "result",
-                    "slot": "increment",
-                    "input": {"n": {"$ref": "param", "path": ["n"]}},
-                }
-            ],
-            "returns": "result",
-            "hard_caps": {"wall_clock": "PT30S", "provider_calls": 1},
-        }
+    return procedure_spec(
+        procedure=PROCEDURE if provider is not None else BLUEPRINT,
+        params={"n": "int"},
+        output={"n": "int"},
+        slots={"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
+        steps=[
+            CallStep(call="result", slot="increment", input={"n": {"$ref": "param", "path": ["n"]}})
+        ],
+        returns="result",
+        hard_caps=procedure_limits(wall_clock="PT30S", provider_calls=1),
     )
 
 
@@ -354,7 +347,6 @@ def test_fresh_consumer_provisions_the_operation_contract_before_bundled_install
     The original slotted export scenarios below keep their stronger assertions.
     """
     from cruxible_client.contracts.authoring.inputs import ProcedureInput
-    from cruxible_client.contracts.procedures.authored import ProcedureSpec
     from tests.support.provider_installation import local_call_contract_files
     from tests.test_server.test_provider_installation import _run_call
 
@@ -365,15 +357,13 @@ def test_fresh_consumer_provisions_the_operation_contract_before_bundled_install
         _install(publisher, project)
         pure = ProcedureInput(
             kind="procedure",
-            spec=ProcedureSpec.model_validate(
-                {
-                    "procedure": "acme.installation-marker",
-                    "input": {},
-                    "output": {"n": "int"},
-                    "steps": [{"project": "result", "fields": {"n": 2}}],
-                    "returns": "result",
-                    "hard_caps": {"provider_calls": 0},
-                }
+            spec=procedure_spec(
+                procedure="acme.installation-marker",
+                input={},
+                output={"n": "int"},
+                steps=[ProjectStep(project="result", fields={"n": 2})],
+                returns="result",
+                hard_caps=procedure_limits(provider_calls=0),
             ),
         )
         intent = (

@@ -29,7 +29,6 @@ from cruxible_client.contracts.errors import (
     ProjectionIntegrityError,
 )
 from cruxible_client.contracts.procedure_mandates import (
-    ProcedureMandate,
     procedure_mandate_path,
     render_procedure_mandate,
 )
@@ -44,7 +43,6 @@ from cruxible_client.contracts.procedures.graph import (
     compute_procedure_node_digests,
 )
 from cruxible_client.contracts.procedures.line_specs import (
-    LineSpec,
     line_identity_digest,
     line_spec_digest,
     line_spec_path,
@@ -59,8 +57,6 @@ from cruxible_client.contracts.procedures.measurements import (
 )
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
-    ProcedureDefinition,
-    ProcedureHardCaps,
     ProjectNode,
     ReadNode,
 )
@@ -115,7 +111,13 @@ from tests.core_support._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
-from tests.support.procedures import MAX_WALL_CLOCK, contract_pin, named
+from tests.support.lines import line_budgets, line_spec
+from tests.support.mandates import procedure_mandate
+from tests.support.procedures import (
+    contract_pin,
+    named,
+    procedure_definition,
+)
 from tests.test_claims.test_claim_attestation_service import _request as _attestation_request
 from tests.test_procedures.test_procedure_boundary_contracts import (
     EMPTY_INPUT,
@@ -244,7 +246,7 @@ def _procedure(
         target=ArtifactIdentity(kind="QueryDefinition", name=QUERY_NAME),
         artifact_digest=query_digest,
     )
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name=PROCEDURE_NAME,
         contract_in=named(contract_in),
         contract_out=named(contract_out),
@@ -278,16 +280,7 @@ def _procedure(
                 as_="result",
             ),
         ),
-        returns="result",
         measurements=tuple(sorted(declarations, key=lambda item: item.name.encode())),
-        hard_caps=ProcedureHardCaps(
-            max_wall_clock=MAX_WALL_CLOCK,
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
-        terminal_capability=1,
     )
     return ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
@@ -1312,29 +1305,19 @@ def _line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
     caps = procedure.definition.hard_caps
-    line = LineSpec(
-        identity=ArtifactIdentity(kind="Line", name="measured-line"),
-        occurrence_epoch=1,
+    line = line_spec(
+        "measured-line",
         procedure=procedure_pin,
-        parameters={},
-        max_authority="observe",
-        budgets={
-            "max_capture_bytes": 0,
-            "max_items": caps.max_items,
-            "max_provider_calls": 0,
-            "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
-        },
+        budgets=line_budgets(
+            max_items=caps.max_items, max_wall_clock_microseconds=caps.max_wall_clock.microseconds
+        ),
         epsilon={"$decimal": "0.1"},
     )
-    mandate = ProcedureMandate(
-        identity=ArtifactIdentity(kind="ProcedureMandate", name="measured-line-mandate"),
+    mandate = procedure_mandate(
+        "measured-line-mandate",
         line=ArtifactPin(
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
-        grants="propose",
-        namespace=("claims",),
-        valid_from=datetime(2026, 1, 1, tzinfo=UTC),
-        expires_at=datetime(2027, 1, 1, tzinfo=UTC),
     )
     inspection = submit_member_candidate(
         instance,

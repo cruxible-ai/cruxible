@@ -34,8 +34,6 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
     HaltNode,
-    ProcedureDefinition,
-    ProcedureHardCaps,
     ProjectNode,
     ReadNode,
     TransformNode,
@@ -103,14 +101,14 @@ from tests.core_support._knowledge_loop_support import (
     work_item_query,
 )
 from tests.core_support._support import FIXED_TIMESTAMP, initialize_local
-from tests.support.lines import line_trigger, trigger_members
+from tests.support.lines import line_budgets, line_spec, line_trigger, trigger_members
+from tests.support.mandates import procedure_mandate
 from tests.support.procedures import (
-    MAX_WALL_CLOCK,
-    RUN_WALL_CLOCK,
     boundary_contract,
     contract_files,
     contract_pin,
     named,
+    procedure_definition,
     procedure_members,
     revalidated,
 )
@@ -294,7 +292,7 @@ def _slotless_procedure(name: str) -> AcceptedProcedure:
     input_contract, output_contract, params_contract = _slotless_contracts(name)
     contract_in = contract_pin("contract-in", input_contract)
     contract_out = contract_pin("contract-out", output_contract)
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name=name,
         contract_in=named(contract_in),
         contract_out=named(contract_out),
@@ -305,14 +303,6 @@ def _slotless_procedure(name: str) -> AcceptedProcedure:
                 fields={"status": "$params.status"},
                 as_="result",
             ),
-        ),
-        returns="result",
-        hard_caps=ProcedureHardCaps(
-            max_wall_clock=MAX_WALL_CLOCK,
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=200,
-            max_repeat_attempts=1,
         ),
         terminal_capability=2,
     )
@@ -335,18 +325,12 @@ def _scheduled_line(name: str, *, accepted: AcceptedProcedure) -> LineSpec:
         target=accepted.procedure.identity,
         artifact_digest=accepted.artifact_digest,
     )
-    line = LineSpec(
-        identity=ArtifactIdentity(kind="Line", name=name),
-        occurrence_epoch=1,
+    line = line_spec(
+        name,
         procedure=procedure_pin,
         parameters={"status": "open"},
         max_authority="propose",
-        budgets={
-            "max_capture_bytes": 0,
-            "max_items": 100,
-            "max_provider_calls": 0,
-            "max_wall_clock_microseconds": RUN_WALL_CLOCK.microseconds,
-        },
+        budgets=line_budgets(max_items=100),
         epsilon={"$decimal": "0.1"},
     )
     return line
@@ -1481,16 +1465,15 @@ def _line_mandate(
 
     del rung
     assert line is not None, "a Mandate pins one exact Line"
-    return ProcedureMandate(
-        identity=ArtifactIdentity(kind="ProcedureMandate", name="triage"),
+    return procedure_mandate(
+        "triage",
         line=ArtifactPin(
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
-        grants="propose",
         namespace=("claims", "documents"),
         valid_from=valid_from,
         expires_at=expires_at,
-        lifecycle=ArtifactLifecycle(state=state),  # type: ignore[arg-type]
+        lifecycle=ArtifactLifecycle(state=state),
     )
 
 

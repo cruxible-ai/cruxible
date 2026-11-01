@@ -71,6 +71,7 @@ from cruxible_core.providers.provider_runtime_contract import (
 from tests.core_support._p2b1_support import provider_v2
 from tests.core_support._provider_seal_support import write_test_provider_seal_v2
 from tests.support.invocation_ids import unique_invocation_id
+from tests.support.procedures import procedure_budget, procedure_hard_caps
 from tests.support.short_temporary_root import short_temporary_directory
 
 
@@ -94,7 +95,7 @@ def _lease_store(
 
 
 def _budget(*, capture_bytes: int = 2_000_000) -> ProcedureBudget:
-    return ProcedureBudget(
+    return procedure_budget(
         wall_clock=CanonicalDuration(microseconds=5_900_000),
         max_provider_calls=2,
         max_capture_bytes=capture_bytes,
@@ -103,12 +104,12 @@ def _budget(*, capture_bytes: int = 2_000_000) -> ProcedureBudget:
 
 
 def _caps() -> ProcedureHardCaps:
-    return ProcedureHardCaps(
+    return procedure_hard_caps(
+        preset="provider",
         max_wall_clock=CanonicalDuration(microseconds=4_100_000),
         max_provider_calls=5,
         max_capture_bytes=3_000_000,
         max_items=30,
-        max_repeat_attempts=2,
     )
 
 

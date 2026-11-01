@@ -31,7 +31,6 @@ from cruxible_client.contracts.procedures.measurements import (
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
     ProcedureDefinition,
-    ProcedureHardCaps,
     ProjectNode,
     ReadNode,
 )
@@ -46,6 +45,8 @@ from tests.support.procedures import (
     contract_pin,
     named,
     procedure_artifact,
+    procedure_definition,
+    procedure_hard_caps,
     procedure_members,
 )
 
@@ -126,7 +127,7 @@ def _definition(
 ) -> ProcedureDefinition:
     contract_in = _pin("contract-in", "Contract", "empty-input/v1")
     contract_out = _pin("contract-out", "Contract", "result/v1")
-    return ProcedureDefinition(
+    return procedure_definition(
         name="measured-procedure",
         contract_in=named(contract_in),
         contract_out=named(contract_out),
@@ -160,16 +161,8 @@ def _definition(
                 as_="result",
             ),
         ),
-        returns="result",
         measurements=measurements,
-        hard_caps=ProcedureHardCaps(
-            max_wall_clock=_duration(2_000_000),
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
-        terminal_capability=1,
+        hard_caps=procedure_hard_caps(max_wall_clock=_duration(2_000_000)),
     )
 
 

@@ -8,7 +8,6 @@ import pytest
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.procedures.models import (
-    ProcedureDefinition,
     ReadNode,
 )
 from cruxible_client.contracts.procedures.results import ProcedureNodeRefusal
@@ -24,7 +23,7 @@ from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.support.inbox import inbox_node
-from tests.support.procedures import named
+from tests.support.procedures import named, procedure_definition
 from tests.test_procedures.test_procedure_execution import (
     _accepted,
     _Authority,
@@ -48,7 +47,7 @@ def _terminal_procedure():
     contract_in = _pin("contract-in", "Contract", "terminal-input/v1")
     contract_out = _pin("contract-out", "Contract", "terminal-output/v1")
     query = _pin("query", "QueryDefinition", "terminal-items")
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name="terminal-procedure",
         contract_in=named(contract_in),
         contract_out=named(contract_out),
@@ -68,7 +67,6 @@ def _terminal_procedure():
         ),
         returns="rows",
         hard_caps=_hard_caps(items=100),
-        terminal_capability=1,
     )
     return _accepted(definition, pins=(contract_in, contract_out, query))
 
@@ -329,30 +327,24 @@ def test_terminal_fan_out_obeys_run_budget_with_scalar_return(tmp_path, kind):
             candidate_templates={"items": "$steps.fan.items"},
             result="$steps.summary",
         )
-    definition = original.model_copy(
-        update={
-            "nodes": (
-                ProjectNode(node_id="summary", literal={"count": 2}, as_="summary", next="fan"),
-                ProjectNode(
-                    node_id="fan",
-                    literal={
-                        "items": [{"id": "a"}, {"id": "b"}]
-                        if kind == "post_inbox"
-                        else [item_template(), item_template()]
-                    },
-                    as_="fan",
-                    next="inbox",
-                ),
-                terminal,
+    definition = procedure_definition(
+        base=original,
+        nodes=(
+            ProjectNode(node_id="summary", literal={"count": 2}, as_="summary", next="fan"),
+            ProjectNode(
+                node_id="fan",
+                literal={
+                    "items": [{"id": "a"}, {"id": "b"}]
+                    if kind == "post_inbox"
+                    else [item_template(), item_template()]
+                },
+                as_="fan",
+                next="inbox",
             ),
-            "returns": "summary",
-            "hard_caps": _hard_caps(items=1),
-            "terminal_capability": {
-                "post_inbox": 1,
-                "propose_change_set": 2,
-                "settle_change_set": 3,
-            }[kind],
-        }
+            terminal,
+        ),
+        returns="summary",
+        hard_caps=_hard_caps(items=1),
     )
     accepted = _accepted(
         definition,

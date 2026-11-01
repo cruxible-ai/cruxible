@@ -29,7 +29,7 @@ from cruxible_core.procedures.execution import (
     bind_accepted_state_materials,
 )
 from cruxible_core.query.engine import evaluate_claim_query
-from tests.support.procedures import named
+from tests.support.procedures import named, procedure_definition
 from tests.test_claims.test_claim_query_engine import (
     NOW,
     all_items_query,
@@ -238,7 +238,7 @@ def _two_reads(max_read_rows: int) -> Any:
         target=ArtifactIdentity(kind="QueryDefinition", name="items"),
         artifact_digest="sha256:" + "1" * 64,
     )
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name="two-reads",
         contract_in=named(entry),
         contract_out=named(out),
@@ -247,9 +247,7 @@ def _two_reads(max_read_rows: int) -> Any:
             ReadNode(node_id="second", query=named(query), as_="second"),
             ProjectNode(node_id="result", literal={}, as_="result"),
         ),
-        returns="result",
         hard_caps=_hard_caps().model_copy(update={"max_read_rows": max_read_rows}),
-        terminal_capability=1,
     )
     return _owned_accepted(definition, contracts=(empty, rows), pins=(entry, out, query))
 

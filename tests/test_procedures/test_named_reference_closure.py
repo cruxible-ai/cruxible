@@ -187,46 +187,28 @@ def test_existing_signing_provider_is_rechecked_without_creation_gates(tmp_path,
 def authored_procedure(name="reader", query="definitions"):
     """Explicit authored fields; only compiler-owned digests are computed."""
     from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
+    from cruxible_client.contracts.procedures.authored import (
+        ProjectStep,
+        ReadStep,
+        lower_procedure_spec,
+    )
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
     from cruxible_client.contracts.procedures.models import ProcedureDefinition
+    from tests.support.procedures import procedure_limits, procedure_spec
 
-    def reference(kind, target):
-        return {"target": {"kind": kind, "name": target}}
-
-    raw = {
-        "graph_format": 8,
-        "name": name,
-        "contract_in": reference("Contract", "io/v1"),
-        "contract_out": reference("Contract", "io/v1"),
-        "nodes": [
-            {
-                "kind": "read",
-                "node_id": "read",
-                "as": "result",
-                "query": reference("QueryDefinition", query),
-                "parameters": {},
-            }
-        ]
+    spec = procedure_spec(
+        name,
+        input_contract="io@1",
+        output_contract="io@1",
+        steps=(ReadStep(read="result", id="read", query=query),)
         if query is not None
-        else [
-            {
-                "kind": "project",
-                "node_id": "result",
-                "as": "result",
-                "literal": {},
-            }
-        ],
-        "returns": "result",
-        "hard_caps": {
-            "max_wall_clock": {"microseconds": 1_000_000},
-            "max_provider_calls": 0,
-            "max_capture_bytes": 0,
-            "max_items": 100,
-            "max_repeat_attempts": 1,
-        },
-        "terminal_capability": 1,
-    }
-    definition = ProcedureDefinition.model_validate(raw)
+        else (ProjectStep(project="result", literal={}),),
+        returns="result",
+        hard_caps=procedure_limits(
+            wall_clock="PT1S", provider_calls=0, capture_bytes=0, items=100, repeat_attempts=1
+        ),
+    )
+    definition = ProcedureDefinition.model_validate(lower_procedure_spec(spec).definition)
     return ProcedureArtifact.model_validate(
         {
             "identity": {"kind": "Procedure", "name": name},

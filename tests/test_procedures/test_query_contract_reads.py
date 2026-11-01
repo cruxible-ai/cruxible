@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.procedures.authored import ProcedureSpec
+from cruxible_client.contracts.procedures.authored import ProjectStep, ReadStep
 from cruxible_client.contracts.query.definitions import (
     query_definition_path,
     render_query_definition,
@@ -39,6 +39,7 @@ from tests.core_support._knowledge_loop_support import (
     work_item_query,
 )
 from tests.support.operation_world import actor, author_procedure
+from tests.support.procedures import procedure_spec
 
 NOW = datetime.fromisoformat(EVALUATION_TIME)
 ROW = "test.work-row"
@@ -62,17 +63,15 @@ def _world(tmp_path: Path, row_fields: dict[str, str]) -> tuple[Any, str]:
     )
     author_procedure(
         instance,
-        ProcedureSpec.model_validate(
-            {
-                "procedure": "test.read-work",
-                "input": {},
-                "output": {"count": "int"},
-                "steps": [
-                    {"read": "work", "query": query.identity.name},
-                    {"project": "out", "fields": {"count": 2}},
-                ],
-                "returns": "out",
-            }
+        procedure_spec(
+            procedure="test.read-work",
+            input={},
+            output={"count": "int"},
+            steps=[
+                ReadStep(read="work", query=query.identity.name),
+                ProjectStep(project="out", fields={"count": 2}),
+            ],
+            returns="out",
         ),
     )
     return instance, query.identity.name
@@ -182,17 +181,15 @@ def _param_world(tmp_path: Path, contract_fields: dict[str, str]) -> Any:
     )
     author_procedure(
         instance,
-        ProcedureSpec.model_validate(
-            {
-                "procedure": "test.read-work",
-                "input": {},
-                "output": {"count": "int"},
-                "steps": [
-                    {"read": "work", "query": query.identity.name},
-                    {"project": "out", "fields": {"count": 1}},
-                ],
-                "returns": "out",
-            }
+        procedure_spec(
+            procedure="test.read-work",
+            input={},
+            output={"count": "int"},
+            steps=[
+                ReadStep(read="work", query=query.identity.name),
+                ProjectStep(project="out", fields={"count": 1}),
+            ],
+            returns="out",
         ),
     )
     return instance

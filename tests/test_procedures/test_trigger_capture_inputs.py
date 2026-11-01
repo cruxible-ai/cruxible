@@ -32,7 +32,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_line,
 )
 from cruxible_core.storage.cas import BodyAccessContext
-from tests.support.lines import line_trigger, trigger_members
+from tests.support.lines import line_spec, line_trigger, trigger_members
 from tests.test_procedures.test_procedure_source_runs import (
     NOW,
     RELATIVE_PATH,
@@ -83,16 +83,15 @@ def world(  # noqa: PLR0913
         schedule = WindowCloseSchedule(
             window=CaptureEventNameWindow(event=selector, duration_seconds=60)
         )
-    values = {
-        **original.model_dump(mode="python"),
-        "trigger_input": trigger_input,
-        "trigger_event": selector,
-    }
-
-    values["trigger_event"] = CaptureEventNameSelector(
-        capture_contract_identity=contract.identity, logical_sources=sources
+    line = line_spec(
+        **{
+            **original.model_dump(mode="python"),
+            "trigger_input": trigger_input,
+            "trigger_event": CaptureEventNameSelector(
+                capture_contract_identity=contract.identity, logical_sources=sources
+            ),
+        }
     )
-    line = LineSpec.model_validate(values)
     if line_budget is not None:
         line = line.model_copy(
             update={"budgets": line.budgets.model_copy(update={"max_capture_bytes": line_budget})}

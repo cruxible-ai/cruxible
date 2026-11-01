@@ -61,6 +61,7 @@ from tests.core_support._write_support import (
     report_evidence,
     seed_write_surface,
 )
+from tests.support.mandates import procedure_mandate
 from tests.support.procedures import procedure_members
 from tests.test_floor.test_floor_index import _set, _write, accept_edit, add_lead_field
 from tests.test_floor.test_floor_notes_and_retention import _revise_rationale
@@ -170,18 +171,16 @@ def _mandate(
     from cruxible_client.contracts.procedure_mandates import (
         MandateClaimScope,
         MandateCondition,
-        ProcedureMandate,
         procedure_mandate_digest,
     )
     from cruxible_client.contracts.query.definitions import query_definition_digest
     from tests.test_scale import _worlds
 
     condition = _worlds._condition()
-    mandate = ProcedureMandate(
-        identity=ArtifactIdentity(kind="ProcedureMandate", name=name),
+    mandate = procedure_mandate(
+        name,
         line=_worlds._line_pin(line),
         grants="settle",
-        namespace=("claims",),
         valid_from=_worlds._FAR_PAST,
         expires_at=_worlds._FAR_FUTURE,
         scope=tuple(
@@ -205,15 +204,13 @@ def _mandate(
             required_fields=("id",),
             fallback="propose",
         ),
-        **(
-            {}
-            if previous is None
-            else {
-                "lifecycle": ArtifactLifecycle(
-                    predecessor_digest=procedure_mandate_digest(previous).tagged
-                )
-            }
-        ),
+        **{}
+        if previous is None
+        else {
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=procedure_mandate_digest(previous).tagged
+            )
+        },
         **update,
     )
     return mandate

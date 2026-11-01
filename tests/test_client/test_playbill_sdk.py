@@ -58,7 +58,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core import __version__ as DAEMON_VERSION
 from tests.support.preflight_results import stub_diagnostic, stub_preflight_result
-from tests.support.procedures import named
+from tests.support.procedures import named, procedure_definition
 from tests.test_client._read_fakes import ClaimTypeRead
 
 _DIGEST = "sha256:" + "1" * 64
@@ -437,7 +437,7 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
     _workspace(tmp_path)
 
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
-    from cruxible_client.contracts.procedures.models import ProcedureDefinition, ProjectNode
+    from cruxible_client.contracts.procedures.models import ProjectNode
     from tests.test_procedures.test_procedure_execution import (
         _hard_caps,
         _owned_accepted,
@@ -451,16 +451,14 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
     pp = _owned_pin("contract-params", cp)
     pi, po = _owned_pin("contract-in", ci), _owned_pin("contract-out", co)
     artifact = _owned_accepted(
-        ProcedureDefinition(
+        procedure_definition(
             name="daily-summary",
             contract_in=named(pi),
             contract_out=named(po),
             parameter_contract=named(pp),
             parameter_defaults={"a": 1},
             nodes=(ProjectNode(node_id="result", fields={"ok": True}, as_="result"),),
-            returns="result",
             hard_caps=_hard_caps(),
-            terminal_capability=1,
         ),
         contracts=(ci, co, cp),
         pins=(pi, po, pp),

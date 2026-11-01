@@ -31,14 +31,19 @@ from cruxible_client.contracts.procedures.models import (
     GuardNode,
     HaltNode,
     ProcedureDefinition,
-    ProcedureHardCaps,
     ProjectNode,
     ProposeChangeSetNode,
     ReadNode,
 )
 from cruxible_client.contracts.refs import step_ref
 from cruxible_client.contracts.shapes import Comparison, CountOperand, LiteralOperand
-from tests.support.procedures import boundary_contract, named, procedure_artifact
+from tests.support.procedures import (
+    boundary_contract,
+    named,
+    procedure_artifact,
+    procedure_definition,
+    procedure_hard_caps,
+)
 
 
 def _digest(label: str) -> str:
@@ -73,21 +78,14 @@ def _definition(
             as_="result",
         ),
     )
-    return ProcedureDefinition(
+    return procedure_definition(
         name="triage",
         description="Read accepted claims and shape a bounded result.",
         contract_in=named(contract_in),
         contract_out=named(contract_out),
-        nodes=default_nodes if nodes is None else nodes,  # type: ignore[arg-type]
-        returns="result",
-        hard_caps=ProcedureHardCaps(
-            max_wall_clock=CanonicalDuration(microseconds=2_000_000),
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
-        terminal_capability=terminal_capability,  # type: ignore[arg-type]
+        nodes=default_nodes if nodes is None else nodes,
+        hard_caps=procedure_hard_caps(max_wall_clock=CanonicalDuration(microseconds=2_000_000)),
+        terminal_capability=terminal_capability,
     )
 
 

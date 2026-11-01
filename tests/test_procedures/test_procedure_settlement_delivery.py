@@ -62,7 +62,8 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_line,
 )
 from tests.core_support._light_capture_support import record_contract as capture_contract
-from tests.support.procedures import procedure_members
+from tests.support.mandates import procedure_mandate
+from tests.support.procedures import procedure_definition, procedure_members
 from tests.test_procedures import test_procedure_source_runs as fixtures
 from tests.test_procedures.test_procedure_proposal_delivery import (
     PREDICATE,
@@ -238,29 +239,27 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
 ):
     instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
     source, shape = procedure.definition.nodes
-    definition = procedure.definition.model_copy(
-        update={
-            "terminal_capability": 3,
-            "nodes": fixtures.with_fan_out(
-                (
-                    source,
-                    shape.model_copy(update={"next": "settle"}),
-                    SettleChangeSetNode(
-                        node_id="settle",
-                        candidate_templates=(
-                            (
-                                *subject_items,
-                                *(_predicate_item(predicate) for predicate in item_predicates),
-                            )
-                            if candidate_templates is None
-                            else candidate_templates
-                        ),
-                        result="$steps.result",
+    definition = procedure_definition(
+        base=procedure.definition,
+        nodes=fixtures.with_fan_out(
+            (
+                source,
+                shape.model_copy(update={"next": "settle"}),
+                SettleChangeSetNode(
+                    node_id="settle",
+                    candidate_templates=(
+                        (
+                            *subject_items,
+                            *(_predicate_item(predicate) for predicate in item_predicates),
+                        )
+                        if candidate_templates is None
+                        else candidate_templates
                     ),
+                    result="$steps.result",
                 ),
-                candidate_templates,
             ),
-        }
+            candidate_templates,
+        ),
     )
     with_terminal = procedure.model_copy(
         update={
@@ -318,15 +317,14 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
         **(_level_kind_members(rules=level_rules) if subject_items else {}),
     }
     for index in range(mandates):
-        mandate = ProcedureMandate(
-            identity=ArtifactIdentity(kind="ProcedureMandate", name=f"settle-{index}"),
+        mandate = procedure_mandate(
+            f"settle-{index}",
             line=ArtifactPin(
                 role="line",
                 target=line.identity,
                 artifact_digest=line_spec_digest(line).tagged,
             ),
             grants="settle",
-            namespace=("claims",),
             valid_from=datetime(2020, 1, 1, tzinfo=UTC),
             expires_at=datetime(2099, 1, 1, tzinfo=UTC),
             scope=tuple(
@@ -362,15 +360,13 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
         # The propose grant's digest sorts after every settle grant's, so a
         # digest-order choice between them would pick the settle grant.
         for day in range(256):
-            grant = ProcedureMandate(
-                identity=ArtifactIdentity(kind="ProcedureMandate", name="propose-grant"),
+            grant = procedure_mandate(
+                "propose-grant",
                 line=ArtifactPin(
                     role="line",
                     target=line.identity,
                     artifact_digest=line_spec_digest(line).tagged,
                 ),
-                grants="propose",
-                namespace=("claims",),
                 valid_from=datetime(2020, 1, 1, tzinfo=UTC),
                 expires_at=datetime(2099, 1, 1, tzinfo=UTC) + timedelta(days=day),
             )

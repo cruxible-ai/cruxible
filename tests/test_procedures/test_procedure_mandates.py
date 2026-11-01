@@ -41,6 +41,8 @@ from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
 from tests.core_support._support import initialize_local
+from tests.support.lines import line_budgets, line_spec
+from tests.support.mandates import procedure_mandate
 from tests.support.procedures import procedure_members
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
@@ -79,23 +81,15 @@ def _line(*, procedure: AcceptedProcedure | None = None, name: str = "triage-lin
 
     accepted = procedure or _procedure()
     caps = accepted.procedure.definition.hard_caps
-    return LineSpec(
-        identity=ArtifactIdentity(kind="Line", name=name),
-        occurrence_epoch=1,
+    return line_spec(
+        name,
         procedure=ArtifactPin(
             role="procedure",
             target=accepted.procedure.identity,
             artifact_digest=accepted.artifact_digest,
         ),
-        parameters={},
         max_authority="settle",
-        budgets={
-            "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
-            "max_provider_calls": caps.max_provider_calls,
-            "max_capture_bytes": caps.max_capture_bytes,
-            "max_items": caps.max_items,
-        },
-        epsilon={"$decimal": "0"},
+        budgets=line_budgets(caps=caps),
     )
 
 
@@ -141,8 +135,8 @@ def _mandate(
         {"scope": _settle_scope(), "condition": _settle_condition()} if grants == "settle" else {}
     )
     namespace = ("claims",) if grants == "settle" else ("claims", "documents")
-    return ProcedureMandate(
-        identity=ArtifactIdentity(kind="ProcedureMandate", name="triage"),
+    return procedure_mandate(
+        "triage",
         line=ArtifactPin(
             role="line",
             target=bound_line.identity,
@@ -150,8 +144,6 @@ def _mandate(
         ),
         grants=grants,
         namespace=namespace,
-        valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc),
         **settle_only,
     )
 

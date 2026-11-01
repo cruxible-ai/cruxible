@@ -26,12 +26,11 @@ from cruxible_client.contracts.named_references import name_provider
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
 )
+from cruxible_client.contracts.procedures.authored import CallStep
 from cruxible_client.contracts.procedures.extract import ExtractNode
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ProcedureDefinition,
-    ProcedureHardCaps,
     ProjectNode,
 )
 from cruxible_client.contracts.provider_operations import ProviderOperation
@@ -55,7 +54,13 @@ from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from tests.core_support._light_capture_support import JSON_DECODING, http_contract
-from tests.support.procedures import named
+from tests.support.procedures import (
+    named,
+    procedure_definition,
+    procedure_hard_caps,
+    procedure_limits,
+    procedure_spec_data,
+)
 from tests.support.provider_builds import as_build
 from tests.test_procedures import test_procedure_source_runs as source
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
@@ -259,7 +264,7 @@ def _fetch_procedure(contract: CaptureContract, *, request: dict[str, object]) -
         target=contract.identity,
         artifact_digest=capture_contract_digest(contract).tagged,
     )
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name="sdk-fetch-triage",
         description="Fetch one external record and shape its severity.",
         contract_in=named(run_input_pin),
@@ -280,17 +285,14 @@ def _fetch_procedure(contract: CaptureContract, *, request: dict[str, object]) -
                 as_=_ALIAS,
                 next="bundle",
             ),
-            ExtractNode.model_validate(
-                {
-                    "kind": "extract",
-                    "node_id": "bundle",
-                    "capture": f"$steps.{_ALIAS}.capture",
-                    "records": "/",
-                    "row": _BUNDLE_ROW_REF,
-                    "fields": {"text": {"at": "derived/text"}},
-                    "as": "bundle",
-                    "next": "shape",
-                }
+            ExtractNode(
+                node_id="bundle",
+                capture=f"$steps.{_ALIAS}.capture",
+                records="/",
+                row=_BUNDLE_ROW_REF,
+                fields={"text": {"at": "derived/text"}},
+                as_="bundle",
+                next="shape",
             ),
             ProjectNode(
                 node_id="shape",
@@ -298,14 +300,7 @@ def _fetch_procedure(contract: CaptureContract, *, request: dict[str, object]) -
                 as_="result",
             ),
         ),
-        returns="result",
-        hard_caps=ProcedureHardCaps(
-            max_wall_clock=source.MAX_WALL_CLOCK,
-            max_provider_calls=4,
-            max_capture_bytes=2_097_152,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
+        hard_caps=procedure_hard_caps(preset="source", max_capture_bytes=2_097_152),
         terminal_capability=2,
     )
     procedure = ProcedureArtifact(
@@ -554,24 +549,23 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     authored = ProcedureInput.model_validate(
         {
             "kind": "procedure",
-            "procedure": "replace-me",
-            "input": {},
-            "output": {"size": "int"},
-            "slots": {
-                "invoke": {
-                    "in": f"{call_input.name}@{call_input.version}",
-                    "out": f"{call_output.name}@{call_output.version}",
-                    "effect": "external_read",
-                }
-            },
-            "steps": [{"call": "result", "id": "invoke", "slot": "invoke", "input": {"size": 1}}],
-            "returns": "result",
-            "hard_caps": {
-                "wall_clock": "PT30M",
-                "provider_calls": 2,
-                "capture_bytes": 131072,
-                "items": 200,
-            },
+            **procedure_spec_data(
+                procedure="replace-me",
+                input={},
+                output={"size": "int"},
+                slots={
+                    "invoke": {
+                        "in": f"{call_input.name}@{call_input.version}",
+                        "out": f"{call_output.name}@{call_output.version}",
+                        "effect": "external_read",
+                    }
+                },
+                steps=[CallStep(call="result", id="invoke", slot="invoke", input={"size": 1})],
+                returns="result",
+                hard_caps=procedure_limits(
+                    wall_clock="PT30M", provider_calls=2, capture_bytes=131072, items=200
+                ),
+            ),
         }
     )
     intent = pb.procedure(definition=authored).prepare()

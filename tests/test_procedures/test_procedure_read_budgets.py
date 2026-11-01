@@ -17,7 +17,11 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.procedures.authored import ProcedureSpec
+from cruxible_client.contracts.procedures.authored import (
+    InvokeStep,
+    ProjectStep,
+    ReadStep,
+)
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
     ProcedureRunRequest,
@@ -31,18 +35,19 @@ from tests.core_support._knowledge_loop_support import (
     seed_claims,
 )
 from tests.support.operation_world import actor, author, author_procedure
+from tests.support.procedures import procedure_limits, procedure_spec
 
 NOW = datetime.fromisoformat(EVALUATION_TIME)
 
 
 def _reading(name: str, subjects: tuple[str, ...], *, caps: dict[str, Any] | None = None) -> Any:
     steps: list[dict[str, Any]] = [
-        {"read": f"read_{index}", "claim_type": PREDICATE, "subject": subject}
+        ReadStep(read=f"read_{index}", claim_type=PREDICATE, subject=subject)
         for index, subject in enumerate(subjects)
     ]
-    steps.append({"project": "out", "fields": {"count": len(subjects)}})
-    return ProcedureSpec.model_validate(
-        {
+    steps.append(ProjectStep(project="out", fields={"count": len(subjects)}))
+    return procedure_spec(
+        **{
             "procedure": name,
             "input": {},
             "output": {"count": "int"},
@@ -96,19 +101,17 @@ def test_an_invoked_child_reads_only_what_its_parent_has_left(
 
     instance, _ = seed_claims(tmp_path)
     author_procedure(instance, _reading("test.child-read", ("wi-43",)), name="child")
-    parent = ProcedureSpec.model_validate(
-        {
-            "procedure": "test.parent-read",
-            "input": {},
-            "output": {"count": "int"},
-            "steps": [
-                {"read": "mine", "claim_type": PREDICATE, "subject": "wi-42"},
-                {"invoke": "test.child-read", "id": "child", "input": {}},
-                {"project": "out", "fields": {"count": 2}},
-            ],
-            "returns": "out",
-            "hard_caps": {"read_rows": read_rows},
-        }
+    parent = procedure_spec(
+        procedure="test.parent-read",
+        input={},
+        output={"count": "int"},
+        steps=[
+            ReadStep(read="mine", claim_type=PREDICATE, subject="wi-42"),
+            InvokeStep(invoke="test.child-read", id="child", input={}),
+            ProjectStep(project="out", fields={"count": 2}),
+        ],
+        returns="out",
+        hard_caps=procedure_limits(read_rows=read_rows),
     )
     author_procedure(instance, parent, name="parent")
 

@@ -47,6 +47,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryProjection,
     QueryProjectionField,
 )
+from tests.support.mandates import procedure_mandate
 from tests.support.procedures import procedure_members
 from tests.test_procedures.test_procedure_mandates import (
     _accepted_line,
@@ -127,17 +128,15 @@ def _settle(
 ) -> ProcedureMandate:
     accepted = procedure or _procedure()
     bound_line = line or _line(procedure=accepted)
-    values: dict[str, object] = dict(
-        identity=ArtifactIdentity(kind="ProcedureMandate", name="triage"),
+    return procedure_mandate(
+        "triage",
+        changes=updates,
         line=ArtifactPin(
             role="line",
             target=bound_line.identity,
             artifact_digest=line_spec_digest(bound_line).tagged,
         ),
         grants="settle",
-        namespace=("claims",),
-        valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc),
         scope=(
             MandateClaimScope(
                 claim_type=ArtifactPin(
@@ -158,8 +157,6 @@ def _settle(
             fallback="propose",
         ),
     )
-    values.update(updates)
-    return ProcedureMandate.model_validate(values)
 
 
 def _claim_types() -> dict[ArtifactIdentity, ScopedClaimType]:

@@ -27,8 +27,6 @@ from cruxible_client.contracts.procedures.contracts import (
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
-    ProcedureDefinition,
-    ProcedureHardCaps,
     ProjectNode,
     ReadNode,
 )
@@ -64,13 +62,13 @@ from tests.core_support._knowledge_loop_support import (
 )
 from tests.core_support._support import client_material
 from tests.support.procedures import (
-    MAX_WALL_CLOCK,
     bind_fixture,
     boundary_contract,
     contract_files,
     contract_pin,
     contract_resolver,
     named,
+    procedure_definition,
     procedure_members,
 )
 from tests.test_ledger.test_activation import _sign
@@ -237,7 +235,7 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
         target=ArtifactIdentity(kind="QueryDefinition", name=QUERY_NAME),
         artifact_digest=query_digest,
     )
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name="query-work-items",
         contract_in=named(contract_in),
         contract_out=named(contract_out),
@@ -255,15 +253,6 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
                 as_="result",
             ),
         ),
-        returns="result",
-        hard_caps=ProcedureHardCaps(
-            max_wall_clock=MAX_WALL_CLOCK,
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
-        terminal_capability=1,
     )
     procedure = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),

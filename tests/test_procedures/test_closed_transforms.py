@@ -19,7 +19,6 @@ from pydantic import ValidationError
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
     HaltNode,
-    ProcedureDefinition,
     ProjectNode,
     TransformNode,
 )
@@ -27,7 +26,7 @@ from cruxible_client.contracts.procedures.nodes import TransformDeriveSpec, Tran
 from cruxible_client.contracts.refs import step_ref
 from cruxible_client.contracts.shapes import Comparison, LiteralOperand
 from cruxible_core.procedures.execution import ProcedureExecutor
-from tests.support.procedures import named
+from tests.support.procedures import named, procedure_definition
 from tests.test_procedures.test_procedure_execution import (
     _Authority,
     _Contracts,
@@ -54,15 +53,12 @@ def _rows(*records: dict[str, Any]) -> dict[str, Any]:
 
 
 def _transform(node_id: str, kind: str, spec: dict[str, Any], **extra: Any) -> TransformNode:
-    return TransformNode.model_validate(
-        {
-            "kind": "transform",
-            "node_id": node_id,
-            "transform_kind": kind,
-            "spec": {"tag": f"cruxible-transform-{kind}-spec-v1", **spec},
-            "as": node_id,
-            **extra,
-        }
+    return TransformNode(
+        node_id=node_id,
+        transform_kind=kind,
+        spec={"tag": f"cruxible-transform-{kind}-spec-v1", **spec},
+        as_=node_id,
+        **extra,
     )
 
 
@@ -72,14 +68,13 @@ def _run(nodes: tuple[Any, ...], tmp_path: Path, *, returns: str = "result") -> 
     empty = _owned_contract("empty", {})
     out = _owned_contract("result", {})
     entry, out_pin = _owned_pin("contract-in", empty), _owned_pin("contract-out", out)
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name="completeness",
         contract_in=named(entry),
         contract_out=named(out_pin),
         nodes=tuple(nodes),
         returns=returns,
         hard_caps=_hard_caps(),
-        terminal_capability=1,
     )
     accepted = _owned_accepted(definition, contracts=(empty, out), pins=(entry, out_pin))
     fixture = _fixture(tmp_path)

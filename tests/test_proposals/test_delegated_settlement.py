@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
 from cruxible_client.contracts.claims import ClaimType
@@ -11,7 +9,6 @@ from cruxible_client.contracts.governance import INDEPENDENT_APPROVAL_REQUIREMEN
 from cruxible_client.contracts.procedure_mandates import (
     MandateClaimScope,
     MandateCondition,
-    ProcedureMandate,
     procedure_mandate_digest,
     procedure_mandate_path,
     render_procedure_mandate,
@@ -20,7 +17,6 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
 )
 from cruxible_client.contracts.procedures.line_specs import (
-    LineSpec,
     line_spec_digest,
     line_spec_path,
     render_line_spec,
@@ -47,6 +43,8 @@ from cruxible_core.authoring import lowering
 from cruxible_core.proposals import proposals
 from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
 from tests.core_support._support import initialize_local
+from tests.support.lines import line_budgets, line_spec
+from tests.support.mandates import procedure_mandate
 from tests.support.procedures import procedure_members
 from tests.test_authoring.test_authoring_change_set_intents import (
     SUBJECT_KIND,
@@ -126,35 +124,24 @@ def _world(tmp_path, *, only_subject: str | None = None, change_kinds=("create",
     # Procedure has no provider slots (a closed-form Claims-terminal graph),
     # so its Line binds none either.
     caps = procedure.definition.hard_caps
-    line = LineSpec(
-        identity=ArtifactIdentity(kind="Line", name="triage-line"),
-        occurrence_epoch=1,
+    line = line_spec(
+        "triage-line",
         procedure=ArtifactPin(
             role="procedure",
             target=procedure.identity,
             artifact_digest=procedure_artifact_digest(procedure).tagged,
         ),
-        parameters={},
         max_authority="settle",
-        budgets={
-            "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
-            "max_provider_calls": caps.max_provider_calls,
-            "max_capture_bytes": caps.max_capture_bytes,
-            "max_items": caps.max_items,
-        },
-        epsilon={"$decimal": "0"},
+        budgets=line_budgets(caps=caps),
     )
-    mandate = ProcedureMandate(
-        identity=ArtifactIdentity(kind="ProcedureMandate", name="triage"),
+    mandate = procedure_mandate(
+        "triage",
         line=ArtifactPin(
             role="line",
             target=line.identity,
             artifact_digest=line_spec_digest(line).tagged,
         ),
         grants="settle",
-        namespace=("claims",),
-        valid_from=datetime(2026, 1, 1, tzinfo=UTC),
-        expires_at=datetime(2027, 1, 1, tzinfo=UTC),
         scope=(
             MandateClaimScope(
                 claim_type=ArtifactPin(

@@ -17,11 +17,12 @@ from cruxible_client.contracts.procedures.artifacts import (
     parse_procedure,
     procedure_artifact_digest,
 )
+from cruxible_client.contracts.procedures.authored import CallStep
 from cruxible_client.contracts.procedures.line_specs import line_spec_digest, parse_line_spec
 from cruxible_client.contracts.provider_installation import ProviderRetireRequest
 from cruxible_client.contracts.triggers import CadenceSchedule
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
-from tests.support.procedures import procedure_members
+from tests.support.procedures import procedure_limits, procedure_members, procedure_spec
 from tests.support.provider_checkout import ProviderCheckout
 from tests.test_server.test_kit_providers import (
     PROCEDURE,
@@ -47,25 +48,18 @@ def _author_user_procedure(world) -> None:
     """The operator's own open-slot Procedure, the same shape the kit ships."""
 
     from cruxible_client.contracts.authoring.inputs import ProcedureInput
-    from cruxible_client.contracts.procedures.authored import ProcedureSpec
     from tests.support.provider_installation import LOCAL_CALL_IN, LOCAL_CALL_OUT
 
-    spec = ProcedureSpec.model_validate(
-        {
-            "procedure": USER_PROCEDURE,
-            "params": {"n": "int"},
-            "output": {"n": "int"},
-            "slots": {"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
-            "steps": [
-                {
-                    "call": "result",
-                    "slot": "increment",
-                    "input": {"n": {"$ref": "param", "path": ["n"]}},
-                }
-            ],
-            "returns": "result",
-            "hard_caps": {"wall_clock": "PT30S", "provider_calls": 1},
-        }
+    spec = procedure_spec(
+        procedure=USER_PROCEDURE,
+        params={"n": "int"},
+        output={"n": "int"},
+        slots={"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
+        steps=[
+            CallStep(call="result", slot="increment", input={"n": {"$ref": "param", "path": ["n"]}})
+        ],
+        returns="result",
+        hard_caps=procedure_limits(wall_clock="PT30S", provider_calls=1),
     )
     intent = (
         world.pb.changes(rationale="The operator's own increment.")

@@ -40,7 +40,6 @@ from cruxible_client.contracts.procedures.models import (
     CallNode,
     CaptureEgressNode,
     ProcedureDefinition,
-    ProcedureHardCaps,
     ProjectNode,
     ProposeChangeSetNode,
 )
@@ -66,7 +65,11 @@ from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._light_capture_support import procedure_contract
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._subject_kind_support import bare_slug_claim_type, create_by_key
-from tests.support.procedures import MAX_WALL_CLOCK, named
+from tests.support.procedures import (
+    named,
+    procedure_definition,
+    procedure_hard_caps,
+)
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
 SUBJECT_KIND = "security.advisory"
@@ -224,7 +227,7 @@ def _procedure_definition(
         replayability="exact",
     )
     _wf_source, _wf_content, wf_request, wf_result = workspace_file_contracts()
-    return ProcedureDefinition(
+    return procedure_definition(
         name=PROCEDURE_NAME,
         description="Read the advisory document and propose its severity as a Claim.",
         contract_in=named(contract_in),
@@ -272,15 +275,7 @@ def _procedure_definition(
                 )
             ),
         ),
-        returns="result",
-        hard_caps=ProcedureHardCaps(
-            max_wall_clock=MAX_WALL_CLOCK,
-            max_provider_calls=4,
-            max_capture_bytes=131_072,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
-        terminal_capability=2 if terminal_kind == "propose_change_set" else 1,
+        hard_caps=procedure_hard_caps(preset="source"),
     )
 
 

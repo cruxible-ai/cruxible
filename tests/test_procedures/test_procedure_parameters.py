@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from cruxible_client.contracts.procedures.authored import (
     ProcedureSpec,
     ProcedureSpecError,
+    ProjectStep,
     lower_procedure_spec,
 )
 from cruxible_client.contracts.procedures.models import ProcedureDefinition
@@ -20,24 +21,22 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_procedure,
 )
 from tests.support.operation_world import NOW, actor, author_line, author_procedure, world
-from tests.support.procedures import ref
+from tests.support.procedures import procedure_limits, procedure_spec, ref
 
-LIMITS = {"provider_calls": 0}
+LIMITS = procedure_limits(provider_calls=0)
 
 
 def _spec(**fields: Any) -> ProcedureSpec:
     """A Procedure returning its ``limit`` parameter, defaulted to 3."""
 
-    return ProcedureSpec.model_validate(
-        {
-            "procedure": "test.limited",
-            "params": {"limit": {"type": "int", "default": 3}},
-            "output": {"limit": "int"},
-            "steps": [{"project": "result", "fields": {"limit": ref("$params.limit")}}],
-            "returns": "result",
-            "hard_caps": LIMITS,
-            **fields,
-        }
+    return procedure_spec(
+        procedure="test.limited",
+        params={"limit": {"type": "int", "default": 3}},
+        output={"limit": "int"},
+        steps=[ProjectStep(project="result", fields={"limit": ref("$params.limit")})],
+        returns="result",
+        hard_caps=LIMITS,
+        changes=fields,
     )
 
 
@@ -268,15 +267,13 @@ def test_a_line_run_takes_no_input(tmp_path: Any) -> None:
     instance = world(tmp_path)
     author_procedure(
         instance,
-        ProcedureSpec.model_validate(
-            {
-                "procedure": "test.inputs",
-                "input": {"limit": "int"},
-                "output": {"limit": "int"},
-                "steps": [{"project": "result", "fields": {"limit": ref("$input.limit")}}],
-                "returns": "result",
-                "hard_caps": LIMITS,
-            }
+        procedure_spec(
+            procedure="test.inputs",
+            input={"limit": "int"},
+            output={"limit": "int"},
+            steps=[ProjectStep(project="result", fields={"limit": ref("$input.limit")})],
+            returns="result",
+            hard_caps=LIMITS,
         ),
     )
     with pytest.raises(AuthoringLoweringError) as refused:

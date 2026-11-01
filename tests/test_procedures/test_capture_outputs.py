@@ -24,13 +24,14 @@ from typing import Any
 
 import pytest
 
+from cruxible_client.contracts.procedures.authored import CallStep, ProjectStep
 from cruxible_client.contracts.procedures.capture_outputs import (
     TriggerTargetRefused,
     capture_output_descriptors,
     trigger_capture_output,
 )
 from tests.support.operation_world import Invoker
-from tests.support.procedures import refs
+from tests.support.procedures import procedure_limits, procedure_spec
 from tests.test_procedures.test_b2_operations import run_line
 
 LINE_NAME = "test.paired-line"
@@ -45,7 +46,6 @@ def _paired_world(
 ) -> Any:
     from cruxible_client.authoring.inputs import LineInput
     from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
-    from cruxible_client.contracts.procedures.authored import ProcedureSpec
     from cruxible_client.contracts.providers import (
         ProviderDistributionRef,
         ProviderImplementationManifest,
@@ -144,35 +144,32 @@ def _paired_world(
     accept_tree(instance, build_files(build), name="pair-build")
     author_procedure(
         instance,
-        ProcedureSpec.model_validate(
-            refs(
-                {
-                    "procedure": "test.paired",
-                    "input": {},
-                    "output": {name: result.fields[name].spelling for name in returned},
-                    "slots": {
-                        "pair": {
-                            "in": "demo.pair.request@1",
-                            "out": "demo.pair.result@1",
-                            "effect": "external_read",
-                        }
-                    },
-                    "steps": [
-                        {
-                            "call": "doc",
-                            "captures": {"left": "test.events-v1", "right": "test.other-v1"},
-                            "slot": "pair",
-                            "input": {"query": "orders"},
-                        },
-                        {
-                            "project": "out",
-                            "fields": {name: f"$doc.{name}" for name in returned},
-                        },
-                    ],
-                    "returns": "out",
-                    "hard_caps": {"provider_calls": 1, "capture_bytes": 65536},
+        procedure_spec(
+            reference_text=True,
+            procedure="test.paired",
+            input={},
+            output={name: result.fields[name].spelling for name in returned},
+            slots={
+                "pair": {
+                    "in": "demo.pair.request@1",
+                    "out": "demo.pair.result@1",
+                    "effect": "external_read",
                 }
-            )
+            },
+            steps=[
+                CallStep(
+                    call="doc",
+                    captures={"left": "test.events-v1", "right": "test.other-v1"},
+                    slot="pair",
+                    input={"query": "orders"},
+                ),
+                ProjectStep(
+                    project="out",
+                    fields={name: f"$doc.{name}" for name in returned},
+                ),
+            ],
+            returns="out",
+            hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
         ),
     )
     line: dict[str, Any] = {

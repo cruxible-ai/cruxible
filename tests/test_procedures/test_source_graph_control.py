@@ -23,7 +23,13 @@ from cruxible_client.contracts.procedures.models import (
 from cruxible_client.contracts.refs import input_ref
 from cruxible_client.contracts.shapes import Comparison, LiteralOperand
 from cruxible_core.procedures.execution import ProcedureExecutor
-from tests.support.procedures import bind_fixture, boundary_contract, contract_resolver, named
+from tests.support.procedures import (
+    bind_fixture,
+    boundary_contract,
+    contract_resolver,
+    named,
+    procedure_definition,
+)
 from tests.test_procedures.test_procedure_execution import (
     _Authority,
     _fixture,
@@ -79,14 +85,13 @@ def definition(*, early=False):
                 leaf=True,
             ),
         ]
-    graph = ProcedureDefinition(
+    graph = procedure_definition(
         name="choice",
         contract_in=named(pi),
         contract_out=named(po),
         nodes=tuple(nodes),
         returns="yes" if early else "result",
         hard_caps=_hard_caps(),
-        terminal_capability=1,
     )
     artifact = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name="choice"),
