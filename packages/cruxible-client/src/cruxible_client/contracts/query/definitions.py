@@ -132,14 +132,15 @@ class QueryDefinition(_StrictQueryDefinitionModel):
     orderings: tuple[QueryOrdering, ...] = ()
     includes: tuple[QueryInclude, ...] = ()
     parameters: tuple[QueryParameterDeclaration, ...] = ()
-    #: The Contract the parameters a caller supplies must satisfy (``name@N``).
-    #: Not supported in B1: the acceptance law refuses any Query that declares
-    #: one (``contract_unsupported``). B3 enables runtime validation.
+    #: The Contract the parameters a Procedure read supplies must satisfy
+    #: (``name@N``, pinned by exact digest at acceptance). Enforced at runtime
+    #: for a Procedure ``read``; interactive query callers are unaffected.
     parameter_contract: ContractRef | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    #: The Contract every projected row satisfies (``name@N``). Not supported
-    #: in B1; see ``parameter_contract``.
+    #: The Contract every projected row a Procedure ``read`` receives satisfies
+    #: (``name@N``, exact digest), enforced at runtime row by row; it types the
+    #: read's output.
     row_contract: ContractRef | None = Field(default=None, exclude_if=lambda value: value is None)
     evaluation_policy: QueryEvaluationPolicy
     default_budgets: QueryBudgets
@@ -642,33 +643,58 @@ def evaluate_query_definition_law(
     by_name: bool = False,
     contracts: Callable[[ContractRef], Contract | None] | None = None,
 ) -> QueryDefinitionLawResult:
-    """Evaluate exact path, digest-pinned dependencies, Contract support, and lifecycle.
+    """Evaluate exact path, digest-pinned dependencies, Contracts, and lifecycle.
 
-    ``contracts`` is accepted but unused: B1 does not support a Query
-    Contract at all (see the ``contract_unsupported`` refusal below). It
-    stays in the signature so B3 can wire in runtime validation of
-    supplied parameters and emitted rows without changing this boundary.
+    A declared ``parameter_contract``/``row_contract`` must be exact-pinned and
+    resolve through ``contracts``; its fields must name declared parameters
+    (respectively projected fields). Values are enforced at runtime, where a
+    Procedure ``read`` supplies parameters and receives rows -- acceptance
+    proves only that the Contract exists and can describe the Query.
     """
 
     try:
         validate_query_definition_path(query, path)
     except QueryDefinitionFormatError as exc:
         return _refusal("cruxible.query_definition.path_mismatch", str(exc), path=path)
-    # Acceptance-time proof of a declared Contract (field agreement,
-    # refinement, source presence) repeatedly let a signed, accepted,
-    # executed Query violate its own declared Contract -- nested refinements,
-    # Claim-sourced kinds/cardinality, and parameter-vs-Contract bare-type
-    # gaps each slipped through. Rather than chase a sound acceptance-time
-    # proof, B1 refuses either field outright: the model fields, lowering's
-    # exact-digest pin, and the dependency edge all stay built for B3, which
-    # owns runtime validation.
-    if query.parameter_contract is not None or query.row_contract is not None:
-        return _refusal(
-            "cruxible.query_definition.contract_unsupported",
-            "Query Contracts (parameter_contract/row_contract) are enforced from B3; "
-            "not yet supported.",
-            path=path,
-        )
+    # No acceptance-time proof that rows satisfy the Contract (refinements,
+    # Claim-sourced kinds and cardinality made such proofs unsound): the
+    # Contract is pinned and checked against every row a Procedure read
+    # receives, at runtime.
+    declared = (
+        ("parameter", query.parameter_contract, {item.name for item in query.parameters}),
+        (
+            "row",
+            query.row_contract,
+            set() if query.projection is None else {item.name for item in query.projection.fields},
+        ),
+    )
+    for label, ref, names in declared:
+        if ref is None:
+            continue
+        if ref.digest is None:
+            return _refusal(
+                "cruxible.query_definition.contract_unpinned",
+                f"The {label} Contract {ref.spelling} carries no exact digest.",
+                path=path,
+            )
+        if contracts is None:
+            continue
+        contract = contracts(ref)
+        if contract is None:
+            return _refusal(
+                "cruxible.query_definition.contract_unresolved",
+                f"The {label} Contract {ref.spelling} is not accepted at its pinned digest.",
+                path=path,
+            )
+        undeclared = sorted(set(contract.fields) - names)
+        if undeclared:
+            what = "declared parameters" if label == "parameter" else "projected fields"
+            return _refusal(
+                "cruxible.query_definition.contract_field_unknown",
+                f"The {label} Contract {ref.spelling} names fields that are not {what}: "
+                f"{undeclared}.",
+                path=path,
+            )
     if accepted_artifacts is not None:
         for predicate in query.referenced_predicates:
             if accepted_artifacts.get(f"ClaimType:{predicate}") is None:

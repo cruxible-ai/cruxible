@@ -3287,7 +3287,11 @@ def service_run_playbill_procedure(
                 admitted_at=evaluation_time,
             )
     except ProcedureBoundaryRefused as exc:
-        if exc.code not in {"read_ceiling_exceeded", "state_tap_refused"}:
+        if exc.code not in {
+            "read_ceiling_exceeded",
+            "state_tap_refused",
+            "query_contract_violated",
+        }:
             raise
         # A read the admission refuses (past the run's read budget, or a
         # selection the reader declines) is an admission refusal, not a crash.
@@ -4222,7 +4226,11 @@ def _run_playbill_line(
             ),
         )
     except ProcedureBoundaryRefused as exc:
-        if exc.code not in {"read_ceiling_exceeded", "state_tap_refused"}:
+        if exc.code not in {
+            "read_ceiling_exceeded",
+            "state_tap_refused",
+            "query_contract_violated",
+        }:
             raise
         return _line_refusal_state(
             accepted,

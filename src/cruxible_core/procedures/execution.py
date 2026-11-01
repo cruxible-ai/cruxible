@@ -1093,6 +1093,22 @@ class StateTapReadResultV1(_StrictExecutionModel):
     rows: int = Field(default=0, ge=0, exclude=True)
 
 
+class QueryContractViolated(ExecutionError):
+    """A Procedure read whose parameters or a row break the Query's pinned Contract."""
+
+    def __init__(
+        self, *, direction: Literal["parameters", "row"], details: Mapping[str, object]
+    ) -> None:
+        self.direction = direction
+        self.details: dict[str, object] = dict(details)
+        self.reason = (
+            "the read's parameters do not satisfy the Query's parameter Contract"
+            if direction == "parameters"
+            else "a row the read returned does not satisfy the Query's row Contract"
+        )
+        super().__init__(f"query_contract_violated: {self.reason}")
+
+
 class ReadCeilingExceeded(ExecutionError):
     """A Procedure read that the run's read ceiling would clip: refused, never truncated."""
 
@@ -1789,7 +1805,7 @@ def bind_accepted_state_materials(
     Every run lane reads the accepted-state plane the SAME way, so this is the
     one place a read becomes admitted material. ``read_ceiling`` is the rows
     the run's reads may return in all, as its admission budget states it (its
-    Line's and Mandates', or what an invoking parent has left): Query reads
+    Line's, or what an invoking parent has left): Query reads
     and Claim reads alike draw it down, and the read that would pass it
     refuses ``read_ceiling_exceeded``.
     """
@@ -1833,6 +1849,12 @@ def bind_accepted_state_materials(
                     ceiling=remaining,
                 )
             remaining -= read.rows
+        except QueryContractViolated as exc:
+            raise ProcedureBoundaryRefused(
+                "query_contract_violated",
+                exc.reason,
+                details={"node": node.node_id, "direction": exc.direction, **exc.details},
+            ) from exc
         except ReadCeilingExceeded as exc:
             raise ProcedureBoundaryRefused(
                 "read_ceiling_exceeded",
@@ -2453,6 +2475,7 @@ class ProcedureExecutor:
                 "provider_replay_receipt_required",
                 # An invoked child's read past what its parent left refuses.
                 "read_ceiling_exceeded",
+                "query_contract_violated",
             }:
                 status = "refused"
                 refusal = ProcedureRunRefusalV1(

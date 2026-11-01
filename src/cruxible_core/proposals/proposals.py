@@ -2457,14 +2457,22 @@ def _corroboration_digests(claim_type: ClaimType) -> frozenset[str]:
 def _candidate_contract_resolver(
     tree: Mapping[str, bytes],
 ) -> Callable[[ContractRef], Contract | None]:
-    """Read a pinned Contract version from the candidate tree, which includes this set."""
+    """Read a pinned Contract version from the candidate tree, which includes this set.
 
-    from cruxible_client.contracts.shapes import contract_path, parse_contract
+    A reference that pins a digest resolves only to the Contract with that digest.
+    """
+
+    from cruxible_client.contracts.shapes import contract_digest, contract_path, parse_contract
 
     def resolve(ref: ContractRef) -> Contract | None:
         path = contract_path(ref.name, ref.version)
         content = tree.get(path)
-        return None if content is None else parse_contract(content, path=path)
+        if content is None:
+            return None
+        contract = parse_contract(content, path=path)
+        if ref.digest is not None and contract_digest(contract).tagged != ref.digest:
+            return None
+        return contract
 
     return resolve
 

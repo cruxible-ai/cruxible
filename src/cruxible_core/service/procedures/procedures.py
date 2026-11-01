@@ -43,6 +43,7 @@ from cruxible_core.procedures.execution import (
     ProcedureExecutor,
     ProcedureRunResultV1,
     ProviderRuntimeInvokerProtocol,
+    QueryContractViolated,
     ReadCeilingExceeded,
     StateTapReaderProtocol,
     StateTapReadResultV1,
@@ -120,6 +121,84 @@ class LocalExhaustPromotionVerifier:
         )
 
 
+def _pinned_contract(
+    resolve: Callable[[ContractRef], Contract | None], ref: ContractRef
+) -> Contract:
+    contract = resolve(ref)
+    if contract is None:
+        raise ExecutionError(
+            f"the Query's pinned Contract {ref.spelling} is not accepted at this coordinate"
+        )
+    return contract
+
+
+def _first_problem(record: Any) -> dict[str, object] | None:
+    from cruxible_client.contracts.shapes import FieldInvalid
+
+    for name, result in sorted(record.fields.items()):
+        if isinstance(result, FieldInvalid):
+            return {"field": name, "problem": result.problem.model_dump(mode="json")}
+    return None
+
+
+def enforce_query_parameter_contract(
+    parameters: Mapping[str, object],
+    contract: Contract,
+    resolve: Callable[[ContractRef], Contract | None],
+) -> None:
+    """Refuse a Procedure read whose parameters break the Query's parameter Contract."""
+
+    from cruxible_client.contracts.shapes import check_record
+
+    problem = _first_problem(
+        check_record(parameters, contract, record="parameters", resolve=resolve)
+    )
+    if problem is not None:
+        raise QueryContractViolated(
+            direction="parameters",
+            details={"contract": f"{contract.name}@{contract.version}", **problem},
+        )
+
+
+def enforce_query_row_contract(
+    result: ClaimQueryResult,
+    contract: Contract,
+    resolve: Callable[[ContractRef], Contract | None],
+) -> None:
+    """Refuse a Procedure read any of whose rows breaks the Query's row Contract.
+
+    A row's projected fields are checked by name: a present field's value is
+    checked against its declared type; an absent one satisfies only an
+    optional field; a conflicted one satisfies none.
+    """
+
+    from cruxible_client.contracts.shapes import check_record
+
+    for index, row in enumerate(result.rows):
+        present: dict[str, object] = {}
+        conflicted: list[str] = []
+        for item in row.fields:
+            if item.state == "present":
+                present[item.name] = item.value
+            elif item.state == "conflict":
+                conflicted.append(item.name)
+        declared_conflicts = sorted(set(conflicted) & set(contract.fields))
+        problem: dict[str, object] | None = (
+            {"field": declared_conflicts[0], "problem": {"code": "conflict"}}
+            if declared_conflicts
+            else _first_problem(check_record(present, contract, record="row", resolve=resolve))
+        )
+        if problem is not None:
+            raise QueryContractViolated(
+                direction="row",
+                details={
+                    "contract": f"{contract.name}@{contract.version}",
+                    "row": index,
+                    **problem,
+                },
+            )
+
+
 class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
     """Read accepted state for a Procedure: one exact Query or ClaimType, to the end."""
 
@@ -160,6 +239,19 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
             raise ExecutionError(
                 "state tap QueryDefinition pin does not match the admitted coordinate"
             )
+        definition = accepted.query
+        resolve = None
+        if definition.parameter_contract is not None or definition.row_contract is not None:
+            from cruxible_core.service.procedures.procedure_runs import (
+                accepted_contract_resolver,
+            )
+
+            resolve = accepted_contract_resolver(self.instance, internal)
+        if definition.parameter_contract is not None:
+            assert resolve is not None
+            enforce_query_parameter_contract(
+                dict(parameters), _pinned_contract(resolve, definition.parameter_contract), resolve
+            )
         run = service_run_playbill_query(
             self.instance,
             name=query.target.name,
@@ -177,6 +269,11 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
                 clipped=truncation.clipped_budgets,
                 candidates=truncation.candidate_result_count,
                 ceiling=ceiling,
+            )
+        if definition.row_contract is not None:
+            assert resolve is not None
+            enforce_query_row_contract(
+                run.result, _pinned_contract(resolve, definition.row_contract), resolve
             )
         return StateTapReadResultV1(
             value=state_tap_value(run.result),

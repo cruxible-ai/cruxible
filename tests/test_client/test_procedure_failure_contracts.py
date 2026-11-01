@@ -97,6 +97,7 @@ def test_node_refusal_vocabulary_covers_every_executor_code() -> None:
         "extract_duplicate_key",
         "extract_format_unsupported",
         "read_ceiling_exceeded",
+        "query_contract_violated",
         "repeat_exhausted",
         "budget_exhausted",
         "runtime_reference_unresolved",

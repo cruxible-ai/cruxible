@@ -120,6 +120,7 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "provider_replay_receipt_required": "record_the_durable_provider_completion_before_replay",
     "state_tap_refused": "restore_the_accepted_state_query_backend",
     "read_ceiling_exceeded": "raise_the_procedure_max_read_rows_or_narrow_the_query",
+    "query_contract_violated": "correct_the_read_parameters_or_the_query_contract",
     "decode_invalid": "acquire_bytes_that_decode_as_the_capture_contract_declares",
     "decoded_limit_exceeded": "raise_the_capture_contract_decoding_limits_or_acquire_less",
     "extract.header_invalid@1": "acquire_a_document_whose_required_header_field_reads",

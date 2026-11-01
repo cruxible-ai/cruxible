@@ -1,10 +1,10 @@
-"""A run's read budget: one cumulative ceiling its Line, Mandates and parent can only lower.
+"""A run's read budget: one cumulative ceiling its Line and parent can only lower.
 
 ``max_read_rows`` is a hard cap a Procedure declares (authored ``read_rows``).
 A run's reads, Query and Claim alike, draw on one budget: the Line's stated
-``max_read_rows`` (else the cap), lowered by every live Mandate's resource
-ceiling. An invoked child gets what its parent has left, so the parent and its
-children never read past the parent's budget between them. These run on the
+``max_read_rows`` (else the cap). An invoked child gets what its parent has
+left, so the parent and its children never read past the parent's budget
+between them. These run on the
 seeded work-item world: two Subjects, one status Claim each.
 """
 
