@@ -584,3 +584,103 @@ def test_a_write_to_a_key_field_stores_its_canonical_value(instance: PlaybillIns
         {"op": "set", "subject": f"{PACKAGE}/requests", "field": "name", "value": "_bad"},
     )
     assert refused.refusal is not None and refused.refusal.code == "cruxible.subject.key_invalid"
+
+
+# -- F-001: a served query's operand takes the shared key canonicalization ------------
+
+
+@pytest.fixture
+def ruled(tmp_path: Path) -> PlaybillInstance:
+    """Two kinds whose form and normalizer can disagree on an operand."""
+
+    instance, _owner = initialize_local(tmp_path)
+    accept(
+        instance,
+        change_set(
+            ClaimTypeInput(
+                kind="claim_type", claim_type=_key("pkg.lower", "label", canonical_form=("trim",))
+            ),
+            SubjectKindInput(
+                kind="subject_kind",
+                name="pkg.lower",
+                keys=("pkg.lower.label",),
+                normalizers={"label": LowercaseNormalizer(version=1)},
+            ),
+            ClaimTypeInput(
+                kind="claim_type", claim_type=_key("pkg.purl", "purl", canonical_form=("casefold",))
+            ),
+            SubjectKindInput(
+                kind="subject_kind",
+                name="pkg.purl",
+                keys=("pkg.purl.purl",),
+                normalizers={"purl": PurlTypeNormalizer(version=1, identity="package")},
+            ),
+        ),
+    )
+    _create(instance, "pkg.lower", "Ready")
+    _create(instance, "pkg.purl", "pkg:generic/x")
+    return instance
+
+
+def _param_query_on(instance: PlaybillInstance, kind: str, predicate: str, operator: str) -> str:
+    from cruxible_client.contracts.authoring.inputs import QueryDefinitionInput
+    from cruxible_client.contracts.query.authored import QuerySpecInput
+
+    name = f"{kind}.by_{'eq' if operator == '==' else 'ne'}"
+    accept(
+        instance,
+        lower_authoring_input(
+            QueryDefinitionInput(
+                kind="query_definition",
+                query_definition=QuerySpecInput.model_validate(
+                    {
+                        "query": name,
+                        "from": {"p": kind},
+                        "fields": ["p", {"value": f"p.{predicate}"}],
+                        "where": f"p.{predicate} {operator} $value",
+                        "params": {"value": "string"},
+                    }
+                ),
+            )
+        ),
+    )
+    return name
+
+
+@pytest.mark.parametrize(
+    ("kind", "predicate", "stored", "bad"),
+    [
+        ("pkg.lower", "pkg.lower.label", "ready", "   "),
+        ("pkg.purl", "pkg.purl.purl", "pkg:generic/x", "pkg:generic/%C3%A9"),
+    ],
+    ids=["empty-after-form", "form-respells-normalized"],
+)
+def test_a_served_operand_no_key_can_equal_refuses(
+    ruled: PlaybillInstance, kind: str, predicate: str, stored: str, bad: str
+) -> None:
+    from cruxible_core.service.discovery.query import service_run_playbill_query
+    from cruxible_core.service.read_refusals import ReadRefusalError
+
+    for operator in ("==", "!="):
+        name = _param_query_on(ruled, kind, predicate, operator)
+
+        def run(value: str) -> Any:
+            return service_run_playbill_query(
+                ruled,
+                name=name,
+                evaluation_time=datetime(2026, 10, 9, 13, tzinfo=UTC),
+                parameters={"value": value},
+            ).result
+
+        refused = run(bad)
+        assert refused.verdict == "refused", (operator, refused)
+        assert refused.refusal is not None
+        assert refused.refusal.code == "cruxible.query.value_type_mismatch"
+        assert run(stored).verdict == "completed"
+    with pytest.raises(ReadRefusalError) as caught:
+        _compact(ruled, kind=kind, where=[{"field": predicate.rsplit(".", 1)[1], "eq": bad}])
+    assert caught.value.error_code == "cruxible.query.value_type_mismatch"
+    with pytest.raises(ReadRefusalError):
+        _compact(
+            ruled, kind=kind, where=[{"field": predicate.rsplit(".", 1)[1], "in": [stored, bad]}]
+        )

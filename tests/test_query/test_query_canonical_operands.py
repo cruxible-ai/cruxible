@@ -7,6 +7,8 @@ it compare equal and one distinct under it stays distinct.
 
 from __future__ import annotations
 
+import pytest
+
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.query.grammar import (
     QueryClaimValueRef,
@@ -127,3 +129,98 @@ def test_a_key_predicates_operand_takes_its_normalizer_after_the_form() -> None:
 def test_a_fact_row_without_a_key_normalizer_keeps_its_bytes() -> None:
     row = status_claim(1, "wi-1", "ready")
     assert "key_normalizer" not in row.model_dump(mode="json")
+
+
+# -- F-001: operands take the one shared key canonicalization, both checks ------------
+
+
+def _rule(spelled: dict[str, object]) -> object:
+    from pydantic import TypeAdapter
+
+    from cruxible_client.contracts.identity_normalizers import KeyNormalizer
+
+    return TypeAdapter(KeyNormalizer).validate_python(spelled)
+
+
+_LOWER_TRIM = (("trim",), {"normalizer": "lowercase", "version": 1})
+_PURL_CASEFOLD = (("casefold",), {"normalizer": "purl-type", "version": 1, "identity": "package"})
+
+
+def _ruled(row: ClaimFactRowV1, form: tuple[str, ...], rule: dict[str, object]) -> ClaimFactRowV1:
+    return row.model_copy(update={"canonical_form": form, "key_normalizer": _rule(rule)})
+
+
+def _param_query(operator: str) -> object:
+    from cruxible_client.contracts.query.definitions import QueryDefinition
+    from cruxible_client.contracts.query.grammar import (
+        QueryParameterDeclaration,
+        QueryParameterRef,
+    )
+
+    base = typed_item_query(STATUS_PREDICATE, name="project.status_param")
+    return QueryDefinition.model_validate(
+        {
+            **dict(base),
+            "where": QueryComparisonFilter(
+                left=QueryClaimValueRef(binding="item", predicate=STATUS_PREDICATE),
+                operator=operator,  # type: ignore[arg-type]
+                right=QueryParameterRef(parameter="value"),
+                value_type="string",
+            ),
+            "parameters": (QueryParameterDeclaration(name="value", value_type="string"),),
+        }
+    )
+
+
+def _membership(*values: str) -> object:
+    refs = tuple(
+        sorted(
+            (QueryLiteralRef(value=value) for value in values),
+            key=lambda item: canonical_bytes(item.model_dump(mode="json")),
+        )
+    )
+    return typed_item_query(
+        STATUS_PREDICATE,
+        name="project.status_in",
+        where=QueryMembershipFilter(
+            left=QueryClaimValueRef(binding="item", predicate=STATUS_PREDICATE),
+            values=refs,
+            value_type="string",
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("ruling", "stored", "bad"),
+    [
+        # trim + lowercase@1: an all-spaces operand settles to "", which is no key.
+        (_LOWER_TRIM, "ready", "   "),
+        # casefold + purl-type@1: the second form pass re-spells the escapes, so no
+        # value is canonical under both rules.
+        (_PURL_CASEFOLD, "pkg:generic/x", "pkg:generic/%C3%A9"),
+    ],
+    ids=["empty-after-form", "form-respells-normalized"],
+)
+def test_an_operand_no_key_can_equal_refuses_in_every_operator(
+    ruling: tuple[tuple[str, ...], dict[str, object]], stored: str, bad: str
+) -> None:
+    form, rule = ruling
+    rows = facts((_ruled(status_claim(1, "wi-1", stored), form, rule),))
+    for operator in ("eq", "ne"):
+        for query, parameters in (
+            (_param_query(operator), {"value": bad}),
+            (_eq(bad) if operator == "eq" else None, None),
+        ):
+            if query is None:
+                continue
+            result = run(query, rows, parameters=parameters)  # type: ignore[arg-type]
+            assert result.verdict == "refused", (operator, result)
+            assert result.refusal is not None
+            assert result.refusal.code == "cruxible.query.value_type_mismatch"
+    refused = run(_membership(stored, bad), rows)  # type: ignore[arg-type]
+    assert refused.verdict == "refused"
+    assert refused.refusal is not None
+    assert refused.refusal.code == "cruxible.query.value_type_mismatch"
+    # A canonical operand still matches through the parameter path.
+    matched = run(_param_query("eq"), rows, parameters={"value": stored})  # type: ignore[arg-type]
+    assert [row.fields[0].value for row in matched.rows] == ["wi-1"]

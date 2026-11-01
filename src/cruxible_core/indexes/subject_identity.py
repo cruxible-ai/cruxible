@@ -21,15 +21,12 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
-from cruxible_client.contracts.canonical_forms import (
-    CanonicalFormDidNotConverge,
-    canonicalize_literal,
-)
 from cruxible_client.contracts.claim_types import ClaimType, effective_canonical_form
 from cruxible_client.contracts.identity_normalizers import (
     NO_NORMALIZER,
     KeyNormalizationRefused,
     KeyNormalizer,
+    canonical_key_part,
     normalize_key_value,
     normalizer_spelling,
 )
@@ -89,22 +86,12 @@ def canonical_key_value(
     Raises ``SubjectKeyInvalid`` naming the part and why.
     """
 
-    form = effective_canonical_form(claim_type)
     try:
-        value = canonicalize_literal(value, form)
-        normalized = normalize_key_value(normalizer, value)
-        settled = canonicalize_literal(normalized, form)
-    except (CanonicalFormDidNotConverge, KeyNormalizationRefused) as exc:
-        raise SubjectKeyInvalid(f"{predicate}: {exc}") from exc
-    if settled != normalized:
-        raise SubjectKeyInvalid(
-            f"{predicate}: {normalizer_spelling(normalizer)} gives {normalized!r}, which the "
-            "key ClaimType's canonical form re-spells; the two rules disagree on this value"
+        return canonical_key_part(  # type: ignore[return-value]
+            value, effective_canonical_form(claim_type), normalizer
         )
-    problem = key_value_problem(normalized)
-    if problem is not None:
-        raise SubjectKeyInvalid(f"{predicate}: {problem}")
-    return normalized  # type: ignore[return-value]
+    except KeyNormalizationRefused as exc:
+        raise SubjectKeyInvalid(f"{predicate}: {exc}") from exc
 
 
 def canonical_key(

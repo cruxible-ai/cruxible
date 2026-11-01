@@ -51,7 +51,7 @@ from cruxible_client.contracts.errors import CanonicalEncodingError, CruxibleErr
 from cruxible_client.contracts.identity_normalizers import (
     KeyNormalizationRefused,
     KeyNormalizer,
-    normalize_key_value,
+    canonical_key_part,
 )
 from cruxible_client.contracts.procedures.reads import ProcedureReadCeiling
 from cruxible_client.contracts.query.definitions import (
@@ -663,11 +663,11 @@ class _Evaluator:
             except CanonicalFormDidNotConverge as exc:
                 raise _refuse(VALUE_TYPE_MISMATCH, str(exc)) from exc
         if key_rule is not None and isinstance(value, str):
+            # The shared key canonicalization (form, normalizer, both checks):
+            # an operand no stored key can equal refuses, never silently misses.
             try:
-                value = normalize_key_value(key_rule, value)
-                if form:
-                    value = canonicalize_literal(value, form)
-            except (KeyNormalizationRefused, CanonicalFormDidNotConverge) as exc:
+                value = canonical_key_part(value, form, key_rule)
+            except KeyNormalizationRefused as exc:
                 raise _refuse(VALUE_TYPE_MISMATCH, f"not a key of this field: {exc}") from exc
         if (
             value_type == "subject_reference"

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Annotated, Final, Literal, TypeAlias
 from urllib.parse import quote, unquote
@@ -380,6 +381,44 @@ def normalize_key_value(rule: KeyNormalizer, value: object) -> object:
     return identity.package if rule.identity == "package" else identity.variant
 
 
+def canonical_key_part(value: object, form: Iterable[str], rule: KeyNormalizer) -> object:
+    """One key part's canonical value: the ClaimType ``form``, then ``rule`` (R12, D4).
+
+    The one key canonicalization every route shares (creation, key reads,
+    Contract values, query operands). The result is refused
+    (``KeyNormalizationRefused``) when the form does not settle the value, when
+    ``rule`` cannot read it, when the form would re-spell the normalized value
+    (the two rules disagree, so no value is canonical under both), or when it
+    is not a key value (a non-empty string, an integer or a boolean).
+    """
+
+    from cruxible_client.contracts.canonical_forms import (
+        CanonicalFormDidNotConverge,
+        canonicalize_literal,
+    )
+
+    transforms = tuple(form)
+    try:
+        normalized = normalize_key_value(rule, canonicalize_literal(value, transforms))
+        settled = canonicalize_literal(normalized, transforms)
+    except CanonicalFormDidNotConverge as exc:
+        raise KeyNormalizationRefused(str(exc)) from exc
+    if settled != normalized:
+        raise KeyNormalizationRefused(
+            f"{normalizer_spelling(rule)} gives {normalized!r}, which the key ClaimType's "
+            "canonical form re-spells; the two rules disagree on this value"
+        )
+    if isinstance(normalized, bool | int):
+        return normalized
+    if not isinstance(normalized, str):
+        raise KeyNormalizationRefused(
+            f"a key part is a string, an integer or a boolean, not {type(normalized).__name__}"
+        )
+    if not normalized:
+        raise KeyNormalizationRefused("a key part is never empty")
+    return normalized
+
+
 __all__ = [
     "LOWERCASING_NORMALIZERS",
     "NORMALIZER_VERSIONS",
@@ -392,6 +431,7 @@ __all__ = [
     "Pep503Normalizer",
     "PurlIdentity",
     "PurlTypeRule",
+    "canonical_key_part",
     "PurlTypeNormalizer",
     "lowercase_v1",
     "normalize_key_value",
