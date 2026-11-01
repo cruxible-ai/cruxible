@@ -67,7 +67,7 @@ NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 
 
 def test_direct_lane_requires_line_authority_for_effectful_terminals() -> None:
-    effectful = {"emit_capture", "post_inbox", "propose_change_set", "settle_change_set"}
+    effectful = {"emit_capture", "post_inbox", "propose_change_set", "settle_change_set", "claims"}
     assert DIRECT_NODE_KINDS.isdisjoint(effectful)
     # Every terminal, the inbox included, runs under a Line's authority.
     assert LINE_NODE_KINDS == effectful

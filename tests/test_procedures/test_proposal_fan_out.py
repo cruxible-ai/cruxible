@@ -14,6 +14,7 @@ import pytest
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claims import parse_claim
 from cruxible_client.contracts.procedures.models import ProposalItemsFanOut, ProposeChangeSetNode
+from cruxible_core.procedures.completeness import Completeness
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.test_procedures import test_procedure_source_runs as fixtures
@@ -163,6 +164,7 @@ def _two_capture_state(items):  # type: ignore[no-untyped-def]
         parameters={},
         outputs={"joined": {"items": [_element(None), _element("vendor")]}},
         provenance={"joined": provenance},
+        completeness=Completeness(),
         alias_tokens=lambda aliases: provenance.whole if "joined" in aliases else frozenset(),
     )
 
@@ -222,6 +224,7 @@ class _State:
         self.parameters = {}
         self.outputs = outputs
         self.provenance = provenance
+        self.completeness = Completeness()
 
     def alias_tokens(self, aliases):  # type: ignore[no-untyped-def]
         tokens = frozenset()

@@ -126,11 +126,11 @@ def test_procedure_round_trip_digest_and_node_golden() -> None:
     assert definition.graph_format == 8
     assert procedure_runnability(definition) == ("direct", ())
     assert procedure.definition_digest == (
-        "sha256:3fb2f634a990b7f14b82c47989f0fbe6a214cf95b65ddba89dbe269ef3e4d1f7"
+        "sha256:f22d80f7cf37738876e55affcbe2e9afda621f10ab0072574ccfb459e6432734"
     )
     nodes = compute_procedure_node_digests(definition)
     assert nodes["read"].subtree_digest == (
-        "sha256:713d082f1179a88cc08ca475ecfa358f56699bcf706661c4623bea3e1217be6f"
+        "sha256:785d37efc9fa599307d4bf133ebeb61daef67827a0119684b13bddcf57015778"
     )
 
     content = render_procedure(procedure)
