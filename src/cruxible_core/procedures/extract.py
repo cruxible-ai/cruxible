@@ -461,10 +461,12 @@ def _check(
         target = None if resolve is None else resolve(field_type.contract)
         if target is None:
             return _bad("type_mismatch", field, value)
-        # Each declared field carries its checked value (a key canonicalized, a
-        # date parsed): what a later Contract boundary reads is the typed value,
-        # never the raw lexeme. Undeclared members pass through as before.
-        nested: dict[str, object] = dict(value)
+        # The nested record is built from its checked values (a key canonicalized,
+        # a date parsed), in the nested Contract's own fields: what a later
+        # Contract boundary reads is the typed value, never the raw lexeme. A
+        # Contract is closed (the empty record holds only ``{}``), so an
+        # undeclared member is not carried.
+        nested: dict[str, object] = {}
         for name, declared in target.fields.items():
             if name not in value:
                 if not declared.optional:

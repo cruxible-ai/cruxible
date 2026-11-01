@@ -812,20 +812,21 @@ def accepted_contract_resolver(
 
     from cruxible_client.contracts.shapes import contract_digest, contract_identity
 
-    found: dict[tuple[str, int], Contract | None] = {}
+    found: dict[tuple[str, int], tuple[Contract, str] | None] = {}
 
     def resolve(ref: ContractRef) -> Contract | None:
         key = (ref.name, ref.version)
         if key not in found:
             with instance.bind_accepted_projection(coordinate) as projection:
                 value = projection.typed.source(contract_identity(ref.name, ref.version).qualified)
-            found[key] = value if isinstance(value, Contract) else None
-        contract = found[key]
-        if contract is None or (
-            ref.digest is not None and contract_digest(contract).tagged != ref.digest
-        ):
+            # The digest is computed once per version, not once per nested value.
+            found[key] = (
+                (value, contract_digest(value).tagged) if isinstance(value, Contract) else None
+            )
+        entry = found[key]
+        if entry is None or (ref.digest is not None and entry[1] != ref.digest):
             return None
-        return contract
+        return entry[0]
 
     return resolve
 

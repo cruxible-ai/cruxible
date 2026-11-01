@@ -625,7 +625,7 @@ def test_nested_and_listed_nested_keys_are_extracted_canonical() -> None:
             "vulnerabilities": [
                 {
                     "cveID": "CVE-2026-0001",
-                    "primary": {"cve": "CVE-2026-0009", "note": "x"},
+                    "primary": {"cve": "CVE-2026-0009", "note": "x", "extra": 1},
                     "related": [{"cve": " CVE-2026-0002 "}, {"cve": "cve-2026-0003"}],
                 }
             ],
@@ -675,7 +675,8 @@ def test_nested_and_listed_nested_keys_are_extracted_canonical() -> None:
     ).records
     primary, related = record.fields["primary"], record.fields["related"]
     assert isinstance(primary, FieldPresent) and isinstance(related, FieldPresent)
-    # Each declared nested field carries its checked (canonical) value.
+    # Built from the checked values in the nested Contract's own fields: a
+    # Contract is closed, so the undeclared ``extra`` is not carried.
     assert primary.value == {"cve": "cve-2026-0009", "note": "x"}
     assert related.value == [{"cve": "cve-2026-0002"}, {"cve": "cve-2026-0003"}]
     # The emitted record passes a later Contract boundary, which checks keys canonical.
