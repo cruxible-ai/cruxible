@@ -13,8 +13,6 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactRef
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
-    ClaimAdmissionPolicy,
-    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy as ClaimEvidenceAdmissionPolicy,
@@ -33,6 +31,7 @@ from cruxible_core.service.discovery.next import (
     _evidence_repair,
     _item,
 )
+from tests.support.claim_types import claim_type as build_claim_type
 
 CLAIM = "CLM-" + "a" * 32
 OTHER = "CLM-" + "b" * 32
@@ -43,16 +42,12 @@ CITATION = "sha256:" + "e" * 64
 
 def _captured_type(*, roles: tuple[str, ...] = ("observation",)) -> ClaimType:
     predicate = "project.work_item.measured"
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name=predicate),
+    return build_claim_type(
         predicate=predicate,
+        value_type={"type": "integer"},
         allowed_subject_kinds=("project.work_item",),
-        object_kind="literal",
-        literal_schema={"type": "integer"},
-        cardinality="one",
         permitted_roles=("observation",),
         evidence_requirement="captured",
-        revision_evidence="accumulate",
         evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
             rules=(
                 ClaimEvidenceAdmissionRule(
@@ -71,10 +66,6 @@ def _captured_type(*, roles: tuple[str, ...] = ("observation",)) -> ClaimType:
                     subject_binding="exact_claim_subject",
                 ),
             )
-        ),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality="one", eligible_verdicts=("supported",), selector="only_contender"
         ),
     )
 
