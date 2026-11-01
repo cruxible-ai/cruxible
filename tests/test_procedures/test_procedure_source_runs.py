@@ -116,7 +116,6 @@ from tests.core_support._support import initialize_local
 from tests.support.lines import line_budgets, line_spec
 from tests.support.mandates import procedure_mandate
 from tests.support.procedures import (
-    MAX_WALL_CLOCK,
     named,
     procedure_definition,
     procedure_hard_caps,
@@ -329,15 +328,7 @@ def _procedure(  # noqa: PLR0913
                 as_="result",
             ),
         ),
-        returns="result",
-        hard_caps=procedure_hard_caps(
-            max_wall_clock=MAX_WALL_CLOCK,
-            max_provider_calls=4,
-            max_capture_bytes=131_072,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
-        terminal_capability=1,
+        hard_caps=procedure_hard_caps(preset="source"),
     )
     procedure = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=PROCEDURE_NAME),
@@ -837,10 +828,8 @@ def _served_line(
     )
     caps = procedure.definition.hard_caps
     line = line_spec(
-        identity=ArtifactIdentity(kind="Line", name=LINE_NAME),
-        occurrence_epoch=1,
+        LINE_NAME,
         procedure=procedure_pin,
-        parameters={},
         bindings={
             "read": LineBinding(
                 build=binding_pin(provider.identity, provider_digest(provider).tagged),
@@ -848,13 +837,7 @@ def _served_line(
             )
         },
         acquisition={SOURCE_CAPTURE: policy},
-        max_authority="observe",
-        budgets=line_budgets(
-            max_capture_bytes=caps.max_capture_bytes,
-            max_items=caps.max_items,
-            max_provider_calls=caps.max_provider_calls,
-            max_wall_clock_microseconds=caps.max_wall_clock.microseconds,
-        ),
+        budgets=line_budgets(caps=caps),
         epsilon={"$decimal": "0.1"},
     )
     return line
@@ -862,16 +845,12 @@ def _served_line(
 
 def _line_mandate(line: LineSpec, procedure: ProcedureArtifact) -> ProcedureMandate:
     return procedure_mandate(
-        identity=ArtifactIdentity(kind="ProcedureMandate", name="advisory-line-mandate"),
+        "advisory-line-mandate",
         line=ArtifactPin(
             role="line",
             target=line.identity,
             artifact_digest=line_spec_digest(line).tagged,
         ),
-        grants="propose",
-        namespace=("claims",),
-        valid_from=datetime(2026, 1, 1, tzinfo=UTC),
-        expires_at=datetime(2027, 1, 1, tzinfo=UTC),
     )
 
 

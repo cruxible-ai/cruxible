@@ -129,17 +129,14 @@ def _settle(
     accepted = procedure or _procedure()
     bound_line = line or _line(procedure=accepted)
     return procedure_mandate(
+        "triage",
         changes=updates,
-        identity=ArtifactIdentity(kind="ProcedureMandate", name="triage"),
         line=ArtifactPin(
             role="line",
             target=bound_line.identity,
             artifact_digest=line_spec_digest(bound_line).tagged,
         ),
         grants="settle",
-        namespace=("claims",),
-        valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc),
         scope=(
             MandateClaimScope(
                 claim_type=ArtifactPin(

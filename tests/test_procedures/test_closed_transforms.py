@@ -75,7 +75,6 @@ def _run(nodes: tuple[Any, ...], tmp_path: Path, *, returns: str = "result") -> 
         nodes=tuple(nodes),
         returns=returns,
         hard_caps=_hard_caps(),
-        terminal_capability=1,
     )
     accepted = _owned_accepted(definition, contracts=(empty, out), pins=(entry, out_pin))
     fixture = _fixture(tmp_path)

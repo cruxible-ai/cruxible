@@ -93,7 +93,6 @@ from tests.core_support._published_world import (
 from tests.core_support._subject_kind_support import _is_key, without_keys
 from tests.core_support._support import initialize_local
 from tests.support.procedures import (
-    MAX_WALL_CLOCK,
     accepted_procedure,
     named,
     procedure_definition,
@@ -124,15 +123,7 @@ def _accepted_procedure() -> AcceptedProcedure:
                 as_="result",
             ),
         ),
-        returns="result",
-        hard_caps=procedure_hard_caps(
-            max_wall_clock=MAX_WALL_CLOCK,
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=20,
-            max_repeat_attempts=1,
-        ),
-        terminal_capability=1,
+        hard_caps=procedure_hard_caps(max_items=20),
     )
     return accepted_procedure(definition)
 

@@ -10,7 +10,6 @@ import tempfile
 import time
 from contextlib import nullcontext
 from dataclasses import replace
-from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -114,7 +113,6 @@ from tests.support.invocation_ids import unique_invocation_id
 from tests.support.lines import line_budgets, line_spec
 from tests.support.mandates import procedure_mandate
 from tests.support.procedures import (
-    MAX_WALL_CLOCK,
     boundary_contract,
     contract_files,
     contract_pin,
@@ -902,17 +900,10 @@ def _provider_line_procedure(accepted_provider: AcceptedProvider) -> AcceptedPro
                 as_="result",
             ),
         ),
-        returns="result",
         slots={
             "ask": ProcedureSlot.model_validate(operation.signature().model_dump(by_alias=True))
         },
-        hard_caps=procedure_hard_caps(
-            max_wall_clock=MAX_WALL_CLOCK,
-            max_provider_calls=4,
-            max_capture_bytes=2048,
-            max_items=20,
-            max_repeat_attempts=1,
-        ),
+        hard_caps=procedure_hard_caps(preset="provider", max_repeat_attempts=1),
         terminal_capability=2,
     )
     procedure = ProcedureArtifact(
@@ -1072,8 +1063,7 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
     definition = accepted.procedure.definition
     operation = accepted_provider.provider.operations[0]
     line = line_spec(
-        identity=ArtifactIdentity(kind="Line", name="served-provider-hourly"),
-        occurrence_epoch=1,
+        "served-provider-hourly",
         procedure=procedure_pin,
         parameters={"status": "open"},
         bindings={
@@ -1085,23 +1075,13 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
             )
         },
         max_authority="propose",
-        budgets=line_budgets(
-            max_capture_bytes=definition.hard_caps.max_capture_bytes,
-            max_items=definition.hard_caps.max_items,
-            max_provider_calls=definition.hard_caps.max_provider_calls,
-            max_wall_clock_microseconds=definition.hard_caps.max_wall_clock.microseconds,
-        ),
-        epsilon={"$decimal": "0"},
+        budgets=line_budgets(caps=definition.hard_caps),
     )
     mandate = procedure_mandate(
-        identity=ArtifactIdentity(kind="ProcedureMandate", name="served-provider-mandate"),
+        "served-provider-mandate",
         line=ArtifactPin(
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
-        grants="propose",
-        namespace=("claims",),
-        valid_from=datetime(2026, 1, 1, tzinfo=UTC),
-        expires_at=datetime(2027, 1, 1, tzinfo=UTC),
     )
     instance = get_playbill_manager().get(instance_id)
     _accept_members(

@@ -71,14 +71,7 @@ def _definition(query: ArtifactPin) -> ProcedureDefinition:
                 as_="result",
             ),
         ),
-        returns="result",
-        hard_caps=procedure_hard_caps(
-            max_wall_clock=CanonicalDuration(microseconds=2_000_000),
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
+        hard_caps=procedure_hard_caps(max_wall_clock=CanonicalDuration(microseconds=2_000_000)),
         terminal_capability=2,
     )
 
@@ -107,17 +100,11 @@ def _line(
         digest=accepted.artifact_digest,
     )
     line = line_spec(
-        identity=ArtifactIdentity(kind="Line", name="triage-hourly"),
+        "triage-hourly",
         occurrence_epoch=epoch,
         procedure=procedure_pin,
-        parameters={},
         max_authority=RUNG_AUTHORITY[requested_rung],
-        budgets=line_budgets(
-            max_capture_bytes=0,
-            max_items=100,
-            max_provider_calls=0,
-            max_wall_clock_microseconds=1_000_000,
-        ),
+        budgets=line_budgets(max_items=100, max_wall_clock_microseconds=1_000_000),
         epsilon={"$decimal": "0.1"},
         lifecycle=ArtifactLifecycle(predecessor_digest=predecessor_digest),
     )

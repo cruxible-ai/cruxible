@@ -66,7 +66,6 @@ from tests.core_support._light_capture_support import procedure_contract
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._subject_kind_support import bare_slug_claim_type, create_by_key
 from tests.support.procedures import (
-    MAX_WALL_CLOCK,
     named,
     procedure_definition,
     procedure_hard_caps,
@@ -276,15 +275,7 @@ def _procedure_definition(
                 )
             ),
         ),
-        returns="result",
-        hard_caps=procedure_hard_caps(
-            max_wall_clock=MAX_WALL_CLOCK,
-            max_provider_calls=4,
-            max_capture_bytes=131_072,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
-        terminal_capability=2 if terminal_kind == "propose_change_set" else 1,
+        hard_caps=procedure_hard_caps(preset="source"),
     )
 
 

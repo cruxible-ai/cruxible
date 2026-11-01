@@ -62,7 +62,6 @@ from tests.core_support._knowledge_loop_support import (
 )
 from tests.core_support._support import client_material
 from tests.support.procedures import (
-    MAX_WALL_CLOCK,
     bind_fixture,
     boundary_contract,
     contract_files,
@@ -70,7 +69,6 @@ from tests.support.procedures import (
     contract_resolver,
     named,
     procedure_definition,
-    procedure_hard_caps,
     procedure_members,
 )
 from tests.test_ledger.test_activation import _sign
@@ -255,15 +253,6 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
                 as_="result",
             ),
         ),
-        returns="result",
-        hard_caps=procedure_hard_caps(
-            max_wall_clock=MAX_WALL_CLOCK,
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
-        terminal_capability=1,
     )
     procedure = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),

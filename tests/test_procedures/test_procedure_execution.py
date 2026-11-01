@@ -221,13 +221,7 @@ def _budget(*, providers: int = 0, items: int = 100) -> ProcedureBudget:
 
 
 def _hard_caps(*, providers: int = 0, items: int = 100) -> ProcedureHardCaps:
-    return procedure_hard_caps(
-        max_wall_clock=MAX_WALL_CLOCK,
-        max_provider_calls=providers,
-        max_capture_bytes=0,
-        max_items=items,
-        max_repeat_attempts=3,
-    )
+    return procedure_hard_caps(preset="execution", max_provider_calls=providers, max_items=items)
 
 
 def _accepted(
@@ -284,9 +278,7 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
                 as_="result",
             ),
         ),
-        returns="result",
         hard_caps=_hard_caps(items=max_items),
-        terminal_capability=1,
     )
     return _accepted(definition, pins=(contract_in, contract_out, query))
 
@@ -357,9 +349,7 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
         contract_in=named(entry_pin),
         contract_out=named(typed_out),
         nodes=(listed, compute),
-        returns="result",
         hard_caps=_hard_caps(items=1),
-        terminal_capability=1,
     )
     return _owned_accepted(definition, contracts=(empty, item, typed), pins=(entry_pin, typed_out))
 
@@ -394,7 +384,6 @@ def _repeat_transform_procedure(*, max_items: int = 100) -> AcceptedProcedure:
         ),
         returns="repeated",
         hard_caps=_hard_caps(items=max_items),
-        terminal_capability=1,
     )
     return _accepted(definition, pins=(contract_in, contract_out))
 
@@ -466,9 +455,7 @@ def _guarded_filter_procedure(
             ),
             HaltNode(node_id="stop", reason="No filtered items."),
         ),
-        returns="result",
         hard_caps=_hard_caps(),
-        terminal_capability=1,
     )
     return _owned_accepted(
         definition,
@@ -512,9 +499,7 @@ def _guarded_scalar_procedure(
             ),
             HaltNode(node_id="stop", reason="Summary count was not positive."),
         ),
-        returns="result",
         hard_caps=_hard_caps(),
-        terminal_capability=1,
     )
     return _owned_accepted(
         definition,
@@ -980,13 +965,9 @@ def _accepted_line_for_admission(
     )
     assert admission.line_identity is not None
     line = line_spec(
-        identity=admission.line_identity,
-        occurrence_epoch=1,
+        admission.line_identity.name,
         procedure=procedure_pin,
-        parameters={},
-        max_authority="observe",
         budgets=caps_line_budgets(accepted_procedure.procedure.definition.hard_caps),
-        epsilon={"$decimal": "0"},
     )
     return AcceptedLineSpec(
         path=line_spec_path(line.identity.name),
@@ -1520,7 +1501,6 @@ def test_executor_recognizes_a_source_node_as_a_landed_capture_input(tmp_path) -
         nodes=(source,),
         returns="capture",
         hard_caps=_hard_caps(),
-        terminal_capability=1,
     )
     source_accepted = _accepted(source_definition, pins=(capture_contract,))
     fixture = _fixture(tmp_path)

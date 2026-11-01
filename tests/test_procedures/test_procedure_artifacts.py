@@ -83,16 +83,9 @@ def _definition(
         description="Read accepted claims and shape a bounded result.",
         contract_in=named(contract_in),
         contract_out=named(contract_out),
-        nodes=default_nodes if nodes is None else nodes,  # type: ignore[arg-type]
-        returns="result",
-        hard_caps=procedure_hard_caps(
-            max_wall_clock=CanonicalDuration(microseconds=2_000_000),
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
-        terminal_capability=terminal_capability,  # type: ignore[arg-type]
+        nodes=default_nodes if nodes is None else nodes,
+        hard_caps=procedure_hard_caps(max_wall_clock=CanonicalDuration(microseconds=2_000_000)),
+        terminal_capability=terminal_capability,
     )
 
 

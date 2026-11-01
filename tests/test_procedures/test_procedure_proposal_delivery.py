@@ -63,7 +63,7 @@ from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._subject_kind_support import core_assigned
-from tests.support.procedures import procedure_members
+from tests.support.procedures import procedure_definition, procedure_members
 from tests.test_procedures import test_procedure_source_runs as fixtures
 
 SUBJECT_KIND = "security.advisory"
@@ -165,7 +165,6 @@ def terminal_procedure(
         nodes = fixtures.severity_from_document(nodes)
     update: dict[str, object] = {
         "nodes": fixtures.with_fan_out(nodes, templates),
-        "terminal_capability": 2,
     }
     caps = {}
     if wall_clock_seconds is not None:
@@ -174,7 +173,7 @@ def terminal_procedure(
         caps["max_items"] = max_items
     if caps:
         update["hard_caps"] = procedure.definition.hard_caps.model_copy(update=caps)
-    definition = procedure.definition.model_copy(update=update)
+    definition = procedure_definition(base=procedure.definition, **update)
     return procedure.model_copy(
         update={
             "definition": definition,

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
 from cruxible_client.contracts.claims import ClaimType
@@ -127,34 +125,23 @@ def _world(tmp_path, *, only_subject: str | None = None, change_kinds=("create",
     # so its Line binds none either.
     caps = procedure.definition.hard_caps
     line = line_spec(
-        identity=ArtifactIdentity(kind="Line", name="triage-line"),
-        occurrence_epoch=1,
+        "triage-line",
         procedure=ArtifactPin(
             role="procedure",
             target=procedure.identity,
             artifact_digest=procedure_artifact_digest(procedure).tagged,
         ),
-        parameters={},
         max_authority="settle",
-        budgets=line_budgets(
-            max_wall_clock_microseconds=caps.max_wall_clock.microseconds,
-            max_provider_calls=caps.max_provider_calls,
-            max_capture_bytes=caps.max_capture_bytes,
-            max_items=caps.max_items,
-        ),
-        epsilon={"$decimal": "0"},
+        budgets=line_budgets(caps=caps),
     )
     mandate = procedure_mandate(
-        identity=ArtifactIdentity(kind="ProcedureMandate", name="triage"),
+        "triage",
         line=ArtifactPin(
             role="line",
             target=line.identity,
             artifact_digest=line_spec_digest(line).tagged,
         ),
         grants="settle",
-        namespace=("claims",),
-        valid_from=datetime(2026, 1, 1, tzinfo=UTC),
-        expires_at=datetime(2027, 1, 1, tzinfo=UTC),
         scope=(
             MandateClaimScope(
                 claim_type=ArtifactPin(

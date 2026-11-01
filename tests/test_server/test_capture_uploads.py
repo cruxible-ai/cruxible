@@ -49,7 +49,6 @@ from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.service.uploads import CaptureUploadRefused, CaptureUploadStore, UploadLimits
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.support.procedures import (
-    MAX_WALL_CLOCK,
     named,
     procedure_definition,
     procedure_hard_caps,
@@ -589,15 +588,7 @@ def _definition(contract_pin: ArtifactPin) -> ProcedureDefinition:
                 as_="result",
             ),
         ),
-        returns="result",
-        hard_caps=procedure_hard_caps(
-            max_wall_clock=MAX_WALL_CLOCK,
-            max_provider_calls=4,
-            max_capture_bytes=131_072,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
-        terminal_capability=1,
+        hard_caps=procedure_hard_caps(preset="source"),
     )
 
 

@@ -58,16 +58,14 @@ from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import initialize_local
 from tests.support.inbox import contract_members, inbox_node
 from tests.support.lines import line_budgets, line_spec
+from tests.support.procedures import accepted_procedure as carried_procedure
 from tests.support.procedures import (
-    MAX_WALL_CLOCK,
-    RUN_WALL_CLOCK,
     boundary_contract,
     named,
     procedure_definition,
     procedure_hard_caps,
     procedure_members,
 )
-from tests.support.procedures import accepted_procedure as carried_procedure
 from tests.test_indexes.test_resolution_contracts import _accept_tree, _actor
 
 NOW = datetime(2026, 8, 18, 15, 0, tzinfo=timezone.utc)
@@ -103,14 +101,7 @@ def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
             inbox_node("emit", fields={"note": "$item.order"}, for_each="$steps.rows.items"),
         ),
         returns="rows",
-        hard_caps=procedure_hard_caps(
-            max_wall_clock=MAX_WALL_CLOCK,
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=200,
-            max_repeat_attempts=2,
-        ),
-        terminal_capability=1,
+        hard_caps=procedure_hard_caps(max_repeat_attempts=2),
     )
     accepted_procedure = carried_procedure(
         definition,
@@ -120,17 +111,9 @@ def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
         "procedure", "Procedure", definition.name, digest=accepted_procedure.artifact_digest
     )
     line = line_spec(
-        identity=ArtifactIdentity(kind="Line", name="orders-triage"),
-        occurrence_epoch=1,
+        "orders-triage",
         procedure=procedure_pin,
-        parameters={},
-        max_authority="observe",
-        budgets=line_budgets(
-            max_capture_bytes=0,
-            max_items=100,
-            max_provider_calls=0,
-            max_wall_clock_microseconds=RUN_WALL_CLOCK.microseconds,
-        ),
+        budgets=line_budgets(max_items=100),
         epsilon={"$decimal": "0.1"},
     )
     return accepted_procedure, AcceptedLineSpec(

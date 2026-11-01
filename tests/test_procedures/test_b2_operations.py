@@ -38,7 +38,7 @@ from tests.support.operation_world import (
     slotted_spec,
     world,
 )
-from tests.support.procedures import procedure_limits, procedure_spec, procedure_spec_data, refs
+from tests.support.procedures import procedure_limits, procedure_spec
 
 
 @dataclass(frozen=True)
@@ -475,20 +475,14 @@ def _attempt_started_payload(instance, run_id):  # type: ignore[no-untyped-def]
 def plain_spec(*, name="test.plain"):  # type: ignore[no-untyped-def]
     """One `project` step: no Call or Source node, so no provider is involved."""
 
-    from cruxible_client.contracts.procedures.authored import ProcedureSpec
-
-    return ProcedureSpec.model_validate(
-        refs(
-            procedure_spec_data(
-                reference_text=True,
-                procedure=name,
-                input={"value": "int"},
-                output={"value": "int"},
-                steps=[ProjectStep(project="result", fields=refs({"value": "$input.value"}))],
-                returns="result",
-                hard_caps=procedure_limits(provider_calls=0),
-            )
-        )
+    return procedure_spec(
+        reference_text=True,
+        procedure=name,
+        input={"value": "int"},
+        output={"value": "int"},
+        steps=[ProjectStep(project="result", fields={"value": "$input.value"})],
+        returns="result",
+        hard_caps=procedure_limits(provider_calls=0),
     )
 
 
@@ -584,51 +578,39 @@ def _author_widget_kind(instance):  # type: ignore[no-untyped-def]
 def _plain_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
     """No Call or Source node: a pure ``project`` feeding a propose/settle terminal."""
 
-    from cruxible_client.contracts.procedures.authored import ProcedureSpec
-
-    return ProcedureSpec.model_validate(
-        refs(
-            procedure_spec_data(
-                reference_text=True,
-                procedure=name,
-                input={},
-                output={"value": "int"},
-                steps=[
-                    ProjectStep(project="shaped", fields={"value": 1}),
-                    {verb: (_self_sourced_subject_item(f"Plain direct {verb}."),)},
-                ],
-                returns="shaped",
-                hard_caps=procedure_limits(provider_calls=0),
-            )
-        )
+    return procedure_spec(
+        reference_text=True,
+        procedure=name,
+        input={},
+        output={"value": "int"},
+        steps=[
+            ProjectStep(project="shaped", fields={"value": 1}),
+            {verb: (_self_sourced_subject_item(f"Plain direct {verb}."),)},
+        ],
+        returns="shaped",
+        hard_caps=procedure_limits(provider_calls=0),
     )
 
 
 def _call_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
     """A slotted Call precedes the propose/settle terminal (a real provider run)."""
 
-    from cruxible_client.contracts.procedures.authored import ProcedureSpec
-
-    return ProcedureSpec.model_validate(
-        refs(
-            procedure_spec_data(
-                reference_text=True,
-                procedure=name,
-                input={"value": "int"},
-                output={"value": "int"},
-                slots={"compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}},
-                steps=[
-                    CallStep(
-                        call="result",
-                        slot="compute",
-                        input=refs({"value": "$input.value"}),
-                    ),
-                    {verb: (_self_sourced_subject_item(f"Called direct {verb}."),)},
-                ],
-                returns="result",
-                hard_caps=procedure_limits(provider_calls=1),
-            )
-        )
+    return procedure_spec(
+        reference_text=True,
+        procedure=name,
+        input={"value": "int"},
+        output={"value": "int"},
+        slots={"compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}},
+        steps=[
+            CallStep(
+                call="result",
+                slot="compute",
+                input={"value": "$input.value"},
+            ),
+            {verb: (_self_sourced_subject_item(f"Called direct {verb}."),)},
+        ],
+        returns="result",
+        hard_caps=procedure_limits(provider_calls=1),
     )
 
 
@@ -731,32 +713,27 @@ def test_authored_removed_nouns_are_refused_naming_their_replacement(tmp_path, p
 
 
 def test_an_invoked_child_uses_the_parent_lines_binding_under_its_node_path(tmp_path):
-    from cruxible_client.contracts.procedures.authored import ProcedureSpec
     from cruxible_client.contracts.providers import provider_digest
 
     first, second = operation_build(build="a"), operation_build(build="d")
     instance = slotted_world(tmp_path, first, second)
-    parent = ProcedureSpec.model_validate(
-        refs(
-            procedure_spec_data(
-                reference_text=True,
-                procedure="test.parent",
-                params={"value": "int"},
-                output={"value": "int"},
-                steps=[
-                    # The parent maps its parameter into the child's.
-                    InvokeStep(
-                        invoke="test.slotted",
-                        id="child",
-                        input={},
-                        params=refs({"value": "$params.value"}),
-                    ),
-                    ProjectStep(project="finished", fields=refs({"value": "$params.value"})),
-                ],
-                returns="finished",
-                hard_caps=procedure_limits(provider_calls=1),
-            )
-        )
+    parent = procedure_spec(
+        reference_text=True,
+        procedure="test.parent",
+        params={"value": "int"},
+        output={"value": "int"},
+        steps=[
+            # The parent maps its parameter into the child's.
+            InvokeStep(
+                invoke="test.slotted",
+                id="child",
+                input={},
+                params={"value": "$params.value"},
+            ),
+            ProjectStep(project="finished", fields={"value": "$params.value"}),
+        ],
+        returns="finished",
+        hard_caps=procedure_limits(provider_calls=1),
     )
     author_procedure(instance, parent, name="parent")
     # The child's slot is keyed under the invoke node; the parent Line names its build.
@@ -780,43 +757,38 @@ SOURCE_LINE = "test.sourced-line"
 
 
 def sourced_spec(*, description=None):  # type: ignore[no-untyped-def]
-    from cruxible_client.contracts.procedures.authored import ProcedureSpec
 
-    return ProcedureSpec.model_validate(
-        refs(
-            procedure_spec_data(
-                reference_text=True,
-                procedure="test.sourced",
-                description=description,
-                input={},
-                output={"length": "int"},
-                slots={
-                    "read": {
-                        "in": "workspace.file.request@1",
-                        "out": "workspace.file.result@1",
-                        "effect": "pure",
-                    }
+    return procedure_spec(
+        reference_text=True,
+        procedure="test.sourced",
+        description=description,
+        input={},
+        output={"length": "int"},
+        slots={
+            "read": {
+                "in": "workspace.file.request@1",
+                "out": "workspace.file.result@1",
+                "effect": "pure",
+            }
+        },
+        steps=[
+            CallStep(
+                call="doc",
+                captures={"capture": "test.orders-v1"},
+                slot="read",
+                input={
+                    "logical_source": "commerce.production.orders",
+                    "relative_path": "data/doc.json",
+                    "coordinate_type": "database-snapshot-v1",
+                    "coordinate": {"lsn": "workspace"},
+                    "selector_type": "relation-primary-key-v1",
+                    "selector": {"id": 7, "relation": "orders"},
                 },
-                steps=[
-                    CallStep(
-                        call="doc",
-                        captures={"capture": "test.orders-v1"},
-                        slot="read",
-                        input={
-                            "logical_source": "commerce.production.orders",
-                            "relative_path": "data/doc.json",
-                            "coordinate_type": "database-snapshot-v1",
-                            "coordinate": {"lsn": "workspace"},
-                            "selector_type": "relation-primary-key-v1",
-                            "selector": {"id": 7, "relation": "orders"},
-                        },
-                    ),
-                    ProjectStep(project="out", fields=refs({"length": "$doc.source.byte_length"})),
-                ],
-                returns="out",
-                hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
-            )
-        )
+            ),
+            ProjectStep(project="out", fields={"length": "$doc.source.byte_length"}),
+        ],
+        returns="out",
+        hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
     )
 
 
@@ -1123,35 +1095,30 @@ def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
         name="severity",
     )
     accept_tree(instance, build_files(build), name="build")
-    from cruxible_client.contracts.procedures.authored import ProcedureSpec
 
     author_procedure(
         instance,
-        ProcedureSpec.model_validate(
-            refs(
-                procedure_spec_data(
-                    reference_text=True,
-                    procedure="test.slotted",
-                    params={"value": "int"},
-                    output={"severity": {"type": "enum_of:test.severity"}},
-                    slots={
-                        "compute": {
-                            "in": "test.value@1",
-                            "out": "test.severity_value@1",
-                            "effect": "pure",
-                        }
-                    },
-                    steps=[
-                        CallStep(
-                            call="result",
-                            slot="compute",
-                            input=refs({"value": "$params.value"}),
-                        )
-                    ],
-                    returns="result",
-                    hard_caps=procedure_limits(provider_calls=1),
+        procedure_spec(
+            reference_text=True,
+            procedure="test.slotted",
+            params={"value": "int"},
+            output={"severity": {"type": "enum_of:test.severity"}},
+            slots={
+                "compute": {
+                    "in": "test.value@1",
+                    "out": "test.severity_value@1",
+                    "effect": "pure",
+                }
+            },
+            steps=[
+                CallStep(
+                    call="result",
+                    slot="compute",
+                    input={"value": "$params.value"},
                 )
-            )
+            ],
+            returns="result",
+            hard_caps=procedure_limits(provider_calls=1),
         ),
     )
     author_line(instance)
@@ -1225,7 +1192,6 @@ def _fetch_world(
     """
 
     from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
-    from cruxible_client.contracts.procedures.authored import ProcedureSpec
     from cruxible_client.contracts.providers import (
         ProviderDistributionRef,
         ProviderImplementationManifest,
@@ -1337,33 +1303,29 @@ def _fetch_world(
         request["url"] = request_url
     author_procedure(
         instance,
-        ProcedureSpec.model_validate(
-            refs(
-                procedure_spec_data(
-                    reference_text=True,
-                    procedure="test.fetched",
-                    input={},
-                    output={"ok": "bool"},
-                    slots={
-                        "fetch": {
-                            "in": "demo.fetch.request@1",
-                            "out": "demo.fetch.result@1",
-                            "effect": "external_read",
-                        }
-                    },
-                    steps=[
-                        CallStep(
-                            call="doc",
-                            captures=refs({"capture": capture_contract.identity.name}),
-                            slot="fetch",
-                            input=refs(request),
-                        ),
-                        ProjectStep(project="out", fields={"ok": True}),
-                    ],
-                    returns="out",
-                    hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
-                )
-            )
+        procedure_spec(
+            reference_text=True,
+            procedure="test.fetched",
+            input={},
+            output={"ok": "bool"},
+            slots={
+                "fetch": {
+                    "in": "demo.fetch.request@1",
+                    "out": "demo.fetch.result@1",
+                    "effect": "external_read",
+                }
+            },
+            steps=[
+                CallStep(
+                    call="doc",
+                    captures={"capture": capture_contract.identity.name},
+                    slot="fetch",
+                    input=request,
+                ),
+                ProjectStep(project="out", fields={"ok": True}),
+            ],
+            returns="out",
+            hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
         ),
     )
     author_line(
@@ -1750,13 +1712,14 @@ def _produced_captures(instance, run_id):  # type: ignore[no-untyped-def]
 def emitting_spec(*, description=None):  # type: ignore[no-untyped-def]
 
     return procedure_spec(
+        reference_text=True,
         base=slotted_spec(description=description).model_dump(mode="json", by_alias=True),
         steps=[
-            CallStep(call="result", slot="compute", input=refs({"value": "$params.value"})),
+            CallStep(call="result", slot="compute", input={"value": "$params.value"}),
             EmitStep(
                 emit="test.procedure-output",
-                input=refs({"value": "$params.value"}),
-                result=refs({"value": "$result.value"}),
+                input={"value": "$params.value"},
+                result={"value": "$result.value"},
             ),
         ],
         hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),

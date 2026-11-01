@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping
+from functools import cache
 from hashlib import sha256
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -42,6 +45,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
+    derived_terminal_capability,
 )
 from cruxible_client.contracts.shapes import (
     Contract,
@@ -70,6 +74,7 @@ def procedure_spec(
     *,
     base: Mapping[str, Any] | None = None,
     changes: Mapping[str, Any] | None = None,
+    reference_text: bool = False,
     **overrides: Any,
 ) -> ProcedureSpec:
     """A typed authored Procedure, with a constant result unless steps are supplied.
@@ -79,16 +84,17 @@ def procedure_spec(
     deliberately bypass this builder.
     """
 
-    return ProcedureSpec(
-        **{
-            "procedure": "fixture",
-            "steps": (ProjectStep(project="result", fields={}),),
-            **dict(base or {}),
-            **({} if procedure is None else {"procedure": procedure}),
-            **overrides,
-            **dict(changes or {}),
-        }
-    )
+    fields = {
+        **dict(base or {}),
+        **({} if procedure is None else {"procedure": procedure}),
+        **overrides,
+        **dict(changes or {}),
+    }
+    fields.setdefault("procedure", "fixture")
+    fields.setdefault("steps", (ProjectStep(project="result", fields={}),))
+    if reference_text:
+        fields = refs(fields)
+    return ProcedureSpec(**fields)
 
 
 def procedure_spec_data(
@@ -96,16 +102,49 @@ def procedure_spec_data(
 ) -> dict[str, Any]:
     """The typed spec serialized for a test of a JSON authoring surface."""
 
-    if reference_text:
-        overrides = refs(overrides)
-    return procedure_spec(procedure, **overrides).model_dump(mode="json", by_alias=True)
+    return procedure_spec(procedure, reference_text=reference_text, **overrides).model_dump(
+        mode="json", by_alias=True, exclude_unset=True
+    )
 
 
-def procedure_hard_caps(**overrides: Any) -> ProcedureHardCaps:
-    """Graph caps, defaulted by the public authored spec's lowering."""
+@cache
+def _lowered_default_spec() -> Any:
+    """The immutable default envelope; callers merge overrides without mutating it."""
 
-    defaults = lower_procedure_spec(procedure_spec()).definition["hard_caps"]
-    return ProcedureHardCaps(**{**defaults, **overrides})
+    return lower_procedure_spec(procedure_spec())
+
+
+def procedure_hard_caps(
+    preset: Literal["read", "execution", "provider", "source"] = "read", **overrides: Any
+) -> ProcedureHardCaps:
+    """Shared limits for reads, executor kernels, provider calls and source runs.
+
+    A fixture selects its workload and states only limits that differ. Production
+    lowering supplies any new fields; the presets keep historical fixture values.
+    """
+
+    presets = {
+        "read": dict(
+            max_provider_calls=0, max_capture_bytes=0, max_items=200, max_repeat_attempts=1
+        ),
+        "execution": dict(
+            max_provider_calls=0, max_capture_bytes=0, max_items=100, max_repeat_attempts=3
+        ),
+        "provider": dict(
+            max_provider_calls=4, max_capture_bytes=2048, max_items=20, max_repeat_attempts=2
+        ),
+        "source": dict(
+            max_provider_calls=4, max_capture_bytes=131072, max_items=200, max_repeat_attempts=1
+        ),
+    }
+    return ProcedureHardCaps(
+        **{
+            **_lowered_default_spec().definition["hard_caps"],
+            "max_wall_clock": MAX_WALL_CLOCK,
+            **presets[preset],
+            **overrides,
+        }
+    )
 
 
 def procedure_budget(**overrides: Any) -> ProcedureBudget:
@@ -121,7 +160,9 @@ def procedure_budget(**overrides: Any) -> ProcedureBudget:
     )
 
 
-def procedure_definition(name: str = "fixture", **overrides: Any) -> ProcedureDefinition:
+def procedure_definition(
+    name: str | None = None, *, base: ProcedureDefinition | None = None, **overrides: Any
+) -> ProcedureDefinition:
     """A graph fixture with its envelope supplied by a lowered typed spec.
 
     Executor and graph-law tests need exact typed nodes, including deliberately
@@ -130,8 +171,23 @@ def procedure_definition(name: str = "fixture", **overrides: Any) -> ProcedureDe
     subject of a refusal test or change a digest pin).
     """
 
-    lowered = lower_procedure_spec(procedure_spec(name))
-    return ProcedureDefinition.model_validate({**lowered.definition, **overrides})
+    name = name if name is not None else base.name if base is not None else "fixture"
+    fields = {
+        **_lowered_default_spec().definition,
+        "name": name,
+        "contract_in": ArtifactNameRef(
+            target=ArtifactIdentity(kind="Contract", name=f"{name}.input/v1")
+        ),
+        "contract_out": ArtifactNameRef(
+            target=ArtifactIdentity(kind="Contract", name=f"{name}.output/v1")
+        ),
+        "hard_caps": procedure_hard_caps(),
+        **({} if base is None else base.model_dump(mode="python", by_alias=True)),
+        **overrides,
+    }
+    if "terminal_capability" not in overrides and (base is None or "nodes" in overrides):
+        fields["terminal_capability"] = derived_terminal_capability(fields["nodes"])
+    return ProcedureDefinition.model_validate(fields)
 
 
 def boundary_contract(
@@ -427,6 +483,8 @@ def refs(value: Any) -> Any:
     tests write it briefly.
     """
 
+    if isinstance(value, BaseModel):
+        return refs(value.model_dump(mode="json", by_alias=True, exclude_unset=True))
     if isinstance(value, str) and value.startswith(("$input", "$steps.", "$item", "$params.")):
         return ref(value)
     if isinstance(value, str) and _SHORT_STEP_REF.fullmatch(value):

@@ -234,7 +234,7 @@ def test_child_occurrences_have_exact_bindings_and_replay_without_execution(
 
 
 def test_line_child_inherits_authority_and_recovery_rebuilds_only_the_recorded_delegation(tmp_path):
-    from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+    from cruxible_client.contracts.artifacts import ArtifactPin
     from cruxible_client.contracts.errors import ExecutionError
     from cruxible_client.contracts.procedure_mandates import (
         procedure_mandate_path,
@@ -263,32 +263,20 @@ def test_line_child_inherits_authority_and_recovery_rebuilds_only_the_recorded_d
     # all), unlike the workspace.file advisory procedure _served_line/
     # _line_mandate are built for -- a plain, slot-free Line and Mandate here.
     line = line_spec(
-        identity=ArtifactIdentity(kind="Line", name="nested-line"),
-        occurrence_epoch=1,
+        "nested-line",
         procedure=ArtifactPin(
             role="procedure",
             target=accepted.procedure.identity,
             artifact_digest=accepted.artifact_digest,
         ),
         parameters={"positive": True},
-        max_authority="observe",
-        budgets=line_budgets(
-            max_wall_clock_microseconds=caps.max_wall_clock.microseconds,
-            max_provider_calls=caps.max_provider_calls,
-            max_capture_bytes=caps.max_capture_bytes,
-            max_items=caps.max_items,
-        ),
-        epsilon={"$decimal": "0"},
+        budgets=line_budgets(caps=caps),
     )
     mandate = procedure_mandate(
-        identity=ArtifactIdentity(kind="ProcedureMandate", name="nested-line-mandate"),
+        "nested-line-mandate",
         line=ArtifactPin(
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
-        grants="propose",
-        namespace=("claims",),
-        valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc),
     )
     _accept_more(
         instance,

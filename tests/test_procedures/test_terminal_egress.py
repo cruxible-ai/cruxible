@@ -67,7 +67,6 @@ def _terminal_procedure():
         ),
         returns="rows",
         hard_caps=_hard_caps(items=100),
-        terminal_capability=1,
     )
     return _accepted(definition, pins=(contract_in, contract_out, query))
 
@@ -328,30 +327,24 @@ def test_terminal_fan_out_obeys_run_budget_with_scalar_return(tmp_path, kind):
             candidate_templates={"items": "$steps.fan.items"},
             result="$steps.summary",
         )
-    definition = original.model_copy(
-        update={
-            "nodes": (
-                ProjectNode(node_id="summary", literal={"count": 2}, as_="summary", next="fan"),
-                ProjectNode(
-                    node_id="fan",
-                    literal={
-                        "items": [{"id": "a"}, {"id": "b"}]
-                        if kind == "post_inbox"
-                        else [item_template(), item_template()]
-                    },
-                    as_="fan",
-                    next="inbox",
-                ),
-                terminal,
+    definition = procedure_definition(
+        base=original,
+        nodes=(
+            ProjectNode(node_id="summary", literal={"count": 2}, as_="summary", next="fan"),
+            ProjectNode(
+                node_id="fan",
+                literal={
+                    "items": [{"id": "a"}, {"id": "b"}]
+                    if kind == "post_inbox"
+                    else [item_template(), item_template()]
+                },
+                as_="fan",
+                next="inbox",
             ),
-            "returns": "summary",
-            "hard_caps": _hard_caps(items=1),
-            "terminal_capability": {
-                "post_inbox": 1,
-                "propose_change_set": 2,
-                "settle_change_set": 3,
-            }[kind],
-        }
+            terminal,
+        ),
+        returns="summary",
+        hard_caps=_hard_caps(items=1),
     )
     accepted = _accepted(
         definition,

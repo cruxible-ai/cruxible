@@ -247,9 +247,7 @@ def _two_reads(max_read_rows: int) -> Any:
             ReadNode(node_id="second", query=named(query), as_="second"),
             ProjectNode(node_id="result", literal={}, as_="result"),
         ),
-        returns="result",
         hard_caps=_hard_caps().model_copy(update={"max_read_rows": max_read_rows}),
-        terminal_capability=1,
     )
     return _owned_accepted(definition, contracts=(empty, rows), pins=(entry, out, query))
 

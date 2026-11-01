@@ -161,16 +161,8 @@ def _definition(
                 as_="result",
             ),
         ),
-        returns="result",
         measurements=measurements,
-        hard_caps=procedure_hard_caps(
-            max_wall_clock=_duration(2_000_000),
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
-        terminal_capability=1,
+        hard_caps=procedure_hard_caps(max_wall_clock=_duration(2_000_000)),
     )
 
 

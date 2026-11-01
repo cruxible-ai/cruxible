@@ -105,11 +105,11 @@ def _budget(*, capture_bytes: int = 2_000_000) -> ProcedureBudget:
 
 def _caps() -> ProcedureHardCaps:
     return procedure_hard_caps(
+        preset="provider",
         max_wall_clock=CanonicalDuration(microseconds=4_100_000),
         max_provider_calls=5,
         max_capture_bytes=3_000_000,
         max_items=30,
-        max_repeat_attempts=2,
     )
 
 

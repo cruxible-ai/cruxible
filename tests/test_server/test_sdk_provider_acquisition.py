@@ -59,7 +59,7 @@ from tests.support.procedures import (
     procedure_definition,
     procedure_hard_caps,
     procedure_limits,
-    procedure_spec,
+    procedure_spec_data,
 )
 from tests.support.provider_builds import as_build
 from tests.test_procedures import test_procedure_source_runs as source
@@ -300,14 +300,7 @@ def _fetch_procedure(contract: CaptureContract, *, request: dict[str, object]) -
                 as_="result",
             ),
         ),
-        returns="result",
-        hard_caps=procedure_hard_caps(
-            max_wall_clock=source.MAX_WALL_CLOCK,
-            max_provider_calls=4,
-            max_capture_bytes=2_097_152,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
+        hard_caps=procedure_hard_caps(preset="source", max_capture_bytes=2_097_152),
         terminal_capability=2,
     )
     procedure = ProcedureArtifact(
@@ -553,25 +546,27 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http
     pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=tmp_path)
-    authored = ProcedureInput(
-        kind="procedure",
-        spec=procedure_spec(
-            procedure="replace-me",
-            input={},
-            output={"size": "int"},
-            slots={
-                "invoke": {
-                    "in": f"{call_input.name}@{call_input.version}",
-                    "out": f"{call_output.name}@{call_output.version}",
-                    "effect": "external_read",
-                }
-            },
-            steps=[CallStep(call="result", id="invoke", slot="invoke", input={"size": 1})],
-            returns="result",
-            hard_caps=procedure_limits(
-                wall_clock="PT30M", provider_calls=2, capture_bytes=131072, items=200
+    authored = ProcedureInput.model_validate(
+        {
+            "kind": "procedure",
+            **procedure_spec_data(
+                procedure="replace-me",
+                input={},
+                output={"size": "int"},
+                slots={
+                    "invoke": {
+                        "in": f"{call_input.name}@{call_input.version}",
+                        "out": f"{call_output.name}@{call_output.version}",
+                        "effect": "external_read",
+                    }
+                },
+                steps=[CallStep(call="result", id="invoke", slot="invoke", input={"size": 1})],
+                returns="result",
+                hard_caps=procedure_limits(
+                    wall_clock="PT30M", provider_calls=2, capture_bytes=131072, items=200
+                ),
             ),
-        ),
+        }
     )
     intent = pb.procedure(definition=authored).prepare()
     assert not intent.refused, intent.diagnostics

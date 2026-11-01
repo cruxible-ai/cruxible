@@ -272,19 +272,10 @@ def _install_line(world):
     )
     caps = procedure.definition.hard_caps
     line = line_spec(
-        identity=ArtifactIdentity(kind="Line", name="derive-ready-line"),
-        occurrence_epoch=1,
+        "derive-ready-line",
         procedure=procedure_pin,
-        parameters={},
-        bindings={},
-        acquisition={},
         max_authority="propose",
-        budgets=line_budgets(
-            max_capture_bytes=caps.max_capture_bytes,
-            max_items=caps.max_items,
-            max_provider_calls=caps.max_provider_calls,
-            max_wall_clock_microseconds=caps.max_wall_clock.microseconds,
-        ),
+        budgets=line_budgets(caps=caps),
         epsilon={"$decimal": "0.1"},
     )
     # No conversion to a "named" Line format: cruxible-line-v8 is the only

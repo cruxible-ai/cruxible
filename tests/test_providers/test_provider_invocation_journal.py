@@ -269,14 +269,7 @@ def _accepted_one_provider(
         nodes=(graph_node,),
         returns=returns,
         slots={SLOT: ProcedureSlot.model_validate(operation_signature.model_dump(by_alias=True))},
-        hard_caps=procedure_hard_caps(
-            max_wall_clock=max_wall_clock,
-            max_provider_calls=4,
-            max_capture_bytes=2048,
-            max_items=20,
-            max_repeat_attempts=2,
-        ),
-        terminal_capability=1,
+        hard_caps=procedure_hard_caps(preset="provider", max_wall_clock=max_wall_clock),
     )
     return _bind(accepted_procedure(definition, activation_policy="drain", bound=False), provider)
 

@@ -16,7 +16,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     procedure_artifact_digest,
 )
-from cruxible_client.contracts.procedures.authored import CallStep, ProcedureSpec
+from cruxible_client.contracts.procedures.authored import CallStep
 from cruxible_client.contracts.procedures.line_specs import (
     line_spec_digest,
     render_line_spec,
@@ -51,7 +51,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 from tests.core_support._identity_support import accept_tree
 from tests.support.lines import line_budgets_input
 from tests.support.operation_world import author, contract_files, operation_build
-from tests.support.procedures import procedure_limits, procedure_spec, procedure_spec_data, refs
+from tests.support.procedures import procedure_limits, procedure_spec
 from tests.test_procedures.test_procedure_measurement_readings import _actor, _world
 from tests.test_procedures.test_procedure_source_runs import (
     RELATIVE_PATH,
@@ -191,26 +191,22 @@ def _slotted_world(tmp_path, *, landed=False):
         artifact_digest=provider_digest(first).tagged,
     )
     declaration = next(m for m in measured.definition.measurements if m.name == "rows-present")
-    spec = ProcedureSpec.model_validate(
-        refs(
-            procedure_spec_data(
-                reference_text=True,
-                procedure="test.measured-slot",
-                params={"value": "int"},
-                output={"value": "int"},
-                slots={"compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}},
-                steps=[
-                    CallStep(
-                        call="result",
-                        slot="compute",
-                        input=refs({"value": "$params.value"}),
-                    )
-                ],
-                returns="result",
-                measurements=[declaration.model_dump(mode="json")],
-                hard_caps=procedure_limits(provider_calls=1),
+    spec = procedure_spec(
+        reference_text=True,
+        procedure="test.measured-slot",
+        params={"value": "int"},
+        output={"value": "int"},
+        slots={"compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}},
+        steps=[
+            CallStep(
+                call="result",
+                slot="compute",
+                input={"value": "$params.value"},
             )
-        )
+        ],
+        returns="result",
+        measurements=[declaration.model_dump(mode="json")],
+        hard_caps=procedure_limits(provider_calls=1),
     )
     source_bindings: dict[str, str] = {}
     if landed:
@@ -236,6 +232,7 @@ def _slotted_world(tmp_path, *, landed=False):
             name="slotted-measurement-source-builds",
         )
         spec = procedure_spec(
+            reference_text=True,
             base=spec.model_dump(mode="json"),
             slots={
                 "compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"},
@@ -256,7 +253,7 @@ def _slotted_world(tmp_path, *, landed=False):
                 CallStep(
                     call="result",
                     slot="compute",
-                    input=refs({"value": "$captured.content.json.value"}),
+                    input={"value": "$captured.content.json.value"},
                 ),
             ],
             hard_caps=procedure_limits(provider_calls=2, capture_bytes=65536),

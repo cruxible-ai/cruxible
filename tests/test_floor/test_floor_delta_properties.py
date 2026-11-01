@@ -178,10 +178,9 @@ def _mandate(
 
     condition = _worlds._condition()
     mandate = procedure_mandate(
-        identity=ArtifactIdentity(kind="ProcedureMandate", name=name),
+        name,
         line=_worlds._line_pin(line),
         grants="settle",
-        namespace=("claims",),
         valid_from=_worlds._FAR_PAST,
         expires_at=_worlds._FAR_FUTURE,
         scope=tuple(
@@ -205,15 +204,13 @@ def _mandate(
             required_fields=("id",),
             fallback="propose",
         ),
-        **(
-            {}
-            if previous is None
-            else {
-                "lifecycle": ArtifactLifecycle(
-                    predecessor_digest=procedure_mandate_digest(previous).tagged
-                )
-            }
-        ),
+        **{}
+        if previous is None
+        else {
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=procedure_mandate_digest(previous).tagged
+            )
+        },
         **update,
     )
     return mandate

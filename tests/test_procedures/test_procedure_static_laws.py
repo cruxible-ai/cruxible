@@ -75,7 +75,6 @@ def _definition(
             max_wall_clock=CanonicalDuration(microseconds=4_000_000),
             max_provider_calls=20,
             max_capture_bytes=20_000,
-            max_items=200,
             max_repeat_attempts=3,
         ),
         terminal_capability=terminal_capability,  # type: ignore[arg-type]

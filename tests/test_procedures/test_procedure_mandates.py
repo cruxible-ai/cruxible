@@ -82,22 +82,14 @@ def _line(*, procedure: AcceptedProcedure | None = None, name: str = "triage-lin
     accepted = procedure or _procedure()
     caps = accepted.procedure.definition.hard_caps
     return line_spec(
-        identity=ArtifactIdentity(kind="Line", name=name),
-        occurrence_epoch=1,
+        name,
         procedure=ArtifactPin(
             role="procedure",
             target=accepted.procedure.identity,
             artifact_digest=accepted.artifact_digest,
         ),
-        parameters={},
         max_authority="settle",
-        budgets=line_budgets(
-            max_wall_clock_microseconds=caps.max_wall_clock.microseconds,
-            max_provider_calls=caps.max_provider_calls,
-            max_capture_bytes=caps.max_capture_bytes,
-            max_items=caps.max_items,
-        ),
-        epsilon={"$decimal": "0"},
+        budgets=line_budgets(caps=caps),
     )
 
 
@@ -144,7 +136,7 @@ def _mandate(
     )
     namespace = ("claims",) if grants == "settle" else ("claims", "documents")
     return procedure_mandate(
-        identity=ArtifactIdentity(kind="ProcedureMandate", name="triage"),
+        "triage",
         line=ArtifactPin(
             role="line",
             target=bound_line.identity,
@@ -152,8 +144,6 @@ def _mandate(
         ),
         grants=grants,
         namespace=namespace,
-        valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc),
         **settle_only,
     )
 

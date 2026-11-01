@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactNameRef
 from cruxible_client.contracts.procedures.line_specs import LineBudgets, LineBudgetsInput, LineSpec
+from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 from cruxible_client.contracts.triggers import (
     ActionTarget,
     CadenceSchedule,
@@ -18,16 +19,27 @@ from cruxible_client.contracts.triggers import (
 )
 
 
-def line_budgets(**overrides: Any) -> LineBudgets:
+def line_budgets(*, caps: ProcedureHardCaps | None = None, **overrides: Any) -> LineBudgets:
     """Operating limits for a Line whose test does not exercise budgets."""
 
     from tests.support.procedures import RUN_WALL_CLOCK
 
+    defaults = (
+        {
+            "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
+            "max_provider_calls": caps.max_provider_calls,
+            "max_capture_bytes": caps.max_capture_bytes,
+            "max_items": caps.max_items,
+        }
+        if caps is not None
+        else {}
+    )
     return LineBudgets(
         **{
             "max_wall_clock_microseconds": RUN_WALL_CLOCK.microseconds,
             "max_provider_calls": 0,
             "max_capture_bytes": 0,
+            **defaults,
             **overrides,
         }
     )

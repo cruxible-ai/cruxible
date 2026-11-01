@@ -127,9 +127,8 @@ def _hands_parameters(parent: ProcedureArtifact) -> ProcedureArtifact:
 
 
 def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) -> None:
-    from datetime import datetime, timezone
 
-    from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+    from cruxible_client.contracts.artifacts import ArtifactPin
     from cruxible_client.contracts.procedure_mandates import (
         procedure_mandate_path,
         render_procedure_mandate,
@@ -186,32 +185,20 @@ def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) ->
     # slots), unlike the workspace.file advisory procedure _served_line/
     # _line_mandate are built for -- a plain, slot-free Line and Mandate here.
     line = line_spec(
-        identity=ArtifactIdentity(kind="Line", name="nested-inbox-line"),
-        occurrence_epoch=1,
+        "nested-inbox-line",
         procedure=ArtifactPin(
             role="procedure",
             target=accepted_grand.identity,
             artifact_digest=procedure_artifact_digest(accepted_grand).tagged,
         ),
         parameters={"positive": True},
-        max_authority="observe",
-        budgets=line_budgets(
-            max_wall_clock_microseconds=caps.max_wall_clock.microseconds,
-            max_provider_calls=caps.max_provider_calls,
-            max_capture_bytes=caps.max_capture_bytes,
-            max_items=caps.max_items,
-        ),
-        epsilon={"$decimal": "0"},
+        budgets=line_budgets(caps=caps),
     )
     mandate = procedure_mandate(
-        identity=ArtifactIdentity(kind="ProcedureMandate", name="nested-inbox-line-mandate"),
+        "nested-inbox-line-mandate",
         line=ArtifactPin(
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
-        grants="propose",
-        namespace=("claims",),
-        valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc),
     )
     _accept_more(
         instance,

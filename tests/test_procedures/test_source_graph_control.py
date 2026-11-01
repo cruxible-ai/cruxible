@@ -92,7 +92,6 @@ def definition(*, early=False):
         nodes=tuple(nodes),
         returns="yes" if early else "result",
         hard_caps=_hard_caps(),
-        terminal_capability=1,
     )
     artifact = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name="choice"),

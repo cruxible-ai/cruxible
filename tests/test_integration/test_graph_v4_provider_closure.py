@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     evaluate_procedure_law,
@@ -34,8 +34,6 @@ from tests.core_support._support import initialize_local
 from tests.support.lines import line_budgets, line_spec
 from tests.support.operation_world import VALUE, contract_files
 from tests.support.procedures import (
-    MAX_WALL_CLOCK,
-    RUN_WALL_CLOCK,
     accepted_procedure,
     boundary_contract,
     named,
@@ -71,15 +69,7 @@ def _definition() -> ProcedureDefinition:
                 as_="result",
             ),
         ),
-        returns="result",
-        hard_caps=procedure_hard_caps(
-            max_wall_clock=MAX_WALL_CLOCK,
-            max_provider_calls=4,
-            max_capture_bytes=2048,
-            max_items=20,
-            max_repeat_attempts=2,
-        ),
-        terminal_capability=1,
+        hard_caps=procedure_hard_caps(preset="provider"),
     )
 
 
@@ -93,28 +83,19 @@ def _line() -> LineSpec:
     procedure = _accepted_procedure()
     provider = accepted_provider()
     return line_spec(
-        identity=ArtifactIdentity(kind="Line", name="provider-v4-line"),
-        occurrence_epoch=1,
+        "provider-v4-line",
         procedure=ArtifactPin(
             role="procedure",
             target=procedure.procedure.identity,
             artifact_digest=procedure.artifact_digest,
         ),
-        parameters={},
         bindings={
             "compute": LineBinding(
                 build=binding_pin(provider.provider.identity, provider.artifact_digest),
                 operation="compute",
             )
         },
-        max_authority="observe",
-        budgets=line_budgets(
-            max_capture_bytes=1024,
-            max_items=10,
-            max_provider_calls=2,
-            max_wall_clock_microseconds=RUN_WALL_CLOCK.microseconds,
-        ),
-        epsilon={"$decimal": "0"},
+        budgets=line_budgets(max_capture_bytes=1024, max_items=10, max_provider_calls=2),
     )
 
 

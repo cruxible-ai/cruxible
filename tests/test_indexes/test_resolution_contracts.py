@@ -64,11 +64,9 @@ from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodySto
 from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import client_material, initialize_local
 from tests.support.procedures import (
-    MAX_WALL_CLOCK,
     accepted_procedure,
     named,
     procedure_definition,
-    procedure_hard_caps,
     procedure_members,
 )
 from tests.test_ledger.test_activation import _sign
@@ -183,7 +181,6 @@ def _accepted() -> AcceptedProcedure:
                 as_="result",
             ),
         ),
-        returns="result",
         measurements=(
             _measurement(
                 "arm-health", "arm", node_id="hot", from_node_id="gate", arm_label="on_true"
@@ -191,14 +188,6 @@ def _accepted() -> AcceptedProcedure:
             _measurement("node-health", "node", node_id="hot"),
             _measurement("unit-health", "procedure_unit"),
         ),
-        hard_caps=procedure_hard_caps(
-            max_wall_clock=MAX_WALL_CLOCK,
-            max_provider_calls=0,
-            max_capture_bytes=0,
-            max_items=200,
-            max_repeat_attempts=1,
-        ),
-        terminal_capability=1,
     )
     return accepted_procedure(
         definition,
