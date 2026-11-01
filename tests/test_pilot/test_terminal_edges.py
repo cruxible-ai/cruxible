@@ -229,13 +229,7 @@ def test_evidence_refresh_obeys_the_same_replaces_policy(tmp_path: Path) -> None
 
 
 def test_subject_valued_template_resolves_the_objects_declared_key(tmp_path: Path) -> None:
-    related = claim_type(
-        KIND + ".related",
-        f"subject<{KIND}>",
-        object_kind="subject",
-        literal_schema=None,
-        allowed_object_subject_kinds=(KIND,),
-    )
+    related = claim_type(KIND + ".related", f"subject<{KIND}>", value_type=(KIND,))
     instance, root = claims_world(
         tmp_path,
         {
