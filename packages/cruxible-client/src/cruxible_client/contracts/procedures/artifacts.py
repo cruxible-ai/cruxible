@@ -45,7 +45,13 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.shapes import Contract, ContractRef
+from cruxible_client.contracts.shapes import (
+    Contract,
+    ContractRef,
+    FieldInvalid,
+    check_value,
+    contract_ref_for_identity,
+)
 
 _PROCEDURE_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 
@@ -347,6 +353,10 @@ def evaluate_procedure_law(
     problem = extract_row_problem(procedure.definition, contracts or {})
     if problem is not None:
         return _refusal("cruxible.procedure.extract_row_unresolved", problem, path=path)
+    if contract_lookup is not None:
+        problem = parameter_default_problem(procedure.definition, contract_lookup)
+        if problem is not None:
+            return _refusal("cruxible.procedure.parameter_default_invalid", problem, path=path)
     if capture_lookup is not None:
         from cruxible_client.contracts.procedures.capture_outputs import (
             procedure_capture_problem,
@@ -365,6 +375,40 @@ def evaluate_procedure_law(
         required_tier="governed_write",
         approval_scope=(),
     )
+
+
+def parameter_default_problem(
+    definition: ProcedureDefinition, contract_lookup: Callable[[ContractRef], Contract | None]
+) -> str | None:
+    """Why a parameter default does not fit its params Contract field, or ``None``.
+
+    Contracts stay shape-only: a default lives on the Procedure, and each one
+    must be a value of the field it defaults (nested Contracts resolve through
+    ``contract_lookup``).
+    """
+
+    if not definition.parameter_defaults:
+        return None
+    reference = definition.parameter_contract
+    if reference is None:  # pragma: no cover - the definition model refuses this
+        return "parameter_defaults name parameters, and the Procedure declares no params"
+    declared = contract_lookup(contract_ref_for_identity(reference.target))
+    if declared is None:
+        return f"params Contract {reference.target.name} is not accepted"
+    for name, value in sorted(definition.parameter_defaults.items()):
+        field = declared.fields.get(name)
+        if field is None:
+            return (
+                f"parameter {name!r} has a default and {declared.name}@{declared.version} "
+                "declares no such field"
+            )
+        checked = check_value(value, field.type, at=f"/{name}", field=name, resolve=contract_lookup)
+        if isinstance(checked, FieldInvalid):
+            return (
+                f"the default of parameter {name!r} does not fit {field.spelling} "
+                f"({declared.name}@{declared.version}): {checked.problem}"
+            )
+    return None
 
 
 def _node_contracts(definition: ProcedureDefinition) -> tuple[tuple[str, str, ContractRef], ...]:

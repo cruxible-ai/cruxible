@@ -124,8 +124,11 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         items=100,
     )
 
-    def sequence(name: str, **extra: Any) -> Sequence:
-        return Sequence(name, input=request, output=result, hard_caps=limits, **extra)
+    def sequence(name: str, *, line_run: bool = False, **extra: Any) -> Sequence:
+        # A Line-run parent takes the URL as its parameter (a Line supplies it);
+        # the invoked observer takes it as input.
+        boundary = {"params": request} if line_run else {"input": request}
+        return Sequence(name, **boundary, output=result, hard_caps=limits, **extra)
 
     observer = sequence(
         "observe-web",
@@ -218,8 +221,8 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     def observed_result(observed: Any) -> dict[str, Any]:
         return {"status": observed.ref("value", "status"), "text": observed.ref("value", "text")}
 
-    parent = sequence("observe-parent")
-    observed = parent.invoke("observe-web", input={"url": parent.input["url"]}, as_="observed")
+    parent = sequence("observe-parent", line_run=True)
+    observed = parent.invoke("observe-web", input={"url": parent.params["url"]}, as_="observed")
     parent.guard(eq(observed["succeeded"], True), else_=halt("Observation failed"))
     parent.propose(
         (
@@ -235,7 +238,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     )
     accept(pb.procedure(definition=parent))
     accepted_parent = pb.accepted_procedure("observe-parent")
-    refused = accepted_parent.run(input=accepted_parent.input(url=URL))
+    refused = accepted_parent.run(parameters=accepted_parent.params(url=URL))
     assert refused.status == "admission_refused"
     # Child capture cannot acquire a Line's authority directly: nothing ran, nothing fetched.
     assert refused.run_id is None and not refused.outcome.children
@@ -285,7 +288,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     _approve_and_activate(http, instance_id, reviewer, proposal.proposal_id)
     pb.refresh()
 
-    verify_parent = sequence("verify-parent")
+    verify_parent = sequence("verify-parent", line_run=True)
     baseline = verify_parent.read_claims(
         "baseline",
         claim_type="security.advisory.severity",
@@ -293,7 +296,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         subject_kind="security.advisory",
     )
     observed = verify_parent.invoke(
-        "observe-web", input={"url": verify_parent.input["url"]}, as_="observed"
+        "observe-web", input={"url": verify_parent.params["url"]}, as_="observed"
     )
     verify_parent.guard(eq(observed["succeeded"], True), else_=halt("Observation failed"))
     verify_parent.propose(

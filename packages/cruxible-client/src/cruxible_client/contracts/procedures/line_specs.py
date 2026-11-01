@@ -302,7 +302,7 @@ class EphemeralLineSpec(_StrictLineModel):
     propose would allow and in practice observes.
     """
 
-    tag: Literal["cruxible-ephemeral-line-spec-v2"] = "cruxible-ephemeral-line-spec-v2"
+    tag: Literal["cruxible-ephemeral-line-spec-v3"] = "cruxible-ephemeral-line-spec-v3"
     procedure: ArtifactPin
     parameters: object
     bindings: dict[str, LineBinding] = Field(default_factory=dict)
@@ -319,7 +319,7 @@ class EphemeralLineSpec(_StrictLineModel):
 def ephemeral_line_spec_digest(spec: EphemeralLineSpec) -> str:
     return typed_digest(
         ArtifactDigest,
-        "cruxible-ephemeral-line-spec-v2",
+        "cruxible-ephemeral-line-spec-v3",
         spec.model_dump(mode="json", exclude={"tag"}),
     ).tagged
 
@@ -490,7 +490,8 @@ def evaluate_line_spec_law(
     is every capture output the Line may name a rule for, invoked children's
     included (:func:`line_capture_outputs`); omitted, the Procedure's own.
     ``contracts`` reads governed Contracts at the coordinate: the Line's
-    parameters are checked against the Procedure's input Contract with it.
+    parameters (over the defaults) are checked against the Procedure's params
+    Contract with it, and the empty Line-run input against its input Contract.
     """
 
     del by_name
@@ -519,14 +520,13 @@ def evaluate_line_spec_law(
     from cruxible_client.contracts.procedures.contracts import (
         AcceptedProcedureContractValidator,
         ProcedureContractValidationError,
+        validate_line_parameters,
     )
 
     if contracts is not None:
         try:
-            AcceptedProcedureContractValidator(contracts).validate_contract(
-                contract=definition.contract_in,
-                payload=normalize_canonical(line.parameters),
-                direction="input",
+            validate_line_parameters(
+                AcceptedProcedureContractValidator(contracts), definition, line.parameters
             )
         except ProcedureContractValidationError as exc:
             return _refusal("cruxible.line.parameters_invalid", str(exc), path=path)

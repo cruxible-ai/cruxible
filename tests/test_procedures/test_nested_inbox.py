@@ -105,6 +105,25 @@ def _inbox_child(child: ProcedureArtifact) -> ProcedureArtifact:
     return _redigest(child.model_copy(update={"definition": definition}))
 
 
+def _hands_parameters(parent: ProcedureArtifact) -> ProcedureArtifact:
+    """The parent, handing each invoked child its values as the child's parameters.
+
+    ``relay`` is parent-shaped: it takes ``positive`` as a parameter (a Line's
+    shape), so whatever invokes it maps the value into its params, not input.
+    """
+
+    from cruxible_client.contracts.procedures.models import InvokeNode
+
+    nodes = tuple(
+        node.model_copy(update={"input": {}, "parameters": node.input})
+        if isinstance(node, InvokeNode)
+        else node
+        for node in parent.definition.nodes
+    )
+    definition = parent.definition.model_copy(update={"nodes": nodes})
+    return _redigest(parent.model_copy(update={"definition": definition}))
+
+
 def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) -> None:
     from datetime import datetime, timezone
 
@@ -143,10 +162,12 @@ def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) ->
         )
     )
     relay_digest = procedure_artifact_digest(relay).tagged
-    grand = _rewritten(
-        relay,
-        {child_digest: relay_digest, '"name": "inbox_child"': '"name": "relay"'},
-        name="grand",
+    grand = _hands_parameters(
+        _rewritten(
+            relay,
+            {child_digest: relay_digest, '"name": "inbox_child"': '"name": "relay"'},
+            name="grand",
+        )
     )
     _accept_more(
         instance,
@@ -223,7 +244,7 @@ def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) ->
     direct = service_run_playbill_procedure(
         instance,
         name="grand",
-        request=ProcedureRunRequest(input={"positive": True}),
+        request=ProcedureRunRequest(input={}, parameters={"positive": True}),
         actor_context=_actor(instance),
     )
     assert direct.status != "succeeded"

@@ -67,6 +67,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_runnability,
 )
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
+from cruxible_client.contracts.procedures.contracts import LINE_RUN_INPUT
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
     LineSpec,
@@ -584,7 +585,19 @@ class ProcedureRunRequest(_StrictProcedureSurfaceModel):
             "ephemeral Line spec carries them; one left out runs under the core default."
         ),
     )
+    parameters: dict[str, object] = Field(
+        default_factory=dict,
+        description=(
+            "The run's Procedure parameter values (its ephemeral Line spec's), over the "
+            "Procedure's parameter_defaults; checked against its params Contract."
+        ),
+    )
     input: object
+
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def _parameters(cls, value: object) -> object:
+        return normalize_canonical(value)
 
     @field_validator("evaluation_time")
     @classmethod
@@ -1474,6 +1487,7 @@ def _line_state_materials(
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
     invocation_input: object,
+    parameters: object,
     read_ceiling: int,
 ) -> tuple[AcceptedStateRunMaterial, ...]:
     return bind_accepted_state_materials(
@@ -1485,6 +1499,7 @@ def _line_state_materials(
         bodies=instance.body_store(),
         read_ceiling=read_ceiling,
         invocation_input=invocation_input,
+        parameters=parameters,
     )
 
 
@@ -3028,6 +3043,7 @@ def _prepare_direct_external_run(
     effective_caps: ProcedureHardCaps | None = None,
     acquisition: Mapping[str, LineAcquisitionRule] | None = None,
     ephemeral_spec_digest: str | None = None,
+    parameters: Mapping[str, object] | None = None,
 ) -> (
     tuple[
         PreparedProcedureRun,
@@ -3036,8 +3052,13 @@ def _prepare_direct_external_run(
     ]
     | ProcedureRunStateV2
 ):
-    """Bind state and external inputs through the same planner for root and child runs."""
+    """Bind state and external inputs through the same planner for root and child runs.
+
+    ``parameters`` are the run's values over the Procedure's defaults (an
+    invoked child supplies none: it runs on its defaults).
+    """
     definition = accepted.procedure.definition
+    effective_parameters = definition.effective_parameters(parameters or {})
     budget = effective_budget or caps_budget(definition.hard_caps)
     caps = effective_caps or definition.hard_caps
     planned = _plan_direct_external_run(
@@ -3067,6 +3088,7 @@ def _prepare_direct_external_run(
         bodies=instance.body_store(),
         read_ceiling=effective_read_rows(budget.max_read_rows, caps.max_read_rows),
         invocation_input=invocation_input,
+        parameters=effective_parameters,
     )
     node_pin_sets = procedure_node_pin_sets(accepted)
     bindings = procedure_provider_bindings(external_occurrences)
@@ -3096,6 +3118,7 @@ def _prepare_direct_external_run(
             "node_pin_sets": node_pin_sets,
             "pin_set_digest": procedure_pin_set_digest(accepted.procedure.pins, node_pin_sets),
             "invocation_input": invocation_input,
+            "parameters": effective_parameters,
             "accepted_state_inputs": tuple(item.input for item in materials),
             "budget": budget,
             "hard_caps": caps,
@@ -3183,7 +3206,7 @@ def service_run_playbill_procedure(
                 target=accepted.procedure.identity,
                 artifact_digest=accepted.artifact_digest,
             ),
-            parameters=request.input,
+            parameters=request.parameters,
             bindings=spec_bindings,
             acquisition=request.acquisition,
             budget=caps_budget(accepted.procedure.definition.hard_caps),
@@ -3268,6 +3291,7 @@ def service_run_playbill_procedure(
                 provider_runtime_operator=provider_runtime_operator,
                 acquisition=request.acquisition,
                 ephemeral_spec_digest=ephemeral_spec_digest,
+                parameters=request.parameters,
             )
             if isinstance(planned, ProcedureRunStateV2):
                 return planned
@@ -3291,6 +3315,7 @@ def service_run_playbill_procedure(
                 head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
                 lane=lane,
                 admitted_at=evaluation_time,
+                parameters=request.parameters,
             )
     except ProcedureBoundaryRefused as exc:
         if exc.code not in {
@@ -4220,6 +4245,11 @@ def _run_playbill_line(
             message="The accepted Provider closure for this Line is incomplete.",
             details={"reason": str(exc), "repair": "Accept the Provider closure this graph pins."},
         )
+    # A Line supplies the Procedure's parameters; a Line run's input is empty.
+    supplied = accepted_line.line.parameters
+    if not isinstance(supplied, dict):  # the Line law accepts a record only
+        raise ExecutionError("accepted Line parameters are not a record")
+    line_parameters = accepted.procedure.definition.effective_parameters(supplied)
     plan_digest = procedure_acquisition_plan_digest(plan)
     try:
         materials = _line_state_materials(
@@ -4227,7 +4257,8 @@ def _run_playbill_line(
             accepted,
             coordinate=coordinate,
             evaluation_time=evaluation_time,
-            invocation_input=accepted_line.line.parameters,
+            invocation_input=LINE_RUN_INPUT,
+            parameters=line_parameters,
             read_ceiling=effective_read_rows(
                 budget.max_read_rows, accepted.procedure.definition.hard_caps.max_read_rows
             ),
@@ -4295,7 +4326,8 @@ def _run_playbill_line(
             "full_pins": full_pins,
             "node_pin_sets": node_pin_sets,
             "pin_set_digest": procedure_pin_set_digest(full_pins, node_pin_sets),
-            "invocation_input": accepted_line.line.parameters,
+            "invocation_input": LINE_RUN_INPUT,
+            "parameters": line_parameters,
             "accepted_state_inputs": tuple(item.input for item in materials),
             "landed_capture_inputs": tuple(item.input for item in landed_materials),
             "budget": budget,

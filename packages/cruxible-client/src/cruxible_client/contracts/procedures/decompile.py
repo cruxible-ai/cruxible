@@ -253,7 +253,10 @@ def decompile_procedure(
             )
         elif isinstance(node, InvokeNode):
             step = dict(
-                invoke=_name(node.procedure), input=typed_template(node.input), **{"as": node.as_}
+                invoke=_name(node.procedure),
+                input=typed_template(node.input),
+                **({"params": typed_template(node.parameters)} if node.parameters else {}),
+                **{"as": node.as_},
             )
         elif isinstance(node, SelectNode):
             step = dict(select=node.as_, sources=node.sources)
@@ -356,6 +359,7 @@ def decompile_procedure(
                 if definition.parameter_contract is None
                 else boundary("params", definition.parameter_contract)
             ),
+            parameter_defaults=definition.parameter_defaults,
             returns=returns,
             measurements=definition.measurements,
             annotations=definition.annotations,

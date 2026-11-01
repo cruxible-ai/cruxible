@@ -2215,8 +2215,8 @@ separate from freeform prose; sync does not render Markdown or HTML.
 ## procedure
 
 ~~~text
-cruxible procedure run NAME INPUT_FILE|- [--evaluation-time TS] [--at FILE|-]
-  [--resolution-contract FILE|-] [--trigger-event FILE|-] [--json]
+cruxible procedure run NAME INPUT_FILE|- [--parameters FILE|-] [--evaluation-time TS]
+  [--at FILE|-] [--resolution-contract FILE|-] [--trigger-event FILE|-] [--json]
 cruxible procedure measure NAME [--run-id RUN_ID] [--measurement NAME]...
   [--evaluation-time TS] [--at FILE] [--json]
 cruxible procedure dispose NAME RESOLUTION_ID --verdict upheld|overturned --reason TEXT [--json]
@@ -2437,9 +2437,12 @@ matched), its pending occurrences and its recent runs.
 
 A Line is authored like any other definition: a `line` input (alone or as a
 change-set member) names its Procedure and `parameters` -- the Procedure's
-input record, which lowering checks against the Procedure's input contract,
-refusing `cruxible.authoring.line_parameters_refused` with the expected
-fields. It may name an `acquisition_policy` to override the instance default. A Procedure with an `exhaust_tap` node
+parameter values, over its `parameter_defaults`, which lowering checks against
+the Procedure's params Contract, refusing
+`cruxible.authoring.line_parameters_refused` with the expected fields. A Line
+run's input is empty, so a Procedure a Line runs declares what a Line supplies
+as `params` and reads it as `$params.<name>`; `procedure run --parameters`
+supplies the same values to a direct run. It may name an `acquisition_policy` to override the instance default. A Procedure with an `exhaust_tap` node
 cannot be a Line's (`cruxible.authoring.line_exhaust_tap_unsupported`): no run
 path admits one. `authoring example line` prints a Line over the `authoring
 example procedure` Procedure, and `authoring example acquisition-policy` a

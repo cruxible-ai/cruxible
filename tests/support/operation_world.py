@@ -170,17 +170,21 @@ def slotted_spec(
     effect: str = "pure",
     description: str | None = None,
 ) -> ProcedureSpec:
-    """One Call through slot ``compute`` (``test.value@1 -> test.value@1``)."""
+    """One Call through slot ``compute`` (``test.value@1 -> test.value@1``).
+
+    Its ``value`` is a parameter: a Line (or a direct run's ``parameters``)
+    supplies it.
+    """
 
     return ProcedureSpec.model_validate(
         {
             "procedure": name,
             **({} if description is None else {"description": description}),
-            "input": {"value": "int"},
+            "params": {"value": "int"},
             "output": {"value": "int"},
             "slots": {"compute": {"in": "test.value@1", "out": "test.value@1", "effect": effect}},
             "steps": [
-                {"call": "result", "slot": "compute", "input": {"value": ref("$input.value")}}
+                {"call": "result", "slot": "compute", "input": {"value": ref("$params.value")}}
             ],
             "returns": "result",
             "hard_caps": {"provider_calls": 1},

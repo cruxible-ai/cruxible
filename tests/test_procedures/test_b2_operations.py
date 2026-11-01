@@ -364,7 +364,7 @@ def test_a_direct_run_records_its_ephemeral_spec_digest(tmp_path, monkeypatch):
     result = service_run_playbill_procedure(
         instance,
         name="test.slotted",
-        request=ProcedureRunRequest(input={"value": 4}, evaluation_time=NOW),
+        request=ProcedureRunRequest(input={}, parameters={"value": 4}, evaluation_time=NOW),
         actor_context=actor(),
         provider_runtime_operator=Operator(Invoker()),  # type: ignore[arg-type]
     )
@@ -409,7 +409,7 @@ def test_a_direct_run_reaches_its_terminal_under_an_ephemeral_line(tmp_path):
     result = service_run_playbill_procedure(
         instance,
         name="test.slotted",
-        request=ProcedureRunRequest(input={"value": 4}, evaluation_time=NOW),
+        request=ProcedureRunRequest(input={}, parameters={"value": 4}, evaluation_time=NOW),
         actor_context=actor(),
         provider_runtime_operator=Operator(Invoker()),  # type: ignore[arg-type]
     )
@@ -526,7 +526,9 @@ def test_a_plain_direct_run_also_records_its_ephemeral_spec_digest(tmp_path):
                 target=result.procedure_identity,
                 artifact_digest=result.procedure_artifact_digest,
             ),
-            parameters={"value": 9},
+            # The spec records the run's parameters, not its input: this
+            # Procedure declares none.
+            parameters={},
             bindings={},
             acquisition={},
             # A direct run states no budget: it runs at its Procedure's caps.
@@ -726,11 +728,17 @@ def test_an_invoked_child_uses_the_parent_lines_binding_under_its_node_path(tmp_
         refs(
             {
                 "procedure": "test.parent",
-                "input": {"value": "int"},
+                "params": {"value": "int"},
                 "output": {"value": "int"},
                 "steps": [
-                    {"invoke": "test.slotted", "id": "child", "input": {"value": "$input.value"}},
-                    {"project": "finished", "fields": {"value": "$input.value"}},
+                    # The parent maps its parameter into the child's.
+                    {
+                        "invoke": "test.slotted",
+                        "id": "child",
+                        "input": {},
+                        "params": {"value": "$params.value"},
+                    },
+                    {"project": "finished", "fields": {"value": "$params.value"}},
                 ],
                 "returns": "finished",
                 "hard_caps": {"provider_calls": 1},
@@ -1109,7 +1117,7 @@ def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
             refs(
                 {
                     "procedure": "test.slotted",
-                    "input": {"value": "int"},
+                    "params": {"value": "int"},
                     "output": {"severity": {"type": "enum_of:test.severity"}},
                     "slots": {
                         "compute": {
@@ -1119,7 +1127,7 @@ def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
                         }
                     },
                     "steps": [
-                        {"call": "result", "slot": "compute", "input": {"value": "$input.value"}}
+                        {"call": "result", "slot": "compute", "input": {"value": "$params.value"}}
                     ],
                     "returns": "result",
                     "hard_caps": {"provider_calls": 1},
@@ -1725,10 +1733,10 @@ def emitting_spec(*, description=None):  # type: ignore[no-untyped-def]
             {
                 **slotted_spec(description=description).model_dump(mode="json", by_alias=True),
                 "steps": [
-                    {"call": "result", "slot": "compute", "input": {"value": "$input.value"}},
+                    {"call": "result", "slot": "compute", "input": {"value": "$params.value"}},
                     {
                         "emit": "test.procedure-output",
-                        "input": {"value": "$input.value"},
+                        "input": {"value": "$params.value"},
                         "result": {"value": "$result.value"},
                     },
                 ],

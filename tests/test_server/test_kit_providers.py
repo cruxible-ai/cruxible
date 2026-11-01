@@ -218,14 +218,15 @@ def _graph(world: Any, *, provider: str | None) -> Any:
     return ProcedureSpec.model_validate(
         {
             "procedure": PROCEDURE if provider is not None else BLUEPRINT,
-            "input": {"n": "int"},
+            # A consumer Line supplies ``n``: the Procedure's one parameter.
+            "params": {"n": "int"},
             "output": {"n": "int"},
             "slots": {"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
             "steps": [
                 {
                     "call": "result",
                     "slot": "increment",
-                    "input": {"n": {"$ref": "input", "path": ["n"]}},
+                    "input": {"n": {"$ref": "param", "path": ["n"]}},
                 }
             ],
             "returns": "result",
@@ -276,16 +277,17 @@ def _author(world: Any, *, procedure: bool = True) -> None:
         assert set(stored.definition.slots) == {"increment"}
         # Its boundaries are governed Contracts co-proposed beside it.
         tree = _tree(world)
-        for pin in (stored.definition.contract_in, stored.definition.contract_out):
-            from cruxible_client.contracts.shapes import (
-                contract_path_for_identity,
-                parse_contract,
-            )
+        from cruxible_client.contracts.shapes import contract_path_for_identity, parse_contract
 
+        def boundary(pin: Any) -> Any:
             path = contract_path_for_identity(pin.target.name)
-            boundary = parse_contract(tree[path], path=path)
-            assert set(boundary.fields) == {"n"}
-            assert boundary.fields["n"].spelling == "int"
+            return parse_contract(tree[path], path=path)
+
+        # A Line supplies ``n`` as the parameter; the Line-run input is empty.
+        assert boundary(stored.definition.contract_in).fields == {}
+        for pin in (stored.definition.parameter_contract, stored.definition.contract_out):
+            assert set(boundary(pin).fields) == {"n"}
+            assert boundary(pin).fields["n"].spelling == "int"
 
 
 def _build(world: Any, *projects: Path, version: str = "1.0.0") -> KitBundle:
@@ -434,9 +436,11 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
         assert [item.path for item in manifest.artifacts] == [
             f"contracts/{PROCEDURE}.input/v1.json",
             f"contracts/{PROCEDURE}.output/v1.json",
+            f"contracts/{PROCEDURE}.params/v1.json",
             f"contracts/{POLICY}/v1.json",
             f"contracts/{BLUEPRINT}.input/v1.json",
             f"contracts/{BLUEPRINT}.output/v1.json",
+            f"contracts/{BLUEPRINT}.params/v1.json",
             "contracts/local.increment.value/v1.json",
             f"procedures/{PROCEDURE}.json",
             f"procedures/{BLUEPRINT}.json",

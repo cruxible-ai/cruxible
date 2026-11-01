@@ -316,8 +316,8 @@ ProcedureRunStatusV1 = Literal[
 PROCEDURE_SEMANTIC_RESULT_DOMAIN = "playbill-procedure-semantic-result-v1"
 #: The one admitted-run family: its admission tag is also its binding-digest
 #: domain, and its replay key hashes one explicit semantic projection.
-PROCEDURE_RUN_ADMISSION_TAG: Final = "playbill-procedure-run-admission-v10"
-PROCEDURE_SEMANTIC_REPLAY_KEY_DOMAIN: Final = "playbill-procedure-replay-key-v10"
+PROCEDURE_RUN_ADMISSION_TAG: Final = "playbill-procedure-run-admission-v11"
+PROCEDURE_SEMANTIC_REPLAY_KEY_DOMAIN: Final = "playbill-procedure-replay-key-v11"
 PROCEDURE_INPUT_PROVENANCE_DOMAIN = "playbill-procedure-replay-input-provenance-v1"
 PROCEDURE_LINE_RUN_ID_DOMAIN = "playbill-procedure-line-run-id-v1"
 PROCEDURE_RUN_ID_V2_DOMAIN = "playbill-procedure-run-id-v2"
@@ -513,7 +513,7 @@ class ProcedureRunAdmission(_StrictExecutionModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
-    tag: Literal["playbill-procedure-run-admission-v10"] = PROCEDURE_RUN_ADMISSION_TAG
+    tag: Literal["playbill-procedure-run-admission-v11"] = PROCEDURE_RUN_ADMISSION_TAG
     instance_id: str
     run_id: str
     attempt: int = Field(ge=1)
@@ -530,6 +530,9 @@ class ProcedureRunAdmission(_StrictExecutionModel):
     node_pin_sets: tuple[ProcedureNodePinSetV1, ...]
     pin_set_digest: str
     invocation_input: object
+    #: The run's effective parameters: the Line's (or a direct run's) values
+    #: over the Procedure's ``parameter_defaults``.
+    parameters: object
     accepted_state_inputs: tuple[AcceptedStateRunInput, ...]
     landed_capture_inputs: tuple[LandedCaptureRunInputV1, ...] = ()
     exhaust_inputs: tuple[ExhaustRunInputV1, ...] = ()
@@ -564,7 +567,7 @@ class ProcedureRunAdmission(_StrictExecutionModel):
     semantic_replay_key_digest: str
     admission_binding_digest: str
 
-    @field_validator("invocation_input", mode="before")
+    @field_validator("invocation_input", "parameters", mode="before")
     @classmethod
     def _invocation_input(cls, value: object) -> object:
         return normalize_canonical(value)
@@ -1546,6 +1549,7 @@ def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmission) -> st
             "procedure_identity": admission.procedure_identity.model_dump(mode="json"),
             "procedure_artifact_digest": admission.procedure_artifact_digest,
             "invocation_input": admission.invocation_input,
+            "parameters": admission.parameters,
             "bound_coordinate": admission.bound_coordinate.model_dump(mode="json"),
             "evaluation_time": format_datetime(admission.occurrence_evaluation_time),
             "validated_pins": pins,
@@ -1611,6 +1615,7 @@ def seal_procedure_run_admission(
             **cast(dict[str, Any], fields),
             # Exactly the normalized values validation hashes again.
             "invocation_input": normalize_canonical(fields.get("invocation_input")),
+            "parameters": normalize_canonical(fields.get("parameters")),
             "admitted_at": ensure_utc(cast(datetime, fields["admitted_at"])),
             "occurrence_evaluation_time": ensure_utc(
                 cast(datetime, fields["occurrence_evaluation_time"])
@@ -1748,6 +1753,7 @@ def state_tap_parameters(
     node: ReadNode,
     *,
     invocation_input: object,
+    parameters: object,
     values: dict[str, CanonicalValue],
 ) -> CanonicalValue:
     if node.reads_claims:
@@ -1758,10 +1764,14 @@ def state_tap_parameters(
                 "cardinality": node.cardinality,
             },
             input_payload=normalize_canonical(invocation_input),
+            parameters=normalize_canonical(parameters),
             outputs=values,
         )
     return _resolve_template(
-        node.parameters, input_payload=normalize_canonical(invocation_input), outputs=values
+        node.parameters,
+        input_payload=normalize_canonical(invocation_input),
+        parameters=normalize_canonical(parameters),
+        outputs=values,
     )
 
 
@@ -1802,7 +1812,8 @@ def bind_accepted_state_materials(
     state_reader: StateTapReaderProtocol,
     bodies: ContentAddressedBodyStore,
     read_ceiling: int,
-    invocation_input: object = None,
+    invocation_input: object,
+    parameters: object,
 ) -> tuple[AcceptedStateRunMaterial, ...]:
     """Read and retain every accepted-state read this run will observe.
 
@@ -1826,14 +1837,16 @@ def bind_accepted_state_materials(
         binding = node.claim_type if node.claim_type is not None else node.query
         assert binding is not None  # a read names exactly one selection
         query = resolved_pin(accepted, binding)
-        parameters = state_tap_parameters(node, invocation_input=invocation_input, values=values)
+        read_parameters = state_tap_parameters(
+            node, invocation_input=invocation_input, parameters=parameters, values=values
+        )
         try:
             if remaining < 1:
                 raise ReadCeilingExceeded(clipped=("max_results",), candidates=None, ceiling=0)
             if node.reads_claims:
-                assert isinstance(parameters, dict)
+                assert isinstance(read_parameters, dict)
                 assert node.subject_kind is not None
-                identity = parameters["subject_id"]
+                identity = read_parameters["subject_id"]
                 if not isinstance(identity, str):
                     raise ExecutionError("Subject id must resolve to a string")
                 read = state_reader.read_accepted_claim(
@@ -1848,7 +1861,7 @@ def bind_accepted_state_materials(
             else:
                 read = state_reader.read_accepted_state(
                     query=query,
-                    parameters=parameters,
+                    parameters=read_parameters,
                     coordinate=accepted_coordinate,
                     ceiling=remaining,
                 )
@@ -1883,7 +1896,7 @@ def bind_accepted_state_materials(
         common = dict(
             input_name=node.as_,
             read_coordinate=accepted_coordinate,
-            parameters_digest=run_value_digest("state-parameters", parameters),
+            parameters_digest=run_value_digest("state-parameters", read_parameters),
             result_digest=run_value_digest("state-result", value),
             effective_query_budgets=read.effective_budgets,
             material_body_digest=retained.digest,
@@ -1919,15 +1932,18 @@ def prepare_direct_procedure_run(
     attempt: int = 1,
     runtime_policy: ProcedureRuntimePolicy | None = None,
     budget: ProcedureBudget | None = None,
+    parameters: Mapping[str, object] | None = None,
 ) -> PreparedProcedureRun:
     """Bind exact accepted state and all pins for an actor's pure direct run.
 
     A pure run plans no Provider occurrence, so it binds no acquisition plan,
     Provider binding or deployment; its admission material manifest is empty.
-    ``budget`` is the run's ephemeral Line budget (default: the hard caps).
+    ``budget`` is the run's ephemeral Line budget (default: the hard caps), and
+    ``parameters`` its parameter values over the Procedure's defaults.
     """
 
     procedure = accepted.procedure
+    effective_parameters = procedure.definition.effective_parameters(parameters or {})
     budget = caps_budget(procedure.definition.hard_caps) if budget is None else budget
     from cruxible_core.procedures.reference_binding import authored_procedure
 
@@ -1944,6 +1960,7 @@ def prepare_direct_procedure_run(
             procedure.definition.hard_caps.max_read_rows,
         ),
         invocation_input=invocation_input,
+        parameters=effective_parameters,
     )
     node_pin_sets = _node_pin_sets(accepted)
     admitted_at = ensure_utc(admitted_at)
@@ -1964,6 +1981,7 @@ def prepare_direct_procedure_run(
             "node_pin_sets": node_pin_sets,
             "pin_set_digest": procedure_pin_set_digest(procedure.pins, node_pin_sets),
             "invocation_input": invocation_input,
+            "parameters": effective_parameters,
             "accepted_state_inputs": tuple(item.input for item in materials),
             "resource_budget": (
                 resolve_procedure_resource_budget(
@@ -2436,7 +2454,7 @@ class ProcedureExecutor:
         state = _RunState(
             outputs={},
             input_payload=normalize_canonical(admission.invocation_input),
-            parameters={},
+            parameters=normalize_canonical(admission.parameters),
         )
         status: ProcedureRunStatusV1
         output: CanonicalValue | None = None
@@ -2462,6 +2480,25 @@ class ProcedureExecutor:
                 max_items=_effective_max_items(admission),
                 observe_items=state.observe_items,
             )
+            # The effective parameters (Line values over the defaults) are
+            # checked against the params Contract after the defaults apply.
+            parameter_contract = accepted.procedure.definition.parameter_contract
+            if parameter_contract is not None:
+                state.parameters = _validate_node_contract(
+                    self.contract_validator,
+                    contract=self._pin(parameter_contract, label="Procedure parameter_contract"),
+                    payload=state.parameters,
+                    direction="input",
+                    node_id="procedure",
+                    max_items=_effective_max_items(admission),
+                    observe_items=state.observe_items,
+                )
+            elif state.parameters != {}:
+                raise _RunRefusal(
+                    "contract_input_refused",
+                    "The Procedure declares no parameters; the run supplied some.",
+                    node_id="procedure",
+                )
             output = self._walk(
                 accepted,
                 admission=admission,
@@ -2763,7 +2800,7 @@ class ProcedureExecutor:
         state = _RunState(
             outputs={},
             input_payload=normalize_canonical(admission.invocation_input),
-            parameters={},
+            parameters=normalize_canonical(admission.parameters),
             outcomes={item.input_name: item for item in prepared.acquisition_outcomes},
             acquisition_plan=prepared.acquisition_plan,
             read_rows=sum(item.rows for item in prepared.accepted_state_materials),
@@ -2941,7 +2978,10 @@ class ProcedureExecutor:
                 run_value_digest(
                     "state-parameters",
                     state_tap_parameters(
-                        node, invocation_input=admission.invocation_input, values=retained_values
+                        node,
+                        invocation_input=admission.invocation_input,
+                        parameters=admission.parameters,
+                        values=retained_values,
                     ),
                 ),
             )
@@ -3232,6 +3272,7 @@ class ProcedureExecutor:
                             node.result,
                             node_id=node.node_id,
                             input_payload=state.input_payload,
+                            parameters=state.parameters,
                             outputs=state.outputs,
                         )
                         state.return_tokens = _base_tokens(
@@ -3359,6 +3400,7 @@ class ProcedureExecutor:
                     fields,
                     node_id=node.node_id,
                     input_payload=state.input_payload,
+                    parameters=state.parameters,
                     outputs=state.outputs,
                 )
             )
@@ -3550,6 +3592,7 @@ class ProcedureExecutor:
             _resolve_template(
                 node.input,
                 input_payload=state.input_payload,
+                parameters=state.parameters,
                 outputs=state.outputs,
             )
         )
@@ -3986,6 +4029,7 @@ class ProcedureExecutor:
                 node.only_keys,
                 node_id=node.node_id,
                 input_payload=state.input_payload,
+                parameters=state.parameters,
                 outputs=state.outputs,
             )
             if not isinstance(resolved, list) or not all(
@@ -4045,6 +4089,7 @@ class ProcedureExecutor:
                 reference,
                 node_id=node_id,
                 input_payload=state.input_payload,
+                parameters=state.parameters,
                 outputs=outputs,
             )
 
@@ -4381,6 +4426,14 @@ class ProcedureExecutor:
             node.input,
             node_id=node.node_id,
             input_payload=state.input_payload,
+            parameters=state.parameters,
+            outputs=state.outputs,
+        )
+        child_parameters = _resolve_node_template(
+            node.parameters,
+            node_id=node.node_id,
+            input_payload=state.input_payload,
+            parameters=state.parameters,
             outputs=state.outputs,
         )
         self._append_event(
@@ -4397,7 +4450,7 @@ class ProcedureExecutor:
                 "remaining_budget": remaining.model_dump(mode="json"),
             },
         )
-        result = self.nested_runner.run(context, value)
+        result = self.nested_runner.run(context, value, child_parameters)
         child_records = [
             row
             for row in self.journal.all_records(result.receipt.stream, result.receipt.partition_id)
@@ -5638,6 +5691,7 @@ class ProcedureExecutor:
             _resolve_template(
                 node.input,
                 input_payload=state.input_payload,
+                parameters=state.parameters,
                 outputs=state.outputs,
             )
         )
@@ -5822,6 +5876,7 @@ class ProcedureExecutor:
             body.spec,
             node_id=body.node_id,
             input_payload=state.input_payload,
+            parameters=state.parameters,
             outputs=combined,
         )
         if body.operation == "call":
@@ -6333,7 +6388,10 @@ def _fan_out_list(
 
     try:
         resolved = _resolve_template(
-            template, input_payload=state.input_payload, outputs=state.outputs
+            template,
+            input_payload=state.input_payload,
+            parameters=state.parameters,
+            outputs=state.outputs,
         )
     except ExecutionError as exc:
         raise _RunRefusal(
@@ -6422,6 +6480,7 @@ def _inbox_items(
                 resolved = _resolve_template(
                     template,
                     input_payload=state.input_payload,
+                    parameters=state.parameters,
                     outputs=state.outputs,
                     item=element,
                 )
@@ -6602,6 +6661,7 @@ def _terminal_items(
     resolved = _resolve_template(
         declared,
         input_payload=state.input_payload,
+        parameters=state.parameters,
         outputs=state.outputs,
     )
     if isinstance(declared, list | tuple):
@@ -6659,6 +6719,7 @@ def _resolve_reference(
     value: str,
     *,
     input_payload: CanonicalValue,
+    parameters: CanonicalValue,
     outputs: dict[str, CanonicalValue],
     item: CanonicalValue | None = None,
 ) -> object:
@@ -6666,6 +6727,9 @@ def _resolve_reference(
         return input_payload
     if value.startswith("$input."):
         return _resolve_path(input_payload, tuple(value[7:].split(".")), reference=value)
+    if value.startswith("$params."):
+        current = parameters if isinstance(parameters, dict) else {}
+        return _resolve_path(current, tuple(value[8:].split(".")), reference=value)
     if value.startswith("$steps."):
         parts = tuple(value[7:].split("."))
         alias = parts[0]
@@ -6687,6 +6751,7 @@ def _resolve_template(
     value: object,
     *,
     input_payload: CanonicalValue,
+    parameters: CanonicalValue,
     outputs: dict[str, CanonicalValue],
     item: CanonicalValue | None = None,
     preserve_item_references: bool = False,
@@ -6698,6 +6763,7 @@ def _resolve_template(
             _resolve_reference(
                 value,
                 input_payload=input_payload,
+                parameters=parameters,
                 outputs=outputs,
                 item=item,
             )
@@ -6707,6 +6773,7 @@ def _resolve_template(
             _resolve_template(
                 member,
                 input_payload=input_payload,
+                parameters=parameters,
                 outputs=outputs,
                 item=item,
                 preserve_item_references=preserve_item_references,
@@ -6718,6 +6785,7 @@ def _resolve_template(
             key: _resolve_template(
                 member,
                 input_payload=input_payload,
+                parameters=parameters,
                 outputs=outputs,
                 item=item,
                 preserve_item_references=preserve_item_references,
@@ -6732,10 +6800,13 @@ def _resolve_node_template(
     *,
     node_id: str,
     input_payload: CanonicalValue,
+    parameters: CanonicalValue,
     outputs: dict[str, CanonicalValue],
 ) -> CanonicalValue:
     try:
-        return _resolve_template(value, input_payload=input_payload, outputs=outputs)
+        return _resolve_template(
+            value, input_payload=input_payload, parameters=parameters, outputs=outputs
+        )
     except ExecutionError as exc:
         raise _RunRefusal(
             "runtime_reference_unresolved",

@@ -869,7 +869,9 @@ def test_lazy_rearm_is_serialized_and_never_runs_during_an_invocation(
     assert operator.lane_status() == ("available", None, None)
 
 
-_SERVED_RUN_INPUT = boundary_contract("served-provider-run-input", {"status": "string"})
+_SERVED_RUN_INPUT = boundary_contract("served-provider-run-input")
+#: The Line supplies ``status`` as the Procedure's parameter; its input is empty.
+_SERVED_RUN_PARAMS = boundary_contract("served-provider-run-params", {"status": "string"})
 _SERVED_PROVIDER_OUTPUT = boundary_contract("served-provider-output", {"echo": "string"})
 
 
@@ -890,6 +892,7 @@ def _provider_line_procedure(accepted_provider: AcceptedProvider) -> AcceptedPro
         name="served-provider-triage",
         contract_in=named(run_input_pin),
         contract_out=named(provider_output_pin),
+        parameter_contract=named(contract_pin("parameter-contract", _SERVED_RUN_PARAMS)),
         nodes=(
             CallNode(
                 node_id="ask",
@@ -1105,7 +1108,7 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
         reviewer_key_path,
         {
             **procedure_members(authored_procedure(accepted)),
-            **contract_files(_SERVED_RUN_INPUT, _SERVED_PROVIDER_OUTPUT),
+            **contract_files(_SERVED_RUN_INPUT, _SERVED_RUN_PARAMS, _SERVED_PROVIDER_OUTPUT),
             accepted_provider.path: render_provider(accepted_provider.provider),
             contract_path(_OPERATION_INPUT.name, _OPERATION_INPUT.version): render_contract(
                 _OPERATION_INPUT

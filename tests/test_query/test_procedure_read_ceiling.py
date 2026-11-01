@@ -297,6 +297,8 @@ def test_a_claim_read_draws_on_the_same_ceiling_as_a_query_read(claims: int, ref
         state_reader=reader,
         bodies=_fixture_bodies(),
         read_ceiling=100,
+        invocation_input={},
+        parameters={},
     )
     if refused:
         with pytest.raises(ProcedureBoundaryRefused) as caught:
@@ -323,6 +325,8 @@ def test_two_reads_share_the_runs_read_ceiling_and_the_second_refuses() -> None:
             state_reader=reader,  # type: ignore[arg-type]
             bodies=_fixture_bodies(),
             read_ceiling=100,
+            invocation_input={},
+            parameters={},
         )
 
     assert reader.ceilings == [100, 40]
@@ -345,6 +349,8 @@ def test_reads_within_the_ceiling_all_bind() -> None:
         state_reader=reader,  # type: ignore[arg-type]
         bodies=_fixture_bodies(),
         read_ceiling=100,
+        invocation_input={},
+        parameters={},
     )
 
     assert reader.ceilings == [100, 50]

@@ -5507,6 +5507,15 @@ class Procedure:
         return procedure_record_constructor(self.definition, "input", self.contracts)
 
     @property
+    def params(self) -> RecordConstructor:
+        """The typed constructor for this Procedure's parameter record.
+
+        Next: ``procedure.run(parameters=procedure.params(...))``.
+        """
+
+        return procedure_record_constructor(self.definition, "params", self.contracts)
+
+    @property
     def ref(self) -> ProcedureRef:
         """This Procedure as a typed ref. Next: ``cx.get(procedure.ref)``."""
 
@@ -5529,12 +5538,16 @@ class Procedure:
         self,
         *,
         input: Record | None = None,
+        parameters: Record | None = None,
         bindings: Mapping[str, str] | None = None,
         at: AcceptedCoordinate | None = None,
         resolution_contract: ResolutionContractReference | None = None,
         trigger_event: TriggerEventReference | None = None,
     ) -> ProcedureRun:
-        """Run this Procedure on a typed input and return the run.
+        """Run this Procedure on a typed input (and parameters) and return the run.
+
+        ``parameters`` (made by ``procedure.params``) are the run's values over
+        the Procedure's defaults.
 
         Next: ``run.succeeded`` and ``run.result``, or
         ``cx.get(f"ProcedureRun:{run.run_id}")``.
@@ -5546,14 +5559,23 @@ class Procedure:
             self._coordinate = at
         if input is not None and not isinstance(input, Record):
             raise TypeError("Procedure.run requires a record made by procedure.input")
+        if parameters is not None and not isinstance(parameters, Record):
+            raise TypeError("Procedure.run parameters are a record made by procedure.params")
         constructor = self.input
         normalized = constructor() if input is None else constructor.from_wire(input)
+        supplied = None
+        if parameters is not None:
+            record = normalize_canonical(self.params.from_wire(parameters))
+            if not isinstance(record, dict):  # pragma: no cover - a Record is an object
+                raise TypeError("Procedure.run parameters are a record")
+            supplied = record
         result = self._playbill._client.run_procedure(
             self._playbill._instance_id,
             self._name,
             evaluation_time=self._playbill._evaluation_time(),
             at=self._playbill._read_at(at or self._coordinate),
             input=normalize_canonical(normalized),
+            parameters=supplied,
             **({"bindings": bindings} if bindings else {}),
             resolution_contract=resolution_contract,
             trigger_event=trigger_event,

@@ -173,14 +173,14 @@ def _run_call(http, instance_id, reviewer, *, build, value, name="installed-pack
         reviewer,
         spec={
             "procedure": f"test.{name}",
-            "input": {"n": "int"},
+            "params": {"n": "int"},
             "output": {"n": "int"},
             "slots": {"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
             "steps": [
                 {
                     "call": "result",
                     "slot": "increment",
-                    "input": {"n": {"$ref": "input", "path": ["n"]}},
+                    "input": {"n": {"$ref": "param", "path": ["n"]}},
                 }
             ],
             "returns": "result",

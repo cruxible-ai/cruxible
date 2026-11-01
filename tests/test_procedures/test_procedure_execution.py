@@ -668,7 +668,7 @@ def test_a_pure_direct_run_binds_no_line_plan_invocation_or_occurrence(tmp_path)
     fixture = _fixture(tmp_path)
     prepared = _prepare(_state_procedure(), fixture, _StateReader(), journal_partition_id=None)
     admission = prepared.admission
-    assert admission.tag == "playbill-procedure-run-admission-v10"
+    assert admission.tag == "playbill-procedure-run-admission-v11"
     assert admission.invocation_origin == "actor"
     assert not admission.plans_providers
     assert admission.parent_binding is None

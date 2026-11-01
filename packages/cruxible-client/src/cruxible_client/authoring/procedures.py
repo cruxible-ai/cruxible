@@ -105,7 +105,7 @@ from cruxible_client.contracts.shapes import (
 
 def procedure_record_constructor(
     artifact: ProcedureArtifact,
-    direction: Literal["input", "output"],
+    direction: Literal["input", "params", "output"],
     contracts: Iterable[Contract],
 ) -> RecordConstructor:
     """A typed record constructor for one boundary of an accepted Procedure.
@@ -120,8 +120,12 @@ def procedure_record_constructor(
     pin = (
         artifact.definition.contract_in
         if direction == "input"
+        else artifact.definition.parameter_contract
+        if direction == "params"
         else artifact.definition.contract_out
     )
+    if pin is None:
+        raise ValueError("the Procedure declares no params")
     if not isinstance(pin, ArtifactPin | ArtifactNameRef):
         raise ValueError("Typed execution requires a named boundary Contract")
     by_identity = {contract.identity: contract for contract in contracts}
@@ -498,13 +502,24 @@ class Sequence:
         *,
         input: Template,
         as_: str,
+        params: Mapping[str, Template] | None = None,
         id: str | None = None,
         next: str | None = None,
     ) -> Handle:
-        """Invoke an accepted Procedure under this run's limits and authority."""
+        """Invoke an accepted Procedure under this run's limits and authority.
+
+        ``params`` are the child's parameter values, over its defaults.
+        """
 
         step = InvokeStep.model_validate(
-            {"invoke": procedure, "input": input, "as": as_, "id": id, "next": next}
+            {
+                "invoke": procedure,
+                "input": input,
+                "params": dict(params or {}),
+                "as": as_,
+                "id": id,
+                "next": next,
+            }
         )
         return self._add(step, as_, None)
 

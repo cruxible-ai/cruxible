@@ -270,12 +270,16 @@ def test_line_closure_loss_refuses_before_mandate_or_occurrence(
     assert "Restore or succeed" in str(result.terminal.details)
 
 
-def _slotless_contracts(name: str) -> tuple[object, object]:
-    """The slotless Procedure's governed boundaries (``procedure_members`` accepts them)."""
+def _slotless_contracts(name: str) -> tuple[object, object, object]:
+    """The slotless Procedure's governed boundaries (``procedure_members`` accepts them).
+
+    A Line supplies ``status`` as the Procedure's parameter; its input is empty.
+    """
 
     return (
-        boundary_contract(f"{name}.input", {"status": "string"}),
+        boundary_contract(f"{name}.input"),
         boundary_contract(f"{name}.output", {"status": "string"}),
+        boundary_contract(f"{name}.params", {"status": "string"}),
     )
 
 
@@ -287,17 +291,18 @@ def _slotless_procedure(name: str) -> AcceptedProcedure:
     end to end through the served Line route.
     """
 
-    input_contract, output_contract = _slotless_contracts(name)
+    input_contract, output_contract, params_contract = _slotless_contracts(name)
     contract_in = contract_pin("contract-in", input_contract)
     contract_out = contract_pin("contract-out", output_contract)
     definition = ProcedureDefinition(
         name=name,
         contract_in=named(contract_in),
         contract_out=named(contract_out),
+        parameter_contract=named(contract_pin("parameter-contract", params_contract)),
         nodes=(
             ProjectNode(
                 node_id="shape",
-                fields={"status": "$input.status"},
+                fields={"status": "$params.status"},
                 as_="result",
             ),
         ),

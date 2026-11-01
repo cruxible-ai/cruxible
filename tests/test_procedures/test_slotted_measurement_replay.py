@@ -194,13 +194,13 @@ def _slotted_world(tmp_path, *, landed=False):
         refs(
             {
                 "procedure": "test.measured-slot",
-                "input": {"value": "int"},
+                "params": {"value": "int"},
                 "output": {"value": "int"},
                 "slots": {
                     "compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}
                 },
                 "steps": [
-                    {"call": "result", "slot": "compute", "input": {"value": "$input.value"}}
+                    {"call": "result", "slot": "compute", "input": {"value": "$params.value"}}
                 ],
                 "returns": "result",
                 "measurements": [declaration.model_dump(mode="json")],
@@ -326,7 +326,7 @@ def test_measure_replays_explicit_build_and_refuses_retired_build(tmp_path, orig
         service_run_playbill_procedure(
             instance,
             name=accepted.procedure.identity.name,
-            request=ProcedureRunRequest(input={"value": 1}),
+            request=ProcedureRunRequest(input={}, parameters={"value": 1}),
             actor_context=_actor(instance),
         )
     assert ambiguous.value.error_code == "cruxible.line.slot_ambiguous"
@@ -348,7 +348,8 @@ def test_measure_replays_explicit_build_and_refuses_retired_build(tmp_path, orig
             instance,
             name=accepted.procedure.identity.name,
             request=ProcedureRunRequest(
-                input={"value": 1},
+                input={},
+                parameters={"value": 1},
                 bindings={"compute": selected.identity.name},
                 evaluation_time=NOW,
             ),
@@ -493,7 +494,9 @@ def test_measure_replays_line_with_a_landed_slotted_source_and_call(tmp_path):
             instance,
             name=accepted.procedure.identity.name,
             request=ProcedureRunRequest(
-                input={"value": 1}, bindings={"compute": first.provider.identity.name}
+                input={},
+                parameters={"value": 1},
+                bindings={"compute": first.provider.identity.name},
             ),
             actor_context=_actor(instance),
         )
@@ -505,7 +508,8 @@ def test_measure_replays_line_with_a_landed_slotted_source_and_call(tmp_path):
         instance,
         name=accepted.procedure.identity.name,
         request=ProcedureRunRequest(
-            input={"value": 1},
+            input={},
+            parameters={"value": 1},
             evaluation_time=NOW,
             bindings={slot: binding.build.target.name for slot, binding in line.bindings.items()},
         ),

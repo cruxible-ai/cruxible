@@ -8266,6 +8266,14 @@
                 ],
                 "default": null,
                 "title": "Next"
+              },
+              "params": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/Template"
+                },
+                "description": "The child's parameter values, over its defaults (its params Contract).",
+                "title": "Params",
+                "type": "object"
               }
             },
             "required": [
@@ -9772,10 +9780,19 @@
                 "default": null,
                 "title": "Parameter Contract"
               },
+              "parameter_defaults": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/JsonValue"
+                },
+                "description": "Each parameter's default by name; a Line's value overrides it. The params Contract stays shape-only, and each default must fit its field.",
+                "title": "Parameter Defaults",
+                "type": "object"
+              },
               "params": {
                 "additionalProperties": {
                   "$ref": "#/$defs/ContractField"
                 },
+                "description": "Parameter fields a Line supplies (Contract field spellings); core co-proposes the governed <procedure>.params@N Contract. A field may state its default inline as {type, default}.",
                 "title": "Params",
                 "type": "object"
               },
@@ -52363,6 +52380,9 @@
                 "title": "Node Id",
                 "type": "string"
               },
+              "parameters": {
+                "title": "Parameters"
+              },
               "procedure": {
                 "$ref": "#/$defs/ArtifactNameRef"
               }
@@ -52903,6 +52923,11 @@
                   }
                 ],
                 "default": null
+              },
+              "parameter_defaults": {
+                "additionalProperties": true,
+                "title": "Parameter Defaults",
+                "type": "object"
               },
               "returns": {
                 "anyOf": [
@@ -77403,6 +77428,9 @@
                 "title": "Node Id",
                 "type": "string"
               },
+              "parameters": {
+                "title": "Parameters"
+              },
               "procedure": {
                 "$ref": "#/$defs/ArtifactNameRef"
               }
@@ -77751,6 +77779,11 @@
                   }
                 ],
                 "default": null
+              },
+              "parameter_defaults": {
+                "additionalProperties": true,
+                "title": "Parameter Defaults",
+                "type": "object"
               },
               "returns": {
                 "anyOf": [
@@ -85008,6 +85041,9 @@
                 "title": "Node Id",
                 "type": "string"
               },
+              "parameters": {
+                "title": "Parameters"
+              },
               "procedure": {
                 "$ref": "#/$defs/ArtifactNameRef"
               }
@@ -85356,6 +85392,11 @@
                   }
                 ],
                 "default": null
+              },
+              "parameter_defaults": {
+                "additionalProperties": true,
+                "title": "Parameter Defaults",
+                "type": "object"
               },
               "returns": {
                 "anyOf": [

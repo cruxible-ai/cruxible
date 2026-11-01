@@ -160,6 +160,7 @@ def _two_capture_state(items):  # type: ignore[no-untyped-def]
     provenance = AliasProvenanceV1(whole=frozenset({a, b}), items=items(a, b))
     return SimpleNamespace(
         input_payload={},
+        parameters={},
         outputs={"joined": {"items": [_element(None), _element("vendor")]}},
         provenance={"joined": provenance},
         alias_tokens=lambda aliases: provenance.whole if "joined" in aliases else frozenset(),
@@ -218,6 +219,7 @@ class _State:
 
     def __init__(self, outputs, provenance):  # type: ignore[no-untyped-def]
         self.input_payload = {}
+        self.parameters = {}
         self.outputs = outputs
         self.provenance = provenance
 

@@ -8,12 +8,13 @@ binds; nothing here performs a mutable config or registry lookup.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactNameRef
-from cruxible_client.contracts.canonical import normalize_canonical
+from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.measurements import (
     ProcedureMeasurementDeclaration,
@@ -180,6 +181,12 @@ class ProcedureDefinition(_StrictProcedureModel):
     contract_in: ArtifactNameRef
     contract_out: ArtifactNameRef
     parameter_contract: ArtifactNameRef | None = None
+    #: Each parameter's default by name. The params Contract stays shape-only;
+    #: acceptance checks each default against its field, and a run's
+    #: effective parameters are the Line's values over these defaults.
+    parameter_defaults: dict[str, object] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
     nodes: tuple[ProcedureNode, ...]
     returns: str | None = None
     slots: dict[str, ProcedureSlot] = Field(
@@ -236,6 +243,15 @@ class ProcedureDefinition(_StrictProcedureModel):
     def _annotations(cls, value: object) -> object:
         return normalize_canonical(value)
 
+    @field_validator("parameter_defaults", mode="before")
+    @classmethod
+    def _parameter_defaults(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            raise ValueError("parameter_defaults maps each parameter name to its default")
+        if not all(isinstance(name, str) for name in value):
+            raise ValueError("a parameter default is keyed by its parameter name")
+        return normalize_canonical(value)
+
     @model_validator(mode="after")
     def _basic_shape(self) -> "ProcedureDefinition":
         if not self.nodes:
@@ -252,6 +268,11 @@ class ProcedureDefinition(_StrictProcedureModel):
             raise ValueError("Procedure node ids must be unique")
         if len(set(aliases)) != len(aliases):
             raise ValueError("Procedure output aliases must be unique")
+        if self.parameter_defaults and self.parameter_contract is None:
+            raise ValueError(
+                "procedure_parameter_default_undeclared: parameter_defaults name "
+                "parameters, and this Procedure declares no params Contract"
+            )
         used = {slot for _occurrence, slot in self.slot_nodes()}
         if used != set(self.slots):
             undeclared = sorted(used - set(self.slots))
@@ -325,6 +346,15 @@ class ProcedureDefinition(_StrictProcedureModel):
                     f"{arm_label!r} does not target {measurement_node_id!r}"
                 )
         return self
+
+    def effective_parameters(self, supplied: Mapping[str, object]) -> CanonicalValue:
+        """A run's parameters: the supplied values (its Line's) over the defaults.
+
+        The result is checked against the params Contract after the defaults
+        apply; a parameter neither supplied nor defaulted stays absent.
+        """
+
+        return normalize_canonical({**self.parameter_defaults, **supplied})
 
     def slot_nodes(self) -> tuple[tuple[str, str], ...]:
         """``(occurrence id, slot)`` for every slotted node, repeat bodies included."""

@@ -41,6 +41,7 @@ from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonS
 from pydantic_core import PydanticUndefined
 from typing_extensions import TypeAliasType
 
+from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.extract import CompleteWhen, ExtractField
@@ -60,6 +61,7 @@ from cruxible_client.contracts.shapes import (
     ContractField,
     ContractRef,
     CountOperand,
+    FieldInvalid,
     IntType,
     ListType,
     LiteralOperand,
@@ -71,8 +73,10 @@ from cruxible_client.contracts.shapes import (
     Presence,
     StringType,
     as_predicate,
+    check_value,
     parse_contract_ref,
     predicate_context_problem,
+    type_refs,
 )
 
 Name = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_.-]{0,255}$")]
@@ -502,6 +506,10 @@ class EmitStep(StepOptions):
 class InvokeStep(StepOptions):
     invoke: str
     input: Template
+    params: dict[str, Template] = Field(
+        default_factory=dict,
+        description="The child's parameter values, over its defaults (its params Contract).",
+    )
     as_: StepId | None = Field(alias="as", default=None)
 
 
@@ -659,7 +667,21 @@ class ProcedureSpec(_Model):
             "<procedure>.input@N Contract. Or name one with input_contract."
         ),
     )
-    params: dict[str, FieldType] = Field(default_factory=dict)
+    params: dict[str, FieldType] = Field(
+        default_factory=dict,
+        description=(
+            "Parameter fields a Line supplies (Contract field spellings); core co-proposes "
+            "the governed <procedure>.params@N Contract. A field may state its default "
+            "inline as {type, default}."
+        ),
+    )
+    parameter_defaults: dict[str, JsonValue] = Field(
+        default_factory=dict,
+        description=(
+            "Each parameter's default by name; a Line's value overrides it. The params "
+            "Contract stays shape-only, and each default must fit its field."
+        ),
+    )
     returns: StepId | ReturnFrom | ReturnFields | None = None
     activation: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
     hard_caps: ProcedureLimits = Field(
@@ -737,6 +759,43 @@ class ProcedureSpec(_Model):
                 "(<alias>.<field>)"
             )
         return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def _inline_parameter_defaults(cls, value: Any) -> Any:
+        """Lower ``params: {name: {type, default}}`` into ``parameter_defaults``."""
+
+        if not isinstance(value, Mapping):
+            return value
+        for role in ("input", "output"):
+            declared = value.get(role)
+            if isinstance(declared, Mapping):
+                for name, field in declared.items():
+                    if isinstance(field, Mapping) and "default" in field:
+                        raise ValueError(
+                            f"procedure_default_not_a_parameter: {role} field {name!r} states "
+                            "a default; only params take defaults (a Line overrides them)"
+                        )
+        params = value.get("params")
+        if not isinstance(params, Mapping) or not any(
+            isinstance(field, Mapping) and "default" in field for field in params.values()
+        ):
+            return value
+        defaults = dict(value.get("parameter_defaults") or {})
+        fields: dict[str, Any] = {}
+        for name, field in params.items():
+            if isinstance(field, Mapping) and "default" in field:
+                if name in defaults:
+                    raise ValueError(
+                        f"procedure_parameter_default_ambiguous: parameter {name!r} states its "
+                        "default inline and in parameter_defaults; state one"
+                    )
+                defaults[name] = field["default"]
+                field = {key: member for key, member in field.items() if key != "default"}
+                if set(field) == {"type"}:
+                    field = field["type"]
+            fields[name] = field
+        return {**value, "params": fields, "parameter_defaults": defaults}
 
     @field_validator("steps", mode="before")
     @classmethod
@@ -929,18 +988,11 @@ def graph_template(value: Any, path: str) -> Any:
     """A template in the stored graph's spelling: each Ref becomes its reference string.
 
     The stored graph reads a ``$``-prefixed string as a reference, so a literal
-    string may not begin with ``$``; a ``param`` reference is read only by
-    predicates.
+    string may not begin with ``$``. A ``$params.<name>`` reference reads the
+    run's effective parameter, typed by the params Contract.
     """
 
     if isinstance(value, Ref):
-        if value.root == "param":
-            raise ProcedureSpecError(
-                "procedure_ref_unsupported",
-                path,
-                f"{value.render()!r}: a Line parameter is read by guard and transform "
-                "predicates, not by value templates",
-            )
         return value.graph_text()
     if isinstance(value, str):
         if value.startswith("$"):
@@ -1433,6 +1485,8 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                 procedure=_ref("Procedure", step.invoke),
                 input=template(step.input, path + ".input"),
             )
+            if step.params:
+                node["parameters"] = template(step.params, path + ".params")
             if resolve:
                 output = invoke_view_fields(resolve("procedure_output", step))
             alias = step.as_ or id_
@@ -1616,11 +1670,54 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         }
     if root_params is not None:
         definition["parameter_contract"] = root_params
+    if spec.parameter_defaults:
+        definition["parameter_defaults"] = _parameter_defaults(spec, param_shape)
     return lowered_procedure_payload(
         definition=definition,
         activation_policy=spec.activation,
         generated={role: fields for role, fields in sorted(generated.items())},
     )
+
+
+def _parameter_defaults(
+    spec: ProcedureSpec, fields: Mapping[str, ContractField] | None
+) -> dict[str, Any]:
+    """The spec's parameter defaults, each checked against its params field.
+
+    A field whose type names another Contract is checked when the Procedure is
+    accepted, against the Contracts at that coordinate.
+    """
+
+    if not spec.params and spec.parameter_contract is None:
+        raise ProcedureSpecError(
+            "procedure_parameter_default_undeclared",
+            "parameter_defaults",
+            "parameter_defaults name parameters, and this Procedure declares no params",
+        )
+    defaults = normalize_canonical(dict(spec.parameter_defaults))
+    assert isinstance(defaults, dict)
+    if fields is None:
+        return defaults
+    for name, value in defaults.items():
+        path = f"parameter_defaults.{name}"
+        declared = fields.get(name)
+        if declared is None:
+            raise ProcedureSpecError(
+                "procedure_parameter_default_undeclared",
+                path,
+                f"parameter {name!r} has a default and no params field; declare it in params",
+            )
+        if type_refs(declared.type):
+            continue
+        checked = check_value(value, declared.type, at=f"/{name}", field=name)
+        if isinstance(checked, FieldInvalid):
+            raise ProcedureSpecError(
+                "procedure_parameter_default_invalid",
+                path,
+                f"the default of parameter {name!r} does not fit {declared.spelling}: "
+                f"{checked.problem}",
+            )
+    return defaults
 
 
 def _query_view_fields() -> dict[str, PropertySchema]:

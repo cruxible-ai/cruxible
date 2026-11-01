@@ -99,6 +99,8 @@ def _reference_templates(
             yield "parameters", node.parameters
     elif isinstance(node, CallNode | InvokeNode):
         yield "input", node.input
+        if isinstance(node, InvokeNode) and node.parameters:
+            yield "parameters", node.parameters
     elif isinstance(node, ExtractNode):
         yield "capture", node.capture
         if node.only_keys is not None:

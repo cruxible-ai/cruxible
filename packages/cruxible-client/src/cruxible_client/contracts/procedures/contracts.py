@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
@@ -23,6 +23,9 @@ from cruxible_client.contracts.shapes import (
     contract_ref_for_identity,
 )
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
+
+if TYPE_CHECKING:
+    from cruxible_client.contracts.procedures.models import ProcedureDefinition
 
 
 class ProcedureContractValidationError(ValueError):
@@ -372,10 +375,56 @@ class AcceptedProcedureContractValidator:
         return ValidatedProcedureContract(value=value, list_observations=tuple(observations))
 
 
+#: A Line run's Procedure input: a Line supplies parameters, never input.
+LINE_RUN_INPUT: dict[str, CanonicalValue] = {}
+
+
+def validate_line_parameters(
+    validator: AcceptedProcedureContractValidator,
+    definition: ProcedureDefinition,
+    parameters: object,
+) -> None:
+    """Refuse a Line whose runs the Procedure would refuse at the boundary.
+
+    A Line supplies the Procedure's parameters and its runs take an empty
+    input: the input Contract must accept ``{}``, and the Line's values over
+    the Procedure's defaults must satisfy its params Contract. A refusal names
+    the parameter (``field_path``) it is about.
+    """
+
+    try:
+        validator.validate_contract(
+            contract=definition.contract_in, payload=LINE_RUN_INPUT, direction="input"
+        )
+    except ProcedureContractValidationError as exc:
+        raise ProcedureContractValidationError(
+            f"a Line run's input is empty, and the Procedure's input refuses it: {exc}; "
+            "a Line supplies parameters (declare them as the Procedure's params)",
+        ) from exc
+    supplied = normalize_canonical(parameters)
+    if not isinstance(supplied, dict):
+        raise ProcedureContractValidationError("Line parameters are a record")
+    if definition.parameter_contract is None:
+        if supplied:
+            raise ProcedureContractValidationError(
+                f"Procedure {definition.name!r} declares no parameters; the Line names "
+                + ", ".join(sorted(supplied)),
+                field_path=sorted(supplied)[0],
+            )
+        return
+    validator.validate_contract(
+        contract=definition.parameter_contract,
+        payload=definition.effective_parameters(supplied),
+        direction="input",
+    )
+
+
 __all__ = [
+    "LINE_RUN_INPUT",
     "AcceptedProcedureContractValidator",
     "ProcedureContractItemBudgetExceeded",
     "ProcedureContractListObservation",
     "ProcedureContractValidationError",
     "ValidatedProcedureContract",
+    "validate_line_parameters",
 ]

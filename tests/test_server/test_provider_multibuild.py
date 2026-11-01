@@ -53,14 +53,14 @@ def _author_user_procedure(world) -> None:
     spec = ProcedureSpec.model_validate(
         {
             "procedure": USER_PROCEDURE,
-            "input": {"n": "int"},
+            "params": {"n": "int"},
             "output": {"n": "int"},
             "slots": {"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
             "steps": [
                 {
                     "call": "result",
                     "slot": "increment",
-                    "input": {"n": {"$ref": "input", "path": ["n"]}},
+                    "input": {"n": {"$ref": "param", "path": ["n"]}},
                 }
             ],
             "returns": "result",

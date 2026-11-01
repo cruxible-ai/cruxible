@@ -321,7 +321,9 @@ class ServedNestedProcedureRunner:
             self.prefix,
         )
 
-    def run(self, context: ParentInvocationContext, value: object) -> ProcedureRunResultV1:
+    def run(
+        self, context: ParentInvocationContext, value: object, parameters: object
+    ) -> ProcedureRunResultV1:
         from cruxible_core.service.procedures.procedure_runs import (
             PROCEDURE_RUN_FENCING_TOKEN,
             ProcedureRunStateV2,
@@ -339,6 +341,9 @@ class ServedNestedProcedureRunner:
         )
 
         parent = context.admission
+        if not isinstance(parameters, dict):  # an invoke node's parameters are a record
+            raise ExecutionError("an invoked child's parameters are a record")
+        child_parameters: Mapping[str, object] = parameters
         if parent.accepted_coordinate != AcceptedCoordinate.from_internal(self.coordinate):
             raise ProcedureBoundaryRefused(
                 "pin_binding_mismatch", "Nested runner names another accepted state."
@@ -358,6 +363,7 @@ class ServedNestedProcedureRunner:
             head_at_admission=self.head_at_admission,
             evaluation_time=self.evaluation_time,
             invocation_input=value,
+            parameters=child_parameters,
             actor_context=parent.actor_context,
             state_reader=PlaybillProcedureStateTapReader(
                 instance=self.instance, evaluation_time=self.evaluation_time

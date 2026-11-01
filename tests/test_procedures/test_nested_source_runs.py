@@ -61,11 +61,12 @@ def blueprints():
     }
     parent = {
         "procedure": "parent",
-        "input": {"positive": "bool"},
+        # A Line supplies ``positive``; the parent hands it to its first child.
+        "params": {"positive": "bool"},
         "output": {"label": "string"},
         **LIMITS,
         "steps": [
-            {"invoke": "child", "as": "first", "input": {"positive": ref("$input.positive")}},
+            {"invoke": "child", "as": "first", "input": {"positive": ref("$params.positive")}},
             {"guard": _succeeded("first"), "else": {"goto": "halted"}},
             {"invoke": "child", "as": "second", "input": {"positive": True}},
             {"guard": _succeeded("second"), "else": {"halt": "Second child failed"}},
@@ -171,7 +172,7 @@ def test_child_occurrences_have_exact_bindings_and_replay_without_execution(
     result = service_run_playbill_procedure(
         instance,
         name="parent",
-        request=ProcedureRunRequest(input={"positive": positive}),
+        request=ProcedureRunRequest(input={}, parameters={"positive": positive}),
         actor_context=actor,
     )
     assert result.status == "succeeded", payloads(instance, result.run_id)[-1][1]
@@ -228,7 +229,7 @@ def test_child_occurrences_have_exact_bindings_and_replay_without_execution(
         instance,
         name="parent",
         request=ProcedureRunRequest(
-            input={"positive": positive}, evaluation_time=result.evaluation_time
+            input={}, parameters={"positive": positive}, evaluation_time=result.evaluation_time
         ),
         actor_context=actor,
     )

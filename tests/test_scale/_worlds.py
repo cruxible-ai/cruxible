@@ -262,15 +262,17 @@ def _bulk(world: World) -> None:
 # -- definitions ------------------------------------------------------------------------
 
 
-def _contract(name: str) -> tuple[Any, ArtifactPin, str]:
+_ROLE_PINS = {"input": "contract-in", "output": "contract-out", "params": "parameter-contract"}
+
+
+def _contract(name: str, role: str) -> tuple[Any, ArtifactPin, str]:
+    """One boundary of the scale Procedure: a Line supplies ``status`` as its
+    parameter, its input is empty, and its output carries ``status`` back."""
+
     from tests.support.procedures import boundary_contract, contract_pin
 
-    contract = boundary_contract(name, {"status": "string"})
-    return (
-        contract,
-        contract_pin("contract-in" if name.endswith(".input") else "contract-out", contract),
-        name,
-    )
+    contract = boundary_contract(f"{name}.{role}", {} if role == "input" else {"status": "string"})
+    return contract, contract_pin(_ROLE_PINS[role], contract), f"{name}.{role}"
 
 
 def boundary_members(name: str) -> dict[str, bytes]:
@@ -278,7 +280,7 @@ def boundary_members(name: str) -> dict[str, bytes]:
 
     from tests.support.procedures import contract_files
 
-    return contract_files(_contract(f"{name}.input")[0], _contract(f"{name}.output")[0])
+    return contract_files(*(_contract(name, role)[0] for role in _ROLE_PINS))
 
 
 def _procedure(
@@ -286,16 +288,18 @@ def _procedure(
 ) -> AcceptedProcedure:
     """A Procedure with no Source and no Provider: one Project node, then its terminal."""
 
-    _, contract_in, _ = _contract(f"{name}.input")
-    _, contract_out, _ = _contract(f"{name}.output")
+    _, contract_in, _ = _contract(name, "input")
+    _, contract_out, _ = _contract(name, "output")
+    _, parameter_contract, _ = _contract(name, "params")
     definition = ProcedureDefinition(
         name=name,
         contract_in=named(contract_in),
         contract_out=named(contract_out),
+        parameter_contract=named(parameter_contract),
         nodes=(
             ProjectNode(
                 node_id="shape",
-                fields={"status": "$input.status"},
+                fields={"status": "$params.status"},
                 as_="result",
                 **({} if terminal is None else {"next": terminal.node_id}),
             ),

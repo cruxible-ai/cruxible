@@ -805,10 +805,13 @@ class InvokeNode(_StrictProcedureModel):
     node_id: str
     procedure: ArtifactNameRef
     input: object
+    #: The child's parameter values (templates over this run's values), over
+    #: the child's defaults; checked against the child's params Contract.
+    parameters: object = Field(default_factory=dict, exclude_if=lambda value: not value)
     as_: str = Field(alias="as")
     next: str | None = None
 
-    _input = field_validator("input", mode="before")(normalize_canonical)
+    _input = field_validator("input", "parameters", mode="before")(normalize_canonical)
 
 
 ProcedureNode = Annotated[

@@ -176,6 +176,7 @@ from cruxible_client.contracts.procedures.artifacts import (
 from cruxible_client.contracts.procedures.contracts import (
     AcceptedProcedureContractValidator,
     ProcedureContractValidationError,
+    validate_line_parameters,
 )
 from cruxible_client.contracts.procedures.graph import (
     ProcedureGraphFormatError,
@@ -3357,34 +3358,36 @@ def _check_line_parameters(
     procedure_path_value: str,
     tree: Mapping[str, bytes],
 ) -> None:
-    """Refuse Line parameters the Procedure's input contract would refuse at run time.
+    """Refuse Line parameters the Procedure would refuse at run time.
 
-    Every Line run hands `parameters` to the Procedure as its input record, and
-    the executor validates that record against the Procedure's own input
-    Contract. The same validator runs here, so a mismatch refuses when the Line
-    is authored rather than on every later run.
+    Every Line run hands `parameters` (over the Procedure's defaults) to the
+    Procedure as its parameters, with an empty input; the executor checks both
+    against the Procedure's params and input Contracts. The same check runs
+    here, so a mismatch refuses when the Line is authored rather than on every
+    later run.
     """
 
-    contract = procedure.definition.contract_in
+    definition = procedure.definition
     try:
-        AcceptedProcedureContractValidator(tree_contract_resolver(tree)).validate_contract(
-            contract=contract,
-            payload=normalize_canonical(payload.parameters),
-            direction="input",
+        validate_line_parameters(
+            AcceptedProcedureContractValidator(tree_contract_resolver(tree)),
+            definition,
+            payload.parameters,
         )
     except ProcedureContractValidationError as exc:
         field_path = exc.field_path
+        contract = definition.parameter_contract
         _refuse(
             "cruxible.authoring.line_parameters_refused",
             "parameters" if not field_path else f"parameters.{field_path}",
-            f"Line parameters are the input record of Procedure {payload.procedure_name!r}, "
-            f"and its input contract {contract.target.name!r} refuses them: {exc}",
+            f"Line parameters are the parameters of Procedure {payload.procedure_name!r}, "
+            f"and it refuses them: {exc}",
             repair_kind="replace_parameters",
             repair_description=(
-                "Set parameters to a record the Procedure's input contract accepts; "
+                "Set parameters to a record the Procedure's params Contract accepts; "
                 "the replacement lists its fields and types."
             ),
-            replacement=_contract_fields_summary(contract, tree),
+            replacement=None if contract is None else _contract_fields_summary(contract, tree),
         )
 
 

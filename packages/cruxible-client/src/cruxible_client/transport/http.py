@@ -1577,6 +1577,7 @@ class CruxibleClient:
         evaluation_time: str | None,
         at: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
         input: Any,
+        parameters: Mapping[str, Any] | None = None,
         bindings: Mapping[str, str] | None = None,
         resolution_contract: contracts.ResolutionContractReference | None = None,
         trigger_event: contracts.TriggerEventReference | None = None,
@@ -1598,6 +1599,7 @@ class CruxibleClient:
                 "at": self._coordinate_body(at),
                 "evaluation_time": evaluation_time,
                 "input": input,
+                **({"parameters": dict(parameters)} if parameters else {}),
                 **({"bindings": dict(bindings)} if bindings else {}),
             },
         )

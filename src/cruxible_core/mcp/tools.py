@@ -1382,6 +1382,15 @@ def register_tools(
                 description="The Procedure's input; checked against its accepted input contract."
             ),
         ],
+        parameters: Annotated[
+            JsonValue,
+            Field(
+                description=(
+                    "The Procedure's parameter values (an object), over its "
+                    "parameter_defaults; checked against its params Contract."
+                )
+            ),
+        ] = None,
         bindings: McpProcedureBindings | None = None,
         evaluation_time: str | None = None,
         at: contracts.AcceptedCoordinate | None = None,
@@ -1397,6 +1406,7 @@ def register_tools(
             trigger_event=trigger_event,
             at=_dump(at),
             input=input,
+            parameters=parameters,
             bindings=None if bindings is None else bindings.root,
         )
 

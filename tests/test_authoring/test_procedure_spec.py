@@ -618,7 +618,7 @@ def test_authored_graph_refusal_names_step_id(tmp_path):
             "ClaimType:semantic.alias",
         ),
         (
-            {"invoke": "stored.procc", "input": {"status": "open"}},
+            {"invoke": "stored.procc", "input": {}, "params": {"status": "open"}},
             "invoke",
             "Procedure:stored.proc",
         ),
@@ -998,15 +998,24 @@ def test_parameter_and_step_references_have_distinct_typed_roots():
     predicate = lowered.definition["nodes"][1]["predicate"]
     assert predicate["left"] == {"$ref": "step", "step": "params", "path": ["value"]}
     assert predicate["right"] == {"$ref": "param", "path": ["limit"]}
-    # A value template does not read a parameter: guards and transforms do.
+    # A value template reads a parameter too (G1), typed by the params Contract.
+    valued = lower_procedure_spec(
+        spec(
+            params={"limit": "int"},
+            output={"value": "int"},
+            steps=[{"project": "result", "fields": {"value": ref("$params.limit")}}],
+        )
+    )
+    assert valued.definition["nodes"][0]["fields"] == {"value": "$params.limit"}
     with pytest.raises(ProcedureSpecError) as caught:
         lower_procedure_spec(
             spec(
                 params={"limit": "int"},
+                output={"value": "string"},
                 steps=[{"project": "result", "fields": {"value": ref("$params.limit")}}],
             )
         )
-    assert caught.value.code == "cruxible.authoring.procedure_ref_unsupported"
+    assert "mistyped" in str(caught.value) and "value" in str(caught.value)
 
 
 def test_parameter_name_can_match_a_collection_step_alias():

@@ -10,7 +10,6 @@ parameters and conditions are data, never reference replacement targets.
 from collections.abc import Callable, Mapping
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
-from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandate,
@@ -24,6 +23,7 @@ from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.contracts import (
     AcceptedProcedureContractValidator,
     ProcedureContractValidationError,
+    validate_line_parameters,
 )
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
@@ -57,18 +57,17 @@ def validate_carried_line(
     procedure: AcceptedProcedure,
     contracts: Callable[[ContractRef], Contract | None],
 ) -> None:
-    """Apply ordinary Line-authoring input semantics to the exact final Procedure.
+    """Apply ordinary Line-authoring parameter semantics to the exact final Procedure.
 
     Called once per affected Line at settlement; parameters remain unchanged.
     """
 
     line = parse_carry_line(content, path=path)
-    contract = procedure.procedure.definition.contract_in
     try:
-        AcceptedProcedureContractValidator(contracts).validate_contract(
-            contract=contract,
-            payload=normalize_canonical(line.parameters),
-            direction="input",
+        validate_line_parameters(
+            AcceptedProcedureContractValidator(contracts),
+            procedure.procedure.definition,
+            line.parameters,
         )
     except ProcedureContractValidationError as exc:
         field = "parameters" if not exc.field_path else f"parameters.{exc.field_path}"
@@ -76,7 +75,7 @@ def validate_carried_line(
             f"{line.identity.qualified}: final {procedure.procedure.identity.qualified} "
             f"at {procedure.artifact_digest} refuses {field}: {exc}; "
             "explicitly author compatible Line parameters against the final Procedure's "
-            "input contract before retrying the upgrade"
+            "params Contract before retrying the upgrade"
         ) from exc
 
 
