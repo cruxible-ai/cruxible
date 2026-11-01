@@ -33,8 +33,6 @@ from cruxible_client.contracts.procedures.measurements import (
 )
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
-    ProcedureDefinition,
-    ProcedureHardCaps,
     ProjectNode,
     ReadNode,
 )
@@ -65,7 +63,14 @@ from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import client_material, initialize_local
-from tests.support.procedures import MAX_WALL_CLOCK, accepted_procedure, named, procedure_members
+from tests.support.procedures import (
+    MAX_WALL_CLOCK,
+    accepted_procedure,
+    named,
+    procedure_definition,
+    procedure_hard_caps,
+    procedure_members,
+)
 from tests.test_ledger.test_activation import _sign
 
 NOW = datetime(2026, 8, 17, 14, 0, tzinfo=timezone.utc)
@@ -140,7 +145,7 @@ def _measurement(
 def _accepted() -> AcceptedProcedure:
     contract_in = _pin("contract-in", "Contract", "input/v1")
     contract_out = _pin("contract-out", "Contract", "output/v1")
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name="measured-procedure",
         contract_in=named(contract_in),
         contract_out=named(contract_out),
@@ -186,7 +191,7 @@ def _accepted() -> AcceptedProcedure:
             _measurement("node-health", "node", node_id="hot"),
             _measurement("unit-health", "procedure_unit"),
         ),
-        hard_caps=ProcedureHardCaps(
+        hard_caps=procedure_hard_caps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=0,
             max_capture_bytes=0,

@@ -37,8 +37,6 @@ from cruxible_client.contracts.declared_blocks import (
 from cruxible_client.contracts.file_catalog import ProcedureProjectionCatalogEntry
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.models import (
-    ProcedureDefinition,
-    ProcedureHardCaps,
     ProjectNode,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate as ClientAcceptedCoordinate
@@ -94,7 +92,13 @@ from tests.core_support._published_world import (
 )
 from tests.core_support._subject_kind_support import _is_key, without_keys
 from tests.core_support._support import initialize_local
-from tests.support.procedures import MAX_WALL_CLOCK, accepted_procedure, named
+from tests.support.procedures import (
+    MAX_WALL_CLOCK,
+    accepted_procedure,
+    named,
+    procedure_definition,
+    procedure_hard_caps,
+)
 from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
 from tests.test_claims.test_claims import _claim_type, vocabulary_claim_type
 from tests.test_indexes.test_resolution_contracts import _accept_tree
@@ -109,7 +113,7 @@ def _accepted_procedure() -> AcceptedProcedure:
     """One accepted graph-v6 Procedure; these tests only read its identity and path."""
 
     contract_out = pin("contract-out", "Contract", "procedure-output/v1")
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name="catalog-procedure",
         contract_in=named(pin("contract-in", "Contract", "procedure-input/v1")),
         contract_out=named(contract_out),
@@ -121,7 +125,7 @@ def _accepted_procedure() -> AcceptedProcedure:
             ),
         ),
         returns="result",
-        hard_caps=ProcedureHardCaps(
+        hard_caps=procedure_hard_caps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=0,
             max_capture_bytes=0,
