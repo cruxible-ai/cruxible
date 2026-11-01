@@ -277,7 +277,8 @@ def line_example() -> LineInput:
     """A Line over the `--example procedure` Procedure.
 
     That Procedure has no Source nodes, so the Line names no acquisition
-    policy, and its input contract is empty, so `parameters` is `{}`. It only
+    rule, and it declares no params, so `parameters` is `{}` (a Line supplies
+    a Procedure's parameters; a Line run's input is empty). It only
     observes, so it runs without a ProcedureMandate. It runs when run explicitly
     (`line run`); `--example trigger` schedules it, and the Trigger runs it only
     once the Line is enabled (`line enable`).
