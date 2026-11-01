@@ -276,7 +276,6 @@ from cruxible_core.procedures.terminal_dependencies import (
 )
 from cruxible_core.procedures.transforms import (
     TransformInputInvalid,
-    TransformItemBudgetExceeded,
     apply_closed_transform,
 )
 from cruxible_core.providers.provider_local_runtime import (
@@ -3339,7 +3338,7 @@ class ProcedureExecutor:
             )
             return None
         if isinstance(node, TransformNode):
-            self._run_closed_transform(node, admission=admission, state=state)
+            self._run_closed_transform(node, state=state)
             return None
         if isinstance(node, ProjectNode | SelectNode):
             if isinstance(node, SelectNode):
@@ -4037,7 +4036,6 @@ class ProcedureExecutor:
         spec: object,
         *,
         outputs: dict[str, CanonicalValue],
-        admission: ProcedureRunAdmission,
         state: _RunState,
     ) -> tuple[CanonicalValue, bool]:
         """One closed transform over ``outputs``: its value, and whether it is complete."""
@@ -4057,17 +4055,7 @@ class ProcedureExecutor:
                 resolve,
                 parameters=state.parameters if isinstance(state.parameters, dict) else None,
                 enums=self.enum_resolver,
-                max_items=_effective_max_items(admission),
             )
-        except TransformItemBudgetExceeded as exc:
-            raise _budget_refusal(
-                budget_kind="max_items",
-                limit=exc.limit,
-                observed=exc.observed,
-                node_id=node_id,
-                boundary=f"transform:{node_id}",
-                field_path="records",
-            ) from exc
         except TransformInputInvalid as exc:
             raise _RunRefusal(
                 "contract_input_refused",
@@ -4079,7 +4067,6 @@ class ProcedureExecutor:
         self,
         node: TransformNode,
         *,
-        admission: ProcedureRunAdmission,
         state: _RunState,
     ) -> None:
         """One closed transform over records: typed, three-valued, completeness carried."""
@@ -4089,7 +4076,6 @@ class ProcedureExecutor:
             node.transform_kind,
             node.spec,
             outputs=state.outputs,
-            admission=admission,
             state=state,
         )
         aliases = _referenced_aliases(node.spec)
@@ -5825,7 +5811,6 @@ class ProcedureExecutor:
                 body.transform_kind,
                 body.spec,
                 outputs=combined,
-                admission=admission,
                 state=state,
             )
             local_outputs[body.as_] = value

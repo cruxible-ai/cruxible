@@ -1970,7 +1970,10 @@ def test_a_repeat_body_runs_a_closed_transform_per_attempt(tmp_path) -> None:
     assert branch["body_lineage"]["shaped"]["items"] is None  # type: ignore[index]
 
 
-def test_a_repeat_body_transform_is_held_to_the_items_budget(tmp_path) -> None:
+def test_a_repeat_body_transform_is_held_to_no_intermediate_items_budget(tmp_path) -> None:
+    """max_items is enforced at boundaries only: a transform's two shaped rows
+    inside a repeat body pass a one-item budget (this return declares no list)."""
+
     accepted = _repeat_transform_procedure(max_items=1)
     fixture = _fixture(tmp_path)
     result = ProcedureExecutor(
@@ -1982,10 +1985,9 @@ def test_a_repeat_body_transform_is_held_to_the_items_budget(tmp_path) -> None:
         contract_validator=_Contracts(),
     ).execute(_prepare(accepted, fixture, _StateReader()), accepted)
 
-    assert result.status == "refused"
-    assert result.refusal is not None
-    assert result.refusal.code == "budget_max_items_exceeded"
-    assert result.refusal.details["boundary"] == "transform:shape-body"
+    assert result.status == "succeeded", result.refusal
+    assert isinstance(result.output, dict)
+    assert result.output["final"]["shaped"]["count"] == 2
 
 
 @pytest.mark.parametrize(
