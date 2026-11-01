@@ -15,11 +15,6 @@ from cruxible_client.contracts.claim_types import (
     claim_type_digest,
     render_claim_type,
 )
-from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicy,
-    ClaimResolutionPolicy,
-)
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_digest
 from cruxible_core.claims.closure import evaluate_dependency_closure
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -40,6 +35,7 @@ from cruxible_core.service.proposals.review import (
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import client_material, initialize_local
+from tests.support.claim_types import claim_type as build_claim_type
 from tests.test_ledger.test_activation import _sign
 
 TIMESTAMP = "2026-08-16T14:00:00.000000Z"
@@ -60,21 +56,10 @@ def claim_type(
     *,
     pins: tuple[ArtifactPin, ...] = (),
 ) -> ClaimType:
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name=predicate),
+    return build_claim_type(
         predicate=predicate,
         allowed_subject_kinds=("project.work_item",),
-        object_kind="literal",
-        literal_schema={"type": "string"},
-        cardinality="one",
         permitted_roles=("normative",),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality="one",
-            eligible_verdicts=("supported",),
-            selector="only_contender",
-        ),
         pins=pins,
     )
 

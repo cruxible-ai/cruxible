@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring_profiles import (
     CLAIM_TYPE_AUTHORING_PROFILES,
     ClaimTypeProfileInput,
@@ -15,11 +14,6 @@ from cruxible_client.contracts.authoring_profiles import (
 )
 from cruxible_client.contracts.candidates import CandidateRecord, candidate_digest
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
-from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicy,
-    ClaimResolutionPolicy,
-)
 from cruxible_core.compiler.compiler import current_compiler_coordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.proposals.settlement import (
@@ -31,6 +25,7 @@ from cruxible_core.proposals.settlement import (
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.core_support._support import client_material, initialize_local
+from tests.support.claim_types import claim_type as build_claim_type
 from tests.test_ledger.test_activation import _sign
 
 TIMESTAMP = "2026-08-16T16:00:00.000000Z"
@@ -38,21 +33,10 @@ CLAIM_TYPE_PATH = "claim-types/project.work_item/status.json"
 
 
 def claim_type() -> ClaimType:
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.status"),
+    return build_claim_type(
         predicate="project.work_item.status",
-        allowed_subject_kinds=("project.work_item",),
-        object_kind="literal",
-        literal_schema={"enum": ["blocked", "done", "ready"], "type": "string"},
-        cardinality="one",
+        value_type={"enum": ["blocked", "done", "ready"], "type": "string"},
         permitted_roles=("normative",),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality="one",
-            eligible_verdicts=("supported",),
-            selector="only_contender",
-        ),
     )
 
 

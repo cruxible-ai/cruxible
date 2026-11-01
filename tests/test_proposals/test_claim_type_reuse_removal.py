@@ -37,6 +37,7 @@ from cruxible_core.proposals.settlement import parse_change_set_record
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.core_support._claim_type_support import defaulted_claim_type_input_example
 from tests.core_support._support import initialize_local
+from tests.support.claim_types import claim_type_changes
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 
 TIMESTAMP = "2026-09-29T12:00:00.000000Z"
@@ -52,8 +53,7 @@ def _claim_type(
     payload = defaulted_claim_type_input_example().model_dump(mode="json")
     payload.update(predicate=predicate, allowed_subject_kinds=[subject_kind])
     if object_subject_kind is not None:
-        payload.pop("literal_schema", None)
-        payload.update(object_kind="subject", allowed_object_subject_kinds=[object_subject_kind])
+        payload.update(claim_type_changes(value_type=(object_subject_kind,)))
     return lower_claim_type_input(ClaimTypeInputRecord.model_validate(payload), tree=tree)
 
 
