@@ -40,6 +40,7 @@ from cruxible_client.contracts.subjects import (
     subject_digest,
     subject_path,
 )
+from tests.support.claim_types import claim_type_changes
 from tests.test_procedures.test_procedure_proposal_delivery import _claim_type
 
 
@@ -119,7 +120,7 @@ def test_copies_of_a_sealed_artifact_are_never_served_its_digest():
     sealed = parse_claim_type(render_claim_type(value), path=claim_type_path(value.predicate))
     digest = claim_type_digest(sealed)
     # model_copy with an update: a new, unsealed object digests its own content.
-    changed = sealed.model_copy(update={"literal_schema": {"type": "integer"}})
+    changed = sealed.model_copy(update=claim_type_changes(value_type={"type": "integer"}))
     assert not is_sealed(changed)
     assert claim_type_digest(changed) != digest
     assert claim_type_digest(changed) == _fresh_digest(changed)

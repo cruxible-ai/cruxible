@@ -42,7 +42,6 @@ from cruxible_client.contracts.captures import foreign_source_capture_contract
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicy,
     ClaimAttestationConsequenceRule,
-    ClaimType,
 )
 from cruxible_client.contracts.claims import LiteralClaimObject, SubjectClaimObject
 from cruxible_client.contracts.declared_blocks import (
@@ -51,12 +50,12 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicy,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core import __version__ as DAEMON_VERSION
+from tests.support.claim_types import claim_type as build_claim_type
 from tests.support.preflight_results import stub_diagnostic, stub_preflight_result
 from tests.support.procedures import named, procedure_definition
 from tests.test_client._read_fakes import ClaimTypeRead
@@ -1395,28 +1394,6 @@ def test_refusal_diagnostic_maps_exact_payload_path_to_the_call_expression(
     assert diagnostic.call_site.expression == "ClaimRole.NORMATIVE"
 
 
-def _staged_claim_type(predicate: str, *, object_kind: str) -> ClaimType:
-    """One whole ClaimType a change set can define, minimal but real."""
-
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name=predicate),
-        predicate=predicate,
-        allowed_subject_kinds=("sec.vuln",),
-        allowed_object_subject_kinds=("sec.package",) if object_kind == "subject" else (),
-        object_kind=object_kind,  # type: ignore[arg-type]
-        literal_schema={"type": "string"} if object_kind == "literal" else None,
-        cardinality="one",
-        permitted_roles=("normative", "observation"),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(rules=()),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality="one",
-            eligible_verdicts=("supported",),
-            selector="only_contender",
-        ),
-    )
-
-
 def test_exact_content_authors_the_object_the_wire_has_always_carried(
     tmp_path: Path,
 ) -> None:
@@ -1517,7 +1494,7 @@ def test_a_string_value_reads_the_object_kind_from_the_sets_own_definition(
     reads_before = client.claim_type_reads
 
     draft = pb.changes(rationale="Define the predicate and state one Claim under it.")
-    draft.claim_type(_staged_claim_type("sec.vuln.affects", object_kind="subject"))
+    draft.claim_type(build_claim_type("sec.vuln.affects", value_type=("sec.package",)))
     draft.claim(
         subject="sec.vuln/cve-2026-0001",
         predicate="sec.vuln.affects",
