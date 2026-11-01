@@ -454,6 +454,9 @@ class GetSubjectKindCard(_StrictGetModel):
     rule: Literal["keys", "minted"]
     #: The key ClaimTypes in key order; empty for a minted kind.
     keys: tuple[str, ...] = ()
+    #: Each key part's identity normalizer as ``name@version`` (purl-type adds its
+    #: identity), keyed by predicate; a key not listed takes ``none@1``.
+    normalizers: dict[str, str] = Field(default_factory=dict, exclude_if=lambda value: not value)
     uniqueness: Literal["unique", "hint"] | None = Field(default=None, exclude_if=_omit_none)
     #: How many Subjects of the kind are live at this coordinate.
     live_subjects: int

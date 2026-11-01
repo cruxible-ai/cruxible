@@ -48,6 +48,7 @@ from cruxible_client.contracts.claim_verdicts import (
     reported_claim_verdict,
 )
 from cruxible_client.contracts.claims import AcceptedClaim, SubjectClaimObject
+from cruxible_client.contracts.identity_normalizers import KeyNormalizer
 from cruxible_client.contracts.providers import ProviderV1
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
@@ -86,6 +87,12 @@ class ClaimFactRowV1(_StrictQueryBackendModel):
     #: The canonical form its ClaimType declares (v8): a literal compared with
     #: this Claim's value is canonicalized by it. Omitted when none.
     canonical_form: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: The identity normalizer its SubjectKind pins when this Claim's predicate is
+    #: a key part (R12): an operand compared with it is normalized after the
+    #: form. Omitted for a non-key predicate and for ``none``.
+    key_normalizer: KeyNormalizer | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     #: How to read the recorded re-observations of content this Claim cites at
     #: an evaluation instant (``evidence.claim_reobservations``). Not part of the
     #: row's bytes: set only for a lineage that was re-observed.

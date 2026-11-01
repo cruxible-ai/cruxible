@@ -349,24 +349,73 @@ def _procedure(  # noqa: PLR0913
 PROPOSALS_ALIAS = "proposals"
 #: A terminal fan-out over the items that extract read, one row per item.
 FAN_OUT = {"items": f"$steps.{PROPOSALS_ALIAS}.rows"}
-#: The Contracts a fan-out item row is typed by. Each nested record is read
-#: whole: its Contract declares no fields, so the item's own model decides it.
-_FAN_OUT_NESTED = ("test.fan-out-record",)
+#: The Contracts a fan-out item row is typed by: each nested record declares
+#: the members the item model consumes (Contracts are closed: an undeclared
+#: member is not read), in pin order -- a Contract after those it nests.
+_FAN_OUT_NESTED: tuple[dict[str, object], ...] = (
+    {
+        "name": "test.fan-out-selector",
+        "version": 1,
+        "description": "A Subject address's selector.",
+        "fields": {"scheme": "string", "value": "string?"},
+    },
+    {
+        "name": "test.fan-out-address",
+        "version": 1,
+        "description": "A Subject address: the artifact and its selector.",
+        "fields": {
+            "tag": "string",
+            "artifact_path": "string",
+            "selector": "test.fan-out-selector@1",
+        },
+    },
+    {
+        "name": "test.fan-out-object",
+        "version": 1,
+        "description": "A statement's object: its kind and literal value.",
+        "fields": {"kind": "string", "value": "string?"},
+    },
+    {
+        "name": "test.fan-out-statement",
+        "version": 1,
+        "description": "One authored Claim statement.",
+        "fields": {
+            "tag": "string",
+            "subject": "test.fan-out-address@1",
+            "predicate": "string",
+            "qualifier": "string?",
+            "object": "test.fan-out-object@1",
+            "role": "string",
+            "effective_from": "string?",
+            "effective_until": "string?",
+        },
+    },
+    {
+        "name": "test.fan-out-source",
+        "version": 1,
+        "description": "A self-sourced body: the author's own words.",
+        "fields": {"tag": "string", "content_base64": "string"},
+    },
+    {
+        "name": "test.fan-out-key",
+        "version": 1,
+        "description": "A Subject creation's key, by its key part.",
+        "fields": {"slug": "string"},
+    },
+)
 _FAN_OUT_ROW: dict[str, object] = {
     "name": "test.fan-out-item",
     "version": 1,
-    "description": "One proposal item a feed states, read whole for a terminal fan-out.",
+    "description": "One proposal item a feed states, typed for a terminal fan-out.",
     "fields": {
         "tag": "string",
-        "statement": "test.fan-out-record@1?",
+        "statement": "test.fan-out-statement@1?",
         "rationale": "string?",
         "revises": "string?",
-        "source": "test.fan-out-record@1?",
+        "source": "test.fan-out-source@1?",
         "citation_role": "string?",
-        "derivation": "test.fan-out-record@1?",
-        "existing_claim_dispositions": "list<test.fan-out-record@1>{max_items: 64}?",
         "subject_kind": "string?",
-        "key": "test.fan-out-record@1?",
+        "key": "test.fan-out-key@1?",
         "create_new": "bool?",
         "retires": "string?",
         "reason": "string?",
@@ -386,7 +435,7 @@ DOCUMENT_ALIAS = "document"
 
 
 def fan_out_contracts() -> tuple[Any, ...]:
-    """The fan-out row Contract and the open record it nests, digests pinned."""
+    """The nested record Contracts, then the fan-out row Contract, every pin's digest set."""
 
     from cruxible_client.contracts.shapes import (
         contract_digest,
@@ -394,14 +443,14 @@ def fan_out_contracts() -> tuple[Any, ...]:
         validate_contract,
     )
 
-    record = validate_contract(
-        {"name": "test.fan-out-record", "version": 1, "fields": {}, "description": "Any record."}
-    )
-    row = pin_contract_refs(
-        validate_contract(_FAN_OUT_ROW),
-        lambda ref: ref.model_copy(update={"digest": contract_digest(record).tagged}),
-    )
-    return record, row
+    pinned: dict[str, Any] = {}
+    for spec in (*_FAN_OUT_NESTED, _FAN_OUT_ROW):
+        contract = pin_contract_refs(
+            validate_contract(spec),
+            lambda ref: ref.model_copy(update={"digest": contract_digest(pinned[ref.name]).tagged}),
+        )
+        pinned[contract.name] = contract
+    return tuple(pinned.values())
 
 
 def document_contract() -> Any:
@@ -425,7 +474,7 @@ def proposals_extract(*, next_node: str | None = None) -> Any:
     from cruxible_client.contracts.procedures.extract import ExtractNode
     from cruxible_client.contracts.shapes import contract_digest
 
-    _record, row = fan_out_contracts()
+    *_nested, row = fan_out_contracts()
     return ExtractNode.model_validate(
         {
             "kind": "extract",

@@ -365,15 +365,16 @@ LINE_V6_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="line",
     artifact_tag="playbill-line-v6",
 )
-# A SubjectKind declares how Subjects of one kind are identified: by key
-# ClaimTypes (live, literal, one-valued, about that kind only) or by minted
-# ids. A retired SubjectKind is never revived.
+# A SubjectKind declares how Subjects of one kind are identified: by key parts
+# (each a key ClaimType -- live, literal, one-valued, about that kind only --
+# and a pinned identity normalizer from the fixed core set) or by minted ids.
+# A retired SubjectKind is never revived.
 SUBJECT_KIND_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
-        "cruxible.subject-kind.v1", "cruxible-subject-kind-v1", semantic_revision=1
+        "cruxible.subject-kind.v2", "cruxible-subject-kind-v2", semantic_revision=1
     ),
     artifact_kind="subject-kind",
-    artifact_tag="cruxible-subject-kind-v1",
+    artifact_tag="cruxible-subject-kind-v2",
 )
 # A Contract is one immutable data shape: a version never changes, a successor
 # names its predecessor's digest, and every nested Contract pin resolves exactly.

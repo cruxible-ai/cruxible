@@ -32,12 +32,12 @@ CURRENT_COMPILER = CompilerCoordinate(
             "projection_content": "claims-procedures-runtime-v1",
             "semantic_revision": 42,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "typed-authoring-foundations-v2",
+            "revision_name": "typed-authoring-identity-v1",
         },
     )
 )
 #: Display label only; the digest is the authority.
-CURRENT_COMPILER_REVISION = "typed-authoring-foundations-v2"
+CURRENT_COMPILER_REVISION = "typed-authoring-identity-v1"
 
 #: The deterministic projection registry the current compiler runs.
 PROJECTION_REGISTRY: ProjectionExtensionRegistry = current_extension_registry()

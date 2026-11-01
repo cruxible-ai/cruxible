@@ -35,6 +35,7 @@ from cruxible_client.contracts.errors import (
     ProjectionIntegrityError,
     ProposalIntegrityError,
 )
+from cruxible_client.contracts.identity_normalizers import KeyNormalizer
 from cruxible_client.contracts.procedures.reads import ProcedureReadCeiling
 from cruxible_client.contracts.query.definitions import AcceptedQueryDefinition
 from cruxible_client.contracts.query.grammar import QueryArtifactsEntry, QueryBudgets
@@ -61,6 +62,7 @@ from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.sql_batch import select_in
 from cruxible_core.indexes.subject_aliases import projection_connection, reference_resolver
+from cruxible_core.indexes.subject_identity import key_normalizer_of, tree_subject_kind_reader
 from cruxible_core.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
 from cruxible_core.query.engine import (
     bind_reference_forms,
@@ -138,6 +140,21 @@ def _accepted_subjects(
     )
 
 
+def _key_normalizer(
+    tree: Mapping[str, bytes],
+    claim_type: ClaimType,
+    cache: dict[str, KeyNormalizer | None] | None,
+) -> KeyNormalizer | None:
+    """The identity normalizer a key predicate's operands take (one read per predicate)."""
+
+    if cache is not None and claim_type.predicate in cache:
+        return cache[claim_type.predicate]
+    found = key_normalizer_of(claim_type, tree_subject_kind_reader(tree))
+    if cache is not None:
+        cache[claim_type.predicate] = found
+    return found
+
+
 def _fact_row(
     instance: ClaimReadSourceProtocol,
     *,
@@ -153,6 +170,7 @@ def _fact_row(
     store: Any = None,
     reobserved: bool = False,
     bodies: dict[str, Any] | None = None,
+    key_normalizers: dict[str, KeyNormalizer | None] | None = None,
 ) -> ClaimFactRowV1:
     """Assemble one Claim's verdict inputs exactly as the verdict service does.
 
@@ -219,6 +237,7 @@ def _fact_row(
         resolved_authority_basis=(),
         cardinality=claim_type.cardinality,
         canonical_form=effective_canonical_form(claim_type),
+        key_normalizer=_key_normalizer(tree, claim_type, key_normalizers),
     )
     if reobserved and isinstance(instance, PlaybillInstance):
         # A re-observed lineage reads its freshness at each evaluation instant,
@@ -330,6 +349,7 @@ class _AcceptedQueryFactsRead:
         self._attestations: dict[tuple[str, str], list[ClaimAttestation]] = {}
         self._claims: dict[str, ClaimArtifact] = {}
         self._claim_types: dict[str, ClaimType] = {}
+        self._key_normalizers: dict[str, KeyNormalizer | None] = {}
         self._rows: dict[str, ClaimFactRowV1] = {}
         self._results: dict[bool, ClaimQueryFactsV1] = {}
 
@@ -585,6 +605,7 @@ class _AcceptedQueryFactsRead:
                     ),
                     reobserved=reader is not None and bool(reader.sequence(claim.identity.name)),
                     bodies=self._consulted_bodies,
+                    key_normalizers=self._key_normalizers,
                 )
                 self._rows[path] = row
             rows.append(row)
@@ -898,6 +919,7 @@ def evaluate_accepted_query(
         )
     selection = None
     canonical_forms = None
+    key_normalizers: dict[str, KeyNormalizer] | None = None
     if facts is None:
         with instance.bind_accepted_projection(coordinate) as projection:
             selection = select_query_facts(
@@ -914,7 +936,9 @@ def evaluate_accepted_query(
                 # Preserve that metadata with one indexed existence seek per
                 # declared predicate, without loading those rows' facts.
                 canonical_forms = {}
+                key_normalizers = {}
                 tree = instance.immutable_tree_at(coordinate.git_oid)
+                kinds = tree_subject_kind_reader(tree)
                 for predicate in definition.query.referenced_predicates:
                     if (
                         projection.typed.connection.execute(
@@ -924,9 +948,13 @@ def evaluate_accepted_query(
                         is not None
                     ):
                         path = claim_type_path(predicate)
-                        form = effective_canonical_form(parse_claim_type(tree[path], path=path))
+                        claim_type = parse_claim_type(tree[path], path=path)
+                        form = effective_canonical_form(claim_type)
                         if form:
                             canonical_forms[predicate] = form
+                        rule = key_normalizer_of(claim_type, kinds)
+                        if rule is not None:
+                            key_normalizers[predicate] = rule
     accepted_facts = (
         facts()
         if facts
@@ -963,6 +991,7 @@ def evaluate_accepted_query(
         entry_candidate_count=None if selection is None else selection.candidate_count,
         canonical_forms=canonical_forms,
         procedure_read=procedure_read,
+        key_normalizers=key_normalizers,
     )
 
 

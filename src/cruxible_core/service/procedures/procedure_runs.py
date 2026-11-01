@@ -198,6 +198,7 @@ from cruxible_core.exhaust.records import (
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_identity import KeyRules
 from cruxible_core.indexes.typed_state import ProcedureInventoryRow, utc_microseconds
 from cruxible_core.procedures.acquisition import (
     ACQUISITION_OVERSIZED,
@@ -764,6 +765,34 @@ def _resolve_coordinate(
     )
 
 
+def accepted_key_rules(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+) -> KeyRules:
+    """R12/D4: the SubjectKind identity rules (and key ClaimTypes) at this run's coordinate.
+
+    Like the enum and Contract resolvers, it reads the admitted (immutable)
+    coordinate, so a replay canonicalizes every key exactly as the run did.
+    """
+
+    from cruxible_client.contracts.claim_types import ClaimType
+    from cruxible_client.contracts.subject_kinds import SubjectKind
+
+    def read(identity: str) -> object:
+        with instance.bind_accepted_projection(coordinate) as projection:
+            return projection.typed.source(identity)
+
+    def subject_kind(kind: str) -> SubjectKind | None:
+        value = read(f"SubjectKind:{kind}")
+        return value if isinstance(value, SubjectKind) else None
+
+    def claim_type(predicate: str) -> ClaimType | None:
+        value = read(f"ClaimType:{predicate}")
+        return value if isinstance(value, ClaimType) else None
+
+    return KeyRules(subject_kind, claim_type)
+
+
 def accepted_contract_resolver(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -777,20 +806,21 @@ def accepted_contract_resolver(
 
     from cruxible_client.contracts.shapes import contract_digest, contract_identity
 
-    found: dict[tuple[str, int], Contract | None] = {}
+    found: dict[tuple[str, int], tuple[Contract, str] | None] = {}
 
     def resolve(ref: ContractRef) -> Contract | None:
         key = (ref.name, ref.version)
         if key not in found:
             with instance.bind_accepted_projection(coordinate) as projection:
                 value = projection.typed.source(contract_identity(ref.name, ref.version).qualified)
-            found[key] = value if isinstance(value, Contract) else None
-        contract = found[key]
-        if contract is None or (
-            ref.digest is not None and contract_digest(contract).tagged != ref.digest
-        ):
+            # The digest is computed once per version, not once per nested value.
+            found[key] = (
+                (value, contract_digest(value).tagged) if isinstance(value, Contract) else None
+            )
+        entry = found[key]
+        if entry is None or (ref.digest is not None and entry[1] != ref.digest):
             return None
-        return contract
+        return entry[0]
 
     return resolve
 
@@ -3381,6 +3411,7 @@ def service_run_playbill_procedure(
             ephemeral_spec_digest=ephemeral_spec_digest,
             enum_resolver=accepted_enum_resolver(instance, coordinate),
             contract_resolver=accepted_contract_resolver(instance, coordinate),
+            key_rules=accepted_key_rules(instance, coordinate),
             clock=_DeterministicClock(evaluation_time),
             nested_runner=ServedNestedProcedureRunner(
                 instance,
@@ -4499,6 +4530,7 @@ def _run_playbill_line(
                 egress_sink=egress_sink,
                 enum_resolver=accepted_enum_resolver(instance, coordinate),
                 contract_resolver=accepted_contract_resolver(instance, coordinate),
+                key_rules=accepted_key_rules(instance, coordinate),
                 clock=_DeterministicClock(evaluation_time),
                 nested_runner=ServedNestedProcedureRunner(
                     instance,

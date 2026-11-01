@@ -1,0 +1,22 @@
+{
+  "normalizer": {"normalizer": "pep503", "version": 1},
+  "about": "pep503@1: a PEP 508 package name, every run of '-', '_' and '.' as one '-', ASCII lowercase. Anything else refuses.",
+  "cases": [
+    {"raw": "Django", "canonical": "django"},
+    {"raw": "django_rest_framework", "canonical": "django-rest-framework"},
+    {"raw": "Django-REST.framework", "canonical": "django-rest-framework"},
+    {"raw": "zope.interface", "canonical": "zope-interface"},
+    {"raw": "a__b--c..d", "canonical": "a-b-c-d"},
+    {"raw": "a-_.b", "canonical": "a-b"},
+    {"raw": "A", "canonical": "a"},
+    {"raw": "pip", "canonical": "pip"},
+    {"raw": "1password", "canonical": "1password"},
+    {"raw": "", "refused": "key_unparseable"},
+    {"raw": "_private", "refused": "key_unparseable"},
+    {"raw": "trailing-", "refused": "key_unparseable"},
+    {"raw": "has space", "refused": "key_unparseable"},
+    {"raw": "café", "refused": "key_unparseable"},
+    {"raw": "pkg:pypi/django", "refused": "key_unparseable"},
+    {"raw": 3, "refused": "key_unparseable"}
+  ]
+}

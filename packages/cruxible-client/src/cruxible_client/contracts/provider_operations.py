@@ -37,6 +37,7 @@ from cruxible_client.contracts.shapes import (
     FieldInvalid,
     FieldResultType,
     FieldType,
+    KeyCanonicalizer,
     ListType,
     NestedType,
     NumberType,
@@ -363,13 +364,16 @@ def validate_operation_value(
     max_items: int | None = None,
     observe_items: Callable[[int, str], None] | None = None,
     allow_captures: bool = True,
+    keys: KeyCanonicalizer | None = None,
 ) -> dict[str, object]:
     """``value`` exactly as ``contract`` declares it, or :class:`OperationValueRefused`.
 
     Undeclared keys refuse; a missing required field refuses; every present
-    field is checked by the Contract type grammar. Nested Contracts are closed
-    the same way. List lengths are reported to ``observe_items`` and bounded by
-    ``max_items`` when given. The value is returned unchanged (never coerced).
+    field is checked by the Contract type grammar (a ``key<K>`` field through
+    ``keys``, core's SubjectKind identity rules: it states its canonical key).
+    Nested Contracts are closed the same way. List lengths are reported to
+    ``observe_items`` and bounded by ``max_items`` when given. The value is
+    returned unchanged (never coerced).
     """
 
     if not isinstance(value, Mapping):
@@ -391,6 +395,7 @@ def validate_operation_value(
             field=name,
             resolve=resolve,
             enum_members=enum_members,
+            keys=keys,
         )
         if isinstance(checked, FieldInvalid):
             problems.append(f"{checked.problem.field or name}: {checked.problem.code}")

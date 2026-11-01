@@ -198,7 +198,11 @@ accepted (generation 47, a8242f4b9a28)
 
 The key is stored in its canonical form (this one folds case), and any
 spelling of it finds the same Subject: `cruxible get "catalog.supplier/ACME
-parts"` reads `catalog.supplier/acme-parts`. A kind whose things have no
+parts"` reads `catalog.supplier/acme-parts`. A key with a well-known identity
+rule, such as a Python package name or a package URL, also names a core
+normalizer in the SubjectKind (`"normalizers": {"name": {"normalizer": "pep503",
+"version": 1}}`), so `Django_REST` and `django-rest` are one package; see
+[identity normalizers](cli-reference.md#subject-kinds-and-creation). A kind whose things have no
 natural name, such as a remediation task, is **minted** instead: Cruxible
 gives each a generated id. To bring an existing kind under keys, see [Subject
 kinds](cli-reference.md#subject-kinds-and-creation).

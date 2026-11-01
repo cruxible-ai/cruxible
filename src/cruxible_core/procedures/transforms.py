@@ -34,6 +34,7 @@ from cruxible_client.contracts.shapes import (
     FieldAbsent,
     FieldInvalid,
     FieldPresent,
+    KeyCanonicalizer,
     Predicate,
     Problem,
     Truth,
@@ -187,11 +188,14 @@ def apply_closed_transform(
     *,
     parameters: Mapping[str, object] | None = None,
     enums: EnumResolver | None = None,
+    keys: KeyCanonicalizer | None = None,
 ) -> tuple[CanonicalValue, bool]:
     """``(value, complete)`` of one closed transform; ``resolve`` reads a reference.
 
     An intermediate value is held to no item budget: ``max_items`` is enforced at
     the boundaries (Procedure input/output, provider operations, terminal rows).
+    ``keys`` (core's SubjectKind identity rules) lets a ``shape`` cast
+    ``as: key<K>`` canonicalize a key; without it such a cast fails closed.
     """
 
     if isinstance(spec, TransformShapeSpec):
@@ -217,7 +221,7 @@ def apply_closed_transform(
                     result = results.get(member, FieldAbsent())
                 if field.as_ is not None:
                     result = cast_value(
-                        result, parse_type(field.as_), field=name, enum_members=enums
+                        result, parse_type(field.as_), field=name, enum_members=enums, keys=keys
                     )
                 fields[name] = _wire(result)
             shaped.append(
