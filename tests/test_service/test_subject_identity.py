@@ -43,12 +43,12 @@ FORM = ("nfkc", "trim", "collapse_whitespace", "casefold")
 
 
 def _key(kind: str, field: str, **changes: Any) -> Any:
-    fields: dict[str, Any] = {
-        "canonical_form": FORM,
-        "literal_schema": {"type": "string"},
-        "predicate": f"{kind}.{field}",
-        "subject_kinds": (kind,),
-    }
+    fields: dict[str, Any] = dict(
+        predicate=f"{kind}.{field}",
+        value_type={"type": "string"},
+        canonical_form=FORM,
+        subject_kinds=(kind,),
+    )
     fields.update(changes)
     return identity_claim_type(field, **fields)
 
@@ -56,8 +56,8 @@ def _key(kind: str, field: str, **changes: Any) -> Any:
 def _field(kind: str, field: str) -> Any:
     return identity_claim_type(
         field,
+        value_type={"type": "string"},
         canonical_form=None,
-        literal_schema={"type": "string"},
         predicate=f"{kind}.{field}",
         subject_kinds=(kind,),
     )
@@ -634,7 +634,7 @@ def test_a_boolean_key_and_an_integer_key_never_meet(tmp_path: Path) -> None:
     """Typed keys compare by canonical encoding (``true`` is not ``1``), in one change or two."""
 
     instance, _owner = initialize_local(tmp_path)
-    typed = _key("dev.typed", "flag", literal_schema={"enum": [True, 1]})
+    typed = _key("dev.typed", "flag", value_type={"enum": [True, 1]})
     accept(
         instance,
         change_set(
@@ -964,9 +964,8 @@ def test_rendering_collisions_keep_labels_and_subject_values_bound(
                 kind="claim_type",
                 claim_type=identity_claim_type(
                     "peer",
+                    value_type=(DECISION,),
                     canonical_form=None,
-                    object_kind="subject",
-                    object_kinds=(DECISION,),
                     predicate=predicate,
                     subject_kinds=(DECISION,),
                 ),
@@ -1099,9 +1098,8 @@ def test_dry_run_keeps_every_pending_subject_outcome_unassigned(
                 kind="claim_type",
                 claim_type=identity_claim_type(
                     "peer",
+                    value_type=(kind,),
                     canonical_form=None,
-                    object_kind="subject",
-                    object_kinds=(kind,),
                     predicate=f"{DECISION}.peer",
                     subject_kinds=(DECISION,),
                 ),

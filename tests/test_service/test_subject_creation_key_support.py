@@ -54,8 +54,8 @@ def instance(tmp_path: Path) -> PlaybillInstance:
                 kind="claim_type",
                 claim_type=identity_claim_type(
                     "title",
+                    value_type={"type": "string"},
                     canonical_form=None,
-                    literal_schema={"type": "string"},
                     predicate=TITLE,
                     subject_kinds=(KIND,),
                 ),

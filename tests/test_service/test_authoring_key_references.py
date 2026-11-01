@@ -42,8 +42,8 @@ FORM = ("nfkc", "trim", "collapse_whitespace", "casefold")
 def _key(kind: str, field: str) -> Any:
     return identity_claim_type(
         field,
+        value_type={"type": "string"},
         canonical_form=FORM,
-        literal_schema={"type": "string"},
         predicate=f"{kind}.{field}",
         subject_kinds=(kind,),
     )
@@ -71,8 +71,8 @@ def instance(tmp_path: Path) -> PlaybillInstance:
             kind="claim_type",
             claim_type=identity_claim_type(
                 "status",
+                value_type={"type": "string"},
                 canonical_form=None,
-                literal_schema={"type": "string"},
                 predicate=f"{ASSESSMENT}.status",
                 subject_kinds=(ASSESSMENT,),
             ),
@@ -81,9 +81,8 @@ def instance(tmp_path: Path) -> PlaybillInstance:
             kind="claim_type",
             claim_type=identity_claim_type(
                 "supersedes",
+                value_type=(ASSESSMENT,),
                 canonical_form=None,
-                object_kind="subject",
-                object_kinds=(ASSESSMENT,),
                 predicate=f"{ASSESSMENT}.supersedes",
                 subject_kinds=(ASSESSMENT,),
             ),
@@ -96,8 +95,8 @@ def instance(tmp_path: Path) -> PlaybillInstance:
             kind="claim_type",
             claim_type=identity_claim_type(
                 "title",
+                value_type={"type": "string"},
                 canonical_form=None,
-                literal_schema={"type": "string"},
                 predicate=f"{PACKAGE}.title",
                 subject_kinds=(PACKAGE,),
             ),
@@ -106,9 +105,8 @@ def instance(tmp_path: Path) -> PlaybillInstance:
             kind="claim_type",
             claim_type=identity_claim_type(
                 "affects",
+                value_type=(PACKAGE,),
                 canonical_form=None,
-                object_kind="subject",
-                object_kinds=(PACKAGE,),
                 predicate=f"{ASSESSMENT}.affects",
                 subject_kinds=(ASSESSMENT,),
             ),
@@ -117,8 +115,8 @@ def instance(tmp_path: Path) -> PlaybillInstance:
             kind="claim_type",
             claim_type=identity_claim_type(
                 "note",
+                value_type={"type": "string"},
                 canonical_form=None,
-                literal_schema={"type": "string"},
                 predicate=f"{FINDING}.note",
                 subject_kinds=(FINDING,),
             ),

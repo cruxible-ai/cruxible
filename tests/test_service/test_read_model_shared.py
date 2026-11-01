@@ -37,6 +37,7 @@ from tests.core_support._knowledge_loop_support import (
     work_item_query,
 )
 from tests.core_support._subject_kind_support import without_keys
+from tests.support.claim_types import claim_type_changes
 from tests.support.oid_prefixes import too_short_prefix
 
 _WHEN = datetime.fromisoformat(EVALUATION_TIME)
@@ -522,7 +523,7 @@ def test_query_cuts_every_long_string_by_the_card_rule(tmp_path: Path) -> None:
     from tests.core_support._knowledge_loop_support import activate, authoring, subject_shell
     from tests.test_claims.test_claims import _claim_type
 
-    note = _claim_type().model_copy(update={"literal_schema": {"type": "string"}})
+    note = _claim_type().model_copy(update=claim_type_changes(value_type={"type": "string"}))
     instance, owner = seed_claims(tmp_path, claim_type_override=note)
     long_note = "a long literal note " * 40
     activate(
@@ -1047,7 +1048,7 @@ def test_only_subject_references_lose_their_prefix_in_a_projection(tmp_path: Pat
     )
 
     instance, owner = seed_write_surface(tmp_path)
-    notes = _claim_type("notes", literal_schema={"type": "string"}, cardinality="many")
+    notes = _claim_type("notes", value_type={"type": "string"}, cardinality="many")
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[claim_type_path(notes.predicate)] = render_claim_type(notes)
     proposed = instance.proposal_service().submit(

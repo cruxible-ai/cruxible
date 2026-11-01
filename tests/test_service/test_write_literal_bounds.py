@@ -17,10 +17,10 @@ from tests.core_support._write_support import KIND, OWNER, _claim_type, caller, 
 WI1 = f"{KIND}/wi-1"
 
 BOUNDED = (
-    _claim_type("headline", literal_schema={"type": "string", "minLength": 3, "maxLength": 200}),
-    _claim_type("code", literal_schema={"type": "string", "pattern": "^[A-Z]{2}-[0-9]+$"}),
-    _claim_type("grade", literal_schema={"type": "integer", "enum": [1, 2, 3]}),
-    _claim_type("score", literal_schema={"type": "integer", "minimum": 1, "maximum": 10}),
+    _claim_type("headline", value_type={"type": "string", "minLength": 3, "maxLength": 200}),
+    _claim_type("code", value_type={"type": "string", "pattern": "^[A-Z]{2}-[0-9]+$"}),
+    _claim_type("grade", value_type={"type": "integer", "enum": [1, 2, 3]}),
+    _claim_type("score", value_type={"type": "integer", "minimum": 1, "maximum": 10}),
 )
 
 

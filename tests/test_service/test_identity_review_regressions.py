@@ -273,10 +273,9 @@ def test_a_creation_reference_reaches_composites_and_further_holders(
 
     paired = identity_claim_type(
         "pair",
+        value_type=(PAIR,),
         canonical_form=None,
-        object_kind="subject",
         cardinality="many",
-        object_kinds=(PAIR,),
         predicate=f"{DECISION}.pair",
         subject_kinds=(DECISION,),
     )
