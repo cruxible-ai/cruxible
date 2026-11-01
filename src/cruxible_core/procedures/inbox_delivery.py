@@ -35,6 +35,29 @@ class InboxTerminalEgressSink:
         self.store = store
         self.line = line
 
+    def post_claims_diagnostics(self, *, admission, node_id, diagnostics, at) -> None:  # type: ignore[no-untyped-def]
+        from cruxible_core.exhaust.line_inbox import InboxPosting
+
+        self.store.post(
+            [
+                InboxPosting(
+                    line=self.line.qualified,
+                    procedure=admission.procedure_identity.qualified,
+                    procedure_artifact_digest=admission.procedure_artifact_digest,
+                    run_id=admission.run_id,
+                    node_id=node_id,
+                    item_key=f"diagnostic-{index}",
+                    payload=d.model_dump(mode="json"),
+                    source_capture_digests=(),
+                    posted_at=at,
+                )
+                for index, d in enumerate(diagnostics)
+            ],
+            actor=admission.actor_context,
+            now=at,
+            coordinate=admission.accepted_coordinate,
+        )
+
     def deliver_inbox_egress(
         self,
         *,

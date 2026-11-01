@@ -975,7 +975,7 @@ def test_claim_type_builder_writes_v7_with_identity_rules(tmp_path: Path) -> Non
         attestation_consequence_policy=policy,
     )
 
-    assert draft.definition.artifact_format == "cruxible-claim-type-v10"
+    assert draft.definition.artifact_format == "cruxible-claim-type-v11"
     assert draft.definition.attestation_consequence_policy == policy
     assert draft.definition.evidence_requirement == "self"
     assert draft.definition.revision_evidence == "replace"

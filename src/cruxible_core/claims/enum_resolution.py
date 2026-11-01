@@ -17,6 +17,10 @@ if TYPE_CHECKING:
 def enum_members_of(claim_type: ClaimType | None) -> tuple[str, ...] | None:
     """The literal enum declared by a ClaimType, when it has one."""
 
+    from cruxible_client.contracts.shapes import EnumType
+
+    if claim_type is not None and isinstance(claim_type.value, EnumType):
+        return claim_type.value.members
     schema = None if claim_type is None else claim_type.literal_schema
     members = None if schema is None else schema.get("enum")
     return tuple(members) if isinstance(members, list) else None

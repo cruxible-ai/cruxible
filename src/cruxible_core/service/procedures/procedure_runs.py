@@ -30,6 +30,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.captures import (
     capture_retention_policy,
 )
+from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic
 from cruxible_client.contracts.dependencies import dependency_pins
 from cruxible_client.contracts.errors import (
     CruxibleError,
@@ -204,6 +205,7 @@ from cruxible_core.procedures.acquisition import (
     ACQUISITION_OVERSIZED,
     ACQUISITION_REFUSED,
 )
+from cruxible_core.procedures.claims_context import AcceptedClaimsContext
 from cruxible_core.procedures.egress import (
     SERVED_AUTHORITY_TERMS,
     CaptureTerminalEgressSink,
@@ -2106,6 +2108,11 @@ def _fold_terminal_egress(
             else (None if current is None else current.inbox_truncation)
         ),
         line_open_proposal=line_open_proposal,
+        claims_diagnostics=tuple(
+            ClaimsDiagnostic.model_validate(d)
+            for d in cast(list[object], payload.get("claims_diagnostics", []))
+        )
+        or (() if current is None else current.claims_diagnostics),
     )
 
 
@@ -3412,6 +3419,7 @@ def service_run_playbill_procedure(
             enum_resolver=accepted_enum_resolver(instance, coordinate),
             contract_resolver=accepted_contract_resolver(instance, coordinate),
             key_rules=accepted_key_rules(instance, coordinate),
+            claims_context=AcceptedClaimsContext(instance, coordinate),
             clock=_DeterministicClock(evaluation_time),
             nested_runner=ServedNestedProcedureRunner(
                 instance,
@@ -3554,6 +3562,10 @@ class _LineTerminalEgressSink:
         if self.inbox is None:
             raise TerminalEgressError("post_inbox is delivered only under a Line")
         return self.inbox.deliver_inbox_egress(request=request, manifests=manifests)
+
+    def post_claims_diagnostics(self, **kwargs: Any) -> None:
+        if self.inbox is not None:
+            self.inbox.post_claims_diagnostics(**kwargs)
 
     def grants_settle(self) -> bool:
         return self.proposal.grants_settle()
@@ -4531,6 +4543,7 @@ def _run_playbill_line(
                 enum_resolver=accepted_enum_resolver(instance, coordinate),
                 contract_resolver=accepted_contract_resolver(instance, coordinate),
                 key_rules=accepted_key_rules(instance, coordinate),
+                claims_context=AcceptedClaimsContext(instance, coordinate),
                 clock=_DeterministicClock(evaluation_time),
                 nested_runner=ServedNestedProcedureRunner(
                     instance,

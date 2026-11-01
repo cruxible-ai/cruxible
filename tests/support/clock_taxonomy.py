@@ -225,6 +225,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ClaimRetirementResultItemV1", "effective_until"): "VALIDITY WINDOW",
     ("ClaimStatement", "effective_from"): "VALIDITY WINDOW",
     ("ClaimStatement", "effective_until"): "VALIDITY WINDOW",
+    ("ClaimTemplateSpec", "effective_until"): "VALIDITY WINDOW",
+    ("ClaimTemplate", "effective_until"): "VALIDITY WINDOW",
     ("ClaimTypeDependentDisposition", "claim_effective_until"): "VALIDITY WINDOW",
     ("ClaimTypeMigrationDisposition", "claim_effective_until"): "VALIDITY WINDOW",
     ("ClaimTypeSuccessionDependent", "claim_effective_until"): "VALIDITY WINDOW",

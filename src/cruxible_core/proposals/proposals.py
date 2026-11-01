@@ -2005,6 +2005,21 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
         content = context.candidate_tree.get(path)
         return None if content is None else parse_capture_contract(content, path=path)
 
+    from cruxible_core.procedures.claims_typing import tree_claims_lookup, validate_claims_templates
+
+    if procedure.lifecycle.state == "live":
+        try:
+            validate_claims_templates(
+                procedure.definition, tree_claims_lookup(context.candidate_tree)
+            )
+        except ValueError as exc:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "cruxible.procedure.claims_type_invalid", str(exc), path=context.path
+                    ),
+                )
+            )
     law = evaluate_procedure_law(
         procedure,
         path=context.path,

@@ -218,16 +218,16 @@ def test_the_one_format_pins_its_exact_wire_and_digest() -> None:
     )
 
     assert hashlib.sha256(render_claim_type(original)).hexdigest() == (
-        "cf45f79ce1ddeef16e306ca297bc38013e5067f63a2eedbeffdd11f29eca1eb2"
+        "ef2ae633b12d458c671da3055db4a3f0b17a81eb370eb77914a5894008793ab3"
     )
     assert claim_type_digest(original).tagged == (
-        "sha256:33c401b98bed146f8d18823f69b8ecfe2e0e285e7102567a0ba52c2fb1d577d1"
+        "sha256:78e9e2a8f95c2d79702c1ec1be27f794543c80658b818262c2964b82d0b047c1"
     )
     assert hashlib.sha256(render_claim_type(successor)).hexdigest() == (
-        "68ea69e300ab62296f12db7edb60e267ebb3baa1826a153fb42316eaea7d5da5"
+        "5b76daf2adf4e504a0fa72e8a0735421e4d987baf45676871b9a1766039836c0"
     )
     assert claim_type_digest(successor).tagged == (
-        "sha256:4de8f499f30a000d7316ad96cdc52eb4830aa1fd5b186253d6ba2576a1224e7e"
+        "sha256:5c053ff028cdf86d8481fc4f3d09a9ddf7b06e43aaa7c90d39c6a43213b645d8"
     )
     # Absent optional members are omitted, never written as null placeholders.
     for rendered in (render_claim_type(original), render_claim_type(successor)):
@@ -486,7 +486,7 @@ def test_derivation_profile_removes_producer_input_but_verifies_frozen_expansion
         },
     )
     expanded = expand_claim_type_profile(request)
-    assert expanded.claim_type.artifact_format == "cruxible-claim-type-v10"
+    assert expanded.claim_type.artifact_format == "cruxible-claim-type-v11"
     rule = expanded.claim_type.evidence_admission_policy.rules[0]
     assert "allowed_reducer_digests" not in rule.model_dump()
     assert [item.target.qualified for item in rule.capture_contracts] == [

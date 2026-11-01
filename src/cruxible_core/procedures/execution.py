@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable, Final, Literal, NoReturn, Protocol, cast
 
 from cruxible_client.contracts.captures import capture_retention_policy, parse_capture_envelope
+from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic
+from cruxible_client.contracts.procedures.claims import ClaimsNode
 from cruxible_client.contracts.refs import Ref
 from cruxible_client.contracts.shapes import (
     AllOf,
@@ -26,6 +28,7 @@ from cruxible_client.contracts.shapes import (
     Predicate,
     Presence,
 )
+from cruxible_core.procedures.claims_context import ClaimsContext
 
 if TYPE_CHECKING:
     from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
@@ -2211,6 +2214,10 @@ class _RunState:
     read_rows: int = 0
     #: Sinks whose posted values met an invalid field: incomplete at the sink.
     sinks_incomplete: set[str] = dataclass_field(default_factory=set)
+    claims_items: dict[str, tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]] = (
+        dataclass_field(default_factory=dict)
+    )
+    claims_diagnostics: tuple[ClaimsDiagnostic, ...] = ()
 
     def observe_items(self, observed: int, boundary: str, field_path: str) -> None:
         candidate = (boundary.encode("utf-8"), field_path.encode("utf-8"))
@@ -2284,6 +2291,7 @@ class ProcedureExecutor:
         contract_resolver: Callable[[ContractRef], Contract | None] | None = None,
         completeness_probe: CompletenessProbe | None = None,
         key_rules: KeyCanonicalizer | None = None,
+        claims_context: ClaimsContext | None = None,
     ) -> None:
         self.journal = journal
         self.bodies = bodies
@@ -2326,6 +2334,7 @@ class ProcedureExecutor:
         # R12/D4: the SubjectKind identity rules at the admitted (immutable)
         # coordinate; every key<K> / key_part<K:p> value reads through them.
         self.key_rules = key_rules
+        self.claims_context = claims_context
         # A sink harness told whether each sink's value is complete (the law's
         # real sinks belong to the Claims terminal).
         self.completeness_probe = completeness_probe
@@ -3212,7 +3221,8 @@ class ProcedureExecutor:
                     started_ns=started_ns,
                     node_id=node.node_id,
                     wall_clock=not isinstance(
-                        node, CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode
+                        node,
+                        ClaimsNode | CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
                     ),
                 )
                 self._track_completeness(node, state)
@@ -3271,6 +3281,9 @@ class ProcedureExecutor:
                             state.alias_tokens(frozenset({node.as_})) | state.control
                         )
                         state.return_complete = state.completeness.at_sink(_node_reads(node))
+                    elif isinstance(node, ClaimsNode) and definition.returns is None:
+                        result = {}
+                        state.return_tokens = state.control
                     elif isinstance(node, CaptureEgressNode | ProposeChangeSetNode):
                         result = _resolve_node_template(
                             node.result,
@@ -3365,6 +3378,9 @@ class ProcedureExecutor:
             self._extend_alias(
                 state, node.as_, _node_policy_tokens(node, self.references) | state.control
             )
+            return None
+        if isinstance(node, ClaimsNode):
+            self._run_claims(node, admission=admission, state=state, records=records)
             return None
         if isinstance(node, HaltNode):
             return None
@@ -4179,7 +4195,12 @@ class ProcedureExecutor:
                 # A read completed within its ceiling, or the node refused.
                 tracker.mark(alias, True)
             else:
-                tracker.mark(alias, tracker.reads_complete(reads))
+                truncates = (
+                    isinstance(node, CallNode)
+                    and self.plan is not None
+                    and self.plan.definition.slots[node.slot].may_truncate
+                )
+                tracker.mark(alias, tracker.reads_complete(reads) and not truncates)
 
     def _occurrence_matches_slot(
         self, occurrence: ProviderExternalOccurrencePlan, slot: str | None
@@ -4574,6 +4595,51 @@ class ProcedureExecutor:
             },
         )
 
+    def _run_claims(
+        self,
+        node: ClaimsNode,
+        *,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+    ) -> None:
+        from cruxible_core.procedures.claims_terminal import expand_claims
+
+        if self.claims_context is None:
+            raise _RunRefusal(
+                "terminal_not_available",
+                "Claims terminal needs accepted slot reads",
+                node_id=node.node_id,
+            )
+        expanded = expand_claims(
+            node, executor=self, admission=admission, state=state, context=self.claims_context
+        )
+        policy = _node_policy_tokens(node, self.references)
+        state.claims_items[node.node_id] = (
+            expanded.values,
+            tuple(t | policy for t in expanded.tokens),
+        )
+        state.claims_diagnostics = expanded.diagnostics
+        if expanded.diagnostics:
+            post = getattr(self.egress_sink, "post_claims_diagnostics", None)
+            if post is not None:
+                post(
+                    admission=admission,
+                    node_id=node.node_id,
+                    diagnostics=expanded.diagnostics,
+                    at=self.clock.now(),
+                )
+        self._run_terminal(
+            SettleChangeSetNode(
+                node_id=node.node_id,
+                candidate_templates=({},),
+                result={},
+            ),
+            admission=admission,
+            state=state,
+            records=records,
+        )
+
     def _inbox_items(
         self,
         node: InboxEgressNode,
@@ -4638,6 +4704,22 @@ class ProcedureExecutor:
             ).model_dump(mode="json")
         )
         if not values and truncation is None:
+            if node.node_id in state.claims_items or state.claims_diagnostics:
+                self._append_event(
+                    admission,
+                    records,
+                    "terminal_egress",
+                    {
+                        "node_id": node.node_id,
+                        "kind": "claims" if node.node_id in state.claims_items else node.kind,
+                        "required_rung": TERMINAL_REQUIRED_RUNGS[node.kind],
+                        "verdict": "delivered",
+                        "children": [],
+                        "claims_diagnostics": [
+                            d.model_dump(mode="json") for d in state.claims_diagnostics
+                        ],
+                    },
+                )
             # A fan-out over an empty list has nothing to emit: no egress is
             # prepared or delivered (a proposal with no member is no proposal),
             # and the run ends at this terminal with its typed result.
@@ -4645,7 +4727,8 @@ class ProcedureExecutor:
         required = TERMINAL_REQUIRED_RUNGS[node.kind]
         payload: dict[str, object] = {
             "node_id": node.node_id,
-            "kind": node.kind,
+            "kind": "claims" if node.node_id in state.claims_items else node.kind,
+            "claims_diagnostics": [d.model_dump(mode="json") for d in state.claims_diagnostics],
             "required_rung": required,
             "children": [item.model_dump(mode="json") for item in children],
         }
@@ -5052,7 +5135,9 @@ class ProcedureExecutor:
         """
 
         base = _node_policy_tokens(node, self.references) | state.control
-        if isinstance(node, ProposeChangeSetNode) and isinstance(
+        if node.node_id in state.claims_items:
+            values, item_tokens = state.claims_items[node.node_id]
+        elif isinstance(node, ProposeChangeSetNode) and isinstance(
             node.candidate_templates, ProposalItemsFanOut
         ):
             values, item_tokens = _fan_out_items(
@@ -5917,7 +6002,11 @@ class ProcedureExecutor:
             local_provenance[body.as_] = AliasProvenanceV1(
                 whole=_base_tokens(body, local_state, body.spec, self.references)
             )
-            return True
+            return not (
+                self.plan is not None
+                and body.slot is not None
+                and self.plan.definition.slots[body.slot].may_truncate
+            )
         raise ExecutionError(f"unsupported repeat operation {body.operation!r}")
 
     def _append_events(
@@ -6499,6 +6588,7 @@ def _inbox_items(
     seen: set[bytes] = set()
     for element, element_token in zip(elements, element_tokens, strict=True):
         item: dict[str, object] = {}
+        skip_item = False
         for name, template in node.fields.items():
             try:
                 resolved = _resolve_template(
@@ -6521,9 +6611,32 @@ def _inbox_items(
                 continue
             if tag == "absent":
                 continue
-            item[name] = (
+            value = (
                 resolved["value"] if tag == "present" and isinstance(resolved, dict) else resolved
             )
+            declared = contract.fields.get(name)
+            complete = state.completeness.at_sink(_referenced_reads([node.for_each, template]))
+            if (
+                declared is not None
+                and declared.negative
+                and value != declared.unknown_member
+                and not complete
+            ):
+                state.claims_diagnostics += (
+                    ClaimsDiagnostic(
+                        kind="incomplete_source",
+                        target=f"{node.contract.spelling}.{name}",
+                        field=name,
+                        input=",".join(sorted(state.completeness.incomplete)) or "control lineage",
+                    ),
+                )
+                if declared.unknown_member is None:
+                    skip_item = True
+                    continue
+                value = declared.unknown_member
+            item[name] = value
+        if skip_item:
+            continue
         try:
             validate_operation_value(
                 item,
@@ -6729,13 +6842,15 @@ def _decision_digest(run_id: str, decision: AcquisitionInputDecision) -> str:
 
 def _resolve_path(value: object, path: tuple[str, ...], *, reference: str) -> object:
     current = value
-    for member in path:
+    for position, member in enumerate(path):
         if isinstance(current, dict) and member in current:
             current = current[member]
             continue
         if isinstance(current, list) and member.isdigit() and int(member) < len(current):
             current = current[int(member)]
             continue
+        if isinstance(current, list) and not member.isdigit():
+            return [_resolve_path(item, path[position:], reference=reference) for item in current]
         raise ExecutionError(f"runtime reference {reference!r} does not resolve")
     return current
 

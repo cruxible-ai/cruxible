@@ -1491,7 +1491,7 @@ vocabulary and adds one disposition the operator form has no use for --
 paths build their candidate with the same function, so neither can drift from
 the other's law.
 
-A ClaimType has one format, `cruxible-claim-type-v10`, with identity evidence
+A ClaimType has one format, `cruxible-claim-type-v11`, with identity evidence
 rules (`cruxible-claim-evidence-admission-policy-v4`); every authoring path
 writes it: `propose --input`, the SDK draft, the authoring examples and
 change-set members. A rule that names an exact contract digest no accepted
@@ -3927,7 +3927,7 @@ ClaimType:` and `get SubjectKind:` cards. A full ClaimType descriptor (here and
 under `--kind`) and the `get ClaimType:` card also carry `contention` (the
 resolution `selector`, `on_conflict`: `unresolved` or `refuse`, and the
 admission policy's `corroboration` and `freeze` requirement counts when there
-are any), `format` (10 for `cruxible-claim-type-v10`), the accepted `revision`
+are any), `format` (10 for `cruxible-claim-type-v11`), the accepted `revision`
 and the ledger `path`. `--section runs` lists
 Procedure runs, newest admission first, each with its Procedure, status,
 admission time, Line and finished-node count, and `--section running` lists

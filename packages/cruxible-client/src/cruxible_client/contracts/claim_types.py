@@ -6,7 +6,7 @@ import json
 import re
 import unicodedata
 from collections.abc import Mapping
-from typing import Annotated, Final, Literal, TypeAlias
+from typing import Annotated, Any, Final, Literal, TypeAlias
 
 from pydantic import (
     BaseModel,
@@ -43,6 +43,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
     ClaimResolutionPolicy,
 )
+from cruxible_client.contracts.shapes import FieldInvalid, FieldType, check_value, coerce_field_type
 
 _PREDICATE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})+$")
 
@@ -187,7 +188,7 @@ class ClaimInverse(_StrictClaimTypeModel):
 
 #: The one ClaimType artifact format: every field any earlier format carried,
 #: stated explicitly. Earlier formats are refused, never reinterpreted.
-CLAIM_TYPE_FORMAT: Final = "cruxible-claim-type-v10"
+CLAIM_TYPE_FORMAT: Final = "cruxible-claim-type-v11"
 
 #: What a Claim of this type must be backed by. ``none``: the Claim's own origin
 #: supports it; ``self``: the evidence rules decide; ``captured``: at least one
@@ -234,6 +235,40 @@ def _member_key(member: object) -> bytes:
     return canonical_bytes(member)
 
 
+class ClaimPrecedence(_StrictClaimTypeModel):
+    """Highest role first; one policy governs every Procedure replacement."""
+
+    roles: tuple[ClaimRole, ...] = ("normative", "environment_binding", "observation", "derivation")
+    revisable_by_procedures: tuple[ClaimRole, ...] = (
+        "environment_binding",
+        "observation",
+        "derivation",
+    )
+
+    @model_validator(mode="after")
+    def _roles(self) -> "ClaimPrecedence":
+        if len(set(self.roles)) != len(self.roles) or set(self.roles) != {
+            "normative",
+            "environment_binding",
+            "observation",
+            "derivation",
+        }:
+            raise ValueError("precedence.roles orders every role exactly once")
+        if len(set(self.revisable_by_procedures)) != len(self.revisable_by_procedures):
+            raise ValueError("revisable_by_procedures contains distinct roles")
+        return self
+
+    def replacements(
+        self, role: ClaimRole, override: tuple[ClaimRole, ...] | None = None
+    ) -> tuple[ClaimRole, ...]:
+        allowed = tuple(
+            r for r in self.roles[self.roles.index(role) :] if r in self.revisable_by_procedures
+        )
+        if override is not None and not set(override).issubset(allowed):
+            raise ValueError("claims_replaces_forbidden: replaces exceeds ClaimType precedence")
+        return allowed if override is None else override
+
+
 class ClaimType(_StrictClaimTypeModel):
     """The one ClaimType: what a predicate means, admits and settles.
 
@@ -241,10 +276,22 @@ class ClaimType(_StrictClaimTypeModel):
     stated value never share a spelling.
     """
 
-    artifact_format: Literal["cruxible-claim-type-v10"] = CLAIM_TYPE_FORMAT
+    artifact_format: Literal["cruxible-claim-type-v11"] = CLAIM_TYPE_FORMAT
     identity: ArtifactIdentity
     predicate: str
     allowed_subject_kinds: tuple[str, ...]
+    value: FieldType | None = Field(default=None, exclude_if=lambda value: value is None)
+    precedence: ClaimPrecedence = ClaimPrecedence()
+    negative: bool = False
+    unknown_member: str | int | bool | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _value_type(cls, value: Any) -> object:
+        return None if value is None else coerce_field_type(value)
+
     object_kind: Literal["literal", "subject", "exact_content"]
     literal_schema: dict[str, object] | None = Field(
         default=None, exclude_if=lambda value: value is None
@@ -379,6 +426,13 @@ class ClaimType(_StrictClaimTypeModel):
 
     @model_validator(mode="after")
     def _complete_contract(self) -> "ClaimType":
+        if self.unknown_member is not None:
+            if not self.negative or self.value is None:
+                raise ValueError("unknown_member requires a negative ClaimType with value")
+            if isinstance(
+                check_value(self.unknown_member, self.value, at="unknown_member"), FieldInvalid
+            ):
+                raise ValueError("unknown_member is not a member of ClaimType.value")
         expected = ArtifactIdentity(kind="ClaimType", name=self.predicate)
         if self.identity != expected:
             raise ValueError("ClaimType identity must equal ClaimType:<predicate>")
@@ -552,7 +606,7 @@ def claim_type_contention(claim_type: ClaimType) -> ClaimTypeContention:
 
 
 def claim_type_format_version(claim_type: ClaimType) -> int:
-    """The ClaimType format's version number: ``cruxible-claim-type-v10`` is 10."""
+    """The ClaimType format's version number: ``cruxible-claim-type-v11`` is 10."""
 
     return int(claim_type.artifact_format.rpartition("-v")[2])
 

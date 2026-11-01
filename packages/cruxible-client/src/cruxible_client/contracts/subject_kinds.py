@@ -641,9 +641,9 @@ def key_predicate(subject_kind: SubjectKind, name: str) -> str | None:
     return None
 
 
-def ordered_key_parts(
+def ordered_key_values(
     subject_kind: SubjectKind, key: Mapping[str, SubjectKeyValue]
-) -> tuple[SubjectKeyPart, ...]:
+) -> tuple[tuple[str, SubjectKeyValue], ...]:
     """The key in the kind's key order; a missing, unknown or repeated part refuses.
 
     Raises ``ValueError`` naming the problem; the caller types it to its surface.
@@ -658,6 +658,9 @@ def ordered_key_parts(
         return ()
     found: dict[str, SubjectKeyValue] = {}
     for name, value in key.items():
+        problem = key_value_problem(value)
+        if problem is not None:
+            raise ValueError(problem)
         predicate = key_predicate(subject_kind, name)
         if predicate is None:
             raise ValueError(
@@ -675,9 +678,16 @@ def ordered_key_parts(
             + "; missing "
             + ", ".join(missing)
         )
+    return tuple((predicate, found[predicate]) for predicate in subject_kind.keys)
+
+
+def ordered_key_parts(
+    subject_kind: SubjectKind, key: Mapping[str, SubjectKeyValue]
+) -> tuple[SubjectKeyPart, ...]:
+    """The public typed parts, over the same canonical key validation."""
     return tuple(
-        SubjectKeyPart(predicate=predicate, value=found[predicate])
-        for predicate in subject_kind.keys
+        SubjectKeyPart(predicate=predicate, value=value)
+        for predicate, value in ordered_key_values(subject_kind, key)
     )
 
 

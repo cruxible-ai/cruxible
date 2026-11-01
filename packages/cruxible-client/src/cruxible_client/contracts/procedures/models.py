@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from cruxible_client.contracts.artifacts import ArtifactNameRef
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
 from cruxible_client.contracts.captures import CanonicalDuration
+from cruxible_client.contracts.procedures.claims import ClaimsNode
 from cruxible_client.contracts.procedures.measurements import (
     ProcedureMeasurementDeclaration,
 )
@@ -381,6 +382,7 @@ REFERENCE_ROLES = {
     "capture_contract": "capture-contract",
     "captures": "capture-contract",
     "claim_type": "claim-type",
+    "subject_kind": "subject-kind",
     "procedure": "procedure",
     "effect_policy": "effect-policy",
 }
@@ -392,6 +394,17 @@ def iter_role_references(value: object) -> tuple[tuple[str, ArtifactNameRef], ..
     found: list[tuple[str, ArtifactNameRef]] = []
 
     def visit(item: object, field: str) -> None:
+        from cruxible_client.contracts.procedures.claims import ClaimsSubject
+
+        if isinstance(item, ClaimsSubject):
+            from cruxible_client.contracts.artifacts import ArtifactIdentity
+
+            found.append(
+                (
+                    "subject-kind",
+                    ArtifactNameRef(target=ArtifactIdentity(kind="SubjectKind", name=item.kind)),
+                )
+            )
         if isinstance(item, ArtifactNameRef):
             found.append((REFERENCE_ROLES[field], item))
             return
@@ -440,6 +453,7 @@ __all__ = [
     "ProcedureTransformSpec",
     "ProjectNode",
     "ProposalItemsFanOut",
+    "ClaimsNode",
     "ProposeChangeSetNode",
     "ReadNode",
     "RUNG_AUTHORITY",

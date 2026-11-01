@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from cruxible_client.contracts.artifacts import ArtifactNameRef
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_MAX
+from cruxible_client.contracts.procedures.claims import ClaimsNode
 from cruxible_client.contracts.procedures.extract import ExtractNode
 from cruxible_client.contracts.procedures.model_base import (
     _ALIAS_RE,
@@ -666,6 +667,7 @@ class HaltNode(_StrictProcedureModel):
 TERMINAL_REQUIRED_RUNGS = {
     "emit_capture": 0,
     "post_inbox": 1,
+    "claims": 3,
     "propose_change_set": 2,
     "settle_change_set": 3,
 }
@@ -825,6 +827,7 @@ ProcedureNode = Annotated[
     | RepeatNode
     | CaptureEgressNode
     | InboxEgressNode
+    | ClaimsNode
     | ProposeChangeSetNode
     | SettleChangeSetNode
     | HaltNode
@@ -864,6 +867,7 @@ __all__ = [
     "ProcedureTransformSpec",
     "ProjectNode",
     "ProposalItemsFanOut",
+    "ClaimsNode",
     "ProposeChangeSetNode",
     "RETIRED_NODE_KINDS",
     "RETIRED_TRANSFORM_KINDS",

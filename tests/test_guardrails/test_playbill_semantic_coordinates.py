@@ -148,9 +148,9 @@ LAW_COORDINATES: tuple[
     (
         CLAIM_TYPE_ACCEPTANCE_LAW,
         "cruxible.claim-type.v10",
-        "cruxible-claim-type-v10",
+        "cruxible-claim-type-v11",
         1,
-        "sha256:5ea68ca2feffebae8dc0316b586f3f76accecfe89f7742452ae03e731bf1297e",
+        "sha256:dab54dd9366932014f2f396f3a178424dd996394a677fd6cfaecbbd5c61558db",
     ),
     (
         CAPTURE_CONTRACT_ACCEPTANCE_LAW,
@@ -163,8 +163,8 @@ LAW_COORDINATES: tuple[
         CLAIM_ACCEPTANCE_LAW,
         "playbill.claim.v4",
         "playbill-claim-v4",
-        1,
-        "sha256:94302db5a6cc0ce821965b5c1ba57717d494fc502f9959b11591ff95ce72eb82",
+        2,
+        "sha256:690ecc226bcaf24f35c6f786b986c176359625dcd2b35b1a229edc7205afacf7",
     ),
     (
         PROVIDER_ACCEPTANCE_LAW,
@@ -311,16 +311,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:89769ca0c70bb3d0ac6b10302109afbf6ee89c2a9778cfff63f196943c9434a5"
+    expected = "sha256:3c8883bc852c2916b76eb22abe90186067b053b1b4a8ff28db73ba70738b7224"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 42,
+            "semantic_revision": 43,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "typed-authoring-identity-v1",
+            "revision_name": "claims-terminal-v1",
         },
     )
     assert computed == expected
@@ -365,8 +365,8 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "typed-authoring-identity-v1"
-    assert compiler_revision_label(CURRENT_COMPILER) == "typed-authoring-identity-v1"
+    assert CURRENT_COMPILER_REVISION == "claims-terminal-v1"
+    assert compiler_revision_label(CURRENT_COMPILER) == "claims-terminal-v1"
     for earlier_digest in (
         "sha256:56542b566100db8fadfd4bfcea8f0fe58e37de444885906f3914ec1cc225d085",
         # Revision 36 (light-artifacts-v1): flat-manifest sroot-v1 genesis.

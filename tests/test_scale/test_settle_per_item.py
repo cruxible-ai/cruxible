@@ -63,7 +63,6 @@ from pydantic import BaseModel
 
 from cruxible_client.contracts import candidates, canonical, claims, projection_extensions
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.exhaust.backends import LocalJournalBackend
 from cruxible_core.ledger import activation, recovery
@@ -76,7 +75,6 @@ from tests.test_procedures import test_procedure_settlement_delivery as settle_s
 from tests.test_procedures import test_procedure_source_runs as fixtures
 from tests.test_procedures.test_procedure_proposal_delivery import (
     SUBJECT_KIND,
-    item_template,
 )
 from tests.test_scale._counters import _database_path, _prefixes, _under
 
@@ -404,14 +402,8 @@ def _create_subjects(instance: Any, owner: Any, count: int) -> None:
 
 
 def _item(index: int) -> dict[str, object]:
-    statement = {
-        **item_template()["statement"],  # type: ignore[dict-item]
-        "subject": SemanticAddress.whole_artifact(
-            subject_path(SUBJECT_KIND, _subject_id(index))
-        ).model_dump(mode="json"),
-        "object": {"kind": "literal", "value": ("high", "low", "medium")[index % 3]},
-    }
-    return item_template(statement=statement, rationale=f"The feed reports {index}.")
+    """Recorded source rows carry facts; the core Claims template owns writes."""
+    return {"id": _subject_id(index), "severity": ("high", "low", "medium")[index % 3]}
 
 
 def _settle(world: Any, first: int, count: int, batch: int) -> Counter[str]:
@@ -454,7 +446,7 @@ def test_a_settles_work_per_item_stays_at_its_floor(
 ) -> None:
     _roomy_selection_budget(monkeypatch)
     with _sql_traced(tmp_path):
-        instance, root, line = settle_support.settle_world(tmp_path, candidate_templates=_FAN_OUT)
+        instance, root, line = settle_support.settle_world(tmp_path, claims_terminal=True)
         _create_subjects(instance, settle_support.OWNERS[instance.root], 5 * N)
         world = (instance, root, line)
         _settle(world, 0, N, 0)

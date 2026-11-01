@@ -72,6 +72,9 @@ class ExtractField(_StrictProcedureModel):
 
     at: str = Field(min_length=1, max_length=512)
     type: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    project: Literal["utc_date"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     parse: Parse | None = Field(default=None, exclude_if=lambda value: value is None)
     canonicalize: Literal["claim_type"] | None = Field(
         default=None, exclude_if=lambda value: value is None
@@ -87,9 +90,17 @@ class ExtractField(_StrictProcedureModel):
             parse_type(value)
         return value
 
+    @model_validator(mode="after")
+    def _projection(self) -> ExtractField:
+        if self.project is not None and self.parse != "datetime":
+            raise ValueError("utc_date requires parse: datetime")
+        return self
+
     def field_type(self) -> FieldType:
         """The declared type; else the parse's type; else a string."""
 
+        if self.project == "utc_date":
+            return DateType()
         if self.type is not None:
             return parse_type(self.type)
         if self.parse is not None:

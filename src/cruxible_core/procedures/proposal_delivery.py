@@ -342,11 +342,13 @@ def proposal_items(
 def evidence_by_item(
     request: TerminalEgressRequestV1,
     manifests: Mapping[str, TerminalItemDependencyManifestV1],
+    items: tuple[ProcedureProposalItemAny, ...] | None = None,
 ) -> dict[str, str]:
     """Pick the one Capture each item's own closure reached (see ``citable_captures``)."""
 
     evidence: dict[str, str] = {}
-    for item in request.items:
+    parsed = proposal_items(request) if items is None else items
+    for item, typed in zip(request.items, parsed, strict=True):
         manifest = manifests.get(item.item_key)
         produced = citable_captures(manifest)
         consumed = (
@@ -354,12 +356,11 @@ def evidence_by_item(
             if manifest is None
             else (*manifest.produced_capture_digests, *manifest.admitted_capture_digests)
         )
-        model = _item_model(item.value)
-        if issubclass(model, ProcedureClaimRetirementItem):
+        if isinstance(typed, ProcedureClaimRetirementItem):
             continue  # a retirement cites nothing: it ends a Claim, it asserts none
         explicit = None
-        if issubclass(model, ProcedureClaimProposalItem | ProcedureSubjectProposalItem):
-            explicit = model.model_validate(item.value).source
+        if isinstance(typed, ProcedureClaimProposalItem | ProcedureSubjectProposalItem):
+            explicit = typed.source
         if explicit is not None:
             if isinstance(explicit, SelfSourceBody):
                 continue
@@ -450,6 +451,9 @@ def _claim_members(
             source = ExistingCaptureCitationSource(capture_digest=evidence[egress_item.item_key])
             citation_role = "evidence"
         member = ClaimAuthoringPayload(
+            procedure_evidence=item.procedure_evidence
+            if isinstance(item, ProcedureClaimProposalItem)
+            else None,
             statement=statement_of(item),
             rationale=item.rationale,
             source=source,
@@ -1411,6 +1415,16 @@ def select_settle_mandate(
     """
 
     line_identity, line_digest = authority_line(admission, delegation)
+    # B4c introduces explicit basis scopes. Until then a legacy grant cannot
+    # silently authorize interpreted measurements or Claim derivations.
+    basis_restricted: set[str] = set()
+    for path in target_paths:
+        if not path.startswith("claims/") or path not in candidate_tree:
+            continue
+        claim = parse_claim(candidate_tree[path], path=path)
+        receipt = claim.backing.procedure_evidence
+        if receipt is not None and receipt.value.basis in {"derived", "measured"}:
+            basis_restricted.add(claim.statement.predicate)
     covering: list[str] = []
     partial: list[tuple[int, str, tuple[str, ...]]] = []
     for digest, mandate in sorted(accepted_mandates.items(), key=lambda item: item[0]):
@@ -1438,6 +1452,8 @@ def select_settle_mandate(
             candidate_tree=candidate_tree,
             evaluated_at=request.prepared_at,
         )
+        if outside is not None:
+            outside = tuple(sorted(set(outside) | basis_restricted))
         if outside == ():
             covering.append(digest)
         elif outside is not None:
@@ -1514,7 +1530,7 @@ class ProposalTerminalEgressSink:
             )
         items = proposal_items(request)
         if evidence is None:
-            evidence = evidence_by_item(request, manifests or {})
+            evidence = evidence_by_item(request, manifests or {}, items=items)
         else:
             # Self-source items retain their body in the request, not a selected
             # Capture. Recovery must use the same rule as evidence_by_item.

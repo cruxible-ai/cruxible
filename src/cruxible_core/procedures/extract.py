@@ -517,6 +517,12 @@ def _type_value(
     if lexeme is _MISSING or lexeme is None or lexeme == "" and declared.parse is not None:
         return _bad("absent_required", name) if required else _ABSENT
     value = _parsed(lexeme, declared.parse)
+    if declared.project == "utc_date" and value is not _UNPARSEABLE:
+        # _parsed(datetime) returns canonical UTC text, not a datetime object.
+        parsed_time = parse_datetime(str(value))
+        if parsed_time is None:
+            return _bad("type_mismatch", name, lexeme)
+        value = parsed_time.date()
     if value is _UNPARSEABLE:
         return _bad("type_mismatch", name, lexeme)
     value = _canonicalized(_drop_nulls(value), field_type, declared.canonicalize, enums)

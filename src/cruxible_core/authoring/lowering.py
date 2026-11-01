@@ -1502,6 +1502,14 @@ def _lower_claim(
     assert isinstance(authored, ClaimAuthoringPayload)
     payload = authored
     derivation = payload.derivation
+    if payload.procedure_evidence is not None and derivation_procedure is None:
+        _refuse(
+            "cruxible.authoring.derivation_requires_execution",
+            "procedure_evidence",
+            "Only the executing Claims terminal can bind a claim-evidence-v2 receipt.",
+            repair_kind="run_procedure",
+            repair_description="Run the declared Procedure.",
+        )
     if payload.statement.role == "derivation" or derivation is not None:
         if (
             derivation is None
@@ -2087,7 +2095,10 @@ def _lower_claim(
                     identity_matches = basis_claim.identity == pin.target
                     digest = claim_artifact_digest(basis_claim).tagged
                 if not identity_matches or digest != pin.artifact_digest:
-                    raise ValueError("a derivation binding changed from its admitted version")
+                    raise ValueError(
+                        f"derivation binding {pin.target.qualified} changed "
+                        f"from {pin.artifact_digest} to {digest}"
+                    )
                 pins.append(pin)
         except (ValueError, CruxibleError) as exc:
             _refuse(
@@ -2101,6 +2112,7 @@ def _lower_claim(
         identity=identity,
         statement=statement,
         backing=ClaimBacking(
+            procedure_evidence=payload.procedure_evidence,
             referent_context=context,
             capture_digests=capture_digests,
             citations=merge_claim_citations(

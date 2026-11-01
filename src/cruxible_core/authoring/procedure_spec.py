@@ -93,7 +93,12 @@ def resolve_procedure_spec(
                     )
                 pins[side] = ref.model_copy(update={"digest": digest})
             return ProcedureSlot.model_validate(
-                {"in": pins["in"], "out": pins["out"], "effect": slot.effect}
+                {
+                    "in": pins["in"],
+                    "out": pins["out"],
+                    "effect": slot.effect,
+                    "may_truncate": slot.may_truncate,
+                }
             )
 
         def resolve_ref(ref: ContractRef) -> Contract | None:
@@ -234,4 +239,20 @@ def resolve_procedure_spec(
                 "output_contract": output_contract,
             }
 
-        return lower_procedure_spec(spec, resolve=resolve)
+        def maybe_source_identity(identity: Any) -> Any:
+            return maybe_source(identity.qualified)
+
+        lowered = lower_procedure_spec(spec, resolve=resolve)
+        from cruxible_client.contracts.procedures.models import ProcedureDefinition
+        from cruxible_core.procedures.claims_typing import (
+            ClaimsTypingRefused,
+            validate_claims_templates,
+        )
+
+        try:
+            validate_claims_templates(
+                ProcedureDefinition.model_validate(lowered.definition), maybe_source_identity
+            )
+        except (ClaimsTypingRefused, ValueError) as exc:
+            raise ProcedureSpecError("claims_type_invalid", "$.steps", str(exc)) from exc
+        return lowered

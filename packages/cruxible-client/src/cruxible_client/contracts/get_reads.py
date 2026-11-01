@@ -340,7 +340,7 @@ class GetClaimTypeCard(_StrictGetModel):
     # How rival Claims of one slot settle: the resolution selector, what a
     # conflict resolves to, and the admission policy's requirement counts.
     contention: ClaimTypeContention
-    # The format version (10 for ``cruxible-claim-type-v10``), the accepted
+    # The format version (10 for ``cruxible-claim-type-v11``), the accepted
     # revision and the ledger path (which a kit's drifted paths name).
     format: int = Field(ge=1)
     revision: int = Field(ge=1)

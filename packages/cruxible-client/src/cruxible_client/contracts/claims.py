@@ -67,6 +67,7 @@ from cruxible_client.contracts.claim_attestations import (
     read_claim_attestation,
     verify_claim_attestation,
 )
+from cruxible_client.contracts.claim_evidence import ClaimEvidenceReceipt
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
     AcceptedClaimType,
@@ -480,6 +481,9 @@ class ClaimBacking(_StrictClaimModel):
     input_claim_digests: tuple[str, ...] = ()
     reducer_digest: str | None = None
     source_mappings: tuple[SourceMapping, ...] = ()
+    procedure_evidence: ClaimEvidenceReceipt | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("capture_digests", "attestation_digests")
     @classmethod
@@ -526,6 +530,18 @@ class ClaimBacking(_StrictClaimModel):
     def _backing_shape(self) -> "ClaimBacking":
         if (self.reducer_digest is None) != (not self.input_claim_digests):
             raise ValueError("Claim derivation requires reducer and input Claims together")
+        if self.procedure_evidence is not None:
+            from cruxible_client.contracts.claim_evidence import DerivedBasis
+
+            basis = self.procedure_evidence.value
+            if isinstance(basis, DerivedBasis):
+                if (
+                    tuple(sorted(pin.artifact_digest for pin in basis.inputs))
+                    != self.input_claim_digests
+                ):
+                    raise ValueError("claim-evidence-v2 inputs must match exact derivation backing")
+            elif basis.capture_digest not in self.capture_digests:
+                raise ValueError("claim-evidence-v2 must cite a backing Capture")
         if not {item.capture_digest for item in self.citations}.issubset(self.capture_digests):
             raise ValueError("every Claim citation must name a backing Capture digest")
         return self
@@ -803,6 +819,9 @@ class ClaimLawEvidence(_StrictClaimModel):
     verified_attestation_digests: tuple[str, ...] = ()
     verified_attestations: tuple[VerifiedClaimAttestationV1, ...] = ()
     verdict_captures: tuple[CaptureVerdictEvidence, ...] = ()
+    procedure_evidence: ClaimEvidenceReceipt | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator(
         "law_digest", "adjudication_rule_digest", "statement_digest", "artifact_digest"
@@ -2751,6 +2770,20 @@ def evaluate_claim_law(
         require_proof = (
             require_new_citation_proof and capture_digest_value not in inherited_captures
         )
+        if (
+            claim.backing.procedure_evidence is not None
+            and require_new_citation_proof
+            and verified is not None
+        ):
+            if not all(
+                capture_store.verify(body)
+                for body in capture_retained_body_digests(verified.envelope)
+            ):
+                return _diagnostic(
+                    "cruxible.claim.evidence_unavailable",
+                    "Cited Capture bytes are no longer retained; acquire evidence again.",
+                    path=path,
+                )
         production_gap: CaptureProductionUnproven | None = None
         if (
             named
@@ -2822,10 +2855,23 @@ def evaluate_claim_law(
                     break
         if envelope is None or resolved_contract is None:
             return _diagnostic(
-                "cruxible.claim.capture_unverified",
+                (
+                    "cruxible.claim.evidence_unavailable"
+                    if claim.backing.procedure_evidence is not None and require_new_citation_proof
+                    else "cruxible.claim.capture_unverified"
+                ),
                 "A backing Capture or its exact CaptureContract cannot be verified.",
                 path=path,
             )
+        if claim.backing.procedure_evidence is not None and require_new_citation_proof:
+            if not all(
+                capture_store.verify(body) for body in capture_retained_body_digests(envelope)
+            ):
+                return _diagnostic(
+                    "cruxible.claim.evidence_unavailable",
+                    "Cited Capture bytes are no longer retained; acquire evidence again.",
+                    path=path,
+                )
         if resolved_contract.artifact_digest not in capture_contract_pin_digests:
             return _diagnostic(
                 "cruxible.claim.capture_contract_pin_missing",
@@ -3175,6 +3221,7 @@ def evaluate_claim_law(
                 artifact_digest=digest,
                 initial_verdict=verdict_result.verdict,
                 evidence_basis=basis,
+                procedure_evidence=claim.backing.procedure_evidence,
                 evaluation_time=evaluated_at,
                 verdict_result=verdict_result,
                 verified_attestation_digests=tuple(

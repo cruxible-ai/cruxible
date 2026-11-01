@@ -762,6 +762,10 @@ class ContractField(_Shape):
 
     type: FieldType
     optional: StrictBool = Field(default=False, exclude_if=lambda value: value is False)
+    negative: StrictBool = Field(default=False, exclude_if=lambda value: value is False)
+    unknown_member: str | int | bool | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     description: str | None = Field(default=None, exclude_if=_not_none)
 
     @model_validator(mode="before")
@@ -784,6 +788,17 @@ class ContractField(_Shape):
                 _refuse_structured(raw)
             return stated
         return data
+
+    @model_validator(mode="after")
+    def _negative_unknown(self) -> ContractField:
+        if self.unknown_member is not None:
+            if not self.negative or isinstance(
+                check_value(self.unknown_member, self.type, at="unknown_member"), FieldInvalid
+            ):
+                raise ValueError(
+                    "unknown_member requires negative: true and a member of the field type"
+                )
+        return self
 
     @field_validator("description")
     @classmethod
@@ -1895,6 +1910,15 @@ def edge_refusal(src: FieldType, dst: FieldType, *, via: EdgeVia | None = None) 
         return "only a field_result<T> is read through $item.fields"
     if src == dst:
         return None
+    if isinstance(src, EnumType) and isinstance(dst, StringType):
+        return (
+            None
+            if all(
+                isinstance(check_value(member, dst, at="edge"), FieldPresent)
+                for member in src.members
+            )
+            else "enum members do not fit string refinements"
+        )
     if src.kind != dst.kind:
         if isinstance(src, ResultType) or (
             isinstance(src, ListType) and isinstance(src.item, ResultType)

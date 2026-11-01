@@ -81,7 +81,7 @@ def test_claim_type_structural_diagnostics_are_explicitly_local_only() -> None:
 
 
 def test_the_one_claim_type_format_activates_the_one_claim_type_law() -> None:
-    law = ACCEPTANCE_LAWS.resolve_member(artifact_tag="cruxible-claim-type-v10")
+    law = ACCEPTANCE_LAWS.resolve_member(artifact_tag="cruxible-claim-type-v11")
     assert law.artifact_kind == "claim-type"
     assert law.coordinate.identifier == "cruxible.claim-type.v10"
     for removed in ("playbill-claim-type-v1", "playbill-claim-type-v8", "cruxible-claim-type-v9"):

@@ -236,7 +236,7 @@ def _shape(**changes: Any) -> KeyClaimTypeShape:
     values: dict[str, Any] = {
         "predicate": SLUG,
         "live": True,
-        "artifact_format": "cruxible-claim-type-v10",
+        "artifact_format": "cruxible-claim-type-v11",
         "object_kind": "literal",
         "cardinality": "one",
         "allowed_subject_kinds": (KIND,),

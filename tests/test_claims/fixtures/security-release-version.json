@@ -8,7 +8,7 @@
   "allowed_subject_kinds": [
     "security.release"
   ],
-  "artifact_format": "cruxible-claim-type-v10",
+  "artifact_format": "cruxible-claim-type-v11",
   "canonical_form": [
     "trim"
   ],
@@ -33,11 +33,25 @@
     "type": "string"
   },
   "member_descriptions": [],
+  "negative": false,
   "object_kind": "literal",
   "permitted_roles": [
     "normative"
   ],
   "pins": [],
+  "precedence": {
+    "revisable_by_procedures": [
+      "environment_binding",
+      "observation",
+      "derivation"
+    ],
+    "roles": [
+      "normative",
+      "environment_binding",
+      "observation",
+      "derivation"
+    ]
+  },
   "predicate": "security.release.version",
   "referent_sensitivity": "identity",
   "resolution_policy": {

@@ -236,6 +236,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
     candidate_templates: Any = None,
     change_kinds: tuple[str, ...] = ("create", "revise"),
     level_rules: bool = True,
+    claims_terminal: bool = False,
 ):
     instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
     source, shape = procedure.definition.nodes
@@ -261,6 +262,47 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
             candidate_templates,
         ),
     )
+    if claims_terminal:
+        from cruxible_client.contracts.artifacts import ArtifactNameRef
+        from cruxible_client.contracts.procedures.claims import ClaimsNode
+        from cruxible_client.contracts.procedures.extract import ExtractNode
+        from cruxible_client.contracts.shapes import contract_digest
+        from tests.support.procedures import boundary_contract, contract_pin, named
+
+        row = boundary_contract("security.cost-row", {"severity": "string"})
+        out = boundary_contract("security.cost-output", {})
+        definition = procedure_definition(
+            base=procedure.definition,
+            contract_out=named(contract_pin("contract-out", out)),
+            returns=None,
+            nodes=(
+                source.model_copy(update={"next": "entries"}),
+                ExtractNode(
+                    node_id="entries",
+                    capture=f"$steps.{fixtures.SOURCE_ALIAS}.capture",
+                    records="/proposals/*",
+                    row=row.ref.model_copy(update={"digest": contract_digest(row).tagged}),
+                    key={"slug": {"at": "id", "type": "string"}},
+                    fields={"severity": {"at": "severity"}},
+                    as_="entries",
+                    next="settle",
+                ),
+                ClaimsNode(
+                    node_id="settle",
+                    for_each="$steps.entries.records",
+                    subject={"kind": SUBJECT_KIND, "key": {"slug": "$item.key.slug"}},
+                    claims=[
+                        {
+                            "type": ArtifactNameRef(
+                                target=ArtifactIdentity(kind="ClaimType", name=PREDICATE)
+                            ),
+                            "value": "$item.fields.severity",
+                            "role": "observation",
+                        }
+                    ],
+                ),
+            ),
+        )
     with_terminal = procedure.model_copy(
         update={
             "definition": definition,
@@ -303,6 +345,12 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
         predicate: _predicate_claim_type(predicate)
         for predicate in dict.fromkeys((*scope_predicates, *item_predicates))
     }
+    if claims_terminal:
+        from cruxible_client.contracts.shapes import StringType
+
+        claim_types = {
+            name: ct.model_copy(update={"value": StringType()}) for name, ct in claim_types.items()
+        }
     query = _condition(only_subject=only_subject, require_claim=require_claim)
     members: dict[str, bytes] = {
         **trigger_members,
@@ -316,6 +364,10 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
         query_definition_path(query.identity.name): render_query_definition(query),
         **(_level_kind_members(rules=level_rules) if subject_items else {}),
     }
+    if claims_terminal:
+        from tests.support.procedures import contract_files
+
+        members.update(contract_files(row, out))
     for index in range(mandates):
         mandate = procedure_mandate(
             f"settle-{index}",
