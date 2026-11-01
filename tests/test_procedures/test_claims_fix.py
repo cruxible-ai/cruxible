@@ -533,7 +533,7 @@ def test_measured_receipt_and_settle_fails_closed(tmp_path: Path) -> None:
     )
     from tests.test_procedures.test_completeness_transfer import _Clock
 
-    score = claim_type(KIND + ".score", "int", literal_schema={"type": "integer"})
+    score = claim_type(KIND + ".score", "int", value_type={"type": "integer"})
     instance, root = claims_world(
         tmp_path, {"entries": [{"id": "CVE-2026-0001", "status": "open"}]}, types=(score,)
     )

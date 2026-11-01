@@ -19,10 +19,8 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claims import parse_claim
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
-    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
@@ -40,6 +38,7 @@ from cruxible_core.service.authoring.documents import service_activate_playbill_
 from tests.core_support._identity_support import accept_tree
 from tests.core_support._light_capture_support import record_contract
 from tests.core_support._subject_kind_support import keyed_subject_kind
+from tests.support.claim_types import claim_type as build_claim_type
 from tests.support.mandates import procedure_mandate
 from tests.support.operation_world import (
     author,
@@ -70,15 +69,12 @@ def claim_type(
     schema = {"type": "boolean"} if isinstance(typed, BoolType) else {"type": "string"}
     if isinstance(typed, EnumType):
         schema["enum"] = list(typed.members)
-    return ClaimType.model_validate(
-        {
-            "identity": ArtifactIdentity(kind="ClaimType", name=name),
+    return build_claim_type(
+        **{
             "predicate": name,
             "allowed_subject_kinds": [KIND],
             "value": typed,
-            "object_kind": "literal",
-            "literal_schema": schema,
-            "cardinality": "one",
+            "value_type": schema,
             "permitted_roles": ["derivation", "normative", "observation"],
             "default_role": "observation",
             "revision_evidence": "replace",
@@ -92,10 +88,6 @@ def claim_type(
                         subject_binding="exact_claim_subject",
                     ),
                 )
-            ),
-            "admission_policy": ClaimAdmissionPolicy(),
-            "resolution_policy": ClaimResolutionPolicy(
-                cardinality="one", eligible_verdicts=("supported",), selector="only_contender"
             ),
             **changes,
         }

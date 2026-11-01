@@ -19,6 +19,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
     service_run_playbill_line,
 )
+from tests.support.claim_types import claim_type_changes
 from tests.support.lines import line_budgets_input
 from tests.support.operation_world import (
     LINE,
@@ -999,10 +1000,9 @@ def _severity_claim_type():  # type: ignore[no-untyped-def]
     from tests.core_support._claim_type_support import claim_type_input_example
 
     record = claim_type_input_example().model_copy(
-        update={
-            "predicate": "test.severity",
-            "literal_schema": {"type": "string", "enum": ["low", "high"]},
-        }
+        update=claim_type_changes(
+            predicate="test.severity", value_type={"type": "string", "enum": ["low", "high"]}
+        )
     )
     return lower_claim_type_input(record, tree={})
 
