@@ -5095,11 +5095,17 @@ class ProcedureExecutor:
                 )
                 for child, value in zip(children, values, strict=True)
             ),
-            claims_evidence={
-                child.item_key: receipt
-                for child, receipt in zip(children, claims_evidence, strict=True)
-                if receipt is not None
-            },
+            # Only the claims terminal produces receipts (one per child); any
+            # other terminal's items carry none.
+            claims_evidence=(
+                {
+                    child.item_key: receipt
+                    for child, receipt in zip(children, claims_evidence, strict=True)
+                    if receipt is not None
+                }
+                if claims_evidence
+                else {}
+            ),
             prepared_at=self.clock.now(),
         )
         # Ruling C4: a direct run's admission is never a V5+ Line carrier (it
