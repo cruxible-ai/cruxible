@@ -80,7 +80,7 @@ def test_an_inverse_is_written_round_trips_and_is_digested() -> None:
     assert dumped["inverse"]["key"] == {"kind": "slot"}
     assert parse_claim_type(render_claim_type(claim_type), path=PATH) == claim_type
     assert claim_type_digest(claim_type) != claim_type_digest(v8(()))
-    assert claim_type_format_version(claim_type) == 10
+    assert claim_type_format_version(claim_type) == 11
     assert effective_inverse_stale_after(claim_type) == ClaimFreshnessDuration(
         microseconds=3_600_000_000
     )

@@ -781,8 +781,9 @@ def test_query_definition_participates_in_dependency_closure_with_its_claim_type
     )
     assert closure.verdict == "complete"
     assert tuple((item.target_path, item.pin_role) for item in closure.proofs_for(QUERY_PATH)) == (
-        (REVIEWER_CLAIM_TYPE_PATH, "claim-type"),
+        # canonical proof order (dependency_proof_order: sorted canonical bytes, digests included)
         (STATUS_CLAIM_TYPE_PATH, "claim-type"),
+        (REVIEWER_CLAIM_TYPE_PATH, "claim-type"),
     )
 
     incomplete = evaluate_dependency_closure(
