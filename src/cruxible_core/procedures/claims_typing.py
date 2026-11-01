@@ -206,9 +206,15 @@ def validate_claims_templates(
             if isinstance(t, FieldResultType):
                 t = t.value
             elif isinstance(t, ListType):
-                t = t.item
-                if path[0].isdigit():
-                    path = path[1:]
+                member, *rest = path
+                if member == "[*]":
+                    item = descend(t.item, rest)
+                    return None if item is None else ListType(item=item, max_items=t.max_items)
+                if not member.isdigit():
+                    raise ClaimsTypingRefused(
+                        "a list reference requires [*] or an explicit position"
+                    )
+                t, path = t.item, rest
             elif isinstance(t, NestedType):
                 fields = contract(t.contract).fields
                 if path[0] not in fields:

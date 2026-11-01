@@ -89,10 +89,8 @@ def test_g10_g14_normative_holder_and_date_are_held_by_precedence(tmp_path: Path
     assert observed.status == "succeeded", observed.terminal
     egress = observed.terminal_egress[0]
     assert egress.proposal_id is None
-    assert len(egress.claims_diagnostics) == 8
-    assert {d.kind for d in egress.claims_diagnostics} == {"held_by_precedence"}
-    assert all(d.role == "normative" for d in egress.claims_diagnostics)
-    assert any(KEV + "due_date" in d.target for d in egress.claims_diagnostics)
+    assert not egress.claims_diagnostics
+    assert egress.claims_same_count == 8
     assert instance.accepted_coordinate() == before
 
 
@@ -156,7 +154,13 @@ def test_g18_invalid_status_filter_count_derive_cannot_launder_a_negative(tmp_pa
                 "id": "write",
                 "for_each": "$steps.entries.records",
                 "subject": {"kind": KIND, "key": {"cve_id": "$item.key.cve_id"}},
-                "claims": [{"type": KIND + ".closure", "value": "$steps.verdict.result"}],
+                "claims": [
+                    {
+                        "type": KIND + ".closure",
+                        "value": "$steps.verdict.result",
+                        "role": "derivation",
+                    }
+                ],
             },
         ]
     )
@@ -169,7 +173,22 @@ def test_g18_invalid_status_filter_count_derive_cannot_launder_a_negative(tmp_pa
 
     document = json.loads((FIXTURES / "kev-invalid.json").read_bytes())
     closure = claim_type(
-        KIND + ".closure", "enum[affected, fixed, unknown]", negative=True, unknown_member="unknown"
+        KIND + ".closure",
+        "enum[affected, fixed, unknown]",
+        requires_complete_input=("fixed",),
+        incomplete_fallback="unknown",
+    )
+    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicy
+
+    closure = closure.model_copy(
+        update={
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                rules=tuple(
+                    rule.model_copy(update={"admission": "derivational"})
+                    for rule in closure.evidence_admission_policy.rules
+                )
+            )
+        }
     )
     instance, root = claims_world(
         tmp_path,
@@ -187,6 +206,13 @@ def test_g18_invalid_status_filter_count_derive_cannot_launder_a_negative(tmp_pa
     state = run(instance, root)
     claims = candidate_claims(instance, state)
     assert {c.statement.object.value for c in claims} == {"unknown"}
+    for claim in claims:
+        receipt = claim.backing.procedure_evidence.value
+        assert receipt.basis == "derived"
+        assert receipt.transform_node_ids == ("kept", "count", "verdict")
+        assert len(receipt.extractions) == 1
+        assert receipt.extractions[0].capture_digest in claim.backing.capture_digests
+
     assert {d.kind for d in state.terminal_egress[0].claims_diagnostics} == {"incomplete_source"}
     assert all(d.input == "verdict" for d in state.terminal_egress[0].claims_diagnostics)
 

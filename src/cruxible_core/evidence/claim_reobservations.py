@@ -32,6 +32,7 @@ from cruxible_client.contracts.captures import (
     observed_content,
     parse_capture_envelope,
 )
+from cruxible_client.contracts.claim_evidence import ClaimEvidenceReceipt
 from cruxible_client.contracts.claim_verdicts import (
     CaptureReobservationEvidence,
     CaptureVerdictEvidence,
@@ -275,12 +276,18 @@ class ClaimReobservationStore:
         claim_id: str,
         capture_digest: str,
         coordinate: AcceptedProjectionCoordinate,
-    ) -> CaptureEnvelopeAny:
+        extraction: ClaimEvidenceReceipt | None = None,
+        extracted_value: object = None,
+    ) -> tuple[CaptureEnvelopeAny, str]:
         """The re-observing Capture's envelope, or the typed refusal.
 
         It must be a daemon-admitted Capture that verifies at ``coordinate``,
         the Claim must be live there, and the Capture's observed content must
-        equal a Capture the Claim cites there under the same contract.
+        equal a Capture the Claim cites there under the same contract, or a
+        core extraction receipt must prove the same value, extract spec and key.
+        The returned content digest is the cited Capture's unchanged digest:
+        freshness keeps using its existing indexed key, even if other bytes in
+        the newly observed catalog changed.
         """
 
         from cruxible_core.service.evidence.capture_reads import (
@@ -318,16 +325,44 @@ class ClaimReobservationStore:
             raise ClaimReobservationRefused(
                 f"Claim {claim_id} already cites Capture {capture_digest}: nothing new was observed"
             )
+        original = claim.backing.procedure_evidence
+        same_extraction = False
+        if extraction is not None:
+            same_extraction = (
+                original is not None
+                and original.value.basis == "extracted"
+                and extraction.value.basis == "extracted"
+                and extraction.value.capture_digest == capture_digest
+                and original.value.extract_spec_digest == extraction.value.extract_spec_digest
+                and original.value.record_key == extraction.value.record_key
+                and claim.statement.object.model_dump(mode="json") == extracted_value
+            )
+            if not same_extraction:
+                raise ClaimReobservationRefused(
+                    "extraction does not prove the same value, extract spec and key"
+                )
         wanted = (envelope.capture_contract_digest, observed_content(envelope).digest)
-        for cited in claim.backing.capture_digests:
+        cited_captures = (
+            (original.value.capture_digest,)
+            if same_extraction and original is not None and original.value.basis == "extracted"
+            else claim.backing.capture_digests
+        )
+        for cited in cited_captures:
             try:
                 held = parse_capture_envelope(
                     self.instance.body_store().read(cited, access=_ACCESS)
                 )
             except (CruxibleError, ValueError):
                 continue
-            if (held.capture_contract_digest, observed_content(held).digest) == wanted:
-                return envelope
+            held_digest = observed_content(held).digest
+            if (held.capture_contract_digest, held_digest) == wanted or (
+                same_extraction
+                and original is not None
+                and original.value.basis == "extracted"
+                and cited == original.value.capture_digest
+                and held.capture_contract_digest == envelope.capture_contract_digest
+            ):
+                return envelope, held_digest
         raise ClaimReobservationRefused(
             f"Capture {capture_digest} observed no content Claim {claim_id} "
             "cites under its contract"
@@ -364,6 +399,8 @@ class ClaimReobservationStore:
         claim_id: str,
         capture_digest: str,
         actor_id: str,
+        extraction: ClaimEvidenceReceipt | None = None,
+        extracted_value: object = None,
     ) -> ReobservationRecord | None:
         """Record one admissible re-observation at the current head; a repeat is the same record.
 
@@ -385,10 +422,12 @@ class ClaimReobservationStore:
         """
 
         if is_previewing():
-            envelope = self._admissible(
+            envelope, cited_content = self._admissible(
                 claim_id=claim_id,
                 capture_digest=capture_digest,
                 coordinate=self.instance.accepted_coordinate(),
+                extraction=extraction,
+                extracted_value=extracted_value,
             )
             self._at(
                 claim_id=claim_id,
@@ -424,8 +463,12 @@ class ClaimReobservationStore:
             # Admission's immutable work first: verify the Capture, the live Claim
             # and its citations at the held head, then recover any reserved
             # material and the journal head and activate the writer.
-            envelope = self._admissible(
-                claim_id=claim_id, capture_digest=capture_digest, coordinate=accepted
+            envelope, cited_content = self._admissible(
+                claim_id=claim_id,
+                capture_digest=capture_digest,
+                coordinate=accepted,
+                extraction=extraction,
+                extracted_value=extracted_value,
             )
             journal = self._journal(create=True)
             assert journal is not None
@@ -458,11 +501,12 @@ class ClaimReobservationStore:
                 envelope=envelope,
                 now=self.instance.recording_clock(),
             )
+            record = replace(record, observed_content_digest=cited_content)
             last = conn.execute("SELECT recorded_us FROM progress WHERE singleton=1").fetchone()
             if last is not None and _micros(record.recorded_at) < int(last[0]):
                 record = replace(record, recorded_at=_from_micros(last[0]))
             now = record.recorded_at
-            payload = {
+            payload: dict[str, Any] = {
                 "tag": _EVENT_TAG,
                 "claim_id": record.claim_id,
                 "capture_digest": record.capture_digest,
@@ -470,6 +514,9 @@ class ClaimReobservationStore:
                 "observed_content_digest": record.observed_content_digest,
                 "observed_at": format_datetime(record.observed_at),
             }
+            if extraction is not None:
+                payload["extraction"] = extraction.model_dump(mode="json")
+                payload["extracted_value"] = extracted_value
             stored = ProcedureExhaustWriter(
                 journal=journal, bodies=bodies, fencing_token=_FENCE
             ).append(

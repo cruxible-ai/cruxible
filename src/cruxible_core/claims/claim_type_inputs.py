@@ -11,6 +11,8 @@ from pydantic import (
     ConfigDict,
     Field,
     GetJsonSchemaHandler,
+    StrictBool,
+    StrictStr,
     ValidationError,
     field_validator,
     model_serializer,
@@ -98,8 +100,8 @@ _MERGED_INPUT_FIELDS = (
 _STRUCTURAL_INPUT_FIELDS = (
     "value",
     "precedence",
-    "negative",
-    "unknown_member",
+    "requires_complete_input",
+    "incomplete_fallback",
     "allowed_subject_kinds",
     "object_kind",
     "literal_schema",
@@ -253,8 +255,8 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
 
     value: FieldType | None = None
     precedence: ClaimPrecedence = ClaimPrecedence()
-    negative: bool = False
-    unknown_member: str | int | bool | None = None
+    requires_complete_input: tuple[StrictStr | StrictBool, ...] = ()
+    incomplete_fallback: StrictStr | StrictBool | None = None
 
     @field_validator("value", mode="before")
     @classmethod

@@ -22,7 +22,7 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
@@ -1178,7 +1178,32 @@ def _claim_card(
         if item.claim_id != name
     }
     flags = verdict_flags(verdict, status, held=claim.identity.qualified in held)
+    value_source: Literal["field", "literal", "param"] | None = None
+    receipt = claim.backing.procedure_evidence
+    if receipt is not None:
+        from cruxible_client.contracts.procedures.artifacts import parse_procedure
+        from cruxible_client.contracts.procedures.claims import ClaimsNode
+        from cruxible_client.contracts.refs import ref_from_graph_text
+
+        pinned = instance.accepted_artifact_version(
+            AcceptedCoordinate.from_internal(coordinate),
+            receipt.procedure_digest,
+            family="procedures/",
+        )
+        if pinned is not None:
+            procedure_path, procedure_bytes = pinned
+            procedure = parse_procedure(procedure_bytes, path=procedure_path)
+            node = next(
+                (n for n in procedure.definition.nodes if n.node_id == receipt.node_id), None
+            )
+            if isinstance(node, ClaimsNode) and receipt.template < len(node.claims):
+                template = node.claims[receipt.template].value
+                ref = ref_from_graph_text(template) if isinstance(template, str) else None
+                value_source = (
+                    "literal" if ref is None else "param" if ref.root == "param" else "field"
+                )
     return GetClaimCard(
+        value_source=value_source,
         claim=name,
         subject=_subject_ref(subject_path),
         predicate=short_field_name(statement.predicate, subject_kind, accepted_predicates),

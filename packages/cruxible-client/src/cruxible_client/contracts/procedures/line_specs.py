@@ -28,6 +28,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
+from cruxible_client.contracts.claim_evidence import FindingKind
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -228,6 +229,17 @@ def _binding_keys(value: dict[str, LineBinding]) -> dict[str, LineBinding]:
     return dict(sorted(value.items(), key=lambda item: item[0].encode("utf-8")))
 
 
+class LineFindings(_StrictLineModel):
+    inbox: tuple[FindingKind, ...] = ()
+
+    @field_validator("inbox")
+    @classmethod
+    def _unique(cls, value: tuple[FindingKind, ...]) -> tuple[FindingKind, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("findings.inbox kinds must be distinct")
+        return value
+
+
 class LineSpec(_StrictLineModel):
     """One instantiation of an exact Procedure version, with every slot bound.
 
@@ -261,6 +273,9 @@ class LineSpec(_StrictLineModel):
     )
     acquisition: dict[str, LineAcquisitionRule] = Field(
         default_factory=dict, exclude_if=lambda value: not value
+    )
+    findings: LineFindings = Field(
+        default_factory=LineFindings, exclude_if=lambda value: not value.inbox
     )
     max_authority: LineAuthority
     trigger_input: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")

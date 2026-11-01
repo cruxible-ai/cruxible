@@ -54,7 +54,11 @@ from cruxible_client.contracts.captures import (
     contract_materialization_modes,
     contract_source_kinds,
 )
-from cruxible_client.contracts.claim_evidence import ClaimEvidenceReceipt, ExtractRefusedInboxItem
+from cruxible_client.contracts.claim_evidence import (
+    ClaimEvidenceReceipt,
+    ClaimsDiagnostic,
+    FindingKind,
+)
 from cruxible_client.contracts.errors import FormatError, ProjectionIntegrityError
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandate,
@@ -1574,15 +1578,16 @@ def producer_receipt_for_request(
 
 
 @runtime_checkable
-class ClaimsDiagnosticSinkProtocol(Protocol):
+class FindingsSinkProtocol(Protocol):
+    finding_kinds: tuple[FindingKind, ...]
     """Post bounded core diagnostics after successful terminal delivery."""
 
-    def post_claims_diagnostics(
+    def route_findings(
         self,
         *,
         admission: ProcedureRunAdmission,
         node_id: str,
-        diagnostics: tuple[ExtractRefusedInboxItem, ...],
+        diagnostics: tuple[ClaimsDiagnostic, ...],
         at: datetime,
     ) -> None: ...
 

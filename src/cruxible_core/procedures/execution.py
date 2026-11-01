@@ -13,7 +13,11 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable, Final, Literal, NoReturn, Protocol, cast
 
 from cruxible_client.contracts.captures import capture_retention_policy, parse_capture_envelope
-from cruxible_client.contracts.claim_evidence import ClaimEvidenceReceipt, ClaimsDiagnostic
+from cruxible_client.contracts.claim_evidence import (
+    ClaimEvidenceReceipt,
+    ClaimsDiagnostic,
+    FindingKind,
+)
 from cruxible_client.contracts.procedures.claims import ClaimsNode
 from cruxible_client.contracts.refs import Ref
 from cruxible_client.contracts.shapes import (
@@ -27,6 +31,7 @@ from cruxible_client.contracts.shapes import (
     Not,
     Predicate,
     Presence,
+    requires_complete_input,
 )
 from cruxible_core.procedures.claims_context import ClaimsContext
 
@@ -213,9 +218,9 @@ from cruxible_core.procedures.completeness import (
 )
 from cruxible_core.procedures.egress import (
     SERVED_AUTHORITY_TERMS,
-    ClaimsDiagnosticSinkProtocol,
     EffectiveRungTermV1,
     EffectiveRungV1,
+    FindingsSinkProtocol,
     InboxEgressSinkProtocol,
     PreparedTerminalEgressV1,
     SettleGrantHolderProtocol,
@@ -3232,11 +3237,18 @@ class ProcedureExecutor:
                     ),
                 )
                 self._track_completeness(node, state)
+                if isinstance(node, ExtractNode):
+                    self._route_findings(node.node_id, admission, state)
                 self._append_event(
                     admission,
                     records,
                     "node_fired",
-                    {"node_id": node.node_id, "kind": node.kind, "verdict": "succeeded"},
+                    {
+                        "node_id": node.node_id,
+                        "kind": node.kind,
+                        "verdict": "succeeded",
+                        **self._diagnostic_report(node.node_id, state),
+                    },
                 )
                 if isinstance(node, HaltNode):
                     raise _Halted(node_id=node.node_id, reason=node.reason, message=node.message)
@@ -3245,7 +3257,12 @@ class ProcedureExecutor:
                     admission,
                     records,
                     "node_fired",
-                    {"node_id": node.node_id, "kind": node.kind, "verdict": "refused"},
+                    {
+                        "node_id": node.node_id,
+                        "kind": node.kind,
+                        "verdict": "refused",
+                        **self._diagnostic_report(node.node_id, state),
+                    },
                 )
                 raise
             except _Halted:
@@ -3255,7 +3272,12 @@ class ProcedureExecutor:
                     admission,
                     records,
                     "node_fired",
-                    {"node_id": node.node_id, "kind": node.kind, "verdict": "failed"},
+                    {
+                        "node_id": node.node_id,
+                        "kind": node.kind,
+                        "verdict": "failed",
+                        **self._diagnostic_report(node.node_id, state),
+                    },
                 )
                 raise
 
@@ -4086,6 +4108,28 @@ class ProcedureExecutor:
                 node_id=node.node_id,
                 details=exc.details or None,
             ) from exc
+        if node.duplicates == "refuse_key":
+            from cruxible_client.contracts.canonical import canonical_bytes
+            from cruxible_client.contracts.shapes import DuplicateArm
+            from cruxible_core.procedures.extract import wire_value
+
+            duplicates: dict[bytes, tuple[dict[str, Any], list[str]]] = {}
+            for arm in outcome.held:
+                if isinstance(arm, DuplicateArm):
+                    key = {name: wire_value(value) for name, value in arm.key.items()}
+                    _, locators = duplicates.setdefault(canonical_bytes(key), (key, []))
+                    locators.append(arm.record)
+            diagnostics = state.claims_diagnostics.setdefault(node.node_id, ClaimsDiagnostics())
+            for key, locators in duplicates.values():
+                diagnostics.add(
+                    ClaimsDiagnostic(
+                        kind="duplicate_key",
+                        target=node.node_id,
+                        problem="duplicate_key",
+                        key=cast(Any, key),
+                        record_locators=tuple(locators),
+                    )
+                )
         value = normalize_canonical(outcome.value())
         state.observe_items(len(outcome.held), f"extract:{node.node_id}", "results")
         state.outputs[node.as_] = value
@@ -4637,6 +4681,10 @@ class ProcedureExecutor:
             state=state,
             records=records,
         )
+        for claim_id, receipt, value in expanded.reobservations:
+            self.claims_context.reobserve(
+                claim_id, receipt, value, admission.actor_context.actor_id
+            )
 
     def _inbox_items(
         self,
@@ -4668,25 +4716,33 @@ class ProcedureExecutor:
             return {}
         report = diagnostics.report()
         remaining = max(INBOX_RUN_ITEM_CAP_MAX - state.inbox_items, 0)
-        if diagnostics.inbox_selected > remaining:
+        kinds: tuple[FindingKind, ...] = (
+            self.egress_sink.finding_kinds
+            if isinstance(self.egress_sink, FindingsSinkProtocol)
+            else ()
+        )
+        selected = sum(diagnostics.counts.get(kind, 0) for kind in kinds)
+        if selected > remaining:
             report["claims_diagnostics_inbox_truncation"] = InboxPostTruncation(
                 cap=INBOX_RUN_ITEM_CAP_MAX,
                 cap_source="default",
-                selected=diagnostics.inbox_selected,
-                posted=min(len(diagnostics.inbox), remaining),
+                selected=selected,
+                posted=min(selected, remaining),
             ).model_dump(mode="json")
         return report
 
-    def _post_diagnostics(
+    def _route_findings(
         self, node_id: str, admission: ProcedureRunAdmission, state: _RunState
     ) -> None:
         diagnostics = state.claims_diagnostics.get(node_id)
-        if diagnostics is None or not diagnostics.inbox:
+        if diagnostics is None or not isinstance(self.egress_sink, FindingsSinkProtocol):
             return
         remaining = max(INBOX_RUN_ITEM_CAP_MAX - state.inbox_items, 0)
-        items = tuple(diagnostics.inbox[:remaining])
-        if items and isinstance(self.egress_sink, ClaimsDiagnosticSinkProtocol):
-            self.egress_sink.post_claims_diagnostics(
+        items = tuple(d for d in diagnostics.findings if d.kind in self.egress_sink.finding_kinds)[
+            :remaining
+        ]
+        if items and isinstance(self.egress_sink, FindingsSinkProtocol):
+            self.egress_sink.route_findings(
                 admission=admission, node_id=node_id, diagnostics=items, at=self.clock.now()
             )
             state.inbox_items += len(items)
@@ -4733,7 +4789,7 @@ class ProcedureExecutor:
         if not values and truncation is None:
             if node.node_id in state.claims_items or node.node_id in state.claims_diagnostics:
                 diagnostic_report = self._diagnostic_report(node.node_id, state)
-                self._post_diagnostics(node.node_id, admission, state)
+                self._route_findings(node.node_id, admission, state)
                 self._append_event(
                     admission,
                     records,
@@ -4939,7 +4995,7 @@ class ProcedureExecutor:
                 str(exc),
                 node_id=node.node_id,
             ) from exc
-        self._post_diagnostics(node.node_id, admission, state)
+        self._route_findings(node.node_id, admission, state)
         self._append_event(
             admission,
             records,
@@ -6659,8 +6715,7 @@ def _inbox_items(
             complete = state.completeness.at_sink(_referenced_reads([node.for_each, template]))
             if (
                 declared is not None
-                and declared.negative
-                and value != declared.unknown_member
+                and requires_complete_input(value, declared.requires_complete_input)
                 and not complete
             ):
                 state.claims_diagnostics.setdefault(node.node_id, ClaimsDiagnostics()).add(
@@ -6676,10 +6731,10 @@ def _inbox_items(
                         or "control lineage",
                     )
                 )
-                if declared.unknown_member is None:
+                if declared.incomplete_fallback is None:
                     skip_item = True
                     continue
-                value = declared.unknown_member
+                value = declared.incomplete_fallback
             item[name] = value
         if skip_item:
             continue
@@ -6895,8 +6950,10 @@ def _resolve_path(value: object, path: tuple[str, ...], *, reference: str) -> ob
         if isinstance(current, list) and member.isdigit() and int(member) < len(current):
             current = current[int(member)]
             continue
-        if isinstance(current, list) and not member.isdigit():
-            return [_resolve_path(item, path[position:], reference=reference) for item in current]
+        if isinstance(current, list) and member == "[*]":
+            return [
+                _resolve_path(item, path[position + 1 :], reference=reference) for item in current
+            ]
         raise ExecutionError(f"runtime reference {reference!r} does not resolve")
     return current
 

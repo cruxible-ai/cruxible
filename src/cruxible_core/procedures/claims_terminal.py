@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.authoring.models import ClaimDerivationBinding
@@ -16,6 +16,7 @@ from cruxible_client.contracts.canonical_forms import canonicalize_literal
 from cruxible_client.contracts.claim_evidence import (
     ClaimEvidenceReceipt,
     ClaimsDiagnostic,
+    FindingKind,
 )
 from cruxible_client.contracts.claim_types import effective_canonical_form
 from cruxible_client.contracts.claims import claim_artifact_digest, parse_claim
@@ -33,7 +34,12 @@ from cruxible_client.contracts.procedures.models import (
 from cruxible_client.contracts.procedures.proposal_items import (
     ProcedureSubjectProposalItem,
 )
-from cruxible_client.contracts.shapes import FieldInvalid, SubjectType, check_value
+from cruxible_client.contracts.shapes import (
+    FieldInvalid,
+    SubjectType,
+    check_value,
+    requires_complete_input,
+)
 from cruxible_core.procedures.claims_context import ClaimsContext
 from cruxible_core.procedures.claims_diagnostics import ClaimsDiagnostics
 from cruxible_core.procedures.terminal_dependencies import DependencyToken
@@ -58,6 +64,7 @@ class ExpandedClaims:
     tokens: tuple[frozenset[DependencyToken], ...]
     diagnostics: ClaimsDiagnostics
     evidence: tuple[ClaimEvidenceReceipt | None, ...]
+    reobservations: tuple[tuple[str, ClaimEvidenceReceipt, dict[str, Any]], ...] = ()
 
 
 def expand_claims(
@@ -109,10 +116,11 @@ def expand_claims(
             boundary=f"terminal:{node.node_id}",
             field_path="for_each",
         )
-    diagnostics = ClaimsDiagnostics()
+    diagnostics = state.claims_diagnostics.setdefault(node.node_id, ClaimsDiagnostics())
     evidence: list[ClaimEvidenceReceipt | None] = []
     values: list[CanonicalValue] = []
     tokens: list[frozenset[DependencyToken]] = []
+    reobservations: list[tuple[str, ClaimEvidenceReceipt, dict[str, Any]]] = []
     created: set[bytes] = set()
     nodes = (
         {}
@@ -168,9 +176,7 @@ def expand_claims(
         return found
 
     def report(
-        kind: Literal[
-            "extract_refused", "incomplete_source", "held_by_precedence", "slot_contested"
-        ],
+        kind: FindingKind,
         target: str,
         **details: Any,
     ) -> None:
@@ -245,7 +251,7 @@ def expand_claims(
                 "key": key,
             }
         )
-        for mapping in node.claims:
+        for template_index, mapping in enumerate(node.claims):
             attempted += 1
             state.observe_items(attempted, f"terminal:{node.node_id}", "claims")
             if attempted > max_items:
@@ -391,29 +397,31 @@ def expand_claims(
                 continue
             qualifier = metadata["qualifier"]
             held = () if subject is None else context.slot(subject, ct.predicate, qualifier)
-            if ct.negative and value != ct.unknown_member and not complete:
+            if requires_complete_input(value, ct.requires_complete_input) and not complete:
                 incomplete = state.completeness.incomplete_inputs(value_reads)
                 report("incomplete_source", target, input=",".join(incomplete) or "control lineage")
                 # No destructive replacement over incomplete input, including a downgrade.
-                if ct.unknown_member is None or held:
+                if ct.incomplete_fallback is None or held:
                     continue
-                value = ct.unknown_member
+                value = ct.incomplete_fallback
                 obj = {"kind": "literal", "value": value}
             if obj["kind"] == "literal":
                 obj["value"] = canonicalize_literal(obj["value"], effective_canonical_form(ct))
             blocked = [c for c in held if c.statement.role not in replaces]
-            blocked_refresh = any(
-                c.statement.object.model_dump(mode="json") == obj and c.statement.role == role
-                for c in blocked
-            )
-            if blocked and (ct.cardinality == "one" or blocked_refresh):
-                for claim in blocked:
-                    report(
-                        "held_by_precedence",
-                        target,
-                        claim=claim.identity.name,
-                        role=claim.statement.role,
-                    )
+            same_blocked = [c for c in blocked if c.statement.object.model_dump(mode="json") == obj]
+            if blocked and (ct.cardinality == "one" or same_blocked):
+                if same_blocked:
+                    diagnostics.same += 1
+                else:
+                    for claim in blocked:
+                        report(
+                            "held_disagrees",
+                            target,
+                            claim=claim.identity.name,
+                            role=claim.statement.role,
+                            held_value=claim.statement.object.model_dump(mode="json"),
+                            incoming_value=obj,
+                        )
                 continue
             eligible = [c for c in held if c.statement.role in replaces]
             if ct.cardinality == "one" and len(eligible) > 1:
@@ -469,7 +477,7 @@ def expand_claims(
                     ) from exc
                 inputs.append(pin)
                 input_captures.update(captures_read)
-            if bool(inputs) != (role == "derivation"):
+            if inputs and role != "derivation":
                 raise _RunRefusal(
                     "proposal_item_invalid",
                     "claims_inputs_invalid: only derivation uses inputs",
@@ -505,6 +513,21 @@ def expand_claims(
                 )
                 continue
             extractors = [n for n in sources.values() if isinstance(n, ExtractNode)]
+            computed = any(
+                isinstance(n, TransformNode)
+                and n.node_id in transforms
+                and n.transform_kind in {"derive", "aggregate"}
+                for n in nodes.values()
+            )
+            if computed and role != "derivation":
+                report(
+                    "extract_refused",
+                    target,
+                    field=str(mapping.value),
+                    problem="derived_role_required",
+                )
+                continue
+
             if inputs and not any(t.slot in {"produced_capture", "admitted_capture"} for t in own):
                 from cruxible_core.procedures.terminal_dependencies import admitted_capture_token
 
@@ -540,6 +563,7 @@ def expand_claims(
                         getattr(getattr(contract, "decoding", None), "format", "json")
                     ],
                     "record_locator": str(record["record"]),
+                    "record_key": record["key"],
                     "field_path": str(raw.get("at", "")) if present else "",
                     "transform_node_ids": list(transforms),
                 }
@@ -579,6 +603,44 @@ def expand_claims(
                         "transform_node_ids": list(transforms),
                     }
                 )
+            if computed and basis["basis"] == "extracted":
+                basis = {
+                    "basis": "derived",
+                    "extractions": [basis],
+                    "transform_node_ids": list(transforms),
+                }
+            if role == "derivation" and basis["basis"] != "derived":
+                report(
+                    "extract_refused",
+                    target,
+                    field=str(mapping.value),
+                    problem="derivation_basis_required",
+                )
+                continue
+            receipt = ClaimEvidenceReceipt.model_validate(
+                {
+                    "node_id": node.node_id,
+                    "template": template_index,
+                    "procedure_digest": admission.procedure_artifact_digest,
+                    "value": basis,
+                }
+            )
+            if receipt.value.basis == "extracted":
+                matched = [
+                    c
+                    for c in refresh
+                    if c.backing.procedure_evidence is not None
+                    and c.backing.procedure_evidence.value.basis == "extracted"
+                    and c.backing.procedure_evidence.value.extract_spec_digest
+                    == receipt.value.extract_spec_digest
+                    and c.backing.procedure_evidence.value.record_key == receipt.value.record_key
+                ]
+                if len(matched) == 1:
+                    diagnostics.same += 1
+                    held_claim = matched[0]
+                    if receipt.value.capture_digest not in held_claim.backing.capture_digests:
+                        reobservations.append((held_claim.identity.name, receipt, obj))
+                    continue
             rationale = mapping.rationale
             for ref in rationale_references(mapping.rationale):
                 quoted = resolve(ref, row)
@@ -625,7 +687,7 @@ def expand_claims(
                 "rationale": rationale,
                 "revises": revises,
                 "derivation": None
-                if not inputs
+                if role != "derivation"
                 else ClaimDerivationBinding(
                     procedure=ArtifactPin(
                         role="reducer",
@@ -641,8 +703,10 @@ def expand_claims(
                 item["derivation"] = item["derivation"].model_dump(mode="json")
             values.append(cast(CanonicalValue, item))
             tokens.append(own)
-            evidence.append(ClaimEvidenceReceipt.model_validate({"value": basis}))
-    return ExpandedClaims(values, tuple(tokens), diagnostics, tuple(evidence))
+            evidence.append(receipt)
+    return ExpandedClaims(
+        values, tuple(tokens), diagnostics, tuple(evidence), tuple(reobservations)
+    )
 
 
 def bind_claim_input(

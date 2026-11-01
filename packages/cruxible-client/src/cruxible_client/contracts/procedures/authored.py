@@ -1122,8 +1122,6 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
     def shape_of(ref: Ref) -> ContractField | None:
         """The Contract field a one-member reference reads, where the flow knows it."""
 
-        if len(ref.path) != 1:
-            return None
         fields = (
             input_shape
             if ref.root == "input"
@@ -1133,7 +1131,33 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             if ref.root == "step"
             else None
         )
-        return None if fields is None else fields.get(ref.path[0])
+        if fields is None or not ref.path or ref.path[0] not in fields:
+            return None
+
+        def descend(field: ContractField, path: tuple[str, ...]) -> ContractField | None:
+            if not path:
+                return field
+            member, *rest = path
+            if isinstance(field.type, ListType):
+                if member != "[*]" and not member.isdigit():
+                    raise ProcedureSpecError(
+                        "procedure_ref_unknown",
+                        ref.graph_text(),
+                        "A list reference requires [*] or an explicit position",
+                    )
+                selected = descend(ContractField(type=field.type.item), tuple(rest))
+                if selected is None or member != "[*]":
+                    return selected
+                return ContractField(
+                    type=ListType(item=selected.type, max_items=field.type.max_items)
+                )
+            if isinstance(field.type, NestedType):
+                nested = resolve_contract(field.type.contract)
+                if nested is not None and member in nested.fields:
+                    return descend(nested.fields[member], tuple(rest))
+            return None
+
+        return descend(fields[ref.path[0]], ref.path[1:])
 
     def template_shape(value: Any) -> dict[str, ContractField] | None:
         """A record template's Contract fields, when every field's type is known."""
@@ -1176,30 +1200,33 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             if collection:
                 return PropertySchema(type="list", item_fields=fields)
             return PropertySchema(type="json", json_schema={"type": "object"})
+        from cruxible_client.contracts.procedures.views import schema_json_type
+
+        schema = schema_json_type(ContractSchema(fields=fields))
         if collection:
-            raise ProcedureSpecError(
-                "procedure_ref_unknown",
-                path,
-                "A bounded all-Claim read is a list; select fields in an item transform",
-            )
-        field: PropertySchema | None = None
-        for index, member in enumerate(rest):
-            if member.isdigit() and field is not None and field.type == "list":
-                continue  # one element of the list: its fields are the item's
-            if member not in fields:
-                _unknown(path, member, fields)
-            field = fields[member]
-            if index < len(rest) - 1:
-                if field.item_fields is not None:
-                    fields = field.item_fields
-                elif field.type == "json":
-                    properties = (field.json_schema or {}).get("properties")
-                    if not isinstance(properties, dict):
-                        return None
-                    fields = {k: _json_field(v) for k, v in properties.items()}
-                else:
-                    _unknown(path, rest[index + 1], ())
-        return field
+            schema = {"type": "array", "items": schema}
+
+        def descend_schema(current: dict[str, Any], members: tuple[str, ...]) -> dict[str, Any]:
+            if not members:
+                return current
+            member, *tail = members
+            if current.get("type") == "array":
+                if member != "[*]" and not member.isdigit():
+                    raise ProcedureSpecError(
+                        "procedure_ref_unknown",
+                        path,
+                        "A list reference requires [*] or an explicit position",
+                    )
+                result = descend_schema(current.get("items", {}), tuple(tail))
+                return {"type": "array", "items": result} if member == "[*]" else result
+            properties = current.get("properties")
+            if not isinstance(properties, dict):
+                return {}  # not yet known at the local-only authoring pass
+            if member not in properties:
+                _unknown(path, member, properties)
+            return descend_schema(properties[member], tuple(tail))
+
+        return _json_field(descend_schema(schema, rest))
 
     def template(value: Any, path: str) -> Any:
         _check_refs(value, path)

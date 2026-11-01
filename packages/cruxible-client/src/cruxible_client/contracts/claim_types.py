@@ -12,6 +12,8 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
+    StrictStr,
     ValidationError,
     field_validator,
     model_validator,
@@ -43,7 +45,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
     ClaimResolutionPolicy,
 )
-from cruxible_client.contracts.shapes import FieldInvalid, FieldType, check_value, coerce_field_type
+from cruxible_client.contracts.shapes import FieldType, coerce_field_type
 
 _PREDICATE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})+$")
 
@@ -282,8 +284,8 @@ class ClaimType(_StrictClaimTypeModel):
     allowed_subject_kinds: tuple[str, ...]
     value: FieldType | None = Field(default=None, exclude_if=lambda value: value is None)
     precedence: ClaimPrecedence = ClaimPrecedence()
-    negative: bool = False
-    unknown_member: str | int | bool | None = Field(
+    requires_complete_input: tuple[StrictStr | StrictBool, ...] = ()
+    incomplete_fallback: StrictStr | StrictBool | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
 
@@ -426,13 +428,11 @@ class ClaimType(_StrictClaimTypeModel):
 
     @model_validator(mode="after")
     def _complete_contract(self) -> "ClaimType":
-        if self.unknown_member is not None:
-            if not self.negative or self.value is None:
-                raise ValueError("unknown_member requires a negative ClaimType with value")
-            if isinstance(
-                check_value(self.unknown_member, self.value, at="unknown_member"), FieldInvalid
-            ):
-                raise ValueError("unknown_member is not a member of ClaimType.value")
+        from cruxible_client.contracts.shapes import validate_complete_input_policy
+
+        validate_complete_input_policy(
+            self.value, self.requires_complete_input, self.incomplete_fallback
+        )
         expected = ArtifactIdentity(kind="ClaimType", name=self.predicate)
         if self.identity != expected:
             raise ValueError("ClaimType identity must equal ClaimType:<predicate>")

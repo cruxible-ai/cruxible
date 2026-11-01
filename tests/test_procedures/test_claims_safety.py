@@ -28,21 +28,21 @@ from tests.test_procedures.test_claims_terminal import (
 )
 
 
-def _incomplete_spec(*, inbox: bool = False, unknown: bool = True) -> Any:
+def _incomplete_spec(*, inbox: bool = False, unknown: bool = True, value: str = "closed") -> Any:
     steps = claims_spec().model_dump(mode="json", by_alias=True)["steps"]
     steps[-1] = {
         "id": "write",
         "for_each": "$steps.entries.records",
         "subject": {"kind": KIND, "key": {"cve_id": "$item.key.cve_id"}},
-        "claims": [{"type": PREDICATE, "value": "closed"}],
+        "claims": [{"type": PREDICATE, "value": value}],
     }
     # D3: a slot explicitly warns that the operation can truncate.
     if inbox:
         steps[-1] = {
             "id": "write",
-            "inbox": "test.negative@1",
+            "inbox": "test.requires_complete_input@1",
             "for_each": "$steps.entries.records",
-            "fields": {"status": "closed"},
+            "fields": {"status": value},
         }
     slots = {
         "fetch": {
@@ -62,7 +62,9 @@ def _incomplete_spec(*, inbox: bool = False, unknown: bool = True) -> Any:
 def test_incomplete_negative_is_downgraded_or_skipped_at_claims(
     tmp_path: Path, unknown: bool
 ) -> None:
-    ct = claim_type(negative=True, unknown_member="unknown" if unknown else None)
+    ct = claim_type(
+        requires_complete_input=("closed",), incomplete_fallback="unknown" if unknown else None
+    )
     instance, root = claims_world(
         tmp_path, {"entries": [{"id": "CVE-2026-0001", "status": "open"}]}, types=(ct,)
     )
@@ -88,13 +90,13 @@ def test_incomplete_negative_is_downgraded_or_skipped_at_inbox(
     )
     contract = Contract.model_validate(
         {
-            "name": "test.negative",
+            "name": "test.requires_complete_input",
             "version": 1,
             "fields": {
                 "status": {
                     "type": "enum[open, closed, unknown]",
-                    "negative": True,
-                    **({"unknown_member": "unknown"} if unknown else {}),
+                    "requires_complete_input": ["closed"],
+                    **({"incomplete_fallback": "unknown"} if unknown else {}),
                 }
             },
         }
@@ -206,3 +208,72 @@ def test_inputs_on_a_non_derivation_role_are_refused() -> None:
             role="observation",
             inputs=("$steps.read",),
         )
+
+
+@pytest.mark.parametrize("inbox", [False, True])
+@pytest.mark.parametrize("value", ["affected", "fixed", "not_affected"])
+def test_incomplete_input_gates_only_declared_members(
+    tmp_path: Path, inbox: bool, value: str
+) -> None:
+    vocabulary = "enum[affected, fixed, not_affected, unknown]"
+    ct = claim_type(
+        value=vocabulary,
+        requires_complete_input=("fixed", "not_affected"),
+        incomplete_fallback="unknown",
+    )
+    instance, root = claims_world(
+        tmp_path, {"entries": [{"id": "CVE-2026-0001", "status": "open"}]}, types=(ct,)
+    )
+    if inbox:
+        contract = Contract.model_validate(
+            {
+                "name": "test.requires_complete_input",
+                "version": 1,
+                "fields": {
+                    "status": {
+                        "type": vocabulary,
+                        "requires_complete_input": ["fixed", "not_affected"],
+                        "incomplete_fallback": "unknown",
+                    }
+                },
+            }
+        )
+        accept_tree(
+            instance,
+            {contract_path(contract.name, contract.version): render_contract(contract)},
+            name="member-policy",
+        )
+    install(
+        instance,
+        _incomplete_spec(inbox=inbox, value=value),
+        authority="observe" if inbox else "propose",
+    )
+    state = run(instance, root)
+    assert state.status == "succeeded", state.terminal
+    expected = "affected" if value == "affected" else "unknown"
+    if inbox:
+        from cruxible_core.exhaust.line_inbox import LineInboxStore
+
+        store = LineInboxStore(instance)
+        page, _ = store.page(line=None, status=None, limit=20, cursor=None)
+        assert {"status": expected} in [store.get(item.envelope.item_id).payload for item in page]
+    else:
+        assert candidate_claims(instance, state)[0].statement.object.value == expected
+
+
+@pytest.mark.parametrize("type_name", ["date", "number", "int", "string"])
+def test_completeness_policy_refuses_non_member_types(type_name: str) -> None:
+    from cruxible_client.contracts.shapes import ContractField
+
+    with pytest.raises(ValidationError, match="enum or bool member type"):
+        ContractField.model_validate({"type": type_name, "requires_complete_input": ["fixed"]})
+
+
+def test_boolean_completeness_policy_names_false() -> None:
+    from cruxible_client.contracts.shapes import ContractField, requires_complete_input
+
+    field = ContractField.model_validate({"type": "bool", "requires_complete_input": [False]})
+    assert requires_complete_input(False, field.requires_complete_input)
+    assert not requires_complete_input(True, field.requires_complete_input)
+    with pytest.raises(ValidationError, match="only false"):
+        ContractField.model_validate({"type": "bool", "requires_complete_input": [True]})

@@ -222,7 +222,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     procedure_artifact_digest,
 )
-from cruxible_client.contracts.procedures.line_specs import LineBudgetsInput
+from cruxible_client.contracts.procedures.line_specs import LineBudgetsInput, LineFindings
 from cruxible_client.contracts.procedures.results import ProcedureTerminalEgress
 from cruxible_client.contracts.procedures.windows import (
     TriggerEventReference,
@@ -1197,6 +1197,7 @@ class ChangeSetDraft:
         name: str,
         procedure: str,
         bindings: Mapping[str, str] | None = None,
+        findings: LineFindings | None = None,
         acquisition: Mapping[str, Mapping[str, object]] | None = None,
         max_authority: Literal["observe", "propose", "settle"] | None = None,
         trigger_input: str | None = None,
@@ -1242,6 +1243,7 @@ class ChangeSetDraft:
                 payload=LineAuthoringPayload(
                     name=name,
                     procedure_name=procedure,
+                    findings=findings or LineFindings(),
                     bindings={} if bindings is None else dict(bindings),
                     acquisition={
                         alias: LineAcquisitionRule.model_validate(rule)

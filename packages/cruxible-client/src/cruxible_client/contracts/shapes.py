@@ -32,6 +32,7 @@ from pydantic import (
     Discriminator,
     Field,
     StrictBool,
+    StrictStr,
     Tag,
     TypeAdapter,
     ValidationError,
@@ -757,13 +758,46 @@ def render_type(field_type: FieldType) -> str:
 # -- the Contract artifact --------------------------------------------------------------
 
 
+def validate_complete_input_policy(
+    field_type: FieldType | None,
+    members: tuple[str | bool, ...],
+    fallback: str | bool | None,
+) -> None:
+    """Completeness gates name enum members (or false), never a whole type."""
+    if not members and fallback is None:
+        return
+    if isinstance(field_type, EnumType):
+        admitted: tuple[str | bool, ...] = field_type.members
+    elif isinstance(field_type, BoolType):
+        admitted = (False, True)
+        if any(type(member) is not bool or member is not False for member in members):
+            raise ValueError("bool requires_complete_input may list only false")
+    else:
+        raise ValueError("requires_complete_input needs an enum or bool member type")
+    if len(set(members)) != len(members):
+        raise ValueError("requires_complete_input members must be unique")
+    if any(type(member) is not type(admitted[0]) or member not in admitted for member in members):
+        raise ValueError("requires_complete_input names a non-member")
+    if fallback is not None:
+        if not members or type(fallback) is not type(admitted[0]) or fallback not in admitted:
+            raise ValueError("incomplete_fallback needs requires_complete_input and a member")
+        if fallback in members:
+            raise ValueError("incomplete_fallback must not itself require complete input")
+
+
+def requires_complete_input(value: object, members: tuple[str | bool, ...]) -> bool:
+    return any(type(value) is type(member) and value == member for member in members)
+
+
 class ContractField(_Shape):
     """One field: its type, whether its key may be absent, and what it means."""
 
     type: FieldType
     optional: StrictBool = Field(default=False, exclude_if=lambda value: value is False)
-    negative: StrictBool = Field(default=False, exclude_if=lambda value: value is False)
-    unknown_member: str | int | bool | None = Field(
+    requires_complete_input: tuple[StrictStr | StrictBool, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    incomplete_fallback: StrictStr | StrictBool | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
     description: str | None = Field(default=None, exclude_if=_not_none)
@@ -790,14 +824,10 @@ class ContractField(_Shape):
         return data
 
     @model_validator(mode="after")
-    def _negative_unknown(self) -> ContractField:
-        if self.unknown_member is not None:
-            if not self.negative or isinstance(
-                check_value(self.unknown_member, self.type, at="unknown_member"), FieldInvalid
-            ):
-                raise ValueError(
-                    "unknown_member requires negative: true and a member of the field type"
-                )
+    def _complete_input_policy(self) -> ContractField:
+        validate_complete_input_policy(
+            self.type, self.requires_complete_input, self.incomplete_fallback
+        )
         return self
 
     @field_validator("description")

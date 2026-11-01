@@ -528,13 +528,19 @@ class ClaimBacking(_StrictClaimModel):
 
     @model_validator(mode="after")
     def _backing_shape(self) -> "ClaimBacking":
-        if (self.reducer_digest is None) != (not self.input_claim_digests):
+        if self.input_claim_digests and self.reducer_digest is None:
             raise ValueError("Claim derivation requires reducer and input Claims together")
         if self.procedure_evidence is not None:
             from cruxible_client.contracts.claim_evidence import DerivedBasis
 
             basis = self.procedure_evidence.value
             if isinstance(basis, DerivedBasis):
+                if self.procedure_evidence.procedure_digest != self.reducer_digest:
+                    raise ValueError("derived receipt must pin its exact reducer")
+                if not {source.capture_digest for source in basis.extractions}.issubset(
+                    self.capture_digests
+                ):
+                    raise ValueError("derived extraction receipts must cite backing Captures")
                 if (
                     tuple(sorted(pin.artifact_digest for pin in basis.inputs))
                     != self.input_claim_digests
@@ -1509,6 +1515,11 @@ def evaluate_capture_evidence_admissions(
         if isinstance(envelope.source, ExternalSourceReference)
         else None
     )
+    has_extracted_inputs = (
+        claim.backing.procedure_evidence is not None
+        and claim.backing.procedure_evidence.value.basis == "derived"
+        and bool(claim.backing.procedure_evidence.value.extractions)
+    )
     for kind in kinds:
         matching_rules = tuple(
             rule
@@ -1535,6 +1546,7 @@ def evaluate_capture_evidence_admissions(
             logical_source,
             claim.backing.reducer_digest,
             claim.backing.input_claim_digests,
+            has_extracted_inputs,
             attestation_grade,
             source_bound,
             tuple(sorted(subject_binding_by_rule.items())),
@@ -1553,6 +1565,7 @@ def evaluate_capture_evidence_admissions(
                     logical_source=logical_source,
                     reducer_digest=claim.backing.reducer_digest,
                     input_claim_artifact_digests=claim.backing.input_claim_digests,
+                    has_extracted_inputs=has_extracted_inputs,
                     attestation_grade=attestation_grade,
                     source_subject_bound=source_bound,
                 ),
@@ -3170,11 +3183,20 @@ def evaluate_claim_law(
             path=path,
         )
     if statement.role == "derivation" and (
-        not claim.backing.input_claim_digests or claim.backing.reducer_digest is None
+        claim.backing.reducer_digest is None
+        or (
+            not claim.backing.input_claim_digests
+            and (
+                claim.backing.procedure_evidence is None
+                or claim.backing.procedure_evidence.value.basis != "derived"
+                or not claim.backing.procedure_evidence.value.extractions
+            )
+        )
     ):
         return _diagnostic(
             "cruxible.claim.derivation_incomplete",
-            "A derivation Claim requires exact inputs and reducer backing.",
+            "A derivation Claim requires its pinned Procedure and exact Claim inputs "
+            "or core extraction receipts.",
             path=path,
         )
     if statement.role != "derivation" and (

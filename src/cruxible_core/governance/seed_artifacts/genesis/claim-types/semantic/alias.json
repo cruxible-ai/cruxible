@@ -58,7 +58,6 @@
     "type": "string"
   },
   "member_descriptions": [],
-  "negative": false,
   "object_kind": "literal",
   "permitted_roles": [
     "normative",
@@ -80,6 +79,7 @@
   },
   "predicate": "semantic.alias",
   "referent_sensitivity": "identity",
+  "requires_complete_input": [],
   "resolution_policy": {
     "cardinality": "many",
     "conflict_result": "unresolved",

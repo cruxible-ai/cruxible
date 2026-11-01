@@ -1140,6 +1140,7 @@ class ProcedureTerminalEgress(_StrictResultModel):
     claims_diagnostics: tuple[ClaimsDiagnostic, ...] = Field(
         default=(), exclude_if=lambda value: not value
     )
+    claims_same_count: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
     claims_diagnostics_count: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
     claims_diagnostics_truncated: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
     claims_diagnostics_inbox_truncation: InboxPostTruncation | None = Field(

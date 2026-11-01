@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 RefRoot = Literal["input", "param", "step", "item"]
 
-_MEMBER_RE = re.compile(r"^(?:[a-z][a-z0-9_]{0,127}|[0-9]{1,9})$")
+_MEMBER_RE = re.compile(r"^(?:[a-z][a-z0-9_]{0,127}|[0-9]{1,9}|\[\*\])$")
 _ALIAS_RE = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
 
 #: The graph reference prefix of each root.
@@ -39,8 +39,8 @@ class Ref(BaseModel):
     """A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.
 
     ``step`` is named exactly when the root is ``step``. ``path`` members are
-    field names, or list positions as digits. A ``param`` reference names the
-    parameter as its first path member.
+    field names, list positions as digits, or explicit ``[*]`` projections.
+    A ``param`` reference names the parameter as its first path member.
     """
 
     model_config = ConfigDict(

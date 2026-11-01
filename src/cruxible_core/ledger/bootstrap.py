@@ -158,11 +158,11 @@ def genesis_tree(
 GENESIS_SEEDS: tuple[tuple[str, str], ...] = (
     (
         "claim-types/semantic/alias.json",
-        "7621dc59d96b96d7e982309e2428e3e42a408c59286186bf007a49416e4cec64",
+        "d98443d1c52e5123072cdecb6eb8afefcc778a2c9651e20cfd81d3d024d13ea8",
     ),
     (
         "claim-types/semantic/distinct_from.json",
-        "cf26b36640c73e4b50e140be840ed7473b16d2eedf6dbdf503d5f168f826c105",
+        "fa37a09c5987a097f4be413a5d217ba5f61112e9f3e503ccae7e3e53d234aece",
     ),
     (
         "contracts/workspace.file.content/v1.json",

@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from cruxible_client.contracts.claim_evidence import ClaimEvidenceReceipt
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, parse_claim_type
 from cruxible_client.contracts.claims import ClaimArtifact
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -23,6 +24,9 @@ if TYPE_CHECKING:
 
 
 class ClaimsContext(Protocol):
+    def reobserve(
+        self, claim_id: str, receipt: ClaimEvidenceReceipt, value: object, actor_id: str
+    ) -> None: ...
     def claim_type(self, predicate: str) -> ClaimType | None: ...
     def subject(self, kind: str, key: Mapping[str, object]) -> SemanticAddress | None: ...
     def reference(self, kind: str, value: str) -> SemanticAddress | None: ...
@@ -48,6 +52,27 @@ class AcceptedClaimsContext:
         self._kinds: dict[str, SubjectKind | None] = {}
         self._subjects: dict[tuple[str, KeyTuple], SemanticAddress | None] = {}
         self._slots: dict[tuple[SemanticAddress, str, str | None], tuple[ClaimArtifact, ...]] = {}
+
+    def reobserve(
+        self, claim_id: str, receipt: ClaimEvidenceReceipt, value: object, actor_id: str
+    ) -> None:
+        from cruxible_core.evidence.claim_reobservations import (
+            ClaimReobservationRefused,
+            ClaimReobservationStore,
+        )
+
+        if receipt.value.basis != "extracted":
+            return
+        try:
+            ClaimReobservationStore(self.instance).record(
+                claim_id=claim_id,
+                capture_digest=receipt.value.capture_digest,
+                actor_id=actor_id,
+                extraction=receipt,
+                extracted_value=value,
+            )
+        except ClaimReobservationRefused:
+            return  # admission moved; the terminal's no-write result stays valid
 
     def claim_type(self, predicate: str) -> ClaimType | None:
         if predicate not in self._types:

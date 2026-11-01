@@ -51,7 +51,6 @@
     "state": "live"
   },
   "member_descriptions": [],
-  "negative": false,
   "object_kind": "subject",
   "permitted_roles": [
     "normative",
@@ -73,6 +72,7 @@
   },
   "predicate": "semantic.distinct_from",
   "referent_sensitivity": "identity",
+  "requires_complete_input": [],
   "resolution_policy": {
     "cardinality": "many",
     "conflict_result": "unresolved",

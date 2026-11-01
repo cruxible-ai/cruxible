@@ -71,7 +71,7 @@ from cruxible_client.contracts.procedures.authored import (
     lower_procedure_spec,
 )
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
-from cruxible_client.contracts.procedures.line_specs import LineBudgetsInput
+from cruxible_client.contracts.procedures.line_specs import LineBudgetsInput, LineFindings
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
     validate_change_set_rationale,
@@ -421,6 +421,7 @@ class LineInput(_StrictInputModel):
             "child's slot is '<invoke node>.<slot>'. Omitted slots are fitted."
         ),
     )
+    findings: LineFindings = Field(default_factory=LineFindings)
     acquisition: dict[str, LineAcquisitionRule] = Field(
         default_factory=dict,
         description=(
@@ -845,6 +846,7 @@ def _line_payload(value: LineInput) -> LineAuthoringPayload:
         procedure_name=value.procedure_name,
         bindings=value.bindings,
         acquisition=value.acquisition,
+        findings=value.findings,
         max_authority=value.max_authority,
         trigger_input=value.trigger_input,
         parameters=value.parameters,

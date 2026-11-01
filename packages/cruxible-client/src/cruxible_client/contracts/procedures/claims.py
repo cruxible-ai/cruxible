@@ -86,8 +86,6 @@ class ClaimTemplate(_StrictProcedureModel):
     def _derivation(self) -> ClaimTemplate:
         if self.inputs and self.role != "derivation":
             raise ValueError("claims_inputs_invalid: inputs require role: derivation")
-        if self.role == "derivation" and not self.inputs:
-            raise ValueError("claims_inputs_invalid: derivation requires read Claim inputs")
         if self.replaces is not None and len(set(self.replaces)) != len(self.replaces):
             raise ValueError("replaces must contain distinct roles")
         return self

@@ -210,6 +210,9 @@ class GetContender(_StrictGetModel):
 
 
 class GetClaimCard(_StrictGetModel):
+    value_source: Literal["field", "literal", "param"] | None = Field(
+        default=None, exclude_if=_omit_none
+    )
     claim: str
     subject: str
     predicate: str

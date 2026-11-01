@@ -388,13 +388,15 @@ def test_query_joined_basis_and_unchanged_constant_handling(
 
 
 def test_diagnostics_are_typed_bounded_and_not_reposted(tmp_path: Path) -> None:
-    from cruxible_client.contracts.claim_evidence import ExtractRefusedInboxItem
+    from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic
 
     instance, root = claims_world(
         tmp_path, {"entries": [{"id": f"CVE-2026-{i:04d}", "status": "Maybe"} for i in range(1, 6)]}
     )
     install(
-        instance, claims_spec(mappings=[{"type": PREDICATE, "value": "$item.fields.status"}] * 201)
+        instance,
+        claims_spec(mappings=[{"type": PREDICATE, "value": "$item.fields.status"}] * 201),
+        findings=("extract_refused",),
     )
     first = run(instance, root)
     assert first.status == "succeeded", first.terminal
@@ -405,7 +407,7 @@ def test_diagnostics_are_typed_bounded_and_not_reposted(tmp_path: Path) -> None:
     assert egress.claims_diagnostics_inbox_truncation.posted == 1000
     before = _inbox(instance)
     assert len(before) == 5
-    diagnostics = [ExtractRefusedInboxItem.model_validate(item.payload) for item in before]
+    diagnostics = [ClaimsDiagnostic.model_validate(item.payload) for item in before]
     assert {d.target for d in diagnostics} == {
         KIND + ':{"cve_id":"CVE-2026-' + f"{i:04d}" + '"}:' + PREDICATE for i in range(1, 6)
     }
@@ -449,6 +451,8 @@ def test_diagnostics_are_not_posted_before_refused_delivery(
     monkeypatch.setattr(ProposalTerminalEgressSink, "prepare_terminal_egress", refuse)
     state = run(instance, root)
     assert state.status == "node_refused"
+    assert state.findings_count == 1
+    assert state.findings[0].kind == "extract_refused"
     assert not _inbox(instance)
 
 
@@ -479,7 +483,8 @@ def test_many_value_canonical_refresh_respects_protected_holder(tmp_path: Path) 
     state = run(instance, root, minute=1)
     assert state.status == "succeeded", state.terminal
     assert state.terminal_egress[0].proposal_id is None
-    assert state.terminal_egress[0].claims_diagnostics[0].kind == "held_by_precedence"
+    assert not state.terminal_egress[0].claims_diagnostics
+    assert state.terminal_egress[0].claims_same_count == 1
     assert instance.accepted_coordinate() == before
     assert not _inbox(instance)
 
@@ -498,13 +503,13 @@ def test_inbox_reasons_stay_with_their_own_node() -> None:
 
     contract = Contract.model_validate(
         {
-            "name": "test.negative",
+            "name": "test.requires_complete_input",
             "version": 1,
             "fields": {
                 "status": {
                     "type": "enum[open, closed, unknown]",
-                    "negative": True,
-                    "unknown_member": "unknown",
+                    "requires_complete_input": ["closed"],
+                    "incomplete_fallback": "unknown",
                 },
             },
         }
@@ -523,7 +528,7 @@ def test_inbox_reasons_stay_with_their_own_node() -> None:
     for reasons in state.claims_diagnostics.values():
         assert reasons.count == 1
         assert reasons.reasons[0].input == "own"
-        assert not reasons.inbox
+        assert reasons.findings == reasons.reasons
 
 
 def test_measured_receipt_and_settle_fails_closed(tmp_path: Path) -> None:

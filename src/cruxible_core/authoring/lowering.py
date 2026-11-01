@@ -3122,6 +3122,7 @@ def _render_line_member(
             parameters=payload.parameters,
             bindings=bindings,
             acquisition=payload.acquisition,
+            findings=payload.findings,
             max_authority=(
                 payload.max_authority or RUNG_AUTHORITY[procedure.definition.terminal_capability]
             ),

@@ -203,6 +203,7 @@ def install(
     line_name: str = "test.claims-line",
     authority: str = "propose",
     parameters: dict[str, Any] | None = None,
+    findings: tuple[str, ...] = (),
 ) -> None:
     author_procedure(instance, spec)
     author_line(
@@ -211,6 +212,7 @@ def install(
         procedure=spec.procedure,
         parameters=parameters or {},
         max_authority=authority,
+        findings={"inbox": list(findings)},
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     path = line_spec_path(line_name)
@@ -343,6 +345,7 @@ def test_invalid_mapping_is_excluded_and_valid_sibling_writes(tmp_path: Path) ->
                 {"type": note.predicate, "value": "$item.fields.note"},
             ]
         ),
+        findings=("extract_refused",),
     )
     state = run(instance, root)
     (claim,) = candidate_claims(instance, state)
@@ -391,7 +394,12 @@ def test_a_normative_holder_is_protected_before_proposal(tmp_path: Path) -> None
     first = run(instance, root)
     (held,) = candidate_claims(instance, first)
     activate(instance, first)
-    # A second Procedure writes the observation in the same slot.
+    # A second Procedure writes a different observation in the same slot.
+    import json
+
+    (root / "data/doc.json").write_text(
+        json.dumps({"entries": [{"id": "CVE-2026-0001", "status": "closed"}]})
+    )
     from tests.support.procedures import procedure_spec as spec_builder
 
     observed = claims_spec()
@@ -404,5 +412,5 @@ def test_a_normative_holder_is_protected_before_proposal(tmp_path: Path) -> None
     egress = state.terminal_egress[0]
     assert egress.proposal_id is None
     (diagnostic,) = egress.claims_diagnostics
-    assert diagnostic.kind == "held_by_precedence"
+    assert diagnostic.kind == "held_disagrees"
     assert diagnostic.claim == held.identity.name and diagnostic.role == "normative"

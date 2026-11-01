@@ -6579,6 +6579,21 @@
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
               },
+              "incomplete_fallback": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Incomplete Fallback"
+              },
               "inverse": {
                 "anyOf": [
                   {
@@ -6617,11 +6632,6 @@
                 },
                 "title": "Member Descriptions",
                 "type": "array"
-              },
-              "negative": {
-                "default": false,
-                "title": "Negative",
-                "type": "boolean"
               },
               "object_kind": {
                 "enum": [
@@ -6682,6 +6692,21 @@
                 "title": "Referent Sensitivity",
                 "type": "string"
               },
+              "requires_complete_input": {
+                "default": [],
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "title": "Requires Complete Input",
+                "type": "array"
+              },
               "resolution_policy": {
                 "$ref": "#/$defs/ClaimResolutionPolicy"
               },
@@ -6693,24 +6718,6 @@
                 ],
                 "title": "Revision Evidence",
                 "type": "string"
-              },
-              "unknown_member": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Unknown Member"
               },
               "unsure_hold_for": {
                 "anyOf": [
@@ -7226,15 +7233,40 @@
                 "default": null,
                 "title": "Description"
               },
-              "negative": {
-                "default": false,
-                "title": "Negative",
-                "type": "boolean"
+              "incomplete_fallback": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Incomplete Fallback"
               },
               "optional": {
                 "default": false,
                 "title": "Optional",
                 "type": "boolean"
+              },
+              "requires_complete_input": {
+                "default": [],
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "title": "Requires Complete Input",
+                "type": "array"
               },
               "type": {
                 "discriminator": {
@@ -7329,24 +7361,6 @@
                   }
                 ],
                 "title": "Type"
-              },
-              "unknown_member": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Unknown Member"
               }
             },
             "required": [
@@ -9050,6 +9064,29 @@
             "title": "LineBudgetsInput",
             "type": "object"
           },
+          "LineFindings": {
+            "additionalProperties": false,
+            "properties": {
+              "inbox": {
+                "default": [],
+                "items": {
+                  "enum": [
+                    "extract_refused",
+                    "duplicate_key",
+                    "incomplete_source",
+                    "held_by_precedence",
+                    "held_disagrees",
+                    "slot_contested"
+                  ],
+                  "type": "string"
+                },
+                "title": "Inbox",
+                "type": "array"
+              }
+            },
+            "title": "LineFindings",
+            "type": "object"
+          },
           "LineInput": {
             "additionalProperties": false,
             "description": "One Line: a stable instantiation of an accepted or same-set Procedure.\n\nLowering pins the named Procedure's exact version and binds every slot to\none exact ``{build, operation}``: ``bindings`` names\n``provider[/build]#operation`` (or ``provider[/build]``) per slot, and a\nslot left out is fitted (exactly one live operation must serve its\nsignature). A Line runs when run explicitly (`line run`, one manual occurrence),\nor, once it is enabled (`line enable`), when a Trigger aimed at it fires; a\nTrigger aimed at a Line that is not enabled does nothing. Enabling needs\ngoverned write even for an observe-only Line. A Line that proposes or\nsettles also needs a live ProcedureMandate pinning this exact Line before it\ncan run or be enabled; an observe-only Line needs none.",
@@ -9088,6 +9125,9 @@
                 ],
                 "default": null,
                 "description": "Per-run budgets; omit to use the Procedure's hard caps."
+              },
+              "findings": {
+                "$ref": "#/$defs/LineFindings"
               },
               "kind": {
                 "const": "line",
@@ -12686,7 +12726,7 @@
           },
           "Ref": {
             "additionalProperties": false,
-            "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, or list positions as digits. A ``param`` reference names the\nparameter as its first path member.",
+            "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, list positions as digits, or explicit ``[*]`` projections.\nA ``param`` reference names the parameter as its first path member.",
             "properties": {
               "$ref": {
                 "enum": [
@@ -52393,15 +52433,40 @@
                 "default": null,
                 "title": "Description"
               },
-              "negative": {
-                "default": false,
-                "title": "Negative",
-                "type": "boolean"
+              "incomplete_fallback": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Incomplete Fallback"
               },
               "optional": {
                 "default": false,
                 "title": "Optional",
                 "type": "boolean"
+              },
+              "requires_complete_input": {
+                "default": [],
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "title": "Requires Complete Input",
+                "type": "array"
               },
               "type": {
                 "discriminator": {
@@ -52496,24 +52561,6 @@
                   }
                 ],
                 "title": "Type"
-              },
-              "unknown_member": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Unknown Member"
               }
             },
             "required": [
@@ -54610,7 +54657,7 @@
           },
           "Ref": {
             "additionalProperties": false,
-            "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, or list positions as digits. A ``param`` reference names the\nparameter as its first path member.",
+            "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, list positions as digits, or explicit ``[*]`` projections.\nA ``param`` reference names the parameter as its first path member.",
             "properties": {
               "$ref": {
                 "enum": [
@@ -61855,6 +61902,14 @@
                 "default": null,
                 "title": "Field"
               },
+              "held_value": {
+                "$ref": "#/$defs/JsonValue",
+                "default": null
+              },
+              "incoming_value": {
+                "$ref": "#/$defs/JsonValue",
+                "default": null
+              },
               "input": {
                 "anyOf": [
                   {
@@ -61867,11 +61922,28 @@
                 "default": null,
                 "title": "Input"
               },
+              "key": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/JsonValue"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Key"
+              },
               "kind": {
                 "enum": [
                   "extract_refused",
+                  "duplicate_key",
                   "incomplete_source",
                   "held_by_precedence",
+                  "held_disagrees",
                   "slot_contested"
                 ],
                 "title": "Kind",
@@ -61901,6 +61973,14 @@
                 ],
                 "default": null,
                 "title": "Problem"
+              },
+              "record_locators": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Record Locators",
+                "type": "array"
               },
               "role": {
                 "anyOf": [
@@ -62024,6 +62104,7 @@
             "title": "InvestigationBinding",
             "type": "object"
           },
+          "JsonValue": {},
           "LineOpenProposalOutcome": {
             "additionalProperties": false,
             "description": "How a Line run's proposal terminal stood to its Line's open proposal.\n\n``still_current``: the run's change equals the open proposal's (the same\nstatements on the same evidence content, the same retired Claims and the\nsame created Subjects), so nothing was proposed -- no change; open proposal\n``proposal_id`` still current. ``superseded``: the change differed, so the\nrun's own proposal was submitted and open proposal ``proposal_id`` was\nwithdrawn as superseded by it. Nothing carries over to the new proposal.",
@@ -64394,6 +64475,12 @@
                 "title": "Claims Diagnostics Truncated",
                 "type": "integer"
               },
+              "claims_same_count": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Claims Same Count",
+                "type": "integer"
+              },
               "effective_authority": {
                 "anyOf": [
                   {
@@ -65694,6 +65781,20 @@
             "type": "integer"
           }
         },
+        "claims_same_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claims_same_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Claims Same Count",
+            "type": "integer"
+          }
+        },
         "effective_authority": {
           "default": null,
           "default_json_serializable": true,
@@ -66125,6 +66226,14 @@
                 "default": null,
                 "title": "Field"
               },
+              "held_value": {
+                "$ref": "#/$defs/JsonValue",
+                "default": null
+              },
+              "incoming_value": {
+                "$ref": "#/$defs/JsonValue",
+                "default": null
+              },
               "input": {
                 "anyOf": [
                   {
@@ -66137,11 +66246,28 @@
                 "default": null,
                 "title": "Input"
               },
+              "key": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/JsonValue"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Key"
+              },
               "kind": {
                 "enum": [
                   "extract_refused",
+                  "duplicate_key",
                   "incomplete_source",
                   "held_by_precedence",
+                  "held_disagrees",
                   "slot_contested"
                 ],
                 "title": "Kind",
@@ -66171,6 +66297,14 @@
                 ],
                 "default": null,
                 "title": "Problem"
+              },
+              "record_locators": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Record Locators",
+                "type": "array"
               },
               "role": {
                 "anyOf": [
@@ -66239,6 +66373,7 @@
             "title": "InboxPostTruncation",
             "type": "object"
           },
+          "JsonValue": {},
           "LineOpenProposalOutcome": {
             "additionalProperties": false,
             "description": "How a Line run's proposal terminal stood to its Line's open proposal.\n\n``still_current``: the run's change equals the open proposal's (the same\nstatements on the same evidence content, the same retired Claims and the\nsame created Subjects), so nothing was proposed -- no change; open proposal\n``proposal_id`` still current. ``superseded``: the change differed, so the\nrun's own proposal was submitted and open proposal ``proposal_id`` was\nwithdrawn as superseded by it. Nothing carries over to the new proposal.",
@@ -66582,6 +66717,12 @@
             "default": 0,
             "minimum": 0,
             "title": "Claims Diagnostics Truncated",
+            "type": "integer"
+          },
+          "claims_same_count": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Claims Same Count",
             "type": "integer"
           },
           "effective_authority": {
@@ -78091,6 +78232,21 @@
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
               },
+              "incomplete_fallback": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Incomplete Fallback"
+              },
               "inverse": {
                 "anyOf": [
                   {
@@ -78129,11 +78285,6 @@
                 },
                 "title": "Member Descriptions",
                 "type": "array"
-              },
-              "negative": {
-                "default": false,
-                "title": "Negative",
-                "type": "boolean"
               },
               "object_kind": {
                 "enum": [
@@ -78194,6 +78345,21 @@
                 "title": "Referent Sensitivity",
                 "type": "string"
               },
+              "requires_complete_input": {
+                "default": [],
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "title": "Requires Complete Input",
+                "type": "array"
+              },
               "resolution_policy": {
                 "$ref": "#/$defs/ClaimResolutionPolicy"
               },
@@ -78205,24 +78371,6 @@
                 ],
                 "title": "Revision Evidence",
                 "type": "string"
-              },
-              "unknown_member": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Unknown Member"
               },
               "unsure_hold_for": {
                 "anyOf": [
@@ -81593,7 +81741,7 @@
           },
           "Ref": {
             "additionalProperties": false,
-            "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, or list positions as digits. A ``param`` reference names the\nparameter as its first path member.",
+            "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, list positions as digits, or explicit ``[*]`` projections.\nA ``param`` reference names the parameter as its first path member.",
             "properties": {
               "$ref": {
                 "enum": [
@@ -86815,6 +86963,21 @@
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
               },
+              "incomplete_fallback": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Incomplete Fallback"
+              },
               "inverse": {
                 "anyOf": [
                   {
@@ -86853,11 +87016,6 @@
                 },
                 "title": "Member Descriptions",
                 "type": "array"
-              },
-              "negative": {
-                "default": false,
-                "title": "Negative",
-                "type": "boolean"
               },
               "object_kind": {
                 "enum": [
@@ -86918,6 +87076,21 @@
                 "title": "Referent Sensitivity",
                 "type": "string"
               },
+              "requires_complete_input": {
+                "default": [],
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "title": "Requires Complete Input",
+                "type": "array"
+              },
               "resolution_policy": {
                 "$ref": "#/$defs/ClaimResolutionPolicy"
               },
@@ -86929,24 +87102,6 @@
                 ],
                 "title": "Revision Evidence",
                 "type": "string"
-              },
-              "unknown_member": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Unknown Member"
               },
               "unsure_hold_for": {
                 "anyOf": [
@@ -90630,7 +90785,7 @@
           },
           "Ref": {
             "additionalProperties": false,
-            "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, or list positions as digits. A ``param`` reference names the\nparameter as its first path member.",
+            "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, list positions as digits, or explicit ``[*]`` projections.\nA ``param`` reference names the parameter as its first path member.",
             "properties": {
               "$ref": {
                 "enum": [
