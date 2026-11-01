@@ -1431,6 +1431,20 @@ class _Planner:
                     repair="Pass a value the field's canonical form settles",
                     field_path=path,
                 ) from exc
+        if info.key_normalizer is not None and isinstance(value, str):
+            # A key part is stored in its SubjectKind's canonical value (R12).
+            try:
+                value = canonical_key_value(
+                    value, info.claim_type, info.key_normalizer, predicate=info.predicate
+                )
+            except SubjectKeyInvalid as exc:
+                raise _refuse(
+                    "cruxible.subject.key_invalid",
+                    str(exc),
+                    change=index,
+                    repair="Pass a value that is a key of this field's kind",
+                    field_path=path,
+                ) from exc
         if info.members:
             if value not in info.members:
                 spelled = ", ".join(info.members)

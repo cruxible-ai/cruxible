@@ -84,3 +84,46 @@ def test_a_fact_row_without_a_form_keeps_its_bytes() -> None:
     row = status_claim(1, "wi-1", "ready")
     assert "canonical_form" not in row.model_dump(mode="json")
     assert _formed(row).model_dump(mode="json")["canonical_form"] == list(FORM)
+
+
+def _keyed(row: ClaimFactRowV1) -> ClaimFactRowV1:
+    from cruxible_client.contracts.identity_normalizers import Pep503Normalizer
+
+    return row.model_copy(
+        update={"canonical_form": ("trim",), "key_normalizer": Pep503Normalizer(version=1)}
+    )
+
+
+def test_a_key_predicates_operand_takes_its_normalizer_after_the_form() -> None:
+    """R12: a key part's stored value is form-then-normalizer; so is a compared operand."""
+
+    stored = (_keyed(status_claim(1, "wi-1", "django-rest")), _keyed(status_claim(2, "wi-2", "x")))
+    for spelled in (" Django_REST ", "django.rest", "DJANGO--rest"):
+        assert _rows(_eq(spelled), *stored) == ["wi-1"]
+    values = tuple(
+        sorted(
+            (QueryLiteralRef(value="X"), QueryLiteralRef(value="Django_Rest")),
+            key=lambda item: canonical_bytes(item.model_dump(mode="json")),
+        )
+    )
+    membership = typed_item_query(
+        STATUS_PREDICATE,
+        name="project.status_in",
+        where=QueryMembershipFilter(
+            left=QueryClaimValueRef(binding="item", predicate=STATUS_PREDICATE),
+            values=values,
+            value_type="string",
+        ),
+    )
+    assert sorted(_rows(membership, *stored)) == ["wi-1", "wi-2"]  # type: ignore[type-var]
+    # An operand that is no key of the field refuses rather than silently missing.
+    refused = run(_eq("_private"), facts(stored))  # type: ignore[arg-type]
+    assert refused.verdict == "refused"
+    # Without the row's normalizer the spelling stays distinct.
+    plain = (_formed(status_claim(1, "wi-1", "django-rest"), ("trim",)),)
+    assert _rows(_eq("Django_REST"), *plain) == []
+
+
+def test_a_fact_row_without_a_key_normalizer_keeps_its_bytes() -> None:
+    row = status_claim(1, "wi-1", "ready")
+    assert "key_normalizer" not in row.model_dump(mode="json")

@@ -141,6 +141,44 @@ def canonical_key(
     return tuple(found)
 
 
+def key_normalizer_of(
+    claim_type: ClaimType, subject_kind: Callable[[str], SubjectKind | None]
+) -> KeyNormalizer | None:
+    """The normalizer a key ClaimType's values take, when it keys a live kind (R12).
+
+    A key ClaimType is about exactly one kind; its SubjectKind (read through
+    ``subject_kind``) names its normalizer. None for a non-key predicate and
+    for ``none`` (its values compare under the ClaimType form alone).
+    """
+
+    from cruxible_client.contracts.identity_normalizers import NoneNormalizer
+
+    kinds = tuple(claim_type.allowed_subject_kinds)
+    if len(kinds) != 1:
+        return None
+    declared = subject_kind(kinds[0])
+    if declared is None or claim_type.predicate not in declared.keys:
+        return None
+    rule = declared.normalizer(claim_type.predicate)
+    return None if isinstance(rule, NoneNormalizer) else rule
+
+
+def tree_subject_kind_reader(tree: Mapping[str, bytes]) -> Callable[[str], SubjectKind | None]:
+    """The live SubjectKind of a kind in ``tree``, memoized per kind."""
+
+    known: dict[str, SubjectKind | None] = {}
+
+    def read(kind: str) -> SubjectKind | None:
+        if kind not in known:
+            try:
+                known[kind] = live_subject_kind(tree, kind)
+            except SubjectKindFormatError:
+                known[kind] = None
+        return known[kind]
+
+    return read
+
+
 class KeyRules:
     """SubjectKind identity rules as a Contract value check reads them (``KeyCanonicalizer``).
 
@@ -1786,6 +1824,8 @@ __all__ = [
     "SUBJECT_KIND_REKEY_UNHANDLED",
     "SUBJECT_KEY_NOT_CANONICAL",
     "KeyRules",
+    "key_normalizer_of",
+    "tree_subject_kind_reader",
     "SingleKey",
     "tree_key_rules",
     "canonical_key_value",

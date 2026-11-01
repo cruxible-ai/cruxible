@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from functools import lru_cache
 from typing import cast
 
@@ -12,6 +13,7 @@ from cruxible_client.contracts.compact_query import QueryFilterOperator
 from cruxible_client.contracts.query.grammar import QueryValueType
 from cruxible_client.contracts.subject_kinds import parse_subject_kind
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_identity import key_normalizer_of, tree_subject_kind_reader
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.query_vocabulary import (
     PredicateInfo,
@@ -188,6 +190,7 @@ def candidate_query_vocabulary(
     """
     predicates = {}
     kinds: set[str] = set()
+    declared_kinds = tree_subject_kind_reader(tree)
     for path in tree if paths is None else paths:
         if path.startswith("subject-kinds/") and path.endswith(".json"):
             content = tree.get(path)
@@ -203,6 +206,10 @@ def candidate_query_vocabulary(
         info = _predicate_info(path, content)
         if info is None:
             continue
+        rule = key_normalizer_of(info.claim_type, declared_kinds)
+        if rule is not None:
+            # A key predicate's literals take its SubjectKind's normalizer (R12).
+            info = replace(info, key_normalizer=rule)
         predicates[info.predicate] = info
         kinds.update(concrete_subject_kinds(info.subject_kinds))
         kinds.update(info.object_kinds)

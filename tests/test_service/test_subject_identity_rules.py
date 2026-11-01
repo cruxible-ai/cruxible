@@ -479,3 +479,108 @@ def test_an_encoded_dot_subpath_reads_as_one_key_on_every_route(
 def _created_by_refusal(instance: PlaybillInstance, kind: str, key: str) -> str | None:
     outcome = write(instance, {"op": "create", "label": "r", "subject_kind": kind, "key": key})
     return None if outcome.refusal is None else outcome.refusal.code
+
+
+# -- query operands on a key predicate take its normalizer (R12) ---------------------
+
+
+def _compact(instance: PlaybillInstance, **fields: Any) -> list[str]:
+    from cruxible_client.contracts.compact_query import QueryRequest
+    from cruxible_core.service.discovery.compact_query import service_playbill_query
+
+    result = service_playbill_query(instance, request=QueryRequest.model_validate(fields))
+    return sorted(row["subject_id"] for row in result.rows)
+
+
+def test_a_compact_filter_on_a_key_names_the_same_key_by_any_spelling(
+    instance: PlaybillInstance,
+) -> None:
+    _create(instance, PACKAGE, "django-rest")
+    _create(instance, PACKAGE, "flask")
+    for spelled in ("Django_REST", "django.rest", " django-rest "):
+        assert _compact(instance, kind=PACKAGE, where=[{"field": "name", "eq": spelled}]) == [
+            "django-rest"
+        ]
+    assert _compact(
+        instance, kind=PACKAGE, where=[{"field": "name", "in": ["FLASK", "Django__Rest"]}]
+    ) == ["django-rest", "flask"]
+    assert _compact(instance, kind=PACKAGE, where=[{"field": "name", "ne": "Django_REST"}]) == [
+        "flask"
+    ]
+    from cruxible_core.service.read_refusals import ReadRefusalError
+
+    with pytest.raises(ReadRefusalError) as caught:
+        _compact(instance, kind=PACKAGE, where=[{"field": "name", "eq": "_private"}])
+    assert caught.value.error_code == "cruxible.query.value_type_mismatch"
+
+
+def _named_query(instance: PlaybillInstance, name: str, where: str, **spec: Any) -> None:
+    from cruxible_client.contracts.authoring.inputs import QueryDefinitionInput
+    from cruxible_client.contracts.query.authored import QuerySpecInput
+
+    payload = lower_authoring_input(
+        QueryDefinitionInput(
+            kind="query_definition",
+            query_definition=QuerySpecInput.model_validate(
+                {
+                    "query": name,
+                    "from": {"p": PACKAGE},
+                    "fields": ["p", {"name": "p.pkg.package.name"}],
+                    "where": where,
+                    **spec,
+                }
+            ),
+        )
+    )
+    checked = compile_(instance, payload)
+    assert checked.verdict == "passed", [
+        (item.code, item.message) for item in checked.frontier.diagnostics
+    ]
+    accept(instance, payload)
+
+
+def _run(instance: PlaybillInstance, query: str, **parameters: object) -> list[object]:
+    from cruxible_core.service.discovery.query import service_run_playbill_query
+
+    run = service_run_playbill_query(
+        instance,
+        name=query,
+        evaluation_time=datetime(2026, 10, 9, 13, tzinfo=UTC),
+        parameters=parameters or None,
+    )
+    assert run.result.verdict == "completed", run.result
+    return sorted(row.fields[1].value for row in run.result.rows)  # type: ignore[union-attr]
+
+
+def test_a_named_query_literal_and_parameter_name_a_key_by_any_spelling(
+    instance: PlaybillInstance,
+) -> None:
+    _create(instance, PACKAGE, "django-rest")
+    _create(instance, PACKAGE, "flask")
+    _named_query(instance, "pkg.django", 'p.pkg.package.name == "Django_REST"')
+    _named_query(instance, "pkg.named", "p.pkg.package.name == $name", params={"name": "string"})
+    _named_query(
+        instance,
+        "pkg.either",
+        'p.pkg.package.name in ("FLASK", "django.rest")',
+    )
+    assert _run(instance, "pkg.django") == ["django-rest"]
+    for spelled in ("Django_REST", "DJANGO-rest", "django__rest"):
+        assert _run(instance, "pkg.named", name=spelled) == ["django-rest"]
+    assert _run(instance, "pkg.named", name="flask") == ["flask"]
+    assert _run(instance, "pkg.either") == ["django-rest", "flask"]
+
+
+def test_a_write_to_a_key_field_stores_its_canonical_value(instance: PlaybillInstance) -> None:
+    _create(instance, PACKAGE, "requests")
+    outcome = write(
+        instance,
+        {"op": "set", "subject": f"{PACKAGE}/requests", "field": "name", "value": "Requests_Two"},
+    )
+    assert outcome.status == "accepted", outcome
+    assert key_claims(instance, PACKAGE, "requests") == {NAME: "requests-two"}
+    refused = write(
+        instance,
+        {"op": "set", "subject": f"{PACKAGE}/requests", "field": "name", "value": "_bad"},
+    )
+    assert refused.refusal is not None and refused.refusal.code == "cruxible.subject.key_invalid"
