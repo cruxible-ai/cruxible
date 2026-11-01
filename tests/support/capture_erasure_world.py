@@ -12,17 +12,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
     CaptureContract,
     parse_capture_envelope,
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
-    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.write import WriteOutcome, WriteRequest
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -32,6 +29,7 @@ from tests.core_support._candidate_support import submit_member_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._write_support import KIND, caller, seed_write_vocabulary
+from tests.support.claim_types import claim_type as build_claim_type
 
 FIELD = f"{KIND}.severity"
 SUBJECT = f"{KIND}/wi-1"
@@ -50,15 +48,10 @@ class ErasureWorld:
 
 
 def _severity_type(contract: CaptureContract) -> ClaimType:
-    return ClaimType(
-        evidence_requirement="captured",
-        revision_evidence="accumulate",
-        identity=ArtifactIdentity(kind="ClaimType", name=FIELD),
+    return build_claim_type(
         predicate=FIELD,
+        evidence_requirement="captured",
         allowed_subject_kinds=(KIND,),
-        object_kind="literal",
-        literal_schema={"type": "string"},
-        cardinality="one",
         permitted_roles=("observation",),
         evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
             rules=(
@@ -70,10 +63,6 @@ def _severity_type(contract: CaptureContract) -> ClaimType:
                     subject_binding="exact_claim_subject",
                 ),
             )
-        ),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality="one", eligible_verdicts=("supported",), selector="only_contender"
         ),
     )
 

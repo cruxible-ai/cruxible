@@ -46,6 +46,7 @@ from tests.core_support._claim_authoring_support import (
 from tests.core_support._knowledge_loop_support import PREDICATE, SUBJECT_KIND, activate
 from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import client_material
+from tests.support.claim_types import claim_type_changes
 from tests.test_ledger.test_activation import _sign
 
 BATCH_KIND = "project.batch"
@@ -60,31 +61,29 @@ _TIMESTAMP = "2026-08-16T20:30:00.000000Z"
 def _relation(template: ClaimType, predicate: str, *, source: str, many: bool) -> ClaimType:
     cardinality = "many" if many else "one"
     return template.model_copy(
-        update={
-            "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
-            "predicate": predicate,
-            "allowed_subject_kinds": (source,),
-            "object_kind": "subject",
-            "literal_schema": None,
-            "allowed_object_subject_kinds": (SUBJECT_KIND,),
-            "cardinality": cardinality,
-            "resolution_policy": ClaimResolutionPolicy(
+        update=claim_type_changes(
+            predicate=predicate,
+            value_type=(SUBJECT_KIND,),
+            identity=ArtifactIdentity(kind="ClaimType", name=predicate),
+            allowed_subject_kinds=(source,),
+            cardinality=cardinality,
+            resolution_policy=ClaimResolutionPolicy(
                 cardinality=cardinality,
                 eligible_verdicts=("supported",),
                 selector="all" if many else "only_contender",
             ),
-        }
+        )
     )
 
 
 def _claim_types(template: ClaimType) -> tuple[ClaimType, ...]:
     state = template.model_copy(
-        update={
-            "identity": ArtifactIdentity(kind="ClaimType", name=BATCH_STATE),
-            "predicate": BATCH_STATE,
-            "allowed_subject_kinds": (BATCH_KIND,),
-            "literal_schema": {"enum": ["closed", "open"], "type": "string"},
-        }
+        update=claim_type_changes(
+            predicate=BATCH_STATE,
+            value_type={"enum": ["closed", "open"], "type": "string"},
+            identity=ArtifactIdentity(kind="ClaimType", name=BATCH_STATE),
+            allowed_subject_kinds=(BATCH_KIND,),
+        )
     )
     return (
         _relation(template, DELIVERS, source=BATCH_KIND, many=True),

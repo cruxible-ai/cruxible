@@ -6,16 +6,13 @@ from cruxible_client.contracts.captures import (
     foreign_source_capture_contract,
 )
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
+from tests.support.claim_types import claim_type_input
 
 
 def claim_type_input_example() -> ClaimTypeInputRecord:
-    return ClaimTypeInputRecord(
+    return claim_type_input(
         predicate="project.work_item.replace_me",
         allowed_subject_kinds=("project.work_item",),
-        object_kind="literal",
-        literal_schema={"type": "string"},
-        cardinality="one",
-        permitted_roles=("normative", "observation"),
         evidence_admission_policy={"rules": []},
         admission_policy={
             "corroboration_requirements": [],

@@ -64,6 +64,7 @@ from cruxible_core.service.authoring.documents import (
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import client_material
+from tests.support.claim_types import claim_type_changes
 from tests.test_claims.test_claims import _claim_type, _subject
 from tests.test_ledger.test_activation import _sign
 
@@ -451,11 +452,11 @@ def _authoring() -> DirectClaimAuthoringV1:
 
 def _summary_claim_type() -> ClaimType:
     return _claim_type().model_copy(
-        update={
-            "identity": ArtifactIdentity(kind="ClaimType", name="project.work_item.summary"),
-            "predicate": "project.work_item.summary",
-            "literal_schema": {"type": "string"},
-        }
+        update=claim_type_changes(
+            predicate="project.work_item.summary",
+            value_type={"type": "string"},
+            identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.summary"),
+        )
     )
 
 

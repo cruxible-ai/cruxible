@@ -36,10 +36,8 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
-    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.governance.keys import GeneratedKeyMaterial
@@ -52,6 +50,8 @@ from tests.core_support._subject_kind_support import (
     key_by_slug,
 )
 from tests.core_support._support import initialize_local
+from tests.support.claim_types import ClaimValueType
+from tests.support.claim_types import claim_type as build_claim_type
 
 KIND = "project.work_item"
 SUBJECTS = ("wi-1", "wi-2", "wi-3")
@@ -73,56 +73,33 @@ def _rule(rule_id: str, roles: tuple[str, ...], contract: str) -> ClaimEvidenceA
 def _claim_type(
     field: str,
     *,
-    object_kind: str = "literal",
-    literal_schema: dict[str, object] | None = None,
+    value_type: ClaimValueType | None = None,
     cardinality: str = "one",
     roles: tuple[str, ...] = ("observation",),
-    object_kinds: tuple[str, ...] = (),
     captured_only: bool = False,
 ) -> ClaimType:
     predicate = f"{KIND}.{field}"
     contract = REPORTS if captured_only else SELF_SOURCE
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name=predicate),
+    return build_claim_type(
         predicate=predicate,
         allowed_subject_kinds=(KIND,),
-        object_kind=object_kind,  # type: ignore[arg-type]
-        literal_schema=literal_schema,
-        allowed_object_subject_kinds=object_kinds,
-        cardinality=cardinality,  # type: ignore[arg-type]
-        permitted_roles=roles,  # type: ignore[arg-type]
+        value_type=value_type,
+        cardinality=cardinality,
+        permitted_roles=roles,
         evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
             rules=(_rule("source", roles, contract.identity.name),)
-        ),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality=cardinality,  # type: ignore[arg-type]
-            eligible_verdicts=("supported",),
-            selector="all" if cardinality == "many" else "only_contender",
         ),
     )
 
 
 CLAIM_TYPES = (
-    _claim_type("status", literal_schema={"enum": ["blocked", "done", "ready"], "type": "string"}),
-    _claim_type(
-        "priority",
-        literal_schema={"type": "string"},
-        roles=("normative", "observation"),
-    ),
-    _claim_type("title", literal_schema={"type": "string"}),
-    _claim_type(
-        "governs",
-        object_kind="subject",
-        cardinality="many",
-        roles=("normative",),
-        object_kinds=(KIND,),
-    ),
-    _claim_type("ruling", object_kind="exact_content", roles=("normative",)),
-    _claim_type(
-        "labels", literal_schema={"type": "string"}, cardinality="many", captured_only=True
-    ),
-    _claim_type("measured", literal_schema={"type": "integer"}, captured_only=True),
+    _claim_type("status", value_type={"enum": ["blocked", "done", "ready"], "type": "string"}),
+    _claim_type("priority", value_type={"type": "string"}, roles=("normative", "observation")),
+    _claim_type("title", value_type={"type": "string"}),
+    _claim_type("governs", value_type=(KIND,), cardinality="many", roles=("normative",)),
+    _claim_type("ruling", value_type="exact_content", roles=("normative",)),
+    _claim_type("labels", value_type={"type": "string"}, cardinality="many", captured_only=True),
+    _claim_type("measured", value_type={"type": "integer"}, captured_only=True),
 )
 
 

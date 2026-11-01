@@ -1,7 +1,7 @@
 """Seed accepted exact-content Claims (rulings, method laws) for read-verb tests.
 
 The ClaimType ``project.work_item.status`` is re-declared with
-``object_kind="exact_content"``, and each Claim's self-source body is exactly
+``value_type="exact_content"``, and each Claim's self-source body is exactly
 its content, so the Claim's own Capture commits the bytes its object names.
 Everything travels through the AuthoringIntent coordinator and accepted
 activation, so the reads see accepted state rather than a fixture.
@@ -31,6 +31,7 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
 from tests.core_support._knowledge_loop_support import activate
 from tests.core_support._support import initialize_local
+from tests.support.claim_types import claim_type_changes
 from tests.test_authoring.test_authoring_preflight import _seed_claim_surface, _self_source_payload
 from tests.test_claims.test_claims import _claim_type
 
@@ -78,7 +79,7 @@ def seed_exact_content_into(
         instance,
         owner,
         claim_type_override=_claim_type().model_copy(
-            update={"object_kind": "exact_content", "literal_schema": None}
+            update=claim_type_changes(value_type="exact_content")
         ),
         additional_subjects=tuple(_shell(item) for item in contents if item != "wi-42"),
     )
