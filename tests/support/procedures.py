@@ -31,8 +31,18 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
     procedure_path,
 )
+from cruxible_client.contracts.procedures.authored import (
+    ProcedureLimits,
+    ProcedureSpec,
+    ProjectStep,
+    lower_procedure_spec,
+)
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-from cruxible_client.contracts.procedures.models import ProcedureDefinition
+from cruxible_client.contracts.procedures.models import (
+    ProcedureBudget,
+    ProcedureDefinition,
+    ProcedureHardCaps,
+)
 from cruxible_client.contracts.shapes import (
     Contract,
     contract_digest,
@@ -47,6 +57,81 @@ from cruxible_client.contracts.shapes import (
 #: node on a shared host. A test about exhaustion injects a clock instead.
 RUN_WALL_CLOCK = CanonicalDuration(microseconds=60_000_000)
 MAX_WALL_CLOCK = CanonicalDuration(microseconds=120_000_000)
+
+
+def procedure_limits(**overrides: Any) -> ProcedureLimits:
+    """Authored caps; a test states only the limits it exercises."""
+
+    return ProcedureLimits(**overrides)
+
+
+def procedure_spec(
+    procedure: str | None = None,
+    *,
+    base: Mapping[str, Any] | None = None,
+    changes: Mapping[str, Any] | None = None,
+    **overrides: Any,
+) -> ProcedureSpec:
+    """A typed authored Procedure, with a constant result unless steps are supplied.
+
+    Keep defaults on the public spec model rather than copying its wire shape
+    into each test. Invalid authored inputs belong in the refusal tests, which
+    deliberately bypass this builder.
+    """
+
+    return ProcedureSpec(
+        **{
+            "procedure": "fixture",
+            "steps": (ProjectStep(project="result", fields={}),),
+            **dict(base or {}),
+            **({} if procedure is None else {"procedure": procedure}),
+            **overrides,
+            **dict(changes or {}),
+        }
+    )
+
+
+def procedure_spec_data(
+    procedure: str | None = None, *, reference_text: bool = False, **overrides: Any
+) -> dict[str, Any]:
+    """The typed spec serialized for a test of a JSON authoring surface."""
+
+    if reference_text:
+        overrides = refs(overrides)
+    return procedure_spec(procedure, **overrides).model_dump(mode="json", by_alias=True)
+
+
+def procedure_hard_caps(**overrides: Any) -> ProcedureHardCaps:
+    """Graph caps, defaulted by the public authored spec's lowering."""
+
+    defaults = lower_procedure_spec(procedure_spec()).definition["hard_caps"]
+    return ProcedureHardCaps(**{**defaults, **overrides})
+
+
+def procedure_budget(**overrides: Any) -> ProcedureBudget:
+    """A test run's operating budget, independent of the Procedure's caps."""
+
+    return ProcedureBudget(
+        **{
+            "wall_clock": RUN_WALL_CLOCK,
+            "max_provider_calls": 0,
+            "max_capture_bytes": 0,
+            **overrides,
+        }
+    )
+
+
+def procedure_definition(name: str = "fixture", **overrides: Any) -> ProcedureDefinition:
+    """A graph fixture with its envelope supplied by a lowered typed spec.
+
+    Executor and graph-law tests need exact typed nodes, including deliberately
+    invalid topology and authority declarations. Those override the lowered
+    graph here without decompiling/re-lowering them (which could repair the
+    subject of a refusal test or change a digest pin).
+    """
+
+    lowered = lower_procedure_spec(procedure_spec(name))
+    return ProcedureDefinition.model_validate({**lowered.definition, **overrides})
 
 
 def boundary_contract(
@@ -370,6 +455,12 @@ def spec_payload(spec: Mapping[str, Any]) -> Any:
 
 
 __all__ = [
+    "procedure_spec",
+    "procedure_spec_data",
+    "procedure_limits",
+    "procedure_hard_caps",
+    "procedure_budget",
+    "procedure_definition",
     "boundary_contract",
     "contract_files",
     "contract_pin",

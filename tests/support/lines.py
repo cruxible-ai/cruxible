@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactNameRef
+from cruxible_client.contracts.procedures.line_specs import LineBudgets, LineBudgetsInput, LineSpec
 from cruxible_client.contracts.triggers import (
     ActionTarget,
     CadenceSchedule,
@@ -15,6 +16,52 @@ from cruxible_client.contracts.triggers import (
     trigger_digest,
     trigger_path,
 )
+
+
+def line_budgets(**overrides: Any) -> LineBudgets:
+    """Operating limits for a Line whose test does not exercise budgets."""
+
+    from tests.support.procedures import RUN_WALL_CLOCK
+
+    return LineBudgets(
+        **{
+            "max_wall_clock_microseconds": RUN_WALL_CLOCK.microseconds,
+            "max_provider_calls": 0,
+            "max_capture_bytes": 0,
+            **overrides,
+        }
+    )
+
+
+def line_budgets_input(**overrides: Any) -> LineBudgetsInput:
+    """Authoring's partial budget, distinct from an accepted Line's filled budget."""
+
+    return LineBudgetsInput(**overrides)
+
+
+def line_spec(name: str = "fixture", **overrides: Any) -> LineSpec:
+    """A typed Line; exact Procedure pins and test-specific fields override defaults."""
+
+    from cruxible_client.contracts.artifacts import ArtifactPin
+    from tests.support.procedures import fixture_digest
+
+    target = ArtifactIdentity(kind="Procedure", name="fixture")
+    return LineSpec(
+        **{
+            "identity": ArtifactIdentity(kind="Line", name=name),
+            "occurrence_epoch": 1,
+            "procedure": ArtifactPin(
+                role="procedure", target=target, artifact_digest=fixture_digest(target)
+            ),
+            "parameters": {},
+            "bindings": {},
+            "acquisition": {},
+            "max_authority": "observe",
+            "budgets": line_budgets(),
+            "epsilon": {"$decimal": "0"},
+            **overrides,
+        }
+    )
 
 
 def line_trigger(

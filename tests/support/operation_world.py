@@ -20,7 +20,7 @@ from cruxible_client.contracts.authoring.inputs import (
     ProcedureInput,
     lower_authoring_input,
 )
-from cruxible_client.contracts.procedures.authored import ProcedureSpec
+from cruxible_client.contracts.procedures.authored import CallStep, ProcedureSpec
 from cruxible_client.contracts.provider_execution import (
     ProviderEgressObservation,
     VerifiedProviderBinding,
@@ -52,7 +52,7 @@ from cruxible_core.providers.provider_local_runtime import (
     ProviderDriverOutcomeV1,
 )
 from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeResultEnvelope
-from tests.support.procedures import ref
+from tests.support.procedures import procedure_limits, procedure_spec, ref
 
 NOW = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
 PROCEDURE = "test.slotted"
@@ -176,19 +176,15 @@ def slotted_spec(
     supplies it.
     """
 
-    return ProcedureSpec.model_validate(
-        {
-            "procedure": name,
-            **({} if description is None else {"description": description}),
-            "params": {"value": "int"},
-            "output": {"value": "int"},
-            "slots": {"compute": {"in": "test.value@1", "out": "test.value@1", "effect": effect}},
-            "steps": [
-                {"call": "result", "slot": "compute", "input": {"value": ref("$params.value")}}
-            ],
-            "returns": "result",
-            "hard_caps": {"provider_calls": 1},
-        }
+    return procedure_spec(
+        procedure=name,
+        description=description,
+        params={"value": "int"},
+        output={"value": "int"},
+        slots={"compute": {"in": "test.value@1", "out": "test.value@1", "effect": effect}},
+        steps=[CallStep(call="result", slot="compute", input={"value": ref("$params.value")})],
+        returns="result",
+        hard_caps=procedure_limits(provider_calls=1),
     )
 
 
