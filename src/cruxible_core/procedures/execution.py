@@ -5055,6 +5055,20 @@ class ProcedureExecutor:
             values, item_tokens = self._inbox_items(node, state=state)
         else:
             values, item_tokens = _terminal_items(_terminal_item_templates(node), state=state)
+        # Check the selected rows before inbox clipping, dependency journaling,
+        # proposal lowering or delivery. A scalar return cannot hide this fan-out.
+        boundary = f"terminal:{node.node_id}"
+        state.observe_items(len(values), boundary, "items")
+        item_limit = _effective_max_items(admission)
+        if len(values) > item_limit:
+            raise _budget_refusal(
+                budget_kind="max_items",
+                limit=item_limit,
+                observed=len(values),
+                node_id=node.node_id,
+                boundary=boundary,
+                field_path="items",
+            )
         if isinstance(node, ProposeChangeSetNode):
             from cruxible_core.procedures.source_candidates import bind_source_candidate
 

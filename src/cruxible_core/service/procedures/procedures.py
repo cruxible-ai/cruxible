@@ -502,6 +502,8 @@ def service_execute_direct_procedure(
 ) -> ProcedureRunResultV1:
     """Execute through the shared runtime; no transport duplicates orchestration."""
 
+    # Every boundary in this execution shares the same coordinate-bound vocabulary.
+    enum_resolver = None if enum_resolver is None else _memoized(enum_resolver)
     if contract_validator is None:
         if contract_resolver is None:
             raise ExecutionError("a Procedure run checks its boundaries against governed Contracts")

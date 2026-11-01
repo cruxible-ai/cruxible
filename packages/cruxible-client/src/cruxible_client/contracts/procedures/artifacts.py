@@ -48,6 +48,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
     Contract,
     ContractRef,
+    EnumResolver,
     FieldInvalid,
     check_value,
     contract_ref_for_identity,
@@ -299,6 +300,7 @@ def evaluate_procedure_law(
     contracts: Mapping[tuple[str, int], str] | None = None,
     contract_lookup: Callable[[ContractRef], Contract | None] | None = None,
     capture_lookup: Callable[[str], CaptureContractAny | None] | None = None,
+    enum_members: EnumResolver | None = None,
 ) -> ProcedureLawResult:
     """Evaluate stable identity, predecessor, and slot signatures.
 
@@ -354,7 +356,9 @@ def evaluate_procedure_law(
     if problem is not None:
         return _refusal("cruxible.procedure.extract_row_unresolved", problem, path=path)
     if contract_lookup is not None:
-        problem = parameter_default_problem(procedure.definition, contract_lookup)
+        problem = parameter_default_problem(
+            procedure.definition, contract_lookup, enum_members=enum_members
+        )
         if problem is not None:
             return _refusal("cruxible.procedure.parameter_default_invalid", problem, path=path)
     if capture_lookup is not None:
@@ -378,7 +382,10 @@ def evaluate_procedure_law(
 
 
 def parameter_default_problem(
-    definition: ProcedureDefinition, contract_lookup: Callable[[ContractRef], Contract | None]
+    definition: ProcedureDefinition,
+    contract_lookup: Callable[[ContractRef], Contract | None],
+    *,
+    enum_members: EnumResolver | None = None,
 ) -> str | None:
     """Why a parameter default does not fit its params Contract field, or ``None``.
 
@@ -395,6 +402,11 @@ def parameter_default_problem(
     declared = contract_lookup(contract_ref_for_identity(reference.target))
     if declared is None:
         return f"params Contract {reference.target.name} is not accepted"
+    from cruxible_client.contracts.provider_operations import (
+        OperationValueRefused,
+        validate_typed_number_encoding,
+    )
+
     for name, value in sorted(definition.parameter_defaults.items()):
         field = declared.fields.get(name)
         if field is None:
@@ -402,12 +414,23 @@ def parameter_default_problem(
                 f"parameter {name!r} has a default and {declared.name}@{declared.version} "
                 "declares no such field"
             )
-        checked = check_value(value, field.type, at=f"/{name}", field=name, resolve=contract_lookup)
+        checked = check_value(
+            value,
+            field.type,
+            at=f"/{name}",
+            field=name,
+            resolve=contract_lookup,
+            enum_members=enum_members,
+        )
         if isinstance(checked, FieldInvalid):
             return (
                 f"the default of parameter {name!r} does not fit {field.spelling} "
                 f"({declared.name}@{declared.version}): {checked.problem}"
             )
+        try:
+            validate_typed_number_encoding(value, field.type, resolve=contract_lookup, path=name)
+        except OperationValueRefused as exc:
+            return f"the default of parameter {name!r} is invalid: {exc}"
     return None
 
 

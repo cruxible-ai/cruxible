@@ -410,3 +410,194 @@ def test_a_contract_refusal_names_the_offending_field_even_at_the_root(
             contract=contract_pin("contract-out", contract), payload=payload, direction="output"
         )
     assert refused.value.field_path == field_path
+
+
+@pytest.mark.parametrize("direction", ["input", "output"])
+def test_nested_list_budget_and_observations(direction):
+    from cruxible_client.contracts.provider_operations import (
+        OperationItemBudgetExceeded,
+        validate_operation_value,
+    )
+
+    rows = boundary_contract(
+        "rows", {"rows": "list<test.nested-row@1>{max_items: 10}"}, _NESTED_ROW
+    )
+    resolve = contract_resolver(rows, _NESTED_ROW, _PART)
+    validator = _validator(rows, _NESTED_ROW, _PART)
+    payload = {"rows": [{"parts": [{"value": 1}, {"value": 2}]}]}
+    with pytest.raises(ProcedureContractItemBudgetExceeded) as caught:
+        validator.validate_contract_with_budget(
+            contract=contract_pin(f"contract-{'in' if direction == 'input' else 'out'}", rows),
+            payload=payload,
+            direction=direction,
+            max_items=1,
+        )
+    assert (caught.value.field_path, caught.value.observed) == ("rows[0].parts", 2)
+    observations = []
+    with pytest.raises(OperationItemBudgetExceeded) as caught_operation:
+        validate_operation_value(
+            payload,
+            rows,
+            resolve=resolve,
+            max_items=1,
+            observe_items=lambda count, path: observations.append((path, count)),
+        )
+    assert caught_operation.value.field_path == "rows[0].parts"
+    assert observations == [("rows", 1), ("rows[0].parts", 2)]
+
+
+@pytest.mark.parametrize("direction", ["input", "output"])
+@pytest.mark.parametrize("nested", [False, True])
+def test_boundaries_require_canonical_number_wire_forms(direction, nested):
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_client.contracts.provider_operations import (
+        OperationValueRefused,
+        validate_operation_value,
+    )
+    from cruxible_client.contracts.shapes import canonical_number
+
+    inner = boundary_contract("test.numbers", {"value": "number"})
+    contract = (
+        boundary_contract("test.number-boundary", {"value": "test.numbers@1"}, inner)
+        if nested
+        else inner
+    )
+    resolve = contract_resolver(inner, contract)
+    validator = AcceptedProcedureContractValidator(resolve)
+    pin = contract_pin("contract-in" if direction == "input" else "contract-out", contract)
+    canonical = {"value": {"value": "0.5"}} if nested else {"value": "0.5"}
+    bad = {"value": {"value": "0.50"}} if nested else {"value": "0.50"}
+    assert (
+        validator.validate_contract(contract=pin, payload=canonical, direction=direction)
+        == canonical
+    )
+    checked = validate_operation_value(canonical, contract, resolve=resolve)
+    assert canonical_bytes(checked) == canonical_bytes(canonical)
+    assert typed_digest(ArtifactDigest, "test-number-wire", checked) == typed_digest(
+        ArtifactDigest, "test-number-wire", canonical
+    )
+    with pytest.raises(ProcedureContractValidationError, match="noncanonical number"):
+        validator.validate_contract(contract=pin, payload=bad, direction=direction)
+    with pytest.raises(OperationValueRefused, match="noncanonical number"):
+        validate_operation_value(bad, contract, resolve=resolve)
+    integral = {"value": {"value": "1.0"}} if nested else {"value": "1.0"}
+    with pytest.raises(ProcedureContractValidationError, match="noncanonical number"):
+        validator.validate_contract(contract=pin, payload=integral, direction=direction)
+    assert canonical_number("1.0") == 1
+
+
+@pytest.mark.parametrize("size", [10, 1000])
+def test_run_enum_vocabulary_sql_is_constant_across_boundaries(tmp_path, monkeypatch, size):
+    from cruxible_client.contracts.provider_operations import validate_operation_value
+    from cruxible_core.indexes.typed_state import TypedStateReader
+    from cruxible_core.service.procedures.procedure_runs import _claim_type_enum_resolver
+
+    instance, _ = seed_claims(tmp_path)
+    original = TypedStateReader.source
+    sources, statements = [], []
+
+    def counted(reader, identity):
+        sources.append(identity)
+        reader.connection.set_trace_callback(statements.append)
+        try:
+            return original(reader, identity)
+        finally:
+            reader.connection.set_trace_callback(None)
+
+    monkeypatch.setattr(TypedStateReader, "source", counted)
+    resolver = _claim_type_enum_resolver(instance, instance.accepted_coordinate())
+    row = boundary_contract("test.enum-row", {"status": "enum_of:project.work_item.status"})
+    rows = boundary_contract(
+        "test.enum-rows", {"rows": "list<test.enum-row@1>{max_items: 2000}"}, row
+    )
+    contracts = contract_resolver(row, rows)
+    validator = AcceptedProcedureContractValidator(contracts, resolver)
+    payload = {"rows": [{"status": "ready"} for _ in range(size)]}
+    for direction in ("input", "output"):
+        validator.validate_contract(
+            contract=contract_pin("contract-in" if direction == "input" else "contract-out", rows),
+            payload=payload,
+            direction=direction,
+        )
+        validate_operation_value(payload, rows, resolve=contracts, enum_members=resolver)
+    assert sources == ["ClaimType:project.work_item.status"]
+    envelope_sql = [
+        statement
+        for statement in statements
+        if " WHERE identity=" in statement and "ClaimType:project.work_item.status" in statement
+    ]
+    assert len(envelope_sql) == 1
+    # Missing vocabulary is cached too; a fresh coordinate resolver reads afresh.
+    assert resolver("test.missing") is None and resolver("test.missing") is None
+    assert sources.count("ClaimType:test.missing") == 1
+    fresh = _claim_type_enum_resolver(instance, instance.accepted_coordinate())
+    assert fresh("project.work_item.status") == ("blocked", "done", "ready")
+    assert sources.count("ClaimType:project.work_item.status") == 2
+
+
+@pytest.mark.parametrize("direction", ["in", "out"])
+@pytest.mark.parametrize("violation", ["budget", "number"])
+def test_operation_nested_boundaries_preserve_budget_and_number_laws(
+    tmp_path, direction, violation
+):
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.shapes import ContractRef
+    from cruxible_core.procedures.execution import ProcedureExecutor
+    from tests.test_procedures.test_procedure_execution import (
+        _Authority,
+        _Contracts,
+        _fixture,
+        _prepare,
+        _state_procedure,
+        _StateReader,
+    )
+
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    prepared = _prepare(accepted, fixture, _StateReader())
+    admission = prepared.admission.model_copy(
+        update={"budget": prepared.admission.budget.model_copy(update={"max_items": 1})}
+    )
+    row = boundary_contract("test.number-parts", {"parts": "list<number>{max_items: 10}"})
+    contract = boundary_contract(
+        "test.operation-rows", {"rows": "list<test.number-parts@1>{max_items: 10}"}, row
+    )
+    occurrence = SimpleNamespace(
+        contracts=(row, contract),
+        operation=SimpleNamespace(
+            in_=ContractRef(name=contract.name, version=1),
+            out=ContractRef(name=contract.name, version=1),
+            name="compute",
+        ),
+    )
+    executor = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    )
+    state = _RunState(outputs={}, input_payload={}, parameters={})
+    payload = {"rows": [{"parts": [1, 2] if violation == "budget" else ["1.0"]}]}
+    with pytest.raises(_RunRefusal) as caught:
+        executor._validate_operation_value(
+            occurrence,
+            payload,
+            direction=direction,
+            admission=admission,
+            state=state,
+            node_id="call",
+        )
+    if violation == "budget":
+        assert caught.value.refusal.code == "budget_max_items_exceeded"
+        assert caught.value.refusal.details["field_path"] == "rows[0].parts"
+        assert state.max_items_high_water == 2
+        assert state.max_items_boundary == f"operation-{direction}:compute"
+    else:
+        assert (
+            caught.value.refusal.code
+            == f"contract_{'input' if direction == 'in' else 'output'}_refused"
+        )
+        assert "noncanonical number" in caught.value.refusal.message

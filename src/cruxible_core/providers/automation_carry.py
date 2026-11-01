@@ -36,7 +36,7 @@ from cruxible_client.contracts.provider_installation import (
     CarriedLineV1,
     CarriedMandateV1,
 )
-from cruxible_client.contracts.shapes import Contract, ContractRef
+from cruxible_client.contracts.shapes import Contract, ContractRef, EnumResolver
 
 # These newly selected families have no contract-level parse memo yet. Share the
 # exact-byte models between upgrade planning and the generation findings worker.
@@ -56,6 +56,7 @@ def validate_carried_line(
     path: str,
     procedure: AcceptedProcedure,
     contracts: Callable[[ContractRef], Contract | None],
+    enum_members: EnumResolver | None = None,
 ) -> None:
     """Apply ordinary Line-authoring parameter semantics to the exact final Procedure.
 
@@ -65,7 +66,7 @@ def validate_carried_line(
     line = parse_carry_line(content, path=path)
     try:
         validate_line_parameters(
-            AcceptedProcedureContractValidator(contracts),
+            AcceptedProcedureContractValidator(contracts, enum_members),
             procedure.procedure.definition,
             line.parameters,
         )

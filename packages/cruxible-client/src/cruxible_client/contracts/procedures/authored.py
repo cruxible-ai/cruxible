@@ -61,7 +61,9 @@ from cruxible_client.contracts.shapes import (
     ContractField,
     ContractRef,
     CountOperand,
+    EnumOfType,
     FieldInvalid,
+    FieldResultType,
     IntType,
     ListType,
     LiteralOperand,
@@ -1679,6 +1681,16 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
     )
 
 
+def _needs_accepted_vocabulary(field_type: Any) -> bool:
+    if type_refs(field_type) or isinstance(field_type, EnumOfType):
+        return True
+    if isinstance(field_type, ListType):
+        return _needs_accepted_vocabulary(field_type.item)
+    if isinstance(field_type, FieldResultType):
+        return _needs_accepted_vocabulary(field_type.value)
+    return False
+
+
 def _parameter_defaults(
     spec: ProcedureSpec, fields: Mapping[str, ContractField] | None
 ) -> dict[str, Any]:
@@ -1707,7 +1719,7 @@ def _parameter_defaults(
                 path,
                 f"parameter {name!r} has a default and no params field; declare it in params",
             )
-        if type_refs(declared.type):
+        if _needs_accepted_vocabulary(declared.type):
             continue
         checked = check_value(value, declared.type, at=f"/{name}", field=name)
         if isinstance(checked, FieldInvalid):
@@ -1717,6 +1729,17 @@ def _parameter_defaults(
                 f"the default of parameter {name!r} does not fit {declared.spelling}: "
                 f"{checked.problem}",
             )
+        from cruxible_client.contracts.provider_operations import (
+            OperationValueRefused,
+            validate_typed_number_encoding,
+        )
+
+        try:
+            validate_typed_number_encoding(
+                value, declared.type, resolve=lambda _ref: None, path=name
+            )
+        except OperationValueRefused as exc:
+            raise ProcedureSpecError("procedure_parameter_default_invalid", path, str(exc)) from exc
     return defaults
 
 

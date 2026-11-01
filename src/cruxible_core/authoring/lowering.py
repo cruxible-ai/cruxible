@@ -279,6 +279,7 @@ from cruxible_core.claims.claim_type_migrations import (
     claim_type_migration_inventory,
     resolve_claim_type_succession,
 )
+from cruxible_core.claims.enum_resolution import tree_enum_resolver
 from cruxible_core.derived.derived_state import CandidateTree, SnapshotTree, fork_tree
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_aliases import (
@@ -3370,7 +3371,9 @@ def _check_line_parameters(
     definition = procedure.definition
     try:
         validate_line_parameters(
-            AcceptedProcedureContractValidator(tree_contract_resolver(tree)),
+            AcceptedProcedureContractValidator(
+                tree_contract_resolver(tree), tree_enum_resolver(tree)
+            ),
             definition,
             payload.parameters,
         )

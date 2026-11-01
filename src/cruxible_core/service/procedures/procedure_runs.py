@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from functools import partial
+from functools import cache, partial
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, get_args
 
@@ -774,6 +774,7 @@ def _claim_type_enum_resolver(
     same read: nothing needs separately retaining for determinism.
     """
 
+    @cache
     def resolve(claim_type_name: str) -> tuple[str, ...] | None:
         with instance.bind_accepted_projection(coordinate) as projection:
             claim_type = projection.typed.source(f"ClaimType:{claim_type_name}")
@@ -3744,6 +3745,7 @@ def _run_playbill_line(
         providers={item.provider.identity.qualified: item for item in providers.values()},
         capture_outputs=capture_outputs,
         contracts=accepted_contract_resolver(instance, coordinate),
+        enum_members=_claim_type_enum_resolver(instance, coordinate),
     )
     if law.verdict != "accepted":
         return _line_refusal_state(

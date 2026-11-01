@@ -283,3 +283,206 @@ def test_a_line_run_takes_no_input(tmp_path: Any) -> None:
         author_line(instance, name="test.inputs", procedure="test.inputs", parameters={"limit": 1})
     assert refused.value.code == "cruxible.authoring.line_parameters_refused"
     assert "a Line supplies parameters" in refused.value.message
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("defaulted", [False, True])
+def test_enum_parameters_defaults_lines_law_and_carry(tmp_path, nested, defaulted):
+    from cruxible_client.contracts.procedures.artifacts import (
+        AcceptedProcedure,
+        evaluate_procedure_law,
+        parse_procedure,
+        procedure_artifact_digest,
+        procedure_path,
+    )
+    from cruxible_client.contracts.procedures.line_specs import (
+        evaluate_line_spec_law,
+        line_spec_path,
+        parse_line_spec,
+        render_line_spec,
+    )
+    from cruxible_client.contracts.shapes import tree_contract_resolver
+    from cruxible_core.claims.enum_resolution import tree_enum_resolver
+    from cruxible_core.providers.automation_carry import validate_carried_line
+    from tests.core_support._identity_support import accept_tree
+    from tests.core_support._knowledge_loop_support import seed_claims
+    from tests.support.procedures import boundary_contract, contract_files
+
+    instance, _ = seed_claims(tmp_path)
+    inner = boundary_contract("test.enum-inner", {"status": "enum_of:project.work_item.status"})
+    accept_tree(instance, contract_files(inner), name="enum-inner")
+    field_type = "test.enum-inner@1" if nested else "enum_of:project.work_item.status"
+    value = {"status": "ready"} if nested else "ready"
+    bad_value = {"status": "unknown"} if nested else "unknown"
+    spec = _spec(
+        params={"limit": field_type},
+        output={"limit": field_type},
+        parameter_defaults={"limit": value} if defaulted else {},
+    )
+    # Offline lowering defers vocabulary-dependent defaults until acceptance.
+    lower_procedure_spec(spec)
+    content = author_procedure(instance, spec)
+    artifact = parse_procedure(content, path=procedure_path(spec.procedure))
+    accepted = AcceptedProcedure(
+        path=procedure_path(spec.procedure),
+        procedure=artifact,
+        artifact_digest=procedure_artifact_digest(artifact).tagged,
+    )
+    author_line(
+        instance,
+        name="test.enum-line",
+        procedure=spec.procedure,
+        parameters={} if defaulted else {"limit": value},
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    resolve, enums = tree_contract_resolver(tree), tree_enum_resolver(tree)
+    line_path = line_spec_path("test.enum-line")
+    line = parse_line_spec(tree[line_path], path=line_path)
+    assert (
+        evaluate_line_spec_law(
+            line,
+            path=line_path,
+            procedure=accepted,
+            predecessor=None,
+            contracts=resolve,
+            enum_members=enums,
+        ).verdict
+        == "accepted"
+    )
+    validate_carried_line(
+        tree[line_path], path=line_path, procedure=accepted, contracts=resolve, enum_members=enums
+    )
+    bad_line = line.model_copy(update={"parameters": {"limit": bad_value}})
+    assert (
+        evaluate_line_spec_law(
+            bad_line,
+            path=line_path,
+            procedure=accepted,
+            predecessor=None,
+            contracts=resolve,
+            enum_members=enums,
+        ).verdict
+        == "refused"
+    )
+    with pytest.raises(ValueError, match="refuses"):
+        validate_carried_line(
+            render_line_spec(bad_line),
+            path=line_path,
+            procedure=accepted,
+            contracts=resolve,
+            enum_members=enums,
+        )
+    with pytest.raises(AuthoringLoweringError, match="refuses"):
+        author_line(
+            instance,
+            name="test.enum-bad",
+            procedure=spec.procedure,
+            parameters={"limit": bad_value},
+        )
+    bad_definition = artifact.definition.model_copy(
+        update={"parameter_defaults": {"limit": bad_value}}
+    )
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+
+    bad_artifact = artifact.model_copy(
+        update={
+            "definition": bad_definition,
+            "definition_digest": compute_procedure_definition_digest(bad_definition).tagged,
+        }
+    )
+    law = evaluate_procedure_law(
+        bad_artifact,
+        path=accepted.path,
+        predecessor=None,
+        contract_lookup=resolve,
+        enum_members=enums,
+    )
+    assert (
+        law.verdict == "refused"
+        and law.diagnostics[0].code == "cruxible.procedure.parameter_default_invalid"
+    )
+    # Runtime Line checks resolve enums at the same admitted coordinate too.
+    from cruxible_core.service.procedures.procedure_runs import (
+        LineRunRequest,
+        service_run_playbill_line,
+    )
+    from tests.test_procedures.test_b2_operations import Clock
+
+    result = service_run_playbill_line(
+        instance,
+        path_identity_digest=line.identity.name,
+        request=LineRunRequest(line=line.identity.name),
+        actor_context=actor(),
+        caller_rung=2,
+        daemon_clock=Clock(NOW),
+    )
+    assert result.status == "succeeded", result.terminal
+    assert result.result == {"limit": value}
+
+
+@pytest.mark.parametrize("value", ["1.0", "0.50"])
+def test_noncanonical_number_defaults_refuse_before_hashing(value):
+    with pytest.raises(ProcedureSpecError, match="noncanonical number"):
+        lower_procedure_spec(
+            _spec(
+                params={"limit": "number"},
+                output={"limit": "number"},
+                parameter_defaults={"limit": value},
+            )
+        )
+
+
+def test_number_defaults_and_parameters_have_one_successful_wire_encoding(tmp_path):
+    from cruxible_client.contracts.procedures.artifacts import (
+        parse_procedure,
+        procedure_artifact_digest,
+    )
+    from cruxible_client.contracts.shapes import canonical_number
+
+    spec = _spec(
+        params={"limit": "number"}, output={"limit": "number"}, parameter_defaults={"limit": 1}
+    )
+    same = _spec(
+        params={"limit": "number"},
+        output={"limit": "number"},
+        parameter_defaults={"limit": canonical_number("1.0")},
+    )
+    assert lower_procedure_spec(spec) == lower_procedure_spec(same)
+    instance = world(tmp_path)
+    content = author_procedure(instance, spec)
+    artifact = parse_procedure(content, path="procedures/test.limited.json")
+    assert artifact.definition.parameter_defaults == {"limit": 1}
+    assert procedure_artifact_digest(artifact) == procedure_artifact_digest(
+        parse_procedure(content, path="procedures/test.limited.json")
+    )
+    valid = service_run_playbill_procedure(
+        instance,
+        name=spec.procedure,
+        request=ProcedureRunRequest(input={}, parameters={"limit": 1}, evaluation_time=NOW),
+        actor_context=actor(),
+    )
+    assert valid.status == "succeeded" and valid.result == {"limit": 1}
+    refused = service_run_playbill_procedure(
+        instance,
+        name=spec.procedure,
+        request=ProcedureRunRequest(input={}, parameters={"limit": "1.0"}, evaluation_time=NOW),
+        actor_context=actor(),
+    )
+    assert refused.terminal.code == "contract_input_refused"
+    assert "noncanonical number" in refused.terminal.message
+
+
+def test_acceptance_refuses_nested_noncanonical_number_defaults(tmp_path):
+    from cruxible_client.contracts.procedures.artifacts import parameter_default_problem
+    from cruxible_client.contracts.shapes import contract_ref_for_identity
+    from tests.support.procedures import boundary_contract, contract_resolver
+
+    inner = boundary_contract("test.numbers", {"n": "number"})
+    params = boundary_contract("test.limited.params", {"limit": "test.numbers@1"}, inner)
+    definition = ProcedureDefinition.model_validate(lower_procedure_spec(_spec()).definition)
+    resolve = contract_resolver(inner, params)
+    assert resolve(contract_ref_for_identity(definition.parameter_contract.target)) == params
+    invalid = definition.model_copy(update={"parameter_defaults": {"limit": {"n": "0.50"}}})
+    valid = definition.model_copy(update={"parameter_defaults": {"limit": {"n": "0.5"}}})
+    assert "noncanonical number" in parameter_default_problem(invalid, resolve)
+    assert parameter_default_problem(valid, resolve) is None

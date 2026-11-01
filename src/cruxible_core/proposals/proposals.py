@@ -264,6 +264,7 @@ from cruxible_core.claims.closure import (
     judge_dependency_closure,
     update_dependency_index,
 )
+from cruxible_core.claims.enum_resolution import tree_enum_resolver
 from cruxible_core.claims.key_claims import (
     carried_key_claim,
     derive_key_claim_retirements,
@@ -2013,6 +2014,7 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
         ),
         contract_lookup=candidate_contract,
         capture_lookup=candidate_capture_contract,
+        enum_members=tree_enum_resolver(context.candidate_tree),
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -2227,6 +2229,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
         },
         capture_outputs=capture_outputs,
         contracts=_candidate_contract_resolver(context.candidate_tree),
+        enum_members=tree_enum_resolver(context.candidate_tree),
         by_name=True,
     )
     if law.verdict == "refused":

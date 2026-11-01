@@ -138,6 +138,7 @@ def terminal_procedure(
     *,
     templates: tuple[object, ...] | None = None,
     wall_clock_seconds: int | None = None,
+    max_items: int | None = None,
     document: bool = False,
 ) -> ProcedureArtifact:
     """The Source Procedure with its shaped row flowing into a rung-2 terminal.
@@ -166,11 +167,13 @@ def terminal_procedure(
         "nodes": fixtures.with_fan_out(nodes, templates),
         "terminal_capability": 2,
     }
+    caps = {}
     if wall_clock_seconds is not None:
-        wall_clock = CanonicalDuration(microseconds=wall_clock_seconds * 1_000_000)
-        update["hard_caps"] = procedure.definition.hard_caps.model_copy(
-            update={"max_wall_clock": wall_clock}
-        )
+        caps["max_wall_clock"] = CanonicalDuration(microseconds=wall_clock_seconds * 1_000_000)
+    if max_items is not None:
+        caps["max_items"] = max_items
+    if caps:
+        update["hard_caps"] = procedure.definition.hard_caps.model_copy(update=caps)
     definition = procedure.definition.model_copy(update=update)
     return procedure.model_copy(
         update={
@@ -194,6 +197,7 @@ def proposal_world(  # type: ignore[no-untyped-def]
     claim_type: ClaimType | None = None,
     requested_terminal_rung: int = 2,
     wall_clock_seconds: int | None = None,
+    max_items: int | None = None,
     document: bool = False,
 ):
     """Accept everything the loop needs; return the instance, owner, root, Line."""
@@ -204,7 +208,11 @@ def proposal_world(  # type: ignore[no-untyped-def]
         **({"contents": fixtures.canonical_bytes({"severity": "high"})} if document else {}),
     )
     with_terminal = terminal_procedure(
-        procedure, templates=templates, wall_clock_seconds=wall_clock_seconds, document=document
+        procedure,
+        templates=templates,
+        wall_clock_seconds=wall_clock_seconds,
+        max_items=max_items,
+        document=document,
     )
     line = _line(instance, with_terminal, policy).model_copy(
         update={"max_authority": RUNG_AUTHORITY[requested_terminal_rung]}

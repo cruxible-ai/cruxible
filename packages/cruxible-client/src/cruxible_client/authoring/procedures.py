@@ -132,7 +132,12 @@ def procedure_record_constructor(
     found = by_identity.get(pin.target)
     if found is None:
         raise ValueError(f"the Procedure's {direction} Contract {pin.target.qualified} is unread")
-    return RecordConstructor(contract_schema_view(found, lambda ref: by_identity.get(ref.identity)))
+    return RecordConstructor(
+        contract_schema_view(found, lambda ref: by_identity.get(ref.identity)),
+        _omittable_fields=frozenset(artifact.definition.parameter_defaults)
+        if direction == "params"
+        else frozenset(),
+    )
 
 
 # -- typed references and predicates ------------------------------------------------------

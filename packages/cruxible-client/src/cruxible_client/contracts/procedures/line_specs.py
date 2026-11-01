@@ -58,7 +58,7 @@ from cruxible_client.contracts.provider_operations import (
 )
 from cruxible_client.contracts.providers import AcceptedProvider, ProviderV2
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.shapes import Contract, ContractRef
+from cruxible_client.contracts.shapes import Contract, ContractRef, EnumResolver
 
 _LINE_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 
@@ -480,6 +480,7 @@ def evaluate_line_spec_law(
     providers: Mapping[str, AcceptedProvider] | None = None,
     capture_outputs: frozenset[str] | None = None,
     contracts: Callable[[ContractRef], Contract | None] | None = None,
+    enum_members: EnumResolver | None = None,
     by_name: bool = True,
 ) -> LineSpecLawResult:
     """The Line law.
@@ -526,7 +527,9 @@ def evaluate_line_spec_law(
     if contracts is not None:
         try:
             validate_line_parameters(
-                AcceptedProcedureContractValidator(contracts), definition, line.parameters
+                AcceptedProcedureContractValidator(contracts, enum_members),
+                definition,
+                line.parameters,
             )
         except ProcedureContractValidationError as exc:
             return _refusal("cruxible.line.parameters_invalid", str(exc), path=path)
