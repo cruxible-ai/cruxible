@@ -74,11 +74,11 @@ OBJECT_TYPE = v9(
     ),
 )
 KEY_TYPE = v7(
+    value_type={"type": "string"},
     identity={"kind": "ClaimType", "name": KEY},
     predicate=KEY,
     allowed_subject_kinds=("project.release",),
     member_descriptions=(),
-    literal_schema={"type": "string"},
 )
 
 
