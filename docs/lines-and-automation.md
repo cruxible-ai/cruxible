@@ -496,3 +496,56 @@ See [Kits](kits.md#automation-that-comes-with-a-kit).
 - The [CLI reference](cli-reference.md#line) for every `line`, `procedure`
   and `inbox` option, and the [Python SDK](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md)
   for the `Sequence` builder over the typed `ProcedureSpec`.
+
+## Declare Claims as templates
+
+A `claims` terminal declares the Subject key and the ClaimTypes it may write.
+The Line's Mandate decides whether the change is proposed or settled. Source
+records carry values; they cannot supply Claim IDs, revisions, retirements or
+attestations.
+
+```yaml
+- id: write
+  for_each: {$ref: step, step: entries, path: [records]}
+  subject:
+    kind: security.vulnerability
+    key:
+      cve_id: {$ref: item, path: [key, cve_id]}
+    create: never
+  claims:
+    - type: security.vulnerability.kev_listed
+      value: true
+      role: observation
+    - type: security.vulnerability.kev_due_date
+      value: {$ref: item, path: [fields, due_date]}
+      role: observation
+```
+
+Each ClaimType declares its `value` with the Contract field grammar. Its
+`precedence.roles` orders roles from highest to lowest;
+`precedence.revisable_by_procedures` lists the roles Procedures may replace.
+A mapping's optional `replaces` can only narrow that policy. An identical
+statement on identical source content changes nothing. A one-valued slot
+revises its one eligible holder; several eligible holders report
+`slot_contested`. Protected holders report `held_by_precedence`. A many-valued
+slot adds values without retiring the others.
+
+Invalid mapped fields are excluded before any proposal and recorded as typed
+`extract_refused` diagnostics in the run and Line inbox. Positive values may
+write over incomplete input. A ClaimType marked `negative: true` instead uses
+its declared `unknown_member`, or skips the write and reports
+`incomplete_source`. An incomplete input never retires a Claim or revises it to a negative.
+Inbox Contract fields support the same `negative` and `unknown_member` rule.
+Declaring `may_truncate: true` on a Procedure slot makes that call's output
+incomplete.
+
+A written value retains a `claim-evidence-v2` receipt, including the Capture,
+extract specification, extractor version, record and field location, and
+transforms. Claim derivations use `role: derivation` and `inputs` from exact
+Claim reads in that row's dependency closure; their receipts pin the versions
+read. Derived and provider-measured values remain propose-only until explicit
+Mandate basis scopes are available. Cruxible does not infer attestations.
+
+Absence handling (`when_absent`, `covers`, `enumeration` and `mirror`) is
+refused until B4b supplies its coverage, completeness and witness rails. An
+omitted source record never produces a negative Claim.

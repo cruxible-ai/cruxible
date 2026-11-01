@@ -1,0 +1,9 @@
+{
+  "catalogVersion": "2026.10.29",
+  "dateReleased": "2026-10-29T12:00:00Z",
+  "count": 2,
+  "vulnerabilities": [
+    {"cveID": "CVE-2026-0001", "dateAdded": "2026-10-01", "dueDate": "2026-10-22", "knownRansomwareCampaignUse": "Maybe"},
+    {"cveID": "CVE-2026-0002", "dateAdded": "2026-10-02", "dueDate": "2026-10-23", "knownRansomwareCampaignUse": "Unknown"}
+  ]
+}
