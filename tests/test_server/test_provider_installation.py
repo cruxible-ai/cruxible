@@ -10,9 +10,7 @@ import pytest
 
 from cruxible_client.contracts.procedures.authored import (
     CallStep,
-    ExtractStep,
     ProjectStep,
-    ReadStep,
 )
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.cli.provider_wheels import install_provider_wheel
@@ -558,6 +556,7 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
         reviewer,
         spec=procedure_spec_data(
             procedure="test.installed-web-fetch",
+            reference_text=True,
             input={},
             output={"text": "string"},
             slots={
@@ -574,13 +573,13 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
                     slot="fetch",
                     input={"url": url, "expected_format": "json"},
                 ),
-                ExtractStep(
-                    extract="bundle",
-                    capture="$observation.capture",
-                    records="/",
-                    row="test.web-bundle@1",
-                    fields={"text": {"at": "derived/text"}},
-                ),
+                {
+                    "extract": "bundle",
+                    "capture": "$observation.capture",
+                    "records": "/",
+                    "row": "test.web-bundle@1",
+                    "fields": {"text": {"at": "derived/text"}},
+                },
                 ProjectStep(project="result", fields={"text": "$bundle.rows.0.text"}),
             ],
             returns="result",
@@ -896,7 +895,7 @@ def _author_workspace_line(http, instance_id, reviewer, *, build, name):
             hard_caps=procedure_limits(provider_calls=1),
         ),
         line=line,
-        bindings=ReadStep(read=f"{build}#workspace.file"),
+        bindings={"read": f"{build}#workspace.file"},
         parameters={},
         name=name,
     )
