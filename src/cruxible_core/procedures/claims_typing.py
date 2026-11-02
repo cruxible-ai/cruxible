@@ -25,6 +25,8 @@ from cruxible_client.contracts.procedures.nodes import (
 )
 from cruxible_client.contracts.shapes import (
     BoolType,
+    DateTimeType,
+    DateType,
     EnumType,
     FieldInvalid,
     FieldResultType,
@@ -41,17 +43,36 @@ from cruxible_client.contracts.shapes import (
     check_value,
     claim_has_line_break,
     parse_type,
+    render_type,
 )
 from cruxible_client.contracts.subject_kinds import key_predicate
 
 
 class ClaimsTypingRefused(ValueError):
-    code = "cruxible.procedure.claims_type_invalid"
+    """One Claims template refused at acceptance.
 
-    def __init__(self, message: str, *, code: str | None = None) -> None:
+    ``node_id`` names the claims step and ``element`` the template inside it
+    (``claims[0].effective_from``, ``subject.key.cve_id``) when the refusal is
+    about one, so an authoring surface can address the authored step.
+    """
+
+    code = "cruxible.procedure.claims_type_invalid"
+    node_id: str | None = None
+    element: str | None = None
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        node_id: str | None = None,
+        element: str | None = None,
+    ) -> None:
         super().__init__(message)
         if code is not None:
             self.code = code
+        self.node_id = node_id
+        self.element = element
 
 
 def absence_enumeration(node: ClaimsNode, aliases: Mapping[str | None, object]) -> ExtractNode:
@@ -272,84 +293,120 @@ def validate_claims_templates(
             return IntType(min=value, max=value)
         return None
 
-    def check(value: object, expected: FieldType, each: object, label: str) -> None:
+    def check(
+        value: object, expected: FieldType, each: object, label: str, slot: str, element: str
+    ) -> None:
+        """Type one template against its slot: ``slot`` names it as the author reads it."""
+
+        def refused(message: str) -> ClaimsTypingRefused:
+            return ClaimsTypingRefused(f"{label}: {message}", element=element)
+
         if isinstance(value, str) and value.startswith(("$item", "$steps.", "$input", "$params.")):
             actual = field_type(value, each)
             if actual is None:
-                raise ClaimsTypingRefused(
-                    f"{label}: value type is unknown; declare an explicit typed shape cast"
-                )
+                raise refused("value type is unknown; declare an explicit typed shape cast")
             if not assignable(normalized(actual), normalized(expected)):
-                raise ClaimsTypingRefused(f"{label}: value is not assignable to ClaimType.value")
+                hint = (
+                    "; read the date into a datetime field with "
+                    "parse: date, project: utc_start_of_day"
+                    if isinstance(actual, DateType) and isinstance(expected, DateTimeType)
+                    else ""
+                )
+                raise refused(
+                    f"{value} is {render_type(actual)}, which is not assignable to "
+                    f"{slot} ({render_type(expected)}){hint}"
+                )
             return
         if isinstance(expected, SubjectType) and isinstance(value, dict):
             if value.get("kind") not in expected.subject_kinds:
-                raise ClaimsTypingRefused(f"{label}: Subject kind does not match")
+                raise refused("Subject kind does not match")
             return
         if claim_has_line_break(value):
-            raise ClaimsTypingRefused(f"{label}: multiline_string; cite a Document section")
+            raise refused("multiline_string; cite a Document section")
         if isinstance(check_value(value, expected, at=label), FieldInvalid):
-            raise ClaimsTypingRefused(f"{label}: literal does not fit ClaimType.value")
+            raise refused(f"literal does not fit {slot} ({render_type(expected)})")
 
     for node in definition.nodes:
         if not isinstance(node, ClaimsNode):
             continue
-        if node.expect is not None:
-            absence_enumeration(node, aliases)
-        kind = source("SubjectKind", node.subject.kind)
-        parts = [key_predicate(kind, name) for name in node.subject.key]
-        if None in parts or set(parts) != set(kind.keys) or len(parts) != len(kind.keys):
-            raise ClaimsTypingRefused(
-                "subject.key must name every SubjectKind key part exactly once"
-            )
-        for name, value in node.subject.key.items():
-            predicate = key_predicate(kind, name)
-            assert predicate is not None
-            ct = source("ClaimType", predicate)
-            check(value, ct.value, node.for_each, f"subject.key.{name}")
-        for mapping in node.claims:
-            ct = source("ClaimType", mapping.claim_type.target.name)
-            if not isinstance(ct, ClaimType):
-                raise ClaimsTypingRefused("claims requires a ClaimType declaring value")
-            if node.subject.kind not in ct.allowed_subject_kinds:
-                raise ClaimsTypingRefused("ClaimType does not permit this SubjectKind")
-            if mapping.when_absent == "inverse" and ct.inverse is None:
-                raise ClaimsTypingRefused(
-                    "claims_inverse_missing: when_absent inverse requires "
-                    "a declared ClaimType inverse"
-                )
-            if mapping.when_absent == "inverse":
-                from cruxible_core.procedures.execution import _mentions_item_reference
+        try:
+            _validate_claims_node(node, aliases, source, check)
+        except ClaimsTypingRefused as exc:
+            if exc.node_id is None:
+                exc.node_id = node.node_id
+            raise
 
-                if _mentions_item_reference(mapping.value):
-                    raise ClaimsTypingRefused(
-                        "claims_inverse_item_value: inverse units require "
-                        "an item-independent value template",
-                        code="cruxible.procedure.claims_inverse_item_value",
-                    )
-            role = mapping.role or ct.default_role
-            if role not in ct.permitted_roles:
-                raise ClaimsTypingRefused("claims_role_forbidden: state a permitted role")
-            if mapping.replaces is not None and not set(mapping.replaces).issubset(
-                ct.permitted_roles
-            ):
+
+def _validate_claims_node(
+    node: ClaimsNode,
+    aliases: Mapping[str | None, object],
+    source: Callable[[str, str], Any],
+    check: Callable[[object, FieldType, object, str, str, str], None],
+) -> None:
+    """One claims step's subject key and Claim templates, against their slots."""
+
+    if node.expect is not None:
+        absence_enumeration(node, aliases)
+    kind = source("SubjectKind", node.subject.kind)
+    parts = [key_predicate(kind, name) for name in node.subject.key]
+    if None in parts or set(parts) != set(kind.keys) or len(parts) != len(kind.keys):
+        raise ClaimsTypingRefused("subject.key must name every SubjectKind key part exactly once")
+    for name, value in node.subject.key.items():
+        predicate = key_predicate(kind, name)
+        assert predicate is not None
+        ct = source("ClaimType", predicate)
+        element = f"subject.key.{name}"
+        check(value, ct.value, node.for_each, element, f"key ClaimType {predicate}", element)
+    for position, mapping in enumerate(node.claims):
+        at = f"claims[{position}]"
+        ct = source("ClaimType", mapping.claim_type.target.name)
+        if not isinstance(ct, ClaimType):
+            raise ClaimsTypingRefused("claims requires a ClaimType declaring value")
+        if node.subject.kind not in ct.allowed_subject_kinds:
+            raise ClaimsTypingRefused("ClaimType does not permit this SubjectKind")
+        if mapping.when_absent == "inverse" and ct.inverse is None:
+            raise ClaimsTypingRefused(
+                "claims_inverse_missing: when_absent inverse requires a declared ClaimType inverse"
+            )
+        if mapping.when_absent == "inverse":
+            from cruxible_core.procedures.execution import _mentions_item_reference
+
+            if _mentions_item_reference(mapping.value):
                 raise ClaimsTypingRefused(
-                    "claims_replaces_forbidden: replaces names a role the ClaimType does not permit"
+                    "claims_inverse_item_value: inverse units require "
+                    "an item-independent value template",
+                    code="cruxible.procedure.claims_inverse_item_value",
                 )
-            ct.precedence.replacements(role, mapping.replaces)
-            check(mapping.value, ct.value, node.for_each, mapping.claim_type.target.name)
-            for name, template in (
-                ("qualifier", mapping.qualifier),
-                ("effective_from", mapping.effective_from),
-                ("effective_until", mapping.effective_until),
-            ):
-                if template is not None:
-                    check(
-                        template,
-                        parse_type("string" if name == "qualifier" else "datetime"),
-                        node.for_each,
-                        name,
-                    )
+        role = mapping.role or ct.default_role
+        if role not in ct.permitted_roles:
+            raise ClaimsTypingRefused("claims_role_forbidden: state a permitted role")
+        if mapping.replaces is not None and not set(mapping.replaces).issubset(ct.permitted_roles):
+            raise ClaimsTypingRefused(
+                "claims_replaces_forbidden: replaces names a role the ClaimType does not permit"
+            )
+        ct.precedence.replacements(role, mapping.replaces)
+        check(
+            mapping.value,
+            ct.value,
+            node.for_each,
+            f"{at} {ct.predicate}",
+            f"the value of ClaimType {ct.predicate}",
+            f"{at}.value",
+        )
+        for name, template in (
+            ("qualifier", mapping.qualifier),
+            ("effective_from", mapping.effective_from),
+            ("effective_until", mapping.effective_until),
+        ):
+            if template is not None:
+                check(
+                    template,
+                    parse_type("string" if name == "qualifier" else "datetime"),
+                    node.for_each,
+                    f"{at} {ct.predicate} {name}",
+                    f"the Claim's {name}",
+                    f"{at}.{name}",
+                )
 
 
 def tree_claims_lookup(tree: Any) -> Callable[[ArtifactIdentity], Any]:

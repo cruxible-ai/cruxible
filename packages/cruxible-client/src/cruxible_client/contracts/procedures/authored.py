@@ -1861,6 +1861,15 @@ def _output_alias(step: Step, index: int) -> str:
     return _step_id(step, index)
 
 
+def authored_step_path(spec: ProcedureSpec, node_id: str | None) -> str:
+    """The authored ``$.steps[i]`` whose lowered node is ``node_id``; else ``$.steps``."""
+
+    for index, step in enumerate(spec.steps):
+        if node_id is not None and _step_id(step, index) == node_id:
+            return f"$.steps[{index}]"
+    return "$.steps"
+
+
 def _step_id(step: Step, index: int) -> str:
     if step.id is not None:
         return step.id
@@ -2038,6 +2047,7 @@ __all__ = [
     "TransformSpec",
     "TransformStep",
     "UnionSpec",
+    "authored_step_path",
     "generated_contract_name",
     "graph_template",
     "lower_procedure_spec",
