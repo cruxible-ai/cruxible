@@ -19,6 +19,9 @@ def delivery_definition(
     templates=None,
     create=False,
     fixed_subject=False,
+    absence=None,
+    many=False,
+    only_keys=None,
 ):
     source = procedure.definition.nodes[0]
     row = boundary_contract("security.delivery-row", {"severity": "string{max_len: 256}"})
@@ -32,7 +35,7 @@ def delivery_definition(
         for predicate in predicates
     ]
     subject_key = {"slug": "$item.key.slug" if records != "/" and not fixed_subject else subject_id}
-    if fixed_subject:
+    if fixed_subject and not many:
         mappings = [{**mapping, "qualifier": "$item.key.slug"} for mapping in mappings]
     if templates is not None:
         if not isinstance(templates, (list, tuple)):
@@ -122,6 +125,7 @@ def delivery_definition(
                     if "$item.fields.severity" in subject_key.values()
                     else {}
                 ),
+                only_keys=only_keys,
                 fields={"severity": {"at": "severity"}},
                 as_="entries",
                 next=node_id,
@@ -138,7 +142,10 @@ def delivery_definition(
                     },
                     **({"within": list(within)} if within else {}),
                 },
-                claims=mappings,
+                claims=[{**mapping, "when_absent": absence} for mapping in mappings]
+                if absence
+                else mappings,
+                **({"covers": list(within), "enumeration": "$steps.entries"} if absence else {}),
             ),
         ),
     )

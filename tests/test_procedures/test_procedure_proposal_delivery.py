@@ -2332,20 +2332,21 @@ def _live_nones(instance: PlaybillInstance) -> dict[str, Any]:
     }
 
 
-def test_inverse_absence_is_explicitly_deferred_to_b4b(
+def test_inverse_absence_is_a_typed_template_policy(
     tmp_path: Path,
 ) -> None:
     from cruxible_client.contracts.artifacts import ArtifactNameRef
     from cruxible_client.contracts.procedures.claims import ClaimTemplate
 
-    with pytest.raises(ValueError, match="B4b"):
-        ClaimTemplate.model_validate(
-            {
-                "type": ArtifactNameRef(target=ArtifactIdentity(kind="ClaimType", name=PREDICATE)),
-                "value": "high",
-                "when_absent": "inverse",
-            }
-        )
+    mapping = ClaimTemplate.model_validate(
+        {
+            "type": ArtifactNameRef(target=ArtifactIdentity(kind="ClaimType", name=PREDICATE)),
+            "value": "high",
+            "when_absent": "inverse",
+        }
+    )
+
+    assert mapping.when_absent == "inverse"
 
 
 def test_an_unchanged_terminal_does_not_record_for_a_claim_retired_after_prepare(

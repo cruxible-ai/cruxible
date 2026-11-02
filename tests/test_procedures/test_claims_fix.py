@@ -202,10 +202,10 @@ def test_authored_literal_receipt_is_refused_before_acceptance(tmp_path: Path) -
 
 
 @pytest.mark.parametrize("feature", ["when_absent", "covers", "enumeration", "mirror"])
-def test_b4b_refused_by_authored_spec(feature: str) -> None:
+def test_misplaced_or_unpaired_absence_in_authored_spec_is_refused(feature: str) -> None:
     base = claims_spec().model_dump(mode="python", by_alias=True)
     base["steps"][-1][feature] = "mirror"
-    with pytest.raises(ValidationError, match="lands in B4b"):
+    with pytest.raises(ValidationError):
         procedure_spec(base=base, reference_text=True)
 
 

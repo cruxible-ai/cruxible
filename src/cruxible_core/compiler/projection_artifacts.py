@@ -29,6 +29,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     pretty_canonical_bytes,
 )
+from cruxible_client.contracts.claim_evidence import AbsenceWitness
 from cruxible_client.contracts.claim_types import (
     ClaimTypeFormatError,
     claim_type_digest,
@@ -434,6 +435,35 @@ def _normalized_source_mapping(mapping: SourceMapping) -> _NormalizedProjectionV
     return normalize() if weight > 4096 else _SOURCE_MAPPINGS.derive(key, normalize)
 
 
+def _normalized_absence_witness(witness: AbsenceWitness) -> _NormalizedProjectionValue:
+    """One exact shared completeness proof per request, not per affected Claim."""
+
+    def normalize() -> _NormalizedProjectionValue:
+        return normalized_projection_value(witness.model_dump(mode="json"))
+
+    if type(witness) is not AbsenceWitness:
+        return normalize()
+    at = witness.covers_coordinate
+    key = (
+        "projection.absence_witness",
+        witness.capture,
+        witness.extract_spec,
+        witness.extractor,
+        witness.logical_source,
+        witness.complete_when,
+        witness.enumerated_key_digest,
+        at.git_oid,
+        at.semantic_root,
+        at.generation_root,
+        at.compiler_digest,
+    )
+    try:
+        hash(key)
+    except TypeError:
+        return normalize()
+    return request_derive(key, normalize)
+
+
 def _claim_static_facts(
     claim: ClaimArtifact,
     *,
@@ -464,6 +494,13 @@ def _claim_static_facts(
     mappings = [_normalized_source_mapping(m) for m in claim.backing.source_mappings]
     backing = claim.backing.model_dump(mode="json")
     backing["source_mappings"] = mappings
+    receipt = claim.backing.procedure_evidence
+    if receipt is not None and receipt.absence is not None:
+        backing["procedure_evidence"]["absence"] = _normalized_absence_witness(receipt.absence)
+    retirement = None if claim.retirement is None else claim.retirement.model_dump(mode="json")
+    if claim.retirement is not None and claim.retirement.absence is not None:
+        assert retirement is not None
+        retirement["absence"] = _normalized_absence_witness(claim.retirement.absence)
     facts: list[ProjectionFact] = []
     facts.extend(
         (
@@ -502,11 +539,7 @@ def _claim_static_facts(
                 value={
                     "lifecycle": claim.lifecycle.model_dump(mode="json"),
                     "pins": [_normalized_pin(pin) for pin in claim.pins],
-                    **(
-                        {"retirement": claim.retirement.model_dump(mode="json")}
-                        if claim.retirement is not None
-                        else {}
-                    ),
+                    **({"retirement": retirement} if claim.retirement is not None else {}),
                 },
             ),
         )

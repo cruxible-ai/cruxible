@@ -293,7 +293,7 @@ def test_an_instance_with_no_scheduled_action_names_a_trigger_to_author(tmp_path
     assert status.compiler.detail["running_compiler_digest"] == CURRENT_COMPILER.rule_digest
     assert (
         status.compiler.detail["running_compiler_revision"]
-        == "claims-lineage-completeness-rulings-v1"
+        == "claims-absence-witness-completeness-v1"
     )
     # With its seeded Triggers retired, the instance schedules no internal action.
     assert status.triggers.state == "unscheduled"

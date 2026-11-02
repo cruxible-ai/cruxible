@@ -51,6 +51,7 @@ from cruxible_client.contracts.authoring.models import (
     ChangeSetClaimIdentity,
     ClaimAuthoringPayload,
     ClaimDependencyDrafts,
+    ClaimRetirementMember,
     ExistingCaptureCitationSource,
     SelfSourceBody,
     SubjectCreationAuthoringPayload,
@@ -129,6 +130,7 @@ from cruxible_core.procedures.claims_changes import (
     CoreClaimChange,
     CoreClaimsChange,
     CoreReobservationChange,
+    CoreRetirementChange,
     CoreSubjectChange,
 )
 from cruxible_core.procedures.egress import (
@@ -1297,10 +1299,11 @@ class ProposalTerminalEgressSink:
             if not isinstance(change, CoreReobservationChange):
                 continue
             receipt = request.claims_evidence[child.item_key]
-            if receipt.value.basis != "extracted":
+            if receipt.value.basis != "extracted" and receipt.absence is None:
                 raise ProposalDeliveryRefused(
                     "proposal_item_invalid", "Re-observation requires an extraction receipt"
                 )
+            assert receipt.value.basis == "extracted" or receipt.value.basis == "capture"
             capture = receipt.value.capture_digest
             if evidence[child.item_key] != capture:
                 raise ProposalDeliveryRefused(
@@ -1446,9 +1449,20 @@ class ProposalTerminalEgressSink:
             },
             base_tree=self.instance.immutable_tree_at(request.accepted_coordinate.git_oid),
         )
+        retirements = {
+            item.item_key: change
+            for item, change in zip(request.items, items, strict=True)
+            if isinstance(change, CoreRetirementChange)
+        }
+        retirement_members = tuple(
+            ClaimRetirementMember(
+                retires=change.claim_id, reason="superseded", absence=change.witness
+            )
+            for change in retirements.values()
+        )
         all_members: tuple[AuthoringChangeSetMember, ...] = tuple(
             sorted(
-                (*ordered, *subject_members),
+                (*ordered, *subject_members, *retirement_members),
                 key=lambda member: authoring_member_identity(member).encode("utf-8"),
             )
         )
@@ -1501,6 +1515,7 @@ class ProposalTerminalEgressSink:
             ) from exc
         target_paths = tuple(path for path, _content in lowered.changed_members)
         item_paths = {item_key: claim_path(claim_id) for item_key, claim_id in claim_ids.items()}
+        item_paths.update({key: claim_path(change.claim_id) for key, change in retirements.items()})
         unchanged: dict[str, UnchangedChildReceiptAny] = dict(
             _unchanged_children(
                 self.instance,
@@ -1621,7 +1636,21 @@ class ProposalTerminalEgressSink:
                 delegation=self.delegation,
             )
             mandate_digest: str | None = selection.digest
-            outside_scope = selection.outside_scope_claim_types
+            destructive_absence = {
+                change.claim_type
+                if isinstance(change, CoreRetirementChange)
+                else change.statement.predicate
+                for item, change in zip(request.items, items, strict=True)
+                if isinstance(change, CoreRetirementChange)
+                or (
+                    isinstance(change, CoreClaimChange)
+                    and (absence_receipt := request.claims_evidence.get(item.item_key)) is not None
+                    and absence_receipt.absence is not None
+                )
+            }
+            outside_scope = tuple(
+                sorted(set(selection.outside_scope_claim_types) | destructive_absence)
+            )
         else:
             mandate_digest = select_procedure_mandate(
                 request,

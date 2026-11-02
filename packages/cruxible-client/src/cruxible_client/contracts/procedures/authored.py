@@ -43,7 +43,6 @@ from typing_extensions import TypeAliasType
 
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.captures import CanonicalDuration
-from cruxible_client.contracts.procedures.claims import refuse_absence
 from cruxible_client.contracts.procedures.extract import CompleteWhen, ExtractField
 from cruxible_client.contracts.procedures.measurements import ProcedureMeasurementDeclaration
 from cruxible_client.contracts.procedures.models import (
@@ -511,8 +510,10 @@ class ClaimTemplateSpec(_Model):
     ) = None
     inputs: tuple[Ref, ...] = ()
     rationale: str = "Claim from declared Procedure template."
+    when_absent: Literal["keep", "surface", "mirror", "inverse"] = Field(
+        default="surface", exclude_if=lambda value: value == "surface"
+    )
 
-    _absence = model_validator(mode="before")(refuse_absence)
     _when = field_validator("when", mode="before")(_record_predicate)
 
     _rationale_line = field_validator("rationale")(claim_rationale)
@@ -523,9 +524,20 @@ class ClaimsStep(StepOptions):
     for_each: Ref
     where: Predicate | None = None
     subject: ClaimsSubjectSpec
+    covers: Ref | None = None
+    enumeration: Ref | None = None
 
-    _absence = model_validator(mode="before")(refuse_absence)
     _where = field_validator("where", mode="before")(_record_predicate)
+
+    @model_validator(mode="after")
+    def _absence_rails(self) -> ClaimsStep:
+        if (self.covers is None) != (self.enumeration is None):
+            raise ValueError("claims_absence_invalid: covers and enumeration are required together")
+        if self.covers is None and any(
+            "when_absent" in item.model_fields_set for item in self.claims
+        ):
+            raise ValueError("claims_absence_invalid: when_absent requires covers and enumeration")
+        return self
 
 
 class EmitStep(StepOptions):
@@ -1520,6 +1532,14 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         elif isinstance(step, ClaimsStep):
             node.update(
                 kind="claims",
+                **(
+                    {
+                        "covers": template(step.covers, path + ".covers"),
+                        "enumeration": template(step.enumeration, path + ".enumeration"),
+                    }
+                    if step.covers is not None
+                    else {}
+                ),
                 for_each=template(step.for_each, path + ".for_each"),
                 subject={
                     "kind": step.subject.kind,
@@ -1550,6 +1570,11 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                         "replaces": None if claim.replaces is None else list(claim.replaces),
                         "inputs": [template(ref, path + ".claims.inputs") for ref in claim.inputs],
                         "rationale": claim.rationale,
+                        **(
+                            {"when_absent": claim.when_absent}
+                            if "when_absent" in claim.model_fields_set
+                            else {}
+                        ),
                     }
                     for claim in step.claims
                 ],

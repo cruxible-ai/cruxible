@@ -271,6 +271,11 @@ def validate_claims_templates(
                 raise ClaimsTypingRefused("claims requires a ClaimType declaring value")
             if node.subject.kind not in ct.allowed_subject_kinds:
                 raise ClaimsTypingRefused("ClaimType does not permit this SubjectKind")
+            if mapping.when_absent == "inverse" and ct.inverse is None:
+                raise ClaimsTypingRefused(
+                    "claims_inverse_missing: when_absent inverse requires "
+                    "a declared ClaimType inverse"
+                )
             role = mapping.role or ct.default_role
             if role not in ct.permitted_roles:
                 raise ClaimsTypingRefused("claims_role_forbidden: state a permitted role")

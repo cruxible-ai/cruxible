@@ -875,11 +875,15 @@ class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidence]):
         self,
         instance: PlaybillInstance,
         coordinate: AcceptedProjectionCoordinate,
-        records: RetainedRecordReader | None = None,
+        records: RetainedRecordReader | Callable[[], RetainedRecordReader] | None = None,
     ):
         self.instance = instance
         self.at = AcceptedCoordinate.from_internal(coordinate)
-        self._records = records if records is not None else instance.retained_record_reader()
+        # Projections defer opening their shared record reader until a selected
+        # historical fact needs it. Resolve that factory here, rather than
+        # passing it to history as the two-argument byte loader.
+        selected = records() if callable(records) else records
+        self._records = selected if selected is not None else instance.retained_record_reader()
         # Prefetched answers: parsed evidence, or None for a path with no law record.
         self._prefetched: dict[str, ClaimLawEvidence | None] = {}
 
@@ -971,7 +975,7 @@ def _claim_read_history_index(
     instance: ClaimReadSourceProtocol,
     *,
     coordinate: AcceptedProjectionCoordinate,
-    records: RetainedRecordReader | None = None,
+    records: RetainedRecordReader | Callable[[], RetainedRecordReader] | None = None,
 ) -> ClaimReadHistoryIndex:
     """Live reads use retained locators; unprojected replay folds its supplied source."""
     if isinstance(instance, PlaybillInstance):

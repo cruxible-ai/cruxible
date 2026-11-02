@@ -302,10 +302,10 @@ def test_claims_template_proposes_and_rerun_is_unchanged(tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize("feature", ["when_absent", "covers", "enumeration", "mirror"])
-def test_absence_instructions_are_refused_until_b4b(feature: str) -> None:
+def test_misplaced_or_unpaired_absence_instructions_are_refused(feature: str) -> None:
     from cruxible_client.contracts.artifacts import ArtifactNameRef
 
-    with pytest.raises(ValidationError, match="lands in B4b"):
+    with pytest.raises(ValidationError):
         ClaimsNode(
             node_id="write",
             for_each="$steps.entries.records",

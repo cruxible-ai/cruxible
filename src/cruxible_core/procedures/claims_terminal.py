@@ -126,6 +126,7 @@ def expand_claims(
     values: list[CanonicalValue] = []
     tokens: list[frozenset[DependencyToken]] = []
     created: set[bytes] = set()
+    observed: set[tuple[str, str, bytes, bytes]] = set()
     nodes = (
         {}
         if executor.plan is None
@@ -275,6 +276,7 @@ def expand_claims(
             # An invalid mapped field is reported even when present(...) is false.
             raw = resolve(mapping.value, row)
             if isinstance(raw, dict) and raw.get("tag") == "invalid":
+                state.completeness.note(node.node_id, "invalid_field")
                 problem = raw.get("problem", {})
                 report(
                     "extract_refused",
@@ -419,14 +421,40 @@ def expand_claims(
                 report("incomplete_source", target, input=",".join(incomplete) or "control lineage")
                 # No destructive replacement over incomplete input, including a downgrade.
                 if ct.incomplete_fallback is None or held:
+                    state.completeness.skipped += 1
                     continue
+                state.completeness.downgraded += 1
                 value = ct.incomplete_fallback
                 obj = {"kind": "literal", "value": value}
             if obj["kind"] == "literal":
                 obj["value"] = canonicalize_literal(obj["value"], effective_canonical_form(ct))
+            if node.covers is not None and ct.cardinality == "many" and subject is not None:
+                from cruxible_core.procedures.claims_absence import object_unit_key
+
+                observed.add(
+                    (
+                        subject.artifact_path,
+                        ct.predicate,
+                        canonical_bytes(qualifier),
+                        object_unit_key(obj, ct, context),
+                    )
+                )
             blocked = [c for c in held if c.statement.role not in replaces]
             same_blocked = [c for c in blocked if c.statement.object.model_dump(mode="json") == obj]
-            if blocked and (ct.cardinality == "one" or same_blocked):
+            if ct.inverse is not None and ct.cardinality == "many":
+                from cruxible_core.procedures.claims_absence import object_unit_key
+
+                incoming_unit = object_unit_key(obj, ct, context)
+                inverse_blocked = [
+                    c
+                    for c in blocked
+                    if c.statement.object.kind == "none"
+                    and object_unit_key(c.statement.object.model_dump(mode="json"), ct, context)
+                    == incoming_unit
+                ]
+            else:
+                inverse_blocked = []
+            if blocked and (ct.cardinality == "one" or same_blocked or inverse_blocked):
                 if same_blocked:
                     diagnostics.same += 1
                 else:
@@ -459,6 +487,23 @@ def expand_claims(
                 if len(refresh) == 1
                 else None
             )
+            if revises is None and ct.inverse is not None:
+                from cruxible_client.contracts.claims import NoneClaimObject
+
+                inverse_holders = [
+                    c
+                    for c in eligible
+                    if isinstance(c.statement.object, NoneClaimObject)
+                    and (
+                        ct.inverse.key.kind == "slot"
+                        or (
+                            object_unit_key(c.statement.object.model_dump(mode="json"), ct, context)
+                            == object_unit_key(obj, ct, context)
+                        )
+                    )
+                ]
+                if len(inverse_holders) == 1:
+                    revises = inverse_holders[0].identity.name
             item_templates = [
                 mapping.value,
                 mapping.qualifier,
@@ -747,6 +792,24 @@ def expand_claims(
             )
             tokens.append(own)
             evidence.append(receipt)
+    if node.covers is not None:
+        from cruxible_core.procedures.claims_absence import append_absence
+
+        append_absence(
+            node,
+            executor=executor,
+            admission=admission,
+            state=state,
+            context=context,
+            resolve=resolve,
+            lineage=lineage,
+            values=values,
+            tokens=tokens,
+            evidence=evidence,
+            changes=changes,
+            diagnostics=diagnostics,
+            observed=observed,
+        )
     return ExpandedClaims(values, tuple(tokens), diagnostics, tuple(evidence), tuple(changes))
 
 

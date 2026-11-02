@@ -567,9 +567,38 @@ source extraction receipts. Derivations over Claim reads also bind exact
 values remain propose-only until explicit Mandate basis scopes are available.
 Cruxible does not infer attestations.
 
-Absence handling (`when_absent`, `covers`, `enumeration` and `mirror`) is
-refused until B4b supplies its coverage, completeness and witness rails. An
-omitted source record never produces a negative Claim.
+A Claims step can compare a complete enumeration with an explicit Subject
+set. Set `covers: $steps.watched.rows` and `enumeration: $steps.entries`
+on the step, then choose `when_absent` on each mapping:
+
+| Policy | A covered, held Claim is absent from the source |
+|---|---|
+| `keep` | Leave it alone. |
+| `surface` (default) | Record `claim_not_in_source` in the run report. A Line may route this finding kind to its inbox. |
+| `mirror` | Retire an eligible Claim backed by the same logical source, with reason `superseded`. Other-source and protected Claims are surfaced. |
+| `inverse` | Write the ClaimType's declared inverse (`{kind: none}` on its unit), under its evidence rules and precedence policy. |
+
+No `covers` means no absence inference. `covers` and `enumeration` are required
+together; if the extractor selects `only_keys`, coverage must be a subset.
+A missing record or an explicitly absent mapped field can establish absence.
+An invalid field, invalid record, duplicate key or false `when` cannot. For a
+many-valued slot, each held unit is compared separately.
+
+Both coverage and enumeration must be complete. Otherwise destructive absence
+becomes `surface`, with `source_incomplete: true`. A mirror retirement retains
+an absence witness: Capture, logical source, extract specification and extractor,
+completeness result, enumerated-key digest, and the accepted coordinate used
+for coverage. Inverses cite that proof as evidence. A mirror on a type with a
+declared inverse retires the positive and writes the inverse. Re-confirming an
+inverse records a re-observation; an appearing value revises it into a positive.
+Mirror retirements and inverse writes currently require proposal review even
+under a settle grant, and appear in `outside_scope_claim_types`.
+
+An incomplete run includes a bounded typed `completeness` summary in its result,
+run card and activity entry: `complete: false`, reasons naming the affected
+nodes and inputs, and counts of downgraded and skipped writes. A complete run
+omits this field. The summary follows the same data and control lineage that
+the write checks use.
 
 
 A derived Claims mapping currently binds whole cardinality-one Claim reads.

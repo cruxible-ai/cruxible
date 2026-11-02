@@ -44,6 +44,7 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
+from cruxible_client.contracts.claim_evidence import RunCompleteness
 from cruxible_client.contracts.operational_reads import capture_handle
 from cruxible_client.contracts.orient import (
     OrientActivity,
@@ -244,6 +245,11 @@ def _run_row(page: _Page, source: str, locator: EventLocator) -> OrientActivity:
             procedure=None if identity is None else identity[0],
             line=line,
             status=final_status(payload),
+            completeness=(
+                RunCompleteness.model_validate(payload["completeness"])
+                if isinstance(payload, Mapping) and payload.get("completeness") is not None
+                else None
+            ),
             elapsed_us=final_elapsed_us(payload),
             unavailable=lost or identity is None,
         )

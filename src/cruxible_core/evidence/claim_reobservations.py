@@ -338,12 +338,25 @@ class ClaimReobservationStore:
                 and original.value.record_key == extraction.value.record_key
                 and claim.statement.object.model_dump(mode="json") == extracted_value
             )
+            if (
+                extraction.absence is not None
+                and original is not None
+                and original.absence is not None
+            ):
+                same_extraction = (
+                    claim.statement.object.kind == "none"
+                    and extraction.absence.capture == capture_digest
+                    and extraction.absence.logical_source == original.absence.logical_source
+                    and claim.statement.object.model_dump(mode="json") == extracted_value
+                )
             if not same_extraction:
                 raise ClaimReobservationRefused("extraction does not prove the same value and key")
         wanted = (envelope.capture_contract_digest, observed_content(envelope).digest)
         cited_captures = (
             (original.value.capture_digest,)
-            if same_extraction and original is not None and original.value.basis == "extracted"
+            if same_extraction
+            and original is not None
+            and (original.value.basis == "extracted" or original.value.basis == "capture")
             else claim.backing.capture_digests
         )
         for cited in cited_captures:
@@ -361,7 +374,7 @@ class ClaimReobservationStore:
             if (held.capture_contract_digest, held_digest) == wanted or (
                 same_extraction
                 and original is not None
-                and original.value.basis == "extracted"
+                and (original.value.basis == "extracted" or original.value.basis == "capture")
                 and cited == original.value.capture_digest
                 and held.capture_contract_digest == envelope.capture_contract_digest
             ):

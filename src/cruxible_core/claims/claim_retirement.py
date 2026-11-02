@@ -8,6 +8,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.claim_evidence import AbsenceWitness
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimRetireDependent,
@@ -82,6 +83,7 @@ def _retired_claim(
     reason: ClaimRetirementReason,
     effective_until: datetime | None,
     successor_digests: Mapping[str, str],
+    absence: AbsenceWitness | None = None,
 ) -> ClaimArtifact:
     statement = claim.statement
     if effective_until is not None:
@@ -112,7 +114,7 @@ def _retired_claim(
             state="retired",
             predecessor_digest=claim_artifact_digest(claim).tagged,
         ),
-        retirement=ClaimRetirementAttribution(reason=reason),
+        retirement=ClaimRetirementAttribution(reason=reason, absence=absence),
     )
 
 
@@ -155,6 +157,7 @@ def build_claim_retirement_candidate(
             successor = _retired_claim(
                 claim,
                 reason=request.reason,
+                absence=request.absence,
                 effective_until=request.effective_until,
                 successor_digests=successor_digests,
             )

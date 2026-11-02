@@ -5782,6 +5782,7 @@ def _stage_claim_retirement(
         artifact_identity=claim.identity,
         predecessor_digest=claim_artifact_digest(claim).tagged,
         reason=member.reason,
+        absence=member.absence,
         effective_until=member.effective_until,
     )
     try:

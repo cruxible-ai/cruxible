@@ -22,6 +22,7 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from cruxible_client.contracts.claim_evidence import RunCompleteness
 from cruxible_client.contracts.line_dispatch import LineTriggerVersion
 from cruxible_client.contracts.procedure_mandates import MandateChangeKind
 from cruxible_client.contracts.procedures.results import (
@@ -354,6 +355,9 @@ class GetRunOutcome(_StrictOperationalModel):
 class GetProcedureRunCard(_StrictOperationalModel):
     run: str
     procedure: str
+    completeness: RunCompleteness | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     status: RunStatus
     nodes_done: int = Field(ge=0)
     nodes_total: int = Field(ge=0)

@@ -67,7 +67,15 @@ class InboxTerminalEgressSink:
                     node_id=node_id,
                     item_key=f"diagnostic-{index}",
                     payload=d.model_dump(mode="json"),
-                    source_capture_digests=(),
+                    source_capture_digests=(d.capture,)
+                    if d.kind == "claim_not_in_source" and d.capture is not None
+                    else (),
+                    dedupe_payload={"kind": d.kind, "claim": d.claim}
+                    if d.kind == "claim_not_in_source" and d.claim is not None
+                    else None,
+                    dedupe_node_id="claim_not_in_source"
+                    if d.kind == "claim_not_in_source" and d.claim is not None
+                    else None,
                     posted_at=at,
                     only_if_new=True,
                 )

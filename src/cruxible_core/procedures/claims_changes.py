@@ -10,8 +10,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
+    AuthoringNoneClaimObject,
     ClaimDerivationBinding,
 )
+from cruxible_client.contracts.claim_evidence import AbsenceWitness
 from cruxible_client.contracts.claims import LiteralClaimObject, SubjectClaimObject
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import claim_rationale
@@ -20,7 +22,10 @@ from cruxible_client.contracts.subject_kinds import SubjectKeyReference, Subject
 
 class CoreClaimStatement(AuthoringClaimStatement):
     subject: SemanticAddress | SubjectKeyReference  # type: ignore[assignment]
-    object: Annotated[LiteralClaimObject | SubjectClaimObject, Field(discriminator="kind")]
+    object: Annotated[
+        LiteralClaimObject | SubjectClaimObject | AuthoringNoneClaimObject,
+        Field(discriminator="kind"),
+    ]
 
 
 class _CoreChange(BaseModel):
@@ -37,6 +42,14 @@ class CoreClaimChange(_CoreChange):
     derivation: ClaimDerivationBinding | None = None
 
 
+class CoreRetirementChange(_CoreChange):
+    kind: Literal["retirement"] = "retirement"
+    claim_id: str
+    artifact_digest: str
+    claim_type: str
+    witness: AbsenceWitness
+
+
 class CoreSubjectChange(_CoreChange):
     kind: Literal["subject"] = "subject"
     subject_kind: str
@@ -51,5 +64,6 @@ class CoreReobservationChange(_CoreChange):
 
 
 CoreClaimsChange = Annotated[
-    CoreClaimChange | CoreSubjectChange | CoreReobservationChange, Field(discriminator="kind")
+    CoreClaimChange | CoreSubjectChange | CoreReobservationChange | CoreRetirementChange,
+    Field(discriminator="kind"),
 ]

@@ -228,10 +228,6 @@ def test_g20_epss_header_datetime_is_projected_to_utc_date(tmp_path: Path) -> No
     assert all(c.backing.procedure_evidence.value.field_path == "/created" for c in dates)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="needs B4b: count mismatch must degrade absence to surface with source_incomplete",
-)
 def test_g4_count_mismatch_never_mirrors(tmp_path: Path) -> None:
     base = kev_spec().model_dump(mode="python", by_alias=True)
     base["steps"][-1]["covers"] = {"$ref": "step", "step": "watched", "path": ["rows"]}
@@ -250,9 +246,10 @@ def test_g4_count_mismatch_never_mirrors(tmp_path: Path) -> None:
     assert state.terminal_egress[0].claims_diagnostics[0].problem == "source_incomplete"
 
 
-@pytest.mark.xfail(strict=True, reason="needs B4b: delisting retires with an absence witness")
 def test_g5_delisting_has_a_mirror_witness(tmp_path: Path) -> None:
     base = kev_spec().model_dump(mode="python", by_alias=True)
+    base["steps"][-1]["covers"] = {"$ref": "step", "step": "watched", "path": ["rows"]}
+    base["steps"][-1]["enumeration"] = {"$ref": "step", "step": "entries", "path": []}
     base["steps"][-1]["claims"][0]["when_absent"] = "mirror"
     spec = procedure_spec(base=base)
     instance, root = pilot_world(tmp_path, "kev.json", spec=spec)
@@ -266,7 +263,10 @@ def test_g5_delisting_has_a_mirror_witness(tmp_path: Path) -> None:
     doc["count"] = 0
     path.write_text(json.dumps(doc))
     second = run(instance, root, minute=1)
-    assert all(c.lifecycle.state == "retired" for c in candidate_claims(instance, second))
+    retired = candidate_claims(instance, second)
+    assert retired and all(c.lifecycle.state == "retired" for c in retired)
+    assert all(c.retirement.absence is not None for c in retired)
+    assert all(c.retirement.absence.logical_source == "cisa.kev.catalog" for c in retired)
 
 
 def test_g8_watched_read_ceiling_refuses_before_writes(tmp_path: Path) -> None:

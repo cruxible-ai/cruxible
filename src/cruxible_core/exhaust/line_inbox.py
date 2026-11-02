@@ -174,6 +174,8 @@ class InboxPosting:
     #: What the item's dedupe key reads, when its terminal declares a
     #: dedupe_key (those fields of the payload); absent, the whole payload.
     dedupe_payload: CanonicalValue | None = None
+    #: A core finding may dedupe across its producing nodes while keeping their attribution.
+    dedupe_node_id: str | None = None
     #: Core diagnostic findings are posted only once, including across runs.
     only_if_new: bool = False
 
@@ -587,7 +589,7 @@ class LineInboxStore:
                 captures = tuple(sorted(set(posting.source_capture_digests)))
                 key = inbox_dedupe_key(
                     line=posting.line,
-                    node_id=posting.node_id,
+                    node_id=posting.dedupe_node_id or posting.node_id,
                     payload_digest=(
                         payload_digest
                         if posting.dedupe_payload is None

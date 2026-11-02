@@ -4683,6 +4683,85 @@
             "title": "AbortDetail",
             "type": "object"
           },
+          "AbsenceWitness": {
+            "additionalProperties": false,
+            "properties": {
+              "capture": {
+                "title": "Capture",
+                "type": "string"
+              },
+              "complete_when": {
+                "title": "Complete When",
+                "type": "boolean"
+              },
+              "covers_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "enumerated_key_digest": {
+                "title": "Enumerated Key Digest",
+                "type": "string"
+              },
+              "extract_spec": {
+                "title": "Extract Spec",
+                "type": "string"
+              },
+              "extractor": {
+                "title": "Extractor",
+                "type": "string"
+              },
+              "logical_source": {
+                "title": "Logical Source",
+                "type": "string"
+              }
+            },
+            "required": [
+              "capture",
+              "extract_spec",
+              "extractor",
+              "logical_source",
+              "complete_when",
+              "enumerated_key_digest",
+              "covers_coordinate"
+            ],
+            "title": "AbsenceWitness",
+            "type": "object"
+          },
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
           "AcceptedQueryProcedureMeasurement": {
             "additionalProperties": false,
             "description": "Evaluate one exact accepted QueryDefinition with fixed options.",
@@ -6103,6 +6182,17 @@
           "ClaimRetireDependent": {
             "additionalProperties": false,
             "properties": {
+              "absence": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/AbsenceWitness"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "artifact_identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
               },
@@ -6367,6 +6457,17 @@
                 ],
                 "default": null,
                 "title": "When"
+              },
+              "when_absent": {
+                "default": "surface",
+                "enum": [
+                  "keep",
+                  "surface",
+                  "mirror",
+                  "inverse"
+                ],
+                "title": "When Absent",
+                "type": "string"
               }
             },
             "required": [
@@ -6895,6 +6996,28 @@
                 "minItems": 1,
                 "title": "Claims",
                 "type": "array"
+              },
+              "covers": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/Ref"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "enumeration": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/Ref"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "for_each": {
                 "$ref": "#/$defs/Ref"
@@ -8955,7 +9078,8 @@
                     "duplicate_key",
                     "incomplete_source",
                     "held_disagrees",
-                    "slot_contested"
+                    "slot_contested",
+                    "claim_not_in_source"
                   ],
                   "type": "string"
                 },
@@ -23588,6 +23712,26 @@
     },
     "ClaimsDiagnostic": {
       "fields": {
+        "capture": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "capture",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Capture"
+          }
+        },
         "claim": {
           "default": null,
           "default_json_serializable": true,
@@ -23606,6 +23750,46 @@
             ],
             "default": null,
             "title": "Claim"
+          }
+        },
+        "claim_type": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claim_type",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Type"
+          }
+        },
+        "extract_spec": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "extract_spec",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Extract Spec"
           }
         },
         "field": {
@@ -23706,7 +23890,8 @@
               "duplicate_key",
               "incomplete_source",
               "held_disagrees",
-              "slot_contested"
+              "slot_contested",
+              "claim_not_in_source"
             ],
             "title": "Kind",
             "type": "string"
@@ -23733,6 +23918,26 @@
             "title": "Lexeme"
           }
         },
+        "logical_source": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "logical_source",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Logical Source"
+          }
+        },
         "problem": {
           "default": null,
           "default_json_serializable": true,
@@ -23751,6 +23956,42 @@
             ],
             "default": null,
             "title": "Problem"
+          }
+        },
+        "qualifier": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "qualifier",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/JsonValue",
+            "default": null
+          }
+        },
+        "reason": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "record_absent",
+                  "field_absent"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
           }
         },
         "record_count": {
@@ -23804,6 +24045,39 @@
             "title": "Role"
           }
         },
+        "source_incomplete": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "source_incomplete",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Source Incomplete",
+            "type": "boolean"
+          }
+        },
+        "subject": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "subject",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subject"
+          }
+        },
         "target": {
           "has_default": false,
           "has_default_factory": false,
@@ -23821,6 +24095,18 @@
         },
         "additionalProperties": false,
         "properties": {
+          "capture": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Capture"
+          },
           "claim": {
             "anyOf": [
               {
@@ -23832,6 +24118,30 @@
             ],
             "default": null,
             "title": "Claim"
+          },
+          "claim_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Type"
+          },
+          "extract_spec": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Extract Spec"
           },
           "field": {
             "anyOf": [
@@ -23886,7 +24196,8 @@
               "duplicate_key",
               "incomplete_source",
               "held_disagrees",
-              "slot_contested"
+              "slot_contested",
+              "claim_not_in_source"
             ],
             "title": "Kind",
             "type": "string"
@@ -23904,6 +24215,18 @@
             "default": null,
             "title": "Lexeme"
           },
+          "logical_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Logical Source"
+          },
           "problem": {
             "anyOf": [
               {
@@ -23915,6 +24238,26 @@
             ],
             "default": null,
             "title": "Problem"
+          },
+          "qualifier": {
+            "$ref": "#/$defs/JsonValue",
+            "default": null
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "record_absent",
+                  "field_absent"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
           },
           "record_count": {
             "default": 0,
@@ -23942,6 +24285,23 @@
             ],
             "default": null,
             "title": "Role"
+          },
+          "source_incomplete": {
+            "default": false,
+            "title": "Source Incomplete",
+            "type": "boolean"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subject"
           },
           "target": {
             "title": "Target",
@@ -41901,6 +42261,45 @@
             "title": "ClaimTypeMemberDescription",
             "type": "object"
           },
+          "CompletenessReason": {
+            "additionalProperties": false,
+            "properties": {
+              "inputs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "title": "Inputs",
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "incomplete_input",
+                  "count_mismatch",
+                  "invalid_record",
+                  "duplicate_key",
+                  "invalid_field",
+                  "unknown_predicate",
+                  "may_truncate",
+                  "control_incomplete",
+                  "upstream_incomplete"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "node": {
+                "title": "Node",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node",
+              "kind"
+            ],
+            "title": "CompletenessReason",
+            "type": "object"
+          },
           "GetCaptureErasure": {
             "additionalProperties": false,
             "description": "Who erased a Capture's retained body, when and why.",
@@ -42628,6 +43027,17 @@
                 "format": "date-time",
                 "title": "At",
                 "type": "string"
+              },
+              "completeness": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RunCompleteness"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "elapsed_us": {
                 "anyOf": [
@@ -44561,6 +44971,42 @@
               "operation"
             ],
             "title": "RepairOperation",
+            "type": "object"
+          },
+          "RunCompleteness": {
+            "additionalProperties": false,
+            "properties": {
+              "complete": {
+                "const": false,
+                "default": false,
+                "title": "Complete",
+                "type": "boolean"
+              },
+              "downgraded": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Downgraded",
+                "type": "integer"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/$defs/CompletenessReason"
+                },
+                "maxItems": 20,
+                "title": "Reasons",
+                "type": "array"
+              },
+              "skipped": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Skipped",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "reasons"
+            ],
+            "title": "RunCompleteness",
             "type": "object"
           },
           "RunRow": {
@@ -51996,6 +52442,17 @@
                 ],
                 "default": null,
                 "title": "When"
+              },
+              "when_absent": {
+                "default": "surface",
+                "enum": [
+                  "keep",
+                  "surface",
+                  "mirror",
+                  "inverse"
+                ],
+                "title": "When Absent",
+                "type": "string"
               }
             },
             "required": [
@@ -52016,6 +52473,26 @@
                 "minItems": 1,
                 "title": "Claims",
                 "type": "array"
+              },
+              "covers": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Covers"
+              },
+              "enumeration": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Enumeration"
               },
               "for_each": {
                 "title": "For Each"
@@ -61043,6 +61520,25 @@
             "type": "array"
           }
         },
+        "completeness": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "completeness",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RunCompleteness"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "evaluation_time": {
           "has_default": false,
           "has_default_factory": false,
@@ -61655,6 +62151,18 @@
           "ClaimsDiagnostic": {
             "additionalProperties": false,
             "properties": {
+              "capture": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Capture"
+              },
               "claim": {
                 "anyOf": [
                   {
@@ -61666,6 +62174,30 @@
                 ],
                 "default": null,
                 "title": "Claim"
+              },
+              "claim_type": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Type"
+              },
+              "extract_spec": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Extract Spec"
               },
               "field": {
                 "anyOf": [
@@ -61720,7 +62252,8 @@
                   "duplicate_key",
                   "incomplete_source",
                   "held_disagrees",
-                  "slot_contested"
+                  "slot_contested",
+                  "claim_not_in_source"
                 ],
                 "title": "Kind",
                 "type": "string"
@@ -61738,6 +62271,18 @@
                 "default": null,
                 "title": "Lexeme"
               },
+              "logical_source": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Logical Source"
+              },
               "problem": {
                 "anyOf": [
                   {
@@ -61749,6 +62294,26 @@
                 ],
                 "default": null,
                 "title": "Problem"
+              },
+              "qualifier": {
+                "$ref": "#/$defs/JsonValue",
+                "default": null
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "record_absent",
+                      "field_absent"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
               },
               "record_count": {
                 "default": 0,
@@ -61777,6 +62342,23 @@
                 "default": null,
                 "title": "Role"
               },
+              "source_incomplete": {
+                "default": false,
+                "title": "Source Incomplete",
+                "type": "boolean"
+              },
+              "subject": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Subject"
+              },
               "target": {
                 "title": "Target",
                 "type": "string"
@@ -61787,6 +62369,45 @@
               "target"
             ],
             "title": "ClaimsDiagnostic",
+            "type": "object"
+          },
+          "CompletenessReason": {
+            "additionalProperties": false,
+            "properties": {
+              "inputs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "title": "Inputs",
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "incomplete_input",
+                  "count_mismatch",
+                  "invalid_record",
+                  "duplicate_key",
+                  "invalid_field",
+                  "unknown_predicate",
+                  "may_truncate",
+                  "control_incomplete",
+                  "upstream_incomplete"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "node": {
+                "title": "Node",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node",
+              "kind"
+            ],
+            "title": "CompletenessReason",
             "type": "object"
           },
           "HandEditInstruction": {
@@ -64597,6 +65218,42 @@
             "title": "ResolutionContractReference",
             "type": "object"
           },
+          "RunCompleteness": {
+            "additionalProperties": false,
+            "properties": {
+              "complete": {
+                "const": false,
+                "default": false,
+                "title": "Complete",
+                "type": "boolean"
+              },
+              "downgraded": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Downgraded",
+                "type": "integer"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/$defs/CompletenessReason"
+                },
+                "maxItems": 20,
+                "title": "Reasons",
+                "type": "array"
+              },
+              "skipped": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Skipped",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "reasons"
+            ],
+            "title": "RunCompleteness",
+            "type": "object"
+          },
           "SourceReadReceipt": {
             "additionalProperties": false,
             "description": "Daemon receipt independently attesting one bounded authorized file read.",
@@ -64766,6 +65423,17 @@
             },
             "title": "Children",
             "type": "array"
+          },
+          "completeness": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RunCompleteness"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "evaluation_time": {
             "title": "Evaluation Time",
@@ -65993,6 +66661,18 @@
           "ClaimsDiagnostic": {
             "additionalProperties": false,
             "properties": {
+              "capture": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Capture"
+              },
               "claim": {
                 "anyOf": [
                   {
@@ -66004,6 +66684,30 @@
                 ],
                 "default": null,
                 "title": "Claim"
+              },
+              "claim_type": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Type"
+              },
+              "extract_spec": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Extract Spec"
               },
               "field": {
                 "anyOf": [
@@ -66058,7 +66762,8 @@
                   "duplicate_key",
                   "incomplete_source",
                   "held_disagrees",
-                  "slot_contested"
+                  "slot_contested",
+                  "claim_not_in_source"
                 ],
                 "title": "Kind",
                 "type": "string"
@@ -66076,6 +66781,18 @@
                 "default": null,
                 "title": "Lexeme"
               },
+              "logical_source": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Logical Source"
+              },
               "problem": {
                 "anyOf": [
                   {
@@ -66087,6 +66804,26 @@
                 ],
                 "default": null,
                 "title": "Problem"
+              },
+              "qualifier": {
+                "$ref": "#/$defs/JsonValue",
+                "default": null
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "record_absent",
+                      "field_absent"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
               },
               "record_count": {
                 "default": 0,
@@ -66114,6 +66851,23 @@
                 ],
                 "default": null,
                 "title": "Role"
+              },
+              "source_incomplete": {
+                "default": false,
+                "title": "Source Incomplete",
+                "type": "boolean"
+              },
+              "subject": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Subject"
               },
               "target": {
                 "title": "Target",
@@ -77857,6 +78611,17 @@
                 ],
                 "default": null,
                 "title": "When"
+              },
+              "when_absent": {
+                "default": "surface",
+                "enum": [
+                  "keep",
+                  "surface",
+                  "mirror",
+                  "inverse"
+                ],
+                "title": "When Absent",
+                "type": "string"
               }
             },
             "required": [
@@ -78261,6 +79026,26 @@
                 "minItems": 1,
                 "title": "Claims",
                 "type": "array"
+              },
+              "covers": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Covers"
+              },
+              "enumeration": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Enumeration"
               },
               "for_each": {
                 "title": "For Each"
@@ -86456,6 +87241,17 @@
                 ],
                 "default": null,
                 "title": "When"
+              },
+              "when_absent": {
+                "default": "surface",
+                "enum": [
+                  "keep",
+                  "surface",
+                  "mirror",
+                  "inverse"
+                ],
+                "title": "When Absent",
+                "type": "string"
               }
             },
             "required": [
@@ -86860,6 +87656,26 @@
                 "minItems": 1,
                 "title": "Claims",
                 "type": "array"
+              },
+              "covers": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Covers"
+              },
+              "enumeration": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Enumeration"
               },
               "for_each": {
                 "title": "For Each"
@@ -94146,6 +94962,146 @@
         "path",
         "predecessor_artifact_digest",
         "semantic_delta"
+      ]
+    },
+    "RunCompleteness": {
+      "fields": {
+        "complete": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "complete",
+          "required": false,
+          "schema": {
+            "const": false,
+            "default": false,
+            "title": "Complete",
+            "type": "boolean"
+          }
+        },
+        "downgraded": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "downgraded",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Downgraded",
+            "type": "integer"
+          }
+        },
+        "reasons": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reasons",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/CompletenessReason"
+            },
+            "maxItems": 20,
+            "title": "Reasons",
+            "type": "array"
+          }
+        },
+        "skipped": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "skipped",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Skipped",
+            "type": "integer"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "CompletenessReason": {
+            "additionalProperties": false,
+            "properties": {
+              "inputs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "title": "Inputs",
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "incomplete_input",
+                  "count_mismatch",
+                  "invalid_record",
+                  "duplicate_key",
+                  "invalid_field",
+                  "unknown_predicate",
+                  "may_truncate",
+                  "control_incomplete",
+                  "upstream_incomplete"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "node": {
+                "title": "Node",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node",
+              "kind"
+            ],
+            "title": "CompletenessReason",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "complete": {
+            "const": false,
+            "default": false,
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "downgraded": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Downgraded",
+            "type": "integer"
+          },
+          "reasons": {
+            "items": {
+              "$ref": "#/$defs/CompletenessReason"
+            },
+            "maxItems": 20,
+            "title": "Reasons",
+            "type": "array"
+          },
+          "skipped": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Skipped",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "reasons"
+        ],
+        "title": "RunCompleteness",
+        "type": "object"
+      },
+      "required_fields": [
+        "reasons"
       ]
     },
     "RuntimeCredentialBootstrapResult": {
