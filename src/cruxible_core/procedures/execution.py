@@ -4238,7 +4238,8 @@ class ProcedureExecutor:
         the transform resolved it (a length read, never a second resolution).
         """
 
-        record_inputs = () if rows_in is None else _record_inputs(spec)
+        # Identities, so a union of many inputs checks each in constant time.
+        record_inputs = frozenset() if rows_in is None else frozenset(map(id, _record_inputs(spec)))
 
         def resolve(reference: object) -> object:
             resolved = _resolve_node_template(
@@ -4248,7 +4249,7 @@ class ProcedureExecutor:
                 parameters=state.parameters,
                 outputs=outputs,
             )
-            if rows_in is not None and any(reference is item for item in record_inputs):
+            if rows_in is not None and id(reference) in record_inputs:
                 rows_in.append(row_count(resolved))
             return resolved
 

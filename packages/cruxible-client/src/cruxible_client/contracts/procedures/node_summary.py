@@ -61,7 +61,8 @@ class ExtractCompleteWhen(_NodeSummary):
 
     count_at: SummaryText
     count_at_truncated: bool = Field(default=False, exclude_if=lambda value: not value)
-    expected: SummaryCount | None = Field(default=None, exclude_if=_omit_none)
+    #: As the source stated it: a source may state any integer, a negative one too.
+    expected: SummaryInt | None = Field(default=None, exclude_if=_omit_none)
     observed: SummaryCount | None = Field(default=None, exclude_if=_omit_none)
     out_of_range: bool = Field(default=False, exclude_if=lambda value: not value)
     held: bool

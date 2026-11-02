@@ -484,3 +484,73 @@ def test_a_v1_claims_delivery_is_summarised_not_failed(tmp_path: Any, monkeypatc
     (claims,) = (payload for payload in fired if payload["kind"] == "claims")
     assert claims["verdict"] == "succeeded"
     assert claims["summary"]["delivery"] == "proposed" and claims["summary"]["written"] == 8
+
+
+def test_a_negative_source_expectation_keeps_the_extract_summary() -> None:
+    """A source may state any count, -1 too: the summary keeps it, and the check failed."""
+
+    check = CompleteWhenResult(count_at="/count", expected=-1, observed=3, held=False)
+    outcome = SimpleNamespace(
+        held=[], invalid_records=0, invalid_fields={}, complete=False, complete_when_result=check
+    )
+    summaries: dict[str, Any] = {}
+    record_summary(summaries, "entries", lambda: extract_summary(outcome))  # type: ignore[arg-type]
+    summary = summaries["entries"]
+    assert summary.complete_when.expected == -1 and summary.complete_when.observed == 3
+    assert not summary.complete_when.held and not summary.complete_when.out_of_range
+
+
+class _CountingInputs(tuple):  # type: ignore[type-arg]
+    """A transform's record inputs that count how many of them the summary looks at."""
+
+    seen = 0
+
+    def __iter__(self) -> Any:
+        for item in super().__iter__():
+            type(self).seen += 1
+            yield item
+
+
+@pytest.mark.parametrize("fan_in", [4, 64])
+def test_union_fan_in_is_matched_in_constant_time_per_input(
+    tmp_path: Any, monkeypatch: Any, fan_in: int
+) -> None:
+    from cruxible_core.procedures import execution
+    from tests.test_procedures.test_closed_transforms import _returned, _run, _status
+    from tests.test_procedures.test_closed_transforms import _transform as transform
+
+    real_inputs = execution._record_inputs
+    _CountingInputs.seen = 0
+    monkeypatch.setattr(
+        execution, "_record_inputs", lambda spec: _CountingInputs(real_inputs(spec))
+    )
+    summaries: list[Any] = []
+    real_summary = execution.transform_summary
+
+    def summary(*args: Any) -> Any:
+        summaries.append(found := real_summary(*args))
+        return found
+
+    monkeypatch.setattr(execution, "transform_summary", summary)
+    from cruxible_client.contracts.procedures.models import ProjectNode
+
+    # Distinct authored inputs: one feed per input, so no two references are one object.
+    feeds = tuple(
+        ProjectNode(
+            node_id=f"feed{n}",
+            literal={"rows": {"records": [_status("open"), _status("closed")], "complete": True}},
+            as_=f"feed{n}",
+        )
+        for n in range(fan_in)
+    )
+    nodes = (
+        *feeds,
+        transform("merged", "union", {"inputs": [f"$steps.feed{n}.rows" for n in range(fan_in)]}),
+        _returned("merged"),
+    )
+    result, _sinks = _run(nodes, tmp_path)
+    assert result.status == "succeeded", result
+    (merged,) = summaries
+    assert (merged.rows_in, merged.rows_out) == (2 * fan_in, 2 * fan_in)
+    # Each input is looked at once (to build the identity set), not once per resolution.
+    assert _CountingInputs.seen == fan_in
