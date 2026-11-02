@@ -695,13 +695,17 @@ def condition_issues(
             parameters={
                 **condition.fixed_parameters,
                 condition.binding_parameter: target.subject_id,
+                # Every declared target binding is supplied, None when the change has
+                # no such value (a create has no before; a retirement or inverse no
+                # new value): a parameter default never stands in for target data,
+                # and a predicate over the missing value is false (fail closed).
                 **{
                     name: value
                     for name, value in (
                         (condition.value_parameter, target.value),
                         (condition.before_parameter, target.before),
                     )
-                    if name is not None and value is not None
+                    if name is not None
                 },
             },
         )

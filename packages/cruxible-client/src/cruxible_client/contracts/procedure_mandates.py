@@ -570,7 +570,8 @@ class MandateCondition(_StrictProcedureMandateModel):
     query: ArtifactPin
     binding_parameter: str
     #: Optional parameters Core binds to the changed Claim's typed new value
-    #: (``$target.value``) and the value it replaces (``$target.before``).
+    #: (``$target.value``) and the value it replaces (``$target.before``). Core
+    #: always supplies them, null when absent, so a default never stands in.
     value_parameter: str | None = Field(default=None, exclude_if=lambda value: value is None)
     before_parameter: str | None = Field(default=None, exclude_if=lambda value: value is None)
     fixed_parameters: dict[str, object] = {}

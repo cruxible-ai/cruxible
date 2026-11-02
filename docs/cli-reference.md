@@ -2888,8 +2888,11 @@ accepted parent for each changed Claim's target Subject (a grant without one
 settles on its scope alone). Besides the target Subject, the condition may
 bind the changed Claim's typed new value (`value_parameter`, `$target.value`)
 and the value it replaces (`before_parameter`, `$target.before`); each must be
-a declared parameter of the type every scoped ClaimType's value binds as. The
-query must return exactly that Subject,
+a declared parameter of the type every scoped ClaimType's value binds as. Cruxible
+always supplies both when declared, as null when the change has no such value
+(a create has no prior value; a retirement or an inverse writes none), so a
+parameter default never stands in for target data and a predicate over the
+missing value is false. The query must return exactly that Subject,
 with every required field present, unconflicted and untruncated. A false or
 incomplete condition follows the mandate's declared fallback: `propose`
 produces an ordinary proposal, reported with `settle_outcome: proposed` and a

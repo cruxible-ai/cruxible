@@ -47,6 +47,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryComparisonFilter,
     QueryEntry,
     QueryLiteralRef,
+    QueryMembershipFilter,
     QueryParameterDeclaration,
     QueryParameterRef,
     QueryProjection,
@@ -237,6 +238,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
     with_condition: bool = True,
     mandate_subjects: str | None = None,
     condition_value: str | None = None,
+    condition_target: tuple[str, str, tuple[str, ...]] | None = None,
     level_rules: bool = True,
     claims_terminal: bool = False,
     claims_within: tuple[str, ...] = (),
@@ -359,6 +361,28 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
                 ),
             }
         )
+    if condition_target is not None:
+        # An OPTIONAL target parameter with a default, bound to $target.<role>:
+        # the condition holds when that value is one of ``allowed``.
+        _role, default, allowed = condition_target
+        query = query.model_copy(
+            update={
+                "parameters": (
+                    *query.parameters,
+                    QueryParameterDeclaration(
+                        name="target_severity",
+                        value_type="string",
+                        required=False,
+                        default=default,
+                    ),
+                ),
+                "where": QueryMembershipFilter(
+                    left=QueryParameterRef(parameter="target_severity"),
+                    values=tuple(QueryLiteralRef(value=item) for item in sorted(allowed)),
+                    value_type="string",
+                ),
+            }
+        )
     members: dict[str, bytes] = {
         **trigger_members,
         **procedure_members(with_terminal),
@@ -408,7 +432,18 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
                     artifact_digest=query_definition_digest(query).tagged,
                 ),
                 binding_parameter="advisory_id",
-                value_parameter="new_severity" if condition_value is not None else None,
+                value_parameter=(
+                    "new_severity"
+                    if condition_value is not None
+                    else "target_severity"
+                    if condition_target is not None and condition_target[0] == "value"
+                    else None
+                ),
+                before_parameter=(
+                    "target_severity"
+                    if condition_target is not None and condition_target[0] == "before"
+                    else None
+                ),
                 required_fields=("id", "severity") if require_claim else ("id",),
                 fallback=fallback,  # type: ignore[arg-type]
             )
@@ -1621,6 +1656,85 @@ def test_the_replayed_verifier_refuses_a_basis_outside_scope(tmp_path: Path) -> 
     )
     assert [code for code, _message in issues] == ["cruxible.settle.scope_uncovered"]
     assert "basis extracted" in issues[0][1]
+
+
+def _replay_codes(instance: Any, state: Any) -> set[str]:
+    """Re-run the delegated settle verifier on the proposed change, as replay does."""
+
+    from cruxible_core.proposals.delegated_authority import delegated_authority_issues
+
+    egress = _egress(state)
+    evaluation = instance.proposal_evidence().read_evaluation(egress.proposal_id)
+    proposed = instance.proposal_tree(evaluation.evaluated_tree_oid, proposal_id=egress.proposal_id)
+    current = instance.accepted_coordinate()
+    issues = delegated_authority_issues(
+        mandate_digest=egress.procedure_mandate_digest,
+        scope=egress.target_paths,
+        current_tree=instance.tree_at(current.git_oid),
+        candidate_tree=proposed,
+        current=current,
+        timestamp="2026-10-09T12:30:00.000000Z",
+        facts=lambda predicates, subject_kinds: instance._accepted_query_facts(
+            instance, current, predicates=predicates, subject_kinds=subject_kinds
+        ),
+    )
+    return {code for code, _message in issues}
+
+
+def test_a_default_never_stands_in_for_a_creates_missing_before(tmp_path: Path) -> None:
+    """A create has no $target.before: the optional parameter's default "high" must not
+    satisfy ``before in [high]``; the change proposes, and replay refuses it too."""
+
+    instance, root, line = settle_world(tmp_path, condition_target=("before", "high", ("high",)))
+    base = instance.accepted_coordinate()
+    state = run_settle(instance, root, line)
+    assert state.status == "succeeded", state.terminal
+    egress = _egress(state)
+    assert egress.settle_outcome == "proposed"
+    assert egress.fallback_reason == "cruxible.settle.condition_false"
+    assert instance.accepted_coordinate() == base
+    assert "cruxible.settle.condition_false" in _replay_codes(instance, state)
+
+
+def test_a_default_never_stands_in_for_a_retirements_missing_value(tmp_path: Path) -> None:
+    """A mirror retirement writes no $target.value: the default "high" must not satisfy
+    ``value in [high, low]``; the retirement proposes, and replay refuses it too."""
+
+    from datetime import timedelta
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_client.contracts.subjects import subject_path
+    from tests.test_procedures import test_procedure_proposal_delivery as delivery
+
+    instance, root, line = settle_world(
+        tmp_path,
+        claims_terminal=True,
+        claims_fixed_subject=True,
+        claims_absence="mirror",
+        claims_within=(subject_path(delivery.SUBJECT_KIND, delivery.SUBJECT_ID),),
+        change_kinds=("create", "revise", "retire"),
+        condition_target=("value", "high", ("high", "low")),
+    )
+    path = root / fixtures.RELATIVE_PATH
+    path.write_bytes(
+        canonical_bytes(
+            {
+                "proposals": [{"id": "a", "severity": "high"}, {"id": "b", "severity": "low"}],
+                "count": 2,
+            }
+        )
+    )
+    first = run_settle(instance, root, line)
+    assert _egress(first).settle_outcome == "settled", first.terminal_egress
+    path.write_bytes(canonical_bytes({"proposals": [{"id": "a", "severity": "high"}], "count": 1}))
+    settled = instance.accepted_coordinate()
+    second = run_settle(instance, root, line, now=fixtures.NOW + timedelta(hours=1))
+    assert second.status == "succeeded", second.terminal
+    egress = _egress(second)
+    assert egress.settle_outcome == "proposed"
+    assert egress.fallback_reason == "cruxible.settle.condition_false"
+    assert instance.accepted_coordinate() == settled
+    assert "cruxible.settle.condition_false" in _replay_codes(instance, second)
 
 
 # --- settled items that match earlier refusals surface per Line in `next` -----
