@@ -232,6 +232,16 @@ def _binding_keys(value: dict[str, LineBinding]) -> dict[str, LineBinding]:
 class LineFindings(_StrictLineModel):
     inbox: tuple[FindingKind, ...] = ()
 
+    @field_validator("inbox", mode="before")
+    @classmethod
+    def _retired_kind(cls, value: object) -> object:
+        if isinstance(value, (list, tuple)) and "held_by_precedence" in value:
+            raise ValueError(
+                "cruxible.line.finding_kind_retired: held_by_precedence is retired; "
+                "use held_disagrees for conflicting values (equal values are quiet no-ops)"
+            )
+        return value
+
     @field_validator("inbox")
     @classmethod
     def _unique(cls, value: tuple[FindingKind, ...]) -> tuple[FindingKind, ...]:

@@ -311,16 +311,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:bb51555f8355fd2d3b960c259ced2217db6298d2921312ef4381fbc97c9dbaaa"
+    expected = "sha256:fad4443891a10bab14a88adaf41c70db7086e6f8017c4836b2480fb92fdca046"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 48,
+            "semantic_revision": 49,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "native-claims-prose-closure-v1",
+            "revision_name": "claims-lineage-completeness-rulings-v1",
         },
     )
     assert computed == expected
@@ -365,9 +365,11 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "native-claims-prose-closure-v1"
-    assert compiler_revision_label(CURRENT_COMPILER) == "native-claims-prose-closure-v1"
+    assert CURRENT_COMPILER_REVISION == "claims-lineage-completeness-rulings-v1"
+    assert compiler_revision_label(CURRENT_COMPILER) == "claims-lineage-completeness-rulings-v1"
     for earlier_digest in (
+        # Revision 48: native Claim prose closure, before D-R14–16.
+        "sha256:bb51555f8355fd2d3b960c259ced2217db6298d2921312ef4381fbc97c9dbaaa",
         "sha256:56542b566100db8fadfd4bfcea8f0fe58e37de444885906f3914ec1cc225d085",
         # Revision 36 (light-artifacts-v1): flat-manifest sroot-v1 genesis.
         "sha256:e77d9aaac5116b76aaf7b7060dedde6bca2cdaaeaa909c59c391bd20f3779924",

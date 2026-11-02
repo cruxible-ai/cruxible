@@ -657,8 +657,6 @@ def expand_claims(
                     for c in refresh
                     if c.backing.procedure_evidence is not None
                     and c.backing.procedure_evidence.value.basis == "extracted"
-                    and c.backing.procedure_evidence.value.extract_spec_digest
-                    == receipt.value.extract_spec_digest
                     and c.backing.procedure_evidence.value.record_key == receipt.value.record_key
                 ]
                 if len(matched) == 1:

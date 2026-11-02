@@ -85,7 +85,6 @@ FindingKind = Literal[
     "extract_refused",
     "duplicate_key",
     "incomplete_source",
-    "held_by_precedence",
     "held_disagrees",
     "slot_contested",
 ]

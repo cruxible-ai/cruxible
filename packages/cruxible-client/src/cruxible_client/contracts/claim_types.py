@@ -46,6 +46,7 @@ from cruxible_client.contracts.policies import (
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.shapes import (
+    BoolType,
     ContractResolver,
     FieldType,
     SubjectType,
@@ -451,6 +452,21 @@ class ClaimType(_StrictClaimTypeModel):
     def _complete_contract(self) -> "ClaimType":
         from cruxible_client.contracts.shapes import validate_complete_input_policy
 
+        if isinstance(self.value, BoolType) and self.incomplete_fallback is not None:
+            raise ValueError(
+                "cruxible.claim_type.bool_fallback_refused: bool ClaimTypes cannot declare "
+                "incomplete_fallback; remove it so incomplete false is skipped and reported "
+                "as incomplete_source"
+            )
+        if (
+            self.incomplete_fallback is not None
+            and self.incomplete_fallback in self.requires_complete_input
+        ):
+            raise ValueError(
+                "cruxible.claim_type.fallback_requires_complete_input: incomplete_fallback "
+                "must not itself require complete input; choose a member outside "
+                "requires_complete_input or remove incomplete_fallback"
+            )
         validate_complete_input_policy(
             self.value, self.requires_complete_input, self.incomplete_fallback
         )

@@ -525,9 +525,10 @@ Each ClaimType declares its `value` with the Contract field grammar. Its
 `precedence.roles` orders roles from highest to lowest;
 `precedence.revisable_by_procedures` lists the roles Procedures may replace.
 A mapping's optional `replaces` can only narrow that policy. The same extracted
-value, extract specification and record key produce a re-observation of the
-new Capture, even when other source bytes changed. The Claim and accepted
-generation stay unchanged, and freshness advances. A one-valued slot revises
+value and record key produce a re-observation of the new Capture, even when
+source bytes, the extract specification or the Procedure version change. The
+re-observation records the new production receipt; the Claim keeps its original
+receipt, the accepted generation stays unchanged, and freshness advances. A one-valued slot revises
 its one eligible holder when the value changes; several eligible holders
 report `slot_contested`. A protected holder with the same value is a counted,
 quiet no-op; a different value reports `held_disagrees` with both values.
@@ -547,8 +548,10 @@ A ClaimType declares the members that need complete input, for example
 or control lineage is incomplete; `affected` still writes. Without a fallback,
 the write is skipped and reports `incomplete_source`. An incomplete input
 never replaces a held Claim with a downgraded value. Boolean types may list
-`false`; dates, numbers and other types without members cannot declare this
-policy. Inbox Contract fields use the same member policy. Declaring
+`false` and cannot declare a fallback: incomplete `false` is skipped and
+reported as `incomplete_source`. A fallback must be outside
+`requires_complete_input`; acceptance refuses either violation with a repair.
+Dates, numbers and other types without members cannot declare this policy. Inbox Contract fields use the same member policy. Declaring
 `may_truncate: true` on a Procedure slot makes that call's output incomplete.
 
 A written value retains a `claim-evidence-v2` receipt, including the Capture,

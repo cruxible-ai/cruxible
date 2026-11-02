@@ -12,7 +12,7 @@ caught up from its last applied sequence on every open. A record is admitted onl
 for a Claim live at the current head, held still through the append, and a
 daemon-admitted Capture that verifies there and whose observed content equals a
 Capture that Claim cites under the same contract, or whose core extraction proves
-the same value, extract spec and record key. The
+the same value and record key, including new production lineage. The
 freshness lookup reads one indexed range per Claim lineage, never a scan.
 """
 
@@ -286,7 +286,7 @@ class ClaimReobservationStore:
         It must be a daemon-admitted Capture that verifies at ``coordinate``,
         the Claim must be live there, and the Capture's observed content must
         equal a Capture the Claim cites there under the same contract, or a
-        core extraction receipt must prove the same value, extract spec and key.
+        core extraction receipt must prove the same value and key.
         The returned content digest is the cited Capture's unchanged digest:
         freshness keeps using its existing indexed key, even if other bytes in
         the newly observed catalog changed.
@@ -335,14 +335,11 @@ class ClaimReobservationStore:
                 and original.value.basis == "extracted"
                 and extraction.value.basis == "extracted"
                 and extraction.value.capture_digest == capture_digest
-                and original.value.extract_spec_digest == extraction.value.extract_spec_digest
                 and original.value.record_key == extraction.value.record_key
                 and claim.statement.object.model_dump(mode="json") == extracted_value
             )
             if not same_extraction:
-                raise ClaimReobservationRefused(
-                    "extraction does not prove the same value, extract spec and key"
-                )
+                raise ClaimReobservationRefused("extraction does not prove the same value and key")
         wanted = (envelope.capture_contract_digest, observed_content(envelope).digest)
         cited_captures = (
             (original.value.capture_digest,)
