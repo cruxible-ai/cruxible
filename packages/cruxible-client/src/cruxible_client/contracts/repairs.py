@@ -53,8 +53,8 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
         "then rerun the Line."
     ),
     "claims_enumeration_invalid": (
-        "Reference the whole extract output directly as enumeration, without transforms or "
-        "subpaths, then rerun the Line."
+        "Reference the whole extract output directly as enumeration. With covers, use "
+        "its records directly or through filter/dedupe only for for_each, then rerun the Line."
     ),
     "claims_inverse_unit_unresolved": (
         "Restore the object's single live key Claim or correct its declared inverse unit, "

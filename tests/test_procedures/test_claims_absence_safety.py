@@ -25,10 +25,18 @@ from tests.test_procedures.test_claims_terminal import (
 
 
 def safety_world(
-    tmp_path, policy="mirror", *, subject_value=False, negative=False, object_key=False
+    tmp_path,
+    policy="mirror",
+    *,
+    subject_value=False,
+    negative=False,
+    object_key=False,
+    numeric=False,
 ):
     value_type = (
-        f"subject<{KIND}>"
+        "int"
+        if numeric
+        else f"subject<{KIND}>"
         if subject_value
         else "enum[open, closed, unknown]"
         if negative
@@ -64,10 +72,15 @@ def safety_world(
         ],
         "count": 2,
     }
+    if numeric:
+        for entry in document["entries"]:
+            entry["status"] = "79"
     instance, root = claims_world(tmp_path, document, types=(ct,), rows=row)
     _watched(instance)
     value = (
-        {"kind": KIND, "key": {"cve_id": "CVE-2026-0001"}}
+        79
+        if numeric
+        else {"kind": KIND, "key": {"cve_id": "CVE-2026-0001"}}
         if subject_value
         else "open"
         if policy == "inverse"
@@ -219,33 +232,46 @@ def test_another_logical_sources_positive_is_surfaced(tmp_path: Path, policy):
 
 
 @pytest.mark.parametrize("policy", ("mirror", "inverse"))
-def test_a_witness_from_another_run_is_refused_at_delivery(tmp_path: Path, policy):
-    from cruxible_core.procedures.egress import TerminalEgressRequestV2
-    from cruxible_core.procedures.proposal_delivery import _validate_absence_bindings
-    from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
+def test_a_witness_from_another_run_is_refused_at_delivery(tmp_path: Path, monkeypatch, policy):
+    from cruxible_core.procedures.claims_changes import CoreRetirementChange
+    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
     from tests.test_procedures.test_procedure_settlement_delivery import _egress_records
-    from tests.test_procedures.test_procedure_source_runs import _admission
 
     instance, root, raw = safety_world(tmp_path, policy)
     (root / "data/doc.json").write_text(json.dumps({"entries": [], "count": 0}))
-    state = run(instance, root, minute=1)
-    assert state.status == "succeeded", state.terminal
-    payload = next(p for p in _egress_records(instance, state) if p.get("verdict") == "prepared")
-    request = TerminalEgressRequestV2.model_validate(payload["request"])
-    admission = _admission(instance, state)
-    _validate_absence_bindings(instance, request, admission, payload["evidence"])
-    receipts = dict(request.claims_evidence)
-    key = next(key for key, receipt in receipts.items() if receipt.absence is not None)
-    receipt = receipts[key]
-    forged = receipt.absence.model_copy(update={"run_id": "RUN-other-run"})
-    receipts[key] = receipt.model_copy(update={"absence": forged})
-    changes = dict(request.claims_changes)
-    if policy == "mirror":
-        changes[key] = changes[key].model_copy(update={"witness": forged})
-    moved = request.model_copy(update={"claims_evidence": receipts, "claims_changes": changes})
-    with pytest.raises(ProposalDeliveryRefused) as caught:
-        _validate_absence_bindings(instance, moved, admission, payload["evidence"])
-    assert caught.value.code == "claims_absence_binding_invalid"
+    first = run(instance, root, minute=1)
+    assert first.status == "succeeded", first.terminal
+    payload = next(p for p in _egress_records(instance, first) if p.get("verdict") == "prepared")
+    from cruxible_core.procedures.egress import TerminalEgressRequestV2
+
+    old_request = TerminalEgressRequestV2.model_validate(payload["request"])
+    foreign = next(r.absence for r in old_request.claims_evidence.values() if r.absence is not None)
+    reinstall(instance, raw)
+    before = instance.accepted_coordinate()
+    deliver = ProposalTerminalEgressSink.deliver_terminal_egress
+    attempts = []
+
+    def moved_witness(self, *, request, admission=None):
+        assert request.run_id != foreign.run_id
+        receipts = dict(request.claims_evidence)
+        changes = dict(request.claims_changes)
+        for key, receipt in receipts.items():
+            if receipt.absence is None:
+                continue
+            receipts[key] = receipt.model_copy(update={"absence": foreign})
+            if isinstance(changes[key], CoreRetirementChange):
+                changes[key] = changes[key].model_copy(update={"witness": foreign})
+        attempts.append(request.run_id)
+        moved = request.model_copy(update={"claims_evidence": receipts, "claims_changes": changes})
+        return deliver(self, request=moved, admission=admission)
+
+    monkeypatch.setattr(ProposalTerminalEgressSink, "deliver_terminal_egress", moved_witness)
+    second = run(instance, root, minute=2, line="safety-followup")
+    assert attempts == [second.run_id]
+    assert second.status == "node_refused", second.terminal
+    assert second.terminal.code == "claims_absence_binding_invalid"
+    assert not proposed_claims(instance, second)
+    assert instance.accepted_coordinate() == before
 
 
 @pytest.mark.parametrize("kind", ("retirement", "inverse"))
@@ -335,3 +361,85 @@ def test_surface_without_a_count_declaration_keeps_existing_completeness(tmp_pat
     assert len(findings) == 2 and not any(f.source_incomplete for f in findings)
     assert result.completeness is None
     assert not proposed_claims(instance, result)
+
+
+def shaped_mirror(raw, *, rename=False):
+    field = "renamed" if rename else "status"
+    raw["steps"].insert(
+        -1,
+        {
+            "transform": "typed",
+            "kind": "shape",
+            "spec": {
+                "input": "$steps.entries.records",
+                "fields": {field: {"from": "$item.fields.status", "as": "int"}},
+            },
+        },
+    )
+    raw["steps"][-1]["for_each"] = "$steps.typed.records"
+    raw["steps"][-1]["claims"][0]["value"] = "$item.fields." + field
+
+
+@pytest.mark.parametrize("rename", (False, True), ids=("cast", "renamed-cast"))
+def test_covered_shape_cast_is_refused_at_authoring(tmp_path: Path, rename):
+    from cruxible_core.authoring.lowering import AuthoringLoweringError
+
+    instance, _root, raw = safety_world(tmp_path, numeric=True)
+    shaped_mirror(raw, rename=rename)
+    before = instance.accepted_coordinate()
+    with pytest.raises(AuthoringLoweringError) as caught:
+        reinstall(instance, raw)
+    assert caught.value.code == "cruxible.authoring.claims_enumeration_invalid"
+    assert "for_each" in str(caught.value)
+    assert instance.accepted_coordinate() == before
+
+
+@pytest.mark.parametrize("rename", (False, True), ids=("cast", "renamed-cast"))
+def test_covered_shape_cast_is_refused_at_runtime(tmp_path: Path, monkeypatch, rename):
+    from cruxible_core.procedures import claims_typing
+
+    instance, root, raw = safety_world(tmp_path, numeric=True)
+    shaped_mirror(raw, rename=rename)
+    # Simulate a Procedure accepted before this rail: runtime must independently
+    # refuse it, before a renamed template raises or a cast causes a retirement.
+    with monkeypatch.context() as old_acceptance:
+        old_acceptance.setattr(claims_typing, "preserves_claims_enumeration", lambda *_: True)
+        reinstall(instance, raw)
+    before = instance.accepted_coordinate()
+    result = run(instance, root, minute=1, line="safety-followup")
+    assert result.status == "node_refused", result.terminal
+    assert result.terminal.code == "claims_enumeration_invalid"
+    assert "for_each" in result.terminal.message
+    assert not proposed_claims(instance, result)
+    assert instance.accepted_coordinate() == before
+
+
+def test_covered_filter_dedupe_chain_preserves_presence(tmp_path: Path):
+    instance, root, raw = safety_world(tmp_path)
+    raw["steps"].insert(
+        -1,
+        {
+            "transform": "unique",
+            "kind": "dedupe",
+            "spec": {"input": "$steps.entries.records", "keys": ["status"]},
+        },
+    )
+    raw["steps"].insert(
+        -1,
+        {
+            "transform": "selected",
+            "kind": "filter",
+            "spec": {
+                "input": "$steps.unique.records",
+                "where": {"op": "eq", "left": {"literal": 0}, "right": {"literal": 1}},
+            },
+        },
+    )
+    raw["steps"][-1]["for_each"] = "$steps.selected.records"
+    reinstall(instance, raw)
+    before = instance.accepted_coordinate()
+    result = run(instance, root, minute=1, line="safety-followup")
+    assert result.status == "succeeded", result.terminal
+    assert not proposed_claims(instance, result)
+    assert not any(f.kind == "claim_not_in_source" for f in result.findings)
+    assert instance.accepted_coordinate() == before

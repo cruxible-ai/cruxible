@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, cast
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
@@ -52,6 +52,37 @@ class ClaimsTypingRefused(ValueError):
         super().__init__(message)
         if code is not None:
             self.code = code
+
+
+def preserves_claims_enumeration(node: ClaimsNode, aliases: Mapping[str | None, object]) -> bool:
+    """Only a direct record list or filter/dedupe chain preserves presence templates.
+
+    Walk this Procedure's referenced chain only; no accepted population reads.
+    Unknown references, subpaths and cycles fail closed.
+    """
+    if not isinstance(node.enumeration, str):
+        return False
+    reference = node.for_each
+    seen: set[str] = set()
+    while isinstance(reference, str):
+        if reference in {node.enumeration, f"{node.enumeration}.records"}:
+            return True
+        parts = reference.split(".")
+        if (
+            len(parts) not in {2, 3}
+            or parts[0] != "$steps"
+            or (len(parts) == 3 and parts[2] != "records")
+            or parts[1] in seen
+        ):
+            return False
+        seen.add(parts[1])
+        producer = aliases.get(parts[1])
+        if not isinstance(producer, TransformNode) or not isinstance(
+            producer.spec, TransformFilterSpec | TransformDedupeSpec
+        ):
+            return False
+        reference = producer.spec.input
+    return False
 
 
 def validate_claims_templates(
@@ -271,6 +302,12 @@ def validate_claims_templates(
                 raise ClaimsTypingRefused(
                     "claims_enumeration_invalid: enumeration must directly "
                     "reference the whole extract output",
+                    code="cruxible.procedure.claims_enumeration_invalid",
+                )
+            if not preserves_claims_enumeration(node, aliases):
+                raise ClaimsTypingRefused(
+                    "claims_enumeration_invalid: covers requires for_each to use "
+                    "the enumeration records directly or through filter/dedupe only",
                     code="cruxible.procedure.claims_enumeration_invalid",
                 )
             if (

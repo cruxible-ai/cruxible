@@ -98,6 +98,21 @@ def expand_claims(
             item=row,
         )
 
+    if node.covers is not None:
+        from cruxible_core.procedures.claims_typing import preserves_claims_enumeration
+
+        aliases = (
+            {}
+            if executor.plan is None
+            else {getattr(n, "as_", None): n for n in executor.plan.definition.nodes}
+        )
+        if not preserves_claims_enumeration(node, aliases):
+            raise _RunRefusal(
+                "claims_enumeration_invalid",
+                "covers requires for_each to use the enumeration records directly "
+                "or through filter/dedupe only",
+                node_id=node.node_id,
+            )
     rows, row_tokens = _fan_out_list(
         node.for_each,
         state=state,

@@ -580,7 +580,11 @@ on the step, then choose `when_absent` on each mapping:
 
 No `covers` means no absence inference. `covers` and `enumeration` are required
 together; enumeration must reference the whole extract output directly, without
-transforms. Mirror and inverse require that extract to declare `complete_when`.
+transforms. With `covers`, `for_each` must use that extract's records directly
+or through a chain of `filter` and `dedupe` transforms. Shapes, casts, joins and
+other transforms are refused at authoring and execution because presence templates
+must see the same record fields and values as the enumeration.
+Mirror and inverse require that extract to declare `complete_when`.
 If the extractor selects `only_keys`, coverage must be a subset.
 A missing record or an explicitly absent mapped field can establish absence.
 An invalid field, invalid record, duplicate key or false `when` cannot. For a
