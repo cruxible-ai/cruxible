@@ -289,6 +289,11 @@ such a scope, it means **unknown**: nobody has looked. Say which one you mean
 when you answer, and treat unknown as something to pull ([Keeping knowledge
 current](keeping-knowledge-current.md#none-or-unknown)).
 
+A recorded none is different from an empty cell. In a `query` table, a field
+whose Claim says it holds nothing reads `none`, or `none of X` for one value
+it does not hold, the same words `get` uses. A `-` means the field has no
+Claim at all.
+
 ## Pitfalls
 
 - **Acting on a page without checking it.** A table or summary in a document

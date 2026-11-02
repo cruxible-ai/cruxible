@@ -372,3 +372,52 @@ def test_a_capped_answer_says_so_without_a_next_command(monkeypatch: pytest.Monk
     assert result.output.splitlines()[-1] == (
         "truncated: capped at max_results=5000; narrow the query with --where"
     )
+
+
+def test_table_cells_show_a_held_none_distinctly_from_no_claim() -> None:
+    """Kit-pilot F3: a cell's nones read as ``get`` names them; ``-`` is no Claim at all."""
+
+    from cruxible_client.authoring.compact_query import render_query_table
+
+    def none(claim: str, of: object = None) -> dict[str, object]:
+        entry: dict[str, object] = {"claim": claim, "verdict": "supported", "status": "accepted"}
+        return entry if of is None else {**entry, "of": of}
+
+    page = contracts.QueryResultRecord(
+        kind="security.vulnerability",
+        columns=(
+            contracts.QueryColumn(name="listed_in", type="subject"),
+            contracts.QueryColumn(name="state", type="string"),
+        ),
+        rows=(
+            {
+                "subject": "security.vulnerability/cve-1",
+                "subject_id": "cve-1",
+                "listed_in": None,
+                "state": None,
+                "flags": [],
+                "nones": {
+                    "listed_in": [none("CLM-1", "security.catalog/cisa-kev")],
+                    "state": [none("CLM-2")],
+                },
+            },
+            {
+                "subject": "security.vulnerability/cve-2",
+                "subject_id": "cve-2",
+                "listed_in": None,
+                "state": None,
+                "flags": [],
+            },
+        ),
+        receipt=contracts.QueryReceipt(
+            mode="inline",
+            spec_digest="sha256:" + "0" * 64,
+            coordinate=COORDINATE,  # type: ignore[arg-type]
+            evaluation_time=datetime(2026, 9, 1, tzinfo=UTC),
+        ),
+    )
+
+    _header, held, unknown = render_query_table(page).splitlines()
+
+    assert held.split()[1:5] == ["none", "of", "security.catalog/cisa-kev", "none"]
+    assert unknown.split()[1:3] == ["-", "-"]

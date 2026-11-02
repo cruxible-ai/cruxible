@@ -355,3 +355,41 @@ def test_query_rows_list_nones_beside_values_never_as_one(
     assert "stale" in stale["flags"] and stale["nones"]["state"][0]["flags"] == ["stale"]
     # A column without nones has no entry.
     assert "nones" not in query(select=["blocks"])
+
+
+def test_the_query_table_shows_a_held_none_as_get_names_it_never_as_no_claim(
+    instance: PlaybillInstance, tmp_path: Path
+) -> None:
+    """Kit-pilot F3: ``-`` is a field with no Claim; a held none reads ``none (of X)``."""
+
+    from cruxible_client.authoring.compact_query import render_query_table
+    from cruxible_client.contracts.compact_query import QueryRequest
+    from cruxible_core.service.discovery.compact_query import service_playbill_query
+
+    written = _write(
+        instance,
+        _change("set", "state", {"none": None}, report_evidence(tmp_path, "closed")),
+        _change("add", "blocks", {"none": WI2}, report_evidence(tmp_path, "free")),
+        _change("add", "tags", "small", report_evidence(tmp_path, "small")),
+        _change("add", "tags", {"none": "urgent"}, report_evidence(tmp_path, "not urgent")),
+    )
+    assert written.status == "accepted", written
+    request = QueryRequest.model_validate(
+        {
+            "kind": KIND,
+            "where": [{"field": "subject_id", "in": ["wi-1", "wi-2"]}],
+            "select": ["state", "blocks", "tags"],
+            "order_by": ["subject_id"],
+        }
+    )
+    header, first, second = render_query_table(
+        service_playbill_query(instance, request=request)
+    ).splitlines()
+    assert header.split() == ["subject", "state", "blocks", "tags", "flags"]
+    # get names each none the same way: ``none``, or ``none of`` its unit.
+    nones = {none.of for row in _card(instance).claims for none in row.nones}
+    assert nones == {None, WI2, "urgent"}
+    assert "none of " + WI2 in first and "small, none of urgent" in first
+    assert first.split()[1] == "none"
+    # wi-2 holds no Claim for these fields: unknown, never a none.
+    assert second.split()[1:4] == ["-", "-", "-"]
