@@ -794,8 +794,48 @@ def value_members(value: FieldType | None) -> tuple[str, ...]:
     return value.members if isinstance(value, EnumType) else ()
 
 
-def claim_has_line_break(value: str) -> bool:
-    return any(char in value for char in "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029")
+def claim_has_line_break(value: object) -> bool:
+    """Apply the Claim prose rule to every string in a structured value."""
+    if isinstance(value, str):
+        return any(char in value for char in "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029")
+    if isinstance(value, Mapping):
+        return any(claim_has_line_break(member) for member in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(claim_has_line_break(member) for member in value)
+    return False
+
+
+def claim_value_has_unbounded_string(
+    value: FieldType, resolve: ContractResolver | None = None
+) -> bool:
+    """Visit each reachable Contract once, including optional fields and variants."""
+    seen: set[tuple[str, int]] = set()
+
+    def visit(field_type: FieldType) -> bool:
+        if isinstance(field_type, StringType):
+            return field_type.max_len is None or field_type.max_len > 256
+        if isinstance(field_type, ListType):
+            return visit(field_type.item)
+        refs = (
+            (field_type.contract,)
+            if isinstance(field_type, NestedType)
+            else tuple(field_type.arms.values())
+            if isinstance(field_type, VariantType)
+            else ()
+        )
+        for ref in refs:
+            key = (ref.name, ref.version)
+            if key in seen:
+                continue
+            seen.add(key)
+            contract = resolve(ref) if resolve is not None else None
+            if contract is not None and any(
+                visit(field.type) for field in contract.fields.values()
+            ):
+                return True
+        return False
+
+    return visit(value)
 
 
 def claim_literal_problem(
@@ -806,7 +846,7 @@ def claim_literal_problem(
     enums: EnumResolver | None = None,
     keys: KeyCanonicalizer | None = None,
 ) -> str | None:
-    if isinstance(value, str) and claim_has_line_break(value):
+    if claim_has_line_break(value):
         return "multiline_string: use a Document section for prose"
     result = check_value(
         value,
@@ -818,6 +858,39 @@ def claim_literal_problem(
         _problem_only=True,
     )
     return result.problem.code if isinstance(result, FieldInvalid) else None
+
+
+def claim_literal_detail(value: object, field_type: FieldType, problem: str) -> str:
+    """Explain a native scalar refinement with its bound and the received value."""
+    shown = json.dumps(value, ensure_ascii=False, default=str)
+    if len(shown) > 80:
+        shown = shown[:77] + "…"
+    if problem == "out_of_range":
+        if isinstance(field_type, StringType) and isinstance(value, str):
+            size = len(value)
+            if field_type.min_len is not None and size < field_type.min_len:
+                return f"min_len {field_type.min_len}, got {size}"
+            return f"max_len {field_type.max_len}, got {size}"
+        if isinstance(field_type, (IntType, NumberType)) and isinstance(value, (int, float)):
+            if field_type.min is not None and Decimal(str(value)) < Decimal(str(field_type.min)):
+                return f"min {field_type.min}, got {shown}"
+            return f"max {field_type.max}, got {shown}"
+    if problem == "pattern_mismatch" and isinstance(field_type, StringType):
+        return f"pattern {json.dumps(field_type.pattern)}, got {shown}"
+    if problem == "type_mismatch":
+        actual = (
+            "boolean"
+            if isinstance(value, bool)
+            else "integer"
+            if isinstance(value, int)
+            else "string"
+            if isinstance(value, str)
+            else type(value).__name__
+        )
+        return f"type {render_type(field_type)}, got {actual} {shown}"
+    if problem == "not_in_enum" and isinstance(field_type, EnumType):
+        return "its members are: " + ", ".join(field_type.members)
+    return problem
 
 
 def claim_rationale(value: str) -> str:
@@ -1648,14 +1721,7 @@ def check_value(
         if isinstance(value, str) and value:
             reference = value.removeprefix("subjects/").removesuffix(".json")
             kind, separator, identity = reference.partition("/")
-            if (
-                separator
-                and identity
-                and (
-                    kind in field_type.subject_kinds
-                    or "semantic.subject" in field_type.subject_kinds
-                )
-            ):
+            if separator and identity and (kind in field_type.subject_kinds):
                 return present(value=value, at=at)
         return _invalid("type_mismatch", field, value)
     if isinstance(field_type, CaptureType):

@@ -157,6 +157,7 @@ def _shadow_and_cardinality(instance: PlaybillInstance) -> None:
 
 
 def _mandate(
+    instance: PlaybillInstance,
     name: str,
     procedure: Any,
     fields: tuple[str, ...],
@@ -187,7 +188,10 @@ def _mandate(
             sorted(
                 (
                     MandateClaimScope(
-                        claim_type=_worlds._claim_type_pin(field), change_kinds=("create",)
+                        claim_type=_worlds._claim_type_pin(
+                            field, type("World", (), {"instance": instance})()
+                        ),
+                        change_kinds=("create",),
                     )
                     for field in fields
                 ),
@@ -275,7 +279,7 @@ def _ontology_history(instance: PlaybillInstance) -> None:
     procedure = _worlds._procedure("onto-tick", terminal=None, capability=3)
     line = _worlds._line("onto-tick-line", procedure, authority="observe")
     condition = _worlds._condition()
-    first = _mandate("onto-mandate", procedure, ("labels", "status"), line=line)
+    first = _mandate(instance, "onto-mandate", procedure, ("labels", "status"), line=line)
     accept_edit(
         instance,
         "onto-line",
@@ -294,7 +298,7 @@ def _ontology_history(instance: PlaybillInstance) -> None:
         },
     )
     install_receipt(instance, version="1.1.0", fields=("status",), revision=2)
-    narrowed = _mandate("onto-mandate", procedure, ("status",), line=line, previous=first)
+    narrowed = _mandate(instance, "onto-mandate", procedure, ("status",), line=line, previous=first)
     accept_edit(
         instance,
         "onto-mandate-narrowed",
@@ -311,7 +315,13 @@ def _ontology_history(instance: PlaybillInstance) -> None:
         instance, "onto-tag-retired", {claim_type_path(tag.predicate): render_claim_type(retired)}
     )
     suspended = _mandate(
-        "onto-mandate", procedure, ("status",), line=line, previous=narrowed, suspended=True
+        instance,
+        "onto-mandate",
+        procedure,
+        ("status",),
+        line=line,
+        previous=narrowed,
+        suspended=True,
     )
     accept_edit(
         instance,
@@ -366,8 +376,14 @@ def _describe_external(original: Any) -> Any:
 
 
 @pytest.fixture(scope="module")
-def world(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, Any]]:
-    from cruxible_core.service.floor import floor_sources
+def world(
+    tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest
+) -> Iterator[dict[str, Any]]:
+    from cruxible_core.service.floor import floor_current, floor_sources
+
+    patch = pytest.MonkeyPatch()
+    patch.setattr(floor_current, "INLINE_TEXT_BYTES", 128)
+    request.addfinalizer(patch.undo)
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(floor_sources, "_describe", _describe_external(floor_sources._describe))
@@ -385,7 +401,7 @@ def _build_world(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     _write(instance, _set(WI2, "status", "done", contend=True), at=first.coordinate.git_oid)
     add_lead_field(instance)
     _write(instance, _set(WI1, "lead", WI2), _set(WI3, "lead", WI2))
-    _write(instance, _set(WI3, "ruling", "".join(f"Clause {i}.\n" for i in range(60))))
+    _write(instance, _set(WI3, "ruling", "bounded" * 32))
     _write(instance, _set(WI1, "measured", 3, evidence=report_evidence(workspace, "Count: 3")))
     note = _document(instance, b"# Note\n\nFirst.\n", None)
     _write(
@@ -394,7 +410,7 @@ def _build_world(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
         {"op": "add", "subject": WI2, "field": "governs", "value": WI1},
     )
     _document(instance, b"# Note\n\nSecond.\n", note)
-    _write(instance, _set(WI3, "ruling", "Short now.\n"))
+    _write(instance, _set(WI3, "ruling", "approved"))
     _write(instance, {"op": "retire", "target": {"subject": WI1, "field": "measured"}})
     _write(instance, _set(WI2, "title", "Two"), _set(WI3, "title", "Three"))
     _shadow_and_cardinality(instance)

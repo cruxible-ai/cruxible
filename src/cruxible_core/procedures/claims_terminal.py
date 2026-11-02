@@ -299,7 +299,7 @@ def expand_claims(
             present = isinstance(raw, dict) and raw.get("tag") == "present"
             value = raw["value"] if present else raw
             ct = context.claim_type(mapping.claim_type.target.name)
-            if ct is None or ct.value is None:
+            if ct is None:
                 raise _RunRefusal(
                     "proposal_item_invalid", "ClaimType.value is required", node_id=node.node_id
                 )
@@ -312,13 +312,13 @@ def expand_claims(
                 replaces = ct.precedence.replacements(role, mapping.replaces)
             except ValueError as exc:
                 raise _RunRefusal("proposal_item_invalid", str(exc), node_id=node.node_id) from exc
-            if isinstance(value, str) and claim_has_line_break(value):
+            if claim_has_line_break(value):
                 report(
                     "extract_refused",
                     target,
                     field=str(mapping.value),
                     problem="multiline_string",
-                    lexeme=value[:512],
+                    lexeme=str(value)[:512],
                 )
                 continue
             checked = (

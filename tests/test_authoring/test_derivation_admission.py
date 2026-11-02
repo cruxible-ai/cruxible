@@ -35,7 +35,12 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
     procedure_path,
 )
-from cruxible_client.contracts.procedures.authored import GuardStep, ProposeStep, ReadStep
+from cruxible_client.contracts.procedures.authored import (
+    ClaimsStep,
+    GuardStep,
+    ProjectStep,
+    ReadStep,
+)
 from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
     render_line_spec,
@@ -96,6 +101,7 @@ def derivation_world(tmp_path):
         procedure="derive-ready",
         input={},
         output={"ready": "bool"},
+        returns="result",
         hard_caps=LIMITS,
         steps=[
             ReadStep(
@@ -112,24 +118,20 @@ def derivation_world(tmp_path):
                 },
                 else_={"halt": "The work item is not ready."},
             ),
-            ProposeStep(
-                propose=[
+            ProjectStep(project="rows", fields={"items": [ref("$steps.basis")]}),
+            ProjectStep(project="result", fields={"ready": True}),
+            ClaimsStep(
+                claims=[
                     {
-                        "tag": "playbill-source-claim-candidate-v1",
-                        "subject_kind": "project.work_item",
-                        "subject_id": "wi-42",
-                        "predicate": "project.work_item.ready",
-                        "object_kind": "literal",
+                        "type": "project.work_item.ready",
                         "value": True,
                         "role": "derivation",
+                        "inputs": [ref("$steps.basis")],
                         "rationale": "Readiness follows from the accepted status.",
-                        "source_kind": "self_source",
-                        "source_value": "Computed from the accepted status.",
-                        "source_alias": None,
-                        "basis": [ref("$steps.basis")],
                     }
                 ],
-                result={"ready": True},
+                for_each=ref("$steps.rows.items"),
+                subject={"kind": "project.work_item", "key": {"slug": "wi-42"}, "create": "never"},
             ),
         ],
     )

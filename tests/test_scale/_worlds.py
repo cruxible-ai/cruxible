@@ -403,15 +403,20 @@ def seed_native_vocabulary(world: World) -> None:
             update={
                 "evidence_admission_policy": item.evidence_admission_policy.model_copy(
                     update={
-                        "rules": (
-                            *item.evidence_admission_policy.rules,
-                            ClaimEvidenceAdmissionRule(
-                                rule_id="native-import",
-                                claim_roles=item.permitted_roles,
-                                capture_contracts=(capture.identity.name,),
-                                admission="direct",
-                                subject_binding="exact_claim_subject",
-                            ),
+                        "rules": tuple(
+                            sorted(
+                                (
+                                    *item.evidence_admission_policy.rules,
+                                    ClaimEvidenceAdmissionRule(
+                                        rule_id="native-import",
+                                        claim_roles=item.permitted_roles,
+                                        capture_contracts=(capture.identity.name,),
+                                        admission="direct",
+                                        subject_binding="exact_claim_subject",
+                                    ),
+                                ),
+                                key=lambda rule: rule.rule_id,
+                            )
                         )
                     }
                 )
@@ -498,6 +503,9 @@ def run_native_line(world: World, name: str):
 
     digest = line_digest(name)
     operator = sources._Operator(sources._WorkspaceInvoker())
+    from types import SimpleNamespace
+
+    operator.config = SimpleNamespace(workspace_allowed_roots=(str(world.workspace),))
     with patch.object(get_playbill_manager(), "provider_runtime_operator", return_value=operator):
         return playbill_api.playbill_line_run(
             world.instance_id, digest, request=LineRunRequest(line=digest)

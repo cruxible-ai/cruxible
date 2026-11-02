@@ -150,3 +150,64 @@ def test_expanded_rationale_cannot_turn_a_short_template_into_prose(tmp_path):
     egress = state.terminal_egress[0]
     assert egress.proposal_id is None and not egress.children
     assert egress.claims_diagnostics[0].problem == "rationale_invalid"
+
+
+@pytest.mark.parametrize(
+    "spelling", ["list<string>{max_items: 10}", "list<string{max_len: 100000}>{max_items: 10}"]
+)
+def test_prose_guard_checks_list_elements(spelling):
+    value = claim_type().model_copy(update={"value": parse_type(spelling)})
+    law = evaluate_claim_type_law(value, path=claim_type_path(value.predicate), predecessor=None)
+    assert law.verdict == "refused"
+    assert law.diagnostics[0].code == "cruxible.claim_type.string_unbounded"
+
+
+@pytest.mark.parametrize("optional", [False, True])
+@pytest.mark.parametrize("variant", [False, True])
+def test_prose_guard_follows_nested_contracts_and_variant_arms(optional, variant):
+    from cruxible_client.contracts.shapes import ContractField, NestedType, VariantType
+
+    row = Contract(
+        name="test.prose",
+        version=1,
+        fields={"text": ContractField(type=StringType(), optional=optional)},
+    )
+    field = VariantType(arms={"note": row.ref}) if variant else NestedType(contract=row.ref)
+    value = claim_type().model_copy(update={"value": field})
+
+    def resolve(ref):
+        return row if ref == row.ref else None
+
+    law = evaluate_claim_type_law(
+        value, path=claim_type_path(value.predicate), predecessor=None, resolve_contract=resolve
+    )
+    assert law.verdict == "refused"
+    assert law.diagnostics[0].code == "cruxible.claim_type.string_unbounded"
+    bounded = row.model_copy(
+        update={"fields": {"text": ContractField(type=StringType(max_len=256), optional=optional)}}
+    )
+    law = evaluate_claim_type_law(
+        value,
+        path=claim_type_path(value.predicate),
+        predecessor=None,
+        resolve_contract=lambda ref: bounded,
+    )
+    assert law.verdict == "accepted"
+
+
+@pytest.mark.parametrize("separator", list("\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"))
+def test_nested_literal_strings_use_the_same_line_break_rule(separator):
+    from cruxible_client.contracts.shapes import claim_literal_problem
+
+    value = {"nested": ["one" + separator + "two"]}
+    assert (
+        claim_literal_problem(value, parse_type("string{max_len: 256}"))
+        == "multiline_string: use a Document section for prose"
+    )
+
+
+def test_contract_subject_unions_do_not_treat_semantic_subject_as_a_wildcard():
+    assert isinstance(
+        check_value("catalog.a/one", parse_type("subject<semantic.subject>"), at="value"),
+        FieldInvalid,
+    )

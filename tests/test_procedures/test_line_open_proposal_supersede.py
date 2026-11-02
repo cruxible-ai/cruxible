@@ -59,7 +59,7 @@ def _first_proposal(instance: PlaybillInstance, root: Path, line: Any) -> str:
 
 
 def _change_the_source(root: Path) -> None:
-    (root / fixtures.RELATIVE_PATH).write_bytes(b"critical")
+    (root / fixtures.RELATIVE_PATH).write_bytes(fixtures.canonical_bytes({"severity": "critical"}))
 
 
 def _prepared_payloads(instance: PlaybillInstance, run_id: str) -> list[dict[str, Any]]:
@@ -270,7 +270,7 @@ def test_a_settle_mode_line_never_weighs_or_supersedes_its_proposals(tmp_path: P
     # A false condition falls back to an ordinary proposal, every run.
     instance, root, line = settle_world(tmp_path, only_subject="someone-else")
     first = run_settle(instance, root, line)
-    (root / fixtures.RELATIVE_PATH).write_bytes(b"critical")
+    (root / fixtures.RELATIVE_PATH).write_bytes(fixtures.canonical_bytes({"severity": "critical"}))
     second = run_settle(instance, root, line, now=NOW + timedelta(minutes=10))
 
     proposals = []

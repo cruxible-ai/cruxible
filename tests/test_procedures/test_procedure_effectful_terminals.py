@@ -15,6 +15,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     LINE_NODE_KINDS,
 )
 from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
+from cruxible_client.contracts.proposal_models import ProposalSettleSubmission
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -67,7 +68,7 @@ NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 
 
 def test_direct_lane_requires_line_authority_for_effectful_terminals() -> None:
-    effectful = {"emit_capture", "post_inbox", "propose_change_set", "settle_change_set", "claims"}
+    effectful = {"emit_capture", "post_inbox", "claims"}
     assert DIRECT_NODE_KINDS.isdisjoint(effectful)
     # Every terminal, the inbox included, runs under a Line's authority.
     assert LINE_NODE_KINDS == effectful
@@ -98,7 +99,10 @@ def _base_request(
     admission: ProcedureRunAdmission,
     item: TerminalEgressItemV1,
     bound: ArtifactPin | None = None,
+    rung: int = 3,
 ) -> TerminalEgressRequestV1:
+    from cruxible_core.procedures.claims_changes import CoreSubjectChange
+
     return TerminalEgressRequestV1(
         kind=kind,
         run_id=admission.run_id,
@@ -107,14 +111,26 @@ def _base_request(
         procedure_identity=admission.procedure_identity,
         procedure_artifact_digest=admission.procedure_artifact_digest,
         admission_binding_digest=admission.admission_binding_digest,
-        effective_rung={"emit_capture": 0, "propose_change_set": 2, "settle_change_set": 3}[kind],
-        required_rung={"emit_capture": 0, "propose_change_set": 2, "settle_change_set": 3}[kind],
-        limiting_term="procedure_terminal_capability",
-        granted_operation={
-            "emit_capture": "compile_capture",
-            "propose_change_set": "propose_change_set",
-            "settle_change_set": "activate_change_set",
-        }[kind],
+        effective_rung=0 if kind == "emit_capture" else rung,
+        required_rung=0 if kind == "emit_capture" else rung,
+        capped_by="line_requested_rung" if kind == "claims" and rung == 2 else None,
+        claims_changes={
+            item.item_key: CoreSubjectChange(
+                subject_kind="project.work_item",
+                key={"slug": "wi-1"},
+                rationale="The terminal names the work item.",
+            )
+        }
+        if kind == "claims"
+        else {},
+        limiting_term="line_requested_rung"
+        if kind == "claims" and rung == 2
+        else "procedure_terminal_capability",
+        granted_operation="compile_capture"
+        if kind == "emit_capture"
+        else "propose_change_set"
+        if rung == 2
+        else "activate_change_set",
         bound_artifact_pin=bound,
         actor_context=admission.actor_context,
         items=(item,),
@@ -204,8 +220,9 @@ def _effectful_request(
     mandate_digest: str,
     bound: ArtifactPin | None = None,
     prepared_at: datetime | None = None,
+    rung: int = 3,
 ):
-    base = _base_request(kind, admission=admission, item=item, bound=bound)
+    base = _base_request(kind, admission=admission, item=item, bound=bound, rung=rung)
     if prepared_at is not None:
         base = base.model_copy(update={"prepared_at": prepared_at})
     return build_terminal_egress_request_v2(
@@ -246,7 +263,8 @@ def test_terminal_operation_key_excludes_clocks_and_commits_authority_scope(tmp_
     path = "subjects/project.work_item/wi-1.json"
     mandate_digest = _digest("procedure-mandate")
     request = _effectful_request(
-        "propose_change_set",
+        "claims",
+        rung=2,
         admission=admission,
         item=_item(path),
         target_paths=(path,),
@@ -262,7 +280,7 @@ def test_terminal_operation_key_excludes_clocks_and_commits_authority_scope(tmp_
         )
     )
     mutations = (
-        {"kind": "settle_change_set"},
+        {"capped_by": None, "required_rung": 3},
         {"target_paths": ("documents/other.md",)},
         {"procedure_mandate_digest": _digest("other-mandate")},
         {"procedure_artifact_digest": _digest("other-procedure")},
@@ -277,7 +295,8 @@ def test_v2_builder_derives_authority_and_uses_monotone_prepared_time(tmp_path) 
     path = "subjects/project.work_item/wi-1.json"
     prepared_at = admission.admitted_at + timedelta(hours=1)
     request = _effectful_request(
-        "propose_change_set",
+        "claims",
+        rung=2,
         admission=admission,
         item=_item(path),
         target_paths=(path,),
@@ -299,7 +318,7 @@ def test_egress_refuses_an_inherited_mandate_pin_or_basis(tmp_path) -> None:
     admission = _admission(tmp_path)
     path = "claims/aa/CLM-" + "a" * 32 + ".json"
     request = _effectful_request(
-        "settle_change_set",
+        "claims",
         admission=admission,
         item=_item("candidate"),
         target_paths=(path,),
@@ -312,7 +331,7 @@ def test_egress_refuses_an_inherited_mandate_pin_or_basis(tmp_path) -> None:
     for update in inherited:
         with pytest.raises(ValueError, match="inherited mandate pin or basis"):
             TerminalEgressRequestV2.model_validate({**request.model_dump(mode="python"), **update})
-        v1 = _base_request("settle_change_set", admission=admission, item=_item("candidate"))
+        v1 = _base_request("claims", admission=admission, item=_item("candidate"))
         with pytest.raises(ValueError, match="inherited mandate pin or basis"):
             TerminalEgressRequestV1.model_validate({**v1.model_dump(mode="python"), **update})
 
@@ -354,7 +373,7 @@ def test_mandate_free_fold_stops_below_proposal() -> None:
     )
     assert MANDATE_FREE_RUNG_CEILING == 1
     assert rung.effective_rung == 1
-    assert not rung.permits("propose_change_set")
+    assert not rung.effective_rung >= 2
 
 
 def test_proposal_adapter_checks_authority_before_creating_a_ref(tmp_path) -> None:
@@ -375,7 +394,8 @@ def test_proposal_adapter_checks_authority_before_creating_a_ref(tmp_path) -> No
     mandate = _runtime_mandate(admission, namespace=("subjects",), grants="propose")
     mandate_digest = procedure_mandate_digest(mandate).tagged
     request = _effectful_request(
-        "propose_change_set",
+        "claims",
+        rung=2,
         admission=admission,
         item=_item(path),
         target_paths=(path,),
@@ -393,6 +413,11 @@ def test_proposal_adapter_checks_authority_before_creating_a_ref(tmp_path) -> No
         adapter.deliver(
             request=request,
             admission=admission,
+            settle_submission=ProposalSettleSubmission(
+                mode="fallback",
+                mandate_digest=request.procedure_mandate_digest or _digest("mandate"),
+                fallback_reason="cruxible.settle.capped_by_line_requested_rung",
+            ),
             candidate_tree=candidate_tree,
             accepted_mandates={},
         )
@@ -463,7 +488,8 @@ def test_proposal_adapter_rechecks_authority_before_submission(tmp_path, retire_
     head = instance.tree_at(base.git_oid)
     candidate_tree = core_assigned(instance, {**head, path: render_subject(subject)})
     request = _effectful_request(
-        "propose_change_set",
+        "claims",
+        rung=2,
         admission=admission,
         item=_item(path),
         target_paths=tuple(
@@ -494,6 +520,11 @@ def test_proposal_adapter_rechecks_authority_before_submission(tmp_path, retire_
         return adapter.deliver(
             request=request,
             admission=admission,
+            settle_submission=ProposalSettleSubmission(
+                mode="fallback",
+                mandate_digest=request.procedure_mandate_digest or _digest("mandate"),
+                fallback_reason="cruxible.settle.capped_by_line_requested_rung",
+            ),
             candidate_tree=candidate_tree,
             accepted_mandates={mandate_digest: mandate},
         )
@@ -520,7 +551,7 @@ def test_egress_refuses_mandate_expired_between_admission_and_egress(tmp_path) -
     )
     mandate_digest = procedure_mandate_digest(mandate).tagged
     request = _effectful_request(
-        "settle_change_set",
+        "claims",
         admission=admission,
         item=_item("candidate"),
         target_paths=(target_path,),
@@ -556,7 +587,7 @@ def test_egress_refuses_expired_mandate_with_rewound_v3_admission(tmp_path) -> N
     )
     mandate_digest = procedure_mandate_digest(mandate).tagged
     request = _effectful_request(
-        "settle_change_set",
+        "claims",
         admission=rewound_admission,
         item=_item("candidate"),
         target_paths=(target_path,),
@@ -589,7 +620,7 @@ def test_procedure_mandate_refusal_reports_every_failed_law_and_repair(tmp_path)
     )
     refused_digest = procedure_mandate_digest(refused).tagged
     request = _effectful_request(
-        "settle_change_set",
+        "claims",
         admission=admission,
         item=_item("candidate"),
         target_paths=(target_path,),
@@ -619,12 +650,13 @@ def test_procedure_mandate_refusal_reports_every_failed_law_and_repair(tmp_path)
 def test_v2_receipt_checks_apply_even_when_request_is_v1(tmp_path) -> None:
     admission = _admission(tmp_path)
     request = _base_request(
-        "propose_change_set",
+        "claims",
+        rung=2,
         admission=admission,
         item=_item("subjects/project.work_item/wi-1.json"),
     )
     receipt = TerminalEgressReceiptV2(
-        kind="propose_change_set",
+        kind="claims",
         run_id=request.run_id,
         node_id=request.node_id,
         disposition="received",

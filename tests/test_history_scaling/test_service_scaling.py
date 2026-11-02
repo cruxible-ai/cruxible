@@ -252,7 +252,7 @@ def _settle_on_a_retained_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     procedure_runs._activate_writer(journal, stream, admission.partition_id)
     target = claim_path(observation.identity.name)
     receipt = TerminalEgressReceiptV4(
-        kind="settle_change_set",
+        kind="claims",
         run_id=run.run_id,
         node_id="settle-observation",
         disposition="settled",

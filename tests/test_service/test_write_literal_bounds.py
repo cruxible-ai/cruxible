@@ -19,7 +19,7 @@ WI1 = f"{KIND}/wi-1"
 BOUNDED = (
     _claim_type("headline", value_type={"type": "string", "minLength": 3, "maxLength": 200}),
     _claim_type("code", value_type={"type": "string", "pattern": "^[A-Z]{2}-[0-9]+$"}),
-    _claim_type("grade", value_type={"type": "integer", "enum": [1, 2, 3]}),
+    _claim_type("grade", value_type={"type": "integer", "minimum": 1, "maximum": 3}),
     _claim_type("score", value_type={"type": "integer", "minimum": 1, "maximum": 10}),
 )
 
@@ -64,13 +64,13 @@ def _refused(instance: PlaybillInstance, field: str, value: object) -> Any:
 @pytest.mark.parametrize(
     ("field", "value", "named"),
     [
-        ("headline", "x" * 230, "maxLength 200, got 230"),
-        ("headline", "ab", "minLength 3, got 2"),
+        ("headline", "x" * 230, "max_len 200, got 230"),
+        ("headline", "ab", "min_len 3, got 2"),
         ("code", "ab-12", 'pattern "^[A-Z]{2}-[0-9]+$", got "ab-12"'),
-        ("grade", 7, "enum [1, 2, 3], got 7"),
-        ("score", 0, "minimum 1, got 0"),
-        ("score", 11, "maximum 10, got 11"),
-        ("headline", 5, "type string, got integer 5"),
+        ("grade", 7, "max 3, got 7"),
+        ("score", 0, "min 1, got 0"),
+        ("score", 11, "max 10, got 11"),
+        ("headline", 5, "type string{min_len: 3, max_len: 200}, got integer 5"),
     ],
 )
 def test_the_refusal_names_the_violated_bound_and_the_value(

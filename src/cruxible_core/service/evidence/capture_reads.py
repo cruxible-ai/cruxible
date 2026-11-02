@@ -51,22 +51,14 @@ def _not_a_capture(
 ) -> ReadRefusalError:
     """Refuse a digest whose bytes are not a Capture envelope, naming what they are.
 
-    A digest an agent sees is usually a Capture's, but an exact-content Claim's
-    value and a Document's body are digests of stored bytes too. Those bytes are
+    A digest an agent sees is usually a Capture's; a Document's body is
+    also addressed by digest. Those bytes are
     read through ``get`` on their owner, which shows them as text; the Captures
     that back a Claim are listed by ``get(<claim>, detail="evidence")``.
     """
 
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection
-        claims = [
-            str(identity).removeprefix("Claim:")
-            for (identity,) in connection.execute(
-                "SELECT identity FROM claims WHERE object_content_digest=? AND lifecycle='live' "
-                "ORDER BY identity LIMIT ?",
-                (digest, _MAX_OWNERS),
-            )
-        ]
         documents = [
             "Document:" + str(identity).removeprefix("document:")
             for (identity,) in connection.execute(
@@ -74,15 +66,8 @@ def _not_a_capture(
                 (digest, _MAX_OWNERS),
             )
         ]
-    owners = [*claims, *documents][:_MAX_OWNERS]
-    if claims:
-        what = f"the exact content of Claim {claims[0]}"
-        repair = RepairOperation(operation="cruxible.get", arguments={"ref": claims[0]})
-        line = (
-            f"Read it with get on the Claim ({claims[0]}), which shows the value as text; "
-            'detail="evidence" names the Captures behind it'
-        )
-    elif documents:
+    owners = documents[:_MAX_OWNERS]
+    if documents:
         what = f"the body of {documents[0]}"
         repair = RepairOperation(
             operation="cruxible.get", arguments={"ref": documents[0], "detail": "body"}

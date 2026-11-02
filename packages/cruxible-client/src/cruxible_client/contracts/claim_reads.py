@@ -137,7 +137,7 @@ class ClaimValueRecord(BaseModel):
     predicate: str
     qualifier: str | None
     role: str
-    object_kind: Literal["literal", "subject", "exact_content", "none"]
+    object_kind: Literal["literal", "subject", "none"]
     # The statement's object exactly as accepted.
     object: ClaimObject
     # The literal itself; the object Subject's artifact path; or the exact

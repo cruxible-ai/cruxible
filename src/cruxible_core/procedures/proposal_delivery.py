@@ -27,6 +27,7 @@ Three properties are load-bearing:
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import sqlite3
 from collections.abc import Callable, Mapping
@@ -51,6 +52,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayload,
     ClaimDependencyDrafts,
     ExistingCaptureCitationSource,
+    SelfSourceBody,
     SubjectCreationAuthoringPayload,
     authoring_change_set_membership,
     authoring_create_fingerprint,
@@ -59,7 +61,11 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.captures import parse_capture_envelope
+from cruxible_client.contracts.captures import (
+    CaptureEnvelopeAny,
+    classify_capture_reuse,
+    parse_capture_envelope,
+)
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, parse_claim_type
 from cruxible_client.contracts.claims import (
@@ -108,6 +114,7 @@ from cruxible_core.evidence.claim_reobservations import (
     ClaimReobservationRefused,
     ClaimReobservationStore,
 )
+from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.indexes.subject_identity import (
     IdentityView,
     KeyTuple,
@@ -340,6 +347,7 @@ def _claim_members(
     read: Callable[[str], bytes | None] = lambda _path: None,
     resolve: Callable[[ClaimAuthoringPayload], ClaimAuthoringPayload] = lambda member: member,
     statement_of: Callable[[CoreClaimChange], AuthoringClaimStatement] = _keyless_statement,
+    claim_bound_captures: frozenset[str] = frozenset(),
 ) -> tuple[tuple[ClaimAuthoringPayload, ...], dict[str, str], dict[str, str]]:
     """Build one Claim member per Claim item; return members, item->claim id, identity->item.
 
@@ -372,8 +380,14 @@ def _claim_members(
             procedure_evidence=request.claims_evidence.get(egress_item.item_key),
             statement=statement_of(item),
             rationale=item.rationale,
-            source=sources[evidence[egress_item.item_key]],
-            citation_role="evidence",
+            source=SelfSourceBody(
+                content_base64=base64.b64encode(item.rationale.encode("utf-8")).decode("ascii")
+            )
+            if evidence[egress_item.item_key] in claim_bound_captures
+            else sources[evidence[egress_item.item_key]],
+            citation_role=None
+            if evidence[egress_item.item_key] in claim_bound_captures
+            else "evidence",
             derivation=item.derivation,
             revises=item.predecessor,
             dependency_drafts=ClaimDependencyDrafts(),
@@ -1323,6 +1337,32 @@ class ProposalTerminalEgressSink:
         keys = _SubjectKeys(self.instance, base=base, base_tree=base_tree)
         keys.add_created(subject_members)
 
+        # Accepted input Claims may cite Claim-bound self sources. Those remain
+        # input evidence; a derived Claim needs its own origin instead of borrowing
+        # another Claim's origin. Classify each distinct source once per preparation.
+        bodies = self.instance.body_store()
+        claim_bound_captures: set[str] = set()
+        for digest in {
+            evidence[egress.item_key]
+            for egress, change in zip(request.items, items, strict=True)
+            if isinstance(change, CoreClaimChange)
+            and change.derivation is not None
+            and change.derivation.inputs
+        }:
+            envelope = parse_capture_envelope(
+                bodies.read(
+                    digest,
+                    access=BodyAccessContext(principal_id="claims-delivery", can_read_body=True),
+                )
+            )
+            accepted_contract = self.instance.accepted_capture_contract_version(
+                AcceptedCoordinate.from_internal(base), envelope.capture_contract_digest
+            )
+            if accepted_contract is not None and classify_capture_reuse(
+                envelope, contract=accepted_contract.contract, store=bodies, claim_id=""
+            ) in {"claim_bound", "claim_bound_mismatch"}:
+                claim_bound_captures.add(digest)
+
         def claim_members() -> tuple[
             tuple[ClaimAuthoringPayload, ...], dict[str, str], dict[str, str]
         ]:
@@ -1333,6 +1373,7 @@ class ProposalTerminalEgressSink:
                 read=base_tree.get,
                 resolve=resolve,
                 statement_of=keys.statement,
+                claim_bound_captures=frozenset(claim_bound_captures),
             )
 
         # Every keyed reference is frozen against the admitted base and the
@@ -1952,6 +1993,7 @@ class ProposalTerminalEgressSink:
         if not unchanged:
             return
         store = ClaimReobservationStore(self.instance)
+        cited_envelopes: dict[str, CaptureEnvelopeAny] = {}
         for child in unchanged:
             if not isinstance(child, TerminalEgressChildReceiptV3):
                 continue  # a reused Subject observes nothing
@@ -1962,6 +2004,7 @@ class ProposalTerminalEgressSink:
                     capture_digest=child.reobserving_capture_digest,
                     actor_id=request.actor_context.actor_id,
                     extraction=request.claims_evidence.get(child.item_key),
+                    cited_envelopes=cited_envelopes,
                     extracted_value=(
                         change.value
                         if isinstance(

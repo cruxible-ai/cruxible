@@ -11,7 +11,6 @@ from cruxible_client._error_base import printable
 from cruxible_client.contracts.read_values import (
     CLAIM_LINE_ID_CHARS,
     ClaimLine,
-    ExactContentRef,
     ShownObject,
     ShownValue,
     TruncatedText,
@@ -22,15 +21,6 @@ GET_CLI_VALUE_WIDTH = 120
 GET_CLI_HISTORY_VALUE_WIDTH = 80
 
 _SHOWN: TypeAdapter[ShownValue] = TypeAdapter(ShownValue)
-
-
-def exact_content_marker_text(marker: ExactContentRef) -> str:
-    """An exact-content value shown by digest (binary or unavailable), in one line."""
-
-    algorithm, _, hexdigest = marker.content_digest.partition(":")
-    short = f"{algorithm}:{hexdigest[:12]}" if hexdigest else marker.content_digest
-    size = f" {marker.length} bytes" if marker.length is not None else ""
-    return f"<{marker.exact_content}{size} {short}>"
 
 
 @dataclass(frozen=True)
@@ -50,12 +40,12 @@ def _wire_value(value: object) -> object:
 def _shown(value: object) -> object:
     """The value re-typed as a read shows it: markers and previews are models again.
 
-    A CLI renders a card from its JSON dump, so a ``TruncatedText`` or an
-    ``ExactContentRef`` may arrive as its wire object; parsing it back as a
+    A CLI renders a card from its JSON dump, so a ``TruncatedText``
+    may arrive as its wire object; parsing it back as a
     ``ShownValue`` keeps one typed rule for both.
     """
 
-    if isinstance(value, TruncatedText | ExactContentRef | ShownObject):
+    if isinstance(value, TruncatedText | ShownObject):
         return value
     wire = _wire_value(value)
     try:
@@ -100,16 +90,12 @@ def get_value_display(
     Claim behind the shown value), else the bare ``--detail evidence`` flag.
     """
     value = _shown(value)
-    if isinstance(value, ExactContentRef):
-        return GetValueDisplay(exact_content_marker_text(value))
     if isinstance(value, TruncatedText):
         text = printable(value.preview)
         preview = text[: max(1, width - 24) - 1]
         source = value.read_whole.ref if value.read_whole is not None else claim
         return GetValueDisplay(f"{preview}…{_cut_hint(value.length, source)}", True)
-    if isinstance(value, list) and any(
-        isinstance(item, TruncatedText | ExactContentRef) for item in value
-    ):
+    if isinstance(value, list) and any(isinstance(item, TruncatedText) for item in value):
         items = [
             get_value_display(item, width=width, evidence_hint=evidence_hint, claim=claim)
             for item in value

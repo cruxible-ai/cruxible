@@ -182,15 +182,15 @@ def test_member_descriptions_name_enum_members_in_canonical_order() -> None:
         v7(member_descriptions=(_member("done"), _member("done")))
     with pytest.raises(ValidationError, match="not an enum member"):
         v7(member_descriptions=(_member("shipped"),))
-    with pytest.raises(ValidationError, match="top-level enum"):
-        v7(literal_schema={"type": "string"}, member_descriptions=(_member("done"),))
+    with pytest.raises(ValidationError, match="enum value type"):
+        v7(value_type={"type": "string"}, member_descriptions=(_member("done"),))
 
 
 def test_a_boolean_member_is_not_its_integer_twin() -> None:
-    schema = {"enum": [0, 1]}
-    with pytest.raises(ValidationError, match="not an enum member"):
-        v7(literal_schema=schema, member_descriptions=(_member(True),))
-    assert v7(literal_schema=schema, member_descriptions=(_member(1),)).member_descriptions
+    # Native enums carry named states only; bool/int equality cannot merge states.
+    for member in (True, 1):
+        with pytest.raises(ValidationError):
+            v7(value={"kind": "enum", "members": [member]})
 
 
 def test_descriptions_are_canonical_text_within_bounds() -> None:
@@ -335,6 +335,8 @@ def _input(**update: object) -> object:
     from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
     from tests.core_support._claim_type_support import defaulted_claim_type_input_example
 
+    if "value_type" in update:
+        update = claim_type_changes(value_type=update.pop("value_type"), **update)
     # A complete record (every structural field stated, no meaning field).
     return ClaimTypeInputRecord.model_validate(
         {
@@ -378,7 +380,7 @@ def test_an_edit_keeps_the_predecessors_accumulate_and_self_unless_named() -> No
 def test_authored_descriptions_are_normalized_and_members_sorted() -> None:
     lowered = _lower(
         _input(
-            literal_schema={"enum": ["ready", "done"], "type": "string"},
+            value_type={"enum": ["ready", "done"], "type": "string"},
             description="  Where the work stands. ",
             member_descriptions=[
                 {"member": "ready", "description": " Can start. "},
@@ -430,7 +432,7 @@ def _described_v7() -> ClaimType:
     return _lower(
         _input(
             canonical_form=None,
-            literal_schema={"enum": ["done", "ready"], "type": "string"},
+            value_type={"enum": ["done", "ready"], "type": "string"},
             description="Where the work stands.",
             member_descriptions=[
                 {"member": "done", "description": "Finished."},
@@ -449,7 +451,7 @@ def test_an_edit_that_omits_the_meaning_fields_keeps_every_one_of_them() -> None
     # An unrelated edit: an extra permitted role, nothing about meaning.
     edited = _lower(
         _input(
-            literal_schema={"enum": ["done", "ready"], "type": "string"},
+            value_type={"enum": ["done", "ready"], "type": "string"},
             permitted_roles=["environment_binding", "normative", "observation"],
         ),
         tree,
@@ -464,7 +466,7 @@ def test_an_explicit_null_clears_a_meaning_field_and_survives_the_wire() -> None
 
     tree = {PATH: render_claim_type(_described_v7())}
     clearing = _input(
-        literal_schema={"enum": ["done", "ready"], "type": "string"},
+        value_type={"enum": ["done", "ready"], "type": "string"},
         description=None,
         member_descriptions=None,
         default_role=None,
@@ -482,9 +484,7 @@ def test_an_explicit_null_clears_a_meaning_field_and_survives_the_wire() -> None
     )
     assert cleared.revision_evidence == "accumulate"  # still kept from the predecessor
     emptied = _lower(
-        _input(
-            literal_schema={"enum": ["done", "ready"], "type": "string"}, member_descriptions=[]
-        ),
+        _input(value_type={"enum": ["done", "ready"], "type": "string"}, member_descriptions=[]),
         tree,
     )
     assert emptied.member_descriptions == ()
@@ -500,15 +500,15 @@ def test_inherited_descriptions_of_members_the_enum_dropped_are_refused_by_name(
 
     tree = {PATH: render_claim_type(_described_v7())}
     with pytest.raises(ClaimTypeMemberDescriptionsStale) as refused:
-        _lower(_input(literal_schema={"enum": ["done", "shipped"], "type": "string"}), tree)
+        _lower(_input(value_type={"enum": ["done", "shipped"], "type": "string"}), tree)
     assert refused.value.error_code == "cruxible.claim_type.member_descriptions_stale"
     assert "'ready'" in str(refused.value) and "'done'" not in str(refused.value)
     with pytest.raises(ClaimTypeMemberDescriptionsStale):
-        _lower(_input(literal_schema={"type": "string"}), tree)
+        _lower(_input(value_type={"type": "string"}), tree)
     # Restating or clearing them is the way through.
     _lower(
         _input(
-            literal_schema={"enum": ["done", "shipped"], "type": "string"},
+            value_type={"enum": ["done", "shipped"], "type": "string"},
             member_descriptions=None,
         ),
         tree,
@@ -520,7 +520,7 @@ def test_an_inherited_default_role_the_edit_no_longer_permits_is_refused() -> No
 
     tree = {PATH: render_claim_type(_described_v7())}
     edited_roles = {
-        "literal_schema": {"enum": ["done", "ready"], "type": "string"},
+        "value_type": {"enum": ["done", "ready"], "type": "string"},
         "permitted_roles": ["observation"],
     }
     with pytest.raises(ClaimTypeDefaultRoleNotPermitted) as refused:

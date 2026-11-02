@@ -89,9 +89,9 @@ def _changes() -> list[tuple[dict[str, Any], ...]]:
         (_set(WI1, "lead", WI2),),
         (_set(f"{KIND}/bulk-7", "status", "ready"), _set(f"{KIND}/bulk-250", "title", "New")),
         # A long text moves to a sibling file, then back: a file enters and leaves.
-        (_set(WI3, "ruling", "".join(f"Clause {i}.\n" for i in range(60))),),
+        (_set(WI3, "ruling", "reviewed"),),
         (_set(WI1, "status", "done"), _set(WI1, "lead", WI3)),
-        (_set(WI3, "ruling", "Short now.\n"),),
+        (_set(WI3, "ruling", "approved"),),
         ({"op": "retire", "target": {"subject": WI1, "field": "status"}},),
     ]
 

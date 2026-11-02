@@ -101,6 +101,7 @@ class ClaimsDiagnostic(_Receipt):
     claim: str | None = None
     role: str | None = None
     key: dict[str, JsonValue] | None = None
-    record_locators: tuple[str, ...] = ()
+    record_locators: tuple[str, ...] = Field(default=(), max_length=10)
+    record_count: int = Field(default=0, ge=0)
     held_value: JsonValue = None
     incoming_value: JsonValue = None

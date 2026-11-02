@@ -106,7 +106,7 @@ EFFECTFUL_TERMINAL_KINDS: frozenset[str] = frozenset({"claims"})
 
 TerminalEgressDispositionV1 = Literal["emitted", "posted", "received", "settled"]
 
-MandateOperationV1 = Literal["compile_capture", "propose", "activate_change_set"]
+MandateOperationV1 = Literal["compile_capture", "propose_change_set", "activate_change_set"]
 
 EffectiveRungTermV1 = Literal[
     "procedure_terminal_capability",
@@ -166,7 +166,7 @@ MANDATE_FREE_RUNG_CEILING = 1
 RUNG_REQUIRED_OPERATIONS: dict[int, MandateOperationV1 | None] = {
     0: "compile_capture",
     1: None,
-    2: "propose",
+    2: "propose_change_set",
     3: "activate_change_set",
 }
 

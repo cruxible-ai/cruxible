@@ -500,7 +500,7 @@ def _select_names(kind: OrientKind) -> list[str]:
 
 def _enum_filter(kind: OrientKind) -> dict[str, object] | None:
     for item in kind.predicates:
-        if item.type == "enum" and item.members and item.cardinality == "one":
+        if item.members and item.cardinality == "one":
             return {"field": item.name, "eq": item.members[0]}
     return None
 

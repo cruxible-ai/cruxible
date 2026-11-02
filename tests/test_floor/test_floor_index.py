@@ -151,11 +151,11 @@ def test_incremental_renders_equal_cold_ones_at_every_generation(tmp_path: Any) 
     instance, _owner = seed_write_surface(tmp_path)
     steps = [
         (_set(WI1, "status", "ready"),),
-        (_set(WI2, "title", "Two"), _set(WI1, "ruling", "Text.\nMore text.\n")),
+        (_set(WI2, "title", "Two"), _set(WI1, "ruling", "reviewed")),
         (_set(WI1, "status", "blocked"),),
         ({"op": "add", "subject": WI1, "field": "governs", "value": WI2},),
-        (_set(WI3, "ruling", "".join(f"Clause {i}.\n" for i in range(60))),),
-        (_set(WI3, "ruling", "Short now.\n"),),
+        (_set(WI3, "ruling", "reviewed"),),
+        (_set(WI3, "ruling", "approved"),),
     ]
     warm: list[FloorRender] = []
     advance_floor_index(instance)

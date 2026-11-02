@@ -27,7 +27,6 @@ if TYPE_CHECKING:
         CaptureRef,
         CaptureView,
         Cardinality,
-        ClaimObjectKind,
         ClaimRef,
         ClaimRole,
         ClaimRoleNotPermittedError,
@@ -82,7 +81,6 @@ if TYPE_CHECKING:
         TransformNode,
     )
     from cruxible_client.contracts.read_values import (
-        ExactContentRef,
         ShownObject,
         TruncatedText,
     )
@@ -106,7 +104,6 @@ __all__ = [
     "CompactQuery",
     "CaptureRef",
     "CaptureView",
-    "ClaimObjectKind",
     "ClaimAdmissionPolicy",
     "ClaimAttestationSigner",
     "ClaimRef",
@@ -154,7 +151,6 @@ __all__ = [
     "WorldClaimType",
     "WorldStructureError",
     "WorldSubject",
-    "ExactContentRef",
     "ShownObject",
     "TruncatedText",
     "WholeValueUnavailable",
@@ -206,7 +202,6 @@ def __getattr__(name: str) -> Any:
         "Cardinality",
         "CaptureRef",
         "CaptureView",
-        "ClaimObjectKind",
         "ClaimRef",
         "ClaimRole",
         "ClaimTypeRef",
@@ -232,7 +227,7 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.authoring import sdk_types
 
         return getattr(sdk_types, name)
-    if name in {"ExactContentRef", "ShownObject", "TruncatedText"}:
+    if name in {"ShownObject", "TruncatedText"}:
         from cruxible_client.contracts import read_values
 
         return getattr(read_values, name)

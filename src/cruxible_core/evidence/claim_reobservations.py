@@ -1,4 +1,4 @@
-"""Recorded re-observations: content a Claim already cites, observed again (identity-design-1009).
+"""Recorded re-observations: matching content, or the same typed extraction (D-R8).
 
 Restating a Claim on a Capture whose observed content it already cites, under
 the same contract and in the same citation association, is a no-op: no
@@ -11,7 +11,8 @@ is the append-only authority, and a SQLite projection keyed by Claim lineage is
 caught up from its last applied sequence on every open. A record is admitted only
 for a Claim live at the current head, held still through the append, and a
 daemon-admitted Capture that verifies there and whose observed content equals a
-Capture that Claim cites under the same contract. The
+Capture that Claim cites under the same contract, or whose core extraction proves
+the same value, extract spec and record key. The
 freshness lookup reads one indexed range per Claim lineage, never a scan.
 """
 
@@ -278,6 +279,7 @@ class ClaimReobservationStore:
         coordinate: AcceptedProjectionCoordinate,
         extraction: ClaimEvidenceReceipt | None = None,
         extracted_value: object = None,
+        cited_envelopes: dict[str, CaptureEnvelopeAny] | None = None,
     ) -> tuple[CaptureEnvelopeAny, str]:
         """The re-observing Capture's envelope, or the typed refusal.
 
@@ -349,9 +351,13 @@ class ClaimReobservationStore:
         )
         for cited in cited_captures:
             try:
-                held = parse_capture_envelope(
-                    self.instance.body_store().read(cited, access=_ACCESS)
-                )
+                held = None if cited_envelopes is None else cited_envelopes.get(cited)
+                if held is None:
+                    held = parse_capture_envelope(
+                        self.instance.body_store().read(cited, access=_ACCESS)
+                    )
+                    if cited_envelopes is not None:
+                        cited_envelopes[cited] = held
             except (CruxibleError, ValueError):
                 continue
             held_digest = observed_content(held).digest
@@ -401,6 +407,7 @@ class ClaimReobservationStore:
         actor_id: str,
         extraction: ClaimEvidenceReceipt | None = None,
         extracted_value: object = None,
+        cited_envelopes: dict[str, CaptureEnvelopeAny] | None = None,
     ) -> ReobservationRecord | None:
         """Record one admissible re-observation at the current head; a repeat is the same record.
 
@@ -428,6 +435,7 @@ class ClaimReobservationStore:
                 coordinate=self.instance.accepted_coordinate(),
                 extraction=extraction,
                 extracted_value=extracted_value,
+                cited_envelopes=cited_envelopes,
             )
             self._at(
                 claim_id=claim_id,
@@ -469,6 +477,7 @@ class ClaimReobservationStore:
                 coordinate=accepted,
                 extraction=extraction,
                 extracted_value=extracted_value,
+                cited_envelopes=cited_envelopes,
             )
             journal = self._journal(create=True)
             assert journal is not None

@@ -32,10 +32,6 @@ class LiveValue:
     predicate: str
     value: object
     artifact_digest: str
-    # An exact-content value: ``value`` is its content digest, and ``span`` the
-    # byte range of that content the Claim states, when it states one.
-    exact: bool = False
-    span: tuple[int, int] | None = None
     role: str = "normative"
     qualifier: str | None = None
     lifecycle: str = "live"
@@ -87,9 +83,9 @@ def subjects_of_kind(connection: sqlite3.Connection, kind: str) -> dict[str, str
 
 _VALUE_COLUMNS = (
     "c.identity, c.subject_path, c.predicate, c.object_kind, "
-    "s.subject_kind, s.subject_id, c.object_content_digest, c.literal_type, "
+    "s.subject_kind, s.subject_id, c.literal_type, "
     "c.literal_text, c.literal_boolean, c.literal_integer_text, c.artifact_digest, "
-    "c.object_span_start_text, c.object_span_end_text, c.role, c.qualifier"
+    "c.role, c.qualifier"
 )
 
 
@@ -106,21 +102,16 @@ def _value_of(row: Sequence[Any], source: Any) -> object:
         object_kind,
         object_kind_name,
         object_id,
-        content_digest,
         literal_type,
         literal_text,
         literal_boolean,
         literal_integer,
         _digest,
-        _span_start,
-        _span_end,
         _role,
         _qualifier,
     ) = row
     if object_kind == "subject":
         return None if object_kind_name is None else f"{object_kind_name}/{object_id}"
-    if object_kind == "exact_content":
-        return content_digest
     if literal_type == "string":
         return literal_text
     if literal_type == "boolean":
@@ -184,15 +175,9 @@ def read_live_values(
                         subject_path=str(row[1]),
                         predicate=str(row[2]),
                         value=_value_of(row, projection.typed.source),
-                        artifact_digest=str(row[11]),
-                        exact=row[3] == "exact_content",
-                        span=(
-                            None
-                            if row[3] != "exact_content" or row[12] is None
-                            else (int(row[12]), int(row[13]))
-                        ),
-                        role=str(row[14]),
-                        qualifier=None if row[15] is None else str(row[15]),
+                        artifact_digest=str(row[10]),
+                        role=str(row[11]),
+                        qualifier=None if row[12] is None else str(row[12]),
                         lifecycle=lifecycle,
                     )
                 )
@@ -217,16 +202,15 @@ def claim_values_by_path(projection: Any, paths: Iterable[str]) -> dict[str, Liv
             f"WHERE c.path IN ({marks}) AND {_NOT_NONE}",
             tuple(chunk),
         ):
-            found[str(row[16])] = LiveValue(
+            found[str(row[13])] = LiveValue(
                 identity=str(row[0]),
                 subject_path=str(row[1]),
                 predicate=str(row[2]),
-                value=_value_of(row[:16], projection.typed.source),
-                artifact_digest=str(row[11]),
-                exact=row[3] == "exact_content",
-                role=str(row[14]),
-                qualifier=None if row[15] is None else str(row[15]),
-                lifecycle=str(row[17]),
+                value=_value_of(row[:13], projection.typed.source),
+                artifact_digest=str(row[10]),
+                role=str(row[11]),
+                qualifier=None if row[12] is None else str(row[12]),
+                lifecycle=str(row[14]),
             )
     return found
 

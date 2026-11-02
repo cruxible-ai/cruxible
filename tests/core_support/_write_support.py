@@ -97,7 +97,7 @@ CLAIM_TYPES = (
     _claim_type("priority", value_type={"type": "string"}, roles=("normative", "observation")),
     _claim_type("title", value_type={"type": "string"}),
     _claim_type("governs", value_type=(KIND,), cardinality="many", roles=("normative",)),
-    _claim_type("ruling", value_type="exact_content", roles=("normative",)),
+    _claim_type("ruling", value_type={"type": "string", "maxLength": 256}, roles=("normative",)),
     _claim_type("labels", value_type={"type": "string"}, cardinality="many", captured_only=True),
     _claim_type("measured", value_type={"type": "integer"}, captured_only=True),
 )

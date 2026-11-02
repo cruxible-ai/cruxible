@@ -141,6 +141,7 @@ class ProposalTerminalAdapter:
         *,
         request: TerminalEgressRequestV2,
         admission: ProcedureRunAdmission,
+        settle_submission: ProposalSettleSubmission,
         candidate_tree: Mapping[str, bytes],
         accepted_mandates: Mapping[str, ProcedureMandateAny],
         item_paths: Mapping[str, str] | None = None,
@@ -159,9 +160,15 @@ class ProposalTerminalAdapter:
             base_tree=base_tree,
             changed_paths=changed_paths,
             delegation=delegation,
+            settle_submission=settle_submission,
         )
-        return proposal_terminal_receipt(
-            request, result=result, item_paths=item_paths, unchanged=unchanged
+        return settle_terminal_receipt(
+            request,
+            result=result,
+            item_paths=item_paths,
+            unchanged=unchanged,
+            accepted_git_oid=None,
+            fallback_reason=settle_submission.fallback_reason,
         )
 
     def submit(

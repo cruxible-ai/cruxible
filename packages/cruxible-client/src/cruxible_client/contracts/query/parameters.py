@@ -32,7 +32,7 @@ class QueryParameters:
                             "boolean": "bool",
                             "decimal": "decimal",
                             "timestamp": "datetime",
-                            "subject": "string",
+                            "subject_reference": "string",
                         }.get(item.value_type, item.value_type)
                     ),
                     optional=not item.required,

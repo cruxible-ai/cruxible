@@ -818,7 +818,7 @@ def dry_run_bodies() -> Iterator[dict[str, bytes]]:
     """Hold every body stored in this context in memory, so a dry run writes nothing.
 
     A dry run takes the same path as the write it previews up to the commit, and
-    that path stores bodies as it lowers (a self-source capture, exact content).
+    that path stores bodies as it lowers (for example, a self-source Capture).
     Inside this context the instance's body store is a ``DryRunBodyStore``: the
     bodies it stores are held here and read back from here, and nothing reaches
     the store on disk. The context is per call (a context variable), so a

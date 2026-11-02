@@ -8,7 +8,6 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.claims import (
-    ExactContentClaimObject,
     LiteralClaimObject,
     SubjectClaimObject,
     claim_artifact_digest,
@@ -17,7 +16,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     render_claim,
 )
-from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.compiler.assembler import PYTHON_REFERENCE_ASSEMBLER
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 from cruxible_core.indexes.sqlite import ProjectionHandle, initialize_projection_database
@@ -114,24 +113,14 @@ def test_literal_discriminants_and_exact_source_roundtrip(
 
 
 def test_exact_content_span_beyond_sqlite_integer_range_roundtrips(claim_world, tmp_path):
-    original = claim_world[2]
-    digest = "sha256:" + "a" * 64
-    span = ContentSpan(content_digest=digest, start_byte=2**96, end_byte=2**96 + 513)
-    claim = original.model_copy(
-        update={
-            "statement": original.statement.model_copy(
-                update={"object": ExactContentClaimObject(content_digest=digest, span=span)}
-            )
-        }
-    )
-    row = _stored_claim(claim_world, tmp_path, claim)
-    assert (
-        row["object_kind"],
-        row["object_content_digest"],
-        row["object_span_start_text"],
-        row["object_span_end_text"],
-        row["literal_type"],
-    ) == ("exact_content", digest, str(span.start_byte), str(span.end_byte), None)
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.claims import ClaimStatement
+
+    raw = claim_world[2].statement.model_dump(mode="json")
+    raw["object"] = {"kind": "exact_content", "content_digest": "sha256:" + "a" * 64}
+    with pytest.raises(ValidationError, match="exact_content_retired.*Documents"):
+        ClaimStatement.model_validate(raw)
 
 
 def test_subject_and_object_nonwhole_selectors_roundtrip(claim_world, tmp_path):

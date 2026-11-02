@@ -8,7 +8,7 @@ import secrets
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Literal, TypeAlias, cast
+from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -111,11 +111,12 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.providers import ProviderV1, provider_digest
-from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
+from cruxible_client.contracts.semantic import SemanticAddress, SourceMapping
 from cruxible_client.contracts.shapes import (
     ContractResolver,
     EnumResolver,
     KeyCanonicalizer,
+    claim_literal_detail,
     claim_literal_problem,
     claim_value_kind,
     render_type,
@@ -158,24 +159,6 @@ class SubjectClaimObject(_StrictClaimModel):
     address: SemanticAddress
 
 
-class ExactContentClaimObject(_StrictClaimModel):
-    kind: Literal["exact_content"] = "exact_content"
-    content_digest: str
-    span: ContentSpan | None = None
-
-    @field_validator("content_digest")
-    @classmethod
-    def _content_digest(cls, value: str) -> str:
-        Sha256Value.from_tagged(value)
-        return value
-
-    @model_validator(mode="after")
-    def _span_binding(self) -> "ExactContentClaimObject":
-        if self.span is not None and self.span.content_digest != self.content_digest:
-            raise ValueError("exact-content span differs from its content digest")
-        return self
-
-
 class NoneClaimObject(_StrictClaimModel):
     """An inverse Claim's object: the unit its ClaimType's inverse names holds nothing.
 
@@ -193,7 +176,7 @@ class NoneClaimObject(_StrictClaimModel):
 
 
 ClaimObject = Annotated[
-    LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject | NoneClaimObject,
+    LiteralClaimObject | SubjectClaimObject | NoneClaimObject,
     Field(discriminator="kind"),
 ]
 
@@ -261,6 +244,17 @@ class ClaimStatement(_StrictClaimModel):
     predicate: str
     qualifier: str | None = None
     object: ClaimObject
+
+    @field_validator("object", mode="before")
+    @classmethod
+    def _retired_object(cls, value: Any) -> Any:
+        if isinstance(value, Mapping) and value.get("kind") == "exact_content":
+            raise ValueError(
+                "cruxible.claim.exact_content_retired: prose lives in Documents; "
+                "cite a Document section"
+            )
+        return value
+
     role: ClaimRole
     effective_from: datetime | None = None
     effective_until: datetime | None = None
@@ -304,6 +298,17 @@ class ClaimStatementCard(_StrictClaimModel):
     subject: SemanticAddress
     predicate: str
     object: ClaimObject
+
+    @field_validator("object", mode="before")
+    @classmethod
+    def _retired_object(cls, value: Any) -> Any:
+        if isinstance(value, Mapping) and value.get("kind") == "exact_content":
+            raise ValueError(
+                "cruxible.claim.exact_content_retired: prose lives in Documents; "
+                "cite a Document section"
+            )
+        return value
+
     role: ClaimRole
     qualifier: str | None = None
     lifecycle: Literal["live", "retired"]
@@ -2231,17 +2236,10 @@ def evaluate_claim_law(
             path=path,
         )
 
-    if isinstance(statement.object, ExactContentClaimObject):
-        return _diagnostic(
-            "cruxible.claim.exact_content_retired",
-            "Prose lives in Documents; cite a Document section",
-            path=path,
-            field="object",
-        )
     object_subject: _ResolvedReferent | None = None
     # What the object section judges: an inverse keyed by object is judged as the
     # object it says is absent; any other inverse has no object to judge.
-    judged_object: LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject | None
+    judged_object: LiteralClaimObject | SubjectClaimObject | None
     if isinstance(statement.object, NoneClaimObject):
         if not claim_type_retirement_shape_exempt:
             refusal = _inverse_object_refusal(
@@ -2292,7 +2290,8 @@ def evaluate_claim_law(
         ):
             return _diagnostic(
                 "cruxible.claim.value_invalid",
-                f"Claim value fails {render_type(contract.value)}: {problem}; "
+                f"Claim value fails {render_type(contract.value)}: "
+                f"{claim_literal_detail(judged_object.value, contract.value, problem)}; "
                 "use an enum, a key, a subject<K> link, or cite a Document section",
                 path=path,
                 field="object",
@@ -3031,32 +3030,11 @@ def evaluate_claim_law(
                     "A source span is not bounded by an exact verified Capture commitment.",
                     path=path,
                 )
-    if isinstance(statement.object, ExactContentClaimObject):
-        exact_commitment = verified_commitments.get(statement.object.content_digest)
-        if exact_commitment is None:
-            return _diagnostic(
-                "cruxible.claim.exact_content_unverified",
-                "The exact-content object has no verified backing Capture commitment.",
-                path=path,
-            )
-        if statement.object.span is not None:
-            mapped_spans = {
-                canonical_bytes(span.model_dump(mode="json"))
-                for mapping in claim.backing.source_mappings
-                for span in mapping.spans
-            }
-            if canonical_bytes(statement.object.span.model_dump(mode="json")) not in mapped_spans:
-                return _diagnostic(
-                    "cruxible.claim.exact_content_span_unmapped",
-                    "The exact-content object span is not mapped to the Claim statement.",
-                    path=path,
-                )
-    if statement.role == "environment_binding" and not isinstance(
-        statement.object, ExactContentClaimObject
-    ):
+    if statement.role == "environment_binding":
         return _diagnostic(
             "cruxible.claim.environment_binding_not_exact",
-            "An environment-binding Claim must identify exact content bytes.",
+            "Environment-binding exact-content Claims are retired; "
+            "use typed observations or Documents.",
             path=path,
         )
     if not claim.backing.capture_digests:
@@ -3161,7 +3139,6 @@ __all__ = [
     "ClaimUnsupportedFormatError",
     "ClaimPolarity",
     "ClaimUnitKey",
-    "ExactContentClaimObject",
     "LiteralClaimObject",
     "NoneClaimObject",
     "claim_polarity",

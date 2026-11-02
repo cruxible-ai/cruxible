@@ -1262,7 +1262,7 @@ def render_floor(
         changed = None
     types, live_predicates = inputs.types, inputs.live_predicates
     stamps = _Stamps(inputs, live_predicates)
-    values = ValueRenderer(instance)
+    values = ValueRenderer()
     subjects = (PMap() if previous is None else previous.subjects).evolver()
     files = _Files(previous)
     kind_moves = _Moves()

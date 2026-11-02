@@ -18,6 +18,7 @@ def delivery_definition(
     within=(),
     templates=None,
     create=False,
+    fixed_subject=False,
 ):
     source = procedure.definition.nodes[0]
     row = boundary_contract("security.delivery-row", {"severity": "string{max_len: 256}"})
@@ -30,11 +31,31 @@ def delivery_definition(
         }
         for predicate in predicates
     ]
+    subject_key = {"slug": "$item.key.slug" if records != "/" and not fixed_subject else subject_id}
+    if fixed_subject:
+        mappings = [{**mapping, "qualifier": "$item.key.slug"} for mapping in mappings]
     if templates is not None:
         if not isinstance(templates, (list, tuple)):
             raise ValueError("provider-made command items are retired; use a typed claims template")
         mappings = []
+        creations = [
+            item
+            for item in templates
+            if isinstance(item, dict) and "subject_kind" in item and "key" in item
+        ]
+        if creations:
+            if len(creations) != 1:
+                raise ValueError("Native claims declares one Subject key per row")
+            creation = creations[0]
+            subject_kind = creation["subject_kind"]
+            subject_key = {
+                name: "$item.fields.severity" if value == "$steps.result.severity" else value
+                for name, value in creation["key"].items()
+            }
+            create = True
         for item in templates:
+            if item in creations:
+                continue
             if not isinstance(item, dict) or "statement" not in item:
                 raise ValueError("Claim commands are retired; use a typed claims template")
             prohibited = {
@@ -48,6 +69,11 @@ def delivery_definition(
             if any(item.get(key) is not None for key in prohibited):
                 raise ValueError("Claim commands are retired; use a typed claims template")
             statement = item["statement"]
+            reference = statement.get("subject")
+            if not creations and isinstance(reference, dict) and "key" in reference:
+                subject_kind = reference["subject_kind"]
+                key = reference["key"]
+                subject_key = key if isinstance(key, dict) else {"slug": key}
             obj = statement["object"]
             if obj["kind"] != "literal":
                 raise ValueError("This fixture maps typed literal Claims only")
@@ -67,6 +93,17 @@ def delivery_definition(
                     "rationale": item["rationale"],
                 }
             )
+        if not mappings and creations:
+            mappings = [
+                {
+                    "type": ArtifactNameRef(
+                        target=ArtifactIdentity(kind="ClaimType", name=subject_kind + ".severity")
+                    ),
+                    "value": "$item.fields.severity",
+                    "role": "observation",
+                    "rationale": creations[0]["rationale"],
+                }
+            ]
     definition = procedure_definition(
         base=procedure.definition,
         contract_out=named(contract_pin("contract-out", out)),
@@ -80,7 +117,11 @@ def delivery_definition(
                 row=row.ref.model_copy(update={"digest": contract_digest(row).tagged}),
                 key={"slug": {"at": "id", "type": f"key_part<{subject_kind}:slug>"}}
                 if records != "/"
-                else {},
+                else (
+                    {"slug": {"at": "severity", "type": f"key_part<{subject_kind}:slug>"}}
+                    if "$item.fields.severity" in subject_key.values()
+                    else {}
+                ),
                 fields={"severity": {"at": "severity"}},
                 as_="entries",
                 next=node_id,
@@ -91,7 +132,10 @@ def delivery_definition(
                 subject={
                     "kind": subject_kind,
                     "create": "if_absent" if create else "never",
-                    "key": {"slug": "$item.key.slug" if records != "/" else subject_id},
+                    "key": {
+                        k: "$item.key.slug" if v == "$item.fields.severity" else v
+                        for k, v in subject_key.items()
+                    },
                     **({"within": list(within)} if within else {}),
                 },
                 claims=mappings,

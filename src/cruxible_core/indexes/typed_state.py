@@ -169,9 +169,6 @@ OWNER_CODECS = (
             ("object_path", "TEXT"),
             ("object_selector_scheme", "TEXT"),
             ("object_selector_value", "TEXT"),
-            ("object_content_digest", "TEXT"),
-            ("object_span_start_text", "TEXT"),
-            ("object_span_end_text", "TEXT"),
             ("literal_type", "TEXT"),
             ("literal_text", "TEXT"),
             ("literal_boolean", "INTEGER CHECK(literal_boolean IN (0,1))"),
@@ -400,23 +397,16 @@ def owner_for_identity(identity: str) -> OwnerCodec | None:
 
 
 _CLAIM_CHECK = """
-CHECK(object_kind IN ('literal','subject','exact_content','none')),
+CHECK(object_kind IN ('literal','subject','none')),
 CHECK((object_kind='subject' AND object_path IS NOT NULL AND object_selector_scheme IS NOT NULL
-       AND object_selector_value IS NOT NULL AND object_content_digest IS NULL
-       AND object_span_start_text IS NULL AND object_span_end_text IS NULL AND literal_type IS NULL)
-   OR (object_kind='exact_content' AND object_path IS NULL AND object_selector_scheme IS NULL
-       AND object_selector_value IS NULL AND object_content_digest IS NOT NULL
-       AND ((object_span_start_text IS NULL AND object_span_end_text IS NULL)
-         OR (object_span_start_text IS NOT NULL AND object_span_end_text IS NOT NULL))
+       AND object_selector_value IS NOT NULL
        AND literal_type IS NULL)
    OR (object_kind='literal' AND object_path IS NULL AND object_selector_scheme IS NULL
-       AND object_selector_value IS NULL AND object_content_digest IS NULL
-       AND object_span_start_text IS NULL AND object_span_end_text IS NULL
+       AND object_selector_value IS NULL
        AND literal_type IS NOT NULL
        AND literal_type IN ('null','boolean','integer','string','array','object'))
    OR (object_kind='none' AND object_path IS NULL AND object_selector_scheme IS NULL
-       AND object_selector_value IS NULL AND object_content_digest IS NULL
-       AND object_span_start_text IS NULL AND object_span_end_text IS NULL
+       AND object_selector_value IS NULL
        AND literal_type IS NULL)),
 CHECK((object_kind='none') OR none_of IS NULL),
 CHECK(COALESCE(literal_type IN ('array','object'),0) = (literal_digest IS NOT NULL)),
@@ -607,13 +597,6 @@ def _object_fields(obj: Any) -> dict[str, SQLValue]:
             object_selector_scheme=obj.address.selector.scheme,
             object_selector_value=obj.address.selector.value,
         )
-    elif obj.kind == "exact_content":
-        result["object_content_digest"] = obj.content_digest
-        if obj.span is not None:
-            result.update(
-                object_span_start_text=str(obj.span.start_byte),
-                object_span_end_text=str(obj.span.end_byte),
-            )
     else:
         value = obj.value
         if value is None:

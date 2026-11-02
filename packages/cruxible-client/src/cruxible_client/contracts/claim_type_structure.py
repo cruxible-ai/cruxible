@@ -15,7 +15,7 @@ from cruxible_client.contracts.shapes import FieldType, coerce_field_type
 CLAIM_TYPE_STRUCTURAL_SIGNATURE_DOMAIN = "playbill-claim-type-structural-signature-v1"
 
 ClaimRole = Literal["normative", "observation", "environment_binding", "derivation"]
-ClaimObjectKind = Literal["literal", "subject", "exact_content"]
+ClaimObjectKind = Literal["literal", "subject"]
 ClaimCardinality = Literal["one", "many"]
 ReferentSensitivity = Literal["identity", "shell"]
 

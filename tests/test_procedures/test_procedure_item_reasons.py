@@ -136,16 +136,11 @@ def _evidence_rationale(instance, claim_id: str):  # type: ignore[no-untyped-def
     return result.evidence.rationale
 
 
-def test_accepted_manual_retirement_does_not_use_withdrawn_procedure_reason(
+def test_accepted_manual_revision_does_not_use_withdrawn_procedure_reason(
     tmp_path: Path,
 ) -> None:
     """A withdrawn Procedure proposal sharing the accepted candidate attributes nothing."""
 
-    from tests.core_support._retirement_support import (
-        activate_submitted,
-        retirement_member,
-        submit_retirement,
-    )
 
     instance, owner, root, line, claim_id = retire._proposed_world(tmp_path)
     (root / delivery.fixtures.RELATIVE_PATH).write_bytes(
@@ -162,22 +157,29 @@ def test_accepted_manual_retirement_does_not_use_withdrawn_procedure_reason(
         withdrawn_at="2026-09-12T12:07:00.000000Z",
         dry_run=False,
     )
-    manual = submit_retirement(
-        instance,
-        retirement_member(instance, claim_id, reason="was-wrong"),
+    evaluation = instance.proposal_evidence().read_evaluation(egress.proposal_id)
+    assert evaluation.evaluated_tree_oid is not None
+    admission = original.proposal.admission
+    manual = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id=admission.actor_id),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/manual-equivalent-revision",
+            proposed_base_oid=admission.proposed_base_oid,
+            source_compilation_digest=admission.source_compilation_digest,
+            rationale="Independently reviewed equivalent revision.",
+        ),
+        candidate_tree=instance.proposal_tree(evaluation.evaluated_tree_oid),
         timestamp=canonical_candidate_timestamp(retire.LATER),
+        settle_submission=admission.settle_submission,
     )
-    assert manual.status.proposal_id is not None, manual
     manual_proposal = service_inspect_playbill_proposal(
-        instance, proposal_id=manual.status.proposal_id
+        instance, proposal_id=manual.admission.proposal_id
     )
-    assert original.proposal.candidate is not None and manual_proposal.proposal.candidate
-    # A manual retirement differs from the withdrawn native revision.
-    assert (
-        manual_proposal.proposal.candidate.candidate_digest
-        != original.proposal.candidate.candidate_digest
-    )
-    activate_submitted(instance, owner, manual)
+    assert original.proposal.candidate is not None and manual.candidate is not None
+    assert manual.candidate.candidate_digest == original.proposal.candidate.candidate_digest
+    from tests.core_support._retirement_support import activate_proposal
+
+    activate_proposal(instance, owner, manual.admission.proposal_id)
 
     assert _why(instance, claim_id).reason is None
     assert _evidence_rationale(instance, claim_id) != delivery.item_template()["rationale"]
@@ -350,7 +352,7 @@ def test_a_malformed_revises_refuses_as_an_invalid_item(tmp_path: Path) -> None:
 # --- recovery never lends a crashed operation's reasons (delta review F-002) -----
 
 
-def test_recovery_refuses_an_independent_admission_without_the_operation_binding(
+def test_recovery_does_not_attach_reasons_to_an_independent_equivalent_admission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Crash before submit; an equivalent proposal lands under the ref; recovery lends nothing."""
@@ -392,11 +394,13 @@ def test_recovery_refuses_an_independent_admission_without_the_operation_binding
             source_compilation_digest=terminal_services.proposal_terminal_payload_digest(
                 captured["candidate_tree"],  # type: ignore[arg-type]
                 captured["changed_paths"],  # type: ignore[arg-type]
+                settle=captured["settle_submission"],
             ),
             rationale="Manual equivalent retirement, independently submitted after the crash.",
         ),
         candidate_tree=captured["candidate_tree"],  # type: ignore[arg-type]
         timestamp=canonical_candidate_timestamp(request.evaluation_time),
+        settle_submission=captured["settle_submission"],
     )
     assert manual.candidate is not None
     # A public submission names no Procedure operation.
@@ -408,10 +412,10 @@ def test_recovery_refuses_an_independent_admission_without_the_operation_binding
     )
 
     ((run_id, disposition),) = recovered.items()
-    assert disposition == "refused"
+    assert disposition == "delivered"
     state = service_get_playbill_procedure_run(instance, run_id=run_id)
     assert any(
-        "effectful_operation_payload_mismatch" in str(item)
+        item.get("receipt", {}).get("item_reasons_unattributed") is True
         for item in _egress_records(instance, state)
     )
     assert _review(instance, manual.admission.proposal_id).item_reason_count == 0

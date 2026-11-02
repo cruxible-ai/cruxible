@@ -1027,7 +1027,7 @@ class World:
 
         Each Subject kind is listed with its fields: the leaf a Subject answers
         by attribute, then what the field holds (``literal``, ``-> kind`` for
-        a Subject, ``exact_content``), its cardinality, enum members and
+        a Subject), its cardinality, enum members and
         description. Next: ``print(w.describe())``, then one of the verbs it
         lists -- ``cx.query(kind, ...)`` to read values, ``cx.get(ref)`` for
         one thing, ``w.<kind>[id].set(...)`` to write.
@@ -1722,12 +1722,7 @@ class World:
                             raise WorldStructureError(
                                 "prefetch Claim returned a different coordinate"
                             )
-                        view = self._playbill._with_exact_text(
-                            self._playbill._typed_claim_view(raw),
-                            AcceptedCoordinate.model_validate(
-                                raw.coordinate.model_dump(mode="json")
-                            ),
-                        )
+                        view = self._playbill._typed_claim_view(raw)
                         if (
                             view.claim_id in seen
                             or view.subject not in request.subject_paths

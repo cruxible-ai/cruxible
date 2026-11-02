@@ -52,14 +52,12 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
-    ExactContentClaimObject,
     NoneClaimObject,
     SubjectClaimObject,
 )
-from cruxible_client.contracts.errors import CruxibleError, ProjectionIntegrityError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.discovery.exact_content import ExactContentReader
 from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.read_flags import answer_flags
 
@@ -241,8 +239,6 @@ def _note(claim: ClaimArtifact) -> str:
 
 def _value_key(claim: ClaimArtifact) -> str:
     obj = claim.statement.object
-    if isinstance(obj, ExactContentClaimObject):
-        return repr(("exact_content", obj.content_digest, obj.span))
     if isinstance(obj, SubjectClaimObject):
         return repr(("subject", obj.address.artifact_path))
     if isinstance(obj, NoneClaimObject):
@@ -254,25 +250,7 @@ _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 class ValueRenderer:
-    """Shows one Claim's object as the floor shows it.
-
-    An exact-content value (a ruling, a method law) is shown as its text, read
-    from the body store the bytes were committed to, exactly as ``get`` shows
-    it. Text too long to keep a current/ file bounded goes whole into a sibling
-    ``.txt`` file, never truncated; bytes that are not UTF-8 text show as a
-    typed marker with their size.
-
-    Accepted-body retention invariant: the body of an accepted exact-content
-    Claim is retained for as long as the Claim is in accepted history. The text
-    is then a pure function of the content digest, so a floor rendered at any
-    time agrees with one rendered at any other. A body that is nevertheless
-    lost refuses the render with a projection integrity failure: the floor is
-    never published differently for the same accepted inputs.
-    """
-
-    def __init__(self, instance: PlaybillInstance) -> None:
-        self._instance = instance
-        self._content = ExactContentReader(instance)
+    """Render native Claim values, spilling large structured text to sibling files."""
 
     def shown(self, claim: ClaimArtifact, *, text_name: str) -> _Shown:
         obj = claim.statement.object
@@ -280,18 +258,6 @@ class ValueRenderer:
         if isinstance(obj, SubjectClaimObject):
             other = subject_ref(obj.address.artifact_path)
             return _Shown(yaml_scalar(other), None, note, plain=other)
-        if isinstance(obj, ExactContentClaimObject):
-            value = self._content.of(obj)
-            if not isinstance(value, str) and value.exact_content == "unavailable":
-                raise ProjectionIntegrityError(
-                    f"floor cannot render {claim.identity.name}: its accepted exact-content "
-                    f"body {obj.content_digest} is not retained"
-                )
-            if not isinstance(value, str):
-                size = "null" if value.length is None else str(value.length)
-                marker = f"{{exact_content: {value.exact_content}, bytes: {size}}}"
-                return _Shown(marker, None, note, plain=marker)
-            return self.text(value, note=note, text_name=text_name)
         if isinstance(obj, NoneClaimObject):
             # An inverse: the unit holds nothing.
             absent = obj.of

@@ -501,7 +501,7 @@ def _authoring_claims(world: World) -> object:
             "kind": "claim",
             "subject": world.subject(index),
             "predicate": f"{KIND}.ruling",
-            "object": {"kind": "exact_content", "text": f"ruling {index}"},
+            "object": {"kind": "literal", "value": f"ruling {index}"},
             "role": "normative",
             "rationale": "The scale guard records a ruling.",
             "source": {"kind": "self_source", "body": f"ruling {index}"},

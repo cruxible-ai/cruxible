@@ -88,7 +88,6 @@ from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimFormatError,
     ClaimLawEvidence,
-    ExactContentClaimObject,
     LiteralClaimObject,
     NoneClaimObject,
     SubjectClaimObject,
@@ -1011,7 +1010,7 @@ def _aggregate_activation(values: list[ActivationPolicy]) -> ActivationPolicy:
 
 
 def _claim_policy_value(
-    value: LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject,
+    value: LiteralClaimObject | SubjectClaimObject,
 ) -> object:
     if isinstance(value, LiteralClaimObject):
         return value.value
@@ -2464,7 +2463,7 @@ def _literal_object_traversal(
             severity="error",
             message=(
                 f"Traversal step {step.binding!r} walks predicate {step.predicate!r}, "
-                f"whose ClaimType declares object_kind="
+                f"whose ClaimType declares value="
                 f"{claim_value_kind(accepted.claim_type.value)!r}: relation traversal requires "
                 "object_kind='subject'."
             ),
@@ -3476,6 +3475,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         predecessor=predecessor,
         accepted_artifacts=context.candidate_identities,
         subject_kind_keys=_inverse_subject_kind_keys(context, claim_type),
+        resolve_contract=_candidate_contract_resolver(context.candidate_tree),
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))

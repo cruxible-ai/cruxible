@@ -128,7 +128,6 @@ from cruxible_client.contracts.claims import (
     ClaimReferentContext,
     ClaimRetireDependent,
     ClaimStatement,
-    ExactContentClaimObject,
     LiteralClaimObject,
     NoneClaimObject,
     SubjectClaimObject,
@@ -675,25 +674,13 @@ def _referent(
     )
 
 
-def _exact_object(
-    instance: PlaybillInstance,
+def _claim_object(
     value: object,
-) -> LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject | NoneClaimObject:
+) -> LiteralClaimObject | SubjectClaimObject | NoneClaimObject:
     if isinstance(value, AuthoringNoneClaimObject):
         return NoneClaimObject(of=value.of)
-    if not isinstance(value, AuthoringExactContentObject):
-        assert isinstance(value, LiteralClaimObject | SubjectClaimObject)
-        return value
-    content = value.content
-    stored = instance.body_store().store(content)
-    return ExactContentClaimObject(
-        content_digest=stored.digest,
-        span=ContentSpan(
-            content_digest=stored.digest,
-            start_byte=0,
-            end_byte=len(content),
-        ),
-    )
+    assert isinstance(value, LiteralClaimObject | SubjectClaimObject)
+    return value
 
 
 _ClaimPayloadT = TypeVar("_ClaimPayloadT", bound=ClaimAuthoringPayload)
@@ -836,9 +823,9 @@ def _cited_associations(
 
 
 def _canonical_object(
-    value: LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject | NoneClaimObject,
+    value: LiteralClaimObject | SubjectClaimObject | NoneClaimObject,
     claim_type: ClaimType,
-) -> LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject | NoneClaimObject:
+) -> LiteralClaimObject | SubjectClaimObject | NoneClaimObject:
     """Store a literal in the canonical form its ClaimType declares (v8).
 
     Every Claim lowering path -- a change-set member, a write verb, a Procedure
@@ -1579,7 +1566,7 @@ def _lower_claim(
             repair_kind="cite_document_section",
             repair_description="Prose lives in Documents; cite a Document section.",
         )
-    statement_object = _exact_object(instance, payload.statement.object)
+    statement_object = _claim_object(payload.statement.object)
     # A none's shape is judged against the ClaimType's inverse by the Claim law.
     if not isinstance(statement_object, NoneClaimObject) and (
         statement_object.kind != claim_value_kind(claim_type.value)

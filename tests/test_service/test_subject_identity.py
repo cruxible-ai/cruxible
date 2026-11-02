@@ -631,26 +631,36 @@ def test_the_key_index_answers_a_composite_key_in_one_seek(instance: PlaybillIns
 
 
 def test_a_boolean_key_and_an_integer_key_never_meet(tmp_path: Path) -> None:
-    """Typed keys compare by canonical encoding (``true`` is not ``1``), in one change or two."""
-
+    """Native key types distinguish booleans from integers before identity lookup."""
     instance, _owner = initialize_local(tmp_path)
-    typed = _key("dev.typed", "flag", value_type={"enum": [True, 1]})
+    typed = _key("dev.typed", "flag", value_type={"type": "boolean"})
     accept(
         instance,
         change_set(
             ClaimTypeInput(kind="claim_type", claim_type=typed),
             SubjectKindInput(
-                kind="subject_kind",
-                name="dev.typed",
-                keys=("dev.typed.flag",),
-                uniqueness="unique",
+                kind="subject_kind", name="dev.typed", keys=("dev.typed.flag",), uniqueness="unique"
             ),
             SubjectInput(kind="subject", subject_kind="dev.typed", key={"flag": True}),
-            SubjectInput(kind="subject", subject_kind="dev.typed", key={"flag": 1}),
         ),
     )
-    ids = sorted(path for path in tree(instance) if path.startswith("subjects/dev.typed/"))
-    assert ids == ["subjects/dev.typed/true.json", "subjects/dev.typed/x1.json"]
+    before = instance.accepted_coordinate()
+    refused = compile_(
+        instance,
+        change_set(SubjectInput(kind="subject", subject_kind="dev.typed", key={"flag": 1})),
+    )
+    assert refused.verdict == "refused"
+    assert any(d.code == "cruxible.claim.value_invalid" for d in refused.frontier.diagnostics), (
+        refused.frontier.diagnostics
+    )
+    assert instance.accepted_coordinate() == before
+    assert sorted(path for path in tree(instance) if path.startswith("subjects/dev.typed/")) == [
+        "subjects/dev.typed/true.json"
+    ]
+    from cruxible_client.contracts.shapes import IntType, check_value
+
+    assert check_value(True, IntType(), at="flag").tag == "invalid"
+    assert check_value(1, IntType(), at="flag").tag == "present"
 
 
 # -- migration help: next names the SubjectKind to author ----------------------------

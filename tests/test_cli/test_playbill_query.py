@@ -212,14 +212,13 @@ def test_follow_order_falls_back_when_the_raw_arguments_disagree() -> None:
     assert ordered == [("--follow-in", "a:b"), ("--follow", "x:y")]
 
 
-def test_table_cells_show_exact_content_text_cut_values_and_markers() -> None:
+def test_table_cells_show_native_values_and_cut_previews() -> None:
     from cruxible_client.authoring.compact_query import render_query_table
-    from cruxible_client.contracts.read_values import ExactContentRef, TruncatedText
+    from cruxible_client.contracts.read_values import TruncatedText
 
-    digest = "sha256:" + "cd" * 32
     page = contracts.QueryResultRecord(
         kind="legal.case",
-        columns=(contracts.QueryColumn(name="ruling", type="exact_content"),),
+        columns=(contracts.QueryColumn(name="ruling", type="string"),),
         rows=(
             {"subject": "legal.case/a", "subject_id": "a", "ruling": "Affirmed.", "flags": []},
             {
@@ -231,9 +230,7 @@ def test_table_cells_show_exact_content_text_cut_values_and_markers() -> None:
             {
                 "subject": "legal.case/c",
                 "subject_id": "c",
-                "ruling": ExactContentRef(
-                    exact_content="unavailable", content_digest=digest, length=40
-                ),
+                "ruling": "reviewed",
                 "flags": [],
             },
         ),
@@ -249,7 +246,7 @@ def test_table_cells_show_exact_content_text_cut_values_and_markers() -> None:
 
     assert "Affirmed." in table
     assert "Reversed Reversed" in table and "…" in table
-    assert "<unavailable 40 bytes sha256:cdcdcdcdcdcd>" in table
+    assert "reviewed" in table
 
 
 def test_status_claims_budgets_and_receipt_reach_the_request(stub: _StubClient) -> None:

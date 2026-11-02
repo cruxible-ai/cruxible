@@ -183,7 +183,7 @@ def test_top_level_and_carried_claim_type_conflict_still_refuses() -> None:
             del files[path]
     legacy = _legacy_claim_payload()
     top_level = json.loads(files["claim-types/project.work_item.status.json"])
-    top_level["literal_schema"] = {"enum": ["done", "ready"], "type": "string"}
+    top_level["value"] = {"kind": "enum", "members": ["done", "ready"]}
     _write(files, "claim-types/project.work_item.status.json", top_level)
     _write(files, "claims/legacy-status.json", legacy)
 
@@ -204,10 +204,7 @@ def test_two_legacy_claims_carrying_different_claim_types_still_refuse() -> None
     second["statement"]["subject"]["artifact_path"] = "subjects/project.work_item/wi-43.json"
     second["subject_shell"]["subject_id"] = "wi-43"
     assert isinstance(second["claim_type_artifact"], dict)
-    second["claim_type_artifact"]["literal_schema"] = {
-        "enum": ["blocked"],
-        "type": "string",
-    }
+    second["claim_type_artifact"]["value"] = {"kind": "enum", "members": ["blocked"]}
     _write(files, "claims/legacy-a.json", first)
     _write(files, "claims/legacy-b.json", second)
 

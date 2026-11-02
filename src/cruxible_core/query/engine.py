@@ -42,7 +42,6 @@ from cruxible_client.contracts.canonical_forms import (
 )
 from cruxible_client.contracts.claim_verdicts import EvidenceRelativeClaimVerdictV1
 from cruxible_client.contracts.claims import (
-    ExactContentClaimObject,
     NoneClaimObject,
     SubjectClaimObject,
 )
@@ -475,12 +474,7 @@ class _Evaluator:
                 value: object = target.shell.identity.qualified
             else:
                 value = item.model_dump(mode="json").get("value")
-            # An exact-content object has no literal value to project, but two
-            # of them are distinct by digest and span, so they compete exactly
-            # as two literals do under the query's conflict_behavior.
-            identity = (
-                item.model_dump(mode="json") if isinstance(item, ExactContentClaimObject) else value
-            )
+            identity = value
             distinct[canonical_bytes(identity)] = value
         if any(claim.row.cardinality == "many" for claim in claims):
             # A many-valued field's Claims are its values: the field projects

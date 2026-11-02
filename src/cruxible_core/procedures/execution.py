@@ -4112,21 +4112,25 @@ class ProcedureExecutor:
             from cruxible_client.contracts.shapes import DuplicateArm
             from cruxible_core.procedures.extract import wire_value
 
-            duplicates: dict[bytes, tuple[dict[str, Any], list[str]]] = {}
+            duplicates: dict[bytes, tuple[dict[str, Any], list[str], int]] = {}
             for arm in outcome.held:
                 if isinstance(arm, DuplicateArm):
                     key = {name: wire_value(value) for name, value in arm.key.items()}
-                    _, locators = duplicates.setdefault(canonical_bytes(key), (key, []))
-                    locators.append(arm.record)
+                    digest = canonical_bytes(key)
+                    _, locators, count = duplicates.get(digest, (key, [], 0))
+                    if len(locators) < 10:
+                        locators.append(arm.record)
+                    duplicates[digest] = (key, locators, count + 1)
             diagnostics = state.claims_diagnostics.setdefault(node.node_id, ClaimsDiagnostics())
-            for key, locators in duplicates.values():
+            for key, locators, count in duplicates.values():
                 diagnostics.add(
                     ClaimsDiagnostic(
                         kind="duplicate_key",
                         target=node.node_id,
                         problem="duplicate_key",
                         key=cast(Any, key),
-                        record_locators=tuple(locators),
+                        record_locators=tuple(locators[:10]),
+                        record_count=count,
                     )
                 )
         value = normalize_canonical(outcome.value())

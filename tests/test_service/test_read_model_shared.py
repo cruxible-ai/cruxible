@@ -28,7 +28,7 @@ from cruxible_core.service.discovery.compact_query import service_playbill_query
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.service.discovery.orient import service_playbill_orient
 from cruxible_core.storage.cas import BodyAccessContext
-from tests.core_support._exact_content_support import EXACT_KIND, seed_exact_content
+from tests.core_support._bounded_content_support import VALUE_KIND, seed_bounded_content
 from tests.core_support._knowledge_loop_support import (
     EVALUATION_TIME,
     PREDICATE,
@@ -37,7 +37,6 @@ from tests.core_support._knowledge_loop_support import (
     work_item_query,
 )
 from tests.core_support._subject_kind_support import without_keys
-from tests.support.claim_types import claim_type_changes
 from tests.support.oid_prefixes import too_short_prefix
 
 _WHEN = datetime.fromisoformat(EVALUATION_TIME)
@@ -347,14 +346,14 @@ def test_get_cards_name_predicates_by_the_shared_rule_as_orient_does(
 
 # -- exact-content values read as text on every verb --------------------------
 
-_RULING = b"The ruling, exactly as written.\n"
-_LONG_RULING = ("A long method law. " * 40).encode()
-_BINARY = b"\xff\xfe\x00opaque"
+_RULING = b"The ruling, exactly as written."
+_LONG_RULING = b"reviewed"
+_BINARY = b"opaque"
 
 
 @pytest.fixture(scope="module")
 def exact_world(tmp_path_factory: pytest.TempPathFactory) -> tuple[Any, dict[str, Any]]:
-    return seed_exact_content(
+    return seed_bounded_content(
         tmp_path_factory.mktemp("exact-content"),
         {"wi-42": _RULING, "wi-long": _LONG_RULING, "wi-bin": _BINARY},
     )
@@ -387,89 +386,38 @@ def _exact_query(instance: Any, **fields: Any) -> QueryResultRecord:
     )
 
 
-def test_get_and_query_show_an_exact_content_value_as_its_text(
-    exact_world: tuple[Any, dict[str, Any]],
-) -> None:
-    from cruxible_client.contracts.read_values import (
-        GET_SUMMARY_TEXT_MAX_CHARS,
-        ExactContentRef,
-        TruncatedText,
-    )
-
+def test_get_and_query_show_native_bounded_text(exact_world: tuple[Any, dict[str, Any]]) -> None:
     instance, seeded = exact_world
-    ruling, long_ruling, binary = seeded["wi-42"], seeded["wi-long"], seeded["wi-bin"]
-    text = _RULING.decode()
-    cut = TruncatedText(
-        truncated=True,
-        preview=_LONG_RULING.decode()[:GET_SUMMARY_TEXT_MAX_CHARS],
-        length=len(_LONG_RULING),
-    )
-    marker = ExactContentRef(
-        exact_content="binary", content_digest=binary.digest, length=len(_BINARY)
-    )
-
-    # get: the Claim card and the Subject row read the text, the digest beside it.
-    claim = _exact_get(instance, ruling.claim_id).card
-    assert isinstance(claim, GetClaimCard)
-    assert (claim.value, claim.content_digest) == (text, ruling.digest)
-    subject = _exact_get(instance, ruling.subject).card
-    assert isinstance(subject, GetSubjectCard)
-    ((row),) = without_keys(subject.claims)
-    assert (row.claim, row.value, row.content_digest) == (ruling.claim_id, text, ruling.digest)
-
-    # A long value is cut on the card by the card rule; evidence reads it whole.
-    long_card = _exact_get(instance, long_ruling.claim_id).card
-    assert isinstance(long_card, GetClaimCard) and _bare(long_card.value) == cut
-    assert isinstance(long_card.value, TruncatedText) and long_card.value.read_whole is not None
-    assert long_card.value.read_whole.ref == long_ruling.claim_id
-    evidence = _exact_get(instance, long_ruling.claim_id, detail="evidence").evidence
-    assert evidence is not None
-    assert (evidence.value, evidence.content_digest) == (_LONG_RULING.decode(), long_ruling.digest)
-
-    # Bytes that are not UTF-8 text show as a typed marker, never an error.
-    binary_card = _exact_get(instance, binary.claim_id).card
-    assert isinstance(binary_card, GetClaimCard)
-    assert binary_card.value == marker and binary_card.content_digest == binary.digest
-
-    # History reads each revision's value the same way.
-    history = _exact_get(instance, ruling.claim_id, detail="history").history
-    assert history is not None
-    assert [(item.value, item.content_digest) for item in history.revisions] == [
-        (text, ruling.digest)
-    ]
-
-    # A long revision value is cut by the same card rule.
-    long_history = _exact_get(instance, long_ruling.claim_id, detail="history").history
-    assert long_history is not None
-    assert [(_bare(item.value), item.content_digest) for item in long_history.revisions] == [
-        (cut, long_ruling.digest)
-    ]
-
-    # query: the same values, on compact and spec rows alike.
+    declared = work_item_query("project.bounded").model_dump(mode="json")
     compact = {
         row["subject"]: row
-        for row in _exact_query(instance, kind=EXACT_KIND, select=["status"]).rows
+        for row in _exact_query(instance, kind=VALUE_KIND, select=["status"]).rows
     }
-    declared = work_item_query("project.exact").model_dump(mode="json")
     spec = {
         row["subject"]: row
         for row in _exact_query(instance, spec=QueryDefinitionSpec.model_validate(declared)).rows
     }
-    for seeded_claim, shown in ((ruling, text), (long_ruling, cut), (binary, marker)):
+    for item in seeded.values():
+        text = item.content.decode()
+        claim = _exact_get(instance, item.claim_id).card
+        assert isinstance(claim, GetClaimCard)
+        assert claim.value == text
+        assert "content_digest" not in claim.model_dump()
+        subject = _exact_get(instance, item.subject).card
+        assert isinstance(subject, GetSubjectCard)
+        (row,) = without_keys(subject.claims)
+        assert (row.claim, row.value) == (item.claim_id, text)
+        assert "content_digest" not in row.model_dump()
+        history = _exact_get(instance, item.claim_id, detail="history").history
+        assert history is not None
+        assert [revision.value for revision in history.revisions] == [text]
         for rows in (compact, spec):
-            row_of = rows[seeded_claim.subject]
-            assert row_of["status"] == shown
-            # Query stays values-first: the digest is get's, not a row key.
-            assert not any("digest" in key for key in row_of)
-        card = _exact_get(instance, seeded_claim.subject).card
-        assert isinstance(card, GetSubjectCard)
-        (stated_row,) = without_keys(card.claims)
-        assert stated_row.content_digest == seeded_claim.digest
-        assert _bare(stated_row.value) == compact[seeded_claim.subject]["status"]
-        assert stated_row.flags == tuple(compact[seeded_claim.subject]["flags"])
+            assert rows[item.subject]["status"] == text
+            assert not any("digest" in key for key in rows[item.subject])
+        assert row.flags == tuple(compact[item.subject]["flags"])
 
 
-def test_contains_matches_exact_content_text_never_its_digest(
+def test_contains_matches_native_text(
     exact_world: tuple[Any, dict[str, Any]],
 ) -> None:
     instance, seeded = exact_world
@@ -478,13 +426,13 @@ def test_contains_matches_exact_content_text_never_its_digest(
     (row,) = _exact_query(instance, contains="exactly as written").rows
     assert (row["claim"], row["value"]) == (ruling.claim_id, _RULING.decode())
     assert set(row) == {"subject", "subject_id", "kind", "predicate", "value", "claim", "flags"}
-    (kind_row,) = _exact_query(instance, kind=EXACT_KIND, contains="exactly as written").rows
+    (kind_row,) = _exact_query(instance, kind=VALUE_KIND, contains="exactly as written").rows
     assert kind_row["subject"] == ruling.subject
     # A digest is proof, not a value: no search matches it.
     assert _exact_query(instance, contains=ruling.digest.split(":")[1][:16]).rows == ()
 
 
-def test_a_caller_who_may_not_read_bodies_still_reads_exact_content_as_text(
+def test_native_text_values_need_no_body_access(
     exact_world: tuple[Any, dict[str, Any]],
 ) -> None:
     """Ruling exact-content-read-only: the value is a Claim value, not a body read."""
@@ -496,11 +444,12 @@ def test_a_caller_who_may_not_read_bodies_still_reads_exact_content_as_text(
 
     card = _exact_get(instance, ruling.claim_id, access=reader).card
     assert isinstance(card, GetClaimCard)
-    assert (card.value, card.content_digest) == (text, ruling.digest)
+    assert card.value == text
+    assert "content_digest" not in card.model_dump()
     history = _exact_get(instance, ruling.claim_id, access=reader, detail="history").history
     assert history is not None
     assert [item.value for item in history.revisions] == [text]
-    rows = _exact_query(instance, kind=EXACT_KIND, select=["status"]).rows
+    rows = _exact_query(instance, kind=VALUE_KIND, select=["status"]).rows
     assert {row["subject"]: row["status"] for row in rows}[ruling.subject] == text
     (found,) = _exact_query(instance, contains="exactly as written").rows
     assert found["claim"] == ruling.claim_id
@@ -515,59 +464,16 @@ def test_query_reserves_no_digest_row_key() -> None:
 
 
 def test_query_cuts_every_long_string_by_the_card_rule(tmp_path: Path) -> None:
-    from cruxible_client.contracts.read_values import (
-        GET_SUMMARY_TEXT_MAX_CHARS,
-        TruncatedText,
-    )
-    from tests.core_support._claim_authoring_support import service_propose_playbill_claim
-    from tests.core_support._knowledge_loop_support import activate, authoring, subject_shell
-    from tests.test_claims.test_claims import _claim_type
+    from cruxible_client.contracts.read_values import TruncatedText, summary_value
+    from cruxible_client.contracts.shapes import claim_literal_problem, parse_type
 
-    note = _claim_type().model_copy(update=claim_type_changes(value_type={"type": "string"}))
-    instance, owner = seed_claims(tmp_path, claim_type_override=note)
-    long_note = "a long literal note " * 40
-    activate(
-        instance,
-        owner,
-        service_propose_playbill_claim(
-            instance,
-            authoring=authoring("wi-44", long_note, with_claim_type=False).model_copy(
-                update={"subject_shell": subject_shell("wi-44")}
-            ),
-            actor_id="owner",
-            proposal_name="long-note",
-            timestamp="2026-08-16T20:10:00.000000Z",
-        ),
-    )
-    cut = TruncatedText(
-        truncated=True, preview=long_note[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(long_note)
-    )
-
-    rows = {
-        row["subject_id"]: row
-        for row in _exact_query(instance, kind=SUBJECT_KIND, select=["status"]).rows
-    }
-    assert rows["wi-44"]["status"] == cut and rows["wi-42"]["status"] == "ready"
-    (found,) = _exact_query(instance, contains="long literal note").rows
-    assert found["value"] == cut
-    spec = QueryDefinitionSpec.model_validate(
-        work_item_query("project.notes").model_dump(mode="json")
-    )
-    by_id = {row["item_id"]: row for row in _exact_query(instance, spec=spec).rows}
-    assert by_id["wi-44"]["status"] == cut
-
-    # get agrees: the card is cut the same way, evidence reads it whole.
-    card = _exact_get(instance, f"{SUBJECT_KIND}/wi-44").card
-    stated = without_keys(card.claims)
-    assert isinstance(card, GetSubjectCard) and _bare(stated[0].value) == cut
-    assert isinstance(stated[0].claim, str)
-    evidence = _exact_get(instance, stated[0].claim, detail="evidence").evidence
-    assert evidence is not None and evidence.value == long_note
-    history = _exact_get(instance, stated[0].claim, detail="history").history
-    assert history is not None and [_bare(item.value) for item in history.revisions] == [cut]
+    text = "a long literal note " * 40
+    assert claim_literal_problem(text, parse_type("string{max_len: 256}")) == "out_of_range"
+    # The generic renderer still bounds values from other surfaces.
+    assert isinstance(summary_value(text), TruncatedText)
 
 
-def test_projected_exact_content_follows_the_engines_visibility_policy(
+def test_projected_native_text_follows_the_engines_visibility_policy(
     exact_world: tuple[Any, dict[str, Any]],
 ) -> None:
     """Regression (Codex F-001): text is shown only for Claims the engine selected.
@@ -586,81 +492,16 @@ def test_projected_exact_content_follows_the_engines_visibility_policy(
     }
 
 
-def test_two_spans_of_one_body_are_two_values_on_query_and_get(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Regression (Codex F-002): exact-content values are keyed by digest AND span.
+def test_retired_exact_content_spans_refuse_at_claim_parsing() -> None:
+    from pydantic import ValidationError
 
-    Two Claims in one slot that select different spans of the same body are two
-    values: both are shown, and a one-cardinality slot holding them is contested.
-    Accepted authoring always states a whole-body span, so the second Claim's
-    live value is re-pointed at the first Claim's body to stand the case up.
-    """
+    from cruxible_client.contracts.claims import ClaimStatementCard
+    from tests.test_authoring.test_authoring_preflight import _self_source_payload
 
-    from cruxible_client.contracts.claims import ExactContentClaimObject
-    from cruxible_client.contracts.semantic import ContentSpan
-    from cruxible_core.service.discovery import get as get_module
-    from cruxible_core.service.discovery import query_values
-
-    instance, seeded = seed_exact_content(tmp_path, {"wi-42": b"first second", "wi-43": b"x"})
-    first, second = seeded["wi-42"], seeded["wi-43"]
-    home = f"subjects/{first.subject}.json"
-    spans = {first.claim_id: (0, 5), second.claim_id: (6, 12)}
-
-    real_values = query_values.read_live_values
-
-    def live_values(*args: Any, **kwargs: Any) -> list[Any]:
-        from dataclasses import replace
-
-        values = []
-        for item in real_values(*args, **kwargs):
-            claim_id = item.identity.removeprefix("Claim:")
-            if claim_id in spans:
-                item = replace(item, subject_path=home, value=first.digest, span=spans[claim_id])
-            values.append(item)
-        return values
-
-    monkeypatch.setattr(query_values, "read_live_values", live_values)
-    wanted = {home, f"subjects/{second.subject}.json"}
-    real_slot = get_module._slot_values
-
-    def slot_values(instance: Any, coordinate: Any, *, subject_path: str, **kw: Any) -> Any:
-        rows = []
-        for path in sorted(wanted) if subject_path == home else [subject_path]:
-            for row in real_slot(instance, coordinate, subject_path=path, **kw):
-                if row.claim_id not in spans:
-                    continue  # a key Claim, not one of the spans under test
-                start, end = spans[row.claim_id]
-                rows.append(
-                    row.model_copy(
-                        update={
-                            "subject_path": home,
-                            "value": first.digest,
-                            "object": ExactContentClaimObject(
-                                content_digest=first.digest,
-                                span=ContentSpan(
-                                    content_digest=first.digest, start_byte=start, end_byte=end
-                                ),
-                            ),
-                        }
-                    )
-                )
-        return tuple(rows)
-
-    monkeypatch.setattr(get_module, "_slot_values", slot_values)
-
-    rows = {
-        row["subject_id"]: row
-        for row in _exact_query(instance, kind=EXACT_KIND, select=["status"]).rows
-    }
-    assert sorted(rows["wi-42"]["status"]) == ["first", "second"]
-    assert "contested" in rows["wi-42"]["flags"]
-
-    card = _exact_get(instance, first.subject).card
-    assert isinstance(card, GetSubjectCard)
-    (row,) = card.claims
-    assert sorted(row.value) == ["first", "second"]
-    assert "contested" in row.flags
+    raw = _self_source_payload().statement.model_dump(mode="json")
+    raw["object"] = {"kind": "exact_content", "content_digest": "sha256:" + "1" * 64}
+    with pytest.raises(ValidationError, match="exact_content_retired.*Documents"):
+        ClaimStatementCard.model_validate(raw)
 
 
 @pytest.fixture(scope="module")
@@ -671,18 +512,18 @@ def competing_worlds(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]
     """
 
     from cruxible_client.contracts.captures import foreign_source_capture_contract
-    from tests.core_support._claim_authoring_support import service_propose_playbill_claim
-    from tests.core_support._exact_content_support import (
-        add_exact_claim,
-        seed_exact_content_into,
+    from tests.core_support._bounded_content_support import (
+        add_bounded_claim,
+        seed_bounded_content_into,
     )
+    from tests.core_support._claim_authoring_support import service_propose_playbill_claim
     from tests.core_support._knowledge_loop_support import activate, authoring
     from tests.core_support._support import initialize_local
     from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
 
     exact, owner = initialize_local(tmp_path_factory.mktemp("competing-exact"))
-    (first,) = seed_exact_content_into(exact, owner, {"wi-42": b"first ruling"}).values()
-    add_exact_claim(
+    (first,) = seed_bounded_content_into(exact, owner, {"wi-42": b"first ruling"}).values()
+    add_bounded_claim(
         exact,
         owner,
         "wi-42",
@@ -719,7 +560,7 @@ def _one_result_spec(conflict_behavior: str) -> QueryDefinitionSpec:
 
 
 @pytest.mark.parametrize("conflict_behavior", ["surface_conflicts", "refuse_on_conflict"])
-def test_competing_exact_content_follows_conflict_behavior_as_literals_do(
+def test_competing_native_text_follows_conflict_behavior(
     competing_worlds: dict[str, Any], conflict_behavior: str
 ) -> None:
     """Regression (Codex F-003): the engine's conflict path decides exact content too.
@@ -924,7 +765,7 @@ def test_an_oid_outside_accepted_history_cannot_resolve(
         assert refused.value.error_code == "cruxible.read.coordinate_not_accepted"
 
 
-def test_a_many_valued_exact_content_projection_is_the_list_compact_mode_shows(
+def test_a_many_valued_native_text_projection_matches_compact_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Review F-001: a projected many-valued exact-content field is every selected value.
@@ -939,8 +780,7 @@ def test_a_many_valued_exact_content_projection_is_the_list_compact_mode_shows(
     from cruxible_client.contracts.query.definitions import (
         QueryDefinitionSpec,
     )
-    from cruxible_client.contracts.read_values import ExactContentRef
-    from tests.core_support import _exact_content_support as support
+    from tests.core_support import _bounded_content_support as support
     from tests.core_support._candidate_support import submit_query_definition_candidate
     from tests.core_support._knowledge_loop_support import TIMESTAMP, accept_proposal
     from tests.core_support._support import initialize_local
@@ -959,10 +799,10 @@ def test_a_many_valued_exact_content_projection_is_the_list_compact_mode_shows(
         ),
     )
     instance, owner = initialize_local(tmp_path)
-    seeded = support.seed_exact_content_into(
+    seeded = support.seed_bounded_content_into(
         instance, owner, {"wi-42": b"first ruling", "wi-one": b"the only ruling"}
     )
-    support.add_exact_claim(
+    support.add_bounded_claim(
         instance,
         owner,
         "wi-42",
@@ -971,7 +811,7 @@ def test_a_many_valued_exact_content_projection_is_the_list_compact_mode_shows(
         existing=(seeded["wi-42"].claim_id,),
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    path = claim_type_path(support.EXACT_PREDICATE)
+    path = claim_type_path(support.VALUE_PREDICATE)
     claim_type = parse_claim_type(tree[path], path=path)
     query = work_item_query("project.exact.many", claim_type=claim_type)
     accept_proposal(
@@ -990,7 +830,7 @@ def test_a_many_valued_exact_content_projection_is_the_list_compact_mode_shows(
         return {row.get("subject_id", row.get("item_id")): row[key] for row in rows}
 
     compact = by_subject(
-        _exact_query(instance, kind=support.EXACT_KIND, select=["status"]).rows, "status"
+        _exact_query(instance, kind=support.VALUE_KIND, select=["status"]).rows, "status"
     )
     spec = QueryDefinitionSpec.model_validate(query.model_dump(mode="json"))
     projected = _exact_query(instance, spec=spec)
@@ -1004,8 +844,7 @@ def test_a_many_valued_exact_content_projection_is_the_list_compact_mode_shows(
         assert isinstance(many, list) and len(many) == 2
         assert many == compact["wi-42"]
         assert "first ruling" in many
-        (marker,) = [item for item in many if isinstance(item, ExactContentRef)]
-        assert marker.exact_content == "binary"
+        assert "opaque" in many
         assert all(row["flags"] == [] for row in answer.rows)
 
 

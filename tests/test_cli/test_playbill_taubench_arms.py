@@ -50,7 +50,7 @@ pytestmark = pytest.mark.taubench
 
 
 @pytest.fixture
-def arm_run(served_cli: _Cli, tmp_path: Path) -> dict[str, object]:  # noqa: F811
+def arm_run(served_cli: _Cli, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:  # noqa: F811
     """The whole recipe against one served instance.
 
     `served_cli` patches the CLI's client onto an in-process transport, so the
@@ -59,6 +59,7 @@ def arm_run(served_cli: _Cli, tmp_path: Path) -> dict[str, object]:  # noqa: F81
     seam of its own.
     """
 
+    monkeypatch.chdir(tmp_path)
     return recipe.run_all(tmp_path / "run", server_url="http://cruxible")
 
 

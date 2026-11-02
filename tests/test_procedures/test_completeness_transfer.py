@@ -56,7 +56,7 @@ ENTRY = Contract.model_validate(
     {
         "name": "test.entry",
         "version": 1,
-        "fields": {"status": {"type": "enum[open, closed]"}, "note": {"type": "int?"}},
+        "fields": {"status": {"type": "enum[open, closed]?"}, "note": {"type": "int?"}},
     }
 )
 #: One extracted row as it flows: an invalid field is dropped from the row.
@@ -306,7 +306,7 @@ def _row_read(tmp_path: Path, field: str) -> Any:
         reference_text=True,
         procedure="test.row-read",
         input={},
-        output={"row": "test.entry-view@1"},
+        output={"row": "enum[open, closed]" if "." in field else "test.entry@1"},
         slots={"read": _SLOT},
         steps=[
             CallStep(
@@ -319,7 +319,7 @@ def _row_read(tmp_path: Path, field: str) -> Any:
             ProjectStep(
                 project="out",
                 fields={"row": f"$steps.entries.rows.{field}"},
-                output={"row": "test.entry-view@1"},
+                output={"row": "enum[open, closed]" if "." in field else "test.entry@1"},
             ),
         ],
         returns="out",
@@ -567,7 +567,7 @@ def test_a_closed_transforms_rows_view_also_taints_a_read_reaching_a_dropped_fie
     document = {"entries": [{"id": "a", "status": "open", "note": "seven"}]}
     instance, root = _workspace_world(tmp_path, {"doc.json": document})
     kept_type = (
-        "list<test.entry-view@1>{max_items: 10}"
+        "list<test.entry@1>{max_items: 10}"
         if view == "rows"
         else "list<record<test.entry@1>>{max_items: 10}"
     )

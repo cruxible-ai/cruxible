@@ -262,23 +262,7 @@ class LiteralValue:
 
 @dataclass(frozen=True)
 class ExactContent:
-    """The exact bytes a Claim's object IS, rather than a value that names them.
-
-    Rulings and method laws are `exact_content` Claims: the object is not a
-    literal the ClaimType admits and not an address, it is the text as written.
-    The wire has carried that shape all along; the SDK could not spell it, so
-    an author with 85 of them built them by hand through the compiled payload
-    path instead.
-
-    `content` takes `str` or `bytes` and keeps bytes: a Claim's object is
-    exactly the bytes the daemon digests, and text is UTF-8 on the way in so
-    that "as written" and "as digested" are the same thing.
-
-    There is deliberately no media type. The accepted artifact carries a digest
-    and a span and has nowhere to put one, so a media type accepted here would
-    be dropped between this object and the ledger -- which is worse than not
-    offering it, because the caller would believe it had been recorded.
-    """
+    """Retired Claim input, retained only to raise a typed Documents repair."""
 
     content: bytes
 
@@ -340,12 +324,6 @@ class ActivationPolicy(str, Enum):
     ABORT = "abort"
     SNAPSHOT = "snapshot"
     EPOCH_CHECK = "epoch-check"
-
-
-class ClaimObjectKind(str, Enum):
-    LITERAL = "literal"
-    SUBJECT = "subject"
-    EXACT_CONTENT = "exact_content"
 
 
 class Cardinality(str, Enum):
@@ -583,7 +561,6 @@ __all__ = [
     "CanonicalValue",
     "CapabilityNotServed",
     "Cardinality",
-    "ClaimObjectKind",
     "ClaimRef",
     "ClaimRole",
     "ClaimTypeRef",

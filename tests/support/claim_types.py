@@ -1,7 +1,7 @@
 """Build ClaimTypes without coupling fixtures to their stored value representation.
 
 ``value_type`` is a literal JSON schema, a tuple of allowed Subject kinds, or
-``"exact_content"``. Keep that translation here when the ClaimType wire changes.
+the retired ``"exact_content"`` sentinel, which refuses with a Documents repair.
 The defaults describe an ordinary string field with no evidence requirements;
 fixtures declare only the vocabulary and policies their tests exercise.
 """
@@ -73,8 +73,10 @@ def claim_type_changes(*, value_type: ClaimValueType, **overrides: Any) -> dict[
     elif isinstance(value_type, tuple):
         native = {"kind": "subject", "subject_kinds": value_type}
     elif value_type == "exact_content":
-        # Existing fixtures can still attempt the retired object; acceptance must refuse it.
-        native = {"kind": "string", "max_len": 256}
+        raise ValueError(
+            "cruxible.claim.exact_content_retired: prose lives in Documents; "
+            "cite a Document section"
+        )
     else:
         native = value_type
     from cruxible_client.contracts.shapes import StringType

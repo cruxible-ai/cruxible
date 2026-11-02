@@ -45,9 +45,9 @@ def test_semantic_delta_expands_added_objects_but_keeps_arrays_atomic() -> None:
         ({"nested": {"value": False}}, {"nested": {"value": 0}}, "/nested/value"),
         ({"values": [True]}, {"values": [1]}, "/values"),
         (
-            {"literal_schema": {"exclusiveMinimum": 0}},
-            {"literal_schema": {"exclusiveMinimum": False}},
-            "/literal_schema/exclusiveMinimum",
+            {"value": {"min": 0}},
+            {"value": {"min": False}},
+            "/value/min",
         ),
     ],
 )

@@ -110,7 +110,6 @@ from cruxible_core.indexes.subject_aliases import resolve_subject_ref
 from cruxible_core.indexes.typed_state import LIVE_SUBJECT_PREDICATE_CLAIMS_SQL
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
-from cruxible_core.service.discovery.exact_content import ExactContentReader
 from cruxible_core.service.discovery.kit_owners import kit_owners, owned_by
 from cruxible_core.service.discovery.listed_kinds import LISTED_KINDS, listed_kind_answer
 from cruxible_core.service.discovery.query import (
@@ -924,7 +923,6 @@ class _RowRenderer:
     vocabulary: QueryVocabulary
     evaluation_time: datetime
     columns: Sequence[_Column]
-    content: ExactContentReader
     values: ValueIndex = field(default_factory=ValueIndex)
     status: tuple[QueryClaimStatus, ...] = _LIVE_ONLY
     claims: bool = False
@@ -957,8 +955,6 @@ class _RowRenderer:
 
     def _cell_claim(self, item: LiveValue, reads: Mapping[str, ClaimRead]) -> QueryClaim:
         value: object = item.value
-        if item.exact:
-            value = self.content.value(str(item.value), item.span)
         read = reads.get(item.identity)
         return QueryClaim(
             claim=item.identity.removeprefix("Claim:"),
@@ -1088,8 +1084,6 @@ class _RowRenderer:
                 )
                 values = distinct(_value_identity(item) for item in (*live, *retired))
                 listed = info.cardinality == "many" or len(values) > 1
-                if info.value_type == "exact_content":
-                    values = _exact_values(self.content, values)
                 if listed:
                     out[column.name] = values
                 else:
@@ -1131,41 +1125,14 @@ class _RowRenderer:
 
 
 def _value_identity(item: LiveValue) -> object:
-    """What makes two live values one value.
+    """Canonical native literal or Subject value used for deduplication."""
 
-    A literal or Subject value is itself. An exact-content value is its digest
-    AND the span it states: two Claims selecting different spans of one body are
-    two values, through deduplication, cardinality, contest and rendering.
-    """
-
-    if item.exact:
-        return {
-            "content_digest": str(item.value),
-            "span": None if item.span is None else list(item.span),
-        }
     return item.value
 
 
-def _exact_values(content: ExactContentReader, identities: Sequence[object]) -> list[object]:
-    """Distinct exact-content identities as their text, or the marker in its place."""
+def _searchable(item: LiveValue) -> str | None:
+    """The native string ``contains`` matches."""
 
-    shown: list[object] = []
-    for identity in identities:
-        assert isinstance(identity, Mapping)
-        span = identity["span"]
-        shown.append(
-            content.value(
-                str(identity["content_digest"]), None if span is None else (span[0], span[1])
-            )
-        )
-    return shown
-
-
-def _searchable(item: LiveValue, content: ExactContentReader) -> str | None:
-    """The text ``contains`` matches in a value: its string, or an exact value's text."""
-
-    if item.exact:
-        return content.text(str(item.value), item.span)
     return item.value if isinstance(item.value, str) else None
 
 
@@ -1227,8 +1194,6 @@ def _compact_subject_query(
     vocabulary: QueryVocabulary,
     request: QueryRequest,
     evaluation_time: datetime,
-    *,
-    content: ExactContentReader,
 ) -> _Answer:
     plan = _CompactPlan(vocabulary, request)
     checked = _require_refs(instance, coordinate, plan, _checked_filters(plan, request.where))
@@ -1338,7 +1303,6 @@ def _compact_subject_query(
         vocabulary=vocabulary,
         evaluation_time=evaluation_time,
         columns=columns,
-        content=content,
         status=request.status,
         claims=request.claims,
         lifecycle=with_retired,
@@ -1350,7 +1314,6 @@ def _compact_subject_query(
             renderer.values,
             candidates,
             inline,
-            content=content,
             contains=request.contains,
             kind_predicates=tuple(info.predicate for info in kind_predicates),
             cardinality_of={
@@ -1411,7 +1374,6 @@ def _apply_inline(
     candidates: list[dict[str, str | None]],
     inline: Sequence[_InlineFilter],
     *,
-    content: ExactContentReader,
     contains: str | None,
     kind_predicates: tuple[str, ...],
     cardinality_of: Mapping[str, str],
@@ -1469,7 +1431,7 @@ def _apply_inline(
         if matched and needle is not None:
             root = row.get(ROOT)
             matched = root is not None and any(
-                (text := _searchable(value, content)) is not None
+                (text := _searchable(value)) is not None
                 and needle in text.casefold()
                 and not _contested(
                     cardinality_of.get(value.predicate, "many"),
@@ -1491,15 +1453,13 @@ def _contains_everywhere(
     vocabulary: QueryVocabulary,
     request: QueryRequest,
     evaluation_time: datetime,
-    *,
-    content: ExactContentReader,
 ) -> _Answer:
     assert request.contains is not None
     needle = request.contains.casefold()
     matches = [
         item
         for item in read_live_values(instance, coordinate, subject_paths=None, predicates=None)
-        if (text := _searchable(item, content)) is not None and needle in text.casefold()
+        if (text := _searchable(item)) is not None and needle in text.casefold()
     ]
     matches.sort(key=lambda item: (item.subject_path, item.predicate, item.identity))
     spec_digest = typed_digest(
@@ -1545,8 +1505,6 @@ def _contains_everywhere(
                 "value": item.value,
                 "claim": item.identity.removeprefix("Claim:"),
             }
-            if item.exact:
-                row["value"] = content.value(str(item.value), item.span)
             rows.append({**row, "flags": ordered_flags(marks)})
         return rows
 
@@ -2030,7 +1988,6 @@ def _engine_answer(
     result: ClaimQueryResult,
     evaluation_time: datetime,
     mode: QueryMode,
-    content: ExactContentReader,
 ) -> _Answer:
     """Shape a governed evaluation's rows as values and flags."""
 
@@ -2070,11 +2027,7 @@ def _engine_answer(
         vocabulary=vocabulary,
         evaluation_time=evaluation_time,
         columns=renderer_columns,
-        content=content,
     )
-    # A projected exact-content field reads as text too, from the live values of
-    # the slot it projects, with its digests beside it.
-    exact_fields: dict[str, tuple[QueryClaimValueRef, str]] = {}
     # Fields whose values are Subject references, by their typed reference and
     # the predicate's declared object kind: only these read as kind/id. A
     # literal that happens to start with "Subject:" is shown exactly.
@@ -2085,8 +2038,6 @@ def _engine_answer(
             if not isinstance(ref, QueryClaimValueRef):
                 continue
             info = vocabulary.predicates.get(ref.predicate)
-            if info is not None and info.value_type == "exact_content":
-                exact_fields[_out(projected_field.name)] = (ref, info.cardinality)
             if info is not None and info.value_type == "subject":
                 subject_fields.add(_out(projected_field.name))
     candidates = list(result.rows)
@@ -2138,39 +2089,6 @@ def _engine_answer(
                         else _subject_value(value)
                     )
                 out[key] = value
-            states = {_out(projected.name): projected.state for projected in row.fields}
-            for key, (ref, cardinality) in exact_fields.items():
-                path = _subject_path_of(row, ref.binding)
-                if path is None or states.get(key) != "present":
-                    # The engine answered no value (absent), or surfaced a
-                    # conflict exactly as it does for a literal (null plus the
-                    # contested flag); the text never adds a value.
-                    out[key] = None
-                    continue
-                ensure_values(
-                    renderer.values,
-                    instance,
-                    coordinate,
-                    paths=(path,),
-                    predicates=(ref.predicate,),
-                )
-                # Only the Claims the engine read for this field under the
-                # query's evaluation policy; never every live Claim in the slot.
-                selected = _engine_selected(row, ref)
-                slot = [
-                    item
-                    for item in renderer.values.slot(path, ref.predicate)
-                    if item.identity in selected
-                ]
-                # The distinct values the engine selected (it keys exact content
-                # by digest and span), each shown as its text: a many-valued
-                # field is their list, a singleton included, in the slot's order
-                # as compact mode shows it; a one-valued field is its one value.
-                values = _exact_values(content, distinct(_value_identity(item) for item in slot))
-                if cardinality == "many":
-                    out[key] = values
-                else:
-                    out[key] = values[0] if values else None
             out["flags"] = flags
         return rendered
 
@@ -2274,8 +2192,6 @@ def _named_answer(
     vocabulary: QueryVocabulary,
     request: QueryRequest,
     evaluation_time: datetime,
-    *,
-    content: ExactContentReader,
 ) -> _Answer:
     from cruxible_core.service.discovery.query import service_run_playbill_query
 
@@ -2344,7 +2260,6 @@ def _named_answer(
             result=run.result,
             evaluation_time=evaluation_time,
             mode="named",
-            content=content,
         )
     answer.replay = replay
     return answer
@@ -2356,8 +2271,6 @@ def _spec_answer(
     vocabulary: QueryVocabulary,
     request: QueryRequest,
     evaluation_time: datetime,
-    *,
-    content: ExactContentReader,
 ) -> _Answer:
     assert request.spec is not None
     definition = _accepted(_resolved_spec(vocabulary, request.spec))
@@ -2396,7 +2309,6 @@ def _spec_answer(
         result=result,
         evaluation_time=evaluation_time,
         mode="spec",
-        content=content,
     )
 
 
@@ -2575,15 +2487,10 @@ def service_playbill_query(
         )
     coordinate = resolve_read_coordinate(instance, at)
     vocabulary = load_query_vocabulary(instance, coordinate)
-    content = ExactContentReader(instance)
     if mode == "named":
-        answer = _named_answer(
-            instance, coordinate, vocabulary, request, evaluation_time, content=content
-        )
+        answer = _named_answer(instance, coordinate, vocabulary, request, evaluation_time)
     elif mode == "spec":
-        answer = _spec_answer(
-            instance, coordinate, vocabulary, request, evaluation_time, content=content
-        )
+        answer = _spec_answer(instance, coordinate, vocabulary, request, evaluation_time)
     elif request.kind in ARTIFACT_KINDS:
         if request.follow:
             raise query_refusal(
@@ -2629,13 +2536,9 @@ def service_playbill_query(
                 "where, select, follow and order_by need a kind",
                 repair="pass kind, or search values with contains alone",
             )
-        answer = _contains_everywhere(
-            instance, coordinate, vocabulary, request, evaluation_time, content=content
-        )
+        answer = _contains_everywhere(instance, coordinate, vocabulary, request, evaluation_time)
     else:
-        answer = _compact_subject_query(
-            instance, coordinate, vocabulary, request, evaluation_time, content=content
-        )
+        answer = _compact_subject_query(instance, coordinate, vocabulary, request, evaluation_time)
 
     served = AcceptedCoordinate.from_internal(coordinate)
     snapshot = list_snapshot([list(key) for key in answer.keys])

@@ -453,7 +453,16 @@ class Sequence:
                 next=next,
             )
         )
-        return self._add(step, name, tuple(extract_view_fields(parse_contract_ref(row), 5000)))
+        return self._add(
+            step,
+            name,
+            tuple(
+                extract_view_fields(
+                    parse_contract_ref(row),
+                    (self._hard_caps.items if self._hard_caps else None) or 5000,
+                )
+            ),
+        )
 
     def project(
         self,
@@ -610,6 +619,12 @@ class Sequence:
                 id=id,
             )
         )
+
+    def propose(self, *args: Any, **kwargs: Any) -> Handle:
+        raise ProcedureSpecError("retired_node", "propose", "Use the claims node via .claims().")
+
+    def settle(self, *args: Any, **kwargs: Any) -> Handle:
+        raise ProcedureSpecError("retired_node", "settle", "Use the claims node via .claims().")
 
     def claims(
         self,

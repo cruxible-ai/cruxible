@@ -291,3 +291,19 @@ def test_reobservation_recovery_replays_the_core_changes_once(
     for claim in claims:
         assert len(store.history(claim.identity.name)) == 1
     assert store.head_sequence() == len(claims)
+
+
+def test_duplicate_finding_bounds_locators_but_keeps_the_full_count(tmp_path: Path) -> None:
+    instance, root = pilot_world(tmp_path, "kev-duplicates.json")
+    path = root / "data/kev-duplicates.json"
+    document = json.loads(path.read_text())
+    document["vulnerabilities"] = [document["vulnerabilities"][0]] * 25
+    path.write_text(json.dumps(document))
+    state = run(instance, root)
+    assert state.status == "succeeded", state.terminal
+    (finding,) = [item for item in state.findings if item.kind == "duplicate_key"]
+    assert finding.record_count == 25
+    assert finding.record_locators == tuple(f"/vulnerabilities/{index}" for index in range(10))
+    (posted,) = [item for item in _inbox(instance) if item.payload["kind"] == "duplicate_key"]
+    assert posted.payload["record_count"] == 25
+    assert len(posted.payload["record_locators"]) == 10

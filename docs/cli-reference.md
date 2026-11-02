@@ -4182,12 +4182,7 @@ incoming:
   more than one distinct live value. No verdict (stale, uncovered,
   contradicted) is in the floor: verdicts move with time and evidence, which no
   coordinate fixes.
-- An exact-content value (a ruling) is its text, read by digest. Accepted
-  bodies (and the Capture envelopes `sources/LEDGER` reads) are retained for as
-  long as their Claim is in history, so the floor is fixed by the coordinate;
-  one lost anyway refuses a fresh render as an integrity failure rather than
-  publishing a different floor. Bytes that are not UTF-8 text show as
-  `{exact_content: binary, bytes: N}`.
+- Prose lives in Documents. The floor lists their sources without copying their bodies.
 
 An `ontology/` file shows live definitions only, with no Subject or Claim
 counts (they move with every write; `orient` has them). Each file's first line

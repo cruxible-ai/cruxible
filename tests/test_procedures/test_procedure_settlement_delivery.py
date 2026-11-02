@@ -235,6 +235,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
     level_rules: bool = True,
     claims_terminal: bool = False,
     claims_within: tuple[str, ...] = (),
+    claims_fixed_subject: bool = False,
 ):
     instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
     source, shape = procedure.definition.nodes
@@ -250,6 +251,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
         within=claims_within,
         templates=candidate_templates,
         create=create_subject,
+        fixed_subject=claims_fixed_subject,
     )
     if not claims_terminal:
         (root / fixtures.RELATIVE_PATH).write_bytes(fixtures.canonical_bytes({"severity": "high"}))
@@ -1371,10 +1373,10 @@ def test_a_capped_settle_request_names_exactly_the_cap_its_rung_allows(tmp_path:
         "line_requested_rung",
         2,
     )
-    assert (capped.required_rung, capped.granted_operation) == (2, "propose")
+    assert (capped.required_rung, capped.granted_operation) == (2, "propose_change_set")
     plain = _prepared_request(tmp_path / "plain")
     assert (plain.capped_by, plain.effective_rung, plain.required_rung) == (None, 3, 3)
-    as_propose = {"required_rung": 2, "granted_operation": "propose"}
+    as_propose = {"required_rung": 2, "granted_operation": "propose_change_set"}
 
     # Below settle, only the limiting term caps it.
     with pytest.raises(ValidationError, match="names its limiting term"):
@@ -1387,8 +1389,8 @@ def test_a_capped_settle_request_names_exactly_the_cap_its_rung_allows(tmp_path:
     with pytest.raises(ValidationError, match="required rung disagrees"):
         _rekeyed(capped, required_rung=3, granted_operation="activate_change_set")
     # Only a settle terminal is capped.
-    with pytest.raises(ValidationError, match="only a settle terminal is capped|Input should be"):
-        _rekeyed(capped, kind="propose")
+    with pytest.raises(ValidationError, match="only a settle terminal is capped"):
+        _rekeyed(capped, kind="post_inbox")
     # The cap is part of the operation: dropping it without a new key refuses.
     stale = capped.model_dump(mode="python")
     stale.pop("capped_by")

@@ -159,6 +159,9 @@ def procedure_input(
         if isinstance(raw_evidence, dict)
         else {}
     )
+    from cruxible_core.procedures.claims_context import reselect_retained_claims
+
+    request = reselect_retained_claims(instance, request, admission)
     coordinate = instance.accepted_coordinate()
     delegation = None
     if admission.parent_binding is not None:

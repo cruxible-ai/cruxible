@@ -9,7 +9,7 @@ import re
 import time
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -228,7 +228,7 @@ from cruxible_client.contracts.procedures.windows import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_client.contracts.query.grammar import QueryBudgets
-from cruxible_client.contracts.read_values import ExactContentRef, TruncatedText
+from cruxible_client.contracts.read_values import TruncatedText
 from cruxible_client.contracts.records import Record, RecordConstructor
 from cruxible_client.contracts.resolution_contracts import (
     ClaimVersionReference,
@@ -378,14 +378,11 @@ class ClaimView:
     qualifier: str | None
     role: str
     object_kind: str
-    # The object's value: a literal, a Subject path, or an exact-content
-    # Claim's text (a ExactContentRef marker when it is not text).
+    # The object's value: a typed literal or a Subject path.
     value: object
     lifecycle_state: str
     verdict: str
     captures: tuple[CaptureRef, ...]
-    # An exact-content Claim's digest, the proof its text is ``value``.
-    content_digest: str | None = None
 
     @property
     def claim(self) -> str:
@@ -2584,30 +2581,6 @@ class Cruxible:
 
         return ProjectionBlocks(self)
 
-    def _with_exact_text(self, view: ClaimView, coordinate: AcceptedCoordinate) -> ClaimView:
-        """An exact-content view with the daemon's text for its value, as get shows it.
-
-        The Claim envelope carries only the content digest. ``get`` with
-        ``detail="evidence"`` reads the whole value through the daemon's
-        exact-content reader at the same coordinate: the text, or the marker
-        that says why it is not text. The digest moves to ``content_digest``.
-        """
-
-        if view.object_kind != "exact_content":
-            return view
-        evidence = self._get(view.claim_id, "evidence", None, coordinate).evidence
-        if evidence is None:  # pragma: no cover - evidence always answers a Claim
-            return view
-        value: object = evidence.value
-        if isinstance(value, Mapping) and "exact_content" in value:
-            value = ExactContentRef.model_validate(value)
-        digest = evidence.content_digest
-        return replace(
-            view,
-            value=value,
-            content_digest=digest if digest is not None else cast(str | None, view.value),
-        )
-
     @staticmethod
     def _typed_claim_view(view: api.ClaimViewRecord, identity: str = "") -> ClaimView:
         facts = {
@@ -2632,8 +2605,6 @@ class Cruxible:
                 object_value = (
                     address.get("artifact_path") if isinstance(address, Mapping) else None
                 )
-            else:
-                object_value = item.get("content_digest")
         state = ""
         if isinstance(lifecycle, Mapping):
             inner = lifecycle.get("lifecycle")
@@ -4349,13 +4320,7 @@ class Cruxible:
         value: object
         if result.kind == "claim" and result.detail == "proof":
             view = api.ClaimViewRecord.model_validate(result.proof)
-            value = (
-                self._with_exact_text(
-                    self._typed_claim_view(view, identity), _get_coordinate(result)
-                )
-                if detail == "summary"
-                else view
-            )
+            value = self._typed_claim_view(view, identity) if detail == "summary" else view
         elif result.card is not None:
             value = result.card
         else:
@@ -4398,8 +4363,6 @@ class Cruxible:
         if result.evidence is None:  # pragma: no cover - evidence always answers a Claim
             raise WholeValueUnavailable(f"get({read.ref!r}) answered no evidence")
         value: object = result.evidence.value
-        if isinstance(value, Mapping) and "exact_content" in value:
-            value = ExactContentRef.model_validate(value)
         return value
 
     def read_whole_many(self, previews: Iterable[TruncatedText]) -> dict[str, object]:
@@ -4409,8 +4372,7 @@ class Cruxible:
         was previewed. Previews are grouped by the generation they name
         (``read_whole.at``) and each group is read through the batched Claim
         read pinned to that generation: at most 256 Claims and about 4 MiB of
-        previewed text per read, so 400 long titles take two reads, not 400. An
-        exact-content value is read as ``read_whole`` reads it, one by one. The
+        previewed text per read. The
         key is each preview's ``read_whole.ref``.
 
         Raises ``WholeValueUnavailable`` for a preview that names no read, for one
@@ -4483,8 +4445,7 @@ class Cruxible:
                         raise WholeValueUnavailable(
                             f"the batched read at {at[:12]} answered a different Claim"
                         )
-                    # A literal's whole value is in the Claim; exact content is
-                    # read through the daemon's exact-content reader, as get does.
+                    # A literal's whole value is in the Claim.
                     values[claim] = (
                         view.value if view.object_kind == "literal" else self.read_whole(preview)
                     )

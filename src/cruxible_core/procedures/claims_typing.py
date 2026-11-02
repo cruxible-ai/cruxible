@@ -39,6 +39,7 @@ from cruxible_client.contracts.shapes import (
     SubjectType,
     assignable,
     check_value,
+    claim_has_line_break,
     parse_type,
 )
 from cruxible_client.contracts.subject_kinds import key_predicate
@@ -74,7 +75,7 @@ def validate_claims_templates(
             if predicate is None:
                 raise ClaimsTypingRefused("unknown Subject key part")
             ct = source("ClaimType", predicate)
-            return cast(FieldType, ct.value) if ct.value is not None else parse_type("string")
+            return cast(FieldType, ct.value)
         if isinstance(t, EnumOfType):
             ct = source("ClaimType", t.claim_type)
             return cast(FieldType, ct.value)
@@ -245,7 +246,7 @@ def validate_claims_templates(
             if value.get("kind") not in expected.subject_kinds:
                 raise ClaimsTypingRefused(f"{label}: Subject kind does not match")
             return
-        if isinstance(value, str) and ("\n" in value or "\r" in value):
+        if claim_has_line_break(value):
             raise ClaimsTypingRefused(f"{label}: multiline_string; cite a Document section")
         if isinstance(check_value(value, expected, at=label), FieldInvalid):
             raise ClaimsTypingRefused(f"{label}: literal does not fit ClaimType.value")
@@ -263,11 +264,10 @@ def validate_claims_templates(
             predicate = key_predicate(kind, name)
             assert predicate is not None
             ct = source("ClaimType", predicate)
-            if ct.value is not None:
-                check(value, ct.value, node.for_each, f"subject.key.{name}")
+            check(value, ct.value, node.for_each, f"subject.key.{name}")
         for mapping in node.claims:
             ct = source("ClaimType", mapping.claim_type.target.name)
-            if not isinstance(ct, ClaimType) or ct.value is None:
+            if not isinstance(ct, ClaimType):
                 raise ClaimsTypingRefused("claims requires a ClaimType declaring value")
             if node.subject.kind not in ct.allowed_subject_kinds:
                 raise ClaimsTypingRefused("ClaimType does not permit this SubjectKind")

@@ -150,73 +150,18 @@ def test_values_records_each_claim_it_served(
     ]
 
 
-def test_a_long_value_is_typed_truncated_text_and_reads_whole_where_it_was_previewed(
+def test_long_prose_titles_refuse_with_the_native_bound(
     served: tuple[TestClient, str, str], tmp_path: Path
 ) -> None:
-    """A preview is a declared type on every read that cuts it, never a loose dict.
-
-    World.values, query rows and Claim cells, get history and the write outcome
-    all carry the same TruncatedText; a short value is unchanged. A preview that
-    one Claim at one generation backs names that exact read, so it whole-reads
-    to the value it previewed even after the value was revised; the documented
-    SDK call, ``cx.read_whole(item.value)``, makes it.
-    """
-
-    from cruxible_client.authoring.sdk_types import WholeValueUnavailable
-    from cruxible_client.contracts.compact_query import QueryClaim
-    from cruxible_client.contracts.get_reads import GetHistory
-    from cruxible_client.contracts.read_values import GET_SUMMARY_TEXT_MAX_CHARS, TruncatedText
-
     client, instance_id, _actor = served
     cx = _sdk(client, instance_id, tmp_path)
-    first_title = "A title long enough to cut. " * 30
-    second_title = "A revised title, also long. " * 30
-    assert len(first_title) > GET_SUMMARY_TEXT_MAX_CHARS
-    first = cx.set(WI1, "title", first_title, because="Named in review.").changes[0]
-    cx.set(WI1, "status", "ready", because="Checked.")
+    from cruxible_client.contracts.errors import WriteRefusalError
 
-    values = {value.predicate: value for value in cx.world().values(subjects=[WI1])}
-    item = values[TITLE]
-    assert isinstance(item.value, TruncatedText)
-    assert (item.value.preview, item.value.length) == (
-        first_title[:GET_SUMMARY_TEXT_MAX_CHARS],
-        len(first_title),
-    )
-    assert item.value.read_whole is not None and item.value.read_whole.ref == item.claim
-    assert values[f"{KIND}.status"].value == "ready"
-    # The documented whole-value call, exactly as documented.
-    assert cx.read_whole(item.value) == first_title
-    assert first.after is not None and isinstance(first.after, TruncatedText)
-    assert first.after.read_whole is None  # the value this write sent
-
-    second = cx.set(WI1, "title", second_title, because="Renamed.").changes[0]
-
-    # The earlier preview still reads back the value it previewed, not the head's.
-    assert cx.read_whole(item.value) == first_title
-    # A write's before previews the value it replaced, and reads back that value.
-    assert isinstance(second.before, TruncatedText)
-    assert cx.read_whole(second.before) == first_title
-    # An older revision's preview whole-reads to its own value.
-    history = cx.get(item.claim, detail="history").value
-    assert isinstance(history, GetHistory)
-    by_revision = {revision.revision: revision.value for revision in history.revisions}
-    assert all(isinstance(value, TruncatedText) for value in by_revision.values())
-    assert cx.read_whole(by_revision[1]) == first_title  # type: ignore[arg-type]
-    assert cx.read_whole(by_revision[2]) == second_title  # type: ignore[arg-type]
-
-    page = cx.query(
-        KIND, where=[{"field": "subject_id", "eq": "wi-1"}], select=["title"], claims=True
-    ).page
-    (row,) = page.rows
-    cell = row["title"]
-    assert isinstance(cell, TruncatedText) and cell.read_whole is None
-    with pytest.raises(WholeValueUnavailable):
-        cx.read_whole(cell)
-    cells = row["claims"]
-    assert isinstance(cells, dict)
-    (claim,) = cells["title"]
-    assert isinstance(claim, QueryClaim) and isinstance(claim.value, TruncatedText)
-    assert cx.read_whole(claim.value) == second_title
+    with pytest.raises(WriteRefusalError, match="max_len 256"):
+        cx.set(WI1, "title", "A title long enough to be prose. " * 30, because="Named in review.")
+    assert cx.set(WI1, "title", "reviewed", because="Named in review.").status == "accepted"
+    (item,) = [item for item in cx.world().values(subjects=[WI1]) if item.predicate == TITLE]
+    assert item.value == "reviewed"
 
 
 #: Object values shaped like the summary markers: each must read back as itself.
@@ -230,7 +175,38 @@ MARKER_SHAPED = {
 def _accept_object_field(instance: PlaybillInstance, *, actor_id: str) -> None:
     base = instance.accepted_coordinate()
     tree = instance.tree_at(base.git_oid)
-    claim_type = _claim_type("meta", value_type={"type": "object"})
+    from cruxible_client.contracts.shapes import (
+        Contract,
+        contract_digest,
+        contract_path,
+        render_contract,
+    )
+
+    contract = Contract.model_validate(
+        {
+            "name": "test.marker-shaped",
+            "version": 1,
+            "fields": {
+                "preview": "string{max_len: 256}?",
+                "length": "int?",
+                "truncated": "bool?",
+                "exact_content": "string{max_len: 256}?",
+                "content_digest": "string{max_len: 256}?",
+            },
+        }
+    )
+    tree[contract_path(contract.name, contract.version)] = render_contract(contract)
+    claim_type = _claim_type(
+        "meta",
+        value_type={
+            "kind": "contract",
+            "contract": {
+                "name": contract.name,
+                "version": 1,
+                "digest": contract_digest(contract).tagged,
+            },
+        },
+    )
     tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
     proposed = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id),
@@ -345,7 +321,7 @@ def test_a_marker_shaped_object_without_its_discriminator_is_never_a_marker() ->
         )
 
 
-def test_many_long_values_read_whole_in_one_batched_read_per_generation(
+def test_many_previews_read_whole_in_one_batched_read_per_generation(
     served: tuple[TestClient, str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """``read_whole_many`` answers exactly what ``read_whole`` answers, preview by preview."""
@@ -357,26 +333,47 @@ def test_many_long_values_read_whole_in_one_batched_read_per_generation(
     client, instance_id, _actor = served
     cx = _sdk(client, instance_id, tmp_path)
     titles = {
-        subject: f"The {subject} title, long enough to cut. " * 20
+        subject: f"The {subject} title, read at its exact generation. " * 4
         for subject in ("wi-1", "wi-2", "wi-3")
     }
     batch = cx.changes(because="Named in review.")
     for subject, title in titles.items():
         batch.set(f"{KIND}/{subject}", "title", title)
     batch.write()
-    cx.set(WI1, "title", "Renamed, and long as well. " * 30, because="Renamed.")
+    cx.set(WI1, "title", "Renamed and reviewed.", because="Renamed.")
 
+    from cruxible_client.contracts.read_values import WholeValueRead
+
+    # A caller-supplied preview still resolves by its exact Claim and generation.
     current = [
-        item.value
+        item
         for item in cx.world().values(subjects=[f"{KIND}/wi-2", f"{KIND}/wi-3"])
         if item.predicate == TITLE
     ]
     first = next(item for item in cx.world().values(subjects=[WI1]) if item.predicate == TITLE)
     history = cx.get(first.claim, detail="history").value
     assert isinstance(history, GetHistory)
-    earlier = next(revision.value for revision in history.revisions if revision.revision == 1)
-    previews = [*current, earlier]
-    assert all(isinstance(preview, TruncatedText) for preview in previews)
+    earlier = next(revision for revision in history.revisions if revision.revision == 1)
+    previews = [
+        TruncatedText(
+            truncated=True,
+            preview=str(item.value)[:20],
+            length=600,
+            read_whole=WholeValueRead(ref=item.claim, at=cx.coordinate.git_oid),
+        )
+        for item in current
+    ]
+    previews.append(
+        TruncatedText(
+            truncated=True,
+            preview=str(earlier.value)[:20],
+            length=600,
+            read_whole=WholeValueRead(
+                ref=first.claim,
+                at=get_playbill_manager().get(instance_id).accepted_history()[earlier.sequence].oid,
+            ),
+        )
+    )
 
     requests: list[ClaimReadBatchRequest] = []
     transport = cx._client  # noqa: SLF001
@@ -402,7 +399,7 @@ def test_many_long_values_read_whole_in_one_batched_read_per_generation(
         titles["wi-2"],
         titles["wi-3"],
     }
-    assert len(requests) == 1
+    assert len(requests) == 0  # bounded values already arrived whole
     # The git oid names the generation exactly as its full coordinate does.
     head = cx.world().coordinate
     by_oid, by_coordinate = (

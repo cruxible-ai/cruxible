@@ -142,13 +142,16 @@ def terminal_procedure(
 
     from tests.support.claims_terminals import delivery_definition
 
+    fan_out = isinstance(templates, dict) and templates == fixtures.FAN_OUT
     definition, _contracts = delivery_definition(
         procedure,
         subject_kind=SUBJECT_KIND,
         subject_id=SUBJECT_ID,
         predicates=(PREDICATE,),
         node_id="propose",
-        templates=templates or (item_template(),),
+        templates=None if fan_out else templates or (item_template(),),
+        records="/proposals/*" if fan_out else "/",
+        fixed_subject=fan_out,
     )
     update: dict[str, object] = {
         "nodes": definition.nodes,
@@ -187,6 +190,7 @@ def proposal_world(  # type: ignore[no-untyped-def]
     wall_clock_seconds: int | None = None,
     max_items: int | None = None,
     document: bool = False,
+    additional_members: dict[str, bytes] | None = None,
 ):
     """Accept everything the loop needs; return the instance, owner, root, Line."""
 
@@ -223,6 +227,7 @@ def proposal_world(  # type: ignore[no-untyped-def]
     members = core_assigned(
         instance,
         {
+            **(additional_members or {}),
             **procedure_members(with_terminal),
             **contract_files(*boundary_contracts),
             line_spec_path(line.identity.name): render_line_spec(line),

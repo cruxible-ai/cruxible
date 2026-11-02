@@ -20,7 +20,12 @@ FAN_OUT = fixtures.FAN_OUT
 
 def _element(qualifier=None, **overrides):
     # Hostile data fixture for consumers testing the retired form.
-    return {"id": qualifier or "one", "severity": "high", **overrides}
+    return {
+        "id": qualifier or "one",
+        "severity": "high",
+        "rationale": f"Severity as the feed reports it ({qualifier or 'one'}).",
+        **overrides,
+    }
 
 
 def _write_feed(root: Path, proposals: list[object]) -> None:

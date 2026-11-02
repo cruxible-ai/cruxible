@@ -261,12 +261,6 @@ def _control_flow_artifact(raw):
     expected graph still pins decompilation of the surrounding calls and guards.
     """
     data = json.loads(json.dumps(raw))
-    for i, node in enumerate(data["definition"]["nodes"]):
-        if node["kind"] in {"propose_change_set", "settle_change_set"}:
-            data["definition"]["nodes"][i] = {
-                "kind": "halt",
-                "node_id": node.get("node_id", node.get("id")),
-            }
     from cruxible_client.contracts.procedures.wire_v3 import expand_procedure
 
     data = expand_procedure(data)
@@ -326,8 +320,7 @@ def _corpus_resolver(original):
 
 @pytest.mark.parametrize("filename", sorted(CORPUS))
 def test_every_kit_procedure_renders_typed_and_lowers_to_stored_bytes(filename):
-    with pytest.raises(ValueError, match="procedure_node_kind_retired.*claims"):
-        ProcedureArtifact.model_validate(CORPUS[filename])
+    ProcedureArtifact.model_validate(CORPUS[filename])
     original = _control_flow_artifact(CORPUS[filename])
     authored = decompile_procedure(original)
     rendered = json.dumps(authored.model_dump(mode="json", by_alias=True))

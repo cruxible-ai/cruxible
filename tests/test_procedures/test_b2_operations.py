@@ -452,8 +452,8 @@ def test_a_direct_run_settle_terminal_is_capped_at_propose():
     assert rung.effective_rung == 2
     assert rung.permits("emit_capture")
     assert rung.permits("post_inbox")
-    assert rung.permits("propose_change_set")
-    assert not rung.permits("settle_change_set")
+    assert rung.effective_rung == 2
+    assert not rung.permits("claims")
     assert rung.limiting_term in {"mandate_grant", "line_requested_rung"}
 
 
@@ -577,7 +577,9 @@ def _author_widget_kind(instance):  # type: ignore[no-untyped-def]
 
 
 def _plain_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
-    """No Call or Source node: a pure ``project`` feeding a propose/settle terminal."""
+    """A provider-free native derivation from an accepted Claim."""
+    from cruxible_client.contracts.procedures.authored import ClaimsStep, ReadStep
+    from tests.support.procedures import ref
 
     return procedure_spec(
         reference_text=True,
@@ -585,8 +587,27 @@ def _plain_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
         input={},
         output={"value": "int"},
         steps=[
+            ReadStep(
+                read="basis",
+                claim_type="project.work_item.status",
+                subject="wi-42",
+                subject_kind="project.work_item",
+            ),
+            ProjectStep(project="rows", fields={"items": [ref("$steps.basis")]}),
             ProjectStep(project="shaped", fields={"value": 1}),
-            {verb: (_self_sourced_subject_item(f"Plain direct {verb}."),)},
+            ClaimsStep(
+                claims=[
+                    {
+                        "type": "project.work_item.ready",
+                        "value": True,
+                        "role": "derivation",
+                        "inputs": [ref("$steps.basis")],
+                        "rationale": "Readiness follows from the accepted status.",
+                    }
+                ],
+                for_each=ref("$steps.rows.items"),
+                subject={"kind": "project.work_item", "key": {"slug": "wi-42"}, "create": "never"},
+            ),
         ],
         returns="shaped",
         hard_caps=procedure_limits(provider_calls=0),
@@ -594,24 +615,20 @@ def _plain_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
 
 
 def _call_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
-    """A slotted Call precedes the propose/settle terminal (a real provider run)."""
-
+    """A slotted Call precedes the same native terminal."""
+    spec = _plain_terminal_spec(name=name, verb=verb)
     return procedure_spec(
         reference_text=True,
-        procedure=name,
-        input={"value": "int"},
-        output={"value": "int"},
-        slots={"compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}},
-        steps=[
-            CallStep(
-                call="result",
-                slot="compute",
-                input={"value": "$input.value"},
+        **{
+            **spec.model_dump(mode="json", by_alias=True),
+            "input": {"value": "int"},
+            "slots": {"compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}},
+            "steps": (
+                CallStep(call="result", slot="compute", input={"value": "$input.value"}),
+                *spec.steps,
             ),
-            {verb: (_self_sourced_subject_item(f"Called direct {verb}."),)},
-        ],
-        returns="result",
-        hard_caps=procedure_limits(provider_calls=1),
+            "hard_caps": procedure_limits(provider_calls=1),
+        },
     )
 
 
@@ -629,8 +646,14 @@ def _direct_propose_or_settle_delivers(tmp_path, *, verb, with_call):  # type: i
     )
 
     build = operation_build() if with_call else None
-    instance = world(tmp_path, *(() if build is None else (build,)))
-    _author_widget_kind(instance)
+    from tests.test_authoring.test_derivation_admission import derivation_world
+
+    instance = derivation_world(tmp_path).instance
+    if build is not None:
+        from tests.core_support._identity_support import accept_tree
+
+        accept_tree(instance, contract_files(VALUE, REFUSAL), name="operation-contracts")
+        install(instance, build)
     name = f"test.{verb}-{'called' if with_call else 'plain'}-direct"
     spec = (
         _call_terminal_spec(name=name, verb=verb)
@@ -652,7 +675,7 @@ def _direct_propose_or_settle_delivers(tmp_path, *, verb, with_call):  # type: i
     assert result.status == "succeeded", result.terminal
     assert len(result.terminal_egress) == 1
     egress = result.terminal_egress[0]
-    assert egress.kind == f"{verb}_change_set"
+    assert egress.kind == "claims"
     assert egress.verdict == "delivered"
     assert egress.proposal_id is not None and egress.candidate_digest is not None
     assert egress.effective_authority == "propose"

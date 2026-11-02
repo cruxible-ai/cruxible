@@ -59,7 +59,6 @@ ValueType = Literal[
     "timestamp",
     "date",
     "subject",
-    "exact_content",
     "json",
 ]
 """How a predicate's values compare. ``json`` is a literal with no scalar schema type."""
@@ -89,7 +88,6 @@ _OPERATORS: dict[str, frozenset[str]] = {
     "timestamp": frozenset({"eq", "ne", "lt", "lte", "gt", "gte", "in", "exists"}),
     "date": frozenset({"eq", "ne", "lt", "lte", "gt", "gte", "in", "exists"}),
     "subject": frozenset({"eq", "ne", "in", "exists", "contains"}),
-    "exact_content": frozenset({"exists"}),
     "json": frozenset({"eq", "ne", "in", "exists"}),
 }
 _SUBJECT_ID_OPERATORS = frozenset({"eq", "ne", "lt", "lte", "gt", "gte", "in", "contains"})
@@ -503,7 +501,7 @@ def check_value(
         return value
     value_type = info.value_type
     value = coerce_text_spelling(value, value_type)
-    if value_type not in {"subject", "exact_content"}:
+    if value_type != "subject":
         # Canonical before any check: an enum member is matched in the form the
         # predicate stores its values in.
         value = canonical_operand(info, value, field_path=field_path)

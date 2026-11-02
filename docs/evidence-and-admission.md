@@ -120,7 +120,6 @@ which must come from a quote and goes stale after 30 days:
 predicate: catalog.part.lead_time_days
 description: Days from order to delivery, as the supplier quotes it.
 allowed_subject_kinds: [catalog.part]
-object_kind: literal
 value: int{min: 0}
 cardinality: one
 permitted_roles: [observation]

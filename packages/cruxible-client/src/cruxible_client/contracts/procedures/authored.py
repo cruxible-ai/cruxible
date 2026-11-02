@@ -930,12 +930,6 @@ class ProcedureSpecError(ValueError):
 Resolver = Callable[[str, Any], Any]
 
 
-def _view_fields(
-    fields: Mapping[str, ContractField], resolve_contract: Callable[[ContractRef], Contract | None]
-) -> dict[str, ContractField]:
-    return dict(fields)
-
-
 def _literal_shape(value: object) -> ContractField | None:
     """The Contract type a literal scalar flows as; ``None`` for structured data."""
 
@@ -1032,7 +1026,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         return found if isinstance(found, Contract) else None
 
     def view(fields: Mapping[str, ContractField]) -> dict[str, ContractField]:
-        return _view_fields(fields, resolve_contract)
+        return dict(fields)
 
     generated: dict[str, dict[str, ContractField]] = {}
 

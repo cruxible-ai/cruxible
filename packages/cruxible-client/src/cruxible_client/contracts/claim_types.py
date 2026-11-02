@@ -46,9 +46,10 @@ from cruxible_client.contracts.policies import (
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.shapes import (
+    ContractResolver,
     FieldType,
-    StringType,
     SubjectType,
+    claim_value_has_unbounded_string,
     coerce_field_type,
     subject_value_kinds,
     value_members,
@@ -795,6 +796,7 @@ def evaluate_claim_type_law(
     predecessor: AcceptedClaimType | None,
     accepted_artifacts: Mapping[str, tuple[ArtifactIdentity, str]] | None = None,
     subject_kind_keys: Mapping[str, tuple[str, ...] | None] | None = None,
+    resolve_contract: ContractResolver | None = None,
 ) -> ClaimTypeLawResult:
     """Evaluate exact path, lifecycle, and digest-pinned dependencies.
 
@@ -809,9 +811,7 @@ def evaluate_claim_type_law(
             verdict="refused",
             diagnostics=(_diagnostic("cruxible.claim_type.path_mismatch", str(exc), path=path),),
         )
-    if isinstance(claim_type.value, StringType) and (
-        claim_type.value.max_len is None or claim_type.value.max_len > 256
-    ):
+    if claim_value_has_unbounded_string(claim_type.value, resolve_contract):
         return ClaimTypeLawResult(
             verdict="refused",
             diagnostics=(

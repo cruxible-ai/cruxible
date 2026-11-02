@@ -365,12 +365,6 @@ class ClaimTypeEvidenceRulesRequired(FormatError):
     error_code = "cruxible.claim_type.evidence_rules_required"
 
 
-class ClaimTypeNumberSchemaIntegerOnly(FormatError):
-    """A literal schema admits non-integer numbers, which no Claim value can hold."""
-
-    error_code = "cruxible.claim_type.number_schema_integer_only"
-
-
 def _admitted_roles(roles: tuple[str, ...]) -> list[str]:
     return sorted({role for role in roles if role != "derivation"}, key=lambda r: r.encode())
 
@@ -1084,7 +1078,6 @@ __all__ = [
     "ClaimTypeEvidenceRulesRequired",
     "ClaimTypeInputIncomplete",
     "ClaimTypeInputProposalResultV1",
-    "ClaimTypeNumberSchemaIntegerOnly",
     "ClaimTypeInputValidationError",
     "ClaimTypeDefaultRoleNotPermitted",
     "ClaimTypeInputRecord",

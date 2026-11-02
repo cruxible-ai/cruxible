@@ -5114,7 +5114,7 @@ def set_value(
     The Claim it replaces is found for you. SUBJECT may also be kind/<key
     value> as written (kind/CVE-2021-44228): a one-key kind's Subject that does
     not exist yet is added by that key. VALUE is text: an enum member, a number or true/false
-    for such fields, a Subject as kind/id, or the text itself for exact content. --none
+    for such fields, a Subject as kind/id, or bounded text. --none
     instead states that FIELD holds nothing (a none), replacing the live value.
     """
 
@@ -5922,8 +5922,6 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
             click.echo(f"value: {printable(whole)}")
         else:
             click.echo(f"value: {printable(json.dumps(whole, ensure_ascii=False))}")
-        if result.evidence.content_digest is not None:
-            click.echo(f"content_digest: {result.evidence.content_digest}")
         for capture in result.evidence.captures:
             erased = capture.erased
             click.echo(

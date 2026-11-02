@@ -16,7 +16,7 @@ What the verbs decide for the caller:
   ``cruxible.write.slot_changed`` when the slot moved since the caller's read
   coordinate (decision a);
 - the default evidence is the writer's ``because`` as self evidence (decision
-  b); for an exact-content field the value is its own evidence, byte for byte;
+  b);
 - a Subject of a known kind that does not exist yet is added to the same change
   set (decision c); a Subject-valued value never is;
 - a ``create`` change creates a Subject by its kind and key under a label (or
@@ -48,7 +48,6 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecy
 from cruxible_client.contracts.authoring.models import (
     AuthoringChangeSetMember,
     AuthoringClaimStatement,
-    AuthoringExactContentObject,
     AuthoringExistingClaimDisposition,
     AuthoringIntent,
     AuthoringNoneClaimObject,
@@ -94,7 +93,6 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimRetireDependent,
-    ExactContentClaimObject,
     LiteralClaimObject,
     SubjectClaimObject,
     claim_artifact_digest,
@@ -110,12 +108,10 @@ from cruxible_client.contracts.errors import (
     SettlementIntegrityError,
     WriteRefusalError,
 )
-from cruxible_client.contracts.get_display import exact_content_marker_text
 from cruxible_client.contracts.get_reads import ReadSurface
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.public_names import public_name, stored_contract_name
 from cruxible_client.contracts.read_values import (
-    ExactContentRef,
     ShownObject,
     TruncatedText,
     shown_plain,
@@ -125,6 +121,7 @@ from cruxible_client.contracts.read_values import (
 from cruxible_client.contracts.recompilation import ProposalRecompiled
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
+    claim_literal_detail,
     claim_literal_problem,
     claim_value_kind,
     subject_value_kinds,
@@ -210,7 +207,6 @@ from cruxible_core.runtime.phase_timing import timed_operation, timed_phase
 from cruxible_core.runtime.request_scope import projection_request
 from cruxible_core.service.change_preview import compact_coordinate, preview_guards
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
-from cruxible_core.service.discovery.exact_content import ExactContentReader
 from cruxible_core.service.discovery.field_names import resolve_field_in
 from cruxible_core.service.discovery.query_values import (
     read_live_nones,
@@ -438,11 +434,11 @@ def _brief(value: object) -> str:
 def _not_whole(value: object) -> bool:
     """Whether a shown value is, or holds, something other than the value itself.
 
-    A ``TruncatedText`` preview or an ``ExactContentRef`` marker: neither is a
+    A ``TruncatedText`` preview or ``ShownObject`` summary: neither is a
     value to expect, so a refusal names the read of the whole value instead.
     """
 
-    return isinstance(value, TruncatedText | ExactContentRef) or (
+    return isinstance(value, TruncatedText) or (
         isinstance(value, list) and any(_not_whole(item) for item in value)
     )
 
@@ -452,8 +448,6 @@ def _brief_shown(value: object) -> str:
 
     if isinstance(value, TruncatedText):
         return f"{_brief(value.preview)} ({value.length} chars)"
-    if isinstance(value, ExactContentRef):
-        return exact_content_marker_text(value)
     if isinstance(value, ShownObject):
         return repr(value.object)
     if isinstance(value, list):
@@ -592,7 +586,6 @@ class _Planner:
         self.read_at = read_at
         self.request = request
         self.vocabulary: QueryVocabulary = load_query_vocabulary(instance, head)
-        self.exact = ExactContentReader(instance)
         self.plan = _Plan()
         self._subject_exists: dict[str, bool] = {}
         self._verified: dict[str, bool] = {}
@@ -651,7 +644,7 @@ class _Planner:
             live = values.get(identity)
             shown: object = None
             if live is not None:
-                shown = self.exact.value(str(live.value), live.span) if live.exact else live.value
+                shown = live.value
             elif identity in nones:
                 shown = {"none": nones[identity].of}
             found.append(
@@ -1464,6 +1457,7 @@ class _Planner:
                 )
         violated = claim_literal_problem(value, info.claim_type.value)
         if violated is not None:
+            violated = claim_literal_detail(value, info.claim_type.value, violated)
             expected = info.value_type if info.value_type != "json" else "value"
             raise _refuse(
                 "cruxible.write.value_type_mismatch",
@@ -1710,7 +1704,6 @@ class _Planner:
         role: str,
         index: int,
         field_name: str,
-        exact: bytes | None,
         capture: str | None,
     ) -> tuple[Any, Literal["evidence", "copy"] | None]:
         """The Claim's source and citation role for this change's evidence."""
@@ -1744,14 +1737,6 @@ class _Planner:
                 )
             if not evidence.own_words:
                 return evidence.observation, "evidence"
-            if exact is not None and evidence.observation.selected_content != exact:
-                raise _refuse(
-                    "cruxible.write.exact_content_evidence_mismatch",
-                    "An exact-content Claim's own-words section must be the value itself.",
-                    change=index,
-                    field_path=path,
-                    repair="Use the section's exact text as the value, or cite a source",
-                )
             if requires_captured_evidence(info.claim_type):
                 raise _refuse(
                     "cruxible.write.evidence_required",
@@ -1761,20 +1746,8 @@ class _Planner:
                     repair="Cite a produced Capture under a ClaimType-admitted contract",
                 )
             return SelfSourceBody(content_base64=evidence.observation.selected_content_base64), None
-        if exact is not None:
-            if isinstance(evidence, SelfEvidence) and evidence.self.encode("utf-8") != exact:
-                raise _refuse(
-                    "cruxible.write.exact_content_evidence_mismatch",
-                    f"{field_name} is exact content, so its self evidence is the value itself; "
-                    "the evidence given differs from the value",
-                    change=index,
-                    repair="Leave evidence out: the value's own text is its evidence",
-                    field_path=path,
-                )
-            body = exact
-        else:
-            text = evidence.self if isinstance(evidence, SelfEvidence) else self.request.because
-            body = text.encode("utf-8")
+        text = evidence.self if isinstance(evidence, SelfEvidence) else self.request.because
+        body = text.encode("utf-8")
         if requires_captured_evidence(info.claim_type):
             with self.instance.bind_accepted_projection(self.head) as projection:
                 admitted = tuple(
@@ -2150,7 +2123,6 @@ class _Planner:
                 field_path=f"{prefix}.op",
             )
         role = self.role(claim_type, change.role, index=index, field_name=name)
-        exact: bytes | None = None
         shown_after: object = change.value
         statement_object: Any
         if isinstance(change.value, NoneValue):
@@ -2200,7 +2172,7 @@ class _Planner:
                     pending_value = pending_bound.label
         capture = self.cited_capture(change, subject=subject, subject_path_value=path, index=index)
         source, citation_role = self.source(
-            info, change, role=role, index=index, field_name=name, exact=exact, capture=capture
+            info, change, role=role, index=index, field_name=name, capture=capture
         )
         if isinstance(change.value, NoneValue) and isinstance(source, SelfSourceBody):
             unit = "nothing" if change.value.none is None else f"no {_brief(change.value.none)}"
@@ -2767,19 +2739,6 @@ class _Planner:
             )
         obj = statement.object
         authored_object: Any = obj
-        if isinstance(obj, ExactContentClaimObject):
-            text = self.exact.of(obj) if obj.span is None else None
-            if not isinstance(text, str):
-                raise _refuse(
-                    "cruxible.write.rebind_unsupported",
-                    f"{claim_id} states exact content this write cannot read back whole",
-                    change=index,
-                    repair=retire_repair,
-                    field_path=f"{prefix}.target",
-                )
-            authored_object = AuthoringExactContentObject(
-                content_base64=base64.b64encode(text.encode("utf-8")).decode("ascii")
-            )
         authored = AuthoringClaimStatement(
             subject=statement.subject,
             predicate=statement.predicate,

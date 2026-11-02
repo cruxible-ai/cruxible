@@ -213,12 +213,8 @@
           }
         },
         {
-          "candidate_templates": {
-            "items": "$steps.parse.items"
-          },
           "id": "propose",
-          "kind": "propose_change_set",
-          "result": "$steps.summary"
+          "kind": "halt"
         },
         {
           "contract": {
@@ -264,9 +260,9 @@
           }
         }
       },
-      "terminal_capability": 2
+      "terminal_capability": 1
     },
-    "definition_digest": "sha256:a36f2d561fe24761edd0c7161e8b62135013f2e971dee7ae6e374c5c654a07ca",
+    "definition_digest": "sha256:2e04ff75a9dd03843523f76572b1b66d9f82a6d8238dddd06681dd7b6489059e",
     "identity": {
       "kind": "Procedure",
       "name": "security.credential-import"
@@ -507,12 +503,8 @@
           }
         },
         {
-          "candidate_templates": {
-            "items": "$steps.decide.items"
-          },
           "id": "propose",
-          "kind": "propose_change_set",
-          "result": "$steps.summary"
+          "kind": "halt"
         },
         {
           "id": "nochange",
@@ -545,9 +537,9 @@
           }
         }
       },
-      "terminal_capability": 2
+      "terminal_capability": 1
     },
-    "definition_digest": "sha256:b9a45c7e554cd9d953918d6ae622f79e653639578ca99537161ea1a17f953dc8",
+    "definition_digest": "sha256:896d34e7fe7bb2889c36e00b65e41601557798d654b9aafb37e12cadcfd72ef5",
     "identity": {
       "kind": "Procedure",
       "name": "security.cve-applicability"
@@ -644,12 +636,8 @@
           }
         },
         {
-          "candidate_templates": {
-            "items": "$steps.parse.items"
-          },
           "id": "settle",
-          "kind": "settle_change_set",
-          "result": "$steps.summary"
+          "kind": "halt"
         },
         {
           "id": "nochange",
@@ -682,9 +670,9 @@
           }
         }
       },
-      "terminal_capability": 3
+      "terminal_capability": 1
     },
-    "definition_digest": "sha256:b442dcc4fdda70c73a04ae2e2663a1db0e200188ae0e1f3a18294cdba4e261eb",
+    "definition_digest": "sha256:8393277c2d6f2a2780883f77b245a8ef11cbdfe810e0ab5a1e2d98ce03fb835e",
     "identity": {
       "kind": "Procedure",
       "name": "security.epss-triage"
@@ -1034,12 +1022,8 @@
           }
         },
         {
-          "candidate_templates": {
-            "items": "$steps.parse.items"
-          },
           "id": "propose",
-          "kind": "propose_change_set",
-          "result": "$steps.summary"
+          "kind": "halt"
         },
         {
           "id": "other",
@@ -1077,9 +1061,9 @@
           }
         }
       },
-      "terminal_capability": 2
+      "terminal_capability": 1
     },
-    "definition_digest": "sha256:80c157c5703448e392de07e5e3ab500cb4cfa5dc67db5fb56a5909d98a2eb731",
+    "definition_digest": "sha256:71bdc2fd1660400bdf39210febb4940515bea8024c3142bf28b6bdc0e767b0e9",
     "identity": {
       "kind": "Procedure",
       "name": "security.inventory-import"
@@ -1388,12 +1372,8 @@
           }
         },
         {
-          "candidate_templates": {
-            "items": "$steps.parse.items"
-          },
           "id": "settle",
-          "kind": "settle_change_set",
-          "result": "$steps.summary"
+          "kind": "halt"
         },
         {
           "id": "nochange",
@@ -1426,9 +1406,9 @@
           }
         }
       },
-      "terminal_capability": 3
+      "terminal_capability": 1
     },
-    "definition_digest": "sha256:8e2ad97e9c0fa64adb1d58accd6cf17ec7f07534cd8e2f0bb985b41ce1f8ae11",
+    "definition_digest": "sha256:7b92a17dc4aafe0d51dd94711a23e9a8efb1e4db453dd689acea9aedeb328afa",
     "identity": {
       "kind": "Procedure",
       "name": "security.kev-triage"
@@ -1670,12 +1650,8 @@
           }
         },
         {
-          "candidate_templates": {
-            "items": "$steps.parse.items"
-          },
           "id": "propose",
-          "kind": "propose_change_set",
-          "result": "$steps.summary"
+          "kind": "halt"
         },
         {
           "contract": {
@@ -1726,9 +1702,9 @@
           }
         }
       },
-      "terminal_capability": 2
+      "terminal_capability": 1
     },
-    "definition_digest": "sha256:6943c19beeb78e53a4cfa5e7ce6b2714e3d45eba3e2b68307bfe67c37b2b8053",
+    "definition_digest": "sha256:45947a593ed131b228537767e2f2f1d9e1f10505f215a7e6a474e3ba4d8574d3",
     "identity": {
       "kind": "Procedure",
       "name": "security.log-import"
@@ -1853,12 +1829,8 @@
           "kind": "project"
         },
         {
-          "candidate_templates": {
-            "items": "$steps.parse.items"
-          },
           "id": "propose",
-          "kind": "propose_change_set",
-          "result": "$steps.summary"
+          "kind": "halt"
         },
         {
           "id": "other",
@@ -1891,9 +1863,9 @@
           }
         }
       },
-      "terminal_capability": 2
+      "terminal_capability": 1
     },
-    "definition_digest": "sha256:2fbcb6f897bd6b37f9ae2dc62c98364aca70e3d9b305cdc20dfbc2574d3efc3a",
+    "definition_digest": "sha256:1713303f1dca59b6cd5c9e8bf2a4bba7b987d77c1de550709684fa8935144214",
     "identity": {
       "kind": "Procedure",
       "name": "security.registry-parse"
@@ -2262,12 +2234,8 @@
           }
         },
         {
-          "candidate_templates": {
-            "items": "$steps.parse.items"
-          },
           "id": "propose",
-          "kind": "propose_change_set",
-          "result": "$steps.summary"
+          "kind": "halt"
         },
         {
           "id": "nochange",
@@ -2300,9 +2268,9 @@
           }
         }
       },
-      "terminal_capability": 2
+      "terminal_capability": 1
     },
-    "definition_digest": "sha256:e851773a7230e074cbaf86f4c704f9910ac5a647fb7642e09aa89866f8aa54f5",
+    "definition_digest": "sha256:34d3f0d89c71f4780143aeb9fab2a95cc7b02356e4ee634ccb512cec6ca38d9b",
     "identity": {
       "kind": "Procedure",
       "name": "security.sbom-import"

@@ -178,7 +178,7 @@ def test_non_ascii_payload_and_actor_commitments_match_public_helpers() -> None:
     raw["intent"]["actor_id"] = "auteur-e\u0301"
     raw["intent"]["instance_id"] = "world-\U0001f30d"
     raw["intent"]["payload"]["members"][0]["rationale"] = (
-        'Observe\u0301: \u03b1, \U0001f30d, "quoted"\n'
+        'Observe\u0301: \u03b1, \U0001f30d, "quoted"'
     )
     _commit_raw_event(raw)
     intent = models.AuthoringIntent.model_validate(raw["intent"])

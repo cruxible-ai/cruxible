@@ -422,7 +422,7 @@ def test_cli_claim_type_migration_delivers_nonblocking_source_lint(
                 successor_artifact_digest="sha256:" + "8" * 64,
                 semantic_delta=[
                     contracts.SemanticFieldDelta(
-                        field_path="/literal_schema/enum",
+                        field_path="/value/members",
                         before=contracts.SemanticFieldValue(state="present", value=["old"]),
                         after=contracts.SemanticFieldValue(state="present", value=["new"]),
                     )
@@ -463,7 +463,7 @@ def test_cli_claim_type_migration_delivers_nonblocking_source_lint(
     )
     assert human.exit_code == 0, human.output
     assert "Blast radius: 0 dependent(s)" in human.stdout
-    assert '/literal_schema/enum: ["old"] -> ["new"]' in human.stdout
+    assert '/value/members: ["old"] -> ["new"]' in human.stdout
     assert "evidence_admission_policy.rules" in human.stdout
 
 

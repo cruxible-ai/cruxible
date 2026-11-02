@@ -121,7 +121,6 @@ propose --template` prints this shape):
 ~~~yaml
 predicate: catalog.part.warranty_months
 allowed_subject_kinds: [catalog.part]
-object_kind: literal
 value: int{min: 0}
 cardinality: one
 ~~~
@@ -157,7 +156,6 @@ spellings are the same key:
 predicate: catalog.supplier.name
 description: "The supplier's name; its key."
 allowed_subject_kinds: [catalog.supplier]
-object_kind: literal
 value: string{min_len: 1, max_len: 256}
 cardinality: one
 canonical_form: [nfkc, trim, collapse_whitespace, casefold]
