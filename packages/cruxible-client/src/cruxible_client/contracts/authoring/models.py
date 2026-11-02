@@ -43,7 +43,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.claim_attestations import ClaimAttestation
-from cruxible_client.contracts.claim_evidence import ClaimEvidenceReceipt
+from cruxible_client.contracts.claim_evidence import AbsenceWitness, ClaimEvidenceReceipt
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import (
@@ -137,7 +137,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:6c60e82e143f9f250ee5c2685798a0c55e431394f8bbcc94a35c508039d15787"
+    "sha256:9c49147ca21a392a597cb7066f8089c610388e8ea27dc98c02e7bce5b6a89bc1"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -1448,6 +1448,7 @@ class ClaimRetirementMember(_StrictAuthoringModel):
     mode: Literal["submit"] = "submit"
     retires: str
     reason: ClaimRetirementReason
+    absence: AbsenceWitness | None = Field(default=None, exclude_if=lambda value: value is None)
     effective_until: datetime | None = None
     dependents: tuple[ClaimRetireDependent, ...] = ()
 

@@ -410,6 +410,7 @@ def procedure_run_card(
     egress: tuple[ProcedureTerminalEgress, ...] = ()
     elapsed: int | None = None
     basis: Literal["read_time", "measured_wall_clock"] | None = None
+    completeness = None
     if locator.final_payload_digest is None:
         target = _current_node(instance, journal, stream, run_id, nodes, edges, first)
         if target is not None and target in kinds:
@@ -428,6 +429,7 @@ def procedure_run_card(
         receipt_digest = state.receipt_digest
         terminal = state.terminal
         result = state.result
+        completeness = state.completeness
         outcomes = tuple(
             GetRunOutcome.model_validate(item.model_dump(mode="json")) for item in state.outcomes
         )
@@ -467,6 +469,7 @@ def procedure_run_card(
         outcomes=outcomes,
         terminal=terminal,
         terminal_egress=egress,
+        completeness=completeness,
         next=tuple(next_steps),
     )
 

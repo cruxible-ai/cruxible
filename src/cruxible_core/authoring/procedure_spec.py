@@ -269,5 +269,7 @@ def resolve_procedure_spec(
         try:
             validate_claims_templates(definition, maybe_source_identity)
         except (ClaimsTypingRefused, ValueError) as exc:
-            raise ProcedureSpecError("claims_type_invalid", "$.steps", str(exc)) from exc
+            raise ProcedureSpecError(
+                getattr(exc, "code", "claims_type_invalid").rsplit(".", 1)[-1], "$.steps", str(exc)
+            ) from exc
         return lowered

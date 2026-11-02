@@ -5264,6 +5264,7 @@ def _stage_change_set_member(
             base=base,
             staged_tree=staged_tree,
             path=path,
+            derivation_procedure=derivation_procedure,
         )
         return tree, resolved, extra, {}
     if isinstance(member, ProcedureAuthoringPayload):
@@ -5757,9 +5758,22 @@ def _stage_claim_retirement(
     base: AcceptedProjectionCoordinate,
     staged_tree: Mapping[str, bytes],
     path: str,
+    derivation_procedure: ArtifactPin | None = None,
 ) -> tuple[MutableMapping[str, bytes], dict[str, object], set[str]]:
     """Retire one Claim and its live closure inside the same change set."""
 
+    for witness in (member.absence, *(dependent.absence for dependent in member.dependents)):
+        if witness is not None and (
+            derivation_procedure is None
+            or witness.procedure_digest != derivation_procedure.artifact_digest
+        ):
+            _refuse(
+                "cruxible.authoring.absence_requires_execution",
+                "absence",
+                "Only the executing Claims terminal can bind an absence witness.",
+                repair_kind="run_procedure",
+                repair_description="Run the declared Procedure with a complete enumeration.",
+            )
     content = staged_tree.get(path)
     if content is None:
         _refuse(
@@ -5782,6 +5796,7 @@ def _stage_claim_retirement(
         artifact_identity=claim.identity,
         predecessor_digest=claim_artifact_digest(claim).tagged,
         reason=member.reason,
+        absence=member.absence,
         effective_until=member.effective_until,
     )
     try:

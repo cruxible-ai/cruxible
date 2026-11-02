@@ -36,6 +36,12 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from cruxible_client.contracts.claim_evidence import (
+    CompletenessReason,
+    CompletenessReasonKind,
+    RunCompleteness,
+)
+
 #: One read of a run value: the alias, and the path read beneath it. ``()``
 #: reads the whole value; ``None`` reads no field content (a count, say).
 Read = tuple[str, tuple[str, ...] | None]
@@ -52,6 +58,21 @@ class Completeness:
     """Which aliases hold incomplete values, and whether the control lineage is complete."""
 
     incomplete: set[str] = field(default_factory=set)
+    reasons: dict[str, CompletenessReason] = field(default_factory=dict)
+    downgraded: int = 0
+    skipped: int = 0
+
+    def note(self, node: str, kind: CompletenessReasonKind, inputs: Iterable[str] = ()) -> None:
+        if node in self.reasons or len(self.reasons) < 20:
+            self.reasons[node] = CompletenessReason(node=node, kind=kind, inputs=tuple(inputs)[:20])
+
+    def summary(self) -> RunCompleteness | None:
+        if not self.reasons and not self.downgraded and not self.skipped:
+            return None
+        return RunCompleteness(
+            reasons=tuple(self.reasons.values()), downgraded=self.downgraded, skipped=self.skipped
+        )
+
     control_complete: bool = True
     #: Per alias, each lossy ``rows`` view it holds, by the path to the value
     #: that has it (``()`` for the alias itself; ``("final", "<body>")`` for a
@@ -108,11 +129,19 @@ class Completeness:
             self.incomplete.discard(alias)
         else:
             self.incomplete.add(alias)
+            if alias not in self.reasons:
+                self.note(alias, "incomplete_input")
 
     def at_sink(self, reads: Iterable[Read]) -> bool:
         """A sink's value counts as complete only if its data and control lineage are."""
 
-        return self.control_complete and self.reads_complete(reads)
+        reads = tuple(reads)
+        complete = self.control_complete and self.reads_complete(reads)
+        if not complete:
+            for alias, path in reads:
+                if alias not in self.incomplete and not self.reads_complete(((alias, path),)):
+                    self.note(alias, "invalid_field")
+        return complete
 
     def incomplete_inputs(self, reads: Iterable[Read]) -> list[str]:
         """Only this value's incomplete aliases, including lossy view reads."""
@@ -124,6 +153,7 @@ class Completeness:
 
         if not self.reads_complete(reads):
             self.control_complete = False
+            self.note("control", "control_incomplete", (alias for alias, _ in reads))
 
 
 def _view_read_complete(

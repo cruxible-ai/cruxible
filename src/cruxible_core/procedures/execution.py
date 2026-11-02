@@ -16,7 +16,9 @@ from cruxible_client.contracts.captures import capture_retention_policy, parse_c
 from cruxible_client.contracts.claim_evidence import (
     ClaimEvidenceReceipt,
     ClaimsDiagnostic,
+    CompleteWhenResult,
     FindingKind,
+    RunCompleteness,
 )
 from cruxible_client.contracts.procedures.claims import ClaimsNode
 from cruxible_client.contracts.refs import Ref
@@ -1010,6 +1012,9 @@ class ProcedureRunResultV1(_StrictExecutionModel):
     output: object | None = None
     refusal: ProcedureRunRefusalV1 | None = None
     receipt: ProcedureRunReceiptV1
+    completeness: RunCompleteness | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("output", mode="before")
     @classmethod
@@ -2224,6 +2229,8 @@ class _RunState:
         dataclass_field(default_factory=dict)
     )
     claims_diagnostics: dict[str, ClaimsDiagnostics] = dataclass_field(default_factory=dict)
+    absence_findings: set[str] = dataclass_field(default_factory=set)
+    extraction_checks: dict[str, CompleteWhenResult] = dataclass_field(default_factory=dict)
     claims_changes: dict[str, tuple[CoreClaimsChange, ...]] = dataclass_field(default_factory=dict)
     claims_evidence: dict[str, tuple[ClaimEvidenceReceipt | None, ...]] = dataclass_field(
         default_factory=dict
@@ -2624,8 +2631,10 @@ class ProcedureExecutor:
                 refusal=refusal,
                 halt=halt,
             )
+        summary = state.completeness.summary()
         final_payload = {
             "status": status,
+            **({"completeness": summary.model_dump(mode="json")} if summary is not None else {}),
             **(
                 {
                     "return_manifest": build_terminal_item_manifest(
@@ -2709,6 +2718,7 @@ class ProcedureExecutor:
             run_id=admission.run_id,
             status=status,
             output=output if status == "succeeded" else None,
+            completeness=summary,
             refusal=refusal,
             receipt=receipt,
         )
@@ -4136,10 +4146,21 @@ class ProcedureExecutor:
         value = normalize_canonical(outcome.value())
         state.observe_items(len(outcome.held), f"extract:{node.node_id}", "results")
         state.outputs[node.as_] = value
+        if outcome.complete_when_result is not None:
+            state.extraction_checks[node.as_] = outcome.complete_when_result
         state.completeness.mark(
             node.as_,
             outcome.complete and state.completeness.complete((node.capture_alias,)),
         )
+        if not outcome.complete:
+            state.completeness.note(
+                node.node_id,
+                "count_mismatch"
+                if not outcome.complete_when_held
+                else "invalid_record"
+                if outcome.invalid_records
+                else "duplicate_key",
+            )
         state.completeness.drop(node.as_, outcome.dropped_rows())
         state.provenance[node.as_] = AliasProvenanceV1(
             whole=_node_policy_tokens(node, self.references)
@@ -4205,6 +4226,12 @@ class ProcedureExecutor:
             complete
             and state.completeness.reads_complete(_referenced_reads(node.spec), records_kept=True),
         )
+        if node.as_ in state.completeness.incomplete:
+            state.completeness.note(
+                node.node_id,
+                "unknown_predicate" if not complete else "upstream_incomplete",
+                aliases,
+            )
         # Like an extract's, a closed transform's rows view drops invalid fields.
         state.completeness.drop(node.as_, dropped_rows(value))
         state.provenance[node.as_] = AliasProvenanceV1(
@@ -4254,6 +4281,12 @@ class ProcedureExecutor:
                     and self.plan.definition.slots[node.slot].may_truncate
                 )
                 tracker.mark(alias, tracker.reads_complete(reads) and not truncates)
+                if alias in tracker.incomplete:
+                    tracker.note(
+                        getattr(node, "node_id", alias),
+                        "may_truncate" if truncates else "upstream_incomplete",
+                        (name for name, _ in reads),
+                    )
 
     def _occurrence_matches_slot(
         self, occurrence: ProviderExternalOccurrencePlan, slot: str | None
@@ -4635,6 +4668,10 @@ class ProcedureExecutor:
             node.as_,
             child_complete and state.completeness.reads_complete(_referenced_reads(node.input)),
         )
+        if node.as_ in state.completeness.incomplete:
+            state.completeness.note(
+                node.node_id, "upstream_incomplete", _referenced_aliases(node.input)
+            )
         self._append_event(
             admission,
             records,
@@ -5986,6 +6023,10 @@ class ProcedureExecutor:
                     {"attempts": attempts, "final": local_outputs}
                 )
                 state.completeness.mark(node.as_, attempts_complete)
+                if not attempts_complete:
+                    state.completeness.note(
+                        node.node_id, "upstream_incomplete", (body.as_ for body in node.body)
+                    )
                 # The repeat's value keeps each body output's lossy rows view,
                 # under the attempt it came from and, for the last, ``final``.
                 for index, tracker in enumerate(attempt_trackers):
@@ -6314,6 +6355,7 @@ class ProcedureExecutor:
                     "run_id": admission.run_id,
                     "status": payload.get("status"),
                     "output": payload.get("output"),
+                    "completeness": payload.get("completeness"),
                     "refusal": payload.get("refusal"),
                     "receipt": receipt.model_dump(mode="json"),
                 }
@@ -6653,6 +6695,8 @@ def _inbox_items(
                 ) from exc
             tag = _field_result_tag(resolved)
             if tag == "invalid":
+                state.completeness.note(node.node_id, "invalid_field")
+                state.completeness.skipped += 1
                 state.sinks_incomplete.add(node.node_id)
                 continue
             if tag == "absent":
@@ -6681,8 +6725,10 @@ def _inbox_items(
                     )
                 )
                 if declared.incomplete_fallback is None:
+                    state.completeness.skipped += 1
                     skip_item = True
                     continue
+                state.completeness.downgraded += 1
                 value = declared.incomplete_fallback
             item[name] = value
         if skip_item:
@@ -6715,10 +6761,14 @@ def _inbox_items(
 
 
 def _mentions_item_reference(value: object) -> bool:
+    if isinstance(value, BaseModel):
+        return _mentions_item_reference(value.model_dump(mode="python", by_alias=True))
     if isinstance(value, str):
         return value == "$item" or value.startswith("$item.")
     if isinstance(value, dict):
-        return any(_mentions_item_reference(member) for member in value.values())
+        return value.get("$ref") == "item" or any(
+            _mentions_item_reference(member) for member in value.values()
+        )
     if isinstance(value, list | tuple):
         return any(_mentions_item_reference(member) for member in value)
     return False

@@ -45,14 +45,14 @@ def test_a_mapping_cannot_supply_retirement_or_lineage_commands(field):
 
 
 @pytest.mark.parametrize("policy", ["surface", "mirror", "inverse"])
-def test_absence_policies_are_refused_until_b4b(policy):
-    with pytest.raises(ValueError, match="B4b"):
-        ClaimTemplate.model_validate(
-            {
-                "type": ArtifactNameRef(
-                    target=ArtifactIdentity(kind="ClaimType", name=delivery.PREDICATE)
-                ),
-                "value": "high",
-                "when_absent": policy,
-            }
-        )
+def test_absence_policies_are_typed_template_choices(policy):
+    mapping = ClaimTemplate.model_validate(
+        {
+            "type": ArtifactNameRef(
+                target=ArtifactIdentity(kind="ClaimType", name=delivery.PREDICATE)
+            ),
+            "value": "high",
+            "when_absent": policy,
+        }
+    )
+    assert mapping.when_absent == policy

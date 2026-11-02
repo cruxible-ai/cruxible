@@ -2021,7 +2021,9 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
             return _MemberVerdict(
                 diagnostics=(
                     _diagnostic(
-                        "cruxible.procedure.claims_type_invalid", str(exc), path=context.path
+                        getattr(exc, "code", "cruxible.procedure.claims_type_invalid"),
+                        str(exc),
+                        path=context.path,
                     ),
                 )
             )

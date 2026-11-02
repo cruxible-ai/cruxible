@@ -74,6 +74,8 @@ def test_every_production_capture_verifier_injects_a_producer_receipt_resolver()
         "packages/cruxible-client/src/cruxible_client/contracts/claims.py",
         # The second: an inherited Capture whose body was erased (envelope + record).
         "packages/cruxible-client/src/cruxible_client/contracts/claims.py",
+        # A mirror retirement's newly cited absence witness.
+        "packages/cruxible-client/src/cruxible_client/contracts/claims.py",
         "src/cruxible_core/authoring/lowering.py",
         "src/cruxible_core/evidence/attestation_verification.py",
         "src/cruxible_core/service/evidence/capture_reads.py",

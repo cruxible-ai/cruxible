@@ -633,6 +633,8 @@ class Sequence:
         for_each: Ref,
         subject: ClaimsSubjectSpec,
         where: Predicate | None = None,
+        covers: Ref | None = None,
+        enumeration: Ref | None = None,
         id: str | None = None,
     ) -> None:
         """Map typed records to Claims; the run's Mandate chooses proposal or settlement."""
@@ -642,6 +644,8 @@ class Sequence:
                 for_each=for_each,
                 subject=subject,
                 where=where,
+                covers=covers,
+                enumeration=enumeration,
                 id=id,
             )
         )

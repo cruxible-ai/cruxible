@@ -430,11 +430,21 @@ def _item(index: int, *, revise: bool = False) -> dict[str, object]:
 
 
 def _settle(
-    world: Any, first: int, count: int, batch: int, *, revise: bool = False
+    world: Any,
+    first: int,
+    count: int,
+    batch: int,
+    *,
+    revise: bool = False,
+    complete_count: bool = False,
 ) -> Counter[str]:
     instance, root, line = world
     proposals = [_item(index, revise=revise) for index in range(first, first + count)]
-    (root / fixtures.RELATIVE_PATH).write_bytes(canonical.canonical_bytes({"proposals": proposals}))
+    (root / fixtures.RELATIVE_PATH).write_bytes(
+        canonical.canonical_bytes(
+            {"proposals": proposals, **({"count": len(proposals)} if complete_count else {})}
+        )
+    )
     with _counted() as counts, _journal_counted(), _objects_counted():
         state = settle_support.run_settle(
             instance, root, line, now=fixtures.NOW + timedelta(minutes=10 * (batch + 1))
@@ -745,3 +755,65 @@ def test_reobservation_same_value_new_bytes_visits_each_item_once(
         observations.append(dict(counters))
     assert observations[1]["items"] == 2 * observations[0]["items"]
     assert observations[1]["cited_reads"] == observations[0]["cited_reads"] == 1
+
+
+def _measure_absence_work(tmp_path, monkeypatch, *, policy, count):
+    """Absence stays propose-only even with a settle grant; measure that real door."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    _roomy_selection_budget(monkeypatch)
+    with _sql_traced(tmp_path):
+        instance, root, line = settle_support.settle_world(
+            tmp_path,
+            claims_terminal=True,
+            claims_absence=policy,
+            change_kinds=("create", "revise", "retire"),
+            claims_within=tuple(subject_path(SUBJECT_KIND, _subject_id(i)) for i in range(count)),
+        )
+        _create_subjects(instance, settle_support.OWNERS[instance.root], count)
+        world = (instance, root, line)
+        _settle(world, 0, count, 0, complete_count=True)
+        (root / fixtures.RELATIVE_PATH).write_bytes(
+            canonical.canonical_bytes({"proposals": [], "count": 0})
+        )
+        _forget_parsed_receipts()
+        with _counted() as counts, _journal_counted(), _objects_counted():
+            state = settle_support.run_settle(
+                instance, root, line, now=fixtures.NOW + timedelta(hours=2)
+            )
+        assert state.status == "succeeded", state.terminal
+        (egress,) = state.terminal_egress
+        assert egress.settle_outcome == "proposed", egress
+        assert egress.outside_scope_claim_types == (proposal_support.PREDICATE,)
+        assert len(egress.target_paths) == count, egress
+        evaluation = instance.proposal_evidence().read_evaluation(egress.proposal_id)
+        assert evaluation.candidate_digest is not None, evaluation.diagnostics
+    return Counter(counts)
+
+
+@pytest.mark.parametrize("policy", ("mirror", "inverse"))
+def test_absence_per_item_work_stays_at_its_floor(tmp_path, monkeypatch, policy):
+    slopes = {}
+    measured = {}
+    for n in (12, 48):
+        small = _measure_absence_work(
+            tmp_path / str(n) / "small", monkeypatch, policy=policy, count=n
+        )
+        large = _measure_absence_work(
+            tmp_path / str(n) / "large", monkeypatch, policy=policy, count=2 * n
+        )
+        slopes[n] = {
+            name: (large[name] - small[name]) / n
+            for name in (*PER_ITEM, "file_opens", "journal_record_reads")
+        }
+        measured[n] = {"small": dict(small), "large": dict(large), "slopes": slopes[n]}
+        destination = os.environ.get("CRUXIBLE_PER_ITEM_REPORT")
+        if destination:
+            Path(destination + f".absence-{policy}").write_text(json.dumps(measured, indent=2))
+        for name, ceiling in PER_ITEM.items():
+            assert slopes[n][name] <= ceiling, (policy, n, name, slopes, dict(small), dict(large))
+    growing = {
+        name: (slopes[12][name], slopes[48][name])
+        for name in slopes[12]
+        if slopes[48][name] > slopes[12][name] * 1.1 + (1024 if name == "encoded_bytes" else 0.1)
+    }
+    assert not growing, growing

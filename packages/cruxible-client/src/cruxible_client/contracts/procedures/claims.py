@@ -36,23 +36,6 @@ def _record_predicate(value: Any) -> object:
     return predicate
 
 
-class ClaimsFeatureDeferred(ValueError):
-    """An absence instruction cannot run before its safety rails ship."""
-
-    code = "cruxible.procedure.claims_feature_deferred"
-
-
-def refuse_absence(value: object) -> object:
-    if isinstance(value, dict):
-        for name in ("when_absent", "covers", "enumeration", "mirror"):
-            if name in value:
-                raise ClaimsFeatureDeferred(
-                    f"{ClaimsFeatureDeferred.code}: {name} lands in B4b; omit it until "
-                    "coverage, completeness and witness rails are available"
-                )
-    return value
-
-
 class ClaimsSubject(_StrictProcedureModel):
     kind: str
     key: dict[str, object] = Field(min_length=1)
@@ -73,8 +56,10 @@ class ClaimTemplate(_StrictProcedureModel):
     replaces: tuple[ClaimRole, ...] | None = None
     inputs: tuple[object, ...] = ()
     rationale: str = "Claim from declared Procedure template."
+    when_absent: Literal["keep", "surface", "mirror", "inverse"] = Field(
+        default="surface", exclude_if=lambda value: value == "surface"
+    )
 
-    _absence = model_validator(mode="before")(refuse_absence)
     _when = field_validator("when", mode="before")(_record_predicate)
     _templates = field_validator(
         "value", "qualifier", "effective_from", "effective_until", mode="before"
@@ -103,12 +88,25 @@ class ClaimsNode(_StrictProcedureModel):
     node_id: str
     for_each: object
     where: Predicate | None = None
+    covers: object | None = Field(default=None, exclude_if=lambda value: value is None)
+    enumeration: object | None = Field(default=None, exclude_if=lambda value: value is None)
     subject: ClaimsSubject
     claims: tuple[ClaimTemplate, ...] = Field(min_length=1, max_length=256)
 
-    _absence = model_validator(mode="before")(refuse_absence)
     _where = field_validator("where", mode="before")(_record_predicate)
-    _templates = field_validator("for_each", mode="before")(normalize_canonical)
+    _templates = field_validator("for_each", "covers", "enumeration", mode="before")(
+        normalize_canonical
+    )
+
+    @model_validator(mode="after")
+    def _absence_rails(self) -> ClaimsNode:
+        if (self.covers is None) != (self.enumeration is None):
+            raise ValueError("claims_absence_invalid: covers and enumeration are required together")
+        if self.covers is None and any(
+            "when_absent" in item.model_fields_set for item in self.claims
+        ):
+            raise ValueError("claims_absence_invalid: when_absent requires covers and enumeration")
+        return self
 
 
-__all__ = ["ClaimTemplate", "ClaimsFeatureDeferred", "ClaimsNode", "ClaimsSubject"]
+__all__ = ["ClaimTemplate", "ClaimsNode", "ClaimsSubject"]

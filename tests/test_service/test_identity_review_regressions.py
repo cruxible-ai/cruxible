@@ -1020,10 +1020,12 @@ def test_core_key_reference_is_frozen_against_pending_aliases(
 def test_provider_made_inverse_items_cannot_enter_the_core_change_channel(
     instance: PlaybillInstance,
 ) -> None:
-    from cruxible_core.procedures.claims_changes import CoreClaimChange
+    from cruxible_client.contracts.procedures.authored import ClaimTemplateSpec
 
     with pytest.raises(ValueError):
-        CoreClaimChange.model_validate(
+        # Core now emits witnessed inverse changes. Provider-made command
+        # objects still cannot enter the authored template/value boundary.
+        ClaimTemplateSpec.model_validate(
             {
                 "statement": {
                     "subject": SemanticAddress.whole_artifact(subject_path(DECISION, "original")),

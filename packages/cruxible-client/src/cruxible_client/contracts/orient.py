@@ -21,6 +21,7 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from cruxible_client.contracts.claim_evidence import RunCompleteness
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
     ClaimTypeContention,
@@ -517,6 +518,7 @@ class OrientActivityRunFinished(_OrientActivityRow):
     run: str
     procedure: str | None = Field(default=None, exclude_if=_is_none)
     line: str | None = Field(default=None, exclude_if=_is_none)
+    completeness: RunCompleteness | None = Field(default=None, exclude_if=_is_none)
     status: RunStatus
     elapsed_us: int | None = Field(default=None, ge=0, exclude_if=_is_none)
     unavailable: bool = Field(default=False, exclude_if=lambda value: value is False)

@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, m
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import Sha256Value
+from cruxible_client.contracts.projection import AcceptedCoordinate
 
 
 def _digest(value: str) -> str:
@@ -72,6 +73,42 @@ EvidenceBasis = Annotated[
 ]
 
 
+class CompleteWhenResult(_Receipt):
+    count_at: str
+    expected: int | None
+    observed: int = Field(ge=0)
+    held: bool
+
+    @model_validator(mode="after")
+    def _counts(self) -> CompleteWhenResult:
+        if self.held and self.expected != self.observed:
+            raise ValueError("complete_when result does not match the enumerated count")
+        return self
+
+
+class AbsenceWitness(_Receipt):
+    run_id: str
+    procedure_digest: str
+    node_id: str
+    capture: str
+    extract_spec: str
+    extractor: str
+    logical_source: str
+    complete_when: CompleteWhenResult
+    enumerated_key_digest: str
+    covers_coordinate: AcceptedCoordinate
+
+    _digests = field_validator(
+        "capture", "extract_spec", "enumerated_key_digest", "procedure_digest"
+    )(_digest)
+
+    @model_validator(mode="after")
+    def _complete(self) -> AbsenceWitness:
+        if not self.complete_when.held:
+            raise ValueError("absence witness requires a complete enumeration")
+        return self
+
+
 class ClaimEvidenceReceipt(_Receipt):
     law: Literal["claim-evidence-v2"] = "claim-evidence-v2"
     node_id: str
@@ -79,6 +116,16 @@ class ClaimEvidenceReceipt(_Receipt):
     procedure_digest: str
     _procedure_digest = field_validator("procedure_digest")(_digest)
     value: EvidenceBasis
+    absence: AbsenceWitness | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def _absence_capture(self) -> ClaimEvidenceReceipt:
+        if self.absence is not None and (
+            not isinstance(self.value, CaptureBasis)
+            or self.value.capture_digest != self.absence.capture
+        ):
+            raise ValueError("absence receipt must bind the witness's exact Capture")
+        return self
 
 
 FindingKind = Literal[
@@ -87,6 +134,7 @@ FindingKind = Literal[
     "incomplete_source",
     "held_disagrees",
     "slot_contested",
+    "claim_not_in_source",
 ]
 
 
@@ -99,8 +147,63 @@ class ClaimsDiagnostic(_Receipt):
     input: str | None = None
     claim: str | None = None
     role: str | None = None
+    subject: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    claim_type: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    qualifier: JsonValue = Field(default=None, exclude_if=lambda value: value is None)
+    logical_source: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    capture: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    extract_spec: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    reason: Literal["record_absent", "field_absent"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    source_incomplete: bool = Field(default=False, exclude_if=lambda value: not value)
     key: dict[str, JsonValue] | None = None
     record_locators: tuple[str, ...] = Field(default=(), max_length=10)
     record_count: int = Field(default=0, ge=0)
     held_value: JsonValue = None
     incoming_value: JsonValue = None
+
+    @model_validator(mode="after")
+    def _absence_finding(self) -> ClaimsDiagnostic:
+        if self.kind == "claim_not_in_source" and any(
+            value is None
+            for value in (
+                self.claim,
+                self.subject,
+                self.claim_type,
+                self.logical_source,
+                self.capture,
+                self.extract_spec,
+                self.reason,
+            )
+        ):
+            raise ValueError(
+                "claim_not_in_source requires a Claim and its complete absence attribution"
+            )
+        return self
+
+
+CompletenessReasonKind = Literal[
+    "incomplete_input",
+    "count_mismatch",
+    "invalid_record",
+    "duplicate_key",
+    "invalid_field",
+    "unknown_predicate",
+    "may_truncate",
+    "control_incomplete",
+    "upstream_incomplete",
+]
+
+
+class CompletenessReason(_Receipt):
+    node: str
+    kind: CompletenessReasonKind
+    inputs: tuple[str, ...] = Field(default=(), max_length=20)
+
+
+class RunCompleteness(_Receipt):
+    complete: Literal[False] = False
+    reasons: tuple[CompletenessReason, ...] = Field(max_length=20)
+    downgraded: int = Field(default=0, ge=0)
+    skipped: int = Field(default=0, ge=0)

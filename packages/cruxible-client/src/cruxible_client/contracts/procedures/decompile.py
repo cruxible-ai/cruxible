@@ -308,6 +308,14 @@ def decompile_procedure(
         elif isinstance(node, ClaimsNode):
             step = dict(
                 for_each=typed_template(node.for_each),
+                **(
+                    {
+                        "covers": typed_template(node.covers),
+                        "enumeration": typed_template(node.enumeration),
+                    }
+                    if node.covers is not None
+                    else {}
+                ),
                 subject={
                     **node.subject.model_dump(mode="json"),
                     "key": typed_template(node.subject.key),

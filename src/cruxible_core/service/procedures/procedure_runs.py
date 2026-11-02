@@ -30,7 +30,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.captures import (
     capture_retention_policy,
 )
-from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic
+from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic, RunCompleteness
 from cruxible_client.contracts.dependencies import dependency_pins
 from cruxible_client.contracts.errors import (
     CruxibleError,
@@ -749,6 +749,9 @@ class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
     terminal_egress: tuple[ProcedureTerminalEgress, ...] = ()
     findings: tuple[ClaimsDiagnostic, ...] = ()
     findings_count: int = Field(default=0, ge=0)
+    completeness: RunCompleteness | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @property
     def coordinate(self) -> AcceptedCoordinate:
@@ -2760,6 +2763,11 @@ def _state_from_records(
         children=tuple(children),
         findings=tuple(findings),
         findings_count=findings_count,
+        completeness=(
+            RunCompleteness.model_validate(final["completeness"])
+            if isinstance(final, dict) and final.get("completeness") is not None
+            else None
+        ),
         source_observations=observations,
         terminal_egress=tuple(
             sorted(

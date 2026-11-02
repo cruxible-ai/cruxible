@@ -67,7 +67,7 @@ from cruxible_client.contracts.claim_attestations import (
     read_claim_attestation,
     verify_claim_attestation,
 )
-from cruxible_client.contracts.claim_evidence import ClaimEvidenceReceipt
+from cruxible_client.contracts.claim_evidence import AbsenceWitness, ClaimEvidenceReceipt
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
     AcceptedClaimType,
@@ -204,7 +204,7 @@ class ClaimUnitKey(_StrictClaimModel):
 
 def claim_unit_key(
     statement: ClaimStatement,
-    inverse: ClaimInverse,
+    inverse: ClaimInverse | None,
     *,
     object_key_value: Callable[[SemanticAddress, str], object] | None = None,
 ) -> ClaimUnitKey | None:
@@ -215,9 +215,9 @@ def claim_unit_key(
     Claim under an inverse keyed by ``object_key``.
     """
 
-    key = inverse.key
+    key = None if inverse is None else inverse.key
     value = statement.object
-    if isinstance(key, ClaimInverseObjectKey):
+    if key is None or isinstance(key, ClaimInverseObjectKey):
         named = value.of if isinstance(value, NoneClaimObject) else value
         return (
             None
@@ -619,6 +619,7 @@ class ClaimRetirementAttribution(_StrictClaimModel):
         "playbill-claim-retirement-attribution-v1"
     )
     reason: ClaimRetirementReason
+    absence: AbsenceWitness | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ClaimRetireDependent(_StrictClaimModel):
@@ -626,6 +627,7 @@ class ClaimRetireDependent(_StrictClaimModel):
     artifact_identity: ArtifactIdentity
     predecessor_digest: str
     reason: ClaimRetirementReason
+    absence: AbsenceWitness | None = Field(default=None, exclude_if=lambda value: value is None)
     effective_until: datetime | None = None
 
     @field_validator("predecessor_digest")
@@ -678,6 +680,13 @@ class ClaimArtifact(_StrictClaimModel):
         if self.identity.kind != "Claim" or not _CLAIM_ID_RE.fullmatch(self.identity.name):
             raise ValueError("Claim identity must be Claim:CLM- plus 128-bit lowercase hex")
         retired = self.lifecycle.state == "retired"
+        receipt = self.backing.procedure_evidence
+        if (
+            receipt is not None
+            and receipt.absence is not None
+            and not isinstance(self.statement.object, NoneClaimObject)
+        ):
+            raise ValueError("absence evidence proves only a declared inverse")
         if retired != (self.retirement is not None):
             raise ValueError("a Claim carries a retirement attribution exactly when retired")
         if retired and self.lifecycle.predecessor_digest is None:
@@ -3011,6 +3020,78 @@ def evaluate_claim_law(
                 ),
             )
         )
+    witness = None if claim.retirement is None else claim.retirement.absence
+    previous_witness = (
+        None
+        if predecessor is None or predecessor.claim.retirement is None
+        else predecessor.claim.retirement.absence
+    )
+    if witness is not None and witness != previous_witness and require_new_citation_proof:
+        # A mirror's proof is attribution, not a changed assertion/backing.
+        # It nevertheless owes the same retained, daemon-produced Capture that
+        # a new inverse cites. Accepted historical witnesses remain readable
+        # after ordinary governed erasure, just like inherited backing.
+        verified = (
+            None
+            if producer_receipt_resolver is None
+            else producer_receipt_resolver.recall_verified(witness.capture)
+        )
+        named = (
+            verified.envelope.capture_contract_digest
+            if verified is not None
+            else _named_capture_contract(capture_store, witness.capture)
+        )
+        choices = (
+            ()
+            if contracts_by_digest is None or named is None
+            else contracts_by_digest.get(named, ())
+        )
+        witness_contract = next(iter(choices), None)
+        if (
+            witness_contract is None
+            and named is not None
+            and historical_capture_contract is not None
+        ):
+            witness_contract = historical_capture_contract(named)
+        if witness_contract is None:
+            return _diagnostic(
+                "cruxible.claim.evidence_unavailable",
+                "The absence witness CaptureContract is unavailable; acquire the source again.",
+                path=path,
+            )
+        try:
+            witness_envelope = verify_capture(
+                witness.capture,
+                store=capture_store,
+                contract=witness_contract.contract,
+                ledger_resolver=ledger_resolver,
+                producer_artifact_digests=(
+                    known_producer_digests
+                    if known_producer_digests is not None
+                    else producer_artifact_digests
+                ),
+                producer_receipt_resolver=producer_receipt_resolver,
+                require_production_proof=True,
+            )
+            retained = all(
+                capture_store.verify(body)
+                for body in capture_retained_body_digests(witness_envelope)
+            )
+        except (FormatError, ValueError):
+            retained = False
+        if not retained:
+            return _diagnostic(
+                "cruxible.claim.evidence_unavailable",
+                "Absence witness bytes are no longer retained; acquire the source again.",
+                path=path,
+            )
+        if getattr(witness_envelope.source, "source_identity", None) != witness.logical_source:
+            return _diagnostic(
+                "cruxible.claim.evidence_unavailable",
+                "The absence witness names a different logical source; "
+                "acquire the declared source.",
+                path=path,
+            )
     if (replacing or rebinding) and not capture_contract_pin_digests.issubset(
         cited_contract_versions
     ):

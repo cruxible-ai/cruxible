@@ -236,6 +236,10 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
     claims_terminal: bool = False,
     claims_within: tuple[str, ...] = (),
     claims_fixed_subject: bool = False,
+    claims_absence: str | None = None,
+    claims_many: bool = False,
+    claims_declares_inverse: bool = False,
+    claims_only_keys: Any = None,
 ):
     instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
     source, shape = procedure.definition.nodes
@@ -252,6 +256,9 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
         templates=candidate_templates,
         create=create_subject,
         fixed_subject=claims_fixed_subject,
+        absence=claims_absence,
+        many=claims_many,
+        only_keys=claims_only_keys,
     )
     if not claims_terminal:
         (root / fixtures.RELATIVE_PATH).write_bytes(fixtures.canonical_bytes({"severity": "high"}))
@@ -302,6 +309,32 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
 
         claim_types = {
             name: ct.model_copy(update={"value": StringType(max_len=256)})
+            for name, ct in claim_types.items()
+        }
+    if claims_many:
+        claim_types = {
+            name: ct.model_copy(
+                update={
+                    "cardinality": "many",
+                    "resolution_policy": ct.resolution_policy.model_copy(
+                        update={"cardinality": "many", "selector": "all"}
+                    ),
+                }
+            )
+            for name, ct in claim_types.items()
+        }
+    if claims_absence == "inverse" or claims_declares_inverse:
+        from cruxible_client.contracts.claim_types import ClaimInverse
+
+        claim_types = {
+            name: ct.model_copy(
+                update={
+                    "inverse": ClaimInverse(
+                        key={"kind": "object" if claims_many else "slot"},
+                        evidence_rules=("workspace-record",),
+                    )
+                }
+            )
             for name, ct in claim_types.items()
         }
     query = _condition(only_subject=only_subject, require_claim=require_claim)
