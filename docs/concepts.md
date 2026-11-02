@@ -282,6 +282,20 @@ evidence is one or more of:
   example a supplier API response that a Procedure fetched (`--capture CAP-…`,
   or `--evidence-contract` for the newest one about the Subject).
 
+A Capture's bytes are the document its producer returned, verbatim: the body an
+origin sent, the file read, the document a conversion produced, in whatever
+format it is. How it was obtained (the URL and the URL a redirect settled on,
+the status, the media type, the request digest, kept headers, the pages of an
+assembled listing) is typed metadata in the Capture's coordinate, never inside
+the bytes. Core never parses the bytes when it admits a Capture; a Procedure
+reads them only through a declared `extract`, which decodes them under the
+CaptureContract's `decoding`. One Capture is one payload from one origin
+response or one file; a derived form (rendered HTML, text extracted from a page,
+a format conversion) is a separate operation whose output is its own Capture,
+citing the one it was made from. Core acts only on declared types, never on a
+provider, operation or kit name; its one exception is its own `workspace.file`
+read, recognized by its builtin signature.
+
 A ClaimType's evidence rules say which of these support a value of that field.
 A Claim whose evidence the rules do not admit is still recorded, with the
 verdict `uncovered`, and `next` asks someone to bind better evidence. If a

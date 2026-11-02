@@ -4496,16 +4496,11 @@ Cruxible resurfaces; it does not judge. A receipt never refuses a proposal, neve
 changes settlement, and is never interpreted: reading it is the reviewer's or
 the agent's job. Evidence is compared by content, never by the Capture's own
 digest, which also binds the run, the observation time and the contract: each
-cited Capture contributes its observed content (`observed_content_digest` on
-its envelope): for a `workspace.file` read, the file's bytes digest, which the
-daemon verified against its own source-read receipt; for a `web.fetch` v3 fetch,
-the digest of the body the origin sent, which the daemon recomputes from the
-retained body and refuses (`cruxible.capture.observed_content_mismatch`) when
-the Provider's stated digest differs; for any other Capture, its evidence
-commitment digest (the digest of the material it committed). A Capture written
-before envelopes recorded observed content keeps the identity it always had (a
-`workspace.file` read: the verified file bytes digest in its material), so every
-refusal key already computed still matches. A re-run that
+cited Capture contributes its observed content, the digest of the exact payload
+it committed (its evidence commitment digest). A Capture's bytes are its
+producer's payload verbatim -- a `workspace.file` read's file bytes, which the
+daemon verified against its own source-read receipt; a `web.fetch` Capture's
+origin body -- so no operation is decoded to find them. A re-run that
 reads identical bytes cites the same evidence; different bytes are a new
 question and match nothing. A third-party Provider whose output embeds
 run-bound values (a run ID, a timestamp, a request digest) commits different
