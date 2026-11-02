@@ -602,7 +602,12 @@ If the extractor selects `only_keys`, `expect` must be a subset. Absence obeys
 is never retired or inverted, and the run counts it in its completeness summary
 as `expect_outside_within`.
 A missing record or an explicitly absent mapped field can establish absence.
-An invalid field, invalid record, duplicate key or false `when` cannot. For a
+An invalid field, invalid record, duplicate key or false `when` cannot: `when`
+is only an applicability guard. An absent value field already skips its mapping
+and counts as `field_absent`, so a `when: present($item.fields.<f>)` guard on a
+mirrored mapping is redundant for writes and only turns off field-level mirror.
+Add it only to mean "retire this value when the record is delisted, not when
+the field disappears". For a
 many-valued slot, each held unit is compared with the enumeration, even when
 `within`, `for_each`, value admission or incomplete-input policy skips its write.
 An inverse mapping must use an item-independent value template (such as a literal
