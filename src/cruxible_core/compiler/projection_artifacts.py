@@ -35,7 +35,7 @@ from cruxible_client.contracts.claim_types import (
     claim_type_projection_structure,
     parse_claim_type,
 )
-from cruxible_client.contracts.content_memo import ParseMemo, ValueMemo
+from cruxible_client.contracts.content_memo import ParseMemo, ValueMemo, request_derive
 from cruxible_client.contracts.dependencies import dependency_pins
 from cruxible_client.contracts.documents import document_digest, parse_document
 from cruxible_client.contracts.errors import (
@@ -404,7 +404,32 @@ def _normalized_source_mapping(mapping: SourceMapping) -> _NormalizedProjectionV
     )
 
     def normalize() -> _NormalizedProjectionValue:
-        return normalized_projection_value(mapping.model_dump(mode="json"))
+        # A revision retains multiple source windows for the same semantic
+        # address. Normalize that exact address once inside this request, not
+        # once for every window. This pays for the cold first address too.
+        address_key = (
+            "projection.source_mapping_subject",
+            subject.tag,
+            subject.artifact_path,
+            subject.selector.scheme,
+            subject.selector.value,
+        )
+
+        def normalize_address() -> _NormalizedProjectionValue:
+            # Serialize through the declared SourceMapping field, preserving
+            # its ordinary treatment of caller-supplied address subclasses.
+            value = mapping.model_dump(mode="json", include={"subject"})["subject"]
+            return normalized_projection_value(value)
+
+        try:
+            hash(address_key)
+        except TypeError:
+            address = normalize_address()
+        else:
+            address = request_derive(address_key, normalize_address)
+        value = mapping.model_dump(mode="json", exclude={"subject"})
+        value["subject"] = address
+        return normalized_projection_value(value)
 
     return normalize() if weight > 4096 else _SOURCE_MAPPINGS.derive(key, normalize)
 

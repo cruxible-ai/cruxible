@@ -20,8 +20,11 @@ ceiling (``PER_ITEM``). A small settle right after a large one must cost what a
 small one after a small one costs (``LARGE_PARENT_RATIO`` and ``FLAT_SLACK``):
 the receipt of the generation it succeeds is as large as that generation's
 change, and nothing a settle reads of its parent may be paid for at that size.
-Before each measured settle the parsed change-set receipts are forgotten, as in
-a fresh process, so a parent receipt re-read and re-parsed shows up as that cost.
+Before each measured settle the parsed change-set receipts and every memo added
+by the revise-cost slice are forgotten, including derivations attached to
+retained models. Their cold work must be paid inside each measured window;
+seeding or an earlier case cannot warm it. Pre-existing immutable artifact
+parses retain their ordinary content-addressed ownership.
 
 Counted on the measuring thread only:
 
@@ -46,6 +49,7 @@ Counted on the measuring thread only:
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import os
@@ -443,8 +447,44 @@ def _settle(
 
 
 def _forget_parsed_receipts() -> None:
+    from cruxible_client.contracts import claim_verdicts, content_memo
+    from cruxible_core.claims import closure
+    from cruxible_core.compiler import projection_artifacts
+    from cruxible_core.query import engine, explanation
+
     settlement._CHANGE_SET_PARSES.clear()
     recovery.reset_released_records()
+    memos = (
+        closure._PROOFS,
+        candidates._PROOF_ENCODINGS,
+        claim_verdicts._CONTROL_COMPONENTS,
+        projection_artifacts._SOURCE_MAPPINGS,
+        projection_artifacts._PIN_VALUES,
+        explanation._HISTORY_VALUES,
+        engine._ROW_BINDINGS,
+        engine._TRUNCATIONS,
+    )
+    for memo in memos:
+        memo.clear()
+    # These derivations were also added by the revise-cost slice, attached to
+    # the immutable parses retained by pre-existing process caches. Forget the
+    # new derived work without discarding the parsed artifacts themselves.
+    for entry in tuple(content_memo._SEALED.values()):
+        for key in tuple(entry.derived):
+            namespace = key[0] if isinstance(key, tuple) else key
+            if namespace in {
+                "core.subject_dependency_state",
+                "core.claim_dependency_state",
+                "query.explanation.record-members",
+                "cruxible_client.contracts.candidates.dependency_proof_order",
+            }:
+                del entry.derived[key]
+    # Prior test worlds can own cycles whose SQLite finalizers checkpoint their
+    # old proposal stores. Drain those owners before counting the next world's
+    # write, rather than charging unrelated cleanup to a random measured batch.
+    # The current world's reachable owners and the cold memos stay untouched.
+    gc.collect()
+    assert all(not memo._entries for memo in memos), "measured settle must start with cold memos"
 
 
 def _roomy_selection_budget(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,5 +1,6 @@
 """Carried Claim rows equal fresh derivation and cannot survive changed bytes."""
 
+from contextlib import nullcontext
 from copy import deepcopy
 
 import pytest
@@ -153,3 +154,76 @@ def test_projection_subtree_reuse_matches_cold_values_after_each_input_changes()
         assert normalize_projection_value(_normalized_pin(value)) == normalize_projection_value(
             value.model_dump(mode="json")
         )
+
+
+def test_source_windows_share_only_their_exact_normalized_address_within_a_request(monkeypatch):
+    from cruxible_client.contracts.content_memo import artifact_request
+    from cruxible_client.contracts.projection_extensions import normalize_projection_value
+    from cruxible_core.compiler import projection_artifacts as module
+
+    path, content = _member()
+    mapping = sealed_claim_member(content, path=path).claim.backing.source_mappings[0]
+    next_window = mapping.model_copy(
+        update={"spans": (mapping.spans[0].model_copy(update={"end_byte": 11}),)}
+    )
+    other_subject = next_window.model_copy(
+        update={
+            "subject": mapping.subject.model_copy(
+                update={"artifact_path": "subjects/other/one.json"}
+            )
+        }
+    )
+    addresses = []
+    original = module.normalized_projection_value
+
+    def normalized(value):
+        if isinstance(value, dict) and value.get("tag") == mapping.subject.tag:
+            addresses.append(value)
+        return original(value)
+
+    monkeypatch.setattr(module, "normalized_projection_value", normalized)
+    module._SOURCE_MAPPINGS.clear()
+    with artifact_request():
+        for value in (mapping, next_window, other_subject):
+            assert normalize_projection_value(module._normalized_source_mapping(value)) == (
+                normalize_projection_value(value.model_dump(mode="json"))
+            )
+    assert len(addresses) == 2
+    module._SOURCE_MAPPINGS.clear()
+    with artifact_request():
+        module._normalized_source_mapping(mapping)
+    assert len(addresses) == 3  # a new request pays the cold address work again
+
+
+def test_mapping_address_reuse_preserves_cold_serialization_of_subclasses_and_copies():
+    from cruxible_client.contracts.content_memo import artifact_request
+    from cruxible_client.contracts.projection_extensions import normalize_projection_value
+    from cruxible_client.contracts.semantic import SemanticAddress
+    from cruxible_core.compiler.projection_artifacts import _normalized_source_mapping
+
+    path, content = _member()
+    mapping = sealed_claim_member(content, path=path).claim.backing.source_mappings[0]
+
+    class ExtendedAddress(SemanticAddress):
+        extra: str = "must follow the declared parent field's serialization"
+
+    variants = (
+        mapping.model_copy(update={"subject": ExtendedAddress(**mapping.subject.model_dump())}),
+        mapping.model_copy(
+            update={
+                "subject": mapping.subject.model_copy(
+                    update={"artifact_path": ["copied without validation"]}
+                )
+            }
+        ),
+    )
+    with artifact_request():
+        for value in variants:
+            with (
+                pytest.warns(UserWarning)
+                if isinstance(value.subject.artifact_path, list)
+                else nullcontext()
+            ):
+                assert normalize_projection_value(_normalized_source_mapping(value)) == (
+                    normalize_projection_value(value.model_dump(mode="json"))
+                )

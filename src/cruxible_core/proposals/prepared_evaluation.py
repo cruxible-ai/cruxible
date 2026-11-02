@@ -28,6 +28,7 @@ from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.capture_erasure import RecordedCaptureErasure
 from cruxible_client.contracts.captures import (
+    CaptureEnvelope,
     CaptureErasureLookupProtocol,
     CaptureObjectStoreProtocol,
     CaptureProductionRecord,
@@ -69,7 +70,7 @@ class _BodyObservation:
 @dataclass(frozen=True, slots=True)
 class _ReceiptObservation:
     source: ProducerReceiptResolverProtocol
-    method: Literal["producer_receipt", "produced_capture"]
+    method: Literal["producer_receipt", "produced_capture", "epoch"]
     digest: str
     run_id: str
     epoch: object
@@ -90,6 +91,8 @@ def _receipts_replay(observations: tuple[_ReceiptObservation, ...]) -> bool:
                 or source._capture_proof_epoch() != observed.epoch
             ):
                 return False
+            if observed.method == "epoch":
+                continue
             actual = getattr(source, observed.method)(observed.digest, run_id=observed.run_id)
             if actual != observed.result or source._capture_proof_epoch() != observed.epoch:
                 return False
@@ -224,6 +227,28 @@ class _ObservedReceipts:
             # An answer this evaluation did not observe in the bodies it reads.
             # A settle run's request verified it from immutable journal records.
             self.scope.ineligible = True
+        if (
+            memo is not None
+            and self.scope.stable_run is not None
+            and isinstance(memo.envelope, CaptureEnvelope)
+            and memo.envelope.run_coordinate.run_id != self.scope.stable_run
+        ):
+            # A request memo can bypass every resolver call below this wrapper.
+            # Its journal proof still depends on the request's body-change epoch.
+            epoch = self._capture_proof_epoch()
+            if epoch is None:
+                self.scope.ineligible = True
+            else:
+                self.scope.observe_receipt(
+                    _ReceiptObservation(
+                        self.source,
+                        "epoch",
+                        capture_digest,
+                        memo.envelope.run_coordinate.run_id,
+                        epoch,
+                        None,
+                    )
+                )
         return memo
 
     def remember_verified(self, memo: VerifiedCaptureMemo) -> None:

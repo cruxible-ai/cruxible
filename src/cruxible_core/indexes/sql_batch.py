@@ -124,6 +124,9 @@ def replace_owned_rows(
     Delete all obsolete keys before inserting, including keys whose value moved,
     so secondary unique constraints see the same result as a full replacement.
     """
+    desired = {tuple(row) for row in rows}
+    if len(desired) != len(rows):
+        raise sqlite3.IntegrityError("duplicate desired owner row")
     previous = [
         tuple(row)
         for row in select_in(
@@ -133,7 +136,6 @@ def replace_owned_rows(
         )
     ]
     old = set(previous)
-    desired = {tuple(row) for row in rows}
     removed = [row for row in previous if row not in desired]
     execute_values(
         connection,

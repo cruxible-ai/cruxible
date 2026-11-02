@@ -704,6 +704,8 @@ def test_claim_revision_clears_old_object_columns_and_only_updates_changed_field
                     "members",
                     "predicate_counts",
                     "predicate_subjects",
+                    "claim_units",
+                    "subject_keys",
                 ):
                     assert [
                         tuple(row) for row in warm._connection.execute(f"SELECT * FROM {table}")

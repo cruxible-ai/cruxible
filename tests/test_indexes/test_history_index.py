@@ -768,3 +768,59 @@ def test_a_file_that_moved_under_the_reader_reverifies_instead_of_rederiving(tmp
         assert reader.artifact("1").identity == "Claim:a"
     assert calls == list(range(len(state.history)))
     index.close()
+
+
+def test_member_history_refuses_a_generation_without_its_source_record(seeded, monkeypatch):
+    from cruxible_client.contracts.errors import ProjectionIntegrityError
+    from cruxible_core.indexes.history.history_index import HistoryReader
+
+    path = seeded._recovered.head.record.members[0].path
+    original = HistoryReader.generation
+
+    def missing_path(self, sequence):
+        return replace(original(self, sequence), source_record_path=None)
+
+    monkeypatch.setattr(HistoryReader, "generation", missing_path)
+    with pytest.raises(ProjectionIntegrityError, match="no source record path"):
+        seeded.member_record_history((path,))
+
+
+def test_changed_record_source_cannot_reuse_or_poison_the_previous_sources_pool(
+    seeded, monkeypatch
+):
+    from cruxible_client.contracts.errors import ProjectionIntegrityError
+
+    path = seeded._recovered.head.record.members[0].path
+    with seeded.accepted_history_reader() as history:
+        location = history.latest_member(path)
+        generation = history.generation(location.sequence)
+    original = seeded.retained_record_reader()
+    member = original.member(generation, location.member_ordinal)
+    old_pool = seeded.verified_change_set_records
+    monkeypatch.setattr(seeded, "blob_at", lambda oid, path: None)
+    changed = seeded.retained_record_reader()
+    assert seeded.verified_change_set_records is not old_pool
+    with pytest.raises(ProjectionIntegrityError, match="source record is unavailable"):
+        changed.member(generation, location.member_ordinal)
+    # A held reader remains bound to its original immutable source; its hits
+    # cannot turn the new adapter's missing bytes into a verified record.
+    assert original.member(generation, location.member_ordinal) == member
+    with pytest.raises(ProjectionIntegrityError, match="source record is unavailable"):
+        seeded.retained_record_reader().member(generation, location.member_ordinal)
+
+
+def test_record_source_binding_does_not_keep_its_owner_alive():
+    import weakref
+
+    from cruxible_core.runtime.instance import _record_source_binding
+
+    class Source:
+        def blob_at(self, oid, path):
+            return None
+
+    source = Source()
+    ref = weakref.ref(source)
+    binding = _record_source_binding(source.blob_at, source)
+    assert binding[1] is Source.blob_at
+    del source
+    assert ref() is None

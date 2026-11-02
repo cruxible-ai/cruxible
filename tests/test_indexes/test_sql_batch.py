@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from cruxible_core.indexes.sql_batch import MAX_PARAMETERS, execute_in, insert_rows, select_in
 
 
@@ -80,3 +82,27 @@ def test_owned_replacement_preserves_equal_rows_and_allows_unique_target_swaps()
             key_columns=("owner", "ordinal"),
         )
         assert connection.execute("SELECT * FROM pins").fetchall() == [original[2]]
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_owned_replacement_refuses_duplicate_rows_without_changing_the_table(existing):
+    from cruxible_core.indexes.sql_batch import replace_owned_rows
+
+    with sqlite3.connect(":memory:") as connection:
+        connection.execute(
+            "CREATE TABLE t (owner TEXT, ordinal INTEGER, PRIMARY KEY(owner,ordinal))"
+        )
+        row = ("a", 1)
+        if existing:
+            insert_rows(connection, "t", [row])
+        before = connection.execute("SELECT * FROM t").fetchall()
+        with pytest.raises(sqlite3.IntegrityError, match="duplicate"):
+            replace_owned_rows(
+                connection,
+                "t",
+                [row, row],
+                owner_column="owner",
+                owners=["a"],
+                key_columns=("owner", "ordinal"),
+            )
+        assert connection.execute("SELECT * FROM t").fetchall() == before

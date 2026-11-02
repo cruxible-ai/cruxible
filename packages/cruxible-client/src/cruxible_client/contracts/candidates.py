@@ -210,7 +210,16 @@ def _sorted_unique_proofs(
             raise ValueError(message)
         return True
 
-    request_derive(("client.sorted_unique_proofs", key), validate)
+    try:
+        hash(key)
+    except TypeError:
+        # model_copy can bypass field validation as well as proof ordering.
+        # Re-enter the ordinary validators before comparing such copied values.
+        for item in value:
+            type(item).model_validate(item.model_dump(warnings=False))
+        validate()
+    else:
+        request_derive(("client.sorted_unique_proofs", key), validate)
     return value
 
 

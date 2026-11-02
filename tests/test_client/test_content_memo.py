@@ -795,6 +795,21 @@ def test_reused_proof_set_validation_still_refuses_reordered_and_duplicate_copie
                 _sorted_unique_proofs(bad, message="invalid")
 
 
+@pytest.mark.parametrize("field", ["pin_role", "source_path", "target_artifact_digest"])
+def test_unhashable_proof_copies_raise_validation_errors(field):
+    from cruxible_client.contracts.candidates import DependencyProofReference, _sorted_unique_proofs
+
+    proof = DependencyProofReference(
+        source_path="subjects/kind/one.json",
+        source_artifact_digest="sha256:" + "3" * 64,
+        target_path="subjects/kind/two.json",
+        target_artifact_digest="sha256:" + "4" * 64,
+        pin_role="subject",
+    )
+    with artifact_request(), pytest.raises(ValueError):
+        _sorted_unique_proofs((proof.model_copy(update={field: []}),), message="invalid")
+
+
 def test_member_law_digest_keeps_its_frozen_preimage_for_sealed_and_copied_records():
     from cruxible_client.contracts.candidates import (
         DependencyProofReference,
