@@ -162,11 +162,7 @@ def validate_claims_templates(
                 return None if rule is None or rule.type is None else parse_type(rule.type)
             if path and path[0] == "header" and len(path) == 2:
                 rule = producer.header.get(path[1])
-                if rule is None:
-                    return None
-                return parse_type(
-                    "date" if rule.project == "utc_date" else rule.type or rule.parse or "string"
-                )
+                return None if rule is None else rule.field_type()
         if isinstance(producer, TransformNode):
             spec = producer.spec
             name = path[-1] if path else ""

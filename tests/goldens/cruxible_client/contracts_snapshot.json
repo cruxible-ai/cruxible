@@ -8009,7 +8009,7 @@
           },
           "ExtractField": {
             "additionalProperties": false,
-            "description": "Where one field is read, and how its lexeme becomes a typed value.\n\n``at`` is a JSON Pointer relative to the record (or to the document, for a\nheader field), or a CSV column name. ``parse`` converts a text lexeme\n(``date``, ``datetime``, ``int``, ``decimal``, ``bool``); ``type`` states\nthe field's type where no row Contract does (keys and header fields);\n``canonicalize: claim_type`` matches an enum member case-insensitively.\n``presence`` overrides the row Contract's optionality.",
+            "description": "Where one field is read, and how its lexeme becomes a typed value.\n\n``at`` is a JSON Pointer relative to the record (or to the document, for a\nheader field), or a CSV column name. ``parse`` converts a text lexeme\n(``date``, ``datetime``, ``int``, ``decimal``, ``bool``); ``type`` states\nthe field's type where no row Contract does (keys and header fields);\n``canonicalize: claim_type`` matches an enum member case-insensitively.\n``presence`` overrides the row Contract's optionality. ``project`` reshapes\nthe parsed value: ``utc_date`` (``parse: datetime``) keeps its UTC calendar\nday; ``utc_start_of_day`` (``parse: date``) is that day at 00:00 UTC.",
             "properties": {
               "at": {
                 "maxLength": 512,
@@ -8068,7 +8068,10 @@
               "project": {
                 "anyOf": [
                   {
-                    "const": "utc_date",
+                    "enum": [
+                      "utc_date",
+                      "utc_start_of_day"
+                    ],
                     "type": "string"
                   },
                   {
@@ -54376,7 +54379,7 @@
           },
           "ExtractField": {
             "additionalProperties": false,
-            "description": "Where one field is read, and how its lexeme becomes a typed value.\n\n``at`` is a JSON Pointer relative to the record (or to the document, for a\nheader field), or a CSV column name. ``parse`` converts a text lexeme\n(``date``, ``datetime``, ``int``, ``decimal``, ``bool``); ``type`` states\nthe field's type where no row Contract does (keys and header fields);\n``canonicalize: claim_type`` matches an enum member case-insensitively.\n``presence`` overrides the row Contract's optionality.",
+            "description": "Where one field is read, and how its lexeme becomes a typed value.\n\n``at`` is a JSON Pointer relative to the record (or to the document, for a\nheader field), or a CSV column name. ``parse`` converts a text lexeme\n(``date``, ``datetime``, ``int``, ``decimal``, ``bool``); ``type`` states\nthe field's type where no row Contract does (keys and header fields);\n``canonicalize: claim_type`` matches an enum member case-insensitively.\n``presence`` overrides the row Contract's optionality. ``project`` reshapes\nthe parsed value: ``utc_date`` (``parse: datetime``) keeps its UTC calendar\nday; ``utc_start_of_day`` (``parse: date``) is that day at 00:00 UTC.",
             "properties": {
               "at": {
                 "maxLength": 512,
@@ -54435,7 +54438,10 @@
               "project": {
                 "anyOf": [
                   {
-                    "const": "utc_date",
+                    "enum": [
+                      "utc_date",
+                      "utc_start_of_day"
+                    ],
                     "type": "string"
                   },
                   {
@@ -82538,7 +82544,7 @@
           },
           "ExtractField": {
             "additionalProperties": false,
-            "description": "Where one field is read, and how its lexeme becomes a typed value.\n\n``at`` is a JSON Pointer relative to the record (or to the document, for a\nheader field), or a CSV column name. ``parse`` converts a text lexeme\n(``date``, ``datetime``, ``int``, ``decimal``, ``bool``); ``type`` states\nthe field's type where no row Contract does (keys and header fields);\n``canonicalize: claim_type`` matches an enum member case-insensitively.\n``presence`` overrides the row Contract's optionality.",
+            "description": "Where one field is read, and how its lexeme becomes a typed value.\n\n``at`` is a JSON Pointer relative to the record (or to the document, for a\nheader field), or a CSV column name. ``parse`` converts a text lexeme\n(``date``, ``datetime``, ``int``, ``decimal``, ``bool``); ``type`` states\nthe field's type where no row Contract does (keys and header fields);\n``canonicalize: claim_type`` matches an enum member case-insensitively.\n``presence`` overrides the row Contract's optionality. ``project`` reshapes\nthe parsed value: ``utc_date`` (``parse: datetime``) keeps its UTC calendar\nday; ``utc_start_of_day`` (``parse: date``) is that day at 00:00 UTC.",
             "properties": {
               "at": {
                 "maxLength": 512,
@@ -82597,7 +82603,10 @@
               "project": {
                 "anyOf": [
                   {
-                    "const": "utc_date",
+                    "enum": [
+                      "utc_date",
+                      "utc_start_of_day"
+                    ],
                     "type": "string"
                   },
                   {
@@ -91158,7 +91167,7 @@
           },
           "ExtractField": {
             "additionalProperties": false,
-            "description": "Where one field is read, and how its lexeme becomes a typed value.\n\n``at`` is a JSON Pointer relative to the record (or to the document, for a\nheader field), or a CSV column name. ``parse`` converts a text lexeme\n(``date``, ``datetime``, ``int``, ``decimal``, ``bool``); ``type`` states\nthe field's type where no row Contract does (keys and header fields);\n``canonicalize: claim_type`` matches an enum member case-insensitively.\n``presence`` overrides the row Contract's optionality.",
+            "description": "Where one field is read, and how its lexeme becomes a typed value.\n\n``at`` is a JSON Pointer relative to the record (or to the document, for a\nheader field), or a CSV column name. ``parse`` converts a text lexeme\n(``date``, ``datetime``, ``int``, ``decimal``, ``bool``); ``type`` states\nthe field's type where no row Contract does (keys and header fields);\n``canonicalize: claim_type`` matches an enum member case-insensitively.\n``presence`` overrides the row Contract's optionality. ``project`` reshapes\nthe parsed value: ``utc_date`` (``parse: datetime``) keeps its UTC calendar\nday; ``utc_start_of_day`` (``parse: date``) is that day at 00:00 UTC.",
             "properties": {
               "at": {
                 "maxLength": 512,
@@ -91217,7 +91226,10 @@
               "project": {
                 "anyOf": [
                   {
-                    "const": "utc_date",
+                    "enum": [
+                      "utc_date",
+                      "utc_start_of_day"
+                    ],
                     "type": "string"
                   },
                   {

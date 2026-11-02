@@ -21,10 +21,12 @@ from tests.test_procedures.test_claims_terminal import KIND, claim_type, claims_
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "pilot"
 KEV = KIND + ".kev_"
 EPSS = KIND + ".epss_"
-KEV_ROW = boundary_contract(
-    "security.kev-entry",
-    {"date_added": "date?", "due_date": "date?", "ransomware_use": f"enum_of {KEV}ransomware_use?"},
-)
+KEV_FIELDS = {
+    "date_added": "date?",
+    "due_date": "date?",
+    "ransomware_use": f"enum_of {KEV}ransomware_use?",
+}
+KEV_ROW = boundary_contract("security.kev-entry", KEV_FIELDS)
 # D-R23: typing belongs in the extract, so absence and writes read one typed record.
 EPSS_ROW = boundary_contract(
     "security.epss-row", {"score": "decimal{0..1}", "percentile": "decimal{0..1}"}
@@ -194,7 +196,12 @@ def epss_spec() -> Any:
 
 
 def pilot_world(
-    tmp_path: Path, fixture: str, *, spec: Any = None, authority: str = "propose"
+    tmp_path: Path,
+    fixture: str,
+    *,
+    spec: Any = None,
+    authority: str = "propose",
+    rows: Any = None,
 ) -> tuple[Any, Path]:
     data = json.loads((FIXTURES / fixture).read_bytes())
     kev = fixture.startswith("kev")
@@ -217,7 +224,7 @@ def pilot_world(
         tmp_path,
         {"entries": [{"id": k} for k in keys]},
         types=types,
-        rows=KEV_ROW if kev else EPSS_ROW,
+        rows=rows or (KEV_ROW if kev else EPSS_ROW),
     )
     (root / "data" / fixture).write_bytes((FIXTURES / fixture).read_bytes())
     _watched(instance)

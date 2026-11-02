@@ -38,7 +38,7 @@ import zlib
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
@@ -529,6 +529,12 @@ def _type_value(
         if parsed_time is None:
             return _bad("type_mismatch", name, lexeme)
         value = parsed_time.date()
+    elif declared.project == "utc_start_of_day" and value is not _UNPARSEABLE:
+        # _parsed(date) returns the canonical ISO day; the moment that day begins in UTC.
+        if not isinstance(value, str):
+            return _bad("type_mismatch", name, lexeme)
+        day = date.fromisoformat(value)
+        value = datetime(day.year, day.month, day.day, tzinfo=UTC)
     if value is _UNPARSEABLE:
         return _bad("type_mismatch", name, lexeme)
     value = _canonicalized(_drop_nulls(value), field_type, declared.canonicalize, enums)
