@@ -28067,6 +28067,7 @@
               "capture_digests": {
                 "default": [],
                 "items": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
                   "type": "string"
                 },
                 "maxItems": 8,
@@ -28074,6 +28075,7 @@
                 "type": "array"
               },
               "captures": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Captures",
                 "type": "integer"
@@ -28101,17 +28103,20 @@
                   "proposed",
                   "still_current",
                   "unchanged",
-                  "empty"
+                  "empty",
+                  "delivered"
                 ],
                 "title": "Delivery",
                 "type": "string"
               },
               "downgraded": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Downgraded",
                 "type": "integer"
               },
               "inverse_written": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Inverse Written",
                 "type": "integer"
@@ -28123,27 +28128,33 @@
                 "type": "string"
               },
               "no_op": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "No Op",
                 "type": "integer"
               },
               "re_observed": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Re Observed",
                 "type": "integer"
               },
               "retired": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Retired",
                 "type": "integer"
               },
               "revised": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Revised",
                 "type": "integer"
               },
               "skipped": {
                 "additionalProperties": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
                   "type": "integer"
                 },
                 "propertyNames": {
@@ -28160,16 +28171,19 @@
                 "type": "object"
               },
               "subjects_created": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Subjects Created",
                 "type": "integer"
               },
               "surfaced": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Surfaced",
                 "type": "integer"
               },
               "written": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Written",
                 "type": "integer"
@@ -28190,48 +28204,12 @@
             "title": "ClaimsRunSummary",
             "type": "object"
           },
-          "CompleteWhenResult": {
-            "additionalProperties": false,
-            "properties": {
-              "count_at": {
-                "title": "Count At",
-                "type": "string"
-              },
-              "expected": {
-                "anyOf": [
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Expected"
-              },
-              "held": {
-                "title": "Held",
-                "type": "boolean"
-              },
-              "observed": {
-                "minimum": 0,
-                "title": "Observed",
-                "type": "integer"
-              }
-            },
-            "required": [
-              "count_at",
-              "expected",
-              "observed",
-              "held"
-            ],
-            "title": "CompleteWhenResult",
-            "type": "object"
-          },
           "EgressRunSummary": {
             "additionalProperties": false,
             "description": "One ``emit_capture`` or ``post_inbox`` terminal: the items it emitted.\n\n``unposted`` counts the items a post's inbox cap left out.",
             "properties": {
               "emitted": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Emitted",
                 "type": "integer"
@@ -28246,6 +28224,7 @@
               },
               "unposted": {
                 "default": 0,
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Unposted",
                 "type": "integer"
@@ -28256,6 +28235,65 @@
               "emitted"
             ],
             "title": "EgressRunSummary",
+            "type": "object"
+          },
+          "ExtractCompleteWhen": {
+            "additionalProperties": false,
+            "description": "An extract's declared count check, bounded for a summary.\n\n``count_at`` is the declared path, cut to ``NODE_SUMMARY_TEXT_MAX`` code\npoints (``count_at_truncated`` then says so). ``expected`` is absent when\nthe source enumerated no count; a count past ``NODE_SUMMARY_INT_MAX`` is\nleft out and ``out_of_range`` says so.",
+            "properties": {
+              "count_at": {
+                "maxLength": 64,
+                "title": "Count At",
+                "type": "string"
+              },
+              "count_at_truncated": {
+                "default": false,
+                "title": "Count At Truncated",
+                "type": "boolean"
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expected"
+              },
+              "held": {
+                "title": "Held",
+                "type": "boolean"
+              },
+              "observed": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Observed"
+              },
+              "out_of_range": {
+                "default": false,
+                "title": "Out Of Range",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "count_at",
+              "held"
+            ],
+            "title": "ExtractCompleteWhen",
             "type": "object"
           },
           "ExtractRunSummary": {
@@ -28269,7 +28307,7 @@
               "complete_when": {
                 "anyOf": [
                   {
-                    "$ref": "#/$defs/CompleteWhenResult"
+                    "$ref": "#/$defs/ExtractCompleteWhen"
                   },
                   {
                     "type": "null"
@@ -28278,16 +28316,19 @@
                 "default": null
               },
               "duplicates": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Duplicates",
                 "type": "integer"
               },
               "invalid_fields": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Invalid Fields",
                 "type": "integer"
               },
               "invalid_records": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Invalid Records",
                 "type": "integer"
@@ -28299,6 +28340,7 @@
                 "type": "string"
               },
               "records": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Records",
                 "type": "integer"
@@ -28316,7 +28358,7 @@
           },
           "GuardOperand": {
             "additionalProperties": false,
-            "description": "One comparison a guard evaluated: its operator, and its numeric or bool operands.\n\nAn operand that is anything else (a string, a list, a record) is left out;\nso is the whole comparison when neither operand is a number or a boolean.\n``present`` and ``absent`` carry whether the reference resolved as ``left``.",
+            "description": "One comparison a guard evaluated: its operator, and its numeric or bool operands.\n\nAn operand that is anything else (a string, a list, a record) is left out;\nso is the whole comparison when neither operand is a number or a boolean.\nA number past ``NODE_SUMMARY_INT_MAX`` is left out too, and ``out_of_range``\nsays so. ``present`` and ``absent`` carry whether the reference resolved as\n``left``.",
             "properties": {
               "left": {
                 "anyOf": [
@@ -28324,6 +28366,8 @@
                     "type": "boolean"
                   },
                   {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
                     "type": "integer"
                   },
                   {
@@ -28334,8 +28378,34 @@
                 "title": "Left"
               },
               "operator": {
-                "title": "Operator",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "enum": [
+                      "eq",
+                      "ne",
+                      "lt",
+                      "le",
+                      "gt",
+                      "ge"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "enum": [
+                      "in",
+                      "not_in",
+                      "present",
+                      "absent"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Operator"
+              },
+              "out_of_range": {
+                "default": false,
+                "title": "Out Of Range",
+                "type": "boolean"
               },
               "right": {
                 "anyOf": [
@@ -28343,6 +28413,8 @@
                     "type": "boolean"
                   },
                   {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
                     "type": "integer"
                   },
                   {
@@ -28388,6 +28460,7 @@
               },
               "operands_truncated": {
                 "default": 0,
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Operands Truncated",
                 "type": "integer"
@@ -28401,7 +28474,7 @@
           },
           "HaltRunSummary": {
             "additionalProperties": false,
-            "description": "One halt: the reason code it declares, when it declares one.",
+            "description": "One halt: the reason code it declares, when it declares one, cut to the text bound.",
             "properties": {
               "kind": {
                 "const": "halt",
@@ -28412,7 +28485,7 @@
               "reason": {
                 "anyOf": [
                   {
-                    "maxLength": 128,
+                    "maxLength": 64,
                     "type": "string"
                   },
                   {
@@ -28421,6 +28494,11 @@
                 ],
                 "default": null,
                 "title": "Reason"
+              },
+              "reason_truncated": {
+                "default": false,
+                "title": "Reason Truncated",
+                "type": "boolean"
               }
             },
             "title": "HaltRunSummary",
@@ -28437,6 +28515,7 @@
                 "type": "string"
               },
               "rows": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Rows",
                 "type": "integer"
@@ -28453,7 +28532,8 @@
             "description": "One repeat: the attempts it used.",
             "properties": {
               "attempts": {
-                "minimum": 1,
+                "maximum": 9007199254740991,
+                "minimum": 0,
                 "title": "Attempts",
                 "type": "integer"
               },
@@ -28483,6 +28563,7 @@
               "rows_in": {
                 "anyOf": [
                   {
+                    "maximum": 9007199254740991,
                     "minimum": 0,
                     "type": "integer"
                   },
@@ -28496,6 +28577,7 @@
               "rows_out": {
                 "anyOf": [
                   {
+                    "maximum": 9007199254740991,
                     "minimum": 0,
                     "type": "integer"
                   },
@@ -28507,6 +28589,15 @@
                 "title": "Rows Out"
               },
               "transform_kind": {
+                "enum": [
+                  "shape",
+                  "filter",
+                  "join",
+                  "aggregate",
+                  "dedupe",
+                  "union",
+                  "derive"
+                ],
                 "title": "Transform Kind",
                 "type": "string"
               }
@@ -63004,6 +63095,7 @@
               "capture_digests": {
                 "default": [],
                 "items": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
                   "type": "string"
                 },
                 "maxItems": 8,
@@ -63011,6 +63103,7 @@
                 "type": "array"
               },
               "captures": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Captures",
                 "type": "integer"
@@ -63309,17 +63402,20 @@
                   "proposed",
                   "still_current",
                   "unchanged",
-                  "empty"
+                  "empty",
+                  "delivered"
                 ],
                 "title": "Delivery",
                 "type": "string"
               },
               "downgraded": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Downgraded",
                 "type": "integer"
               },
               "inverse_written": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Inverse Written",
                 "type": "integer"
@@ -63331,27 +63427,33 @@
                 "type": "string"
               },
               "no_op": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "No Op",
                 "type": "integer"
               },
               "re_observed": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Re Observed",
                 "type": "integer"
               },
               "retired": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Retired",
                 "type": "integer"
               },
               "revised": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Revised",
                 "type": "integer"
               },
               "skipped": {
                 "additionalProperties": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
                   "type": "integer"
                 },
                 "propertyNames": {
@@ -63368,16 +63470,19 @@
                 "type": "object"
               },
               "subjects_created": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Subjects Created",
                 "type": "integer"
               },
               "surfaced": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Surfaced",
                 "type": "integer"
               },
               "written": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Written",
                 "type": "integer"
@@ -63396,43 +63501,6 @@
               "delivery"
             ],
             "title": "ClaimsRunSummary",
-            "type": "object"
-          },
-          "CompleteWhenResult": {
-            "additionalProperties": false,
-            "properties": {
-              "count_at": {
-                "title": "Count At",
-                "type": "string"
-              },
-              "expected": {
-                "anyOf": [
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Expected"
-              },
-              "held": {
-                "title": "Held",
-                "type": "boolean"
-              },
-              "observed": {
-                "minimum": 0,
-                "title": "Observed",
-                "type": "integer"
-              }
-            },
-            "required": [
-              "count_at",
-              "expected",
-              "observed",
-              "held"
-            ],
-            "title": "CompleteWhenResult",
             "type": "object"
           },
           "CompletenessReason": {
@@ -63479,6 +63547,7 @@
             "description": "One ``emit_capture`` or ``post_inbox`` terminal: the items it emitted.\n\n``unposted`` counts the items a post's inbox cap left out.",
             "properties": {
               "emitted": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Emitted",
                 "type": "integer"
@@ -63493,6 +63562,7 @@
               },
               "unposted": {
                 "default": 0,
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Unposted",
                 "type": "integer"
@@ -63503,6 +63573,65 @@
               "emitted"
             ],
             "title": "EgressRunSummary",
+            "type": "object"
+          },
+          "ExtractCompleteWhen": {
+            "additionalProperties": false,
+            "description": "An extract's declared count check, bounded for a summary.\n\n``count_at`` is the declared path, cut to ``NODE_SUMMARY_TEXT_MAX`` code\npoints (``count_at_truncated`` then says so). ``expected`` is absent when\nthe source enumerated no count; a count past ``NODE_SUMMARY_INT_MAX`` is\nleft out and ``out_of_range`` says so.",
+            "properties": {
+              "count_at": {
+                "maxLength": 64,
+                "title": "Count At",
+                "type": "string"
+              },
+              "count_at_truncated": {
+                "default": false,
+                "title": "Count At Truncated",
+                "type": "boolean"
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expected"
+              },
+              "held": {
+                "title": "Held",
+                "type": "boolean"
+              },
+              "observed": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Observed"
+              },
+              "out_of_range": {
+                "default": false,
+                "title": "Out Of Range",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "count_at",
+              "held"
+            ],
+            "title": "ExtractCompleteWhen",
             "type": "object"
           },
           "ExtractRunSummary": {
@@ -63516,7 +63645,7 @@
               "complete_when": {
                 "anyOf": [
                   {
-                    "$ref": "#/$defs/CompleteWhenResult"
+                    "$ref": "#/$defs/ExtractCompleteWhen"
                   },
                   {
                     "type": "null"
@@ -63525,16 +63654,19 @@
                 "default": null
               },
               "duplicates": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Duplicates",
                 "type": "integer"
               },
               "invalid_fields": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Invalid Fields",
                 "type": "integer"
               },
               "invalid_records": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Invalid Records",
                 "type": "integer"
@@ -63546,6 +63678,7 @@
                 "type": "string"
               },
               "records": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Records",
                 "type": "integer"
@@ -63676,7 +63809,7 @@
           },
           "GuardOperand": {
             "additionalProperties": false,
-            "description": "One comparison a guard evaluated: its operator, and its numeric or bool operands.\n\nAn operand that is anything else (a string, a list, a record) is left out;\nso is the whole comparison when neither operand is a number or a boolean.\n``present`` and ``absent`` carry whether the reference resolved as ``left``.",
+            "description": "One comparison a guard evaluated: its operator, and its numeric or bool operands.\n\nAn operand that is anything else (a string, a list, a record) is left out;\nso is the whole comparison when neither operand is a number or a boolean.\nA number past ``NODE_SUMMARY_INT_MAX`` is left out too, and ``out_of_range``\nsays so. ``present`` and ``absent`` carry whether the reference resolved as\n``left``.",
             "properties": {
               "left": {
                 "anyOf": [
@@ -63684,6 +63817,8 @@
                     "type": "boolean"
                   },
                   {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
                     "type": "integer"
                   },
                   {
@@ -63694,8 +63829,34 @@
                 "title": "Left"
               },
               "operator": {
-                "title": "Operator",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "enum": [
+                      "eq",
+                      "ne",
+                      "lt",
+                      "le",
+                      "gt",
+                      "ge"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "enum": [
+                      "in",
+                      "not_in",
+                      "present",
+                      "absent"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Operator"
+              },
+              "out_of_range": {
+                "default": false,
+                "title": "Out Of Range",
+                "type": "boolean"
               },
               "right": {
                 "anyOf": [
@@ -63703,6 +63864,8 @@
                     "type": "boolean"
                   },
                   {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
                     "type": "integer"
                   },
                   {
@@ -63748,6 +63911,7 @@
               },
               "operands_truncated": {
                 "default": 0,
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Operands Truncated",
                 "type": "integer"
@@ -63761,7 +63925,7 @@
           },
           "HaltRunSummary": {
             "additionalProperties": false,
-            "description": "One halt: the reason code it declares, when it declares one.",
+            "description": "One halt: the reason code it declares, when it declares one, cut to the text bound.",
             "properties": {
               "kind": {
                 "const": "halt",
@@ -63772,7 +63936,7 @@
               "reason": {
                 "anyOf": [
                   {
-                    "maxLength": 128,
+                    "maxLength": 64,
                     "type": "string"
                   },
                   {
@@ -63781,6 +63945,11 @@
                 ],
                 "default": null,
                 "title": "Reason"
+              },
+              "reason_truncated": {
+                "default": false,
+                "title": "Reason Truncated",
+                "type": "boolean"
               }
             },
             "title": "HaltRunSummary",
@@ -66569,6 +66738,7 @@
                 "type": "string"
               },
               "rows": {
+                "maximum": 9007199254740991,
                 "minimum": 0,
                 "title": "Rows",
                 "type": "integer"
@@ -66605,7 +66775,8 @@
             "description": "One repeat: the attempts it used.",
             "properties": {
               "attempts": {
-                "minimum": 1,
+                "maximum": 9007199254740991,
+                "minimum": 0,
                 "title": "Attempts",
                 "type": "integer"
               },
@@ -66797,6 +66968,7 @@
               "rows_in": {
                 "anyOf": [
                   {
+                    "maximum": 9007199254740991,
                     "minimum": 0,
                     "type": "integer"
                   },
@@ -66810,6 +66982,7 @@
               "rows_out": {
                 "anyOf": [
                   {
+                    "maximum": 9007199254740991,
                     "minimum": 0,
                     "type": "integer"
                   },
@@ -66821,6 +66994,15 @@
                 "title": "Rows Out"
               },
               "transform_kind": {
+                "enum": [
+                  "shape",
+                  "filter",
+                  "join",
+                  "aggregate",
+                  "dedupe",
+                  "union",
+                  "derive"
+                ],
                 "title": "Transform Kind",
                 "type": "string"
               }

@@ -3,28 +3,34 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic, FindingKind
+from cruxible_client.contracts.claim_evidence import (
+    ClaimsDiagnostic,
+    CompleteWhenResult,
+    FindingKind,
+)
 from cruxible_client.contracts.procedures.node_summary import (
     NODE_RUN_SUMMARY_ADAPTER,
     NODE_SUMMARY_CAPTURE_DIGESTS_MAX,
     NODE_SUMMARY_GUARD_OPERANDS_MAX,
+    NODE_SUMMARY_INT_MAX,
     NODE_SUMMARY_MAX_BYTES,
+    NODE_SUMMARY_TEXT_MAX,
     CallRunSummary,
     ClaimsRunSummary,
     EgressRunSummary,
     ExtractRunSummary,
     GuardOperand,
     GuardRunSummary,
-    HaltRunSummary,
     ReadRunSummary,
     RepeatRunSummary,
     TransformRunSummary,
 )
+from cruxible_client.contracts.shapes import DuplicateArm
 from cruxible_core.cli.commands.playbill import _run_node_line
 from cruxible_core.procedures.claims_changes import (
     CoreClaimChange,
@@ -37,7 +43,10 @@ from cruxible_core.procedures.node_summaries import (
     call_summary,
     claims_delivery,
     claims_summary,
+    extract_summary,
     guard_summary,
+    halt_summary,
+    record_summary,
     row_count,
     transform_summary,
 )
@@ -105,8 +114,12 @@ def test_claims_delivery_reads_the_receipt_kind() -> None:
     assert claims_delivery(receipt("receipt-v3")) == "proposed"
     assert claims_delivery(receipt("unchanged-receipt-v1")) == "unchanged"
     assert claims_delivery(receipt("still-current-receipt-v1")) == "still_current"
-    with pytest.raises(ValueError):
-        claims_delivery(receipt("receipt-v1"))
+    # A v1 receipt names only its disposition: settled, or a fallback proposal.
+    assert claims_delivery(receipt("receipt-v1", disposition="settled")) == "settled"
+    assert claims_delivery(receipt("receipt-v1", disposition="received")) == "proposed"
+    # Anything else is still a delivery, never a failure.
+    assert claims_delivery(receipt("receipt-v2", disposition="received")) == "delivered"
+    assert claims_delivery(object()) == "delivered"
 
 
 def test_guard_summary_keeps_numeric_and_bool_operands_only() -> None:
@@ -139,63 +152,61 @@ def test_counts_of_records_rows_and_captures() -> None:
     assert row_count({"records": [1], "rows": [1], "count": 1}) == 1
     assert row_count({"rows": [1, 2, 3]}) == 3
     assert row_count({"value": {}, "result": 4}) is None
-    shaped = transform_summary("join", [[1, 2], {"records": [1]}], {"records": [1, 2]})
+    shaped = transform_summary("join", [2, 1], {"records": [1, 2]})
     assert (shaped.rows_in, shaped.rows_out) == (3, 2)
-    aggregated = transform_summary("aggregate", [[1, 2]], {"value": {}, "result": 2})
+    aggregated = transform_summary("aggregate", [2], {"value": {}, "result": 2})
     assert (aggregated.rows_in, aggregated.rows_out) == (2, None)
+    assert transform_summary("derive", [], {"value": {}}).rows_in is None
     many = {f"f{n}": f"sha256:{n:064x}" for n in range(10)}
     call = call_summary(many, {**many, "other": "sha256:" + "b" * 64})
     assert call.captures == 10 and len(call.capture_digests) == NODE_SUMMARY_CAPTURE_DIGESTS_MAX
     assert call_summary(("capture",), None) == CallRunSummary(captures=0)
+    # A capture field holding something other than a digest is not a Capture.
+    assert call_summary(("capture",), {"capture": "x" * 5000}) == CallRunSummary(captures=0)
+
+
+#: The widest legal text a summary could meet: 512 four-byte code points, plus
+#: control characters, which canonical JSON escapes to six bytes each.
+WIDE_TEXT = "/" + "\U0001f600" * 255 + "\u0001" * 256
+HUGE = 10**3000
 
 
 def _worst_cases() -> list[Any]:
-    kinds: tuple[FindingKind, ...] = (
-        "extract_refused",
-        "duplicate_key",
-        "incomplete_source",
-        "held_disagrees",
-        "slot_contested",
+    """Each kind at its bound, built through the same builders the executor uses."""
+
+    kinds = get_args(FindingKind)
+    big = NODE_SUMMARY_INT_MAX
+    extract = SimpleNamespace(
+        held=[DuplicateArm.model_construct()] * 3,
+        invalid_records=HUGE,
+        invalid_fields={"a": HUGE, "b": HUGE},
+        complete=False,
+        complete_when_result=CompleteWhenResult.model_construct(
+            count_at=WIDE_TEXT, expected=HUGE, observed=-HUGE, held=False
+        ),
     )
-    big = 10**12
+    many = {f"f{n}": DIGEST for n in range(100)}
     return [
-        ExtractRunSummary(
-            records=big,
-            invalid_records=big,
-            duplicates=big,
-            invalid_fields=big,
-            complete=False,
-            complete_when={
-                "count_at": "/" + "x" * 256,
-                "expected": big,
-                "observed": big,
-                "held": False,
-            },
-        ),
-        TransformRunSummary(transform_kind="aggregate", rows_in=big, rows_out=big),
+        extract_summary(extract),  # type: ignore[arg-type]
+        transform_summary("aggregate", [HUGE, HUGE], {"records": [1]}),
         ReadRunSummary(rows=big),
-        CallRunSummary(captures=big, capture_digests=(DIGEST,) * NODE_SUMMARY_CAPTURE_DIGESTS_MAX),
-        GuardRunSummary(
-            branch="else",
-            operands=(GuardOperand(operator="not_in", left=-big, right=big),)
-            * NODE_SUMMARY_GUARD_OPERANDS_MAX,
-            operands_truncated=big,
+        call_summary(many, many),
+        guard_summary(
+            False,
+            {"any": [{"left": -HUGE, "operator": "not_in", "right": HUGE} for _ in range(20)]},
         ),
-        ClaimsRunSummary(
-            written=big,
-            revised=big,
-            inverse_written=big,
-            subjects_created=big,
-            re_observed=big,
-            no_op=big,
-            retired=big,
-            surfaced=big,
-            downgraded=big,
-            skipped=dict.fromkeys(kinds, big),
+        guard_summary(
+            True,
+            {"all": [{"left": -big, "operator": "ge", "right": big} for _ in range(20)]},
+        ),
+        claims_summary(
+            [],
+            SimpleNamespace(counts=dict.fromkeys(kinds, HUGE), same=HUGE),  # type: ignore[arg-type]
+            downgraded=HUGE,
             delivery="still_current",
         ),
         EgressRunSummary(kind="post_inbox", emitted=big, unposted=big),
-        HaltRunSummary(reason="r" * 128),
+        halt_summary(WIDE_TEXT),
         RepeatRunSummary(attempts=big),
     ]
 
@@ -205,6 +216,43 @@ def test_every_summary_kind_is_bounded_and_round_trips(summary: Any) -> None:
     wire = summary.model_dump(mode="json")
     assert len(canonical_bytes(wire)) <= NODE_SUMMARY_MAX_BYTES
     assert NODE_RUN_SUMMARY_ADAPTER.validate_python(wire) == summary
+
+
+def test_oversized_source_values_are_left_out_and_marked() -> None:
+    extract, *_, guard, _, _, _, halt, _ = _worst_cases()
+    check = extract.complete_when
+    assert check.count_at == WIDE_TEXT[:NODE_SUMMARY_TEXT_MAX] and check.count_at_truncated
+    assert check.expected is None and check.observed is None and check.out_of_range
+    assert extract.invalid_records == NODE_SUMMARY_INT_MAX
+    (first, *_) = guard.operands
+    assert first == GuardOperand(operator="not_in", out_of_range=True)
+    assert guard.operands_truncated == 20 - NODE_SUMMARY_GUARD_OPERANDS_MAX
+    assert halt.reason_truncated and len(halt.reason) == NODE_SUMMARY_TEXT_MAX
+
+
+def test_the_contract_refuses_unbounded_scalars() -> None:
+    from pydantic import ValidationError
+
+    for bad in (
+        {"kind": "read", "rows": NODE_SUMMARY_INT_MAX + 1},
+        {"kind": "call", "captures": 1, "capture_digests": ["not-a-digest"]},
+        {"kind": "transform", "transform_kind": "x" * 100},
+        {"kind": "guard", "branch": "then", "operands": [{"operator": "x" * 100}]},
+        {"kind": "guard", "branch": "then", "operands": [{"operator": "gt", "left": HUGE}]},
+        {"kind": "halt", "reason": "r" * (NODE_SUMMARY_TEXT_MAX + 1)},
+    ):
+        with pytest.raises(ValidationError):
+            NODE_RUN_SUMMARY_ADAPTER.validate_python(bad)
+
+
+def test_a_summary_that_cannot_be_built_is_left_out_not_raised() -> None:
+    summaries: dict[str, Any] = {"n": ReadRunSummary(rows=1)}
+
+    def broken() -> Any:
+        return ReadRunSummary(rows=-1)
+
+    record_summary(summaries, "n", broken)
+    assert summaries == {}
 
 
 def test_run_node_reads_a_payload_with_or_without_a_summary() -> None:
@@ -300,3 +348,139 @@ def test_run_detail_prints_a_node_line_per_finished_node(capsys: Any) -> None:
     assert capsys.readouterr().out == (
         "Node watched read succeeded: 12 rows\nNode tidy project succeeded\n"
     )
+
+
+@pytest.mark.parametrize("size", [5, 200])
+def test_transform_rows_are_counted_from_the_inputs_the_transform_resolved(
+    tmp_path: Any, monkeypatch: Any, size: int
+) -> None:
+    """The summary reads each input's length once: no second resolution, no record walk."""
+
+    from cruxible_core.procedures import execution
+    from tests.test_procedures.test_closed_transforms import _feed, _returned, _run, _status
+    from tests.test_procedures.test_closed_transforms import _transform as transform
+
+    resolved: list[tuple[str, object]] = []
+    counted: list[object] = []
+    summaries: list[Any] = []
+    real_resolve, real_count, real_summary = (
+        execution._resolve_node_template,
+        execution.row_count,
+        execution.transform_summary,
+    )
+
+    def resolve(reference: object, **kwargs: Any) -> object:
+        value = real_resolve(reference, **kwargs)
+        resolved.append((kwargs["node_id"], value))
+        return value
+
+    def count(value: object) -> int | None:
+        counted.append(value)
+        return real_count(value)
+
+    def summary(*args: Any) -> Any:
+        summaries.append(found := real_summary(*args))
+        return found
+
+    monkeypatch.setattr(execution, "_resolve_node_template", resolve)
+    monkeypatch.setattr(execution, "row_count", count)
+    monkeypatch.setattr(execution, "transform_summary", summary)
+    records = tuple(_status("open") for _ in range(size))
+    nodes = (
+        _feed(*records),
+        transform(
+            "kept",
+            "filter",
+            {
+                "input": "$steps.feed.rows",
+                "where": {"op": "present", "of": {"$ref": "item", "path": ["fields", "status"]}},
+            },
+        ),
+        _returned("kept"),
+    )
+    result, _sinks = _run(nodes, tmp_path)
+    assert result.status == "succeeded", result
+    (filtered,) = summaries
+    assert (filtered.rows_in, filtered.rows_out) == (size, size)
+    # The filter resolved its one input once, and the summary counted that very value.
+    kept = [value for node_id, value in resolved if node_id == "kept"]
+    assert len(kept) == 1
+    assert any(value is kept[0] for value in counted)
+    # Constant work whatever the size: the filter's and the result's one resolution
+    # each, and one length read for the summary.
+    assert len(resolved) == 2 and len(counted) == 1
+
+
+class _V1ClaimsSink:
+    """A sink that is no preparer: the claims terminal keeps its v1 request and receipt."""
+
+    def __init__(self) -> None:
+        self.receipts: list[Any] = []
+
+    def deliver_terminal_egress(self, *, request: Any) -> Any:
+        from cruxible_core.procedures.egress import (
+            TerminalEgressChildReceiptV1,
+            TerminalEgressReceiptV1,
+        )
+
+        receipt = TerminalEgressReceiptV1(
+            kind=request.kind,
+            run_id=request.run_id,
+            node_id=request.node_id,
+            disposition="received",
+            children=tuple(
+                TerminalEgressChildReceiptV1(
+                    child_index=item.child_index,
+                    item_key=item.item_key,
+                    egress_digest="sha256:" + f"{item.child_index:064x}",
+                )
+                for item in request.items
+            ),
+        )
+        self.receipts.append(receipt)
+        return receipt
+
+
+def test_a_v1_claims_delivery_is_summarised_not_failed(tmp_path: Any, monkeypatch: Any) -> None:
+    """A sink that is no preparer gets a v1 claims request; its verified v1 receipt is a delivery.
+
+    The executor's own account is checked: the served run state does not fold
+    a delivered claims egress that names no proposal, which is not this path's
+    concern.
+    """
+
+    from contextlib import suppress
+
+    from pydantic import ValidationError
+
+    from cruxible_core.exhaust.payloads import read_payload
+    from cruxible_core.service.procedures import procedure_runs
+    from cruxible_core.storage.cas import BodyAccessContext
+    from tests.test_pilot.support import pilot_world
+    from tests.test_procedures.test_claims_terminal import run
+
+    sink = _V1ClaimsSink()
+    results: list[Any] = []
+    real = procedure_runs.service_execute_direct_procedure
+
+    def execute(*args: Any, **kwargs: Any) -> Any:
+        results.append(found := real(*args, **{**kwargs, "egress_sink": sink}))
+        return found
+
+    monkeypatch.setattr(procedure_runs, "service_execute_direct_procedure", execute)
+    instance, root = pilot_world(tmp_path, "kev.json")
+    with suppress(ValidationError):
+        run(instance, root)
+    (receipt,) = sink.receipts
+    assert receipt.tag == "playbill-terminal-egress-receipt-v1"
+    (result,) = results
+    assert result.status == "succeeded", result
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    fired = [
+        read_payload(instance.body_store(), stored.record.payload_digest, access=access)
+        for stored in procedure_runs._records_for_run(instance, result.run_id)
+        if stored.record.event_kind == "node_fired"
+    ]
+    (claims,) = (payload for payload in fired if payload["kind"] == "claims")
+    assert claims["verdict"] == "succeeded"
+    assert claims["summary"]["delivery"] == "proposed" and claims["summary"]["written"] == 8

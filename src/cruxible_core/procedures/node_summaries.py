@@ -10,19 +10,26 @@ changes and its delivery receipt). See
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING
+import re
+from collections.abc import Callable, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, cast, get_args
 
-from cruxible_client.contracts.claim_evidence import FindingKind
+from cruxible_client.contracts.claim_evidence import CompleteWhenResult, FindingKind
 from cruxible_client.contracts.procedures.node_summary import (
     NODE_SUMMARY_CAPTURE_DIGESTS_MAX,
     NODE_SUMMARY_GUARD_OPERANDS_MAX,
+    NODE_SUMMARY_INT_MAX,
+    NODE_SUMMARY_TEXT_MAX,
     CallRunSummary,
     ClaimsDelivery,
     ClaimsRunSummary,
+    ExtractCompleteWhen,
     ExtractRunSummary,
     GuardOperand,
+    GuardOperator,
     GuardRunSummary,
+    HaltRunSummary,
+    NodeRunSummary,
     TransformRunSummary,
 )
 from cruxible_client.contracts.shapes import DuplicateArm
@@ -40,6 +47,45 @@ if TYPE_CHECKING:
 
 #: The finding a held Claim the source no longer contains is surfaced as.
 _SURFACED: FindingKind = "claim_not_in_source"
+_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+_OPERATORS = frozenset(
+    member for part in get_args(GuardOperator) for member in (get_args(part) or (part,))
+)
+
+
+def record_summary(
+    summaries: dict[str, NodeRunSummary], node_id: str, build: Callable[[], NodeRunSummary]
+) -> None:
+    """Keep one node's summary; a summary that cannot be built is left out, never raised.
+
+    A summary only observes a node that already ran: whatever it meets, it
+    must never turn a valid node, or a delivered terminal, into a failed one.
+    """
+
+    try:
+        summaries[node_id] = build()
+    except ValueError:  # pydantic's ValidationError included
+        summaries.pop(node_id, None)
+
+
+def _count(value: int) -> int:
+    """An in-memory count, clamped to the summary bound."""
+
+    return min(max(value, 0), NODE_SUMMARY_INT_MAX)
+
+
+def _bounded(value: int | None) -> tuple[int | None, bool]:
+    """A source integer within the summary bound, or ``None`` and ``True`` past it."""
+
+    if value is None or -NODE_SUMMARY_INT_MAX <= value <= NODE_SUMMARY_INT_MAX:
+        return value, False
+    return None, True
+
+
+def _text(value: str) -> tuple[str, bool]:
+    """Authored text cut to the summary bound, and whether it was cut."""
+
+    return value[:NODE_SUMMARY_TEXT_MAX], len(value) > NODE_SUMMARY_TEXT_MAX
 
 
 def row_count(value: object) -> int | None:
@@ -55,27 +101,43 @@ def row_count(value: object) -> int | None:
     return None
 
 
+def complete_when_summary(result: CompleteWhenResult) -> ExtractCompleteWhen:
+    count_at, cut = _text(result.count_at)
+    expected, expected_out = _bounded(result.expected)
+    observed, observed_out = _bounded(result.observed)
+    return ExtractCompleteWhen(
+        count_at=count_at,
+        count_at_truncated=cut,
+        expected=expected,
+        observed=observed,
+        out_of_range=expected_out or observed_out,
+        held=result.held,
+    )
+
+
 def extract_summary(outcome: ExtractOutcome) -> ExtractRunSummary:
+    check = outcome.complete_when_result
     return ExtractRunSummary(
-        records=len(outcome.held),
-        invalid_records=outcome.invalid_records,
-        duplicates=sum(1 for item in outcome.held if isinstance(item, DuplicateArm)),
-        invalid_fields=sum(outcome.invalid_fields.values()),
+        records=_count(len(outcome.held)),
+        invalid_records=_count(outcome.invalid_records),
+        duplicates=_count(sum(1 for item in outcome.held if isinstance(item, DuplicateArm))),
+        invalid_fields=_count(sum(outcome.invalid_fields.values())),
         complete=outcome.complete,
-        complete_when=outcome.complete_when_result,
+        complete_when=None if check is None else complete_when_summary(check),
     )
 
 
 def transform_summary(
-    transform_kind: str, inputs: Iterable[object], value: object
+    transform_kind: str, rows_in: Iterable[int | None], value: object
 ) -> TransformRunSummary:
-    """``inputs`` are the transform's resolved record inputs; ``value`` its output."""
+    """``rows_in`` counts each record input as the transform itself resolved it."""
 
-    counted = [count for count in map(row_count, inputs) if count is not None]
+    counted = [count for count in rows_in if count is not None]
+    rows_out = row_count(value)
     return TransformRunSummary(
-        transform_kind=transform_kind,
-        rows_in=sum(counted) if counted else None,
-        rows_out=row_count(value),
+        transform_kind=cast(Any, transform_kind),
+        rows_in=_count(sum(counted)) if counted else None,
+        rows_out=None if rows_out is None else _count(rows_out),
     )
 
 
@@ -83,15 +145,32 @@ def call_summary(capture_fields: Iterable[str], output: object) -> CallRunSummar
     """A call's Captures: the digest each capture field of its output holds."""
 
     held = output if isinstance(output, Mapping) else {}
-    digests = [digest for name in capture_fields if isinstance(digest := held.get(name), str)]
+    digests = [
+        digest
+        for name in capture_fields
+        if isinstance(digest := held.get(name), str) and _DIGEST.fullmatch(digest)
+    ]
     return CallRunSummary(
-        captures=len(digests),
+        captures=_count(len(digests)),
         capture_digests=tuple(digests[:NODE_SUMMARY_CAPTURE_DIGESTS_MAX]),
     )
 
 
-def _operand(value: object) -> int | bool | None:
-    return value if isinstance(value, int) else None  # bool is an int
+def halt_summary(reason: str | None) -> HaltRunSummary:
+    if reason is None:
+        return HaltRunSummary()
+    text, cut = _text(reason)
+    return HaltRunSummary(reason=text, reason_truncated=cut)
+
+
+def _operand(value: object) -> tuple[int | bool | None, bool]:
+    """A numeric or bool operand within the bound, and whether one was left out past it."""
+
+    if isinstance(value, bool):
+        return value, False
+    if isinstance(value, int):
+        return _bounded(value)
+    return None, False
 
 
 def _comparisons(trace: object) -> Iterable[GuardOperand]:
@@ -108,15 +187,22 @@ def _comparisons(trace: object) -> Iterable[GuardOperand]:
                 yield from _comparisons(child)
             return
     operator = trace.get("operator")
-    if not isinstance(operator, str):
+    if not isinstance(operator, str) or operator not in _OPERATORS:
         return
     if "present" in trace:
-        left = _operand(trace["present"])
-        right = None
+        (left, left_out), (right, right_out) = _operand(trace["present"]), (None, False)
     else:
-        left, right = _operand(trace.get("left")), _operand(trace.get("right"))
-    if left is not None or right is not None:
-        yield GuardOperand(operator=operator, left=left, right=right)
+        (left, left_out), (right, right_out) = (
+            _operand(trace.get("left")),
+            _operand(trace.get("right")),
+        )
+    if left is not None or right is not None or left_out or right_out:
+        yield GuardOperand(
+            operator=cast(GuardOperator, operator),
+            left=left,
+            right=right,
+            out_of_range=left_out or right_out,
+        )
 
 
 def guard_summary(verdict: bool, trace: object) -> GuardRunSummary:
@@ -124,7 +210,7 @@ def guard_summary(verdict: bool, trace: object) -> GuardRunSummary:
     return GuardRunSummary(
         branch="then" if verdict else "else",
         operands=tuple(found[:NODE_SUMMARY_GUARD_OPERANDS_MAX]),
-        operands_truncated=max(len(found) - NODE_SUMMARY_GUARD_OPERANDS_MAX, 0),
+        operands_truncated=_count(len(found) - NODE_SUMMARY_GUARD_OPERANDS_MAX),
     )
 
 
@@ -135,8 +221,20 @@ _RECEIPT_DELIVERIES: dict[str, ClaimsDelivery] = {
 }
 
 
+#: A receipt that names only its disposition (a v1 receipt): settled, or a
+#: settle that fell back to a proposal (``received``).
+_DISPOSITION_DELIVERIES: dict[str, ClaimsDelivery] = {
+    "settled": "settled",
+    "received": "proposed",
+}
+
+
 def claims_delivery(receipt: object) -> ClaimsDelivery:
-    """How a claims terminal's delivered receipt landed its change."""
+    """How a claims terminal's delivered receipt landed its change.
+
+    Every receipt the verifier accepts maps to its delivery; any other reads
+    ``delivered``. The summary only observes a delivery that already happened.
+    """
 
     tag = getattr(receipt, "tag", None)
     if tag == "playbill-terminal-egress-receipt-v4":
@@ -144,7 +242,10 @@ def claims_delivery(receipt: object) -> ClaimsDelivery:
         return "settled" if outcome == "settled" else "proposed"
     if isinstance(tag, str) and tag in _RECEIPT_DELIVERIES:
         return _RECEIPT_DELIVERIES[tag]
-    raise ValueError(f"a claims terminal delivered an unexpected receipt {tag!r}")
+    disposition = getattr(receipt, "disposition", None)
+    if tag == "playbill-terminal-egress-receipt-v1" and isinstance(disposition, str):
+        return _DISPOSITION_DELIVERIES.get(disposition, "delivered")
+    return "delivered"
 
 
 def claims_summary(
@@ -183,16 +284,16 @@ def claims_summary(
         counts["incomplete_source"] = counts.get("incomplete_source", 0) - downgraded
     same = 0 if diagnostics is None else diagnostics.same
     return ClaimsRunSummary(
-        written=written,
-        revised=revised,
-        inverse_written=inverse,
-        subjects_created=subjects,
-        re_observed=observed,
-        no_op=max(same - observed, 0),
-        retired=retired,
-        surfaced=surfaced,
-        downgraded=downgraded,
-        skipped={kind: count for kind, count in sorted(counts.items()) if count > 0},
+        written=_count(written),
+        revised=_count(revised),
+        inverse_written=_count(inverse),
+        subjects_created=_count(subjects),
+        re_observed=_count(observed),
+        no_op=_count(same - observed),
+        retired=_count(retired),
+        surfaced=_count(surfaced),
+        downgraded=_count(downgraded),
+        skipped={kind: _count(count) for kind, count in sorted(counts.items()) if count > 0},
         delivery=delivery,
     )
 
@@ -201,8 +302,11 @@ __all__ = [
     "call_summary",
     "claims_delivery",
     "claims_summary",
+    "complete_when_summary",
     "extract_summary",
     "guard_summary",
+    "halt_summary",
+    "record_summary",
     "row_count",
     "transform_summary",
 ]

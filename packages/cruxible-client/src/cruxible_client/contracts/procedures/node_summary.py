@@ -14,14 +14,32 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from cruxible_client.contracts.claim_evidence import CompleteWhenResult, FindingKind
+from cruxible_client.contracts.claim_evidence import FindingKind
+from cruxible_client.contracts.procedures.nodes import TransformKind
+from cruxible_client.contracts.shapes import ComparisonOp
 
 #: Capture digests a call's summary names, at most; ``captures`` counts them all.
 NODE_SUMMARY_CAPTURE_DIGESTS_MAX = 8
 #: Guard comparisons a guard's summary keeps, at most.
 NODE_SUMMARY_GUARD_OPERANDS_MAX = 8
+#: Every integer a summary carries is within this magnitude (exact in JSON
+#: readers that use doubles); a source integer past it is left out, marked.
+NODE_SUMMARY_INT_MAX = 2**53 - 1
+#: Code points of authored text a summary carries (a ``count_at`` path, a halt
+#: reason), at most; longer text is cut, marked.
+NODE_SUMMARY_TEXT_MAX = 64
 #: Canonical bytes of one summary, at most (the payload byte bound per node).
+#: Every field above is bounded, so each kind's worst case is below this.
 NODE_SUMMARY_MAX_BYTES = 2048
+
+#: A count: a nonnegative integer within the summary bound.
+SummaryCount: TypeAlias = Annotated[int, Field(ge=0, le=NODE_SUMMARY_INT_MAX)]
+#: A signed integer within the summary bound.
+SummaryInt: TypeAlias = Annotated[int, Field(ge=-NODE_SUMMARY_INT_MAX, le=NODE_SUMMARY_INT_MAX)]
+#: Authored text, cut to the summary bound.
+SummaryText: TypeAlias = Annotated[str, Field(max_length=NODE_SUMMARY_TEXT_MAX)]
+#: A Capture digest.
+CaptureDigest: TypeAlias = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
 
 
 class _NodeSummary(BaseModel):
@@ -30,6 +48,23 @@ class _NodeSummary(BaseModel):
 
 def _omit_none(value: object) -> bool:
     return value is None
+
+
+class ExtractCompleteWhen(_NodeSummary):
+    """An extract's declared count check, bounded for a summary.
+
+    ``count_at`` is the declared path, cut to ``NODE_SUMMARY_TEXT_MAX`` code
+    points (``count_at_truncated`` then says so). ``expected`` is absent when
+    the source enumerated no count; a count past ``NODE_SUMMARY_INT_MAX`` is
+    left out and ``out_of_range`` says so.
+    """
+
+    count_at: SummaryText
+    count_at_truncated: bool = Field(default=False, exclude_if=lambda value: not value)
+    expected: SummaryCount | None = Field(default=None, exclude_if=_omit_none)
+    observed: SummaryCount | None = Field(default=None, exclude_if=_omit_none)
+    out_of_range: bool = Field(default=False, exclude_if=lambda value: not value)
+    held: bool
 
 
 class ExtractRunSummary(_NodeSummary):
@@ -42,12 +77,12 @@ class ExtractRunSummary(_NodeSummary):
     """
 
     kind: Literal["extract"] = "extract"
-    records: int = Field(ge=0)
-    invalid_records: int = Field(ge=0)
-    duplicates: int = Field(ge=0)
-    invalid_fields: int = Field(ge=0)
+    records: SummaryCount
+    invalid_records: SummaryCount
+    duplicates: SummaryCount
+    invalid_fields: SummaryCount
     complete: bool
-    complete_when: CompleteWhenResult | None = Field(default=None, exclude_if=_omit_none)
+    complete_when: ExtractCompleteWhen | None = Field(default=None, exclude_if=_omit_none)
 
 
 class TransformRunSummary(_NodeSummary):
@@ -59,30 +94,32 @@ class TransformRunSummary(_NodeSummary):
     """
 
     kind: Literal["transform"] = "transform"
-    transform_kind: str
-    rows_in: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
-    rows_out: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
+    transform_kind: TransformKind
+    rows_in: SummaryCount | None = Field(default=None, exclude_if=_omit_none)
+    rows_out: SummaryCount | None = Field(default=None, exclude_if=_omit_none)
 
 
 class ReadRunSummary(_NodeSummary):
     """One accepted-state read: the rows it admitted."""
 
     kind: Literal["read"] = "read"
-    rows: int = Field(ge=0)
+    rows: SummaryCount
 
 
 class CallRunSummary(_NodeSummary):
     """One call: how many Captures it made or was admitted, and the first of them."""
 
     kind: Literal["call"] = "call"
-    captures: int = Field(ge=0)
-    capture_digests: tuple[str, ...] = Field(
+    captures: SummaryCount
+    capture_digests: tuple[CaptureDigest, ...] = Field(
         default=(), max_length=NODE_SUMMARY_CAPTURE_DIGESTS_MAX, exclude_if=lambda value: not value
     )
 
 
-#: A guard operand the summary may carry: a number or a boolean, never a string.
-GuardOperandValue: TypeAlias = bool | int
+#: A guard operand the summary may carry: a bounded number or a boolean, never a string.
+GuardOperandValue: TypeAlias = bool | SummaryInt
+#: Every operator a guard predicate compares with.
+GuardOperator: TypeAlias = ComparisonOp | Literal["in", "not_in", "present", "absent"]
 
 
 class GuardOperand(_NodeSummary):
@@ -90,12 +127,15 @@ class GuardOperand(_NodeSummary):
 
     An operand that is anything else (a string, a list, a record) is left out;
     so is the whole comparison when neither operand is a number or a boolean.
-    ``present`` and ``absent`` carry whether the reference resolved as ``left``.
+    A number past ``NODE_SUMMARY_INT_MAX`` is left out too, and ``out_of_range``
+    says so. ``present`` and ``absent`` carry whether the reference resolved as
+    ``left``.
     """
 
-    operator: str
+    operator: GuardOperator
     left: GuardOperandValue | None = Field(default=None, exclude_if=_omit_none)
     right: GuardOperandValue | None = Field(default=None, exclude_if=_omit_none)
+    out_of_range: bool = Field(default=False, exclude_if=lambda value: not value)
 
 
 class GuardRunSummary(_NodeSummary):
@@ -107,14 +147,17 @@ class GuardRunSummary(_NodeSummary):
         default=(), max_length=NODE_SUMMARY_GUARD_OPERANDS_MAX, exclude_if=lambda value: not value
     )
     #: Comparisons with a numeric or bool operand past the bound.
-    operands_truncated: int = Field(default=0, ge=0, exclude_if=lambda value: value == 0)
+    operands_truncated: SummaryCount = Field(default=0, exclude_if=lambda value: value == 0)
 
 
 #: How a claims terminal's change was delivered: ``settled`` under its
 #: mandate, ``proposed`` for review, ``still_current`` when it equals its
 #: Line's open proposal, ``unchanged`` when every item restated accepted
 #: state, ``empty`` when it had no item to emit.
-ClaimsDelivery: TypeAlias = Literal["settled", "proposed", "still_current", "unchanged", "empty"]
+#: ``delivered`` when the receipt does not say which.
+ClaimsDelivery: TypeAlias = Literal[
+    "settled", "proposed", "still_current", "unchanged", "empty", "delivered"
+]
 
 
 class ClaimsRunSummary(_NodeSummary):
@@ -132,16 +175,16 @@ class ClaimsRunSummary(_NodeSummary):
     """
 
     kind: Literal["claims"] = "claims"
-    written: int = Field(ge=0)
-    revised: int = Field(ge=0)
-    inverse_written: int = Field(ge=0)
-    subjects_created: int = Field(ge=0)
-    re_observed: int = Field(ge=0)
-    no_op: int = Field(ge=0)
-    retired: int = Field(ge=0)
-    surfaced: int = Field(ge=0)
-    downgraded: int = Field(ge=0)
-    skipped: dict[FindingKind, int] = Field(
+    written: SummaryCount
+    revised: SummaryCount
+    inverse_written: SummaryCount
+    subjects_created: SummaryCount
+    re_observed: SummaryCount
+    no_op: SummaryCount
+    retired: SummaryCount
+    surfaced: SummaryCount
+    downgraded: SummaryCount
+    skipped: dict[FindingKind, SummaryCount] = Field(
         default_factory=dict, exclude_if=lambda value: not value
     )
     delivery: ClaimsDelivery
@@ -154,22 +197,23 @@ class EgressRunSummary(_NodeSummary):
     """
 
     kind: Literal["emit_capture", "post_inbox"]
-    emitted: int = Field(ge=0)
-    unposted: int = Field(default=0, ge=0, exclude_if=lambda value: value == 0)
+    emitted: SummaryCount
+    unposted: SummaryCount = Field(default=0, exclude_if=lambda value: value == 0)
 
 
 class HaltRunSummary(_NodeSummary):
-    """One halt: the reason code it declares, when it declares one."""
+    """One halt: the reason code it declares, when it declares one, cut to the text bound."""
 
     kind: Literal["halt"] = "halt"
-    reason: str | None = Field(default=None, max_length=128, exclude_if=_omit_none)
+    reason: SummaryText | None = Field(default=None, exclude_if=_omit_none)
+    reason_truncated: bool = Field(default=False, exclude_if=lambda value: not value)
 
 
 class RepeatRunSummary(_NodeSummary):
     """One repeat: the attempts it used."""
 
     kind: Literal["repeat"] = "repeat"
-    attempts: int = Field(ge=1)
+    attempts: SummaryCount
 
 
 NodeRunSummary: TypeAlias = Annotated[
@@ -192,18 +236,26 @@ __all__ = [
     "NODE_RUN_SUMMARY_ADAPTER",
     "NODE_SUMMARY_CAPTURE_DIGESTS_MAX",
     "NODE_SUMMARY_GUARD_OPERANDS_MAX",
+    "NODE_SUMMARY_INT_MAX",
     "NODE_SUMMARY_MAX_BYTES",
+    "NODE_SUMMARY_TEXT_MAX",
     "CallRunSummary",
+    "CaptureDigest",
     "ClaimsDelivery",
     "ClaimsRunSummary",
     "EgressRunSummary",
+    "ExtractCompleteWhen",
     "ExtractRunSummary",
     "GuardOperand",
     "GuardOperandValue",
+    "GuardOperator",
     "GuardRunSummary",
     "HaltRunSummary",
     "NodeRunSummary",
     "ReadRunSummary",
     "RepeatRunSummary",
+    "SummaryCount",
+    "SummaryInt",
+    "SummaryText",
     "TransformRunSummary",
 ]

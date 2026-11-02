@@ -126,7 +126,6 @@ from cruxible_client.contracts.procedures.models import (
 from cruxible_client.contracts.procedures.node_summary import (
     ClaimsDelivery,
     EgressRunSummary,
-    HaltRunSummary,
     NodeRunSummary,
     ReadRunSummary,
     RepeatRunSummary,
@@ -267,6 +266,8 @@ from cruxible_core.procedures.node_summaries import (
     claims_summary,
     extract_summary,
     guard_summary,
+    halt_summary,
+    record_summary,
     row_count,
     transform_summary,
 )
@@ -3446,7 +3447,10 @@ class ProcedureExecutor:
             if rows is None:
                 rows = row_count(state.outputs[node.as_])
             if rows is not None:
-                state.node_summaries[node.node_id] = ReadRunSummary(rows=rows)
+                found = rows
+                record_summary(
+                    state.node_summaries, node.node_id, lambda: ReadRunSummary(rows=found)
+                )
             self._extend_alias(
                 state, node.as_, _node_policy_tokens(node, self.references) | state.control
             )
@@ -3455,14 +3459,14 @@ class ProcedureExecutor:
             self._run_claims(node, admission=admission, state=state, records=records)
             return None
         if isinstance(node, HaltNode):
-            state.node_summaries[node.node_id] = HaltRunSummary(
-                reason=None if node.reason is None else node.reason[:128]
-            )
+            record_summary(state.node_summaries, node.node_id, lambda: halt_summary(node.reason))
             return None
         if isinstance(node, CallNode) and node.acquires:
             self._run_acquiring_call(node, admission=admission, state=state, records=records)
-            state.node_summaries[node.node_id] = call_summary(
-                node.captures, state.outputs.get(node.as_)
+            record_summary(
+                state.node_summaries,
+                node.node_id,
+                lambda: call_summary(node.captures, state.outputs.get(node.as_)),
             )
             return None
         if isinstance(node, ExtractNode):
@@ -3475,8 +3479,10 @@ class ProcedureExecutor:
                 state=state,
                 records=records,
             )
-            state.node_summaries[node.node_id] = call_summary(
-                node.captures, state.outputs.get(node.as_)
+            record_summary(
+                state.node_summaries,
+                node.node_id,
+                lambda: call_summary(node.captures, state.outputs.get(node.as_)),
             )
             return None
         if isinstance(node, TransformNode):
@@ -3546,7 +3552,9 @@ class ProcedureExecutor:
                     "operands": trace,
                 },
             )
-            state.node_summaries[node.node_id] = guard_summary(verdict, trace)
+            record_summary(
+                state.node_summaries, node.node_id, lambda: guard_summary(verdict, trace)
+            )
             return "on_true" if verdict else "on_false"
         if isinstance(node, RepeatNode):
             self._run_repeat(
@@ -4189,7 +4197,7 @@ class ProcedureExecutor:
                     )
                 )
         value = normalize_canonical(outcome.value())
-        state.node_summaries[node.node_id] = extract_summary(outcome)
+        record_summary(state.node_summaries, node.node_id, lambda: extract_summary(outcome))
         state.observe_items(len(outcome.held), f"extract:{node.node_id}", "results")
         state.outputs[node.as_] = value
         if outcome.complete_when_result is not None:
@@ -4222,17 +4230,27 @@ class ProcedureExecutor:
         *,
         outputs: dict[str, CanonicalValue],
         state: _RunState,
+        rows_in: list[int | None] | None = None,
     ) -> tuple[CanonicalValue, bool]:
-        """One closed transform over ``outputs``: its value, and whether it is complete."""
+        """One closed transform over ``outputs``: its value, and whether it is complete.
+
+        ``rows_in``, when given, receives the row count of each record input as
+        the transform resolved it (a length read, never a second resolution).
+        """
+
+        record_inputs = () if rows_in is None else _record_inputs(spec)
 
         def resolve(reference: object) -> object:
-            return _resolve_node_template(
+            resolved = _resolve_node_template(
                 reference,
                 node_id=node_id,
                 input_payload=state.input_payload,
                 parameters=state.parameters,
                 outputs=outputs,
             )
+            if rows_in is not None and any(reference is item for item in record_inputs):
+                rows_in.append(row_count(resolved))
+            return resolved
 
         try:
             return apply_closed_transform(
@@ -4258,28 +4276,21 @@ class ProcedureExecutor:
     ) -> None:
         """One closed transform over records: typed, three-valued, completeness carried."""
 
+        rows_in: list[int | None] = []
         value, complete = self._apply_closed(
             node.node_id,
             node.transform_kind,
             node.spec,
             outputs=state.outputs,
             state=state,
+            rows_in=rows_in,
         )
         aliases = _referenced_aliases(node.spec)
         state.outputs[node.as_] = value
-        state.node_summaries[node.node_id] = transform_summary(
-            node.transform_kind,
-            (
-                _resolve_node_template(
-                    reference,
-                    node_id=node.node_id,
-                    input_payload=state.input_payload,
-                    parameters=state.parameters,
-                    outputs=state.outputs,
-                )
-                for reference in _record_inputs(node.spec)
-            ),
-            value,
+        record_summary(
+            state.node_summaries,
+            node.node_id,
+            lambda: transform_summary(node.transform_kind, rows_in, value),
         )
         state.completeness.mark(
             node.as_,
@@ -4779,11 +4790,16 @@ class ProcedureExecutor:
             state=state,
             records=records,
         )
-        state.node_summaries[node.node_id] = claims_summary(
-            expanded.changes,
-            expanded.diagnostics,
-            downgraded=state.completeness.downgraded - downgraded_before,
-            delivery=state.claims_deliveries.get(node.node_id, "empty"),
+        downgraded = state.completeness.downgraded - downgraded_before
+        record_summary(
+            state.node_summaries,
+            node.node_id,
+            lambda: claims_summary(
+                expanded.changes,
+                expanded.diagnostics,
+                downgraded=downgraded,
+                delivery=state.claims_deliveries.get(node.node_id, "empty"),
+            ),
         )
 
     def _inbox_items(
@@ -5167,8 +5183,10 @@ class ProcedureExecutor:
         unposted = 0
         if truncation is not None:
             unposted = int(cast(int, truncation["selected"])) - int(cast(int, truncation["posted"]))
-        state.node_summaries[node.node_id] = EgressRunSummary(
-            kind=node.kind, emitted=emitted, unposted=unposted
+        record_summary(
+            state.node_summaries,
+            node.node_id,
+            lambda: EgressRunSummary(kind=node.kind, emitted=emitted, unposted=unposted),
         )
 
     def _deliver_terminal_egress(
@@ -6116,7 +6134,10 @@ class ProcedureExecutor:
                 },
             )
             if verdict:
-                state.node_summaries[node.node_id] = RepeatRunSummary(attempts=attempt)
+                used = attempt
+                record_summary(
+                    state.node_summaries, node.node_id, lambda: RepeatRunSummary(attempts=used)
+                )
                 state.outputs[node.as_] = normalize_canonical(
                     {"attempts": attempts, "final": local_outputs}
                 )
