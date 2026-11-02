@@ -86,6 +86,7 @@ SQLValue = str | int | None
 
 if TYPE_CHECKING:
     from cruxible_core.claims.closure import ArtifactDependencyStateV1
+    from cruxible_core.indexes.history.history_index import RetainedRecordReader
 
 
 def utc_microseconds(value: datetime | None) -> int | None:
@@ -1167,9 +1168,21 @@ class TypedStateReader:
         # A bound projection can serve indexed members without any retained
         # change-set records. Instance sources supply a factory, opened only
         # when selected historical facts actually need those records.
-        self.records = records
+        self._records: RetainedRecordReader | Callable[[], RetainedRecordReader] | None = records
         self._member_bytes: dict[str, bytes] = {}
         self.work = {"members_read": 0, "source_bytes": 0, "owners_selected": 0}
+
+    @property
+    def records(self) -> RetainedRecordReader | None:
+        """Resolve the shared reader lazily, never expose its zero-argument factory.
+
+        Claim-history consumers expect a reader, as selected-facts consumers
+        do. Opening it here preserves deferred creation and the instance's
+        verified-record caches for both paths.
+        """
+        if callable(self._records):
+            self._records = self._records()
+        return self._records
 
     def member_bytes(self, path: str) -> bytes:
         self.prefetch_members((path,))
@@ -1482,9 +1495,6 @@ class TypedStateReader:
         self.prefetch_members(paths)
         if self.history is not None:
             record_reader = self.records
-            if callable(record_reader):
-                record_reader = record_reader()
-                self.records = record_reader
             assert record_reader is not None
             selected = frozenset(paths)
             with self.history() as history:

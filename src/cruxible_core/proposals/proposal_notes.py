@@ -14,6 +14,7 @@ from cruxible_client.contracts.attestations import ApprovalSubmission
 from cruxible_client.contracts.canonical import ProposalDigest, canonical_bytes, canonical_digest
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.proposal_models import (
+    OriginatingLine,
     ProposalAdmissionRecord,
     ProposalAdmissionRequest,
     ProposalEvaluationRecord,
@@ -29,11 +30,15 @@ def proposal_admission_id(
     candidate_tree_oid: str,
     admitted_at: str,
     limits: ProposalReceiveLimits,
+    originating_line: OriginatingLine | None = None,
 ) -> str:
     return ProposalDigest(
         canonical_digest(
-            "playbill-proposal-admission-v1",
+            "playbill-proposal-admission-v2",
             {
+                "originating_line": (
+                    None if originating_line is None else originating_line.model_dump(mode="json")
+                ),
                 "actor_id": actor_id,
                 "target_ref": request.target_ref,
                 "proposed_base_oid": request.proposed_base_oid,

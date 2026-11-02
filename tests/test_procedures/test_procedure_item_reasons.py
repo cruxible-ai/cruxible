@@ -30,7 +30,7 @@ from tests.test_procedures import test_procedure_retirement_items as retire
 
 def _review(instance, proposal_id: str):  # type: ignore[no-untyped-def]
     return service_review_playbill_proposal(
-        instance, proposal_id=proposal_id, access=delivery._READER
+        instance, proposal_id=proposal_id, access=delivery._READER, detail=True
     )
 
 
@@ -140,7 +140,6 @@ def test_accepted_manual_revision_does_not_use_withdrawn_procedure_reason(
     tmp_path: Path,
 ) -> None:
     """A withdrawn Procedure proposal sharing the accepted candidate attributes nothing."""
-
 
     instance, owner, root, line, claim_id = retire._proposed_world(tmp_path)
     (root / delivery.fixtures.RELATIVE_PATH).write_bytes(

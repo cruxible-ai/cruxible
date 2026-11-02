@@ -86,6 +86,10 @@ from cruxible_client.errors import (
 )
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
+_PROPOSAL_REVIEW_RESPONSE: TypeAdapter[contracts.ProposalReviewResponse] = TypeAdapter(
+    contracts.ProposalReviewResponse
+)
+
 _CLAIM_TYPE_MIGRATION_RESPONSE: TypeAdapter[contracts.ClaimTypeMigrationResponse] = TypeAdapter(
     contracts.ClaimTypeMigrationResponse
 )
@@ -990,14 +994,28 @@ class CruxibleClient:
         instance_id: str,
         proposal_id: str,
         *,
-        include_body: bool = False,
+        include_body: bool | None = None,
         workspace_observation: Mapping[str, Any] | None = None,
         item_reasons_after: str | None = None,
         item_reasons_limit: int | None = None,
-    ) -> contracts.ProposalReview:
+        detail: bool = False,
+        summary_after: str | None = None,
+        summary_group: str | None = None,
+        rows_after: str | None = None,
+        rows_limit: int = 5,
+        groups_limit: int = 5,
+        findings_after: str | None = None,
+    ) -> contracts.ProposalReviewResponse:
         response = self._client.post(
             f"/api/v1/{instance_id}/proposals/{proposal_id}/review",
             json={
+                "detail": detail,
+                "summary_after": summary_after,
+                "summary_group": summary_group,
+                "rows_after": rows_after,
+                "rows_limit": rows_limit,
+                "groups_limit": groups_limit,
+                "findings_after": findings_after,
                 "include_body": include_body,
                 "workspace_observation": (
                     None if workspace_observation is None else dict(workspace_observation)
@@ -1006,7 +1024,8 @@ class CruxibleClient:
                 "item_reasons_limit": item_reasons_limit,
             },
         )
-        return self._parse_model(response, contracts.ProposalReview)
+        self._check_error(response)
+        return _PROPOSAL_REVIEW_RESPONSE.validate_json(response.content)
 
     def prepare_approval(
         self,

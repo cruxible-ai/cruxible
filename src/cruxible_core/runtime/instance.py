@@ -1988,6 +1988,25 @@ class PlaybillInstance:
             settled=self._settled_candidate,
         )
 
+    def proposal_review_projection_path(self) -> Path:
+        """The disposable review database, under the validated projection root."""
+        from cruxible_core.indexes.proposal_review import REVIEW_PROJECTION_FILENAME
+
+        return (
+            self._validated_paths(self.root, self.descriptor.storage)["projections"]
+            / REVIEW_PROJECTION_FILENAME
+        )
+
+    def prune_proposal_review(self, candidate_digest: str) -> None:
+        from cruxible_core.indexes.proposal_review import prune_review_projection
+
+        self._housekeeping(
+            "proposal_review",
+            lambda: prune_review_projection(
+                self.proposal_review_projection_path(), candidate_digest
+            ),
+        )
+
     def _settled_candidate(self, candidate_digest: str) -> SettledCandidate | None:
         """A retired accepted candidate, rebuilt from the change-set record its locator names."""
 
@@ -2036,10 +2055,15 @@ class PlaybillInstance:
             history = self._recovered.history
         evidence = self.proposal_evidence()
         if sequences is None:
+            from cruxible_core.indexes.proposal_review import cached_review_candidates
+
             present = [
                 "sha256:" + path.name.removesuffix(".json")
                 for path in evidence.candidates.glob("*.json")
             ]
+            # Startup retention also retires summaries read after the candidate
+            # file was removed. This cold inventory scan never runs per write.
+            present.extend(cached_review_candidates(self.proposal_review_projection_path()))
             with self.accepted_history_reader() as reader:
                 located = (reader.generation_for_candidate(digest) for digest in present)
                 selected: Iterable[int] = sorted(
@@ -2054,6 +2078,7 @@ class PlaybillInstance:
             if record is None or record.candidate_digest is None:
                 continue
             digest = record.candidate_digest
+            self.prune_proposal_review(digest)
             name = digest.removeprefix("sha256:")
             if (
                 not (evidence.candidates / f"{name}.json").exists()

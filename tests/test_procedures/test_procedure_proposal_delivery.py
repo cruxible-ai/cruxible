@@ -631,7 +631,7 @@ def test_a_crash_at_the_proposal_door_recovers_one_proposal_and_publishes_its_re
     assert inspection.proposal.candidate.candidate_digest == egress.candidate_digest
     # The item's reason is recorded with the recovered proposal, whichever side crashed.
     review = service_review_playbill_proposal(
-        instance, proposal_id=egress.proposal_id, access=_READER
+        instance, proposal_id=egress.proposal_id, access=_READER, detail=True
     )
     assert [(item.path, item.reason) for item in review.item_reasons] == [
         (egress.children[0].path, item_template()["rationale"])
@@ -1729,7 +1729,9 @@ def test_readmission_chain_accepts_and_each_link_keeps_the_original_item_reason(
         assert admission.readmits.source_proposal_id == pid
         pid = admission.proposal_id
         assert instance.proposal_evidence().item_reason_operation(admission) == operation
-        review = service_review_playbill_proposal(instance, proposal_id=pid, access=_READER)
+        review = service_review_playbill_proposal(
+            instance, proposal_id=pid, access=_READER, detail=True
+        )
         assert review.item_reason_count == 1
         (item,) = review.item_reasons
         assert (item.path, item.reason, item.run_id, item.terminal) == (
@@ -1783,7 +1785,7 @@ def test_an_item_rationale_is_kept_with_its_claim_through_review_and_acceptance(
     assert egress.proposal_id is not None
     (child,) = egress.children
     review = service_review_playbill_proposal(
-        instance, proposal_id=egress.proposal_id, access=_READER
+        instance, proposal_id=egress.proposal_id, access=_READER, detail=True
     )
     # The change set names the run and its item count; the item's reason is
     # kept with the Claim it explains.

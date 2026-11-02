@@ -150,7 +150,14 @@ class ApprovalRequest(_StrictPlaybillRequest):
 
 
 class ReviewRequest(_StrictPlaybillRequest):
-    include_body: bool = False
+    detail: bool = False
+    summary_after: str | None = None
+    summary_group: str | None = None
+    rows_after: str | None = None
+    rows_limit: int = Field(default=5, ge=1, le=10)
+    groups_limit: int = Field(default=5, ge=1, le=10)
+    findings_after: str | None = None
+    include_body: bool | None = None
     workspace_observation: ReviewWorkspaceObservation | None = None
     # A Procedure proposal's item reasons are paged: the page after this cursor.
     item_reasons_after: str | None = None

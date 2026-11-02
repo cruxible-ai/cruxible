@@ -1336,20 +1336,37 @@ def playbill_review_proposal(
     instance_id: str,
     proposal_id: str,
     *,
-    include_body: bool = False,
+    include_body: bool | None = None,
     workspace_observation: Mapping[str, object] | None = None,
     item_reasons_after: str | None = None,
     item_reasons_limit: int | None = None,
-) -> contracts.ProposalReview:
+    detail: bool = False,
+    summary_after: str | None = None,
+    summary_group: str | None = None,
+    rows_after: str | None = None,
+    rows_limit: int = 5,
+    groups_limit: int = 5,
+    findings_after: str | None = None,
+) -> contracts.ProposalReviewResponse:
     check_permission("cruxible_proposal_review", instance_id=instance_id)
     result = service_review_playbill_proposal(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
-        access=_access(instance_id, include_body=include_body),
+        access=_access(instance_id, include_body=bool(include_body)),
+        include_body=include_body,
         workspace_observation=workspace_observation,
+        detail=detail,
+        summary_after=summary_after,
+        summary_group=summary_group,
+        rows_after=rows_after,
+        rows_limit=rows_limit,
+        groups_limit=groups_limit,
+        findings_after=findings_after,
         item_reasons_after=item_reasons_after,
         **({} if item_reasons_limit is None else {"item_reasons_limit": item_reasons_limit}),
     )
+    if isinstance(result, contracts.ProposalReviewSummary):
+        return result
     return contracts.ProposalReview.model_validate(result.model_dump(mode="json"))
 
 

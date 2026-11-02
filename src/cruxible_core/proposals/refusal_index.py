@@ -110,6 +110,8 @@ CREATE TABLE IF NOT EXISTS proposal_claim_keys (
  match_key TEXT NOT NULL, producer TEXT,
  PRIMARY KEY(proposal_id,path)
 ) STRICT;
+CREATE INDEX IF NOT EXISTS refusal_review_page
+ ON refusals(match_key,decided_at_us,kind,source_id,claim_id);
 CREATE TABLE IF NOT EXISTS proposals_keyed (proposal_id TEXT PRIMARY KEY) STRICT;
 CREATE TABLE IF NOT EXISTS line_settled_refusals (
  line_identity TEXT NOT NULL, line_spec_digest TEXT NOT NULL,
@@ -1075,6 +1077,44 @@ class RefusalIndex:
         return self._recovering("settled_refusals", run, cast(_SettledRead, ({}, None)))
 
     # -- lookups ------------------------------------------------------------
+
+    @contextmanager
+    def review_receipts(
+        self, instance: PlaybillInstance, proposal_id: str, *, limit: int = 2
+    ) -> Iterator[
+        tuple[
+            Callable[[ClaimArtifact], tuple[tuple[PriorRefusalReceipt, ...], bool]],
+            PriorRefusalCoverage | None,
+        ]
+    ]:
+        """Bounded receipt probes for a streaming cold proposal-review build.
+
+        The caller already has each changed Claim. No candidate-wide key list
+        or full receipt collection is constructed. Coverage is the snapshot
+        used by every probe; a further page remains available in --detail.
+        """
+        evidence = instance.proposal_evidence()
+        admitted_us = _micros(evidence.read_admission(proposal_id).admitted_at)
+        with self.current(instance) as connection:
+
+            def lookup(claim: ClaimArtifact) -> tuple[tuple[PriorRefusalReceipt, ...], bool]:
+                self.key_probes += 1
+                rows = connection.execute(
+                    "SELECT kind,source_id,claim_id,proposal_id,decided_by,decided_at,"
+                    "reason_code,rationale,producer FROM refusals "
+                    "WHERE match_key=? AND decided_at_us<? AND source_id<>? "
+                    "ORDER BY decided_at_us,kind,source_id,claim_id LIMIT ?",
+                    (claim_refusal_key(instance, claim), admitted_us, proposal_id, limit + 1),
+                ).fetchall()
+                self.rows_read += len(rows)
+                receipts = tuple(
+                    receipt
+                    for row in rows[:limit]
+                    if (receipt := _receipt(evidence, row, proposal_id=proposal_id)) is not None
+                )
+                return receipts, len(rows) > limit
+
+            yield lookup, self._coverage
 
     def _proposal_keys(
         self,

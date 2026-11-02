@@ -1018,9 +1018,10 @@ class PathFacts:
         colliding = self.colliding
         depths = dict(self.depths)
         folded = self.folded
-        # One delta may add many siblings. Accumulate their shared prefixes in
-        # the delta, then copy each persistent-map path once per changed prefix.
-        respelled: dict[str, _Spellings] = {}
+        # Shared directory prefixes change once per edited path, but need only
+        # one persistent path-copy per distinct prefix in this change. This
+        # staging map grows with edited prefixes, never the instance inventory.
+        changed_folded: dict[str, _Spellings] = {}
         for path, new in edits.items():
             old = rows.get(path)
             if old is None and new is None:
@@ -1036,11 +1037,13 @@ class PathFacts:
             depth = path.count("/") + 1
             depths[depth] = depths.get(depth, 0) + sign
             for key, spelling in _prefixes(path):
-                before = respelled.get(key, folded.get(key, ()))
-                respelled[key] = _respelled(before, spelling, sign)
-        for key, after in respelled.items():
-            before = folded.get(key, ())
-            colliding += (len(after) > 1) - (len(before) > 1)
+                before = changed_folded.get(key)
+                if before is None:
+                    before = folded.get(key, ())
+                after = _respelled(before, spelling, sign)
+                colliding += (len(after) > 1) - (len(before) > 1)
+                changed_folded[key] = after
+        for key, after in changed_folded.items():
             folded = folded.set(key, after) if after else folded.delete(key)
         return PathFacts(content, noncanonical, colliding, depths, folded)
 

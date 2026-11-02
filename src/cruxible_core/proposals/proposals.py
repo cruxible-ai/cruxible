@@ -185,6 +185,7 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.procedures.windows import CaptureEventWindow
 from cruxible_client.contracts.proposal_models import (
     AuthenticatedActor,
+    OriginatingLine,
     ProposalAdmissionRecord,
     ProposalAdmissionRequest,
     ProposalEvaluationRecord,
@@ -5628,6 +5629,7 @@ class ProposalService:
         readmits: ProposalReadmissionLink | None = None,
         confirm_head: Callable[[str], None] | None = None,
         procedure_operation: str | None = None,
+        originating_line: OriginatingLine | None = None,
         handoff: SettlementHandoff | None = None,
     ) -> ProposalResult:
         """Admit one candidate tree under the actor's ref.
@@ -5765,6 +5767,7 @@ class ProposalService:
                 candidate_tree_oid=evaluated_tree_oid or tree_oid,
                 admitted_at=timestamp,
                 limits=self.receive_limits,
+                originating_line=originating_line,
             )
             admission = ProposalAdmissionRecord(
                 proposal_id=proposal_id,
@@ -5781,6 +5784,7 @@ class ProposalService:
                 settle_submission=settle_submission,
                 readmits=readmits,
                 procedure_operation=procedure_operation,
+                originating_line=originating_line,
             )
             candidate_value = outcome.candidate.candidate_digest if outcome.candidate else None
             try:

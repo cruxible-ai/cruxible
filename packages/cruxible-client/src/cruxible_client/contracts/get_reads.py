@@ -35,6 +35,7 @@ from cruxible_client.contracts.operational_reads import (
 )
 from cruxible_client.contracts.procedures.authored import ProcedureSpec
 from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
+from cruxible_client.contracts.proposal_models import OriginatingLine
 from cruxible_client.contracts.query.authored import QuerySpecInput
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.read_values import ClaimLine as ClaimLine
@@ -501,6 +502,7 @@ class GetProposalRefusal(_StrictGetModel):
 
 
 class GetProposalCard(_StrictGetModel):
+    originating_line: OriginatingLine | None = Field(default=None, exclude_if=_omit_none)
     proposal: str
     status: str
     # Retained partial evidence: which records are missing, as the list says.

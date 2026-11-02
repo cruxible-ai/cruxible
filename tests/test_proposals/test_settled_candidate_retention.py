@@ -39,7 +39,9 @@ def _write(instance: PlaybillInstance, *changes: dict[str, Any], **options: Any)
 def _views(instance: PlaybillInstance, proposal_id: str) -> tuple[Any, ...]:
     return (
         service_inspect_playbill_proposal(instance, proposal_id=proposal_id),
-        service_review_playbill_proposal(instance, proposal_id=proposal_id, access=ACCESS),
+        service_review_playbill_proposal(
+            instance, proposal_id=proposal_id, access=ACCESS, detail=True
+        ),
         service_playbill_proposal_status(instance, proposal_id=proposal_id),
         service_list_playbill_proposals(instance),
     )

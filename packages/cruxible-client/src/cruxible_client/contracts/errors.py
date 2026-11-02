@@ -555,6 +555,12 @@ class ProposalIntegrityError(CruxibleError):
     """Persisted proposal or candidate evidence failed deterministic verification."""
 
 
+class ProposalReviewOptionsInvalid(FormatError):
+    """A detailed-review option was supplied for a summary request."""
+
+    error_code = "cruxible.proposal.review_options_invalid"
+
+
 class ProposalEvaluationIntegrityError(ProposalIntegrityError):
     """Daemon-created proposal evaluation bytes failed their own typed contract."""
 

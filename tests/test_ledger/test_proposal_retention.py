@@ -61,11 +61,11 @@ def test_archive_retains_closed_candidates_while_accepted_and_active_work_surviv
     assert rows[active.admission.proposal_id].status == "open"
     access = BodyAccessContext(principal_id="owner", can_read_body=True)
     review = service_review_playbill_proposal(
-        reopened, proposal_id=active.admission.proposal_id, access=access
+        reopened, proposal_id=active.admission.proposal_id, access=access, detail=True
     )
     assert review.candidate_digest == active.candidate.candidate_digest
     closed_review = service_review_playbill_proposal(
-        reopened, proposal_id=closed.admission.proposal_id, access=access
+        reopened, proposal_id=closed.admission.proposal_id, access=access, detail=True
     )
     assert closed_review.candidate_digest == closed.candidate.candidate_digest
     reopened._reconcile_proposal_review_refs()
@@ -97,4 +97,5 @@ def test_missing_active_content_is_integrity_failure_not_expiration(tmp_path, cl
             instance,
             proposal_id=proposal.admission.proposal_id,
             access=BodyAccessContext(principal_id="owner", can_read_body=True),
+            detail=True,
         )

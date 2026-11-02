@@ -311,16 +311,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:3f684414633e61fdfa5a6472d07e87d0cd0dccac48a4f0b99991be8fe09c4ec7"
+    expected = "sha256:ea86ed754f352c9dc58025cc6625ce9b3a3b42915664e2d380dde531838a4ac5"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 51,
+            "semantic_revision": 52,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "claims-absence-run-bound-v1",
+            "revision_name": "claims-absence-review-summary-v1",
         },
     )
     assert computed == expected
@@ -365,12 +365,10 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "claims-absence-run-bound-v1"
-    assert compiler_revision_label(CURRENT_COMPILER) == "claims-absence-run-bound-v1"
+    assert CURRENT_COMPILER_REVISION == "claims-absence-review-summary-v1"
+    assert compiler_revision_label(CURRENT_COMPILER) == "claims-absence-review-summary-v1"
     for earlier_digest in (
-        # Revision 50: witnessed absence before run-bound proofs and direct enumeration.
-        "sha256:6212bd2e702d476ef3f729682962d92e6394910921d34b6afd90ad9e4a08351c",
-        # Revision 49: extraction lineage, before witnessed absence.
+        # Revision 49: before proposal Line attribution entered admission identity.
         "sha256:fad4443891a10bab14a88adaf41c70db7086e6f8017c4836b2480fb92fdca046",
         # Revision 48: native Claim prose closure, before D-R14–16.
         "sha256:bb51555f8355fd2d3b960c259ced2217db6298d2921312ef4381fbc97c9dbaaa",

@@ -168,23 +168,28 @@ def test_an_accepted_record_over_the_file_limit_does_not_block_later_proposals()
         validate_proposal_tree(fork.snapshot(), limits=limits, base_tree=root)
 
 
-def test_one_delta_updates_each_shared_prefix_once(monkeypatch) -> None:
+@pytest.mark.parametrize("population", [100, 1000])
+def test_shared_prefix_updates_copy_each_changed_prefix_once(population, monkeypatch):
     from cruxible_client.contracts.persistent import PersistentMap
 
-    root = SnapshotTree({"subjects/work/old.json": b"old"})
+    rows = {f"subjects/demo.kind/existing-{i}.json": b"{}" for i in range(population)}
+    root = SnapshotTree(rows)
     facts = path_facts(root)
-    updates = []
+    edits = {f"subjects/demo.kind/new-{i}.json": b"new" for i in range(10)}
+    copied = []
     original = PersistentMap.set
 
-    def observed(self, key, value):
-        updates.append(key)
+    def counted(self, key, value):
+        copied.append(key)
         return original(self, key, value)
 
-    monkeypatch.setattr(PersistentMap, "set", observed)
-    edits = {f"subjects/work/new-{index}.json": b"new" for index in range(100)}
-    result = facts.advanced(root._rows, edits)
-    assert updates.count("subjects") == 1
-    assert updates.count("subjects/work") == 1
-    assert len(updates) == 102
-    fresh = path_facts(SnapshotTree({**dict(root.items()), **edits}))
-    assert result == fresh
+    monkeypatch.setattr(PersistentMap, "set", counted)
+    advanced = facts.advanced(root._rows, edits)
+    # Two shared directories and ten added leaves, independent of held rows.
+    assert len(copied) == len(set(copied)) == 12
+    fresh = path_facts(SnapshotTree({**rows, **edits}))
+    assert advanced.content_bytes == fresh.content_bytes
+    assert advanced.noncanonical == fresh.noncanonical
+    assert advanced.colliding == fresh.colliding
+    assert advanced.depths == fresh.depths
+    assert dict(advanced.folded.items()) == dict(fresh.folded.items())

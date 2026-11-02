@@ -733,15 +733,15 @@ def test_an_authoring_intent_written_before_retires_is_refused_with_its_repair(
 def test_an_admission_written_before_the_record_ceiling_reads_and_rewrites(
     tmp_path: Path,
 ) -> None:
-    """An idempotent re-submission must still be a no-op across the upgrade.
+    """Receive bounds stay byte-stable in an idempotent current-format admission.
 
     An admission is immutable: the exclusive write answers a repeat with a
     no-op when the bytes are identical and a refusal when they are not, and the
     read proves the stored bytes are the canonical ones. Both compare against a
-    re-render, so adding a limit key with a default would have made every
-    pre-upgrade admission unreadable and every idempotent re-submission of one
-    trip the occupancy refusal. What an admission records is what receive
-    enforced, so that is what its bytes hold.
+    re-render, so advertised record ceilings must never appear as defaulted
+    receive-bound keys. The frozen fixture's retired tag and identity are
+    explicitly rebound below; this does not install a reader for that format.
+    What the admission records is what receive enforced.
     """
 
     records = _pre_hotfix_records()
@@ -749,6 +749,32 @@ def test_an_admission_written_before_the_record_ceiling_reads_and_rewrites(
     raw = records["proposal_admission"]
     assert isinstance(proposal_id, str)
     assert isinstance(raw, str)
+    # The fixture exercises receive bounds versus advertised record ceilings.
+    # Its retired admission-id domain is deliberately not a current reader;
+    # rebind that dev-only identity, preserving every receive-bound byte/key.
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_client.contracts.proposal_models import ProposalAdmissionRecord
+    from cruxible_core.proposals.proposal_notes import proposal_admission_id
+
+    # The current admission record also names the v2 domain; v1 has no reader.
+    payload = json.loads(raw)
+    payload["tag"] = "playbill-proposal-admission-v2"
+    fixture = ProposalAdmissionRecord.model_validate(payload)
+    proposal_id = proposal_admission_id(
+        actor_id=fixture.actor_id,
+        request=ProposalAdmissionRequest(
+            target_ref=fixture.target_ref,
+            proposed_base_oid=fixture.proposed_base_oid,
+            source_compilation_digest=fixture.source_compilation_digest,
+            claim_type_expansions=fixture.claim_type_expansions,
+        ),
+        candidate_commit_oid=fixture.candidate_commit_oid,
+        candidate_tree_oid=fixture.candidate_tree_oid,
+        admitted_at=fixture.admitted_at,
+        limits=fixture.limits,
+    )
+    payload["proposal_id"] = proposal_id
+    raw = (canonical_bytes(payload) + b"\n").decode("utf-8")
     assert set(json.loads(raw)["limits"]) == set(PROPOSAL_RECEIVE_BOUND_KEYS)
     root = tmp_path / "exhaust"
     root.mkdir()

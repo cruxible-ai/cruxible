@@ -489,7 +489,8 @@ A **proposal** is a frozen candidate: the exact change, evaluated against the
 accepted base it names. It is not accepted state. A refused proposal is kept
 with its diagnostics, and `get PROPOSAL_ID` reads any proposal, its status, and
 for a refusal the code, message and repair. `proposal review` shows the
-candidate and how to diff it with plain Git.
+candidate as a paged, factored summary; `proposal review --detail` shows how
+to diff it with plain Git.
 
 The instance's **approval policy** (`ApprovalPolicy:instance`) decides how much
 review a change needs. It is either `self_approval_allowed`, where an author

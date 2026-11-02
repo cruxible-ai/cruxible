@@ -334,6 +334,7 @@ def _recompile_proposal(
                     candidate_tree=inputs.tree,
                     timestamp=inputs.timestamp,
                     readmits=link,
+                    originating_line=source.admission.originating_line,
                     authorize=authorize,
                     confirm_head=confirm_head,
                     settle_submission=inputs.settle_submission,
