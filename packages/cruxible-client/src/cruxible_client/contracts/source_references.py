@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import re
+from urllib.parse import parse_qsl, urlsplit
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -181,6 +182,36 @@ _LOCATOR_FIELDS_BY_COORDINATE_TYPE: dict[str, frozenset[str]] = {
 }
 
 
+def _secret_name(name: str) -> bool:
+    lowered = name.casefold().replace("-", "_")
+    return lowered in _SECRET_KEYS or any(lowered.endswith(f"_{secret}") for secret in _SECRET_KEYS)
+
+
+def _reject_url_credentials(value: str, *, location: str) -> None:
+    """Refuse (never rewrite) a coordinate URL carrying credentials.
+
+    Userinfo (``user:pass@host``) and any query parameter named by the secret
+    vocabulary (``api_key``, ``token``, ``*_secret`` ...) refuse: a retained
+    coordinate is metadata anyone with read access sees.
+    """
+
+    try:
+        parts = urlsplit(value)
+        parameters = parse_qsl(parts.query, keep_blank_values=True)
+    except ValueError as exc:
+        raise ValueError(f"source coordinate URL does not parse at {location}") from exc
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        raise ValueError(f"source coordinate URL must be absolute http(s) at {location}")
+    if "@" in parts.netloc or parts.username is not None or parts.password is not None:
+        raise ValueError(f"source coordinate URLs cannot carry credentials at {location}")
+    for name, _value in parameters:
+        if _secret_name(name):
+            raise ValueError(
+                f"source coordinate URLs cannot carry credentials at {location} "
+                f"(query parameter {name!r})"
+            )
+
+
 def _reject_secret_or_locator(
     value: object,
     *,
@@ -192,9 +223,7 @@ def _reject_secret_or_locator(
     if isinstance(value, dict):
         for key, item in value.items():
             lowered = key.casefold().replace("-", "_")
-            if lowered in _SECRET_KEYS or any(
-                lowered.endswith(f"_{secret}") for secret in _SECRET_KEYS
-            ):
+            if _secret_name(key):
                 raise ValueError(f"secret-bearing source field is forbidden at {location}.{key}")
             _reject_secret_or_locator(
                 item,
@@ -212,8 +241,8 @@ def _reject_secret_or_locator(
         lowered = value.casefold()
         if lowered.startswith("bearer ") or "-----begin private key-----" in lowered:
             raise ValueError(f"source coordinates/selectors cannot carry secrets at {location}")
-        if locator and "@" in value.partition("://")[2].partition("/")[0]:
-            raise ValueError(f"source coordinate URLs cannot carry credentials at {location}")
+        if locator:
+            _reject_url_credentials(value, location=location)
         if "://" in value and not quoted_source and not locator:
             raise ValueError(
                 f"source coordinates/selectors cannot carry locators at {location}; an "
