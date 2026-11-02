@@ -8,8 +8,11 @@ for CI's results) and install the runtime from it::
 
     uv pip install "$CRUXIBLE_PROVIDERS_CHECKOUT/packages/cruxible-provider-runtime"
 
-Without the variable these tests skip. With it, a missing checkout or runtime
-is a failure, never a skip. The provider wheels are built from the checkout
+Without the variable these tests skip locally; CI sets
+``CRUXIBLE_PROVIDERS_REQUIRED=1``, under which an unset variable is a failure
+too, so the gate those tests form (the end-to-end skeleton among them) can never
+silently skip. With the variable, a missing checkout or runtime is a failure,
+never a skip. The provider wheels are built from the checkout
 once per test session (shared by xdist workers).
 """
 
@@ -24,6 +27,7 @@ from pathlib import Path
 import pytest
 
 CHECKOUT_ENV = "CRUXIBLE_PROVIDERS_CHECKOUT"
+REQUIRED_ENV = "CRUXIBLE_PROVIDERS_REQUIRED"
 # The provider distributions the installation tests transfer or index.
 WHEEL_PACKAGES = ("runtime", "workspace", "web", "noop")
 
@@ -39,13 +43,25 @@ def provider_checkout_path() -> Path | None:
     return Path(value).resolve() if value else None
 
 
-def _require_checkout() -> Path:
+def require_provider_checkout() -> Path:
+    """The checkout; a local run without one skips, a run that requires one fails."""
+
     checkout = provider_checkout_path()
     if checkout is None:
-        pytest.skip(
+        message = (
             f"set {CHECKOUT_ENV} to a cruxible-providers checkout to run the "
             "provider-runtime tests (tests/support/provider_checkout.py)"
         )
+        if os.environ.get(REQUIRED_ENV):
+            pytest.fail(f"{REQUIRED_ENV} is set: {message}")
+        pytest.skip(message)
+    if not (checkout / "packages").is_dir():
+        pytest.fail(f"{CHECKOUT_ENV}={checkout} is not a cruxible-providers checkout")
+    return checkout
+
+
+def _require_checkout() -> Path:
+    checkout = require_provider_checkout()
     if not (checkout / "packages/cruxible-provider-runtime").is_dir():
         pytest.fail(f"{CHECKOUT_ENV}={checkout} is not a cruxible-providers checkout")
     try:

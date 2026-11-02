@@ -77,7 +77,7 @@ from tests.support.operation_world import (
 )
 from tests.support.procedures import boundary_contract, contract_files, procedure_limits
 from tests.support.procedures import procedure_spec as build_spec
-from tests.support.provider_checkout import provider_checkout_path
+from tests.support.provider_checkout import require_provider_checkout
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 EXCHANGES = {
@@ -128,9 +128,7 @@ ACCESS = BodyAccessContext(principal_id="skeleton", can_read_body=True)
 def _web_fetch() -> Any:
     """The providers checkout's own ``web.fetch`` adapter (never a copy of it)."""
 
-    checkout = provider_checkout_path()
-    if checkout is None:
-        pytest.skip("set CRUXIBLE_PROVIDERS_CHECKOUT: the skeleton runs the real web.fetch")
+    checkout = require_provider_checkout()  # the skeleton runs the real web.fetch
     package = checkout / "packages/cruxible-provider-web/src/cruxible_provider_web"
     if not package.is_dir():
         pytest.fail(f"{checkout} carries no cruxible-provider-web package")
@@ -452,9 +450,7 @@ def _install(
 def skeleton_world(tmp_path: Path) -> Any:
     from tests.core_support._support import initialize_local
 
-    checkout = provider_checkout_path()
-    if checkout is None:
-        pytest.skip("set CRUXIBLE_PROVIDERS_CHECKOUT: the skeleton runs the real web.fetch")
+    checkout = require_provider_checkout()  # the skeleton runs the real web.fetch
     instance, _owner = initialize_local(tmp_path)
     members, build = _web_provider_files(checkout)
     kinds = (
@@ -582,13 +578,31 @@ def _assert_payload_capture(instance: Any, capture_digest: str, origin: bytes, u
     assert envelope.source.coordinate_type == "http-response-v1"
 
 
-def _extracted(claim: Any, capture_digest: str) -> ExtractedBasis:
+def pinned_extract_digest(instance: Any, procedure: str, node_id: str) -> str:
+    """The digest of the accepted Procedure's own extract node, as receipts cite it."""
+
+    from cruxible_client.contracts.procedures.artifacts import parse_procedure, procedure_path
+    from cruxible_client.contracts.procedures.extract import extract_spec_digest
+    from cruxible_client.contracts.procedures.models import ExtractNode
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = procedure_path(procedure)
+    accepted = parse_procedure(tree[path], path=path)
+    (node,) = (
+        item
+        for item in accepted.definition.nodes
+        if isinstance(item, ExtractNode) and item.node_id == node_id
+    )
+    return extract_spec_digest(node)
+
+
+def _extracted(claim: Any, capture_digest: str, spec_digest: str) -> ExtractedBasis:
     receipt = claim.backing.procedure_evidence
     assert receipt.law == "claim-evidence-v2"
     value = receipt.value
     assert isinstance(value, ExtractedBasis), value
     assert value.capture_digest == capture_digest
-    assert value.extract_spec_digest.startswith("sha256:")
+    assert value.extract_spec_digest == spec_digest
     assert value.record_locator
     return value
 
@@ -667,6 +681,7 @@ def test_kev_and_epss_flow_from_recorded_bytes_to_claims(tmp_path: Path) -> None
         *((_cve(c), DATE_ADDED) for c in listed),
     }
     capture = claims[(_cve(listed[0]), DATE_ADDED)].backing.procedure_evidence.value.capture_digest
+    kev_spec_digest = pinned_extract_digest(instance, "test.kev-skeleton", "entries")
     _assert_payload_capture(instance, capture, replay.body("kev-catalog"), KEV_URL)
     catalog = json.loads(replay.body("kev-catalog"))
     locators = {
@@ -674,7 +689,7 @@ def test_kev_and_epss_flow_from_recorded_bytes_to_claims(tmp_path: Path) -> None
     }
     for cve in listed:
         date = claims[(_cve(cve), DATE_ADDED)]
-        receipt = _extracted(date, capture)
+        receipt = _extracted(date, capture, kev_spec_digest)
         assert receipt.record_locator == locators[cve]
         assert receipt.field_path.endswith("/dateAdded")
         record = catalog["vulnerabilities"][int(locators[cve].rsplit("/", 1)[1])]
@@ -682,12 +697,13 @@ def test_kev_and_epss_flow_from_recorded_bytes_to_claims(tmp_path: Path) -> None
         positive = claims[(_cve(cve), LISTED_IN)]
         assert positive.statement.object.kind == "subject"
         # A literal keeps the record's extracted lineage (D-R4).
-        assert _extracted(positive, capture).record_locator == locators[cve]
+        assert _extracted(positive, capture, kev_spec_digest).record_locator == locators[cve]
     unlisted = claims[(_cve(UNLISTED), LISTED_IN)]
     assert unlisted.statement.object.kind == "none"
     witnessed = unlisted.backing.procedure_evidence
     assert isinstance(witnessed.value, CaptureBasis) and witnessed.value.capture_digest == capture
     assert witnessed.absence is not None and witnessed.absence.capture == capture
+    assert witnessed.absence.extract_spec == kev_spec_digest
     assert witnessed.absence.logical_source == "cisa.kev.catalog"
     # Every change is inside the grant: the run settles (all or nothing).
     (egress,) = first.terminal_egress
@@ -728,7 +744,11 @@ def test_kev_and_epss_flow_from_recorded_bytes_to_claims(tmp_path: Path) -> None
     _assert_payload_capture(instance, epss_capture, replay.body("epss-api"), EPSS_URL)
     for index, record in enumerate(answer["data"]):
         score = scores[(_cve(record["cve"]), SCORE)]
-        receipt = _extracted(score, epss_capture)
+        receipt = _extracted(
+            score,
+            epss_capture,
+            pinned_extract_digest(instance, "test.epss-skeleton", "scores"),
+        )
         assert receipt.record_locator == f"/data/{index}"
         assert receipt.field_path.endswith("/epss")
         assert float(score.statement.object.value) == float(record["epss"])
