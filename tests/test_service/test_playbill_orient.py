@@ -85,7 +85,7 @@ def test_default_orient_names_each_kind_with_its_predicates_as_values(seeded) ->
     slug, predicate = detail.predicates
     assert slug.name == "slug" and slug.predicate == f"{SUBJECT_KIND}.slug"
     assert predicate.name == "status" and predicate.predicate == PREDICATE
-    assert (predicate.cardinality, predicate.type) == ("one", "enum")
+    assert (predicate.cardinality, predicate.type) == ("one", 'enum["blocked", "done", "ready"]')
     assert predicate.members == ("blocked", "done", "ready")
     # Evidence is named by contract identity; the digest the v5 rule carries is not shown.
     assert predicate.evidence == ("playbill.foreign-source.fixture.work-items",)

@@ -14,6 +14,7 @@ from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
 )
+from cruxible_client.contracts.proposal_models import ProposalSettleSubmission
 from cruxible_core.compiler.compiler import current_compiler_coordinate
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.typed_sqlite import insert_members, parse_static_owners
@@ -91,7 +92,8 @@ def projection_factory():
 
 def _request(admission, mandate):
     return _effectful_request(
-        "propose_change_set",
+        "claims",
+        rung=2,
         admission=admission,
         item=_item(PATH),
         target_paths=(PATH,),
@@ -216,6 +218,11 @@ def test_proposal_callback_binds_its_coordinate_without_reading_the_head_tree(
         adapter.deliver(
             request=request,
             admission=admission,
+            settle_submission=ProposalSettleSubmission(
+                mode="fallback",
+                mandate_digest=request.procedure_mandate_digest or _digest("mandate"),
+                fallback_reason="cruxible.settle.capped_by_line_requested_rung",
+            ),
             candidate_tree={},
             changed_paths=(PATH,),
             accepted_mandates={request.procedure_mandate_digest: mandate},

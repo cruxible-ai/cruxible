@@ -164,7 +164,7 @@ def _claim_types() -> dict[ArtifactIdentity, ScopedClaimType]:
         EXPOSURE: ScopedClaimType(
             identity=EXPOSURE,
             artifact_digest=EXPOSURE_DIGEST,
-            object_kind="literal",
+            value={"kind": "string", "max_len": 256},
             allowed_subject_kinds=(ASSET,),
         )
     }

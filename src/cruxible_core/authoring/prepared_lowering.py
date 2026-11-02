@@ -14,7 +14,6 @@ from typing import Callable
 
 from cruxible_client.contracts.authoring.models import (
     ApprovalPolicyAuthoringPayload,
-    AuthoringExactContentObject,
     AuthoringIntent,
     AuthoringPayload,
     ChangeSetAuthoringPayload,
@@ -84,8 +83,6 @@ def _generated_bodies(payload: AuthoringPayload, lowered: LoweredAuthoring) -> t
             continue
         assert isinstance(member.source, SelfSourceBody)
         digests.add("sha256:" + hashlib.sha256(member.source.content).hexdigest())
-        if isinstance(member.statement.object, AuthoringExactContentObject):
-            digests.add("sha256:" + hashlib.sha256(member.statement.object.content).hexdigest())
     resolved = lowered.resolved_authoring
     rows = resolved.get("members", [resolved])
     assert isinstance(rows, list)

@@ -28,14 +28,12 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
-from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.subject_kinds import KeyClaimTypeShape, key_claim_type_problem
 from cruxible_client.contracts.temporal import parse_iso_duration_microseconds
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeEvidenceRulesRequired,
     ClaimTypeInputIncomplete,
     ClaimTypeInputRecord,
-    ClaimTypeNumberSchemaIntegerOnly,
     claim_type_input_defaults,
     claim_type_input_template,
     lint_claim_type_input,
@@ -54,8 +52,7 @@ from tests.test_claims.test_claim_type_migrations import _accepted_claim_world, 
 _MINIMAL = {
     "predicate": "catalog.part.price",
     "allowed_subject_kinds": ["catalog.part"],
-    "object_kind": "literal",
-    "literal_schema": {"type": "integer"},
+    "value": "int",
     "cardinality": "one",
 }
 
@@ -110,7 +107,7 @@ def test_defaults_follow_the_stated_role_cardinality_and_sources() -> None:
 
 def test_a_new_claim_type_states_what_no_default_can_fill() -> None:
     with pytest.raises(ClaimTypeInputIncomplete, match="states cardinality"):
-        _lower({"predicate": "catalog.part.price", "object_kind": "literal"})
+        _lower({"predicate": "catalog.part.price", "value": "string{max_len: 256}"})
     with pytest.raises(ClaimTypeEvidenceRulesRequired, match="anticipated_source_ids"):
         _lower({**_MINIMAL, "evidence_requirement": "captured"})
     with pytest.raises(ValueError, match="cannot be null"):
@@ -150,12 +147,9 @@ def test_durations_take_iso_8601_and_store_microseconds() -> None:
         parse_iso_duration_microseconds("30 days")
 
 
-def test_a_number_schema_refuses_at_definition_and_an_integer_lands() -> None:
-    with pytest.raises(ClaimTypeNumberSchemaIntegerOnly, match="type: integer"):
-        _lower({**_MINIMAL, "literal_schema": {"type": "number"}})
-    with pytest.raises(ClaimTypeNumberSchemaIntegerOnly):
-        _lower({**_MINIMAL, "literal_schema": {"type": "array", "items": {"type": "number"}}})
-    assert _lower(_MINIMAL).literal_schema == {"type": "integer"}
+def test_native_number_and_integer_types_land_without_schema_translation() -> None:
+    assert _lower({**_MINIMAL, "value": "number"}).value.kind == "number"
+    assert _lower(_MINIMAL).value.kind == "int"
 
 
 def test_a_rule_names_a_reserved_contract_by_either_spelling() -> None:
@@ -199,7 +193,7 @@ def test_the_template_is_minimal_and_keys_a_subject_kind() -> None:
         predicate=template.predicate,
         live=True,
         artifact_format=lowered.artifact_format,
-        object_kind=lowered.object_kind,
+        object_kind="literal",
         cardinality=lowered.cardinality,
         allowed_subject_kinds=lowered.allowed_subject_kinds,
     )
@@ -355,8 +349,8 @@ def test_only_predicate_and_cardinality_are_required() -> None:
     minimal = {"predicate": "catalog.part.name", "cardinality": "one"}
     lowered = _lower(minimal)
     assert lowered.allowed_subject_kinds == ("catalog.part",)
-    assert lowered.object_kind == "literal"
-    assert lowered.literal_schema == {"type": "string"}
+    assert lowered.value.kind == "string"
+    assert lowered.value.max_len == 256
     assert lowered.canonical_form == ("nfc", "trim")
     assert lowered.artifact_format == CLAIM_TYPE_FORMAT
     assert claim_type_digest(lowered) == claim_type_digest(
@@ -364,8 +358,7 @@ def test_only_predicate_and_cardinality_are_required() -> None:
             {
                 **minimal,
                 "allowed_subject_kinds": ["catalog.part"],
-                "object_kind": "literal",
-                "literal_schema": {"type": "string"},
+                "value": "string{max_len: 256}",
                 "canonical_form": ["nfc", "trim"],
             }
         )
@@ -397,9 +390,9 @@ def test_mixed_roles_keep_self_and_explicit_requirement_wins() -> None:
     assert _lower({**_MINIMAL, "evidence_requirement": "none"}).evidence_requirement == "none"
 
 
-@pytest.mark.parametrize("schema", [{"type": "string"}, {"type": "string", "enum": ["yes", "no"]}])
-def test_string_canonical_form_defaults_and_explicit_overrides(schema: dict[str, object]) -> None:
-    record = {"predicate": "catalog.part.name", "cardinality": "one", "literal_schema": schema}
+@pytest.mark.parametrize("value_type", ["string{max_len: 256}", "enum[yes, no]"])
+def test_string_canonical_form_defaults_and_explicit_overrides(value_type: str) -> None:
+    record = {"predicate": "catalog.part.name", "cardinality": "one", "value": value_type}
     assert _lower(record).canonical_form == ("nfc", "trim")
     assert _lower({**record, "canonical_form": []}).canonical_form == ()
     assert _lower({**record, "canonical_form": ["casefold"]}).canonical_form == ("casefold",)
@@ -412,25 +405,17 @@ def test_string_canonical_form_defaults_and_explicit_overrides(schema: dict[str,
     ).canonical_form == ("casefold",)
 
 
-def test_object_kind_inference_preserves_non_strings_and_explicit_kinds() -> None:
+def test_native_value_selects_canonical_defaults_and_retired_forms_refuse() -> None:
     minimal = {"predicate": "catalog.part.price", "cardinality": "one"}
-    integer = _lower({**minimal, "literal_schema": {"type": "integer"}})
-    assert integer.object_kind == "literal"
-    assert integer.canonical_form == ()
-    subject = _lower({**minimal, "allowed_object_subject_kinds": ["catalog.vendor"]})
-    assert subject.object_kind == "subject"
-    assert subject.literal_schema is None and subject.canonical_form == ()
-    exact = _lower({**minimal, "object_kind": "exact_content"})
-    assert exact.object_kind == "exact_content"
-    assert exact.literal_schema is None and exact.canonical_form == ()
-    with pytest.raises(FormatError, match="not both"):
-        _lower(
-            {
-                **minimal,
-                "literal_schema": {"type": "string"},
-                "allowed_object_subject_kinds": ["catalog.vendor"],
-            }
-        )
+    integer = _lower({**minimal, "value": "int"})
+    assert integer.value.kind == "int" and integer.canonical_form == ()
+    subject = _lower({**minimal, "value": "subject<catalog.vendor>"})
+    assert subject.value.subject_kinds == ("catalog.vendor",)
+    assert subject.canonical_form == ()
+    with pytest.raises(ValueError, match="prose lives in Documents"):
+        _lower({**minimal, "object_kind": "exact_content"})
+    with pytest.raises(ValueError, match="value"):
+        _lower({**minimal, "literal_schema": {"type": "string"}})
     assert _lower(
         {**minimal, "allowed_subject_kinds": ["catalog.other", "catalog.part"]}
     ).allowed_subject_kinds == ("catalog.other", "catalog.part")

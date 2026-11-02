@@ -264,7 +264,7 @@ def test_the_builtin_distinct_from_relates_subjects_of_any_kind(
 
     from cruxible_client.contracts.builtin_claim_types import SEMANTIC_DISTINCT_FROM_CLAIM_TYPE
 
-    assert SEMANTIC_DISTINCT_FROM_CLAIM_TYPE.allowed_object_subject_kinds == ("semantic.subject",)
+    assert SEMANTIC_DISTINCT_FROM_CLAIM_TYPE.value.subject_kinds == ("semantic.subject",)
     write(
         instance,
         {"op": "add", "subject": ALPHA, "field": "semantic.distinct_from", "value": BETA},

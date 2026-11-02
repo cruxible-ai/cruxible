@@ -238,7 +238,7 @@ def _terminal_record(
         break
     raise _refuse(
         "settlement_evidence_mismatch",
-        "Terminal evidence is not one delivered, settled settle_change_set record under the "
+        "Terminal evidence is not one delivered, settled claims record under the "
         "prediction Procedure mandate.",
     )
 

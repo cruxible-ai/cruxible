@@ -212,15 +212,16 @@ def test_an_item_outside_its_contract_refuses_and_a_dedupe_key_posts_one(
     """F13: items are typed by their Contract, and those sharing a dedupe_key post once."""
 
     state = _two_capture_state(lambda a, b: (frozenset({a}), frozenset({b})))
+    state.outputs["joined"]["items"][0]["rationale"] = 3
     with pytest.raises(_RunRefusal) as refused:
-        _items(_node({"rationale": "$steps.joined.items.0.statement"}), state)
+        _items(_node({"rationale": "$steps.joined.items.0.rationale"}), state)
     assert refused.value.refusal.code == "inbox_item_invalid"
     assert refused.value.refusal.details == {"field": "fields", "reason": "contract_refused"}
 
     keyed = InboxEgressNode.model_validate(
         {
             **_each("$steps.joined.items").model_dump(mode="json", by_alias=True),
-            "fields": {"rationale": "$item.statement.role"},
+            "fields": {"rationale": "observation"},
             "dedupe_key": ["rationale"],
         }
     )

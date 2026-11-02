@@ -36,12 +36,31 @@ from tests.test_procedures.test_procedure_settlement_delivery import (
 )
 
 
+def _level_severity_members():
+    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+    from tests.core_support._light_capture_support import record_contract
+    from tests.test_procedures.test_procedure_proposal_delivery import _claim_type
+
+    definition = _claim_type(record_contract().identity.name).model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name="security.severity_level.severity"),
+            "predicate": "security.severity_level.severity",
+            "allowed_subject_kinds": ("security.severity_level",),
+        }
+    )
+    return {claim_type_path(definition.predicate): render_claim_type(definition)}
+
+
 @pytest.mark.parametrize("required", [False, True])
 def test_eight_distinct_product_proposals_recompile_lazily(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, required: bool
 ) -> None:
     # A Subject item plus its key Claim is the SBOM product-creation shape.
-    instance, owner, root, line, procedure = proposal_world(tmp_path, templates=(_level_item(),))
+    instance, owner, root, line, procedure = proposal_world(
+        tmp_path,
+        templates=(_level_item(),),
+        additional_members={**_level_kind_members(rules=False), **_level_severity_members()},
+    )
     lines = [
         line.model_copy(
             update={"identity": ArtifactIdentity(kind="Line", name=f"product-import-{i}")}
@@ -84,7 +103,9 @@ def test_eight_distinct_product_proposals_recompile_lazily(
         )
     proposals = []
     for index, item in enumerate(lines):
-        (root / fixtures.RELATIVE_PATH).write_bytes(f"product-{index}".encode())
+        (root / fixtures.RELATIVE_PATH).write_bytes(
+            fixtures.canonical_bytes({"severity": f"product-{index}"})
+        )
         state = run_line(instance, root, item, at=fixtures.NOW + timedelta(seconds=index))
         assert state.status == "succeeded", state.terminal
         (egress,) = state.terminal_egress
@@ -166,13 +187,12 @@ def test_a_provider_free_directs_proposal_readmits_instead_of_input_unavailable(
     )
     from cruxible_core.service.proposals.proposals import service_readmit_playbill_proposal
     from tests.support import operation_world
+    from tests.test_authoring.test_derivation_admission import derivation_world
     from tests.test_procedures.test_b2_operations import (
-        _author_widget_kind,
         _plain_terminal_spec,
     )
 
-    instance = operation_world.world(tmp_path)
-    _author_widget_kind(instance)
+    instance = derivation_world(tmp_path).instance
     name = "test.propose-plain-direct-readmit"
     operation_world.author_procedure(instance, _plain_terminal_spec(name=name, verb="propose"))
     result = service_run_playbill_procedure(
@@ -355,7 +375,7 @@ def test_a_line_proposal_partly_live_at_the_head_readmits_what_is_left(tmp_path:
     source = claim_paths(stale)
     assert landed not in source and len(source) == 2
     after = claim_paths(successor.admission.proposal_id)
-    assert landed in after and len(after) == 2 and len(after & source) == 1
+    assert landed not in after and len(after) == 1 and len(after & source) == 1
     from cruxible_client.contracts.procedures.line_specs import line_identity_digest
     from cruxible_core.service.procedures.procedure_runs import (
         service_get_playbill_procedure_run,

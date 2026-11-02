@@ -272,7 +272,7 @@ class ServedNestedProcedureRunner:
                 if admission.invocation_origin == "line":
                     # A Line's child runs under the root Line's authority; its
                     # inbox posts land in that Line's inbox.
-                    supported |= {"emit_capture", "post_inbox", "propose_change_set"}
+                    supported |= {"emit_capture", "post_inbox", "claims"}
                 if any(step.kind not in supported for step in definition.nodes):
                     raise ProcedureBoundaryRefused(
                         "pin_binding_mismatch",

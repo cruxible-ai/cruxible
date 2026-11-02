@@ -28,7 +28,6 @@
         "claim-flow-a",
         "claim-self-source",
         "claim-subject-relation",
-        "claim-exact-content",
         "claim-revision",
         "procedure",
         "claim-adjudicate-contradicting-evidence",
@@ -1376,7 +1375,7 @@
           },
           "ProposalItemReason": {
             "additionalProperties": false,
-            "description": "One Procedure terminal item's own reason, kept with the member it explains.\n\nA ``propose_change_set`` or ``settle_change_set`` item states why in its\n``rationale``; the change set's rationale names only the run and the item\ncount, and each item's reason is recorded here, keyed by the immutable\nProcedure operation (``operation``: the terminal's admission binding and\nnode, the identity its core creation records use) and the path of the\nClaim (or Subject) it lowered into. A proposal reads them only through its\nown ``ProposalItemReasonLink``, never through its (reusable) ref. It is\nprovenance, not evidence: the Claim's Captures are unchanged.",
+            "description": "One Procedure terminal item's own reason, kept with the member it explains.\n\nA ``claims`` or ``claims`` item states why in its\n``rationale``; the change set's rationale names only the run and the item\ncount, and each item's reason is recorded here, keyed by the immutable\nProcedure operation (``operation``: the terminal's admission binding and\nnode, the identity its core creation records use) and the path of the\nClaim (or Subject) it lowered into. A proposal reads them only through its\nown ``ProposalItemReasonLink``, never through its (reusable) ref. It is\nprovenance, not evidence: the Claim's Captures are unchanged.",
             "properties": {
               "child_index": {
                 "minimum": 0,
@@ -3695,43 +3694,6 @@
             "title": "ClaimLine",
             "type": "object"
           },
-          "ExactContentRef": {
-            "additionalProperties": false,
-            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
-            "properties": {
-              "content_digest": {
-                "title": "Content Digest",
-                "type": "string"
-              },
-              "exact_content": {
-                "enum": [
-                  "binary",
-                  "unavailable"
-                ],
-                "title": "Exact Content",
-                "type": "string"
-              },
-              "length": {
-                "anyOf": [
-                  {
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Length"
-              }
-            },
-            "required": [
-              "exact_content",
-              "content_digest"
-            ],
-            "title": "ExactContentRef",
-            "type": "object"
-          },
           "ShownObject": {
             "additionalProperties": false,
             "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
@@ -3752,9 +3714,6 @@
             "anyOf": [
               {
                 "$ref": "#/$defs/TruncatedText"
-              },
-              {
-                "$ref": "#/$defs/ExactContentRef"
               },
               {
                 "$ref": "#/$defs/ShownObject"
@@ -4265,43 +4224,6 @@
             "title": "ClaimLine",
             "type": "object"
           },
-          "ExactContentRef": {
-            "additionalProperties": false,
-            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
-            "properties": {
-              "content_digest": {
-                "title": "Content Digest",
-                "type": "string"
-              },
-              "exact_content": {
-                "enum": [
-                  "binary",
-                  "unavailable"
-                ],
-                "title": "Exact Content",
-                "type": "string"
-              },
-              "length": {
-                "anyOf": [
-                  {
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Length"
-              }
-            },
-            "required": [
-              "exact_content",
-              "content_digest"
-            ],
-            "title": "ExactContentRef",
-            "type": "object"
-          },
           "ShownObject": {
             "additionalProperties": false,
             "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
@@ -4322,9 +4244,6 @@
             "anyOf": [
               {
                 "$ref": "#/$defs/TruncatedText"
-              },
-              {
-                "$ref": "#/$defs/ExactContentRef"
               },
               {
                 "$ref": "#/$defs/ShownObject"
@@ -4603,7 +4522,6 @@
               "claim-flow-a",
               "claim-self-source",
               "claim-subject-relation",
-              "claim-exact-content",
               "claim-revision",
               "procedure",
               "claim-adjudicate-contradicting-evidence",
@@ -6465,14 +6383,6 @@
               "admission_policy": {
                 "$ref": "#/$defs/ClaimAdmissionPolicy"
               },
-              "allowed_object_subject_kinds": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Allowed Object Subject Kinds",
-                "type": "array"
-              },
               "allowed_subject_kinds": {
                 "items": {
                   "type": "string"
@@ -6579,6 +6489,21 @@
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
               },
+              "incomplete_fallback": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Incomplete Fallback"
+              },
               "inverse": {
                 "anyOf": [
                   {
@@ -6597,19 +6522,6 @@
                   "state": "live"
                 }
               },
-              "literal_schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Literal Schema"
-              },
               "member_descriptions": {
                 "default": [],
                 "items": {
@@ -6617,20 +6529,6 @@
                 },
                 "title": "Member Descriptions",
                 "type": "array"
-              },
-              "negative": {
-                "default": false,
-                "title": "Negative",
-                "type": "boolean"
-              },
-              "object_kind": {
-                "enum": [
-                  "literal",
-                  "subject",
-                  "exact_content"
-                ],
-                "title": "Object Kind",
-                "type": "string"
               },
               "permitted_roles": {
                 "items": {
@@ -6682,6 +6580,21 @@
                 "title": "Referent Sensitivity",
                 "type": "string"
               },
+              "requires_complete_input": {
+                "default": [],
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "title": "Requires Complete Input",
+                "type": "array"
+              },
               "resolution_policy": {
                 "$ref": "#/$defs/ClaimResolutionPolicy"
               },
@@ -6693,24 +6606,6 @@
                 ],
                 "title": "Revision Evidence",
                 "type": "string"
-              },
-              "unknown_member": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Unknown Member"
               },
               "unsure_hold_for": {
                 "anyOf": [
@@ -6724,105 +6619,97 @@
                 "default": null
               },
               "value": {
-                "anyOf": [
+                "discriminator": {
+                  "mapping": {
+                    "bool": "#/$defs/BoolType",
+                    "capture": "#/$defs/CaptureType",
+                    "contract": "#/$defs/NestedType",
+                    "date": "#/$defs/DateType",
+                    "datetime": "#/$defs/DateTimeType",
+                    "decimal": "#/$defs/DecimalType",
+                    "duration": "#/$defs/DurationType",
+                    "enum": "#/$defs/EnumType",
+                    "enum_of": "#/$defs/EnumOfType",
+                    "field_result": "#/$defs/FieldResultType",
+                    "int": "#/$defs/IntType",
+                    "key": "#/$defs/KeyType",
+                    "key_part": "#/$defs/KeyPartType",
+                    "list": "#/$defs/ListType",
+                    "number": "#/$defs/NumberType",
+                    "record": "#/$defs/RecordType",
+                    "refusal": "#/$defs/RefusalType",
+                    "result": "#/$defs/ResultType",
+                    "string": "#/$defs/StringType",
+                    "subject": "#/$defs/SubjectType",
+                    "variant": "#/$defs/VariantType"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
                   {
-                    "discriminator": {
-                      "mapping": {
-                        "bool": "#/$defs/BoolType",
-                        "capture": "#/$defs/CaptureType",
-                        "contract": "#/$defs/NestedType",
-                        "date": "#/$defs/DateType",
-                        "datetime": "#/$defs/DateTimeType",
-                        "decimal": "#/$defs/DecimalType",
-                        "duration": "#/$defs/DurationType",
-                        "enum": "#/$defs/EnumType",
-                        "enum_of": "#/$defs/EnumOfType",
-                        "field_result": "#/$defs/FieldResultType",
-                        "int": "#/$defs/IntType",
-                        "key": "#/$defs/KeyType",
-                        "key_part": "#/$defs/KeyPartType",
-                        "list": "#/$defs/ListType",
-                        "number": "#/$defs/NumberType",
-                        "record": "#/$defs/RecordType",
-                        "refusal": "#/$defs/RefusalType",
-                        "result": "#/$defs/ResultType",
-                        "string": "#/$defs/StringType",
-                        "subject": "#/$defs/SubjectType",
-                        "variant": "#/$defs/VariantType"
-                      },
-                      "propertyName": "kind"
-                    },
-                    "oneOf": [
-                      {
-                        "$ref": "#/$defs/StringType"
-                      },
-                      {
-                        "$ref": "#/$defs/IntType"
-                      },
-                      {
-                        "$ref": "#/$defs/DecimalType"
-                      },
-                      {
-                        "$ref": "#/$defs/NumberType"
-                      },
-                      {
-                        "$ref": "#/$defs/BoolType"
-                      },
-                      {
-                        "$ref": "#/$defs/DateType"
-                      },
-                      {
-                        "$ref": "#/$defs/DateTimeType"
-                      },
-                      {
-                        "$ref": "#/$defs/DurationType"
-                      },
-                      {
-                        "$ref": "#/$defs/EnumType"
-                      },
-                      {
-                        "$ref": "#/$defs/EnumOfType"
-                      },
-                      {
-                        "$ref": "#/$defs/ListType"
-                      },
-                      {
-                        "$ref": "#/$defs/NestedType"
-                      },
-                      {
-                        "$ref": "#/$defs/VariantType"
-                      },
-                      {
-                        "$ref": "#/$defs/KeyType"
-                      },
-                      {
-                        "$ref": "#/$defs/KeyPartType"
-                      },
-                      {
-                        "$ref": "#/$defs/SubjectType"
-                      },
-                      {
-                        "$ref": "#/$defs/CaptureType"
-                      },
-                      {
-                        "$ref": "#/$defs/FieldResultType"
-                      },
-                      {
-                        "$ref": "#/$defs/RecordType"
-                      },
-                      {
-                        "$ref": "#/$defs/ResultType"
-                      },
-                      {
-                        "$ref": "#/$defs/RefusalType"
-                      }
-                    ]
+                    "$ref": "#/$defs/StringType"
                   },
                   {
-                    "type": "null"
+                    "$ref": "#/$defs/IntType"
+                  },
+                  {
+                    "$ref": "#/$defs/DecimalType"
+                  },
+                  {
+                    "$ref": "#/$defs/NumberType"
+                  },
+                  {
+                    "$ref": "#/$defs/BoolType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateTimeType"
+                  },
+                  {
+                    "$ref": "#/$defs/DurationType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumOfType"
+                  },
+                  {
+                    "$ref": "#/$defs/ListType"
+                  },
+                  {
+                    "$ref": "#/$defs/NestedType"
+                  },
+                  {
+                    "$ref": "#/$defs/VariantType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyPartType"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectType"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureType"
+                  },
+                  {
+                    "$ref": "#/$defs/FieldResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RecordType"
+                  },
+                  {
+                    "$ref": "#/$defs/ResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RefusalType"
                   }
                 ],
-                "default": null,
                 "title": "Value"
               }
             },
@@ -6830,7 +6717,7 @@
               "identity",
               "predicate",
               "allowed_subject_kinds",
-              "object_kind",
+              "value",
               "cardinality",
               "permitted_roles",
               "evidence_admission_policy",
@@ -7226,15 +7113,40 @@
                 "default": null,
                 "title": "Description"
               },
-              "negative": {
-                "default": false,
-                "title": "Negative",
-                "type": "boolean"
+              "incomplete_fallback": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Incomplete Fallback"
               },
               "optional": {
                 "default": false,
                 "title": "Optional",
                 "type": "boolean"
+              },
+              "requires_complete_input": {
+                "default": [],
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "title": "Requires Complete Input",
+                "type": "array"
               },
               "type": {
                 "discriminator": {
@@ -7329,24 +7241,6 @@
                   }
                 ],
                 "title": "Type"
-              },
-              "unknown_member": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Unknown Member"
               }
             },
             "required": [
@@ -9050,6 +8944,28 @@
             "title": "LineBudgetsInput",
             "type": "object"
           },
+          "LineFindings": {
+            "additionalProperties": false,
+            "properties": {
+              "inbox": {
+                "default": [],
+                "items": {
+                  "enum": [
+                    "extract_refused",
+                    "duplicate_key",
+                    "incomplete_source",
+                    "held_disagrees",
+                    "slot_contested"
+                  ],
+                  "type": "string"
+                },
+                "title": "Inbox",
+                "type": "array"
+              }
+            },
+            "title": "LineFindings",
+            "type": "object"
+          },
           "LineInput": {
             "additionalProperties": false,
             "description": "One Line: a stable instantiation of an accepted or same-set Procedure.\n\nLowering pins the named Procedure's exact version and binds every slot to\none exact ``{build, operation}``: ``bindings`` names\n``provider[/build]#operation`` (or ``provider[/build]``) per slot, and a\nslot left out is fitted (exactly one live operation must serve its\nsignature). A Line runs when run explicitly (`line run`, one manual occurrence),\nor, once it is enabled (`line enable`), when a Trigger aimed at it fires; a\nTrigger aimed at a Line that is not enabled does nothing. Enabling needs\ngoverned write even for an observe-only Line. A Line that proposes or\nsettles also needs a live ProcedureMandate pinning this exact Line before it\ncan run or be enabled; an observe-only Line needs none.",
@@ -9088,6 +9004,9 @@
                 ],
                 "default": null,
                 "description": "Per-run budgets; omit to use the Procedure's hard caps."
+              },
+              "findings": {
+                "$ref": "#/$defs/LineFindings"
               },
               "kind": {
                 "const": "line",
@@ -10458,12 +10377,6 @@
                       "$ref": "#/$defs/ClaimsStep"
                     },
                     {
-                      "$ref": "#/$defs/ProposeStep"
-                    },
-                    {
-                      "$ref": "#/$defs/SettleStep"
-                    },
-                    {
                       "$ref": "#/$defs/EmitStep"
                     },
                     {
@@ -10574,61 +10487,6 @@
               "project"
             ],
             "title": "ProjectStep",
-            "type": "object"
-          },
-          "ProposeStep": {
-            "additionalProperties": false,
-            "description": "Propose Claims: a fixed tuple of item templates, or one item per element of a list.",
-            "properties": {
-              "id": {
-                "anyOf": [
-                  {
-                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Id"
-              },
-              "next": {
-                "anyOf": [
-                  {
-                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Next"
-              },
-              "propose": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/Ref"
-                  },
-                  {
-                    "items": {
-                      "$ref": "#/$defs/Template"
-                    },
-                    "type": "array"
-                  }
-                ],
-                "title": "Propose"
-              },
-              "result": {
-                "$ref": "#/$defs/Template",
-                "default": null
-              }
-            },
-            "required": [
-              "propose"
-            ],
-            "title": "ProposeStep",
             "type": "object"
           },
           "PurlTypeNormalizer": {
@@ -12686,7 +12544,7 @@
           },
           "Ref": {
             "additionalProperties": false,
-            "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, or list positions as digits. A ``param`` reference names the\nparameter as its first path member.",
+            "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, list positions as digits, or explicit ``[*]`` projections.\nA ``param`` reference names the parameter as its first path member.",
             "properties": {
               "$ref": {
                 "enum": [
@@ -13171,60 +13029,6 @@
             "title": "SemanticSelector",
             "type": "object"
           },
-          "SettleStep": {
-            "additionalProperties": false,
-            "properties": {
-              "id": {
-                "anyOf": [
-                  {
-                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Id"
-              },
-              "next": {
-                "anyOf": [
-                  {
-                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Next"
-              },
-              "result": {
-                "$ref": "#/$defs/Template",
-                "default": null
-              },
-              "settle": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/Ref"
-                  },
-                  {
-                    "items": {
-                      "$ref": "#/$defs/Template"
-                    },
-                    "type": "array"
-                  }
-                ],
-                "title": "Settle"
-              }
-            },
-            "required": [
-              "settle"
-            ],
-            "title": "SettleStep",
-            "type": "object"
-          },
           "ShapeFieldSpec": {
             "additionalProperties": false,
             "description": "One shaped field: read ``from`` the record (``$item.fields.<f>``/``$item.key.<k>``),\nor a literal ``value``; ``as`` casts it explicitly.",
@@ -13707,7 +13511,7 @@
           },
           "SubjectType": {
             "additionalProperties": false,
-            "description": "A Subject of one kind. Reads produce it; an operation may only echo its input's.",
+            "description": "A Subject of one of the explicitly named kinds, in canonical order.",
             "properties": {
               "kind": {
                 "const": "subject",
@@ -13715,13 +13519,17 @@
                 "title": "Kind",
                 "type": "string"
               },
-              "subject_kind": {
-                "title": "Subject Kind",
-                "type": "string"
+              "subject_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "title": "Subject Kinds",
+                "type": "array"
               }
             },
             "required": [
-              "subject_kind"
+              "subject_kinds"
             ],
             "title": "SubjectType",
             "type": "object"
@@ -14041,7 +13849,6 @@
               "claim-flow-a",
               "claim-self-source",
               "claim-subject-relation",
-              "claim-exact-content",
               "claim-revision",
               "procedure",
               "claim-adjudicate-contradicting-evidence",
@@ -20706,43 +20513,6 @@
       },
       "json_schema": {
         "$defs": {
-          "ExactContentRef": {
-            "additionalProperties": false,
-            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
-            "properties": {
-              "content_digest": {
-                "title": "Content Digest",
-                "type": "string"
-              },
-              "exact_content": {
-                "enum": [
-                  "binary",
-                  "unavailable"
-                ],
-                "title": "Exact Content",
-                "type": "string"
-              },
-              "length": {
-                "anyOf": [
-                  {
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Length"
-              }
-            },
-            "required": [
-              "exact_content",
-              "content_digest"
-            ],
-            "title": "ExactContentRef",
-            "type": "object"
-          },
           "ShownObject": {
             "additionalProperties": false,
             "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
@@ -20763,9 +20533,6 @@
             "anyOf": [
               {
                 "$ref": "#/$defs/TruncatedText"
-              },
-              {
-                "$ref": "#/$defs/ExactContentRef"
               },
               {
                 "$ref": "#/$defs/ShownObject"
@@ -20931,7 +20698,6 @@
           "schema": {
             "discriminator": {
               "mapping": {
-                "exact_content": "#/$defs/ExactContentClaimObject",
                 "literal": "#/$defs/LiteralClaimObject",
                 "none": "#/$defs/NoneClaimObject",
                 "subject": "#/$defs/SubjectClaimObject"
@@ -20944,9 +20710,6 @@
               },
               {
                 "$ref": "#/$defs/SubjectClaimObject"
-              },
-              {
-                "$ref": "#/$defs/ExactContentClaimObject"
               },
               {
                 "$ref": "#/$defs/NoneClaimObject"
@@ -21047,68 +20810,6 @@
       },
       "json_schema": {
         "$defs": {
-          "ContentSpan": {
-            "additionalProperties": false,
-            "description": "One exact zero-based, end-exclusive occurrence in immutable bytes.",
-            "properties": {
-              "content_digest": {
-                "title": "Content Digest",
-                "type": "string"
-              },
-              "end_byte": {
-                "title": "End Byte",
-                "type": "integer"
-              },
-              "start_byte": {
-                "title": "Start Byte",
-                "type": "integer"
-              },
-              "tag": {
-                "const": "playbill-content-span-v1",
-                "default": "playbill-content-span-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "content_digest",
-              "start_byte",
-              "end_byte"
-            ],
-            "title": "ContentSpan",
-            "type": "object"
-          },
-          "ExactContentClaimObject": {
-            "additionalProperties": false,
-            "properties": {
-              "content_digest": {
-                "title": "Content Digest",
-                "type": "string"
-              },
-              "kind": {
-                "const": "exact_content",
-                "default": "exact_content",
-                "title": "Kind",
-                "type": "string"
-              },
-              "span": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ContentSpan"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              }
-            },
-            "required": [
-              "content_digest"
-            ],
-            "title": "ExactContentClaimObject",
-            "type": "object"
-          },
           "LiteralClaimObject": {
             "additionalProperties": false,
             "properties": {
@@ -21246,7 +20947,6 @@
           "object": {
             "discriminator": {
               "mapping": {
-                "exact_content": "#/$defs/ExactContentClaimObject",
                 "literal": "#/$defs/LiteralClaimObject",
                 "none": "#/$defs/NoneClaimObject",
                 "subject": "#/$defs/SubjectClaimObject"
@@ -21259,9 +20959,6 @@
               },
               {
                 "$ref": "#/$defs/SubjectClaimObject"
-              },
-              {
-                "$ref": "#/$defs/ExactContentClaimObject"
               },
               {
                 "$ref": "#/$defs/NoneClaimObject"
@@ -23622,7 +23319,6 @@
               "object": {
                 "discriminator": {
                   "mapping": {
-                    "exact_content": "#/$defs/ExactContentClaimObject",
                     "literal": "#/$defs/LiteralClaimObject",
                     "none": "#/$defs/NoneClaimObject",
                     "subject": "#/$defs/SubjectClaimObject"
@@ -23635,9 +23331,6 @@
                   },
                   {
                     "$ref": "#/$defs/SubjectClaimObject"
-                  },
-                  {
-                    "$ref": "#/$defs/ExactContentClaimObject"
                   },
                   {
                     "$ref": "#/$defs/NoneClaimObject"
@@ -23701,68 +23394,6 @@
               "lifecycle"
             ],
             "title": "ClaimStatementCard",
-            "type": "object"
-          },
-          "ContentSpan": {
-            "additionalProperties": false,
-            "description": "One exact zero-based, end-exclusive occurrence in immutable bytes.",
-            "properties": {
-              "content_digest": {
-                "title": "Content Digest",
-                "type": "string"
-              },
-              "end_byte": {
-                "title": "End Byte",
-                "type": "integer"
-              },
-              "start_byte": {
-                "title": "Start Byte",
-                "type": "integer"
-              },
-              "tag": {
-                "const": "playbill-content-span-v1",
-                "default": "playbill-content-span-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "content_digest",
-              "start_byte",
-              "end_byte"
-            ],
-            "title": "ContentSpan",
-            "type": "object"
-          },
-          "ExactContentClaimObject": {
-            "additionalProperties": false,
-            "properties": {
-              "content_digest": {
-                "title": "Content Digest",
-                "type": "string"
-              },
-              "kind": {
-                "const": "exact_content",
-                "default": "exact_content",
-                "title": "Kind",
-                "type": "string"
-              },
-              "span": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ContentSpan"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              }
-            },
-            "required": [
-              "content_digest"
-            ],
-            "title": "ExactContentClaimObject",
             "type": "object"
           },
           "LiteralClaimObject": {
@@ -23953,6 +23584,380 @@
         "facts",
         "statement",
         "tag"
+      ]
+    },
+    "ClaimsDiagnostic": {
+      "fields": {
+        "claim": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claim",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim"
+          }
+        },
+        "field": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "field",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Field"
+          }
+        },
+        "held_value": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "held_value",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/JsonValue",
+            "default": null
+          }
+        },
+        "incoming_value": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "incoming_value",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/JsonValue",
+            "default": null
+          }
+        },
+        "input": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "input",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Input"
+          }
+        },
+        "key": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "key",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/$defs/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Key"
+          }
+        },
+        "kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": true,
+          "schema": {
+            "enum": [
+              "extract_refused",
+              "duplicate_key",
+              "incomplete_source",
+              "held_disagrees",
+              "slot_contested"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "lexeme": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lexeme",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lexeme"
+          }
+        },
+        "problem": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "problem",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Problem"
+          }
+        },
+        "record_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "record_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Record Count",
+            "type": "integer"
+          }
+        },
+        "record_locators": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "record_locators",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Record Locators",
+            "type": "array"
+          }
+        },
+        "role": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "role",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Role"
+          }
+        },
+        "target": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "target",
+          "required": true,
+          "schema": {
+            "title": "Target",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "JsonValue": {}
+        },
+        "additionalProperties": false,
+        "properties": {
+          "claim": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim"
+          },
+          "field": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Field"
+          },
+          "held_value": {
+            "$ref": "#/$defs/JsonValue",
+            "default": null
+          },
+          "incoming_value": {
+            "$ref": "#/$defs/JsonValue",
+            "default": null
+          },
+          "input": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Input"
+          },
+          "key": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/$defs/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Key"
+          },
+          "kind": {
+            "enum": [
+              "extract_refused",
+              "duplicate_key",
+              "incomplete_source",
+              "held_disagrees",
+              "slot_contested"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "lexeme": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lexeme"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Problem"
+          },
+          "record_count": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Record Count",
+            "type": "integer"
+          },
+          "record_locators": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Record Locators",
+            "type": "array"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Role"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "target"
+        ],
+        "title": "ClaimsDiagnostic",
+        "type": "object"
+      },
+      "required_fields": [
+        "kind",
+        "target"
       ]
     },
     "CompilerUpgradeNotice": {
@@ -24392,43 +24397,6 @@
             "title": "ClaimLine",
             "type": "object"
           },
-          "ExactContentRef": {
-            "additionalProperties": false,
-            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
-            "properties": {
-              "content_digest": {
-                "title": "Content Digest",
-                "type": "string"
-              },
-              "exact_content": {
-                "enum": [
-                  "binary",
-                  "unavailable"
-                ],
-                "title": "Exact Content",
-                "type": "string"
-              },
-              "length": {
-                "anyOf": [
-                  {
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Length"
-              }
-            },
-            "required": [
-              "exact_content",
-              "content_digest"
-            ],
-            "title": "ExactContentRef",
-            "type": "object"
-          },
           "ShownObject": {
             "additionalProperties": false,
             "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
@@ -24449,9 +24417,6 @@
             "anyOf": [
               {
                 "$ref": "#/$defs/TruncatedText"
-              },
-              {
-                "$ref": "#/$defs/ExactContentRef"
               },
               {
                 "$ref": "#/$defs/ShownObject"
@@ -30813,43 +30778,6 @@
       },
       "json_schema": {
         "$defs": {
-          "ExactContentRef": {
-            "additionalProperties": false,
-            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
-            "properties": {
-              "content_digest": {
-                "title": "Content Digest",
-                "type": "string"
-              },
-              "exact_content": {
-                "enum": [
-                  "binary",
-                  "unavailable"
-                ],
-                "title": "Exact Content",
-                "type": "string"
-              },
-              "length": {
-                "anyOf": [
-                  {
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Length"
-              }
-            },
-            "required": [
-              "exact_content",
-              "content_digest"
-            ],
-            "title": "ExactContentRef",
-            "type": "object"
-          },
           "InboxAcknowledged": {
             "additionalProperties": false,
             "description": "An agent saw the item and owes it nothing further.",
@@ -31232,9 +31160,6 @@
                 "$ref": "#/$defs/TruncatedText"
               },
               {
-                "$ref": "#/$defs/ExactContentRef"
-              },
-              {
                 "$ref": "#/$defs/ShownObject"
               },
               {
@@ -31437,43 +31362,6 @@
       },
       "json_schema": {
         "$defs": {
-          "ExactContentRef": {
-            "additionalProperties": false,
-            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
-            "properties": {
-              "content_digest": {
-                "title": "Content Digest",
-                "type": "string"
-              },
-              "exact_content": {
-                "enum": [
-                  "binary",
-                  "unavailable"
-                ],
-                "title": "Exact Content",
-                "type": "string"
-              },
-              "length": {
-                "anyOf": [
-                  {
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Length"
-              }
-            },
-            "required": [
-              "exact_content",
-              "content_digest"
-            ],
-            "title": "ExactContentRef",
-            "type": "object"
-          },
           "InboxAcknowledged": {
             "additionalProperties": false,
             "description": "An agent saw the item and owes it nothing further.",
@@ -31830,9 +31718,6 @@
             "anyOf": [
               {
                 "$ref": "#/$defs/TruncatedText"
-              },
-              {
-                "$ref": "#/$defs/ExactContentRef"
               },
               {
                 "$ref": "#/$defs/ShownObject"
@@ -43828,7 +43713,7 @@
           },
           "OrientPredicate": {
             "additionalProperties": false,
-            "description": "One predicate of a kind: compact by default, in full under ``orient(kind=...)``.\n\n``name`` is the short name a query field uses against this kind; ``predicate``\nis the full ClaimType predicate. ``type`` is the value type: a JSON type,\n``date``/``datetime``, ``enum`` (with ``members``), ``subject`` or\n``subject:<kinds>`` for a Subject-valued predicate, or ``exact_content``.\n``evidence`` names the CaptureContracts the ClaimType admits; a digest that\nnames no accepted contract shows as ``unresolved:<short digest>``.\n``None`` (omitted on the wire) inherits the kind's evidence set; an empty\ntuple (``[]`` on the wire) explicitly admits no contracts. Standalone\ndescriptors always carry an explicit set.\n\n``description`` is the ClaimType's (v7) description: its first sentence, at\nmost 160 characters, in a compact descriptor; all of it in full.\n``evidence_requirement`` appears only when it is not ``self`` (``none``: the\nClaim's own origin supports it; ``captured``: a Capture under a declared\ncontract is required). A full descriptor also carries each described enum\nmember, the role a write defaults to, and ``revision_evidence``: what a\nstatement-changing revision keeps.\nA full descriptor also names how the ClaimType settles rival Claims\n(``contention``), its format version (``format``: 10 for\n``cruxible-claim-type-v11``), its accepted ``revision`` and its ledger\n``path``, which a kit's drifted paths name. Under ``orient(kind=K)`` a\ndescriptor counts the kind's ``live_claims`` of the predicate and\n``subjects_with_value``: its live Subjects with at least one, both read\nfrom counters Claim writes maintain.\n``kit`` (claim_types section only) is the installed kit that owns the\nClaimType: its receipt records the definition. Absent when no kit owns it.",
+            "description": "One predicate of a kind: compact by default, in full under ``orient(kind=...)``.\n\n``name`` is the short name a query field uses against this kind; ``predicate``\nis the full ClaimType predicate. ``type`` is the native Contract type spelling,\nincluding enum members and\n``subject<K1 | K2>`` for a Subject-valued predicate.\n``evidence`` names the CaptureContracts the ClaimType admits; a digest that\nnames no accepted contract shows as ``unresolved:<short digest>``.\n``None`` (omitted on the wire) inherits the kind's evidence set; an empty\ntuple (``[]`` on the wire) explicitly admits no contracts. Standalone\ndescriptors always carry an explicit set.\n\n``description`` is the ClaimType's (v7) description: its first sentence, at\nmost 160 characters, in a compact descriptor; all of it in full.\n``evidence_requirement`` appears only when it is not ``self`` (``none``: the\nClaim's own origin supports it; ``captured``: a Capture under a declared\ncontract is required). A full descriptor also carries each described enum\nmember, the role a write defaults to, and ``revision_evidence``: what a\nstatement-changing revision keeps.\nA full descriptor also names how the ClaimType settles rival Claims\n(``contention``), its format version (``format``: 10 for\n``cruxible-claim-type-v11``), its accepted ``revision`` and its ledger\n``path``, which a kit's drifted paths name. Under ``orient(kind=K)`` a\ndescriptor counts the kind's ``live_claims`` of the predicate and\n``subjects_with_value``: its live Subjects with at least one, both read\nfrom counters Claim writes maintain.\n``kit`` (claim_types section only) is the installed kit that owns the\nClaimType: its receipt records the definition. Absent when no kit owns it.",
             "properties": {
               "cardinality": {
                 "enum": [
@@ -52393,15 +52278,40 @@
                 "default": null,
                 "title": "Description"
               },
-              "negative": {
-                "default": false,
-                "title": "Negative",
-                "type": "boolean"
+              "incomplete_fallback": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Incomplete Fallback"
               },
               "optional": {
                 "default": false,
                 "title": "Optional",
                 "type": "boolean"
+              },
+              "requires_complete_input": {
+                "default": [],
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "title": "Requires Complete Input",
+                "type": "array"
               },
               "type": {
                 "discriminator": {
@@ -52496,24 +52406,6 @@
                   }
                 ],
                 "title": "Type"
-              },
-              "unknown_member": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Unknown Member"
               }
             },
             "required": [
@@ -53851,11 +53743,9 @@
                       "invoke": "#/$defs/InvokeNode",
                       "post_inbox": "#/$defs/InboxEgressNode",
                       "project": "#/$defs/ProjectNode",
-                      "propose_change_set": "#/$defs/ProposeChangeSetNode",
                       "read": "#/$defs/ReadNode",
                       "repeat": "#/$defs/RepeatNode",
                       "select": "#/$defs/SelectNode",
-                      "settle_change_set": "#/$defs/SettleChangeSetNode",
                       "transform": "#/$defs/TransformNode"
                     },
                     "propertyName": "kind"
@@ -53893,12 +53783,6 @@
                     },
                     {
                       "$ref": "#/$defs/ClaimsNode"
-                    },
-                    {
-                      "$ref": "#/$defs/ProposeChangeSetNode"
-                    },
-                    {
-                      "$ref": "#/$defs/SettleChangeSetNode"
                     },
                     {
                       "$ref": "#/$defs/HaltNode"
@@ -54434,58 +54318,6 @@
             "title": "ProjectNode",
             "type": "object"
           },
-          "ProposalItemsFanOut": {
-            "additionalProperties": false,
-            "description": "Candidates from data: each element of ``items`` is one Claim proposal item.\n\n``items`` resolves at run time (typically ``$steps.<alias>.items``, a list a\nprovider, Source or transform produced); every element becomes one item of\nthe one proposal, with its own dependency closure and evidence, exactly as\nthe capture and inbox terminals fan out ``{\"items\": ...}``.",
-            "properties": {
-              "items": {
-                "title": "Items"
-              }
-            },
-            "required": [
-              "items"
-            ],
-            "title": "ProposalItemsFanOut",
-            "type": "object"
-          },
-          "ProposeChangeSetNode": {
-            "additionalProperties": false,
-            "description": "Terminal output into proposal receive; it has no activation field.\n\n``candidate_templates`` is a fixed, non-empty list of item templates, or\n``{\"items\": ...}`` to fan out over data (:class:`ProposalItemsFanOut`).",
-            "properties": {
-              "candidate_templates": {
-                "anyOf": [
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "$ref": "#/$defs/ProposalItemsFanOut"
-                  }
-                ],
-                "title": "Candidate Templates"
-              },
-              "kind": {
-                "const": "propose_change_set",
-                "default": "propose_change_set",
-                "title": "Kind",
-                "type": "string"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "result": {
-                "title": "Result"
-              }
-            },
-            "required": [
-              "node_id",
-              "candidate_templates",
-              "result"
-            ],
-            "title": "ProposeChangeSetNode",
-            "type": "object"
-          },
           "ReadNode": {
             "additionalProperties": false,
             "description": "A read of accepted state: one named Query, or one ClaimType's Claims about a Subject.\n\nExactly one of ``query`` and ``claim_type`` is set. A read runs to the end:\nit evaluates under the run's Procedure read ceiling, never the Query's\ninteractive budgets, and refuses ``read_ceiling_exceeded`` rather than\nreturning a clipped result.",
@@ -54610,7 +54442,7 @@
           },
           "Ref": {
             "additionalProperties": false,
-            "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, or list positions as digits. A ``param`` reference names the\nparameter as its first path member.",
+            "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, list positions as digits, or explicit ``[*]`` projections.\nA ``param`` reference names the parameter as its first path member.",
             "properties": {
               "$ref": {
                 "enum": [
@@ -54990,44 +54822,6 @@
             "title": "SemanticSelector",
             "type": "object"
           },
-          "SettleChangeSetNode": {
-            "additionalProperties": false,
-            "description": "Terminal settle: the proposal terminal's Claims, settled under delegated authority.\n\nIt carries no mandate: Core selects the one accepted settle ProcedureMandate\nthat covers the change, evaluates its condition, and falls back as that\nmandate declares. Compiler revision 31.",
-            "properties": {
-              "candidate_templates": {
-                "anyOf": [
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "$ref": "#/$defs/ProposalItemsFanOut"
-                  }
-                ],
-                "title": "Candidate Templates"
-              },
-              "kind": {
-                "const": "settle_change_set",
-                "default": "settle_change_set",
-                "title": "Kind",
-                "type": "string"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "result": {
-                "title": "Result"
-              }
-            },
-            "required": [
-              "node_id",
-              "candidate_templates",
-              "result"
-            ],
-            "title": "SettleChangeSetNode",
-            "type": "object"
-          },
           "ShapeField": {
             "additionalProperties": false,
             "description": "One shaped field: read ``from`` the current record (``$item.fields.<f>``,\n``$item.key.<k>``), or a literal ``value``; ``as`` casts it explicitly.",
@@ -55131,7 +54925,7 @@
           },
           "SubjectType": {
             "additionalProperties": false,
-            "description": "A Subject of one kind. Reads produce it; an operation may only echo its input's.",
+            "description": "A Subject of one of the explicitly named kinds, in canonical order.",
             "properties": {
               "kind": {
                 "const": "subject",
@@ -55139,13 +54933,17 @@
                 "title": "Kind",
                 "type": "string"
               },
-              "subject_kind": {
-                "title": "Subject Kind",
-                "type": "string"
+              "subject_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "title": "Subject Kinds",
+                "type": "array"
               }
             },
             "required": [
-              "subject_kind"
+              "subject_kinds"
             ],
             "title": "SubjectType",
             "type": "object"
@@ -61255,6 +61053,32 @@
             "type": "string"
           }
         },
+        "findings": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "findings",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ClaimsDiagnostic"
+            },
+            "title": "Findings",
+            "type": "array"
+          }
+        },
+        "findings_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "findings_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Findings Count",
+            "type": "integer"
+          }
+        },
         "head_at_admission": {
           "has_default": false,
           "has_default_factory": false,
@@ -61855,6 +61679,14 @@
                 "default": null,
                 "title": "Field"
               },
+              "held_value": {
+                "$ref": "#/$defs/JsonValue",
+                "default": null
+              },
+              "incoming_value": {
+                "$ref": "#/$defs/JsonValue",
+                "default": null
+              },
               "input": {
                 "anyOf": [
                   {
@@ -61867,11 +61699,27 @@
                 "default": null,
                 "title": "Input"
               },
+              "key": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/JsonValue"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Key"
+              },
               "kind": {
                 "enum": [
                   "extract_refused",
+                  "duplicate_key",
                   "incomplete_source",
-                  "held_by_precedence",
+                  "held_disagrees",
                   "slot_contested"
                 ],
                 "title": "Kind",
@@ -61901,6 +61749,21 @@
                 ],
                 "default": null,
                 "title": "Problem"
+              },
+              "record_count": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Record Count",
+                "type": "integer"
+              },
+              "record_locators": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 10,
+                "title": "Record Locators",
+                "type": "array"
               },
               "role": {
                 "anyOf": [
@@ -62024,6 +61887,7 @@
             "title": "InvestigationBinding",
             "type": "object"
           },
+          "JsonValue": {},
           "LineOpenProposalOutcome": {
             "additionalProperties": false,
             "description": "How a Line run's proposal terminal stood to its Line's open proposal.\n\n``still_current``: the run's change equals the open proposal's (the same\nstatements on the same evidence content, the same retired Claims and the\nsame created Subjects), so nothing was proposed -- no change; open proposal\n``proposal_id`` still current. ``superseded``: the change differed, so the\nrun's own proposal was submitted and open proposal ``proposal_id`` was\nwithdrawn as superseded by it. Nothing carries over to the new proposal.",
@@ -64311,7 +64175,7 @@
           },
           "ProcedureTerminalEgress": {
             "additionalProperties": false,
-            "description": "What one terminal node of a run did, reconstructed from its journal.\n\nAdditive and optional: a run with no terminal carries none. A delivered\n`propose_change_set` names the proposal and the exact candidate it produced,\nso a manager can retrieve, review and activate that candidate through the\nexisting proposal doors; producing it never activates it. A refused or\nfailed egress names the code the run refused with, so the run reads as the\nreason it stopped rather than as a bare failure.",
+            "description": "What one terminal node of a run did, reconstructed from its journal.\n\nAdditive and optional: a run with no terminal carries none. A delivered\n`claims` names the proposal and the exact candidate it produced,\nso a manager can retrieve, review and activate that candidate through the\nexisting proposal doors; producing it never activates it. A refused or\nfailed egress names the code the run refused with, so the run reads as the\nreason it stopped rather than as a bare failure.",
             "properties": {
               "accepted_git_oid": {
                 "anyOf": [
@@ -64394,6 +64258,12 @@
                 "title": "Claims Diagnostics Truncated",
                 "type": "integer"
               },
+              "claims_same_count": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Claims Same Count",
+                "type": "integer"
+              },
               "effective_authority": {
                 "anyOf": [
                   {
@@ -64450,9 +64320,7 @@
                 "enum": [
                   "claims",
                   "emit_capture",
-                  "post_inbox",
-                  "propose_change_set",
-                  "settle_change_set"
+                  "post_inbox"
                 ],
                 "title": "Kind",
                 "type": "string"
@@ -64902,6 +64770,18 @@
           "evaluation_time": {
             "title": "Evaluation Time",
             "type": "string"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/$defs/ClaimsDiagnostic"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "findings_count": {
+            "default": 0,
+            "title": "Findings Count",
+            "type": "integer"
           },
           "head_at_admission": {
             "$ref": "#/$defs/AcceptedCoordinate"
@@ -65694,6 +65574,20 @@
             "type": "integer"
           }
         },
+        "claims_same_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claims_same_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Claims Same Count",
+            "type": "integer"
+          }
+        },
         "effective_authority": {
           "default": null,
           "default_json_serializable": true,
@@ -65787,9 +65681,7 @@
             "enum": [
               "claims",
               "emit_capture",
-              "post_inbox",
-              "propose_change_set",
-              "settle_change_set"
+              "post_inbox"
             ],
             "title": "Kind",
             "type": "string"
@@ -66125,6 +66017,14 @@
                 "default": null,
                 "title": "Field"
               },
+              "held_value": {
+                "$ref": "#/$defs/JsonValue",
+                "default": null
+              },
+              "incoming_value": {
+                "$ref": "#/$defs/JsonValue",
+                "default": null
+              },
               "input": {
                 "anyOf": [
                   {
@@ -66137,11 +66037,27 @@
                 "default": null,
                 "title": "Input"
               },
+              "key": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/JsonValue"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Key"
+              },
               "kind": {
                 "enum": [
                   "extract_refused",
+                  "duplicate_key",
                   "incomplete_source",
-                  "held_by_precedence",
+                  "held_disagrees",
                   "slot_contested"
                 ],
                 "title": "Kind",
@@ -66171,6 +66087,21 @@
                 ],
                 "default": null,
                 "title": "Problem"
+              },
+              "record_count": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Record Count",
+                "type": "integer"
+              },
+              "record_locators": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 10,
+                "title": "Record Locators",
+                "type": "array"
               },
               "role": {
                 "anyOf": [
@@ -66239,6 +66170,7 @@
             "title": "InboxPostTruncation",
             "type": "object"
           },
+          "JsonValue": {},
           "LineOpenProposalOutcome": {
             "additionalProperties": false,
             "description": "How a Line run's proposal terminal stood to its Line's open proposal.\n\n``still_current``: the run's change equals the open proposal's (the same\nstatements on the same evidence content, the same retired Claims and the\nsame created Subjects), so nothing was proposed -- no change; open proposal\n``proposal_id`` still current. ``superseded``: the change differed, so the\nrun's own proposal was submitted and open proposal ``proposal_id`` was\nwithdrawn as superseded by it. Nothing carries over to the new proposal.",
@@ -66501,7 +66433,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "What one terminal node of a run did, reconstructed from its journal.\n\nAdditive and optional: a run with no terminal carries none. A delivered\n`propose_change_set` names the proposal and the exact candidate it produced,\nso a manager can retrieve, review and activate that candidate through the\nexisting proposal doors; producing it never activates it. A refused or\nfailed egress names the code the run refused with, so the run reads as the\nreason it stopped rather than as a bare failure.",
+        "description": "What one terminal node of a run did, reconstructed from its journal.\n\nAdditive and optional: a run with no terminal carries none. A delivered\n`claims` names the proposal and the exact candidate it produced,\nso a manager can retrieve, review and activate that candidate through the\nexisting proposal doors; producing it never activates it. A refused or\nfailed egress names the code the run refused with, so the run reads as the\nreason it stopped rather than as a bare failure.",
         "properties": {
           "accepted_git_oid": {
             "anyOf": [
@@ -66584,6 +66516,12 @@
             "title": "Claims Diagnostics Truncated",
             "type": "integer"
           },
+          "claims_same_count": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Claims Same Count",
+            "type": "integer"
+          },
           "effective_authority": {
             "anyOf": [
               {
@@ -66640,9 +66578,7 @@
             "enum": [
               "claims",
               "emit_capture",
-              "post_inbox",
-              "propose_change_set",
-              "settle_change_set"
+              "post_inbox"
             ],
             "title": "Kind",
             "type": "string"
@@ -68883,7 +68819,7 @@
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "One Procedure terminal item's own reason, kept with the member it explains.\n\nA ``propose_change_set`` or ``settle_change_set`` item states why in its\n``rationale``; the change set's rationale names only the run and the item\ncount, and each item's reason is recorded here, keyed by the immutable\nProcedure operation (``operation``: the terminal's admission binding and\nnode, the identity its core creation records use) and the path of the\nClaim (or Subject) it lowered into. A proposal reads them only through its\nown ``ProposalItemReasonLink``, never through its (reusable) ref. It is\nprovenance, not evidence: the Claim's Captures are unchanged.",
+        "description": "One Procedure terminal item's own reason, kept with the member it explains.\n\nA ``claims`` or ``claims`` item states why in its\n``rationale``; the change set's rationale names only the run and the item\ncount, and each item's reason is recorded here, keyed by the immutable\nProcedure operation (``operation``: the terminal's admission binding and\nnode, the identity its core creation records use) and the path of the\nClaim (or Subject) it lowered into. A proposal reads them only through its\nown ``ProposalItemReasonLink``, never through its (reusable) ref. It is\nprovenance, not evidence: the Claim's Captures are unchanged.",
         "properties": {
           "child_index": {
             "minimum": 0,
@@ -71422,7 +71358,7 @@
           },
           "ProposalItemReason": {
             "additionalProperties": false,
-            "description": "One Procedure terminal item's own reason, kept with the member it explains.\n\nA ``propose_change_set`` or ``settle_change_set`` item states why in its\n``rationale``; the change set's rationale names only the run and the item\ncount, and each item's reason is recorded here, keyed by the immutable\nProcedure operation (``operation``: the terminal's admission binding and\nnode, the identity its core creation records use) and the path of the\nClaim (or Subject) it lowered into. A proposal reads them only through its\nown ``ProposalItemReasonLink``, never through its (reusable) ref. It is\nprovenance, not evidence: the Claim's Captures are unchanged.",
+            "description": "One Procedure terminal item's own reason, kept with the member it explains.\n\nA ``claims`` or ``claims`` item states why in its\n``rationale``; the change set's rationale names only the run and the item\ncount, and each item's reason is recorded here, keyed by the immutable\nProcedure operation (``operation``: the terminal's admission binding and\nnode, the identity its core creation records use) and the path of the\nClaim (or Subject) it lowered into. A proposal reads them only through its\nown ``ProposalItemReasonLink``, never through its (reusable) ref. It is\nprovenance, not evidence: the Claim's Captures are unchanged.",
             "properties": {
               "child_index": {
                 "minimum": 0,
@@ -75444,43 +75380,6 @@
       },
       "json_schema": {
         "$defs": {
-          "ExactContentRef": {
-            "additionalProperties": false,
-            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
-            "properties": {
-              "content_digest": {
-                "title": "Content Digest",
-                "type": "string"
-              },
-              "exact_content": {
-                "enum": [
-                  "binary",
-                  "unavailable"
-                ],
-                "title": "Exact Content",
-                "type": "string"
-              },
-              "length": {
-                "anyOf": [
-                  {
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Length"
-              }
-            },
-            "required": [
-              "exact_content",
-              "content_digest"
-            ],
-            "title": "ExactContentRef",
-            "type": "object"
-          },
           "ShownObject": {
             "additionalProperties": false,
             "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
@@ -75501,9 +75400,6 @@
             "anyOf": [
               {
                 "$ref": "#/$defs/TruncatedText"
-              },
-              {
-                "$ref": "#/$defs/ExactContentRef"
               },
               {
                 "$ref": "#/$defs/ShownObject"
@@ -77977,14 +77873,6 @@
               "admission_policy": {
                 "$ref": "#/$defs/ClaimAdmissionPolicy"
               },
-              "allowed_object_subject_kinds": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Allowed Object Subject Kinds",
-                "type": "array"
-              },
               "allowed_subject_kinds": {
                 "items": {
                   "type": "string"
@@ -78091,6 +77979,21 @@
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
               },
+              "incomplete_fallback": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Incomplete Fallback"
+              },
               "inverse": {
                 "anyOf": [
                   {
@@ -78109,19 +78012,6 @@
                   "state": "live"
                 }
               },
-              "literal_schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Literal Schema"
-              },
               "member_descriptions": {
                 "default": [],
                 "items": {
@@ -78129,20 +78019,6 @@
                 },
                 "title": "Member Descriptions",
                 "type": "array"
-              },
-              "negative": {
-                "default": false,
-                "title": "Negative",
-                "type": "boolean"
-              },
-              "object_kind": {
-                "enum": [
-                  "literal",
-                  "subject",
-                  "exact_content"
-                ],
-                "title": "Object Kind",
-                "type": "string"
               },
               "permitted_roles": {
                 "items": {
@@ -78194,6 +78070,21 @@
                 "title": "Referent Sensitivity",
                 "type": "string"
               },
+              "requires_complete_input": {
+                "default": [],
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "title": "Requires Complete Input",
+                "type": "array"
+              },
               "resolution_policy": {
                 "$ref": "#/$defs/ClaimResolutionPolicy"
               },
@@ -78205,24 +78096,6 @@
                 ],
                 "title": "Revision Evidence",
                 "type": "string"
-              },
-              "unknown_member": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Unknown Member"
               },
               "unsure_hold_for": {
                 "anyOf": [
@@ -78236,105 +78109,97 @@
                 "default": null
               },
               "value": {
-                "anyOf": [
+                "discriminator": {
+                  "mapping": {
+                    "bool": "#/$defs/BoolType",
+                    "capture": "#/$defs/CaptureType",
+                    "contract": "#/$defs/NestedType",
+                    "date": "#/$defs/DateType",
+                    "datetime": "#/$defs/DateTimeType",
+                    "decimal": "#/$defs/DecimalType",
+                    "duration": "#/$defs/DurationType",
+                    "enum": "#/$defs/EnumType",
+                    "enum_of": "#/$defs/EnumOfType",
+                    "field_result": "#/$defs/FieldResultType",
+                    "int": "#/$defs/IntType",
+                    "key": "#/$defs/KeyType",
+                    "key_part": "#/$defs/KeyPartType",
+                    "list": "#/$defs/ListType",
+                    "number": "#/$defs/NumberType",
+                    "record": "#/$defs/RecordType",
+                    "refusal": "#/$defs/RefusalType",
+                    "result": "#/$defs/ResultType",
+                    "string": "#/$defs/StringType",
+                    "subject": "#/$defs/SubjectType",
+                    "variant": "#/$defs/VariantType"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
                   {
-                    "discriminator": {
-                      "mapping": {
-                        "bool": "#/$defs/BoolType",
-                        "capture": "#/$defs/CaptureType",
-                        "contract": "#/$defs/NestedType",
-                        "date": "#/$defs/DateType",
-                        "datetime": "#/$defs/DateTimeType",
-                        "decimal": "#/$defs/DecimalType",
-                        "duration": "#/$defs/DurationType",
-                        "enum": "#/$defs/EnumType",
-                        "enum_of": "#/$defs/EnumOfType",
-                        "field_result": "#/$defs/FieldResultType",
-                        "int": "#/$defs/IntType",
-                        "key": "#/$defs/KeyType",
-                        "key_part": "#/$defs/KeyPartType",
-                        "list": "#/$defs/ListType",
-                        "number": "#/$defs/NumberType",
-                        "record": "#/$defs/RecordType",
-                        "refusal": "#/$defs/RefusalType",
-                        "result": "#/$defs/ResultType",
-                        "string": "#/$defs/StringType",
-                        "subject": "#/$defs/SubjectType",
-                        "variant": "#/$defs/VariantType"
-                      },
-                      "propertyName": "kind"
-                    },
-                    "oneOf": [
-                      {
-                        "$ref": "#/$defs/StringType"
-                      },
-                      {
-                        "$ref": "#/$defs/IntType"
-                      },
-                      {
-                        "$ref": "#/$defs/DecimalType"
-                      },
-                      {
-                        "$ref": "#/$defs/NumberType"
-                      },
-                      {
-                        "$ref": "#/$defs/BoolType"
-                      },
-                      {
-                        "$ref": "#/$defs/DateType"
-                      },
-                      {
-                        "$ref": "#/$defs/DateTimeType"
-                      },
-                      {
-                        "$ref": "#/$defs/DurationType"
-                      },
-                      {
-                        "$ref": "#/$defs/EnumType"
-                      },
-                      {
-                        "$ref": "#/$defs/EnumOfType"
-                      },
-                      {
-                        "$ref": "#/$defs/ListType"
-                      },
-                      {
-                        "$ref": "#/$defs/NestedType"
-                      },
-                      {
-                        "$ref": "#/$defs/VariantType"
-                      },
-                      {
-                        "$ref": "#/$defs/KeyType"
-                      },
-                      {
-                        "$ref": "#/$defs/KeyPartType"
-                      },
-                      {
-                        "$ref": "#/$defs/SubjectType"
-                      },
-                      {
-                        "$ref": "#/$defs/CaptureType"
-                      },
-                      {
-                        "$ref": "#/$defs/FieldResultType"
-                      },
-                      {
-                        "$ref": "#/$defs/RecordType"
-                      },
-                      {
-                        "$ref": "#/$defs/ResultType"
-                      },
-                      {
-                        "$ref": "#/$defs/RefusalType"
-                      }
-                    ]
+                    "$ref": "#/$defs/StringType"
                   },
                   {
-                    "type": "null"
+                    "$ref": "#/$defs/IntType"
+                  },
+                  {
+                    "$ref": "#/$defs/DecimalType"
+                  },
+                  {
+                    "$ref": "#/$defs/NumberType"
+                  },
+                  {
+                    "$ref": "#/$defs/BoolType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateTimeType"
+                  },
+                  {
+                    "$ref": "#/$defs/DurationType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumOfType"
+                  },
+                  {
+                    "$ref": "#/$defs/ListType"
+                  },
+                  {
+                    "$ref": "#/$defs/NestedType"
+                  },
+                  {
+                    "$ref": "#/$defs/VariantType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyPartType"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectType"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureType"
+                  },
+                  {
+                    "$ref": "#/$defs/FieldResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RecordType"
+                  },
+                  {
+                    "$ref": "#/$defs/ResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RefusalType"
                   }
                 ],
-                "default": null,
                 "title": "Value"
               }
             },
@@ -78342,7 +78207,7 @@
               "identity",
               "predicate",
               "allowed_subject_kinds",
-              "object_kind",
+              "value",
               "cardinality",
               "permitted_roles",
               "evidence_admission_policy",
@@ -80021,11 +79886,9 @@
                       "invoke": "#/$defs/InvokeNode",
                       "post_inbox": "#/$defs/InboxEgressNode",
                       "project": "#/$defs/ProjectNode",
-                      "propose_change_set": "#/$defs/ProposeChangeSetNode",
                       "read": "#/$defs/ReadNode",
                       "repeat": "#/$defs/RepeatNode",
                       "select": "#/$defs/SelectNode",
-                      "settle_change_set": "#/$defs/SettleChangeSetNode",
                       "transform": "#/$defs/TransformNode"
                     },
                     "propertyName": "kind"
@@ -80063,12 +79926,6 @@
                     },
                     {
                       "$ref": "#/$defs/ClaimsNode"
-                    },
-                    {
-                      "$ref": "#/$defs/ProposeChangeSetNode"
-                    },
-                    {
-                      "$ref": "#/$defs/SettleChangeSetNode"
                     },
                     {
                       "$ref": "#/$defs/HaltNode"
@@ -80573,58 +80430,6 @@
               "as"
             ],
             "title": "ProjectNode",
-            "type": "object"
-          },
-          "ProposalItemsFanOut": {
-            "additionalProperties": false,
-            "description": "Candidates from data: each element of ``items`` is one Claim proposal item.\n\n``items`` resolves at run time (typically ``$steps.<alias>.items``, a list a\nprovider, Source or transform produced); every element becomes one item of\nthe one proposal, with its own dependency closure and evidence, exactly as\nthe capture and inbox terminals fan out ``{\"items\": ...}``.",
-            "properties": {
-              "items": {
-                "title": "Items"
-              }
-            },
-            "required": [
-              "items"
-            ],
-            "title": "ProposalItemsFanOut",
-            "type": "object"
-          },
-          "ProposeChangeSetNode": {
-            "additionalProperties": false,
-            "description": "Terminal output into proposal receive; it has no activation field.\n\n``candidate_templates`` is a fixed, non-empty list of item templates, or\n``{\"items\": ...}`` to fan out over data (:class:`ProposalItemsFanOut`).",
-            "properties": {
-              "candidate_templates": {
-                "anyOf": [
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "$ref": "#/$defs/ProposalItemsFanOut"
-                  }
-                ],
-                "title": "Candidate Templates"
-              },
-              "kind": {
-                "const": "propose_change_set",
-                "default": "propose_change_set",
-                "title": "Kind",
-                "type": "string"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "result": {
-                "title": "Result"
-              }
-            },
-            "required": [
-              "node_id",
-              "candidate_templates",
-              "result"
-            ],
-            "title": "ProposeChangeSetNode",
             "type": "object"
           },
           "QueryArtifactDefinition": {
@@ -81593,7 +81398,7 @@
           },
           "Ref": {
             "additionalProperties": false,
-            "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, or list positions as digits. A ``param`` reference names the\nparameter as its first path member.",
+            "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, list positions as digits, or explicit ``[*]`` projections.\nA ``param`` reference names the parameter as its first path member.",
             "properties": {
               "$ref": {
                 "enum": [
@@ -81973,44 +81778,6 @@
             "title": "SemanticSelector",
             "type": "object"
           },
-          "SettleChangeSetNode": {
-            "additionalProperties": false,
-            "description": "Terminal settle: the proposal terminal's Claims, settled under delegated authority.\n\nIt carries no mandate: Core selects the one accepted settle ProcedureMandate\nthat covers the change, evaluates its condition, and falls back as that\nmandate declares. Compiler revision 31.",
-            "properties": {
-              "candidate_templates": {
-                "anyOf": [
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "$ref": "#/$defs/ProposalItemsFanOut"
-                  }
-                ],
-                "title": "Candidate Templates"
-              },
-              "kind": {
-                "const": "settle_change_set",
-                "default": "settle_change_set",
-                "title": "Kind",
-                "type": "string"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "result": {
-                "title": "Result"
-              }
-            },
-            "required": [
-              "node_id",
-              "candidate_templates",
-              "result"
-            ],
-            "title": "SettleChangeSetNode",
-            "type": "object"
-          },
           "ShapeField": {
             "additionalProperties": false,
             "description": "One shaped field: read ``from`` the current record (``$item.fields.<f>``,\n``$item.key.<k>``), or a literal ``value``; ``as`` casts it explicitly.",
@@ -82114,7 +81881,7 @@
           },
           "SubjectType": {
             "additionalProperties": false,
-            "description": "A Subject of one kind. Reads produce it; an operation may only echo its input's.",
+            "description": "A Subject of one of the explicitly named kinds, in canonical order.",
             "properties": {
               "kind": {
                 "const": "subject",
@@ -82122,13 +81889,17 @@
                 "title": "Kind",
                 "type": "string"
               },
-              "subject_kind": {
-                "title": "Subject Kind",
-                "type": "string"
+              "subject_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "title": "Subject Kinds",
+                "type": "array"
               }
             },
             "required": [
-              "subject_kind"
+              "subject_kinds"
             ],
             "title": "SubjectType",
             "type": "object"
@@ -86701,14 +86472,6 @@
               "admission_policy": {
                 "$ref": "#/$defs/ClaimAdmissionPolicy"
               },
-              "allowed_object_subject_kinds": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Allowed Object Subject Kinds",
-                "type": "array"
-              },
               "allowed_subject_kinds": {
                 "items": {
                   "type": "string"
@@ -86815,6 +86578,21 @@
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
               },
+              "incomplete_fallback": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Incomplete Fallback"
+              },
               "inverse": {
                 "anyOf": [
                   {
@@ -86833,19 +86611,6 @@
                   "state": "live"
                 }
               },
-              "literal_schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Literal Schema"
-              },
               "member_descriptions": {
                 "default": [],
                 "items": {
@@ -86853,20 +86618,6 @@
                 },
                 "title": "Member Descriptions",
                 "type": "array"
-              },
-              "negative": {
-                "default": false,
-                "title": "Negative",
-                "type": "boolean"
-              },
-              "object_kind": {
-                "enum": [
-                  "literal",
-                  "subject",
-                  "exact_content"
-                ],
-                "title": "Object Kind",
-                "type": "string"
               },
               "permitted_roles": {
                 "items": {
@@ -86918,6 +86669,21 @@
                 "title": "Referent Sensitivity",
                 "type": "string"
               },
+              "requires_complete_input": {
+                "default": [],
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "title": "Requires Complete Input",
+                "type": "array"
+              },
               "resolution_policy": {
                 "$ref": "#/$defs/ClaimResolutionPolicy"
               },
@@ -86929,24 +86695,6 @@
                 ],
                 "title": "Revision Evidence",
                 "type": "string"
-              },
-              "unknown_member": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Unknown Member"
               },
               "unsure_hold_for": {
                 "anyOf": [
@@ -86960,105 +86708,97 @@
                 "default": null
               },
               "value": {
-                "anyOf": [
+                "discriminator": {
+                  "mapping": {
+                    "bool": "#/$defs/BoolType",
+                    "capture": "#/$defs/CaptureType",
+                    "contract": "#/$defs/NestedType",
+                    "date": "#/$defs/DateType",
+                    "datetime": "#/$defs/DateTimeType",
+                    "decimal": "#/$defs/DecimalType",
+                    "duration": "#/$defs/DurationType",
+                    "enum": "#/$defs/EnumType",
+                    "enum_of": "#/$defs/EnumOfType",
+                    "field_result": "#/$defs/FieldResultType",
+                    "int": "#/$defs/IntType",
+                    "key": "#/$defs/KeyType",
+                    "key_part": "#/$defs/KeyPartType",
+                    "list": "#/$defs/ListType",
+                    "number": "#/$defs/NumberType",
+                    "record": "#/$defs/RecordType",
+                    "refusal": "#/$defs/RefusalType",
+                    "result": "#/$defs/ResultType",
+                    "string": "#/$defs/StringType",
+                    "subject": "#/$defs/SubjectType",
+                    "variant": "#/$defs/VariantType"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
                   {
-                    "discriminator": {
-                      "mapping": {
-                        "bool": "#/$defs/BoolType",
-                        "capture": "#/$defs/CaptureType",
-                        "contract": "#/$defs/NestedType",
-                        "date": "#/$defs/DateType",
-                        "datetime": "#/$defs/DateTimeType",
-                        "decimal": "#/$defs/DecimalType",
-                        "duration": "#/$defs/DurationType",
-                        "enum": "#/$defs/EnumType",
-                        "enum_of": "#/$defs/EnumOfType",
-                        "field_result": "#/$defs/FieldResultType",
-                        "int": "#/$defs/IntType",
-                        "key": "#/$defs/KeyType",
-                        "key_part": "#/$defs/KeyPartType",
-                        "list": "#/$defs/ListType",
-                        "number": "#/$defs/NumberType",
-                        "record": "#/$defs/RecordType",
-                        "refusal": "#/$defs/RefusalType",
-                        "result": "#/$defs/ResultType",
-                        "string": "#/$defs/StringType",
-                        "subject": "#/$defs/SubjectType",
-                        "variant": "#/$defs/VariantType"
-                      },
-                      "propertyName": "kind"
-                    },
-                    "oneOf": [
-                      {
-                        "$ref": "#/$defs/StringType"
-                      },
-                      {
-                        "$ref": "#/$defs/IntType"
-                      },
-                      {
-                        "$ref": "#/$defs/DecimalType"
-                      },
-                      {
-                        "$ref": "#/$defs/NumberType"
-                      },
-                      {
-                        "$ref": "#/$defs/BoolType"
-                      },
-                      {
-                        "$ref": "#/$defs/DateType"
-                      },
-                      {
-                        "$ref": "#/$defs/DateTimeType"
-                      },
-                      {
-                        "$ref": "#/$defs/DurationType"
-                      },
-                      {
-                        "$ref": "#/$defs/EnumType"
-                      },
-                      {
-                        "$ref": "#/$defs/EnumOfType"
-                      },
-                      {
-                        "$ref": "#/$defs/ListType"
-                      },
-                      {
-                        "$ref": "#/$defs/NestedType"
-                      },
-                      {
-                        "$ref": "#/$defs/VariantType"
-                      },
-                      {
-                        "$ref": "#/$defs/KeyType"
-                      },
-                      {
-                        "$ref": "#/$defs/KeyPartType"
-                      },
-                      {
-                        "$ref": "#/$defs/SubjectType"
-                      },
-                      {
-                        "$ref": "#/$defs/CaptureType"
-                      },
-                      {
-                        "$ref": "#/$defs/FieldResultType"
-                      },
-                      {
-                        "$ref": "#/$defs/RecordType"
-                      },
-                      {
-                        "$ref": "#/$defs/ResultType"
-                      },
-                      {
-                        "$ref": "#/$defs/RefusalType"
-                      }
-                    ]
+                    "$ref": "#/$defs/StringType"
                   },
                   {
-                    "type": "null"
+                    "$ref": "#/$defs/IntType"
+                  },
+                  {
+                    "$ref": "#/$defs/DecimalType"
+                  },
+                  {
+                    "$ref": "#/$defs/NumberType"
+                  },
+                  {
+                    "$ref": "#/$defs/BoolType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateTimeType"
+                  },
+                  {
+                    "$ref": "#/$defs/DurationType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumOfType"
+                  },
+                  {
+                    "$ref": "#/$defs/ListType"
+                  },
+                  {
+                    "$ref": "#/$defs/NestedType"
+                  },
+                  {
+                    "$ref": "#/$defs/VariantType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyPartType"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectType"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureType"
+                  },
+                  {
+                    "$ref": "#/$defs/FieldResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RecordType"
+                  },
+                  {
+                    "$ref": "#/$defs/ResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RefusalType"
                   }
                 ],
-                "default": null,
                 "title": "Value"
               }
             },
@@ -87066,7 +86806,7 @@
               "identity",
               "predicate",
               "allowed_subject_kinds",
-              "object_kind",
+              "value",
               "cardinality",
               "permitted_roles",
               "evidence_admission_policy",
@@ -87607,43 +87347,6 @@
               "members"
             ],
             "title": "EnumType",
-            "type": "object"
-          },
-          "ExactContentRef": {
-            "additionalProperties": false,
-            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
-            "properties": {
-              "content_digest": {
-                "title": "Content Digest",
-                "type": "string"
-              },
-              "exact_content": {
-                "enum": [
-                  "binary",
-                  "unavailable"
-                ],
-                "title": "Exact Content",
-                "type": "string"
-              },
-              "length": {
-                "anyOf": [
-                  {
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Length"
-              }
-            },
-            "required": [
-              "exact_content",
-              "content_digest"
-            ],
-            "title": "ExactContentRef",
             "type": "object"
           },
           "ExtractField": {
@@ -88782,11 +88485,9 @@
                       "invoke": "#/$defs/InvokeNode",
                       "post_inbox": "#/$defs/InboxEgressNode",
                       "project": "#/$defs/ProjectNode",
-                      "propose_change_set": "#/$defs/ProposeChangeSetNode",
                       "read": "#/$defs/ReadNode",
                       "repeat": "#/$defs/RepeatNode",
                       "select": "#/$defs/SelectNode",
-                      "settle_change_set": "#/$defs/SettleChangeSetNode",
                       "transform": "#/$defs/TransformNode"
                     },
                     "propertyName": "kind"
@@ -88824,12 +88525,6 @@
                     },
                     {
                       "$ref": "#/$defs/ClaimsNode"
-                    },
-                    {
-                      "$ref": "#/$defs/ProposeChangeSetNode"
-                    },
-                    {
-                      "$ref": "#/$defs/SettleChangeSetNode"
                     },
                     {
                       "$ref": "#/$defs/HaltNode"
@@ -89336,58 +89031,6 @@
             "title": "ProjectNode",
             "type": "object"
           },
-          "ProposalItemsFanOut": {
-            "additionalProperties": false,
-            "description": "Candidates from data: each element of ``items`` is one Claim proposal item.\n\n``items`` resolves at run time (typically ``$steps.<alias>.items``, a list a\nprovider, Source or transform produced); every element becomes one item of\nthe one proposal, with its own dependency closure and evidence, exactly as\nthe capture and inbox terminals fan out ``{\"items\": ...}``.",
-            "properties": {
-              "items": {
-                "title": "Items"
-              }
-            },
-            "required": [
-              "items"
-            ],
-            "title": "ProposalItemsFanOut",
-            "type": "object"
-          },
-          "ProposeChangeSetNode": {
-            "additionalProperties": false,
-            "description": "Terminal output into proposal receive; it has no activation field.\n\n``candidate_templates`` is a fixed, non-empty list of item templates, or\n``{\"items\": ...}`` to fan out over data (:class:`ProposalItemsFanOut`).",
-            "properties": {
-              "candidate_templates": {
-                "anyOf": [
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "$ref": "#/$defs/ProposalItemsFanOut"
-                  }
-                ],
-                "title": "Candidate Templates"
-              },
-              "kind": {
-                "const": "propose_change_set",
-                "default": "propose_change_set",
-                "title": "Kind",
-                "type": "string"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "result": {
-                "title": "Result"
-              }
-            },
-            "required": [
-              "node_id",
-              "candidate_templates",
-              "result"
-            ],
-            "title": "ProposeChangeSetNode",
-            "type": "object"
-          },
           "QueryArtifactDefinition": {
             "additionalProperties": false,
             "description": "The full definition and its exact accepted identity/path/version binding.",
@@ -89483,9 +89126,6 @@
             "anyOf": [
               {
                 "$ref": "#/$defs/TruncatedText"
-              },
-              {
-                "$ref": "#/$defs/ExactContentRef"
               },
               {
                 "$ref": "#/$defs/ShownObject"
@@ -90630,7 +90270,7 @@
           },
           "Ref": {
             "additionalProperties": false,
-            "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, or list positions as digits. A ``param`` reference names the\nparameter as its first path member.",
+            "description": "A typed reference: its ``$ref`` root, the ``step`` it reads, and a member ``path``.\n\n``step`` is named exactly when the root is ``step``. ``path`` members are\nfield names, list positions as digits, or explicit ``[*]`` projections.\nA ``param`` reference names the parameter as its first path member.",
             "properties": {
               "$ref": {
                 "enum": [
@@ -91010,44 +90650,6 @@
             "title": "SemanticSelector",
             "type": "object"
           },
-          "SettleChangeSetNode": {
-            "additionalProperties": false,
-            "description": "Terminal settle: the proposal terminal's Claims, settled under delegated authority.\n\nIt carries no mandate: Core selects the one accepted settle ProcedureMandate\nthat covers the change, evaluates its condition, and falls back as that\nmandate declares. Compiler revision 31.",
-            "properties": {
-              "candidate_templates": {
-                "anyOf": [
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "$ref": "#/$defs/ProposalItemsFanOut"
-                  }
-                ],
-                "title": "Candidate Templates"
-              },
-              "kind": {
-                "const": "settle_change_set",
-                "default": "settle_change_set",
-                "title": "Kind",
-                "type": "string"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "result": {
-                "title": "Result"
-              }
-            },
-            "required": [
-              "node_id",
-              "candidate_templates",
-              "result"
-            ],
-            "title": "SettleChangeSetNode",
-            "type": "object"
-          },
           "ShapeField": {
             "additionalProperties": false,
             "description": "One shaped field: read ``from`` the current record (``$item.fields.<f>``,\n``$item.key.<k>``), or a literal ``value``; ``as`` casts it explicitly.",
@@ -91118,9 +90720,6 @@
             "anyOf": [
               {
                 "$ref": "#/$defs/TruncatedText"
-              },
-              {
-                "$ref": "#/$defs/ExactContentRef"
               },
               {
                 "$ref": "#/$defs/ShownObject"
@@ -91201,7 +90800,7 @@
           },
           "SubjectType": {
             "additionalProperties": false,
-            "description": "A Subject of one kind. Reads produce it; an operation may only echo its input's.",
+            "description": "A Subject of one of the explicitly named kinds, in canonical order.",
             "properties": {
               "kind": {
                 "const": "subject",
@@ -91209,13 +90808,17 @@
                 "title": "Kind",
                 "type": "string"
               },
-              "subject_kind": {
-                "title": "Subject Kind",
-                "type": "string"
+              "subject_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "title": "Subject Kinds",
+                "type": "array"
               }
             },
             "required": [
-              "subject_kind"
+              "subject_kinds"
             ],
             "title": "SubjectType",
             "type": "object"
@@ -91738,7 +91341,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "One page of a ``query`` answer: values first, flags per row.\n\nRows are bounded by ``get``'s card rule: a string value over 500 characters\nis a ``TruncatedText`` preview, and an exact-content value is its text, or an\n``ExactContentRef`` when it cannot be shown as text. A row cell names no\nwhole read; with ``claims=True`` each Claim's preview does.",
+        "description": "One page of a ``query`` answer: values first, flags per row.\n\nRows are bounded by ``get``'s card rule: a string value over 500 characters\nis a ``TruncatedText`` preview. A structured value retains its typed shape.\nA row cell names no\nwhole read; with ``claims=True`` each Claim's preview does.",
         "properties": {
           "capped": {
             "default": [],
@@ -97368,43 +96971,6 @@
             "title": "ClaimLine",
             "type": "object"
           },
-          "ExactContentRef": {
-            "additionalProperties": false,
-            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
-            "properties": {
-              "content_digest": {
-                "title": "Content Digest",
-                "type": "string"
-              },
-              "exact_content": {
-                "enum": [
-                  "binary",
-                  "unavailable"
-                ],
-                "title": "Exact Content",
-                "type": "string"
-              },
-              "length": {
-                "anyOf": [
-                  {
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Length"
-              }
-            },
-            "required": [
-              "exact_content",
-              "content_digest"
-            ],
-            "title": "ExactContentRef",
-            "type": "object"
-          },
           "ShownObject": {
             "additionalProperties": false,
             "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
@@ -97425,9 +96991,6 @@
             "anyOf": [
               {
                 "$ref": "#/$defs/TruncatedText"
-              },
-              {
-                "$ref": "#/$defs/ExactContentRef"
               },
               {
                 "$ref": "#/$defs/ShownObject"
@@ -97930,43 +97493,6 @@
             "title": "ClaimLine",
             "type": "object"
           },
-          "ExactContentRef": {
-            "additionalProperties": false,
-            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
-            "properties": {
-              "content_digest": {
-                "title": "Content Digest",
-                "type": "string"
-              },
-              "exact_content": {
-                "enum": [
-                  "binary",
-                  "unavailable"
-                ],
-                "title": "Exact Content",
-                "type": "string"
-              },
-              "length": {
-                "anyOf": [
-                  {
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Length"
-              }
-            },
-            "required": [
-              "exact_content",
-              "content_digest"
-            ],
-            "title": "ExactContentRef",
-            "type": "object"
-          },
           "ShownObject": {
             "additionalProperties": false,
             "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
@@ -97987,9 +97513,6 @@
             "anyOf": [
               {
                 "$ref": "#/$defs/TruncatedText"
-              },
-              {
-                "$ref": "#/$defs/ExactContentRef"
               },
               {
                 "$ref": "#/$defs/ShownObject"

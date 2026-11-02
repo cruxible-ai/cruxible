@@ -97,7 +97,7 @@ CLAIM_TYPES = (
     _claim_type("priority", value_type={"type": "string"}, roles=("normative", "observation")),
     _claim_type("title", value_type={"type": "string"}),
     _claim_type("governs", value_type=(KIND,), cardinality="many", roles=("normative",)),
-    _claim_type("ruling", value_type="exact_content", roles=("normative",)),
+    _claim_type("ruling", value_type={"type": "string", "maxLength": 256}, roles=("normative",)),
     _claim_type("labels", value_type={"type": "string"}, cardinality="many", captured_only=True),
     _claim_type("measured", value_type={"type": "integer"}, captured_only=True),
 )
@@ -111,7 +111,13 @@ def _shell(subject_id: str) -> SubjectShell:
     )
 
 
-def seed_write_vocabulary(instance: PlaybillInstance, *, actor_id: str = "owner") -> None:
+def seed_write_vocabulary(
+    instance: PlaybillInstance,
+    *,
+    actor_id: str = "owner",
+    claim_types: tuple[ClaimType, ...] = CLAIM_TYPES,
+    capture_contracts: tuple[Any, ...] = (),
+) -> None:
     """Accept the write vocabulary and three work items into ``instance``.
 
     The genesis approval policy lets the proposer activate its own proposal, so
@@ -122,9 +128,9 @@ def seed_write_vocabulary(instance: PlaybillInstance, *, actor_id: str = "owner"
     tree = instance.tree_at(base.git_oid)
     for subject_id in SUBJECTS:
         tree[subject_path(KIND, subject_id)] = render_subject(_shell(subject_id))
-    for claim_type in CLAIM_TYPES:
+    for claim_type in claim_types:
         tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
-    for contract in (SELF_SOURCE, REPORTS):
+    for contract in (SELF_SOURCE, REPORTS, *capture_contracts):
         tree[capture_contract_path(contract.identity.name)] = render_capture_contract(contract)
     declare_created_kinds(
         instance.tree_at(base.git_oid), tree, instance=instance, actor_id=actor_id

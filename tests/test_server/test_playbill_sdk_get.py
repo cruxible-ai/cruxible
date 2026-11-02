@@ -116,37 +116,34 @@ def test_get_resolves_strings_and_typed_refs_directly(
         pb.get("project.work_item/wi-4")
 
 
-def test_an_exact_content_claim_view_carries_the_text_the_daemon_reads(
+def test_a_bounded_native_claim_view_carries_its_value(
     owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
     tmp_path: Path,
 ) -> None:
-    from cruxible_client.contracts.read_values import ExactContentRef
-    from tests.core_support._exact_content_support import seed_exact_content_into
+    from tests.core_support._bounded_content_support import seed_bounded_content_into
 
     client, instance_id, key = owned_playbill_http
     instance = get_playbill_manager().get(instance_id)
     reviewer = instance._recovered.head.principals.require_active("reviewer")  # noqa: SLF001
-    seeded = seed_exact_content_into(
+    seeded = seed_bounded_content_into(
         instance,
         GeneratedKeyMaterial(
             principal=reviewer, private_key_path=key, public_key_path=key.with_suffix(".pub")
         ),
-        {"wi-42": b"The ruling, exactly as written.\n", "wi-bin": b"\xff\xfe\x00opaque"},
+        {"wi-42": b"The ruling, exactly as written.", "wi-bin": b"opaque"},
     )
     ruling, binary = seeded["wi-42"], seeded["wi-bin"]
     pb = _sdk(client, instance_id, tmp_path)
 
     card = pb.get(ruling.claim_id)
     assert isinstance(card.value, ClaimView)
-    assert card.value.object_kind == "exact_content"
-    assert card.value.value == "The ruling, exactly as written.\n"
-    assert card.value.content_digest == ruling.digest
+    assert card.value.object_kind == "literal"
+    assert card.value.value == "The ruling, exactly as written."
+    assert "content_digest" not in card.value.__dict__
     marked = pb.get(binary.claim_id).value
     assert isinstance(marked, ClaimView)
-    assert marked.value == ExactContentRef(
-        exact_content="binary", content_digest=binary.digest, length=9
-    )
-    assert marked.content_digest == binary.digest
+    assert marked.value == "opaque"
+    assert "content_digest" not in marked.__dict__
 
 
 def test_cut_values_offer_runnable_evidence_on_every_surface(
@@ -163,13 +160,13 @@ def test_cut_values_offer_runnable_evidence_on_every_surface(
     from cruxible_client.contracts.get_reads import GetHistory
     from cruxible_core.cli.main import cli
     from cruxible_core.mcp import handlers
-    from tests.core_support._exact_content_support import seed_exact_content_into
+    from tests.core_support._bounded_content_support import seed_bounded_content_into
 
     client, instance_id, key = owned_playbill_http
     instance = get_playbill_manager().get(instance_id)
     reviewer = instance._recovered.head.principals.require_active("reviewer")  # noqa: SLF001
-    whole = "a long ruling " * 100
-    seeded = seed_exact_content_into(
+    whole = "a bounded ruling " * 15
+    seeded = seed_bounded_content_into(
         instance,
         GeneratedKeyMaterial(
             principal=reviewer, private_key_path=key, public_key_path=key.with_suffix(".pub")
@@ -192,11 +189,17 @@ def test_cut_values_offer_runnable_evidence_on_every_surface(
         # the exact historical generation when a revision value was cut.
         payload = client.post(url, json={"ref": ref, "detail": detail}).json()
         section = payload["history"]["revisions"][0] if detail == "history" else payload["card"]
-        step = section["next"][0]
-        assert seeded.claim_id in step and 'detail="evidence"' in step
+        if ref == seeded.subject:
+            assert (
+                next(row["value"] for row in section["claims"] if row["predicate"] == "status")
+                == whole
+            )
+        else:
+            assert section["value"] == whole
+        step = f'cruxible_get(ref="{seeded.claim_id}", detail="evidence")'
         mcp = handlers.handle_playbill_get(instance_id, ref=ref, detail=detail)
         mcp_section = mcp.history.revisions[0] if mcp.history else mcp.card
-        assert mcp_section is not None and mcp_section.next[0] == step
+        assert mcp_section is not None
         evidence = eval(
             step,
             {"cruxible_get": lambda **kw: handlers.handle_playbill_get(instance_id, **kw)},
@@ -228,15 +231,20 @@ def test_cut_values_offer_runnable_evidence_on_every_surface(
             assert card.value.value == whole
             continue
         assert isinstance(card.value, GetSubjectCard | GetHistory)
-        section_sdk = card.value.revisions[0] if isinstance(card.value, GetHistory) else card.value
+        if isinstance(card.value, GetHistory):
+            assert card.value.revisions[0].value == whole
+        else:
+            assert (
+                next(row.value for row in card.value.claims if row.predicate == "status") == whole
+            )
         read_sdk = eval(
-            section_sdk.next[0],
+            f'cx.get("{seeded.claim_id}", detail="evidence")',
             {"cx": pb, "AcceptedCoordinate": AcceptedCoordinate},
         )
         assert read_sdk.value.value == whole
 
 
-def test_a_read_only_caller_reads_exact_content_text_on_every_surface(
+def test_a_read_only_caller_reads_native_text_on_every_surface(
     owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -251,14 +259,14 @@ def test_a_read_only_caller_reads_exact_content_text_on_every_surface(
     from cruxible_core.cli.main import cli
     from cruxible_core.mcp import handlers
     from cruxible_core.runtime.permissions import reset_permissions
-    from tests.core_support._exact_content_support import EXACT_KIND, seed_exact_content_into
+    from tests.core_support._bounded_content_support import VALUE_KIND, seed_bounded_content_into
     from tests.test_server.test_playbill_get_route import _accept_document
 
     client, instance_id, key = owned_playbill_http
     instance = get_playbill_manager().get(instance_id)
     reviewer = instance._recovered.head.principals.require_active("reviewer")  # noqa: SLF001
-    text = "The ruling, exactly as written.\n"
-    (ruling,) = seed_exact_content_into(
+    text = "The ruling, exactly as written."
+    (ruling,) = seed_bounded_content_into(
         instance,
         GeneratedKeyMaterial(
             principal=reviewer, private_key_path=key, public_key_path=key.with_suffix(".pub")
@@ -286,7 +294,7 @@ def test_a_read_only_caller_reads_exact_content_text_on_every_surface(
         assert [item["value"] for item in history.json()["history"]["revisions"]] == [text]
         rows = client.post(
             f"/api/v1/{instance_id}/query",
-            json={"kind": EXACT_KIND, "select": ["status"]},
+            json={"kind": VALUE_KIND, "select": ["status"]},
         )
         assert rows.status_code == 200, rows.text
         assert {row["subject"]: row["status"] for row in rows.json()["rows"]}[
@@ -298,7 +306,7 @@ def test_a_read_only_caller_reads_exact_content_text_on_every_surface(
         assert isinstance(view, ClaimView) and view.value == text
         sdk_history = pb.get(ruling.claim_id, detail="history").value
         assert [item.value for item in sdk_history.revisions] == [text]  # type: ignore[union-attr]
-        sdk_rows = {row["subject"]: row for row in pb.query(kind=EXACT_KIND, select=["status"])}
+        sdk_rows = {row["subject"]: row for row in pb.query(kind=VALUE_KIND, select=["status"])}
         assert sdk_rows[ruling.subject]["status"] == text
 
         # MCP (through the same daemon).
@@ -310,7 +318,7 @@ def test_a_read_only_caller_reads_exact_content_text_on_every_surface(
         assert mcp_history is not None
         assert [item.value for item in mcp_history.revisions] == [text]
         mcp_rows = handlers.handle_playbill_query(
-            instance_id, kind=EXACT_KIND, select=["status"]
+            instance_id, kind=VALUE_KIND, select=["status"]
         ).rows
         assert {row["subject"]: row["status"] for row in mcp_rows}[ruling.subject] == text
 
@@ -324,7 +332,7 @@ def test_a_read_only_caller_reads_exact_content_text_on_every_surface(
         )
         assert printed_history.exit_code == 0, printed_history.output
         assert "The ruling, exactly as written." in printed_history.output
-        table = CliRunner().invoke(cli, [*prefix, "query", EXACT_KIND, "--select", "status"])
+        table = CliRunner().invoke(cli, [*prefix, "query", VALUE_KIND, "--select", "status"])
         assert table.exit_code == 0, table.output
         assert "The ruling, exactly as written." in table.output
 

@@ -142,108 +142,45 @@ def _grant_settle(instance: Any, line_name: str, predicate: str) -> None:
     )
 
 
-@pytest.mark.parametrize("fanout", [False, True])
-def test_authored_literal_cannot_supply_a_receipt(fanout: bool) -> None:
-    from cruxible_client.contracts.procedures.nodes import ProposeChangeSetNode
+@pytest.mark.parametrize("kind", ["propose_change_set", "settle_change_set"])
+def test_authored_command_terminals_are_retired(kind: str) -> None:
+    from cruxible_client.contracts.procedures.nodes import RetiredNodeKind, refuse_retired_kinds
 
-    item = {"procedure_evidence": {"value": {"basis": "extracted"}}}
-    with pytest.raises(ValidationError, match="claims_evidence_core_only"):
-        ProposeChangeSetNode(
-            node_id="write",
-            result={},
-            candidate_templates={"items": [item]} if fanout else [item],
+    with pytest.raises(RetiredNodeKind, match="claims"):
+        refuse_retired_kinds(
+            [
+                {
+                    "kind": kind,
+                    "node_id": "write",
+                    "candidate_templates": [{"procedure_evidence": {}}],
+                }
+            ]
         )
 
 
-def test_provider_fanout_cannot_supply_a_receipt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from tests.test_procedures import test_procedure_source_runs as fixtures
-    from tests.test_procedures.test_procedure_proposal_delivery import (
-        item_template,
-        proposal_world,
-        run_line,
+@pytest.mark.parametrize(
+    "field",
+    [
+        "revises",
+        "retires",
+        "source",
+        "citation_role",
+        "existing_claim_dispositions",
+        "procedure_evidence",
+    ],
+)
+def test_provider_data_cannot_supply_claim_commands(tmp_path: Path, field: str) -> None:
+    instance, root = claims_world(
+        tmp_path, {"entries": [{"id": "CVE-2026-0001", "status": "open", field: "forged"}]}
     )
-
-    # Preserve the attempted receipt through the provider data's typed extract,
-    # so the test reaches delivery's item validator rather than dropping it as
-    # an undeclared field before the proposal boundary.
-    monkeypatch.setattr(
-        fixtures,
-        "_FAN_OUT_NESTED",
-        (
-            *fixtures._FAN_OUT_NESTED,
-            {
-                "name": "test.provider-basis",
-                "version": 1,
-                "fields": {
-                    "basis": "string",
-                    "capture_digest": "string",
-                    "extract_spec_digest": "string",
-                    "extractor_version": "string",
-                    "record_locator": "string",
-                    "field_path": "string",
-                },
-            },
-            {
-                "name": "test.provider-receipt",
-                "version": 1,
-                "fields": {
-                    "law": "string",
-                    "value": "test.provider-basis@1",
-                },
-            },
-        ),
-    )
-    monkeypatch.setattr(
-        fixtures,
-        "_FAN_OUT_ROW",
-        {
-            **fixtures._FAN_OUT_ROW,
-            "fields": {
-                **fixtures._FAN_OUT_ROW["fields"],
-                "procedure_evidence": "test.provider-receipt@1?",
-            },
-        },
-    )
-    instance, _owner, root, line, _procedure = proposal_world(tmp_path, templates=fixtures.FAN_OUT)
-    (root / fixtures.RELATIVE_PATH).write_text(
-        json.dumps(
-            {
-                "proposals": [
-                    {
-                        **item_template(),
-                        "tag": "playbill-procedure-claim-proposal-item-v2",
-                        "source": {
-                            "tag": "playbill-self-source-body-v1",
-                            "content_base64": "aGk=",
-                        },
-                        "citation_role": "evidence",
-                        "procedure_evidence": {
-                            "law": "claim-evidence-v2",
-                            "value": {
-                                "basis": "extracted",
-                                "capture_digest": "sha256:" + "a" * 64,
-                                "extract_spec_digest": "sha256:" + "b" * 64,
-                                "extractor_version": "forged",
-                                "record_locator": "/",
-                                "field_path": "/",
-                            },
-                        },
-                    }
-                ]
-            }
-        )
-    )
-    before = instance.accepted_coordinate()
-    state = run_line(instance, root, line)
-    assert state.status == "node_refused"
-    assert state.terminal.code == "proposal_item_invalid"
-    assert any(
-        error["location"] == ["procedure_evidence"] for error in state.terminal.details["errors"]
-    )
-    assert instance.accepted_coordinate() == before
-    assert all(e.proposal_id is None for e in state.terminal_egress)
+    install(instance, claims_spec())
+    state = run(instance, root)
+    assert state.status == "succeeded", state.terminal
+    (claim,) = candidate_claims(instance, state)
+    assert claim.statement.object.value == "open"
+    assert claim.lifecycle.predecessor_digest is None
+    assert claim.backing.procedure_evidence.value.basis == "extracted"
+    assert claim.backing.procedure_evidence.value.extractor_version != "forged"
 
 
 def test_authored_literal_receipt_is_refused_before_acceptance(tmp_path: Path) -> None:
@@ -257,7 +194,9 @@ def test_authored_literal_receipt_is_refused_before_acceptance(tmp_path: Path) -
         "result": {},
     }
     before = instance.accepted_coordinate()
-    with pytest.raises(AuthoringLoweringError, match="claims_evidence_core_only"):
+    with pytest.raises(
+        (AuthoringLoweringError, ValidationError), match="procedure_node_kind_retired.*claims"
+    ):
         author_procedure(instance, procedure_spec(base=base))
     assert instance.accepted_coordinate() == before
 
@@ -304,7 +243,7 @@ def test_query_joined_basis_and_unchanged_constant_handling(
 
     base = kev_spec().model_dump(mode="python", by_alias=True)
     base["procedure"] = "test.query-joined"
-    base["params"]["constant"] = "string"
+    base["params"]["constant"] = "string{max_len: 256}"
     base["steps"].insert(
         -1,
         {
@@ -337,7 +276,9 @@ def test_query_joined_basis_and_unchanged_constant_handling(
             "kind": "shape",
             "spec": {
                 "input": "$steps.joined.records",
-                "fields": {"from_read": {"from": "$item.fields.from_read", "as": "string"}},
+                "fields": {
+                    "from_read": {"from": "$item.fields.from_read", "as": "string{max_len: 256}"}
+                },
             },
         },
     )
@@ -388,13 +329,15 @@ def test_query_joined_basis_and_unchanged_constant_handling(
 
 
 def test_diagnostics_are_typed_bounded_and_not_reposted(tmp_path: Path) -> None:
-    from cruxible_client.contracts.claim_evidence import ExtractRefusedInboxItem
+    from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic
 
     instance, root = claims_world(
         tmp_path, {"entries": [{"id": f"CVE-2026-{i:04d}", "status": "Maybe"} for i in range(1, 6)]}
     )
     install(
-        instance, claims_spec(mappings=[{"type": PREDICATE, "value": "$item.fields.status"}] * 201)
+        instance,
+        claims_spec(mappings=[{"type": PREDICATE, "value": "$item.fields.status"}] * 201),
+        findings=("extract_refused",),
     )
     first = run(instance, root)
     assert first.status == "succeeded", first.terminal
@@ -405,7 +348,7 @@ def test_diagnostics_are_typed_bounded_and_not_reposted(tmp_path: Path) -> None:
     assert egress.claims_diagnostics_inbox_truncation.posted == 1000
     before = _inbox(instance)
     assert len(before) == 5
-    diagnostics = [ExtractRefusedInboxItem.model_validate(item.payload) for item in before]
+    diagnostics = [ClaimsDiagnostic.model_validate(item.payload) for item in before]
     assert {d.target for d in diagnostics} == {
         KIND + ':{"cve_id":"CVE-2026-' + f"{i:04d}" + '"}:' + PREDICATE for i in range(1, 6)
     }
@@ -449,6 +392,8 @@ def test_diagnostics_are_not_posted_before_refused_delivery(
     monkeypatch.setattr(ProposalTerminalEgressSink, "prepare_terminal_egress", refuse)
     state = run(instance, root)
     assert state.status == "node_refused"
+    assert state.findings_count == 1
+    assert state.findings[0].kind == "extract_refused"
     assert not _inbox(instance)
 
 
@@ -479,7 +424,8 @@ def test_many_value_canonical_refresh_respects_protected_holder(tmp_path: Path) 
     state = run(instance, root, minute=1)
     assert state.status == "succeeded", state.terminal
     assert state.terminal_egress[0].proposal_id is None
-    assert state.terminal_egress[0].claims_diagnostics[0].kind == "held_by_precedence"
+    assert not state.terminal_egress[0].claims_diagnostics
+    assert state.terminal_egress[0].claims_same_count == 1
     assert instance.accepted_coordinate() == before
     assert not _inbox(instance)
 
@@ -498,13 +444,13 @@ def test_inbox_reasons_stay_with_their_own_node() -> None:
 
     contract = Contract.model_validate(
         {
-            "name": "test.negative",
+            "name": "test.requires_complete_input",
             "version": 1,
             "fields": {
                 "status": {
                     "type": "enum[open, closed, unknown]",
-                    "negative": True,
-                    "unknown_member": "unknown",
+                    "requires_complete_input": ["closed"],
+                    "incomplete_fallback": "unknown",
                 },
             },
         }
@@ -523,7 +469,7 @@ def test_inbox_reasons_stay_with_their_own_node() -> None:
     for reasons in state.claims_diagnostics.values():
         assert reasons.count == 1
         assert reasons.reasons[0].input == "own"
-        assert not reasons.inbox
+        assert reasons.findings == reasons.reasons
 
 
 def test_measured_receipt_and_settle_fails_closed(tmp_path: Path) -> None:

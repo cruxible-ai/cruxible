@@ -826,7 +826,7 @@ def test_a_hint_record_authorizes_only_its_own_key_and_id(instance: PlaybillInst
 def _procedure_address(
     instance: PlaybillInstance, key: Any, *, created: tuple[Any, ...] = ()
 ) -> Any:
-    from cruxible_client.contracts.procedures.proposal_items import SubjectKeyReference
+    from cruxible_client.contracts.subject_kinds import SubjectKeyReference
     from cruxible_core.indexes.subject_identity import IdentityView, tree_key_reader
     from cruxible_core.procedures.proposal_delivery import _SubjectKeys
 
@@ -963,12 +963,12 @@ def test_a_batch_of_composite_creations_encodes_each_key_a_constant_number_of_ti
 # F-002 (delta 2): a Subject-valued object reference is held to the same rule.
 
 
-def test_a_subject_valued_object_reference_is_checked_like_a_subject(
+def test_core_key_reference_is_frozen_against_pending_aliases(
     instance: PlaybillInstance,
 ) -> None:
     from cruxible_client.contracts.authoring.models import ClaimAuthoringPayload
-    from cruxible_client.contracts.procedures.proposal_items import ProcedureKeyedClaimProposalItem
     from cruxible_core.indexes.subject_identity import IdentityView, tree_key_reader
+    from cruxible_core.procedures.claims_changes import CoreClaimChange
     from cruxible_core.procedures.proposal_delivery import ProposalDeliveryRefused, _SubjectKeys
     from tests.test_service.test_subject_identity import _alias_member, _create
 
@@ -976,23 +976,20 @@ def test_a_subject_valued_object_reference_is_checked_like_a_subject(
     _create(instance, DECISION, "other name")
     base = instance.accepted_coordinate()
     base_tree = instance.immutable_tree_at(base.git_oid)
-    item = ProcedureKeyedClaimProposalItem.model_validate(
+    item = CoreClaimChange.model_validate(
         {
-            "tag": "playbill-procedure-claim-proposal-item-v3",
             "statement": {
-                "tag": "playbill-procedure-claim-statement-v1",
-                "subject": SemanticAddress.whole_artifact(
-                    subject_path(DECISION, "original")
-                ).model_dump(mode="json"),
+                "subject": {"subject_kind": DECISION, "key": {"slug": "other name"}},
                 "predicate": f"{DECISION}.related",
                 "object": {
-                    "kind": "subject_key",
-                    "subject": {"subject_kind": DECISION, "key": {"slug": "other name"}},
+                    "kind": "subject",
+                    "address": SemanticAddress.whole_artifact(
+                        subject_path(DECISION, "original")
+                    ).model_dump(mode="json"),
                 },
                 "role": "observation",
             },
             "rationale": "Related decisions.",
-            "revises": None,
         }
     )
     (alias,) = [
@@ -1005,9 +1002,9 @@ def test_a_subject_valued_object_reference_is_checked_like_a_subject(
         connection = projection.typed.connection
         keys.bind(IdentityView(connection, key_reader=tree_key_reader(base_tree)))
         statement = keys.statement(item)
-        assert isinstance(statement.object, SubjectClaimObject)
+        assert isinstance(statement.subject, SemanticAddress)
         # Frozen at the base: the key names other-name.
-        assert statement.object.address.artifact_path == subject_path(DECISION, "other-name")
+        assert statement.subject.artifact_path == subject_path(DECISION, "other-name")
         keys.unstable(connection, members=(), subject_members=(), creations={})  # stable alone
         with pytest.raises(ProposalDeliveryRefused) as refused:
             # The same terminal adding the alias makes "other name" name original.
@@ -1020,61 +1017,23 @@ def test_a_subject_valued_object_reference_is_checked_like_a_subject(
 # F-003 (delta 2): an intent event is published whole, never seen partial.
 
 
-def test_a_none_of_a_subject_named_by_key_resolves_like_a_subject_value(
+def test_provider_made_inverse_items_cannot_enter_the_core_change_channel(
     instance: PlaybillInstance,
 ) -> None:
-    """A Procedure item may state a none (inverse) whose ``of`` names its Subject by key."""
+    from cruxible_core.procedures.claims_changes import CoreClaimChange
 
-    from cruxible_client.contracts.authoring.models import AuthoringNoneClaimObject
-    from cruxible_client.contracts.procedures.proposal_items import (
-        ProcedureKeyedClaimProposalItem,
-        ProcedureNoneClaimObject,
-    )
-    from cruxible_core.indexes.subject_identity import IdentityView, tree_key_reader
-    from cruxible_core.procedures.proposal_delivery import _SubjectKeys
-    from tests.test_service.test_subject_identity import _create
-
-    _create(instance, DECISION, "original")
-    _create(instance, DECISION, "other name")
-    base = instance.accepted_coordinate()
-    base_tree = instance.immutable_tree_at(base.git_oid)
-    item = ProcedureKeyedClaimProposalItem.model_validate(
-        {
-            "tag": "playbill-procedure-claim-proposal-item-v3",
-            "statement": {
-                "tag": "playbill-procedure-claim-statement-v1",
-                "subject": SemanticAddress.whole_artifact(
-                    subject_path(DECISION, "original")
-                ).model_dump(mode="json"),
-                "predicate": f"{DECISION}.related",
-                "object": {
-                    "kind": "none",
-                    "of": {
-                        "kind": "subject_key",
-                        "subject": {"subject_kind": DECISION, "key": {"slug": "other name"}},
-                    },
+    with pytest.raises(ValueError):
+        CoreClaimChange.model_validate(
+            {
+                "statement": {
+                    "subject": SemanticAddress.whole_artifact(subject_path(DECISION, "original")),
+                    "predicate": f"{DECISION}.related",
+                    "object": {"kind": "none"},
+                    "role": "observation",
                 },
-                "role": "observation",
-            },
-            "rationale": "Not related.",
-            "revises": None,
-        }
-    )
-    assert isinstance(item.statement.object, ProcedureNoneClaimObject)
-    keys = _SubjectKeys(instance, base=base, base_tree=base_tree)
-    with instance.bind_accepted_projection(base) as projection:
-        keys.bind(IdentityView(projection.typed.connection, key_reader=tree_key_reader(base_tree)))
-        statement = keys.statement(item)
-    assert isinstance(statement.object, AuthoringNoneClaimObject)
-    assert isinstance(statement.object.of, SubjectClaimObject)
-    assert statement.object.of.address.artifact_path == subject_path(DECISION, "other-name")
-    # A slot none (no ``of``) passes through as the plain none.
-    slot = item.model_copy(
-        update={
-            "statement": item.statement.model_copy(update={"object": ProcedureNoneClaimObject()})
-        }
-    )
-    assert keys.statement(slot).object == AuthoringNoneClaimObject()
+                "rationale": "No provider-made inverse items.",
+            }
+        )
 
 
 def test_an_appended_intent_event_is_never_visible_partially(
@@ -1147,12 +1106,12 @@ def test_an_appended_intent_event_is_never_visible_partially(
 # E-b delta-3 F-001: the stability overlay reads aliases as accepted extraction does.
 
 
-def test_a_qualified_alias_redirects_a_subject_valued_object_reference(
+def test_qualified_alias_is_counted_when_validating_a_core_key_reference(
     instance: PlaybillInstance,
 ) -> None:
     from cruxible_client.contracts.authoring.models import ClaimAuthoringPayload
-    from cruxible_client.contracts.procedures.proposal_items import ProcedureKeyedClaimProposalItem
     from cruxible_core.indexes.subject_identity import IdentityView, tree_key_reader
+    from cruxible_core.procedures.claims_changes import CoreClaimChange
     from cruxible_core.procedures.proposal_delivery import ProposalDeliveryRefused, _SubjectKeys
     from tests.test_service.test_subject_identity import _alias_member, _create
 
@@ -1160,23 +1119,20 @@ def test_a_qualified_alias_redirects_a_subject_valued_object_reference(
     _create(instance, DECISION, "other name")
     base = instance.accepted_coordinate()
     base_tree = instance.immutable_tree_at(base.git_oid)
-    item = ProcedureKeyedClaimProposalItem.model_validate(
+    item = CoreClaimChange.model_validate(
         {
-            "tag": "playbill-procedure-claim-proposal-item-v3",
             "statement": {
-                "tag": "playbill-procedure-claim-statement-v1",
-                "subject": SemanticAddress.whole_artifact(
-                    subject_path(DECISION, "original")
-                ).model_dump(mode="json"),
+                "subject": {"subject_kind": DECISION, "key": {"slug": "other name"}},
                 "predicate": f"{DECISION}.related",
                 "object": {
-                    "kind": "subject_key",
-                    "subject": {"subject_kind": DECISION, "key": {"slug": "other name"}},
+                    "kind": "subject",
+                    "address": SemanticAddress.whole_artifact(
+                        subject_path(DECISION, "original")
+                    ).model_dump(mode="json"),
                 },
                 "role": "observation",
             },
             "rationale": "Related decisions.",
-            "revises": None,
         }
     )
     (alias,) = [

@@ -14,8 +14,7 @@ from cruxible_client import contracts as api
 from cruxible_client.authoring.sdk_types import (
     AbsentSubject,
     Cardinality,
-    ClaimObjectKind,
-    LiteralSchemaError,
+    ClaimValueError,
     PendingClaimTypeRef,
     PendingSubjectRef,
 )
@@ -170,7 +169,7 @@ def test_a_same_set_definition_lands_with_the_claim_that_reads_it_in_one_generat
     world = playbill.world()
     vulnerability = world.sec.vulnerability["cve-2026-69247"]
     assert world.sec.vuln.severity.cardinality is Cardinality.ONE
-    assert world.sec.vuln.affects_package.object_kind is ClaimObjectKind.SUBJECT
+    assert world.sec.vuln.affects_package.value_type.kind == "subject"
 
     draft = playbill.changes(rationale="Name the package this advisory affects.")
     package = draft.subject(playbill.new_subject("sec.package", key="click"))
@@ -299,7 +298,7 @@ def test_the_world_reads_the_accepted_vocabulary_and_refuses_what_it_does_not_na
     )
     assert world.unstructured_predicates == ()
     assert world.sec.vuln.severity.members == ("high", "low")
-    with pytest.raises(LiteralSchemaError):
+    with pytest.raises(ClaimValueError):
         world.sec.vuln.severity("critical")
     with pytest.raises(AbsentSubject):
         world.sec.package["click"]

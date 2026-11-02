@@ -106,7 +106,7 @@ FieldName = Annotated[
 ]
 ClaimValue = bool | int | str
 """A scalar value. A Subject-valued field takes the Subject as kind/id (or
-``@kind/id``); an exact-content field takes the text itself. Accepted values
+``@kind/id``). Prose lives in Document sections. Accepted values
 hold integers only (canonical JSON has no fractions): a number field counts in
 a scaled unit, or takes a decimal as text when its schema is a string."""
 
@@ -162,7 +162,7 @@ def _omit_empty(value: object) -> bool:
 
 
 class SelfEvidence(_StrictWriteModel):
-    """Own words; default: because (exact content: the value itself)."""
+    """Own words; defaults to because."""
 
     kind: Literal["self"] = "self"
     self: str = Field(min_length=1, description="The text that backs the value.")

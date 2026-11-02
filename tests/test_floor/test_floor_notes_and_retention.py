@@ -33,7 +33,7 @@ from tests.test_floor.test_floor_index import _set, _write
 
 WI1 = f"{KIND}/wi-1"
 WI3 = f"{KIND}/wi-3"
-RULING = "Rulings are text.\nEvery line greps on its own.\n"
+RULING = "reviewed"
 
 
 def review_notes_oid(instance: PlaybillInstance) -> str | None:
@@ -132,23 +132,12 @@ def test_a_floor_installed_before_a_notes_revision_is_still_the_heads(tmp_path: 
 def test_a_lost_ruling_body_refuses_a_fresh_render_never_renders_it_otherwise(
     tmp_path: Path,
 ) -> None:
+    # Native values live in the signed Claim, not in a separate text body.
     instance, _owner = seed_write_surface(tmp_path)
-    written = _write(instance, _set(WI1, "ruling", RULING))
+    _write(instance, _set(WI1, "ruling", RULING))
     warm = advance_floor_index(instance)
-    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        digest = projection.typed.source(
-            f"Claim:{written.changes[0].claim}"
-        ).statement.object.content_digest
-    assert instance.body_store().erase(digest)
-    # The kept index still serves the floor it rendered from the retained text.
-    assert dict(advance_floor_index(instance).files) == dict(warm.files)
-    with pytest.raises(ProjectionIntegrityError, match="not retained"):
-        _cold(instance)
-    instance.floor_current_memo.clear()
-    with pytest.raises(ProjectionIntegrityError, match="not retained"):
-        service_playbill_floor_delta(
-            instance, head=_head(instance), base_generation=None, base_renderer=None
-        )
+    assert dict(_cold(instance).files) == dict(warm.files)
+    assert b"ruling: reviewed" in warm.files[f"current/{KIND}/wi-1.yaml"][0]
 
 
 def test_a_lost_capture_envelope_refuses_a_fresh_render_never_drops_its_source(

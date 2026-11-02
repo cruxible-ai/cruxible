@@ -10,11 +10,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
 from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
+from cruxible_client.contracts.shapes import contract_path, render_contract
 from tests.core_support._candidate_support import submit_member_candidate
 from tests.core_support._light_capture_support import record_contract
+from tests.support.procedures import boundary_contract
 from tests.test_procedures import test_procedure_source_runs as fixtures
-from tests.test_procedures.test_procedure_proposal_delivery import terminal_procedure
+from tests.test_procedures.test_procedure_proposal_delivery import _claim_type, terminal_procedure
 
 
 def test_an_extract_over_a_contract_without_decoding_is_refused_at_acceptance(
@@ -25,9 +28,38 @@ def test_an_extract_over_a_contract_without_decoding_is_refused_at_acceptance(
     )
     extracting = terminal_procedure(procedure, templates=fixtures.FAN_OUT)  # type: ignore[arg-type]
 
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+    from cruxible_client.contracts.procedures.models import HaltNode
+    from tests.support.procedures import procedure_definition
+
+    definition = procedure_definition(
+        base=extracting.definition,
+        nodes=(*extracting.definition.nodes[:-1], HaltNode(node_id="propose", reason="extracted")),
+    )
+    extracting = extracting.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+        }
+    )
+
     inspection = submit_member_candidate(
         instance,
-        members={procedure_path(extracting.identity.name): render_procedure(extracting)},
+        members={
+            procedure_path(extracting.identity.name): render_procedure(extracting),
+            claim_type_path("security.advisory.severity"): render_claim_type(
+                _claim_type(record_contract().identity.name)
+            ),
+            **{
+                contract_path(c.name, c.version): render_contract(c)
+                for c in (
+                    boundary_contract(
+                        "security.delivery-row", {"severity": "string{max_len: 256}"}
+                    ),
+                    boundary_contract("security.delivery-output", {}),
+                )
+            },
+        },
         actor_id="owner",
         proposal_name="extract-without-decoding",
         proposal_family="procedure",
@@ -36,7 +68,7 @@ def test_an_extract_over_a_contract_without_decoding_is_refused_at_acceptance(
 
     assert inspection.proposal.candidate is None
     (diagnostic,) = inspection.proposal.evaluation.diagnostics
-    assert diagnostic.code == "cruxible.procedure.extract_decoding_undeclared"
+    assert diagnostic.code == "cruxible.procedure.extract_decoding_undeclared", diagnostic
 
 
 def test_the_same_extract_over_a_contract_with_decoding_is_accepted_and_reads_the_feed(

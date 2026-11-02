@@ -72,7 +72,7 @@ def test_admission_carrier_matches_cold_and_releases_at_request_exit(tmp_path, m
         assert changed[0] is not first[0]
         assert len(calls) == 2
         # Unrelated ClaimType metadata does not change the policy question.
-        claim_type.literal_schema["description"] = "changed"
+        kwargs["claim_type"] = claim_type.model_copy(update={"description": "changed"})
         assert claims.evaluate_capture_evidence_admissions(claim, **kwargs) == cold
         assert len(calls) == 2
         # The entire policy, including the selected rule's identity, is keyed.

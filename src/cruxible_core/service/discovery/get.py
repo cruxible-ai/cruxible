@@ -22,7 +22,7 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
@@ -44,7 +44,6 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimRetirementReason,
-    ExactContentClaimObject,
     NoneClaimObject,
     SubjectClaimObject,
     claim_artifact_digest,
@@ -125,7 +124,12 @@ from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.read_values import TruncatedText, summary_value, whole_value_read
 from cruxible_client.contracts.repairs import RepairOperation, served_repair_for_refusal
 from cruxible_client.contracts.semantic import SemanticAddress, SourceMapping
-from cruxible_client.contracts.shapes import Contract, contract_ref_for_identity, render_type
+from cruxible_client.contracts.shapes import (
+    Contract,
+    contract_ref_for_identity,
+    render_type,
+    value_members,
+)
 from cruxible_client.contracts.subject_kinds import SubjectKind
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import utc_now
@@ -144,7 +148,6 @@ from cruxible_core.indexes.subject_identity import KeyReader, KeyTuple
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.change_reasons import ChangeReasons
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
-from cruxible_core.service.discovery.exact_content import ExactContentReader
 from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.kit_owners import kit_owners, owned_by
 from cruxible_core.service.discovery.operational import (
@@ -1069,10 +1072,8 @@ def _none_of(obj: object) -> object:
 
 
 def _value_key(row: ClaimValueRecord) -> str:
-    """What makes two slot values one value; an exact-content value keeps its span."""
+    """Canonical native value used for slot distinctness."""
 
-    if isinstance(row.object, ExactContentClaimObject):
-        return repr(("exact_content", row.object.content_digest, row.object.span))
     return repr(_claim_value(row))
 
 
@@ -1080,21 +1081,9 @@ def _artifact_value(claim: ClaimArtifact) -> object:
     obj = claim.statement.object
     if isinstance(obj, SubjectClaimObject):
         return _subject_ref(obj.address.artifact_path)
-    if isinstance(obj, ExactContentClaimObject):
-        return obj.content_digest
     if isinstance(obj, NoneClaimObject):
         return obj.model_dump(mode="json")
     return obj.value
-
-
-def _shown(
-    obj: object, value: Callable[[], object], content: ExactContentReader
-) -> tuple[object, str | None]:
-    """A value as a card shows it, with an exact-content value's digest beside its text."""
-
-    if isinstance(obj, ExactContentClaimObject):
-        return content.of(obj), obj.content_digest
-    return value(), None
 
 
 def _slot_values(
@@ -1131,7 +1120,6 @@ def _claim_card(
     *,
     evaluation_time: datetime,
     surface: ReadSurface,
-    content: ExactContentReader,
 ) -> GetClaimCard:
     with instance.bind_accepted_projection(coordinate) as projection:
         claim = cast(ClaimArtifact, projection.typed.source(resolved.identity))
@@ -1171,21 +1159,41 @@ def _claim_card(
         latest = h.latest_member(claim_path(claim.identity.name))
         accepted = None if latest is None else _generation_timestamp(instance, h, latest.sequence)
     name = claim.identity.name
-    value, content_digest = _shown(statement.object, lambda: _artifact_value(claim), content)
-    contender_values = {
-        item.claim_id: _shown(item.object, functools.partial(_claim_value, item), content)
-        for item in slot
-        if item.claim_id != name
-    }
+    value = _artifact_value(claim)
+    contender_values = {item.claim_id: _claim_value(item) for item in slot if item.claim_id != name}
     flags = verdict_flags(verdict, status, held=claim.identity.qualified in held)
+    value_source: Literal["field", "literal", "param"] | None = None
+    receipt = claim.backing.procedure_evidence
+    if receipt is not None:
+        from cruxible_client.contracts.procedures.artifacts import parse_procedure
+        from cruxible_client.contracts.procedures.claims import ClaimsNode
+        from cruxible_client.contracts.refs import ref_from_graph_text
+
+        pinned = instance.accepted_artifact_version(
+            AcceptedCoordinate.from_internal(coordinate),
+            receipt.procedure_digest,
+            family="procedures/",
+        )
+        if pinned is not None:
+            procedure_path, procedure_bytes = pinned
+            procedure = parse_procedure(procedure_bytes, path=procedure_path)
+            node = next(
+                (n for n in procedure.definition.nodes if n.node_id == receipt.node_id), None
+            )
+            if isinstance(node, ClaimsNode) and receipt.template < len(node.claims):
+                template = node.claims[receipt.template].value
+                ref = ref_from_graph_text(template) if isinstance(template, str) else None
+                value_source = (
+                    "literal" if ref is None else "param" if ref.root == "param" else "field"
+                )
     return GetClaimCard(
+        value_source=value_source,
         claim=name,
         subject=_subject_ref(subject_path),
         predicate=short_field_name(statement.predicate, subject_kind, accepted_predicates),
         predicate_full=statement.predicate,
         qualifier=statement.qualifier,
         value=summary_value(value, read_whole=whole_value_read(name, coordinate.git_oid)),
-        content_digest=content_digest,
         verdict=verdict,
         status=status,
         revision=int(row.revision) if row is not None else 1,
@@ -1194,10 +1202,9 @@ def _claim_card(
             GetContender(
                 claim=item.claim_id,
                 value=summary_value(
-                    contender_values[item.claim_id][0],
+                    contender_values[item.claim_id],
                     read_whole=whole_value_read(item.claim_id, coordinate.git_oid),
                 ),
-                content_digest=contender_values[item.claim_id][1],
                 verdict=item.verdict,
             )
             for item in slot
@@ -1208,7 +1215,7 @@ def _claim_card(
             _render_get(surface, name, "evidence"),
             *(
                 _render_get(surface, item, "evidence")
-                for item, (value, _digest) in contender_values.items()
+                for item, value in contender_values.items()
                 if _value_was_cut(summary_value(value), surface=surface)
             ),
             # ``why`` is a deep admission/verdict explanation: worth suggesting
@@ -1228,7 +1235,6 @@ def _subject_card(
     *,
     evaluation_time: datetime,
     surface: ReadSurface,
-    content: ExactContentReader,
 ) -> GetSubjectCard:
     subject = _name(resolved.identity)
     kind = subject.split("/", 1)[0]
@@ -1298,20 +1304,14 @@ def _subject_card(
         # The slot's answer: what resolution selected, or every live contender
         # while it is contested. Overturned and refused contenders are not values.
         shown = [item for item in members if item.status in {"accepted", "conflicted"}] or members
-        # Distinctness is judged on the accepted values before any is shown as
-        # text: an exact-content value is its digest AND its span, so two spans
-        # of one body are two values.
+        # Distinctness is judged on native values before summary rendering.
         marks: set[ReadFlag] = set(
             answer_flags("many" if many else "one", len({_value_key(item) for item in shown}))
         )
-        pairs = [
-            _shown(item.object, functools.partial(_claim_value, item), content) for item in shown
-        ]
-        for item, (value, _digest) in zip(shown, pairs, strict=True):
+        values = [_claim_value(item) for item in shown]
+        for item, value in zip(shown, values, strict=True):
             if _value_was_cut(summary_value(value), surface=surface):
                 evidence_steps.append(_render_get(surface, item.claim_id, "evidence"))
-        values = [value for value, _digest in pairs]
-        digests = tuple(digest for _value, digest in pairs if digest is not None)
         for item in shown:
             marks.update(
                 verdict_flags(item.verdict, item.status, held=f"Claim:{item.claim_id}" in held)
@@ -1337,7 +1337,6 @@ def _subject_card(
                 qualifier=qualifier,
                 claim=claims_shown if listed else claims_shown[0],
                 value=displayed_value,
-                content_digest=(digests if listed else digests[0]) if digests else None,
                 flags=tuple(ordered_flags(marks)),
                 nones=nones,
             )
@@ -1362,18 +1361,7 @@ def _subject_card(
 
 
 def _object_description(claim_type: ClaimType) -> tuple[str, tuple[Any, ...] | None]:
-    if claim_type.object_kind == "subject":
-        kinds = ",".join(claim_type.allowed_object_subject_kinds)
-        return (f"subject:{kinds}" if kinds else "subject"), None
-    if claim_type.object_kind == "exact_content":
-        return "exact_content", None
-    schema = claim_type.literal_schema or {}
-    members = schema.get("enum")
-    kind = schema.get("type")
-    return (
-        str(kind) if isinstance(kind, str) else "literal",
-        tuple(members) if isinstance(members, list) else None,
-    )
+    return render_type(claim_type.value), value_members(claim_type.value) or None
 
 
 def _claim_type_card(
@@ -1955,7 +1943,6 @@ def _claim_evidence(
     resolved: ResolvedRef,
     *,
     evaluation_time: datetime,
-    content: ExactContentReader,
 ) -> GetEvidence:
     from cruxible_core.service.claims.claims import service_explain_playbill_claim
 
@@ -2013,10 +2000,9 @@ def _claim_evidence(
     )
     with instance.bind_accepted_projection(coordinate) as projection:
         claim = cast(ClaimArtifact, projection.typed.source(resolved.identity))
-    value, content_digest = _shown(claim.statement.object, lambda: _artifact_value(claim), content)
+    value = _artifact_value(claim)
     return GetEvidence(
         value=value,
-        content_digest=content_digest,
         captures=tuple(captures),
         attestations=attestations,
         rationale=_claim_rationale(instance, coordinate, _name(resolved.identity)),
@@ -2047,7 +2033,6 @@ class _Shown:
     """What one revision shows once read: its value, lifecycle and, for a Claim, its change."""
 
     value: object = None
-    content_digest: str | None = None
     lifecycle: str | None = None
     change: RevisionChange | None = None
     retirement: ClaimRetirementReason | None = None
@@ -2157,15 +2142,12 @@ class _ClaimVersions:
             tuple(capture_handle(item) for item in added),
         )
 
-    def shown(self, index: int, content: ExactContentReader) -> _Shown:
+    def shown(self, index: int) -> _Shown:
         claim = self.claim(index)
-        value, content_digest = _shown(
-            claim.statement.object, lambda: _artifact_value(claim), content
-        )
+        value = _artifact_value(claim)
         change, retirement = self.change(index)
         return _Shown(
             value=value,
-            content_digest=content_digest,
             lifecycle=claim.lifecycle.state,
             change=change,
             retirement=retirement,
@@ -2206,7 +2188,6 @@ def _revision(
     *,
     ref: str,
     surface: ReadSurface,
-    content: ExactContentReader,
     reasons: ChangeReasons,
 ) -> GetRevision:
     generation = history.generation(entry.sequence)
@@ -2226,7 +2207,6 @@ def _revision(
         next=(_render_get(surface, ref, "evidence", at=_generation_coordinate(generation)),)
         if _value_was_cut(cut_value, surface=surface, width=GET_CLI_HISTORY_VALUE_WIDTH)
         else (),
-        content_digest=shown.content_digest,
         digest=_short_digest(entry.digest),
         change=shown.change,
         reason=None if entry.path is None else reasons.reason(generation, entry.path),
@@ -2238,7 +2218,6 @@ def _history_entries(
     instance: PlaybillInstance,
     resolved: ResolvedRef,
     history: Any,
-    content: ExactContentReader,
 ) -> list[_RevisionEntry]:
     """Every accepted revision up to the read coordinate, oldest first, located only.
 
@@ -2262,7 +2241,7 @@ def _history_entries(
                     sequence=location.sequence,
                     digest=location.artifact_digest,
                     path=path,
-                    read=functools.partial(versions.shown, index, content),
+                    read=functools.partial(versions.shown, index),
                 )
             )
     elif resolved.kind == "subject":
@@ -2321,7 +2300,6 @@ def _history(
     request: GetRequest,
     limit: int,
     continuation: ListContinuation | None,
-    content: ExactContentReader,
 ) -> tuple[GetHistory | GetSubjectHistory, bool, str | None]:
     """One page of history, newest first, and the cursor that continues it.
 
@@ -2345,7 +2323,7 @@ def _history(
     reasons = ChangeReasons(instance)
     surface = request.surface
     with instance.accepted_history_reader(at=at) as history:
-        newest_first = list(reversed(_history_entries(instance, resolved, history, content)))
+        newest_first = list(reversed(_history_entries(instance, resolved, history)))
         revisions = tuple(
             _revision(
                 instance,
@@ -2353,7 +2331,6 @@ def _history(
                 entry,
                 ref=resolved.display,
                 surface=surface,
-                content=content,
                 reasons=reasons,
             )
             for entry in (newest_first if resolved.kind == "subject" else ())
@@ -2368,7 +2345,6 @@ def _history(
                 request=request,
                 limit=limit,
                 continuation=continuation,
-                content=content,
                 reasons=reasons,
             )
         keys = [(str(entry.sequence), entry.digest) for entry in newest_first]
@@ -2389,7 +2365,6 @@ def _history(
                 entry,
                 ref=resolved.display,
                 surface=surface,
-                content=content,
                 reasons=reasons,
             )
             for entry in page
@@ -2446,7 +2421,6 @@ def _subject_events(
     request: GetRequest,
     limit: int,
     continuation: ListContinuation | None,
-    content: ExactContentReader,
     reasons: ChangeReasons,
 ) -> tuple[GetSubjectHistory, bool, str | None]:
     """One page of a Subject's field events, newest first, pinned to the read coordinate.
@@ -2547,7 +2521,6 @@ def _subject_events(
             qualifier=lineages[path][1],
             contended=index == 0 and contended(path, sequence),
             surface=request.surface,
-            content=content,
             reasons=reasons,
         )
         for sequence, path, index in page
@@ -2578,7 +2551,6 @@ def _field_event(
     qualifier: str | None,
     contended: bool,
     surface: ReadSurface,
-    content: ExactContentReader,
     reasons: ChangeReasons,
 ) -> GetFieldEvent:
     location = versions.locations[index]
@@ -2586,7 +2558,7 @@ def _field_event(
     accepted, actor, approved_by = _accepted_by(instance, history, generation)
     claim = versions.claim(index)
     claim_id = claim.identity.name
-    value, content_digest = _shown(claim.statement.object, lambda: _artifact_value(claim), content)
+    value = _artifact_value(claim)
     cut = summary_value(value, read_whole=whole_value_read(claim_id, generation.git_oid))
     common: dict[str, Any] = {
         "field": field,
@@ -2600,7 +2572,6 @@ def _field_event(
         "approved_by": approved_by,
         "reason": reasons.reason(generation, versions.path),
         "value": cut,
-        "content_digest": content_digest,
         "next": (_render_get(surface, claim_id, "evidence", at=_generation_coordinate(generation)),)
         if _value_was_cut(cut, surface=surface, width=GET_CLI_HISTORY_VALUE_WIDTH)
         else (),
@@ -2616,7 +2587,7 @@ def _field_event(
         replaced, by = versions.rebound(index) or ((), ())
         return GetFieldRebound(**common, replaced=replaced, by=by)
     earlier = versions.claim(index - 1)
-    before, _digest = _shown(earlier.statement.object, lambda: _artifact_value(earlier), content)
+    before = _artifact_value(earlier)
     before_at = history.generation(versions.locations[index - 1].sequence).git_oid
     return GetFieldChanged(
         **common, before=summary_value(before, read_whole=whole_value_read(claim_id, before_at))
@@ -3045,7 +3016,6 @@ def service_playbill_get(
     card: GetCard | None = None
     fields: dict[str, Any] = {}
     surface = request.surface
-    content = ExactContentReader(instance)
 
     def render(ref: str, detail: str | None) -> str:
         return _render_get(surface, ref, detail)
@@ -3058,7 +3028,6 @@ def service_playbill_get(
                 resolved,
                 evaluation_time=evaluation_time,
                 surface=surface,
-                content=content,
             )
         elif resolved.kind == "subject":
             card = _subject_card(
@@ -3067,7 +3036,6 @@ def service_playbill_get(
                 resolved,
                 evaluation_time=evaluation_time,
                 surface=surface,
-                content=content,
             )
         elif resolved.kind == "claim_type":
             card = _claim_type_card(instance, coordinate, resolved, surface=surface)
@@ -3146,7 +3114,7 @@ def service_playbill_get(
             fields["live"] = live_view(instance, ("measurement_reviews",))
     elif request.detail == "evidence":
         fields["evidence"] = _claim_evidence(
-            instance, coordinate, resolved, evaluation_time=evaluation_time, content=content
+            instance, coordinate, resolved, evaluation_time=evaluation_time
         )
     elif request.detail == "why":
         fields["why"] = _why(
@@ -3171,7 +3139,6 @@ def service_playbill_get(
             request=request,
             limit=request.limit or GET_HISTORY_DEFAULT_LIMIT,
             continuation=continuation,
-            content=content,
         )
         if resolved.kind == "procedure" and fields["history"].measurement_reviews:
             fields["live"] = live_view(instance, ("history.measurement_reviews",))

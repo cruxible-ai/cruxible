@@ -1063,7 +1063,7 @@ def _claim_set_arguments(
     an acknowledgement -- is the `set` verb on its Subject and field, which the
     default profile serves. It cannot restate a qualified Claim, a derivation
     (only its Procedure produces one), a many-valued field (`set` replaces one
-    value), or an exact-content or structured value (no scalar to pass); those
+    value), or a structured value (no scalar to pass); those
     keep their authoring repair.
     """
 

@@ -18,11 +18,10 @@ from cruxible_client import contracts as api
 from cruxible_client.authoring.sdk_types import (
     AbsentSubject,
     Cardinality,
-    ClaimObjectKind,
     ClaimRole,
     ClaimRoleNotPermittedError,
     ClaimTypeRef,
-    LiteralSchemaError,
+    ClaimValueError,
     LiteralValue,
     LiteralValueTypeError,
     PendingClaimTypeRef,
@@ -637,12 +636,12 @@ def test_a_predicate_is_a_claim_type_ref_carrying_its_own_structure(
     assert isinstance(severity, WorldClaimType)
     assert severity.address == SEVERITY
     assert severity.predicate == SEVERITY
-    assert severity.object_kind is ClaimObjectKind.LITERAL
+    assert severity.value_type.kind == "enum"
     assert severity.cardinality is Cardinality.ONE
     assert severity.permitted_roles == (ClaimRole.OBSERVATION,)
     assert severity.referent_sensitivity is ReferentSensitivity.IDENTITY
     assert severity.allowed_subject_kinds == ("sec.vulnerability",)
-    assert world.sec.vuln.affects_package.allowed_object_subject_kinds == ("sec.package",)
+    assert world.sec.vuln.affects_package.value_type.subject_kinds == ("sec.package",)
 
 
 def test_enum_members_are_typed_values_and_an_unknown_member_names_the_enum(
@@ -662,7 +661,7 @@ def test_enum_members_are_typed_values_and_an_unknown_member_names_the_enum(
         world.sec.vuln.severity.critical
 
 
-def test_a_non_enum_schema_validates_its_constructor_before_the_wire(
+def test_a_native_value_validates_its_constructor_before_the_wire(
     connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     """A 39-character digest is a caller mistake, not a proposal to submit."""
@@ -674,9 +673,9 @@ def test_a_non_enum_schema_validates_its_constructor_before_the_wire(
     assert landed.predicate == LANDED_AT
     assert landed.value == "f" * 40
 
-    with pytest.raises(LiteralSchemaError, match="declared pattern"):
+    with pytest.raises(ClaimValueError, match="pattern_mismatch"):
         world.dev.batch.landed_at("f" * 39)
-    with pytest.raises(LiteralSchemaError, match="value is not string"):
+    with pytest.raises(ClaimValueError, match="type_mismatch"):
         world.dev.batch.landed_at(7)
     with pytest.raises(WorldStructureError, match="subject object"):
         world.sec.vuln.affects_package("sec.package/cryptography")
@@ -1008,9 +1007,7 @@ def test_a_same_set_claim_type_ref_lowers_without_reading_the_unaccepted_type(
     definition = playbill.claim_type(
         predicate="sec.package.license",
         subject_kinds=("sec.package",),
-        object_kind="literal",
-        value_schema={"type": "string"},
-        object_subject_kinds=(),
+        value_type="string{max_len: 256}",
         cardinality="one",
         permitted_roles=("observation",),
         referent_sensitivity="identity",
@@ -1025,7 +1022,7 @@ def test_a_same_set_claim_type_ref_lowers_without_reading_the_unaccepted_type(
 
     assert isinstance(predicate, PendingClaimTypeRef)
     assert predicate.address == "sec.package.license"
-    assert predicate.object_kind == "literal"
+    assert predicate.value_type.kind == "string"
 
     draft.claim(
         subject="sec.package/cryptography",

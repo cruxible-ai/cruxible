@@ -16,7 +16,6 @@ import pytest
 
 from cruxible_client.authoring.sdk import (
     Cardinality,
-    ClaimObjectKind,
     ClaimRole,
     Disposition,
     ReferentSensitivity,
@@ -25,7 +24,6 @@ from cruxible_client.authoring.sdk import (
 
 VOCABULARIES = [
     (Cardinality, "cardinality"),
-    (ClaimObjectKind, "object kind"),
     (ClaimRole, "claim role"),
     (Disposition, "disposition"),
     (ReferentSensitivity, "referent sensitivity"),

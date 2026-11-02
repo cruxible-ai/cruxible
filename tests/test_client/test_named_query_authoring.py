@@ -16,6 +16,7 @@ from cruxible_client.contracts.authoring.inputs import (
     AuthoringInput,
     lower_authoring_input,
 )
+from cruxible_client.contracts.shapes import parse_type
 from tests.test_client.test_playbill_sdk import _Client, _workspace
 
 
@@ -51,7 +52,9 @@ def test_query_refs_preserve_staleness_expectations_and_allow_same_set_refs(tmp_
         == "query_definition.projection.fields[1].value.predicate"
     )
     assert draft.reference_expectations[0].minted_coordinate == pb.coordinate
-    pending = PendingClaimTypeRef(ref.address, ref.coordinate, object_kind="literal")
+    pending = PendingClaimTypeRef(
+        ref.address, ref.coordinate, value_type=parse_type("string{max_len: 256}")
+    )
     assert (
         pb.query_definition(definition=definition, vocabulary=(pending,)).reference_expectations
         == ()

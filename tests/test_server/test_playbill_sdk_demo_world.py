@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 
 from cruxible_client import (
     Cardinality,
-    ClaimObjectKind,
     ClaimRef,
     ClaimRole,
     ClaimTypeRef,
@@ -283,9 +282,7 @@ def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
     draft = pb.claim_type(
         predicate=input_value.predicate,
         subject_kinds=input_value.allowed_subject_kinds,
-        object_kind=input_value.object_kind,
-        value_schema=input_value.literal_schema,
-        object_subject_kinds=input_value.allowed_object_subject_kinds,
+        value_type=input_value.value,
         cardinality=input_value.cardinality,
         permitted_roles=input_value.permitted_roles,
         referent_sensitivity=input_value.referent_sensitivity,
@@ -448,9 +445,7 @@ def test_sdk_cold_claim_delivers_source_lint_without_refusing_preflight(
     claim_type = pb.claim_type(
         predicate="secops.policy.patch_sla",
         subject_kinds=("secops.policy",),
-        object_kind=ClaimObjectKind.LITERAL,
-        value_schema={"type": "integer"},
-        object_subject_kinds=(),
+        value_type="int",
         cardinality=Cardinality.ONE,
         permitted_roles=(ClaimRole.NORMATIVE,),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
@@ -513,9 +508,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     claim_type = pb.claim_type(
         predicate="secops.policy.patch_sla",
         subject_kinds=("secops.policy",),
-        object_kind=ClaimObjectKind.LITERAL,
-        value_schema={"type": "integer"},
-        object_subject_kinds=(),
+        value_type="int",
         cardinality=Cardinality.ONE,
         permitted_roles=(ClaimRole.NORMATIVE,),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
@@ -831,12 +824,36 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         pins=(),
         lifecycle=ArtifactLifecycle(),
     )
+    from cruxible_client.contracts.authoring.inputs import ContractInput
+    from cruxible_client.contracts.shapes import ContractRef, NestedType
+
+    shape = ContractInput(
+        kind="contract",
+        name="secops.triage-fact",
+        version=1,
+        fields={
+            "fact": "string{max_len: 256}?",
+            "hours": "int?",
+            "deadline_hours": "int?",
+            "value": "bool?",
+            "nginx": "string{max_len: 256}?",
+            "lua_gateway": "enum[request_path, disabled, absent]?",
+            "reachable": "enum[internet, vpn_only, internal]?",
+        },
+    )
+    prepared_shape = transport.compile_authoring_input(
+        instance_id, input=shape.model_dump(mode="json")
+    )
+    assert prepared_shape.verdict == "passed", prepared_shape.frontier
+    submitted_shape = transport.submit_authoring_intent(
+        instance_id, prepared_shape.certificate.intent_id, accept="never"
+    )
+    _approve_and_activate(http, instance_id, private_key_path, submitted_shape.status.proposal_id)
+    pb.refresh()
     triage_type = pb.claim_type(
         predicate="secops.vuln.triage_decision",
         subject_kinds=("secops.policy", "secops.service"),
-        object_kind=ClaimObjectKind.LITERAL,
-        value_schema={"type": "object"},
-        object_subject_kinds=(),
+        value_type=NestedType(contract=ContractRef(name="secops.triage-fact", version=1)),
         cardinality=Cardinality.MANY,
         permitted_roles=(ClaimRole.NORMATIVE, ClaimRole.OBSERVATION),
         referent_sensitivity=ReferentSensitivity.IDENTITY,

@@ -82,8 +82,6 @@ def test_values_selection_is_bounded_to_the_requested_predicates(tmp_path: Path)
 
 def test_value_rows_carry_every_object_variant(tmp_path: Path) -> None:
     from cruxible_client.contracts.claims import (
-        ContentSpan,
-        ExactContentClaimObject,
         SubjectClaimObject,
     )
     from cruxible_client.contracts.semantic import SemanticAddress
@@ -91,7 +89,6 @@ def test_value_rows_carry_every_object_variant(tmp_path: Path) -> None:
 
     instance, _owner = seed_claims(tmp_path)
     literal = ClaimVerdictReadContext(instance, instance.accepted_coordinate()).claims()[0]
-    digest = "sha256:" + "ab" * 32
     variants = {
         "literal": literal,
         "subject": literal.model_copy(
@@ -100,18 +97,6 @@ def test_value_rows_carry_every_object_variant(tmp_path: Path) -> None:
                     update={
                         "object": SubjectClaimObject(
                             address=SemanticAddress.whole_artifact(SUBJECTS[1])
-                        )
-                    }
-                )
-            }
-        ),
-        "exact_content": literal.model_copy(
-            update={
-                "statement": literal.statement.model_copy(
-                    update={
-                        "object": ExactContentClaimObject(
-                            content_digest=digest,
-                            span=ContentSpan(content_digest=digest, start_byte=0, end_byte=4),
                         )
                     }
                 )
@@ -127,8 +112,6 @@ def test_value_rows_carry_every_object_variant(tmp_path: Path) -> None:
     }
     assert rows["literal"].value == literal.statement.object.value
     assert rows["subject"].value == SUBJECTS[1]
-    assert rows["exact_content"].value == digest
-    assert rows["exact_content"].object.span.end_byte == 4  # type: ignore[union-attr]
     for kind, claim in variants.items():
         assert rows[kind].object == claim.statement.object
 

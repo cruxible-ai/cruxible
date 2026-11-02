@@ -27,6 +27,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.windows import CaptureEventNameSelector
+from cruxible_client.contracts.shapes import contract_path, render_contract
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_client.contracts.triggers import CaptureLandingSchedule
 from cruxible_core.procedures.proposal_delivery import ProposalDeliveryRefused, evidence_by_item
@@ -40,7 +41,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.support.lines import line_trigger, trigger_members
-from tests.support.procedures import procedure_members
+from tests.support.procedures import boundary_contract, procedure_members
 from tests.test_procedures import test_procedure_source_runs as fixtures
 from tests.test_procedures.test_procedure_proposal_delivery import (
     PREDICATE,
@@ -95,6 +96,15 @@ def _trigger_fed_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
         owner,
         {
             **procedure_members(proposer),
+            **{
+                contract_path(c.name, c.version): render_contract(c)
+                for c in (
+                    boundary_contract(
+                        "security.delivery-row", {"severity": "string{max_len: 256}"}
+                    ),
+                    boundary_contract("security.delivery-output", {}),
+                )
+            },
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
             claim_type_path(claim_type.predicate): render_claim_type(claim_type),
@@ -210,8 +220,12 @@ def test_two_admitted_captures_are_ambiguous_and_none_is_missing() -> None:
 
 
 def test_an_explicitly_selected_capture_must_be_in_the_items_closure_produced_or_admitted() -> None:
+    # Provider-made source fields are inert; only the executor's closure chooses evidence.
     manifests = {"item-0": _manifest(produced=(_B,), admitted=(_A,))}
-    assert evidence_by_item(_request(_selected(_A)), manifests) == {"item-0": _A}
+    assert evidence_by_item(_request(_selected(_A)), manifests) == {"item-0": _B}
+    assert evidence_by_item(_request(_selected(_A)), {"item-0": _manifest(produced=(_B,))}) == {
+        "item-0": _B
+    }
     with pytest.raises(ProposalDeliveryRefused) as outside:
-        evidence_by_item(_request(_selected(_A)), {"item-0": _manifest(produced=(_B,))})
+        evidence_by_item(_request(_selected(_A)), {"item-0": _manifest()})
     assert outside.value.code == "proposal_item_evidence_missing"

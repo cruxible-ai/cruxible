@@ -44,7 +44,7 @@ def _accept(instance: PlaybillInstance, prefix: str, count: int) -> dict[str, li
                     "op": "set",
                     "subject": f"{KIND}/{prefix}-{index}",
                     "field": field,
-                    "value": f"{prefix} {index} " + "long text " * 80 + "\n",
+                    "value": f"{prefix} {index} " + "bounded " * 24,
                 }
                 for field, number in (("title", count), ("ruling", _RULINGS))
                 for index in range(number)

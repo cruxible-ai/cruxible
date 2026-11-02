@@ -490,6 +490,7 @@ class EvidenceAdmissionInput(_StrictPolicyModel):
     logical_source: str | None = None
     reducer_digest: str | None = None
     input_claim_artifact_digests: tuple[str, ...] = ()
+    has_extracted_inputs: bool = False
     attestation_grade: VerifiedAttestationGrade = "none"
     source_subject_bound: bool
     capture_claims_semantic_authority: bool = False
@@ -552,7 +553,9 @@ def _derivation_satisfied(
     evidence: EvidenceAdmissionInput,
 ) -> bool:
     if rule.admission == "derivational":
-        return evidence.reducer_digest is not None and bool(evidence.input_claim_artifact_digests)
+        return evidence.reducer_digest is not None and (
+            bool(evidence.input_claim_artifact_digests) or evidence.has_extracted_inputs
+        )
     return evidence.reducer_digest is None and not evidence.input_claim_artifact_digests
 
 

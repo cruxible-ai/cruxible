@@ -36,9 +36,9 @@ from cruxible_client.contracts.compact_query import (
     QueryResultRecord,
     query_filter,
 )
-from cruxible_client.contracts.get_display import exact_content_marker_text
 from cruxible_client.contracts.public_names import public_name
-from cruxible_client.contracts.read_values import ExactContentRef, ShownObject, TruncatedText
+from cruxible_client.contracts.read_values import ShownObject, TruncatedText
+from cruxible_client.contracts.shapes import claim_value_kind, value_type_name
 from cruxible_client.contracts.temporal import format_datetime
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -169,8 +169,6 @@ _CELL_WIDTH = 60
 def _cell(value: object) -> str:
     if value is None:
         return "-"
-    if isinstance(value, ExactContentRef):
-        return exact_content_marker_text(value)
     if isinstance(value, TruncatedText):
         # A preview always reads as cut, however short the shown part is.
         text = " ".join(value.preview.split())
@@ -433,16 +431,15 @@ class CompactQuery:
                 raise QueryNameError("subject_id always exists; use eq, ne, in or contains")
             return value
         claim_type = self._world.claim_type(predicate)
-        schema = claim_type.literal_schema or {}
-        object_kind = claim_type.object_kind.value
+        object_kind = claim_value_kind(claim_type.value_type)
         members = claim_type.members
-        declared = schema.get("type") if object_kind == "literal" else object_kind
+        declared = (
+            value_type_name(claim_type.value_type) if object_kind == "literal" else object_kind
+        )
         if operator == "exists":
             if not isinstance(value, bool):
                 raise QueryNameError(f"{name}__exists takes true or false")
             return value
-        if object_kind == "exact_content":
-            raise QueryNameError(f"{name} holds exact content; only {name}__exists applies")
         if operator in {"lt", "lte", "gt", "gte"} and (members or declared not in _ORDERED):
             raise QueryNameError(
                 f"{operator!r} does not apply to {name}; use eq, ne, in, exists"
@@ -570,7 +567,6 @@ __all__ = [
     "QueryNameError",
     "QueryResult",
     "WHERE_SYNTAX",
-    "exact_content_marker_text",
     "filters_from_mappings",
     "keyword_field",
     "keyword_name",

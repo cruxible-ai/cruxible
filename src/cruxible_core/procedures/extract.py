@@ -70,6 +70,7 @@ from cruxible_client.contracts.shapes import (
     KeyCanonicalizer,
     KeyPartType,
     KeyType,
+    KeyValueRefused,
     ListType,
     NestedType,
     Problem,
@@ -487,12 +488,16 @@ def _check(
         return ("present", nested, at)
     if isinstance(field_type, KeyType | KeyPartType):
         # Two raw keys that canonicalize to one key are one key.
-        checked_key = check_key_value(
-            value, field_type, at=at, field=field, keys=keys, convert=True
-        )
-        if isinstance(checked_key, FieldPresent):
-            return ("present", checked_key.value, at)
-        return _bad("key_unparseable", field, value)
+        if keys is None:
+            return _bad("key_unparseable", field, value)
+        part = field_type.part if isinstance(field_type, KeyPartType) else None
+        try:
+            # Extraction already builds its own compact result. Avoid allocating
+            # a public FieldPresent merely to unpack its canonical value.
+            canonical = keys.canonical(field_type.subject_kind, part, value)
+        except KeyValueRefused:
+            return _bad("key_unparseable", field, value)
+        return ("present", canonical, at)
     result = check_value(
         value, field_type, at=at, field=field, resolve=resolve, enum_members=enums, keys=keys
     )

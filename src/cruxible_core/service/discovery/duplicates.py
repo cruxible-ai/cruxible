@@ -36,6 +36,7 @@ from cruxible_client.contracts.duplicates import (
     DuplicateValue,
     DuplicateValueGroup,
 )
+from cruxible_client.contracts.shapes import claim_value_kind
 from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyValue
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -129,7 +130,7 @@ def _audit_groups(
     literal = [
         info
         for info in vocabulary.predicates_of(kind)
-        if info.claim_type.object_kind == "literal"
+        if claim_value_kind(info.claim_type.value) == "literal"
         and info.value_type in {"string", "enum", "json"}
     ]
     with instance.bind_accepted_projection(coordinate) as projection:

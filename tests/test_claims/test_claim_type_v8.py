@@ -109,10 +109,13 @@ def test_a_claim_type_always_states_its_form_and_digests_it() -> None:
 
 def test_a_form_applies_only_to_literals_and_every_enum_member_is_already_canonical() -> None:
     with pytest.raises(ValidationError, match="only to literal ClaimTypes"):
-        v8(object_kind="exact_content", literal_schema=None, member_descriptions=())
+        v8(
+            value={"kind": "subject", "subject_kinds": ["project.work_item"]},
+            member_descriptions=(),
+        )
     with pytest.raises(ValidationError, match="'Done' is not in the declared canonical form"):
-        v8(literal_schema={"enum": ["Done", "ready"], "type": "string"})
-    assert v8(("upper",), literal_schema={"enum": ["DONE"], "type": "string"})
+        v8(value_type={"enum": ["Done", "ready"], "type": "string"})
+    assert v8(("upper",), value_type={"enum": ["DONE"], "type": "string"})
 
 
 def test_the_claim_type_law_accepts_a_form_under_the_requirement_rules() -> None:

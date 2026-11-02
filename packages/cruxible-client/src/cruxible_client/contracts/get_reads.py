@@ -204,12 +204,13 @@ class GetCoordinate(_StrictGetModel):
 class GetContender(_StrictGetModel):
     claim: str
     value: ShownValue
-    # An exact-content value's digest; its text is ``value``.
-    content_digest: str | None = Field(default=None, exclude_if=_omit_none)
     verdict: str
 
 
 class GetClaimCard(_StrictGetModel):
+    value_source: Literal["field", "literal", "param"] | None = Field(
+        default=None, exclude_if=_omit_none
+    )
     claim: str
     subject: str
     predicate: str
@@ -217,8 +218,6 @@ class GetClaimCard(_StrictGetModel):
     qualifier: str | None = Field(default=None, exclude_if=_omit_none)
     # The value as a summary shows it: a long string is a TruncatedText preview.
     value: ShownValue
-    # An exact-content value's digest, the proof its text is ``value``.
-    content_digest: str | None = Field(default=None, exclude_if=_omit_none)
     verdict: str
     status: str
     revision: int
@@ -249,8 +248,6 @@ class GetSubjectClaim(_StrictGetModel):
     # holds only nones shows no value: ``claim`` and ``value`` are empty lists.
     claim: str | tuple[str, ...]
     value: ShownValue
-    # An exact-content row's digests, aligned with ``claim`` the same way.
-    content_digest: str | tuple[str, ...] | None = Field(default=None, exclude_if=_omit_none)
     flags: tuple[ReadFlag, ...] = ()
     # The field's live nones (inverses): never values. A field
     # with no value and no current none is unknown.
@@ -656,7 +653,6 @@ class GetAttestationEvidence(_StrictGetModel):
 class GetEvidence(_StrictGetModel):
     # The Claim's whole value, never cut as a summary card cuts a long one.
     value: Any
-    content_digest: str | None = Field(default=None, exclude_if=_omit_none)
     captures: tuple[GetCaptureEvidence, ...]
     attestations: tuple[GetAttestationEvidence, ...]
     rationale: str | None = Field(default=None, exclude_if=_omit_none)
@@ -727,7 +723,6 @@ class GetRevision(_StrictGetModel):
     approved_by: tuple[str, ...] = ()
     lifecycle: str | None = Field(default=None, exclude_if=_omit_none)
     value: ShownValue = Field(default=None, exclude_if=_omit_none)
-    content_digest: str | None = Field(default=None, exclude_if=_omit_none)
     digest: str = Field(description="Artifact digest prefix of this revision.")
     change: RevisionChange | None = Field(default=None, exclude_if=_omit_none)
     reason: GetRevisionReason | None = Field(default=None, exclude_if=_omit_none)
@@ -768,7 +763,6 @@ class _GetFieldEvent(_StrictGetModel):
     approved_by: tuple[str, ...] = ()
     reason: GetRevisionReason | None = Field(default=None, exclude_if=_omit_none)
     value: ShownValue = Field(default=None, exclude_if=_omit_none)
-    content_digest: str | None = Field(default=None, exclude_if=_omit_none)
     # Read a cut value in full at this event's accepted generation.
     next: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 

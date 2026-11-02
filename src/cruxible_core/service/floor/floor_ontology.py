@@ -65,6 +65,10 @@ from cruxible_client.contracts.procedure_mandates import ProcedureMandate
 from cruxible_client.contracts.procedures.line_specs import LineSpec
 from cruxible_client.contracts.public_names import public_name, stored_contract_name
 from cruxible_client.contracts.query.definitions import QueryDefinition
+from cruxible_client.contracts.shapes import (
+    render_type,
+    subject_value_kinds,
+)
 from cruxible_client.contracts.subject_kinds import SubjectKind, SubjectKindKeys
 from cruxible_client.contracts.triggers import LineTarget, Trigger
 from cruxible_core.derived.persistent import EMPTY_PCOUNTS, EMPTY_PSET, PCounts, PMap, PSet
@@ -151,7 +155,7 @@ def _kinds_of(claim_type: ClaimType) -> tuple[str, ...]:
         dict.fromkeys(
             (
                 *concrete_subject_kinds(claim_type.allowed_subject_kinds),
-                *concrete_subject_kinds(claim_type.allowed_object_subject_kinds),
+                *concrete_subject_kinds(subject_value_kinds(claim_type.value)),
             )
         )
     )
@@ -527,27 +531,7 @@ def _live_values(
 
 
 def _value_type(claim_type: ClaimType) -> str:
-    if claim_type.object_kind == "subject":
-        kinds = claim_type.allowed_object_subject_kinds
-        return "subject:" + ",".join(kinds) if kinds else "subject"
-    if claim_type.object_kind == "exact_content":
-        return "exact_content"
-    schema: Mapping[str, Any] = claim_type.literal_schema or {}
-    if "enum" in schema or "const" in schema:
-        raw = schema["enum"] if "enum" in schema else [schema["const"]]
-        members = raw if isinstance(raw, list) else [raw]
-        return (
-            "enum("
-            + "|".join(str(item) if isinstance(item, str) else json.dumps(item) for item in members)
-            + ")"
-        )
-    declared = schema.get("type")
-    fmt = schema.get("format")
-    if declared == "string" and fmt in ("date", "date-time"):
-        return "date" if fmt == "date" else "datetime"
-    if isinstance(declared, list):
-        return "|".join(str(item) for item in declared)
-    return str(declared) if declared is not None else "any"
+    return render_type(claim_type.value)
 
 
 def _roles(claim_type: ClaimType) -> str:
@@ -783,7 +767,7 @@ class _Renderer:
             # here, moves with its shadow's liveness.
             kind = path.removeprefix(KINDS_DIRECTORY).removesuffix(CARD_SUFFIX)
             for _type_file, claim_type in self._kind_types(path):
-                pointed = kind in claim_type.allowed_object_subject_kinds
+                pointed = kind in subject_value_kinds(claim_type.value)
                 for source in concrete_subject_kinds(claim_type.allowed_subject_kinds):
                     if source != kind and not pointed:
                         continue
@@ -911,7 +895,7 @@ class _Renderer:
             (
                 (short_field_name(item.predicate, source, live), source, item)
                 for _path, item in types
-                if kind in item.allowed_object_subject_kinds
+                if kind in subject_value_kinds(item.value)
                 for source in concrete_subject_kinds(item.allowed_subject_kinds)
             ),
             key=lambda row: (row[0].encode(), row[1].encode(), row[2].predicate.encode()),

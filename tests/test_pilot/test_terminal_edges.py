@@ -210,10 +210,11 @@ def test_evidence_refresh_obeys_the_same_replaces_policy(tmp_path: Path) -> None
         json.dumps({"entries": [{"id": "CVE-2026-0001", "status": "open", "note": "new context"}]})
     )
     second = run(instance, root, minute=1)
-    (refreshed,) = candidate_claims(instance, second)
-    assert refreshed.identity == prior.identity
-    assert refreshed.statement == prior.statement
-    assert refreshed.backing.capture_digests != prior.backing.capture_digests
+    assert second.status == "succeeded", second.terminal
+    assert second.terminal_egress[0].proposal_id is None
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+
+    assert len(ClaimReobservationStore(instance).history(prior.identity.name)) == 1
     # An explicit empty replaces list cannot refresh even an observation.
     spec = procedure_spec(
         base=claims_spec(
@@ -225,7 +226,8 @@ def test_evidence_refresh_obeys_the_same_replaces_policy(tmp_path: Path) -> None
     state = run(instance, root, line="test.protected-refresh-line", minute=2)
     assert state.status == "succeeded", state.terminal
     assert state.terminal_egress[0].proposal_id is None
-    assert state.terminal_egress[0].claims_diagnostics[0].kind == "held_by_precedence"
+    assert not state.terminal_egress[0].claims_diagnostics
+    assert state.terminal_egress[0].claims_same_count == 1
 
 
 def test_subject_valued_template_resolves_the_objects_declared_key(tmp_path: Path) -> None:
@@ -307,7 +309,7 @@ def test_within_projects_watched_subject_ids_and_rationale_reads_the_same_row(
     from tests.test_pilot.support import kev_spec, pilot_world
 
     base = kev_spec().model_dump(mode="python", by_alias=True)
-    base["steps"][-1]["subject"]["within"]["path"] = ["rows", "subject_id"]
+    base["steps"][-1]["subject"]["within"]["path"] = ["rows", "[*]", "subject_id"]
     base["steps"][-1]["claims"][0]["rationale"] = (
         "Catalog {$steps.entries.header.catalog_version} lists {$item.key.cve_id}."
     )
@@ -330,19 +332,19 @@ def test_within_projects_watched_subject_ids_and_rationale_reads_the_same_row(
 
 def test_inline_contract_roundtrip_preserves_negative_safety_metadata() -> None:
     spec = procedure_spec(
-        "test.negative-shape",
+        "test.requires_complete_input-shape",
         output={
             "status": {
                 "type": "enum[closed, unknown]",
-                "negative": True,
-                "unknown_member": "unknown",
+                "requires_complete_input": ["closed"],
+                "incomplete_fallback": "unknown",
             }
         },
     )
     wire = spec.model_dump(mode="json", by_alias=True)
     again = procedure_spec(base=wire)
-    assert again.output["status"].negative
-    assert again.output["status"].unknown_member == "unknown"
+    assert again.output["status"].requires_complete_input
+    assert again.output["status"].incomplete_fallback == "unknown"
 
 
 def test_claims_terminal_infers_empty_output_and_honors_explicit_summary(tmp_path: Path) -> None:

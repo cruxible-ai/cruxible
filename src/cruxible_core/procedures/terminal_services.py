@@ -141,6 +141,7 @@ class ProposalTerminalAdapter:
         *,
         request: TerminalEgressRequestV2,
         admission: ProcedureRunAdmission,
+        settle_submission: ProposalSettleSubmission,
         candidate_tree: Mapping[str, bytes],
         accepted_mandates: Mapping[str, ProcedureMandateAny],
         item_paths: Mapping[str, str] | None = None,
@@ -159,9 +160,15 @@ class ProposalTerminalAdapter:
             base_tree=base_tree,
             changed_paths=changed_paths,
             delegation=delegation,
+            settle_submission=settle_submission,
         )
-        return proposal_terminal_receipt(
-            request, result=result, item_paths=item_paths, unchanged=unchanged
+        return settle_terminal_receipt(
+            request,
+            result=result,
+            item_paths=item_paths,
+            unchanged=unchanged,
+            accepted_git_oid=None,
+            fallback_reason=settle_submission.fallback_reason,
         )
 
     def submit(
@@ -185,10 +192,10 @@ class ProposalTerminalAdapter:
         admission retains it; a proposal terminal passes none. A settle that
         activates in the same request passes its own ``handoff``.
         """
-        if (settle_submission is not None) != (request.kind == "settle_change_set"):
+        if (settle_submission is not None) != (request.kind == "claims"):
             raise EffectfulTerminalError("exactly a settle terminal names its submission mode")
 
-        if request.kind not in {"propose_change_set", "settle_change_set"}:
+        if request.kind not in {"claims"}:
             raise EffectfulTerminalError("proposal adapter serves proposal and settle only")
         if changed_paths is None:
             # A caller that lowered the tree already knows exactly which paths

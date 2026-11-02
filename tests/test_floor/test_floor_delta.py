@@ -70,16 +70,22 @@ def _full_dir(instance: PlaybillInstance, directory: Path, generation: int) -> d
 
 
 @pytest.fixture(scope="module")
-def history(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+def history(
+    tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest
+) -> dict[str, Any]:
+    from cruxible_core.service.floor import floor_current
     from tests.test_floor.test_floor_index import add_lead_field
 
+    patch = pytest.MonkeyPatch()
+    patch.setattr(floor_current, "INLINE_TEXT_BYTES", 128)
+    request.addfinalizer(patch.undo)
     instance, _owner = seed_write_surface(tmp_path_factory.mktemp("floor-delta"))
     _write(instance, _set(WI1, "status", "ready"), _set(WI2, "title", "Two"))
     add_lead_field(instance)
     _write(instance, _set(WI1, "lead", WI2))
-    _write(instance, _set(WI3, "ruling", "".join(f"Clause {i}.\n" for i in range(60))))
+    _write(instance, _set(WI3, "ruling", "bounded" * 32))
     _write(instance, _set(WI1, "status", "done"), _set(WI1, "lead", WI3))
-    _write(instance, _set(WI3, "ruling", "Short now.\n"))
+    _write(instance, _set(WI3, "ruling", "approved"))
     _write(instance, {"op": "retire", "target": {"subject": WI1, "field": "status"}})
     return {"instance": instance, "head": len(instance.accepted_history()) - 1}
 
@@ -153,7 +159,7 @@ def test_a_delta_from_the_last_delivered_head_patches_and_hashes_nothing(
     instance, _owner = seed_write_surface(tmp_path)
     _write(instance, _set(WI1, "status", "ready"), _set(WI2, "title", "Two"))
     delivered = _delta(instance)
-    _write(instance, _set(WI1, "status", "done"), _set(WI3, "ruling", "Text.\n"))
+    _write(instance, _set(WI1, "status", "done"), _set(WI3, "ruling", "bounded" * 32))
     advance_floor_index(instance)
 
     def refused(*_args: object, **_kwargs: object) -> object:

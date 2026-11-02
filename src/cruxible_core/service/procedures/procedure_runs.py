@@ -30,7 +30,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.captures import (
     capture_retention_policy,
 )
-from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic, ExtractRefusedInboxItem
+from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic
 from cruxible_client.contracts.dependencies import dependency_pins
 from cruxible_client.contracts.errors import (
     CruxibleError,
@@ -747,6 +747,8 @@ class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
     children: tuple[ProcedureChildInvocation, ...] = ()
     source_observations: tuple[ProcedureSourceObservation, ...] = ()
     terminal_egress: tuple[ProcedureTerminalEgress, ...] = ()
+    findings: tuple[ClaimsDiagnostic, ...] = ()
+    findings_count: int = Field(default=0, ge=0)
 
     @property
     def coordinate(self) -> AcceptedCoordinate:
@@ -2113,6 +2115,7 @@ def _fold_terminal_egress(
             for d in cast(list[object], payload.get("claims_diagnostics", []))
         )
         or (() if current is None else current.claims_diagnostics),
+        claims_same_count=int(cast(int, payload.get("claims_same_count", 0))),
         claims_diagnostics_count=int(cast(int, payload.get("claims_diagnostics_count", 0))),
         claims_diagnostics_truncated=int(cast(int, payload.get("claims_diagnostics_truncated", 0))),
         claims_diagnostics_inbox_truncation=(
@@ -2219,6 +2222,8 @@ def _state_from_records(
     produced_source_associations: list[ProcedureSourceCaptureAssociation] = []
     terminal_egress: dict[str, ProcedureTerminalEgress] = {}
     children: list[ProcedureChildInvocation] = []
+    findings: list[ClaimsDiagnostic] = []
+    findings_count = 0
     for stored in records:
         payload = read_payload(bodies, stored.record.payload_digest, access=access)
         if isinstance(payload, UnavailablePayload):
@@ -2239,6 +2244,11 @@ def _state_from_records(
                     ),
                 )
             )
+        if stored.record.event_kind == "node_fired" and isinstance(payload, dict):
+            findings_count += int(cast(int, payload.get("claims_diagnostics_count", 0)))
+            for finding in cast(list[Any], payload.get("claims_diagnostics", [])):
+                if len(findings) < 1000:
+                    findings.append(ClaimsDiagnostic.model_validate(finding))
         if stored.record.event_kind == "terminal_egress" and isinstance(payload, dict):
             folded = _fold_terminal_egress(
                 terminal_egress.get(str(payload.get("node_id"))),
@@ -2748,6 +2758,8 @@ def _state_from_records(
         receipt_digest=receipt_digest,
         terminal=terminal,
         children=tuple(children),
+        findings=tuple(findings),
+        findings_count=findings_count,
         source_observations=observations,
         terminal_egress=tuple(
             sorted(
@@ -2859,8 +2871,7 @@ def _with_prior_refusals(
     """
 
     if egress.proposal_id is None or egress.kind not in {
-        "propose_change_set",
-        "settle_change_set",
+        "claims",
     }:
         return egress
     try:
@@ -3242,8 +3253,8 @@ def service_run_playbill_procedure(
             caller_rung=caller_rung,
         )
     readiness = _readiness(accepted, coordinate=coordinate)
-    # A Procedure whose terminals act outward (propose_change_set,
-    # settle_change_set, emit_capture, post_inbox) still runs directly: it
+    # A Procedure whose terminals act outward (claims, emit_capture,
+    # post_inbox) still runs directly: it
     # instantiates the ephemeral Line spec above and is capped at propose
     # (ruling C4). Only node kinds no run lane executes at all are refused
     # here; the terminal's own authority cap is enforced at execution.
@@ -3559,6 +3570,7 @@ class _LineTerminalEgressSink:
         self.capture = capture
         self.proposal = proposal
         self.inbox = inbox
+        self.finding_kinds = () if inbox is None else inbox.finding_kinds
 
     def deliver_inbox_egress(
         self,
@@ -3570,16 +3582,16 @@ class _LineTerminalEgressSink:
             raise TerminalEgressError("post_inbox is delivered only under a Line")
         return self.inbox.deliver_inbox_egress(request=request, manifests=manifests)
 
-    def post_claims_diagnostics(
+    def route_findings(
         self,
         *,
         admission: ProcedureRunAdmission,
         node_id: str,
-        diagnostics: tuple[ExtractRefusedInboxItem, ...],
+        diagnostics: tuple[ClaimsDiagnostic, ...],
         at: datetime,
     ) -> None:
         if self.inbox is not None:
-            self.inbox.post_claims_diagnostics(
+            self.inbox.route_findings(
                 admission=admission, node_id=node_id, diagnostics=diagnostics, at=at
             )
 
@@ -4507,7 +4519,9 @@ def _run_playbill_line(
                 instance=instance, accepted_mandates=dict(mandates)
             ),
             inbox=InboxTerminalEgressSink(
-                store=LineInboxStore(instance), line=accepted_line.line.identity
+                store=LineInboxStore(instance),
+                line=accepted_line.line.identity,
+                findings=accepted_line.line.findings,
             ),
         )
         journal, root = _journal_for_write(instance)

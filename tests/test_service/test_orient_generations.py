@@ -17,6 +17,49 @@ from tests.core_support._write_support import KIND, caller, seed_write_surface
 
 
 def _write(instance: PlaybillInstance, because: str, *titles: str) -> None:
+    if len(because) > 280:
+        # Generation rationales may be prose; Claim rationales are bounded facts.
+        from cruxible_client.contracts.documents import (
+            DocumentAuthority,
+            DocumentLifecycle,
+            DocumentShell,
+            document_path,
+            render_document,
+        )
+        from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+        from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+
+        shell = DocumentShell(
+            identity="document:generation-note",
+            document_kind="note",
+            title="Generation note",
+            media_type="text/plain",
+            body_digest=instance.store_document_body(because.encode()).digest,
+            authority=DocumentAuthority(required_tier="graph_write"),
+            governance_scope=("project:playbill",),
+            lifecycle=DocumentLifecycle(revision=1),
+        )
+        head = instance.accepted_coordinate()
+        tree = instance.immutable_tree_at(head.git_oid).fork()
+        tree[document_path(shell.document_id)] = render_document(shell)
+        proposed = instance.proposal_service().submit(
+            actor=AuthenticatedActor(actor_id="owner"),
+            request=ProposalAdmissionRequest(
+                target_ref="refs/proposals/owner/generation-note",
+                proposed_base_oid=head.git_oid,
+                rationale=because,
+            ),
+            candidate_tree=tree,
+            timestamp="2026-10-01T12:00:00.000000Z",
+        )
+        assert proposed.candidate is not None, proposed.evaluation
+        assert (
+            service_activate_playbill_proposal(
+                instance, proposal_id=proposed.admission.proposal_id, activated_by="owner"
+            ).status
+            == "accepted"
+        )
+        return
     request = WriteRequest.model_validate(
         {
             "because": because,

@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from cruxible_client import Cruxible
 from cruxible_client import contracts as api
@@ -32,10 +33,8 @@ def _claim(index: int) -> str:
     return f"CLM-{index:032x}"
 
 
-def _view(identity: str, value: Any, *, kind: str = "literal", at: Any = _COORDINATE) -> Any:
-    item = {"kind": kind, "value": value} if kind == "literal" else {"kind": kind}
-    if kind == "exact_content":
-        item["content_digest"] = "sha256:" + "c" * 64
+def _view(identity: str, value: Any, *, at: Any = _COORDINATE) -> Any:
+    item = {"kind": "literal", "value": value}
     return api.ClaimViewRecord(
         tag="playbill-claim-read-v2",
         coordinate_kind="canonical",
@@ -188,30 +187,14 @@ def test_a_daemon_without_git_oid_batches_says_so(
         pb.read_whole_many([_preview(_claim(1), "z" * 600)])
 
 
-def test_exact_content_values_are_read_as_read_whole_reads_them(
-    connection: tuple[Cruxible, _WorldClient], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    pb, client = connection
-    literal, exact = _claim(1), _claim(2)
-
-    def batch(_instance_id: str, *, request: ClaimReadBatchRequest) -> Any:
-        return ClaimReadBatchResult(
-            coordinate=_COORDINATE,
-            claims=(_view(literal, "l" * 600), _view(exact, None, kind="exact_content")),
-        )
-
-    monkeypatch.setattr(client, "read_claim_batch", batch, raising=False)
-    singles: list[str] = []
-
-    def read_whole(preview: TruncatedText) -> object:
-        assert preview.read_whole is not None
-        singles.append(preview.read_whole.ref)
-        return "e" * 600
-
-    monkeypatch.setattr(pb, "read_whole", read_whole)
-    whole = pb.read_whole_many([_preview(literal, "l" * 600), _preview(exact, "e" * 600)])
-    assert whole == {literal: "l" * 600, exact: "e" * 600}
-    assert singles == [exact]
+def test_exact_content_statement_cards_refuse_with_a_document_repair() -> None:
+    statement = _view(_claim(1), None).statement.model_dump(mode="json")
+    statement["object"] = {"kind": "exact_content", "content_digest": "sha256:" + "c" * 64}
+    with pytest.raises(
+        ValidationError, match=r"cruxible\.claim\.exact_content_retired:.*Documents"
+    ) as refused:
+        api.ClaimStatementCard.model_validate(statement)
+    assert refused.value.errors()[0]["loc"] == ("object",)
 
 
 def test_prefetch_reads_a_wide_selection_in_batches_at_one_coordinate(

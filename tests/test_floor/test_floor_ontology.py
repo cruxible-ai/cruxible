@@ -168,7 +168,9 @@ def test_the_kind_card_greps_to_its_field_and_the_indexes_head_their_columns(
     assert f'identity: "keys: {KIND}.slug (unique)"  # SubjectKind:{KIND}' in rest
     # A field's key line carries its signature: a grep hit on ``status:`` describes it.
     assert any(
-        line.startswith("  status:  # enum(blocked|done|ready)  one  role observation  evidence ")
+        line.startswith(
+            '  status:  # enum["blocked", "done", "ready"]  one  role observation  evidence '
+        )
         for line in rest
     )
     # Past its header line the card is YAML, like a current/ file.
@@ -176,7 +178,7 @@ def test_the_kind_card_greps_to_its_field_and_the_indexes_head_their_columns(
     assert parsed["kind"] == KIND
     status = parsed["fields"]["status"]
     assert status["predicate"] == f"{KIND}.status" and status["owner"] == "local"
-    assert status["type"] == "enum(blocked|done|ready)" and status["cardinality"] == "one"
+    assert status["type"] == 'enum["blocked", "done", "ready"]' and status["cardinality"] == "one"
     assert status["settled_by"] == ["review"]
     assert parsed["pointed_at_by"] == [f"governs <- {KIND}  {KIND}.governs  many"]
     headers = {
@@ -197,7 +199,12 @@ def test_the_kind_card_greps_to_its_field_and_the_indexes_head_their_columns(
         for line in _text(render, "ontology/claim-types/INDEX").splitlines()
         if line.startswith(f"{KIND}.status\t")
     ]
-    assert row.split("\t")[:4] == [f"{KIND}.status", KIND, "enum(blocked|done|ready)", "one"]
+    assert row.split("\t")[:4] == [
+        f"{KIND}.status",
+        KIND,
+        'enum["blocked", "done", "ready"]',
+        "one",
+    ]
     assert row.split("\t")[-1] == "local"
     assert (
         _text(render, "ontology/INDEX")
@@ -321,7 +328,7 @@ def test_owner_markers_follow_the_receipt_and_the_held_content(tmp_path: Any) ->
     edited = advance_floor_index(instance)
     fields = yaml.safe_load(_text(edited, CARD))["fields"]
     assert fields["status"]["owner"] == f"kit={KIT} edited"
-    assert fields["status"]["type"] == "enum(blocked|done|ready|waiting)"
+    assert fields["status"]["type"] == 'enum["blocked", "done", "ready", "waiting"]'
     assert f"ClaimType:{KIND}.status" in _text(edited, "ontology/kits/INDEX")
     # An upgrade that takes the held content back as installed clears it, and
     # touches only the files of the definitions the receipt ever owned.
