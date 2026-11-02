@@ -95,9 +95,7 @@ class ClaimsNode(_StrictProcedureModel):
     claims: tuple[ClaimTemplate, ...] = Field(min_length=1, max_length=256)
 
     _where = field_validator("where", mode="before")(_record_predicate)
-    _templates = field_validator("for_each", "expect", mode="before")(
-        normalize_canonical
-    )
+    _templates = field_validator("for_each", "expect", mode="before")(normalize_canonical)
 
     @model_validator(mode="after")
     def _absence_rails(self) -> ClaimsNode:

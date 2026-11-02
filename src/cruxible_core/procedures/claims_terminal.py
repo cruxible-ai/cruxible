@@ -113,9 +113,7 @@ def expand_claims(
         try:
             enumeration = absence_enumeration(node, aliases)
         except ClaimsTypingRefused as exc:
-            raise _RunRefusal(
-                exc.code.rsplit(".", 1)[-1], str(exc), node_id=node.node_id
-            ) from exc
+            raise _RunRefusal(exc.code.rsplit(".", 1)[-1], str(exc), node_id=node.node_id) from exc
     rows, row_tokens = _fan_out_list(
         node.for_each,
         state=state,

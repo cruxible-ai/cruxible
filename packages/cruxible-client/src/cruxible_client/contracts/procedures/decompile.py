@@ -308,11 +308,7 @@ def decompile_procedure(
         elif isinstance(node, ClaimsNode):
             step = dict(
                 for_each=typed_template(node.for_each),
-                **(
-                    {"expect": typed_template(node.expect)}
-                    if node.expect is not None
-                    else {}
-                ),
+                **({"expect": typed_template(node.expect)} if node.expect is not None else {}),
                 subject={
                     **node.subject.model_dump(mode="json"),
                     "key": typed_template(node.subject.key),
