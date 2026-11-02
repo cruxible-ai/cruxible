@@ -408,12 +408,12 @@ def test_the_capture_counter_follows_capture_inserts_and_deletes() -> None:
     assert count() is None
     for digest in ("d1", "d2", "d3"):
         connection.execute(
-            "INSERT INTO captures VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (digest, "c", "e", None, None, "s", "p", 1, "public", "o", "commitment"),
+            "INSERT INTO captures VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (digest, "c", "e", None, None, "s", "p", 1, "public", "o"),
         )
     connection.execute(
-        "INSERT OR IGNORE INTO captures VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        ("d1", "c", "e", None, None, "s", "p", 1, "public", "o", "commitment"),
+        "INSERT OR IGNORE INTO captures VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("d1", "c", "e", None, None, "s", "p", 1, "public", "o"),
     )
     assert count() == (3,)
     connection.execute("DELETE FROM captures WHERE capture_digest IN ('d1','d2')")

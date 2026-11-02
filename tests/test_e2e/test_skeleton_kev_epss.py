@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import importlib.util
 import json
 import sys
 from collections.abc import Callable, Iterator, Mapping
@@ -130,11 +131,20 @@ def _web_fetch() -> Any:
     checkout = provider_checkout_path()
     if checkout is None:
         pytest.skip("set CRUXIBLE_PROVIDERS_CHECKOUT: the skeleton runs the real web.fetch")
-    source = checkout / "packages/cruxible-provider-web/src"
-    if not source.is_dir():
+    package = checkout / "packages/cruxible-provider-web/src/cruxible_provider_web"
+    if not package.is_dir():
         pytest.fail(f"{checkout} carries no cruxible-provider-web package")
-    if str(source) not in sys.path:
-        sys.path.insert(0, str(source))
+    if "cruxible_provider_web" not in sys.modules:
+        # Loaded from the checkout by location; the import path is left alone.
+        spec = importlib.util.spec_from_file_location(
+            "cruxible_provider_web",
+            package / "__init__.py",
+            submodule_search_locations=[str(package)],
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["cruxible_provider_web"] = module
+        spec.loader.exec_module(module)
     from cruxible_provider_web.fetch import WebFetch
 
     return WebFetch

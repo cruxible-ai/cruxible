@@ -85,7 +85,7 @@ def authored_capture_contract():
             "components": {
                 "coordinate_schemas": [component("http-response-v1")],
                 "selector_schemas": [component("whole-response-v1")],
-                "commitment_canonicalizer": component("canonical-json-v1"),
+                "commitment_canonicalizer": component("sha256-bytes-v1"),
                 "replay_policy": component("playbill.external.exact-replay-v1"),
                 "provenance_rule": component("playbill.external.daemon-fetched-v1"),
                 "source_subject_mapping": component("playbill.external.record-subject-v1"),
