@@ -195,6 +195,35 @@ def test_source_windows_share_only_their_exact_normalized_address_within_a_reque
     assert len(addresses) == 3  # a new request pays the cold address work again
 
 
+def test_claim_identity_and_source_windows_share_the_same_cold_address(monkeypatch):
+    from cruxible_client.contracts.content_memo import artifact_request
+    from cruxible_core.compiler import projection_artifacts as module
+
+    path, content = _member()
+    claim = _parse_claim(content, path=path)
+    arguments = dict(
+        path=path,
+        input_digest=file_digest(content).tagged,
+        artifact_digest=claim_artifact_digest(claim).tagged,
+        statement_digest=claim_statement_digest(claim.statement).tagged,
+    )
+    module._SOURCE_MAPPINGS.clear()
+    cold = module._claim_static_facts(claim, **arguments)
+    addresses = []
+    original = module.normalized_projection_value
+
+    def normalized(value):
+        if isinstance(value, dict) and value.get("tag") == claim.statement.subject.tag:
+            addresses.append(value)
+        return original(value)
+
+    monkeypatch.setattr(module, "normalized_projection_value", normalized)
+    module._SOURCE_MAPPINGS.clear()
+    with artifact_request():
+        assert module._claim_static_facts(claim, **arguments) == cold
+    assert addresses == [claim.backing.source_mappings[0].subject.model_dump(mode="json")]
+
+
 def test_mapping_address_reuse_preserves_cold_serialization_of_subclasses_and_copies():
     from cruxible_client.contracts.content_memo import artifact_request
     from cruxible_client.contracts.projection_extensions import normalize_projection_value

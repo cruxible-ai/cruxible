@@ -446,6 +446,19 @@ def _claim_static_facts(
     from cruxible_client.contracts.claims import claim_statement_address
 
     identity = claim.identity.qualified
+    statement_address = claim_statement_address(path)
+    # Source windows and the identity row name this exact address. Pay for its
+    # normalization once in this request, including on a cold projection build.
+    address_value = request_derive(
+        (
+            "projection.source_mapping_subject",
+            statement_address.tag,
+            statement_address.artifact_path,
+            statement_address.selector.scheme,
+            statement_address.selector.value,
+        ),
+        lambda: normalized_projection_value(statement_address.model_dump(mode="json")),
+    )
     # Each mapping occurs both in backing and as its own fact. Normalize its
     # immutable subtree once, then compose the exact same value into both rows.
     mappings = [_normalized_source_mapping(m) for m in claim.backing.source_mappings]
@@ -463,7 +476,7 @@ def _claim_static_facts(
                     "artifact_digest": {"$digest": artifact_digest},
                     "identity": claim.identity.model_dump(mode="json"),
                     "input_digest": {"$digest": input_digest},
-                    "statement_address": claim_statement_address(path).model_dump(mode="json"),
+                    "statement_address": address_value,
                     "statement_digest": {"$digest": statement_digest},
                 },
             ),
