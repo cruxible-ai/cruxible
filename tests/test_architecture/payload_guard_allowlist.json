@@ -1,0 +1,27 @@
+{
+  "about": "Allow-list for tests/test_architecture/test_capture_payload_guards.py (D-R25..D-R27). Every entry names why it is not a special case. Adding an entry is a reviewed design change, not a test fix.",
+  "provider_names": {
+    "workspace.file": "Core's own builtin operation (R3): the daemon performs the read itself, recognizes the operation by its builtin signature, and seeds its Contracts. The one name core may spell."
+  },
+  "wrapper_reads": {
+    "packages/cruxible-client/src/cruxible_client/contracts/file_catalog.py": {
+      "keys": ["body_base64"],
+      "reason": "L3 transport: a compiled file bundle carries a Document body as base64 JSON (compilation bundles), not a Capture wrapper."
+    },
+    "src/cruxible_core/service/evidence/file_catalog.py": {
+      "keys": ["body_base64"],
+      "reason": "L3 transport: submits a compiled file bundle's base64 body (compilation bundles)."
+    },
+    "packages/cruxible-client/src/cruxible_client/contracts/source_references.py": {
+      "keys": ["body_base64"],
+      "reason": "L3 transport: BodyAccessResult carries a dereferenced selection's bytes as base64 JSON (dereference selections)."
+    },
+    "packages/cruxible-client/src/cruxible_client/authoring/sdk_types.py": {
+      "keys": ["body_base64"],
+      "reason": "L3 transport: the SDK decodes a dereference selection's base64 body (dereference selections)."
+    }
+  },
+  "domain_names": {
+    "packages/cruxible-client/src/cruxible_client/authoring/examples.py": "Examples: authoring templates an agent copies; not core logic."
+  }
+}
