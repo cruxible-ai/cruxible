@@ -71,10 +71,12 @@ from cruxible_core.providers.provider_local_runtime import (
 )
 from cruxible_core.providers.provider_process_leases import (
     PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE,
+    ProviderLocalRuntimeRefused,
 )
 from cruxible_core.runtime.execution_policy import enforce_customer_code_execution_supported
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.provider_runtime import (
+    PROVIDER_RUNTIME_CONFIG_PATH,
     ProviderDeploymentConfigV1,
     ProviderRuntimeOperator,
 )
@@ -784,6 +786,39 @@ def _refuse_unavailable_lane(operator: ProviderRuntimeOperator) -> None:
     )
 
 
+def _register_deployment(
+    operator: ProviderRuntimeOperator, configured: ProviderDeploymentConfigV1
+) -> None:
+    """Publish the deployment; an operator config that already names it otherwise refuses typed.
+
+    The operator config never replaces an admitted deployment, so an entry for
+    this digest with other custody (a config copied from another state root, or
+    one left behind by an earlier environment) is the operator's to remove.
+    """
+
+    try:
+        operator.register_deployment(configured)
+    except ProviderLocalRuntimeRefused as exc:
+        if exc.code != "environment_divergence":
+            raise
+        digest = configured.deployment_digest
+        raise RequestRefusedError(
+            "cruxible.provider.deployment_config_conflict",
+            f"{PROVIDER_RUNTIME_CONFIG_PATH} already records deployment {digest} with other "
+            "custody (a stale or copied operator config); an install never overwrites it",
+            repair=HandEditRepair(
+                hand_edit=HandEditInstruction(
+                    target=str(PROVIDER_RUNTIME_CONFIG_PATH),
+                    required_change=(
+                        f"Remove the deployments entry whose deployment_digest is {digest}, "
+                        "then install again; the retained preparation registers this root's "
+                        "own environment."
+                    ),
+                )
+            ),
+        ) from exc
+
+
 def _install_locked(
     instance: PlaybillInstance,
     operator: ProviderRuntimeOperator,
@@ -905,7 +940,7 @@ def _install_locked(
     # Contracts its operations pin.
     base = instance.accepted_coordinate()
     candidate_tree, changed, build = _definition_changes(instance, document, provider, base.git_oid)
-    operator.register_deployment(configured)
+    _register_deployment(operator, configured)
     if rewrite_prepared:
         _write(
             prepared_path,

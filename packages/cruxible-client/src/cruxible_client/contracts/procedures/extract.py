@@ -58,6 +58,17 @@ _PARSE_TYPES: dict[str, FieldType] = {
     "bool": BoolType(),
 }
 
+Projection = Literal["utc_date", "utc_start_of_day"]
+#: Each projection's required ``parse`` and the type it yields. ``utc_date`` keeps
+#: a moment's UTC calendar day; ``utc_start_of_day`` makes a day the moment it
+#: begins (00:00 UTC), so a date-valued source field fits a datetime slot such
+#: as a Claim's ``effective_from``. Both are declared reshapes: the value stays
+#: ``extracted``.
+PROJECTIONS: dict[str, tuple[Parse, FieldType]] = {
+    "utc_date": ("datetime", DateType()),
+    "utc_start_of_day": ("date", DateTimeType()),
+}
+
 
 class ExtractField(_StrictProcedureModel):
     """Where one field is read, and how its lexeme becomes a typed value.
@@ -67,14 +78,14 @@ class ExtractField(_StrictProcedureModel):
     (``date``, ``datetime``, ``int``, ``decimal``, ``bool``); ``type`` states
     the field's type where no row Contract does (keys and header fields);
     ``canonicalize: claim_type`` matches an enum member case-insensitively.
-    ``presence`` overrides the row Contract's optionality.
+    ``presence`` overrides the row Contract's optionality. ``project`` reshapes
+    the parsed value: ``utc_date`` (``parse: datetime``) keeps its UTC calendar
+    day; ``utc_start_of_day`` (``parse: date``) is that day at 00:00 UTC.
     """
 
     at: str = Field(min_length=1, max_length=512)
     type: str | None = Field(default=None, exclude_if=lambda value: value is None)
-    project: Literal["utc_date"] | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
+    project: Projection | None = Field(default=None, exclude_if=lambda value: value is None)
     parse: Parse | None = Field(default=None, exclude_if=lambda value: value is None)
     canonicalize: Literal["claim_type"] | None = Field(
         default=None, exclude_if=lambda value: value is None
@@ -92,15 +103,15 @@ class ExtractField(_StrictProcedureModel):
 
     @model_validator(mode="after")
     def _projection(self) -> ExtractField:
-        if self.project is not None and self.parse != "datetime":
-            raise ValueError("utc_date requires parse: datetime")
+        if self.project is not None and self.parse != PROJECTIONS[self.project][0]:
+            raise ValueError(f"{self.project} requires parse: {PROJECTIONS[self.project][0]}")
         return self
 
     def field_type(self) -> FieldType:
         """The declared type; else the parse's type; else a string."""
 
-        if self.project == "utc_date":
-            return DateType()
+        if self.project is not None:
+            return PROJECTIONS[self.project][1]
         if self.type is not None:
             return parse_type(self.type)
         if self.parse is not None:
@@ -196,6 +207,8 @@ __all__ = [
     "CompleteWhen",
     "ExtractField",
     "ExtractNode",
+    "PROJECTIONS",
     "Parse",
+    "Projection",
     "extract_spec_digest",
 ]

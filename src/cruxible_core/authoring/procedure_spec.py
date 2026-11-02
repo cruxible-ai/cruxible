@@ -266,6 +266,18 @@ def resolve_procedure_spec(
             validate_claims_templates(definition, maybe_source_identity)
         except (ClaimsTypingRefused, ValueError) as exc:
             raise ProcedureSpecError(
-                getattr(exc, "code", "claims_type_invalid").rsplit(".", 1)[-1], "$.steps", str(exc)
+                getattr(exc, "code", "claims_type_invalid").rsplit(".", 1)[-1],
+                _claims_refusal_path(spec, exc),
+                f"Procedure {spec.procedure}: {exc}",
             ) from exc
         return lowered
+
+
+def _claims_refusal_path(spec: Any, refusal: Exception) -> str:
+    """The authored element a Claims typing refusal names: its step, then its template."""
+
+    from cruxible_client.contracts.procedures.authored import authored_step_path
+
+    step = authored_step_path(spec, getattr(refusal, "node_id", None))
+    element = getattr(refusal, "element", None)
+    return step if element is None or step == "$.steps" else f"{step}.{element}"

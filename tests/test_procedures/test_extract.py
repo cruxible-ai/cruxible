@@ -686,3 +686,67 @@ def test_nested_and_listed_nested_keys_are_extracted_canonical() -> None:
         resolve=resolve,
         keys=rules,
     )
+
+
+# -- projections (D-R29) ----------------------------------------------------------------
+
+
+def test_utc_start_of_day_reads_a_date_as_the_moment_that_day_begins_in_utc() -> None:
+    from datetime import UTC, datetime
+
+    row = validate_contract(
+        {
+            "name": "security.kev-entry",
+            "version": 1,
+            "fields": {"listed_from": "datetime?", "vendor_project": "string"},
+        }
+    )
+    node = _node(
+        fields={
+            "listed_from": {"at": "dateAdded", "parse": "date", "project": "utc_start_of_day"},
+            "vendor_project": {"at": "vendorProject"},
+        },
+        header={},
+    )
+    assert node.fields["listed_from"].field_type().kind == "datetime"
+    content = _catalog(_entry("CVE-2026-0001"), _entry("CVE-2026-0002", dateAdded="2026-02-30"))
+    outcome = run_extract(
+        node,
+        capture_digest="sha256:" + __import__("hashlib").sha256(content).hexdigest(),
+        content=content,
+        decoding=JSON,
+        row=row,
+        enums=_enums,
+    )
+    first, second = outcome.records
+    listed = first.fields["listed_from"]
+    assert isinstance(listed, FieldPresent)
+    assert listed.value == datetime(2026, 9, 1, tzinfo=UTC)
+    assert listed.at == "/vulnerabilities/0/dateAdded"
+    assert outcome.value()["rows"][0]["listed_from"] == "2026-09-01T00:00:00+00:00"
+    invalid = second.fields["listed_from"]
+    assert isinstance(invalid, FieldInvalid) and invalid.problem.code == "type_mismatch"
+    assert invalid.problem.lexeme == "2026-02-30"
+
+
+def test_a_projected_header_date_is_typed_datetime() -> None:
+    node = _node(
+        header={"listed_day": {"at": "/day", "parse": "date", "project": "utc_start_of_day"}}
+    )
+    outcome = _run(_catalog(_entry("CVE-2026-0001"), day="2026-09-30"), node)
+    listed = outcome.header["listed_day"]
+    assert isinstance(listed, FieldPresent)
+    assert listed.value.isoformat() == "2026-09-30T00:00:00+00:00"
+
+
+@pytest.mark.parametrize(
+    ("project", "parse"), [("utc_start_of_day", "datetime"), ("utc_date", "date")]
+)
+def test_a_projection_requires_its_parse(project: str, parse: str) -> None:
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.procedures.extract import ExtractField
+
+    required = "date" if project == "utc_start_of_day" else "datetime"
+    with pytest.raises(ValidationError, match=f"{project} requires parse: {required}"):
+        ExtractField.model_validate({"at": "dateAdded", "parse": parse, "project": project})

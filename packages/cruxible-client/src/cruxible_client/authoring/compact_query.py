@@ -187,6 +187,28 @@ def _cell(value: object) -> str:
     return text if len(text) <= _CELL_WIDTH else text[: _CELL_WIDTH - 1] + "…"
 
 
+def _none_text(none: object) -> str:
+    """A none (an inverse Claim) as ``get`` names it: ``none``, or ``none of <unit>``."""
+
+    of = none.get("of") if isinstance(none, Mapping) else getattr(none, "of", None)
+    return "none" if of is None else f"none of {_cell(of)}"
+
+
+def _cell_with_nones(row: Mapping[str, Any], name: str) -> str:
+    """A cell's value, then each live none behind it: a held none is never ``-``.
+
+    ``-`` stays the cell of a field with no value and no none (unknown).
+    """
+
+    value = row.get(name)
+    nones = row.get("nones")
+    held = nones.get(name) if isinstance(nones, Mapping) else None
+    if not held:
+        return _cell(value)
+    shown = [] if value is None or value == [] or value == () else [_cell(value)]
+    return _cell(", ".join([*shown, *(_none_text(none) for none in held)]))
+
+
 #: Columns whose cells name stored identities, by row kind: a table shows each
 #: by its public name (``cruxible.``), while the typed rows keep the stored one.
 _IDENTITY_COLUMNS: dict[str, frozenset[str]] = {
@@ -220,7 +242,7 @@ def render_query_table(page: QueryResultRecord) -> str:
         header.append("flags")
     if not rows:
         header = header or names
-    cells = [[_cell(row.get(name)) for name in header] for row in rows]
+    cells = [[_cell_with_nones(row, name) for name in header] for row in rows]
     widths = [
         max([len(name), *(len(line[index]) for line in cells)]) for index, name in enumerate(header)
     ]
