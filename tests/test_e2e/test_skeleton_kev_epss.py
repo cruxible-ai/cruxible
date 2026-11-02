@@ -844,3 +844,17 @@ def test_c_admission_commits_any_bytes_and_only_extract_decodes(
 
     committed = CasDigest(hashlib.sha256(NOT_JSON).hexdigest()).tagged
     assert instance.body_store().read(committed, access=ACCESS) == NOT_JSON
+
+
+def test_the_skeleton_cannot_skip_where_the_providers_checkout_is_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CI sets CRUXIBLE_PROVIDERS_REQUIRED: an absent checkout fails, never skips."""
+
+    monkeypatch.delenv("CRUXIBLE_PROVIDERS_CHECKOUT", raising=False)
+    monkeypatch.setenv("CRUXIBLE_PROVIDERS_REQUIRED", "1")
+    with pytest.raises(pytest.fail.Exception):
+        require_provider_checkout()
+    monkeypatch.delenv("CRUXIBLE_PROVIDERS_REQUIRED")
+    with pytest.raises(pytest.skip.Exception):
+        require_provider_checkout()
