@@ -98,21 +98,24 @@ def expand_claims(
             item=row,
         )
 
-    if node.covers is not None:
-        from cruxible_core.procedures.claims_typing import preserves_claims_enumeration
+    enumeration: ExtractNode | None = None
+    if node.expect is not None:
+        from cruxible_core.procedures.claims_typing import (
+            ClaimsTypingRefused,
+            absence_enumeration,
+        )
 
         aliases = (
             {}
             if executor.plan is None
             else {getattr(n, "as_", None): n for n in executor.plan.definition.nodes}
         )
-        if not preserves_claims_enumeration(node, aliases):
+        try:
+            enumeration = absence_enumeration(node, aliases)
+        except ClaimsTypingRefused as exc:
             raise _RunRefusal(
-                "claims_enumeration_invalid",
-                "covers requires for_each to use the enumeration records directly "
-                "or through filter/dedupe only",
-                node_id=node.node_id,
-            )
+                exc.code.rsplit(".", 1)[-1], str(exc), node_id=node.node_id
+            ) from exc
     rows, row_tokens = _fan_out_list(
         node.for_each,
         state=state,
@@ -762,18 +765,18 @@ def expand_claims(
             )
             tokens.append(own)
             evidence.append(receipt)
-    if node.covers is not None:
+    if enumeration is not None:
         from cruxible_core.procedures.claims_absence import append_absence
 
         try:
             append_absence(
                 node,
+                enumeration=enumeration,
                 executor=executor,
                 admission=admission,
                 state=state,
                 context=context,
                 resolve=resolve,
-                lineage=lineage,
                 values=values,
                 tokens=tokens,
                 evidence=evidence,

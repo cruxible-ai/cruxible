@@ -315,7 +315,7 @@ def test_g5_delisting_has_a_mirror_witness(tmp_path: Path) -> None:
             witness.enumerated_key_digest
             == typed_digest(Sha256Value, "cruxible-enumerated-keys-v1", {"keys": []}).tagged
         )
-        assert witness.covers_coordinate == second.bound_coordinate
+        assert witness.expect_coordinate == second.bound_coordinate
 
 
 def test_g8_watched_read_ceiling_refuses_before_writes(tmp_path: Path) -> None:

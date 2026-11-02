@@ -94,8 +94,7 @@ def _reference_templates(
         yield "result", node.result
     if isinstance(node, ClaimsNode):
         yield "for_each", node.for_each
-        yield "covers", node.covers
-        yield "enumeration", node.enumeration
+        yield "expect", node.expect
         yield "subject", node.subject
         yield "claims", node.claims
         from cruxible_client.contracts.procedures.claims import rationale_references

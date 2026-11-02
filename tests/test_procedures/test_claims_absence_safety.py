@@ -92,7 +92,7 @@ def safety_world(
     raw["steps"][-1]["claims"][0]["when_absent"] = policy
     raw["steps"][1]["complete_when"] = {"count_at": "/count"}
     raw["steps"].insert(1, {"read": "watched", "query": "security.watched-vulnerabilities"})
-    raw["steps"][-1].update(covers="$steps.watched.rows", enumeration="$steps.entries")
+    raw["steps"][-1].update(expect="$steps.watched.rows")
     install(instance, procedure_spec(base=raw, reference_text=True))
     first = run(instance, root)
     assert first.status == "succeeded", first.terminal
@@ -186,7 +186,7 @@ def test_unusable_present_values_never_authorize_absence(tmp_path: Path, monkeyp
     assert not any(f.kind == "claim_not_in_source" for f in second.findings)
 
 
-@pytest.mark.parametrize("invalid", ("transformed", "item_inverse"))
+@pytest.mark.parametrize("invalid", ("transformed", "provider_records", "item_inverse"))
 def test_absence_authoring_rails_fail_with_typed_codes(tmp_path: Path, invalid):
     from cruxible_core.authoring.lowering import AuthoringLoweringError
 
@@ -194,18 +194,11 @@ def test_absence_authoring_rails_fail_with_typed_codes(tmp_path: Path, invalid):
     raw["procedure"] = "test.refused-absence"
     expected = "claims_enumeration_invalid"
     if invalid == "transformed":
-        raw["steps"].insert(
-            -1,
-            {
-                "transform": "filtered",
-                "kind": "filter",
-                "spec": {
-                    "input": "$steps.entries.records",
-                    "where": {"op": "eq", "left": {"literal": 0}, "right": {"literal": 1}},
-                },
-            },
-        )
-        raw["steps"][-1]["enumeration"] = "$steps.filtered"
+        # The root of for_each's chain is a query read, not an extract.
+        raw["steps"][-1]["for_each"] = "$steps.watched.rows"
+    elif invalid == "provider_records":
+        raw["steps"][-1]["for_each"] = "$steps.doc.content"
+        expected = "claims_expect_provider_enumeration_unsupported"
     else:
         raw["steps"][-1]["claims"][0]["when_absent"] = "inverse"
         expected = "claims_inverse_item_value"
@@ -422,7 +415,9 @@ def test_covered_shape_cast_is_refused_at_runtime(tmp_path: Path, monkeypatch, r
     # Simulate a Procedure accepted before this rail: runtime must independently
     # refuse it, before a renamed template raises or a cast causes a retirement.
     with monkeypatch.context() as old_acceptance:
-        old_acceptance.setattr(claims_typing, "preserves_claims_enumeration", lambda *_: True)
+        old_acceptance.setattr(
+            claims_typing, "absence_enumeration", lambda _node, aliases: aliases["entries"]
+        )
         reinstall(instance, raw)
     before = instance.accepted_coordinate()
     result = run(instance, root, minute=1, line="safety-followup")

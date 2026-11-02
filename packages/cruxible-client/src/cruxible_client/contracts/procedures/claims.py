@@ -88,24 +88,23 @@ class ClaimsNode(_StrictProcedureModel):
     node_id: str
     for_each: object
     where: Predicate | None = None
-    covers: object | None = Field(default=None, exclude_if=lambda value: value is None)
-    enumeration: object | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: The Subjects whose absence this run judges; the enumeration is never
+    #: authored: it is the extract at the root of ``for_each``'s filter/dedupe chain.
+    expect: object | None = Field(default=None, exclude_if=lambda value: value is None)
     subject: ClaimsSubject
     claims: tuple[ClaimTemplate, ...] = Field(min_length=1, max_length=256)
 
     _where = field_validator("where", mode="before")(_record_predicate)
-    _templates = field_validator("for_each", "covers", "enumeration", mode="before")(
+    _templates = field_validator("for_each", "expect", mode="before")(
         normalize_canonical
     )
 
     @model_validator(mode="after")
     def _absence_rails(self) -> ClaimsNode:
-        if (self.covers is None) != (self.enumeration is None):
-            raise ValueError("claims_absence_invalid: covers and enumeration are required together")
-        if self.covers is None and any(
+        if self.expect is None and any(
             "when_absent" in item.model_fields_set for item in self.claims
         ):
-            raise ValueError("claims_absence_invalid: when_absent requires covers and enumeration")
+            raise ValueError("claims_absence_invalid: when_absent requires expect")
         return self
 
 

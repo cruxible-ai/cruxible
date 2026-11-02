@@ -224,6 +224,14 @@ def _validate_absence_bindings(
 
     if node is None:
         refuse()
+    from cruxible_core.procedures.claims_typing import ClaimsTypingRefused, absence_enumeration
+
+    try:
+        extracting: ExtractNode | None = absence_enumeration(
+            node, {getattr(n, "as_", None): n for n in nodes}
+        )
+    except ClaimsTypingRefused:
+        extracting = None
     for item, change, receipt in selected:
         witness = (
             change.witness
@@ -244,18 +252,10 @@ def _validate_absence_bindings(
             or witness.node_id != request.node_id
             or receipt.node_id != request.node_id
             or witness.capture != evidence.get(item.item_key)
-            or witness.covers_coordinate != admission.accepted_coordinate
+            or witness.expect_coordinate != admission.accepted_coordinate
             or receipt.template >= len(node.claims)
         ):
             refuse()
-        extracting = next(
-            (
-                n
-                for n in nodes
-                if isinstance(n, ExtractNode) and node.enumeration == f"$steps.{n.as_}"
-            ),
-            None,
-        )
         if (
             extracting is None
             or witness.extract_spec != _receipt_extract_digest(extracting)

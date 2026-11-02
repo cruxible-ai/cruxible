@@ -443,7 +443,7 @@ def _normalized_absence_witness(witness: AbsenceWitness) -> _NormalizedProjectio
 
     if type(witness) is not AbsenceWitness:
         return normalize()
-    at = witness.covers_coordinate
+    at = witness.expect_coordinate
     key = (
         "projection.absence_witness",
         witness.capture,

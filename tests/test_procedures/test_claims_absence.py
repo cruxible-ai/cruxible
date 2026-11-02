@@ -23,8 +23,7 @@ from tests.test_procedures.test_claims_terminal import (
 def absence_spec(policy="mirror", *, may_truncate=False):
     raw = kev_spec(may_truncate=may_truncate).model_dump(mode="python", by_alias=True)
     node = raw["steps"][-1]
-    node["covers"] = {"$ref": "step", "step": "watched", "path": ["rows"]}
-    node["enumeration"] = {"$ref": "step", "step": "entries", "path": []}
+    node["expect"] = {"$ref": "step", "step": "watched", "path": ["rows"]}
     node["claims"][0]["when_absent"] = policy
     return procedure_spec(base=raw)
 
@@ -62,7 +61,7 @@ def test_policies_respect_complete_covered_absence(tmp_path: Path, policy):
             witness = claim.retirement.absence
             assert witness is not None and witness.complete_when
             assert witness.logical_source == "cisa.kev.catalog"
-            assert witness.covers_coordinate == second.bound_coordinate
+            assert witness.expect_coordinate == second.bound_coordinate
     else:
         assert not changed
     findings = [f for f in second.findings if f.claim_type == KEV + "listed"]
@@ -100,15 +99,22 @@ def test_incomplete_inputs_surface_and_report_completeness(tmp_path: Path, fault
     assert len(findings) == 2 and all(f.source_incomplete for f in findings)
 
 
-@pytest.mark.parametrize("missing", ("covers", "enumeration"))
-def test_absence_requires_both_rails(missing):
+def test_absence_requires_expect():
     raw = absence_spec().model_dump(mode="python", by_alias=True)
-    raw["steps"][-1].pop(missing)
+    raw["steps"][-1].pop("expect")
     with pytest.raises(ValidationError, match="claims_absence_invalid"):
         procedure_spec(base=raw)
 
 
-def test_absence_without_covers_is_refused():
+@pytest.mark.parametrize("retired", ("enumeration", "covers"))
+def test_the_enumeration_is_never_authored_and_covers_is_gone(retired):
+    raw = absence_spec().model_dump(mode="python", by_alias=True)
+    raw["steps"][-1][retired] = "$steps.entries"
+    with pytest.raises(ValidationError, match=retired):
+        procedure_spec(base=raw)
+
+
+def test_absence_without_expect_is_refused():
     raw = kev_spec().model_dump(mode="python", by_alias=True)
     raw["steps"][-1]["claims"][0]["when_absent"] = "surface"
     with pytest.raises(ValidationError, match="claims_absence_invalid"):
@@ -344,7 +350,7 @@ def test_absence_tracks_each_qualifier_and_each_many_valued_unit(tmp_path: Path,
         assert len(inverse) == 1 and inverse[0].statement.object.of.value == "low"
 
 
-def test_covers_must_be_a_subset_of_only_keys_before_any_write(tmp_path: Path):
+def test_expect_must_be_a_subset_of_only_keys_before_any_write(tmp_path: Path):
     from cruxible_client.contracts.canonical import canonical_bytes
     from cruxible_client.contracts.subjects import subject_path
     from tests.test_procedures import test_procedure_proposal_delivery as delivery
@@ -366,7 +372,7 @@ def test_covers_must_be_a_subset_of_only_keys_before_any_write(tmp_path: Path):
     )
     state = settle.run_settle(instance, root, line)
     assert state.status == "node_refused"
-    assert "claims_covers_outside_only_keys" in state.terminal.message
+    assert state.terminal.code == "claims_expect_outside_only_keys"
     assert instance.accepted_coordinate() == before
 
 

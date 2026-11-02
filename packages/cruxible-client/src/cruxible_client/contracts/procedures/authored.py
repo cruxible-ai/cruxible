@@ -524,19 +524,16 @@ class ClaimsStep(StepOptions):
     for_each: Ref
     where: Predicate | None = None
     subject: ClaimsSubjectSpec
-    covers: Ref | None = None
-    enumeration: Ref | None = None
+    expect: Ref | None = None
 
     _where = field_validator("where", mode="before")(_record_predicate)
 
     @model_validator(mode="after")
     def _absence_rails(self) -> ClaimsStep:
-        if (self.covers is None) != (self.enumeration is None):
-            raise ValueError("claims_absence_invalid: covers and enumeration are required together")
-        if self.covers is None and any(
+        if self.expect is None and any(
             "when_absent" in item.model_fields_set for item in self.claims
         ):
-            raise ValueError("claims_absence_invalid: when_absent requires covers and enumeration")
+            raise ValueError("claims_absence_invalid: when_absent requires expect")
         return self
 
 
@@ -1533,11 +1530,8 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             node.update(
                 kind="claims",
                 **(
-                    {
-                        "covers": template(step.covers, path + ".covers"),
-                        "enumeration": template(step.enumeration, path + ".enumeration"),
-                    }
-                    if step.covers is not None
+                    {"expect": template(step.expect, path + ".expect")}
+                    if step.expect is not None
                     else {}
                 ),
                 for_each=template(step.for_each, path + ".for_each"),

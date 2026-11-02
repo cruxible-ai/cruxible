@@ -309,11 +309,8 @@ def decompile_procedure(
             step = dict(
                 for_each=typed_template(node.for_each),
                 **(
-                    {
-                        "covers": typed_template(node.covers),
-                        "enumeration": typed_template(node.enumeration),
-                    }
-                    if node.covers is not None
+                    {"expect": typed_template(node.expect)}
+                    if node.expect is not None
                     else {}
                 ),
                 subject={

@@ -148,7 +148,7 @@ def delivery_definition(
                 claims=[{**mapping, "when_absent": absence} for mapping in mappings]
                 if absence
                 else mappings,
-                **({"covers": list(within), "enumeration": "$steps.entries"} if absence else {}),
+                **({"expect": list(within)} if absence else {}),
             ),
         ),
     )

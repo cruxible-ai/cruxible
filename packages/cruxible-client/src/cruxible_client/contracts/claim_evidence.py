@@ -100,7 +100,7 @@ class AbsenceWitness(_Receipt):
         default=None, exclude_if=lambda value: value is None
     )
     enumerated_key_digest: str
-    covers_coordinate: AcceptedCoordinate
+    expect_coordinate: AcceptedCoordinate
 
     _digests = field_validator(
         "capture", "extract_spec", "enumerated_key_digest", "procedure_digest"
