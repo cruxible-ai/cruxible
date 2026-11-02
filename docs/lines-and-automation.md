@@ -295,7 +295,10 @@ category:
       "scope": [
         {
           "claim_type": "catalog.part.discontinued",
-          "change_kinds": ["create", "revise"]
+          "changes": {
+            "create": {"basis": ["extracted"]},
+            "revise": {"basis": ["extracted"]}
+          }
         }
       ],
       "condition": {
@@ -563,9 +566,10 @@ Reshaping, parsing, casts, canonicalization, filtering and projection preserve
 that basis. `derive` and `aggregate` compute a `derived` value and require
 `role: derivation`; their receipts retain the computing transform ids and
 source extraction receipts. Derivations over Claim reads also bind exact
-`inputs` from that row's dependency closure. Derived and provider-measured
-values remain propose-only until explicit Mandate basis scopes are available.
-Cruxible does not infer attestations.
+`inputs` from that row's dependency closure. A settle Mandate settles a value
+only on a basis its scope lists for that ClaimType and change kind
+(`extracted`, `measured` for provider-parsed values, `derived`, or `absence`);
+see the settle scope below. Cruxible does not infer attestations.
 
 A Claims step can compare a complete enumeration with an explicit Subject
 set. Set `expect: $steps.watched.rows` on the step (the Subjects whose absence
@@ -624,8 +628,20 @@ to resolve `expect`. The executing Claims terminal produces that proof; public a
 cannot attach it. Preparation and delivery verify its run, Capture and extract
 binding. Inverses cite that proof as evidence. Re-confirming an
 inverse records a re-observation; an appearing value revises it into a positive.
-Mirror retirements and inverse writes currently require proposal review even
-under a settle grant, and appear in `outside_scope_claim_types`.
+Mirror retirements and inverse writes are basis `absence`: they settle only
+when the Mandate's scope lists `absence` for that ClaimType and change kind
+(`retire: {basis: [absence]}` for a retirement, `create` or `revise` with
+`absence` for an inverse write).
+
+A settle Mandate's `scope` names, per ClaimType and change kind, the bases that
+settle, for example
+`{claim_type: security.vulnerability.kev_listed, changes: {create: {basis: [extracted]}, retire: {basis: [absence]}}}`,
+with an optional `value: {from, to}` for enum and bool ClaimTypes. Each basis
+settles only when listed. Settlement is all or nothing: if any admissible
+change in the run falls outside the scope, the whole change set proposes under
+the grant (`cruxible.settle.outside_mandate_scope`), and the run result reports
+each typed `outside_scope` gap as `{claim_type, change, basis, term}`.
+Inadmissible values are excluded before that decision.
 
 An incomplete run includes a bounded typed `completeness` summary in its result,
 run card and activity entry: `complete: false`, reasons naming the affected

@@ -758,7 +758,7 @@ def test_reobservation_same_value_new_bytes_visits_each_item_once(
 
 
 def _measure_absence_work(tmp_path, monkeypatch, *, policy, count):
-    """Absence stays propose-only even with a settle grant; measure that real door."""
+    """Absence outside the grant's scope proposes (all or nothing); measure that real door."""
     tmp_path.mkdir(parents=True, exist_ok=True)
     _roomy_selection_budget(monkeypatch)
     with _sql_traced(tmp_path):
@@ -766,7 +766,8 @@ def _measure_absence_work(tmp_path, monkeypatch, *, policy, count):
             tmp_path,
             claims_terminal=True,
             claims_absence=policy,
-            change_kinds=("create", "revise", "retire"),
+            # Positives settle on basis extracted; absence is not listed, so it proposes.
+            change_kinds=("create", "revise"),
             claims_within=tuple(subject_path(SUBJECT_KIND, _subject_id(i)) for i in range(count)),
         )
         _create_subjects(instance, settle_support.OWNERS[instance.root], count)
@@ -783,7 +784,9 @@ def _measure_absence_work(tmp_path, monkeypatch, *, policy, count):
         assert state.status == "succeeded", state.terminal
         (egress,) = state.terminal_egress
         assert egress.settle_outcome == "proposed", egress
-        assert egress.outside_scope_claim_types == (proposal_support.PREDICATE,)
+        assert {(gap.claim_type, gap.basis) for gap in egress.outside_scope} == {
+            (f"ClaimType:{proposal_support.PREDICATE}", "absence")
+        }
         assert len(egress.target_paths) == count, egress
         evaluation = instance.proposal_evidence().read_evaluation(egress.proposal_id)
         assert evaluation.candidate_digest is not None, evaluation.diagnostics

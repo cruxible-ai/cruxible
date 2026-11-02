@@ -9459,10 +9459,87 @@
             "title": "LowercaseNormalizer",
             "type": "object"
           },
+          "MandateChangeScope": {
+            "additionalProperties": false,
+            "description": "The evidence bases one change kind of a scoped ClaimType settles on.",
+            "properties": {
+              "basis": {
+                "items": {
+                  "enum": [
+                    "extracted",
+                    "measured",
+                    "derived",
+                    "absence"
+                  ],
+                  "type": "string"
+                },
+                "title": "Basis",
+                "type": "array"
+              }
+            },
+            "required": [
+              "basis"
+            ],
+            "title": "MandateChangeScope",
+            "type": "object"
+          },
+          "MandateChanges": {
+            "additionalProperties": false,
+            "description": "Per change kind, the bases a settle grant covers; a kind left out never settles.",
+            "properties": {
+              "create": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateChangeScope"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "retire": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateChangeScope"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "revise": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateChangeScope"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "title": "MandateChanges",
+            "type": "object"
+          },
           "MandateConditionAuthoring": {
             "additionalProperties": false,
             "description": "The settle predicate, named by query; lowering pins the exact accepted query.",
             "properties": {
+              "before_parameter": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Before Parameter"
+              },
               "binding_parameter": {
                 "title": "Binding Parameter",
                 "type": "string"
@@ -9497,6 +9574,18 @@
                 "default": "playbill-mandate-condition-authoring-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "value_parameter": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Value Parameter"
               }
             },
             "required": [
@@ -9510,7 +9599,7 @@
           },
           "MandateScopeAuthoring": {
             "additionalProperties": false,
-            "description": "One ClaimType a settle grant covers, named by predicate; lowering pins its digest.",
+            "description": "One ClaimType a settle grant covers, named by predicate; lowering pins its digest.\n\n``changes`` lists, per change kind, the evidence bases that settle\n(``{create: {basis: [extracted]}, retire: {basis: [absence]}}``); ``value``\nlimits an enum or bool ClaimType's moves (``{from: [...], to: [...]}``).",
             "properties": {
               "binding_subject_role": {
                 "default": "subject",
@@ -9521,18 +9610,8 @@
                 "title": "Binding Subject Role",
                 "type": "string"
               },
-              "change_kinds": {
-                "items": {
-                  "enum": [
-                    "create",
-                    "revise",
-                    "retire"
-                  ],
-                  "type": "string"
-                },
-                "minItems": 1,
-                "title": "Change Kinds",
-                "type": "array"
+              "changes": {
+                "$ref": "#/$defs/MandateChanges"
               },
               "claim_type": {
                 "title": "Claim Type",
@@ -9543,13 +9622,76 @@
                 "default": "playbill-mandate-scope-authoring-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateValueCondition"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
               "claim_type",
-              "change_kinds"
+              "changes"
             ],
             "title": "MandateScopeAuthoring",
+            "type": "object"
+          },
+          "MandateValueCondition": {
+            "additionalProperties": false,
+            "description": "Enum and bool ClaimTypes only: the values a settled change may move from and to.\n\n``from`` lists the held values a change may replace (a create holds none, so\nit settles only when ``from`` is omitted); ``to`` the values it may write (a\nretirement or an inverse writes none, so it settles only when ``to`` is\nomitted). At least one is declared.",
+            "properties": {
+              "from": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "From"
+              },
+              "to": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "To"
+              }
+            },
+            "title": "MandateValueCondition",
             "type": "object"
           },
           "Membership": {
@@ -9895,7 +10037,7 @@
           },
           "ProcedureMandateInput": {
             "additionalProperties": false,
-            "description": "A propose grant, or a settle grant with its Claim scope and condition query.\n\n``line_name`` names the Line the grant authorizes (accepted, or defined in\nthe same set); lowering pins its exact digest, so changing the Line's\nProcedure version, parameters or bindings renews the grant. ``grants`` is\nthe verb the mandate delegates. A settle grant names the ClaimTypes (by\npredicate) and change kinds it covers and the accepted query that decides\neach target; lowering pins every exact digest.",
+            "description": "A propose grant, or a settle grant with its Claim scope and condition query.\n\n``line_name`` names the Line the grant authorizes (accepted, or defined in\nthe same set); lowering pins its exact digest, so changing the Line's\nProcedure version, parameters or bindings renews the grant. ``grants`` is\nthe verb the mandate delegates. A settle grant names the ClaimTypes (by\npredicate), per change kind the evidence bases that settle, an optional\n``value: {from, to}`` for enum and bool ClaimTypes, and an optional accepted\ncondition query (which may bind ``$target.value`` and ``$target.before``);\nlowering pins every exact digest. ``subjects: expected`` limits the grant\nto Subjects the Line's claims templates fence with ``within``.",
             "properties": {
               "condition": {
                 "anyOf": [
@@ -9977,6 +10119,19 @@
                 ],
                 "default": null,
                 "title": "Subject Scope"
+              },
+              "subjects": {
+                "anyOf": [
+                  {
+                    "const": "expected",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Subjects"
               },
               "suspended": {
                 "default": false,
@@ -42499,9 +42654,74 @@
             "title": "LiveView",
             "type": "object"
           },
+          "MandateChangeScope": {
+            "additionalProperties": false,
+            "description": "The evidence bases one change kind of a scoped ClaimType settles on.",
+            "properties": {
+              "basis": {
+                "items": {
+                  "enum": [
+                    "extracted",
+                    "measured",
+                    "derived",
+                    "absence"
+                  ],
+                  "type": "string"
+                },
+                "title": "Basis",
+                "type": "array"
+              }
+            },
+            "required": [
+              "basis"
+            ],
+            "title": "MandateChangeScope",
+            "type": "object"
+          },
+          "MandateChanges": {
+            "additionalProperties": false,
+            "description": "Per change kind, the bases a settle grant covers; a kind left out never settles.",
+            "properties": {
+              "create": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateChangeScope"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "retire": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateChangeScope"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "revise": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateChangeScope"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "title": "MandateChanges",
+            "type": "object"
+          },
           "MandateScope": {
             "additionalProperties": false,
-            "description": "One ClaimType a settle grant covers.\n\n``claim_type`` is its ``ClaimType:<predicate>`` ref, ``change_kinds`` the\nchanges the grant may settle on it, and ``binds`` which referent of the\nchanged Claim (its ``subject`` or its ``object``) binds the condition\nquery's parameter.",
+            "description": "One ClaimType a settle grant covers.\n\n``claim_type`` is its ``ClaimType:<predicate>`` ref, ``changes`` the\nchange kinds the grant may settle on it with the evidence bases each\nsettles on, ``value`` an enum or bool ClaimType's allowed moves, and\n``binds`` which referent of the changed Claim (its ``subject`` or its\n``object``) binds the condition query's parameter.",
             "properties": {
               "binds": {
                 "enum": [
@@ -42511,29 +42731,83 @@
                 "title": "Binds",
                 "type": "string"
               },
-              "change_kinds": {
-                "items": {
-                  "enum": [
-                    "create",
-                    "revise",
-                    "retire"
-                  ],
-                  "type": "string"
-                },
-                "title": "Change Kinds",
-                "type": "array"
+              "changes": {
+                "$ref": "#/$defs/MandateChanges"
               },
               "claim_type": {
                 "title": "Claim Type",
                 "type": "string"
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateValueCondition"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
               "claim_type",
-              "change_kinds",
+              "changes",
               "binds"
             ],
             "title": "MandateScope",
+            "type": "object"
+          },
+          "MandateValueCondition": {
+            "additionalProperties": false,
+            "description": "Enum and bool ClaimTypes only: the values a settled change may move from and to.\n\n``from`` lists the held values a change may replace (a create holds none, so\nit settles only when ``from`` is omitted); ``to`` the values it may write (a\nretirement or an inverse writes none, so it settles only when ``to`` is\nomitted). At least one is declared.",
+            "properties": {
+              "from": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "From"
+              },
+              "to": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "To"
+              }
+            },
+            "title": "MandateValueCondition",
             "type": "object"
           },
           "OrientActivityCaptureErased": {
@@ -65156,12 +65430,12 @@
                 "default": null,
                 "title": "Operation Key"
               },
-              "outside_scope_claim_types": {
+              "outside_scope": {
                 "default": [],
                 "items": {
-                  "type": "string"
+                  "$ref": "#/$defs/SettleScopeGap"
                 },
-                "title": "Outside Scope Claim Types",
+                "title": "Outside Scope",
                 "type": "array"
               },
               "prior_refusal_coverage": {
@@ -65423,6 +65697,61 @@
               "reasons"
             ],
             "title": "RunCompleteness",
+            "type": "object"
+          },
+          "SettleScopeGap": {
+            "additionalProperties": false,
+            "description": "One reason a settle grant's scope left a change out, so the whole change proposed.\n\n``basis`` is the changed value's evidence basis (``None`` when the change\ncarries none a grant can name).",
+            "properties": {
+              "basis": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "extracted",
+                      "measured",
+                      "derived",
+                      "absence"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Basis"
+              },
+              "change": {
+                "enum": [
+                  "create",
+                  "revise",
+                  "retire"
+                ],
+                "title": "Change",
+                "type": "string"
+              },
+              "claim_type": {
+                "title": "Claim Type",
+                "type": "string"
+              },
+              "term": {
+                "enum": [
+                  "claim_type",
+                  "change_kind",
+                  "basis",
+                  "value",
+                  "subject"
+                ],
+                "title": "Term",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_type",
+              "change",
+              "term"
+            ],
+            "title": "SettleScopeGap",
             "type": "object"
           },
           "SourceReadReceipt": {
@@ -66601,19 +66930,19 @@
             "title": "Operation Key"
           }
         },
-        "outside_scope_claim_types": {
+        "outside_scope": {
           "default": [],
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
-          "json_name": "outside_scope_claim_types",
+          "json_name": "outside_scope",
           "required": false,
           "schema": {
             "default": [],
             "items": {
-              "type": "string"
+              "$ref": "#/$defs/SettleScopeGap"
             },
-            "title": "Outside Scope Claim Types",
+            "title": "Outside Scope",
             "type": "array"
           }
         },
@@ -67355,6 +67684,61 @@
             ],
             "title": "ProcedureTerminalEgressChild",
             "type": "object"
+          },
+          "SettleScopeGap": {
+            "additionalProperties": false,
+            "description": "One reason a settle grant's scope left a change out, so the whole change proposed.\n\n``basis`` is the changed value's evidence basis (``None`` when the change\ncarries none a grant can name).",
+            "properties": {
+              "basis": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "extracted",
+                      "measured",
+                      "derived",
+                      "absence"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Basis"
+              },
+              "change": {
+                "enum": [
+                  "create",
+                  "revise",
+                  "retire"
+                ],
+                "title": "Change",
+                "type": "string"
+              },
+              "claim_type": {
+                "title": "Claim Type",
+                "type": "string"
+              },
+              "term": {
+                "enum": [
+                  "claim_type",
+                  "change_kind",
+                  "basis",
+                  "value",
+                  "subject"
+                ],
+                "title": "Term",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_type",
+              "change",
+              "term"
+            ],
+            "title": "SettleScopeGap",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -67553,12 +67937,12 @@
             "default": null,
             "title": "Operation Key"
           },
-          "outside_scope_claim_types": {
+          "outside_scope": {
             "default": [],
             "items": {
-              "type": "string"
+              "$ref": "#/$defs/SettleScopeGap"
             },
-            "title": "Outside Scope Claim Types",
+            "title": "Outside Scope",
             "type": "array"
           },
           "prior_refusal_coverage": {

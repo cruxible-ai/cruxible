@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+from cruxible_client.contracts.mandate_scope import SettleScopeGap
 from cruxible_client.contracts.procedures.results import ProcedureTerminalEgress
 from cruxible_core.cli.commands.playbill import _echo_terminal_egress
 
@@ -50,13 +51,20 @@ def test_an_outside_scope_settle_names_the_claim_types_it_left_out(capsys) -> No
         _settle(
             settle_outcome="proposed",
             fallback_reason="cruxible.settle.outside_mandate_scope",
-            outside_scope_claim_types=("ClaimType:security.advisory.summary",),
+            outside_scope=(
+                SettleScopeGap(
+                    claim_type="ClaimType:security.advisory.summary",
+                    change="create",
+                    basis="extracted",
+                    term="claim_type",
+                ),
+            ),
         ),
     )
     assert out == (
         f"Proposal settle: {PROPOSAL} candidate {CANDIDATE} "
         "(settle fell back: cruxible.settle.outside_mandate_scope; outside the mandate's "
-        "scope: ClaimType:security.advisory.summary)\n"
+        "scope: ClaimType:security.advisory.summary create [extracted] (claim_type))\n"
     )
 
 

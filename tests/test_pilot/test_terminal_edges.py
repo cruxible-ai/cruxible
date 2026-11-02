@@ -84,8 +84,14 @@ def test_many_valued_slot_adds_without_retiring_or_attesting(tmp_path: Path) -> 
     )
 
 
-@pytest.mark.parametrize("settle", [False, True], ids=["propose", "settle-fails-closed"])
-def test_derived_claim_receipt_binds_a_real_admitted_read(tmp_path: Path, settle: bool) -> None:
+@pytest.mark.parametrize(
+    ("settle", "listed"),
+    [(False, False), (True, False), (True, True)],
+    ids=["propose", "settle-fails-closed", "settle-derived-listed"],
+)
+def test_derived_claim_receipt_binds_a_real_admitted_read(
+    tmp_path: Path, settle: bool, listed: bool
+) -> None:
     from cruxible_client.contracts.policies import (
         ClaimEvidenceAdmissionPolicy,
         ClaimEvidenceAdmissionRule,
@@ -158,14 +164,31 @@ def test_derived_claim_receipt_binds_a_real_admitted_read(tmp_path: Path, settle
         instance, spec, line_name="test.derive-line", authority="settle" if settle else "propose"
     )
     if settle:
+        from tests.support.mandates import scope_changes
         from tests.test_procedures.test_claims_fix import _grant_settle
 
-        _grant_settle(instance, "test.derive-line", ct.predicate)
+        _grant_settle(
+            instance,
+            "test.derive-line",
+            ct.predicate,
+            changes=scope_changes(
+                "create", basis=("extracted", "derived") if listed else ("extracted",)
+            ),
+        )
     before = instance.accepted_coordinate()
     state = run(instance, root, line="test.derive-line", minute=1)
-    if settle:
+    if listed:
+        # A derived value settles only under a scope that lists derived (§6.4).
+        assert state.terminal_egress[0].settle_outcome == "settled"
+        assert instance.accepted_coordinate() != before
+    elif settle:
         assert state.terminal_egress[0].settle_outcome == "proposed"
-        assert state.terminal_egress[0].outside_scope_claim_types == (ct.predicate,)
+        (gap,) = state.terminal_egress[0].outside_scope
+        assert (gap.claim_type, gap.basis, gap.term) == (
+            f"ClaimType:{ct.predicate}",
+            "derived",
+            "basis",
+        )
         assert instance.accepted_coordinate() == before
     (derived,) = candidate_claims(instance, state)
     receipt = derived.backing.procedure_evidence.value

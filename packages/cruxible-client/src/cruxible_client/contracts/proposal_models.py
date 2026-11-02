@@ -26,6 +26,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+from cruxible_client.contracts.mandate_scope import SettleScopeGap, settle_scope_gap_key
 from cruxible_client.contracts.policies import ClaimAdmissionEvaluationAccount
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.refusal_receipts import RefusedClaimAny
@@ -493,10 +494,11 @@ class ProposalSettleSubmission(_StrictProposalModel):
     change, for `fallback_reason`. Recovery reads this back rather than
     inferring it from whatever later happened to the proposal.
 
-    A fallback for `cruxible.settle.outside_mandate_scope` names, in
-    `outside_scope_claim_types`, the ClaimTypes the grant's scope left out --
-    a ClaimType a retirement touches counts as left out when the scope does
-    not list `retire` for it.
+    A fallback for `cruxible.settle.outside_mandate_scope` records, in
+    `outside_scope`, each reason the grant's scope left the change out: the
+    ClaimType, change kind and evidence basis, and the scope term (ClaimType,
+    change kind, basis, value or Subject) that excluded it. All or nothing: one
+    gap proposes the whole change.
     """
 
     tag: Literal["playbill-proposal-settle-submission-v1"] = (
@@ -505,7 +507,7 @@ class ProposalSettleSubmission(_StrictProposalModel):
     mode: Literal["delegated", "fallback"]
     mandate_digest: str
     fallback_reason: str | None = None
-    outside_scope_claim_types: tuple[str, ...] = Field(
+    outside_scope: tuple[SettleScopeGap, ...] = Field(
         default=(), exclude_if=lambda value: not value
     )
 
@@ -515,23 +517,20 @@ class ProposalSettleSubmission(_StrictProposalModel):
         Sha256Value.from_tagged(value)
         return value
 
-    @field_validator("outside_scope_claim_types")
+    @field_validator("outside_scope")
     @classmethod
-    def _outside_scope(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("outside-scope ClaimTypes must be sorted and unique")
+    def _outside_scope(cls, value: tuple[SettleScopeGap, ...]) -> tuple[SettleScopeGap, ...]:
+        keys = [settle_scope_gap_key(item) for item in value]
+        if keys != sorted(set(keys)):
+            raise ValueError("outside-scope gaps must be sorted and unique")
         return value
 
     @model_validator(mode="after")
     def _reason(self) -> "ProposalSettleSubmission":
         if (self.mode == "fallback") != bool(self.fallback_reason):
             raise ValueError("exactly a settle fallback names why it fell back")
-        if (self.fallback_reason == SETTLE_OUTSIDE_MANDATE_SCOPE) != bool(
-            self.outside_scope_claim_types
-        ):
-            raise ValueError(
-                "exactly an outside-mandate-scope fallback names the ClaimTypes outside it"
-            )
+        if (self.fallback_reason == SETTLE_OUTSIDE_MANDATE_SCOPE) != bool(self.outside_scope):
+            raise ValueError("exactly an outside-mandate-scope fallback names why it fell outside")
         return self
 
 

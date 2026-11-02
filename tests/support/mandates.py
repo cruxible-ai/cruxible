@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.mandate_scope import MandateChanges
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate
 from tests.support.procedures import fixture_digest
 
@@ -26,4 +27,13 @@ def procedure_mandate(
             **overrides,
             **dict(changes or {}),
         }
+    )
+
+
+def scope_changes(*kinds: str, basis: tuple[str, ...] = ("extracted",)) -> MandateChanges:
+    """Per change kind, the bases a scope settles on: ``basis`` for create and
+    revise, ``absence`` for retire (a Procedure retires only on absence)."""
+
+    return MandateChanges.model_validate(
+        {kind: {"basis": ["absence"] if kind == "retire" else list(basis)} for kind in kinds}
     )

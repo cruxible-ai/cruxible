@@ -14,11 +14,22 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Literal
 
-from cruxible_client.contracts.claims import ClaimFormatError, SubjectClaimObject, parse_claim
+from cruxible_client.contracts.claims import (
+    ClaimArtifact,
+    ClaimFormatError,
+    LiteralClaimObject,
+    SubjectClaimObject,
+    parse_claim,
+)
 from cruxible_client.contracts.errors import CruxibleError
-from cruxible_client.contracts.procedure_mandates import (
-    MANDATE_CHANGE_KIND_ORDER,
+from cruxible_client.contracts.mandate_scope import (
+    MandateBasis,
     MandateChangeKind,
+    SettleScopeGap,
+    settle_scope_gap_key,
+)
+from cruxible_client.contracts.procedure_mandates import (
+    MandateClaimScope,
     ProcedureMandate,
     ProcedureMandateError,
     parse_procedure_mandate_any,
@@ -51,7 +62,14 @@ SUBJECT_PREFIX = "subjects/"
 
 @dataclass(frozen=True)
 class SettleTarget:
-    """One changed Claim, the change it makes, and the Subject its condition binds."""
+    """One changed Claim, the change it makes, and the Subject its condition binds.
+
+    ``basis`` is where the changed value came from, read off the Claim's own
+    evidence (``None`` when it carries none a grant can name). ``value`` is the
+    typed new value and ``before`` the value it replaces (``None`` when there is
+    none: a create, a retirement, an inverse); a Subject value is its path.
+    ``before`` of a revision is read only when the grant asks for it.
+    """
 
     path: str
     claim_type: str
@@ -59,6 +77,41 @@ class SettleTarget:
     subject: SemanticAddress
     subject_identity: str
     subject_id: str
+    basis: MandateBasis | None = None
+    value: object = None
+    before: object = None
+
+
+def _object_value(obj: object) -> object:
+    """A Claim object as the typed value a grant compares and a condition binds."""
+
+    if isinstance(obj, LiteralClaimObject):
+        return obj.value
+    if isinstance(obj, SubjectClaimObject):
+        return obj.address.artifact_path
+    return None  # an inverse states that its unit holds nothing
+
+
+def _change_basis(claim: ClaimArtifact, change_kind: MandateChangeKind) -> MandateBasis | None:
+    """The evidence basis of one change, from the changed Claim's own receipt.
+
+    A retirement a Procedure makes is a complete source's absence (its
+    attribution carries the witness); an inverse write carries the witness on
+    its receipt. Anything else is the receipt's value basis.
+    """
+
+    if change_kind == "retire":
+        retirement = claim.retirement
+        return "absence" if retirement is not None and retirement.absence is not None else None
+    receipt = claim.backing.procedure_evidence
+    if receipt is None:
+        return None
+    if receipt.absence is not None:
+        return "absence"
+    basis = receipt.value.basis
+    if basis == "extracted" or basis == "measured" or basis == "derived":
+        return basis
+    return None  # a bare Capture basis proves only an absence witness
 
 
 def _issue(code: str, message: str) -> tuple[str, str]:
@@ -183,11 +236,13 @@ def settle_targets(
     candidate_tree: Mapping[str, bytes],
     binding_roles: Mapping[str, str],
     subject_creation: tuple[str, ...] = (),
+    with_before: bool = False,
 ) -> tuple[tuple[SettleTarget, ...], tuple[tuple[str, str], ...]]:
     """Derive each changed Claim's target from the change itself, never from a caller.
 
     A new Subject of a kind the grant's ``subject_creation`` names, and each key
     Claim its creation writes, are covered by the creation and bind no target.
+    ``with_before`` reads the value each revision replaces from the parent.
     """
 
     targets: list[SettleTarget] = []
@@ -244,6 +299,13 @@ def settle_targets(
             issues.append(_issue("target_unbound", f"Claim {path!r} binds no accepted Subject."))
             continue
         shell = parse_subject(content, path=subject_path)
+        before: object = None
+        if change_kind == "retire":
+            before = _object_value(statement.object)  # a retirement keeps its statement
+        elif change_kind == "revise" and with_before:
+            held = parse_claim(current_tree[path], path=path)
+            if held.lifecycle.state == "live":
+                before = _object_value(held.statement.object)
         targets.append(
             SettleTarget(
                 path=path,
@@ -252,6 +314,9 @@ def settle_targets(
                 subject=address,
                 subject_identity=shell.identity.qualified,
                 subject_id=shell.subject_id,
+                basis=_change_basis(claim, change_kind),
+                value=None if change_kind == "retire" else _object_value(statement.object),
+                before=before,
             )
         )
     return tuple(targets), tuple(issues)
@@ -395,7 +460,7 @@ def mandate_coverage(
 ) -> tuple[tuple[SettleTarget, ...], tuple[tuple[str, str], ...]]:
     """Whether a live settle grant covers every changed member, and the targets it binds."""
 
-    if mandate.grants != "settle" or mandate.condition is None:
+    if mandate.grants != "settle":
         return (), (_issue("mandate_not_settle", "The mandate grants no settle authority."),)
     if mandate.lifecycle.state != "live":
         return (), (_issue("mandate_retired", "The settle mandate is retired."),)
@@ -413,6 +478,7 @@ def mandate_coverage(
             item.claim_type.target.qualified: item.binding_subject_role for item in mandate.scope
         },
         subject_creation=mandate.subject_creation,
+        with_before=_reads_before(mandate),
     )
     found = [*issues, *(issue for _gap, issue, _target in _target_gaps(mandate, targets))]
     if not found and not targets and not any(path.startswith(SUBJECT_PREFIX) for path in scope):
@@ -420,7 +486,30 @@ def mandate_coverage(
     return targets, tuple(found)
 
 
-_TargetGap = Literal["namespace", "claim_type", "change_kind", "subject"]
+def _reads_before(mandate: ProcedureMandate) -> bool:
+    """Whether the grant compares or binds the value a revision replaces."""
+
+    return (
+        mandate.condition is not None and mandate.condition.before_parameter is not None
+    ) or any(item.value is not None and item.value.from_ is not None for item in mandate.scope)
+
+
+_TargetGap = Literal["namespace", "claim_type", "change_kind", "basis", "value", "subject"]
+
+
+def _value_gap(item: MandateClaimScope, target: SettleTarget) -> bool:
+    """Whether an enum or bool move falls outside the scope's ``value: {from, to}``."""
+
+    condition = item.value
+    if condition is None:
+        return False
+    if condition.from_ is not None and not _member_in(target.before, condition.from_):
+        return True
+    return condition.to is not None and not _member_in(target.value, condition.to)
+
+
+def _member_in(value: object, members: tuple[object, ...]) -> bool:
+    return any(type(value) is type(member) and value == member for member in members)
 
 
 def _target_gaps(
@@ -432,6 +521,7 @@ def _target_gaps(
     gaps: list[tuple[_TargetGap, tuple[str, str], SettleTarget]] = []
     for target in targets:
         item = scope_by_type.get(target.claim_type)
+        change = None if item is None else item.changes.of(target.change_kind)
         if not _in_namespace(target.path, mandate.namespace):
             gaps.append(
                 (
@@ -448,8 +538,8 @@ def _target_gaps(
                     target,
                 )
             )
-        elif target.change_kind not in item.change_kinds:
-            allowed = ", ".join(k for k in MANDATE_CHANGE_KIND_ORDER if k in item.change_kinds)
+        elif change is None:
+            allowed = ", ".join(item.change_kinds)
             gaps.append(
                 (
                     "change_kind",
@@ -457,6 +547,31 @@ def _target_gaps(
                         "scope_uncovered",
                         f"A {target.change_kind} of {target.claim_type} is not covered "
                         f"(covered: {allowed}).",
+                    ),
+                    target,
+                )
+            )
+        elif target.basis is None or target.basis not in change.basis:
+            gaps.append(
+                (
+                    "basis",
+                    _issue(
+                        "scope_uncovered",
+                        f"A {target.change_kind} of {target.claim_type} on basis "
+                        f"{target.basis or 'none'} is not covered "
+                        f"(covered: {', '.join(change.basis)}).",
+                    ),
+                    target,
+                )
+            )
+        elif _value_gap(item, target):
+            gaps.append(
+                (
+                    "value",
+                    _issue(
+                        "scope_uncovered",
+                        f"A {target.change_kind} of {target.claim_type} moves its value "
+                        "outside the scope's value condition.",
                     ),
                     target,
                 )
@@ -474,24 +589,20 @@ def _target_gaps(
     return gaps
 
 
-def claim_types_outside_scope(
+def settle_scope_gaps(
     mandate: ProcedureMandate,
     *,
     scope: tuple[str, ...],
     current_tree: Mapping[str, bytes],
     candidate_tree: Mapping[str, bytes],
     evaluated_at: datetime,
-) -> tuple[str, ...] | None:
-    """The ClaimTypes a live settle grant leaves out, when they are its ONLY gap.
+) -> tuple[SettleScopeGap, ...] | None:
+    """Why a live settle grant's scope leaves this change out; empty when it covers it.
 
-    ``None`` unless the grant is live and every changed Claim is a settle target
-    inside its namespace, change kinds and Subject scope, apart from Claims whose
-    ClaimType the scope does not name -- or retirements of a ClaimType whose
-    scope does not list ``retire`` (a Procedure's retirement item settles only
-    under a grant that explicitly lists it). Those ClaimTypes are returned,
-    sorted; an empty result means the grant covers the change. A settle
-    terminal proposes instead of settling a change carrying such a ClaimType
-    (per-rule trust).
+    ``None`` unless the grant is live and every changed member is a settle
+    target inside its namespace. Otherwise each target the scope leaves out
+    (its ClaimType, change kind, basis, value or Subject) is one gap, deduped
+    and sorted: all or nothing, any gap proposes the whole change (§8.4).
     """
 
     targets, issues = mandate_coverage(
@@ -508,13 +619,22 @@ def claim_types_outside_scope(
     # Every issue is one target's gap only when no changed member failed to be a
     # target at all (not a Claim, unparseable, or binding no Subject).
     gaps = _target_gaps(mandate, targets)
-    if len(issues) != len(gaps) or not all(
-        gap == "claim_type" or (gap == "change_kind" and target.change_kind == "retire")
-        for gap, _detail, target in gaps
-    ):
+    if len(issues) != len(gaps) or any(term == "namespace" for term, _detail, _t in gaps):
         return None
-    outside = {target.claim_type for _gap, _detail, target in gaps}
-    return tuple(sorted(outside, key=lambda item: item.encode("utf-8")))
+    found = {
+        settle_scope_gap_key(gap): gap
+        for gap in (
+            SettleScopeGap(
+                claim_type=target.claim_type,
+                change=target.change_kind,
+                basis=target.basis,
+                term=term,
+            )
+            for term, _detail, target in gaps
+            if term != "namespace"
+        )
+    }
+    return tuple(found[key] for key in sorted(found))
 
 
 def condition_issues(
@@ -531,9 +651,10 @@ def condition_issues(
     from cruxible_core.indexes.subject_aliases import tree_reference_resolver
     from cruxible_core.query.engine import evaluate_claim_query
 
-    assert mandate.condition is not None  # mandate_coverage requires a settle grant
     found: list[tuple[str, str]] = []
     condition = mandate.condition
+    if condition is None:
+        return ()  # scope alone decides a grant without a settlement predicate
     query_path = query_definition_path(condition.query.target.name)
     content = current_tree.get(query_path)
     definition = None if content is None else parse_query_definition(content, path=query_path)
@@ -574,6 +695,18 @@ def condition_issues(
             parameters={
                 **condition.fixed_parameters,
                 condition.binding_parameter: target.subject_id,
+                # Every declared target binding is supplied, None when the change has
+                # no such value (a create has no before; a retirement or inverse no
+                # new value): a parameter default never stands in for target data,
+                # and a predicate over the missing value is false (fail closed).
+                **{
+                    name: value
+                    for name, value in (
+                        (condition.value_parameter, target.value),
+                        (condition.before_parameter, target.before),
+                    )
+                    if name is not None
+                },
             },
         )
         truncation = result.truncation
@@ -632,5 +765,6 @@ __all__ = [
     "condition_issues",
     "mandate_coverage",
     "delegated_authority_issues",
+    "settle_scope_gaps",
     "settle_targets",
 ]

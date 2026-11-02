@@ -346,6 +346,170 @@ def test_g5_delisting_has_a_mirror_witness(tmp_path: Path) -> None:
         assert witness.expect_coordinate == second.bound_coordinate
 
 
+def _delist(root: Path) -> None:
+    import json
+
+    path = root / "data/kev.json"
+    doc = json.loads(path.read_bytes())
+    doc["vulnerabilities"] = []
+    doc["count"] = 0
+    path.write_text(json.dumps(doc))
+
+
+@pytest.mark.parametrize("retire_listed", (True, False), ids=("settled", "proposed"))
+def test_g5_delisting_settles_or_proposes_per_mandate_scope_all_or_nothing(
+    tmp_path: Path, retire_listed: bool
+) -> None:
+    """§8.1 grant: creates settle on extracted, mirror retirements on absence.
+
+    Without ``retire`` for ``kev_listed`` the whole delisting change set (all six
+    retirements, the dates included) proposes, naming that one gap.
+    """
+
+    from tests.test_pilot.support import KEV_SETTLE_SCOPE, grant_kev_settle
+
+    instance, root = pilot_world(tmp_path, "kev.json", spec=kev_mirror_spec(), authority="settle")
+    scope = dict(KEV_SETTLE_SCOPE)
+    if not retire_listed:
+        scope["listed"] = {"create": {"basis": ["extracted"]}}
+    grant_kev_settle(instance, scope=scope)
+    first = run(instance, root)
+    assert first.status == "succeeded", first.terminal
+    assert first.terminal_egress[0].settle_outcome == "settled"
+    assert first.terminal_egress[0].outside_scope == ()
+    settled = instance.accepted_coordinate()
+    _delist(root)
+    second = run(instance, root, minute=1)
+    assert second.status == "succeeded", second.terminal
+    (egress,) = second.terminal_egress
+    retired = candidate_claims(instance, second)
+    assert len(retired) == 6 and all(c.lifecycle.state == "retired" for c in retired)
+    assert all(c.retirement.absence is not None for c in retired)
+    if retire_listed:
+        assert egress.settle_outcome == "settled" and egress.outside_scope == ()
+        assert instance.accepted_coordinate() != settled
+        return
+    assert egress.settle_outcome == "proposed"
+    assert egress.fallback_reason == "cruxible.settle.outside_mandate_scope"
+    assert len(egress.target_paths) == 6  # all or nothing: the in-scope dates propose too
+    (gap,) = egress.outside_scope
+    assert (gap.claim_type, gap.change, gap.basis, gap.term) == (
+        f"ClaimType:{KEV}listed",
+        "retire",
+        "absence",
+        "change_kind",
+    )
+    assert instance.accepted_coordinate() == settled
+
+
+@pytest.mark.parametrize("to", (("Known",), ("Known", "Unknown")))
+def test_value_condition_on_an_enum_type_settles_only_listed_moves(
+    tmp_path: Path, to: tuple[str, ...]
+) -> None:
+    from tests.test_pilot.support import grant_kev_settle
+
+    instance, root = pilot_world(tmp_path, "kev.json", authority="settle")
+    grant_kev_settle(instance, values={"ransomware_use": {"to": list(to)}})
+    before = instance.accepted_coordinate()
+    state = run(instance, root)
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    if len(to) == 2:
+        assert egress.settle_outcome == "settled"
+        return
+    # CVE-2026-0002 writes Unknown: outside value.to, so the whole run proposes.
+    assert egress.settle_outcome == "proposed"
+    (gap,) = egress.outside_scope
+    assert (gap.claim_type, gap.change, gap.term) == (
+        f"ClaimType:{KEV}ransomware_use",
+        "create",
+        "value",
+    )
+    assert len(candidate_claims(instance, state)) == 8
+    assert instance.accepted_coordinate() == before
+
+
+def test_g6_an_inadmissible_value_is_excluded_before_the_settle_decision(
+    tmp_path: Path,
+) -> None:
+    """ "Maybe" never reaches the change set, so its siblings settle under the grant."""
+
+    from tests.test_pilot.support import grant_kev_settle
+
+    instance, root = pilot_world(tmp_path, "kev-invalid.json", authority="settle")
+    grant_kev_settle(instance, values={"ransomware_use": {"to": ["Known", "Unknown"]}})
+    state = run(instance, root)
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    assert egress.settle_outcome == "settled" and egress.outside_scope == ()
+    assert len(candidate_claims(instance, state)) == 7
+    (diagnostic,) = egress.claims_diagnostics
+    assert diagnostic.kind == "extract_refused" and diagnostic.lexeme == "Maybe"
+
+
+def test_g9_a_new_build_changes_nothing_until_provider_move_then_proposes(
+    tmp_path: Path,
+) -> None:
+    """C2/C3: a Line pins its build; ``provider move`` makes its Mandate propose-only."""
+
+    from cruxible_client.contracts.provider_installation import ProviderMoveRequest
+    from cruxible_client.contracts.providers import provider_digest
+    from cruxible_core.service.procedures.provider_builds import service_move_provider
+    from tests.support.mandates import scope_changes
+    from tests.support.operation_world import operation_build
+    from tests.test_procedures.test_b2_operations import install as install_builds
+    from tests.test_procedures.test_claims_fix import _grant_settle, measured_line, run_measured
+
+    instance, root, score = measured_line(tmp_path)
+    grant = _grant_settle(
+        instance,
+        "test.claims-line",
+        score.predicate,
+        changes=scope_changes("create", "revise", basis=("measured",)),
+    )
+    first = run_measured(instance, root, value=1)
+    assert first.terminal_egress[0].settle_outcome == "settled"
+
+    def accepted(path: str) -> bytes:
+        return instance.tree_at(instance.accepted_coordinate().git_oid)[path]
+
+    line_path = "lines/test.claims-line.json"
+    mandate_path = "procedure-mandates/test.claims-line-settle.json"
+    line_bytes, mandate_bytes = accepted(line_path), accepted(mandate_path)
+    newer = operation_build(build="d")
+    install_builds(instance, newer)
+    # A new build changes nothing: the Line keeps its binding, the grant keeps settling.
+    assert (accepted(line_path), accepted(mandate_path)) == (line_bytes, mandate_bytes)
+    again = run_measured(instance, root, minute=2, value=2)
+    assert again.terminal_egress[0].settle_outcome == "settled"
+    assert again.terminal_egress[0].procedure_mandate_digest == grant
+    measured = candidate_claims(instance, again)[0].backing.procedure_evidence.value
+    assert measured.build.artifact_digest != provider_digest(newer).tagged
+
+    moved = service_move_provider(
+        instance,
+        ProviderMoveRequest(provider="demo-provider", to=newer.identity.name, dry_run=False),
+        actor_id="owner",
+        timestamp="2026-10-29T11:30:00.000000Z",
+    )
+    assert moved.status == "accepted", moved.detail
+    # Both of the Line's grants (its propose grant and the settle grant) carry propose-only.
+    carries = {item.identity: item for item in moved.automation_carries}
+    assert all(item.kind == "mandate" and item.new_grant == "propose" for item in carries.values())
+    assert carries["ProcedureMandate:test.claims-line-settle"].loses_settle
+    before = instance.accepted_coordinate()
+    after = run_measured(instance, root, minute=3, value=3)
+    assert after.status == "succeeded", after.terminal
+    (egress,) = after.terminal_egress
+    # The successor Line's Mandate is propose-only: the change proposes, nothing settles.
+    assert (egress.verdict, egress.settle_outcome) == ("delivered", "proposed")
+    assert egress.capped_by == "mandate_grant"
+    assert egress.proposal_id is not None
+    assert instance.accepted_coordinate() == before
+    measured = candidate_claims(instance, after)[0].backing.procedure_evidence.value
+    assert measured.build.artifact_digest == provider_digest(newer).tagged
+
+
 def test_g8_watched_read_ceiling_refuses_before_writes(tmp_path: Path) -> None:
     from tests.support.procedures import procedure_limits
 

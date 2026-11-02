@@ -60,6 +60,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.doc_sections import SectionPath
 from cruxible_client.contracts.identity_normalizers import NO_NORMALIZER, KeyNormalizer
+from cruxible_client.contracts.mandate_scope import MandateChanges, MandateValueCondition
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_IDENTITY,
@@ -137,7 +138,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:e85481dea4c98ec5b5ea6d248d7db4a51f6641cb7cc614c548605c6373a440b1"
+    "sha256:41e2fefa7dd5d026f595409f39f9c7260f1137e8a25436e0b6862a5922647140"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -950,12 +951,18 @@ class ProcedureRuntimePolicyAuthoringPayload(_StrictAuthoringModel):
 
 
 class MandateScopeAuthoring(_StrictAuthoringModel):
-    """One ClaimType a settle grant covers, named by predicate; lowering pins its digest."""
+    """One ClaimType a settle grant covers, named by predicate; lowering pins its digest.
+
+    ``changes`` lists, per change kind, the evidence bases that settle
+    (``{create: {basis: [extracted]}, retire: {basis: [absence]}}``); ``value``
+    limits an enum or bool ClaimType's moves (``{from: [...], to: [...]}``).
+    """
 
     tag: Literal["playbill-mandate-scope-authoring-v1"] = "playbill-mandate-scope-authoring-v1"
     claim_type: str
-    change_kinds: tuple[Literal["create", "revise", "retire"], ...] = Field(min_length=1)
+    changes: MandateChanges
     binding_subject_role: Literal["subject", "object"] = "subject"
+    value: MandateValueCondition | None = None
 
 
 class MandateConditionAuthoring(_StrictAuthoringModel):
@@ -966,6 +973,9 @@ class MandateConditionAuthoring(_StrictAuthoringModel):
     )
     query_name: str
     binding_parameter: str
+    #: Parameters Core binds to the changed Claim's new value and the value it replaces.
+    value_parameter: str | None = None
+    before_parameter: str | None = None
     fixed_parameters: dict[str, object] = Field(default_factory=dict)
     required_fields: tuple[str, ...] = Field(min_length=1)
     fallback: Literal["refuse", "propose"]
@@ -985,6 +995,8 @@ class ProcedureMandateAuthoringPayload(_StrictAuthoringModel):
     expires_at: datetime
     scope: tuple[MandateScopeAuthoring, ...] = ()
     subject_scope: tuple[SemanticAddress, ...] | None = None
+    #: ``expected``: every target lies within the Line's claims templates' fence.
+    subjects: Literal["expected"] | None = None
     condition: MandateConditionAuthoring | None = None
     #: Settle grants only: the Subject kinds it may create (identity D1).
     subject_creation: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)

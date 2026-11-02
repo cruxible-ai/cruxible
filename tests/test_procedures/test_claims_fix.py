@@ -82,7 +82,17 @@ def _inbox(instance: Any) -> tuple[Any, ...]:
     return tuple(store.get(item.envelope.item_id) for item in page)
 
 
-def _grant_settle(instance: Any, line_name: str, predicate: str) -> None:
+def _grant_settle(
+    instance: Any,
+    line_name: str,
+    predicate: str,
+    *,
+    changes: Any = None,
+    value: Any = None,
+    subjects: str | None = None,
+    with_condition: bool = True,
+) -> str:
+    """Accept a settle grant over one ClaimType; return its digest."""
     from cruxible_client.contracts.procedure_mandates import (
         MandateClaimScope,
         MandateCondition,
@@ -94,7 +104,7 @@ def _grant_settle(instance: Any, line_name: str, predicate: str) -> None:
         query_definition_path,
         render_query_definition,
     )
-    from tests.support.mandates import procedure_mandate
+    from tests.support.mandates import procedure_mandate, scope_changes
     from tests.test_procedures.test_procedure_settlement_delivery import _condition
 
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
@@ -118,9 +128,11 @@ def _grant_settle(instance: Any, line_name: str, predicate: str) -> None:
                     target=ct.identity,
                     artifact_digest=claim_type_digest(ct).tagged,
                 ),
-                change_kinds=("create", "revise"),
+                changes=changes or scope_changes("create", "revise"),
+                value=value,
             ),
         ),
+        subjects=subjects,
         condition=MandateCondition(
             query=ArtifactPin(
                 role="condition-query",
@@ -130,7 +142,9 @@ def _grant_settle(instance: Any, line_name: str, predicate: str) -> None:
             binding_parameter="advisory_id",
             required_fields=("id",),
             fallback="propose",
-        ),
+        )
+        if with_condition
+        else None,
     )
     accept_tree(
         instance,
@@ -140,6 +154,9 @@ def _grant_settle(instance: Any, line_name: str, predicate: str) -> None:
         },
         name="settle-grant",
     )
+    from cruxible_client.contracts.procedure_mandates import procedure_mandate_digest
+
+    return procedure_mandate_digest(mandate).tagged
 
 
 @pytest.mark.parametrize("kind", ["propose_change_set", "settle_change_set"])
@@ -472,12 +489,8 @@ def test_inbox_reasons_stay_with_their_own_node() -> None:
         assert reasons.findings == reasons.reasons
 
 
-def test_measured_receipt_and_settle_fails_closed(tmp_path: Path) -> None:
-    from cruxible_core.service.procedures.procedure_runs import (
-        LineRunRequest,
-        service_run_playbill_line,
-    )
-    from tests.test_procedures.test_completeness_transfer import _Clock
+def measured_line(tmp_path: Path) -> tuple[Any, Path, Any]:
+    """A settle Line whose one Claim value a provider operation computes (basis measured)."""
 
     score = claim_type(KIND + ".score", "int", value_type={"type": "integer"})
     instance, root = claims_world(
@@ -509,18 +522,43 @@ def test_measured_receipt_and_settle_fails_closed(tmp_path: Path) -> None:
     )
     spec = procedure_spec(base=base, reference_text=True)
     install(instance, spec, authority="settle")
-    _grant_settle(instance, "test.claims-line", score.predicate)
-    before = instance.accepted_coordinate()
-    state = service_run_playbill_line(
+    return instance, root, score
+
+
+def run_measured(instance: Any, root: Path, *, minute: int = 1, value: int = 1) -> Any:
+    """Run the measured Line once; the provider answers ``value + 1``."""
+
+    from cruxible_core.service.procedures.procedure_runs import (
+        LineRunRequest,
+        service_run_playbill_line,
+    )
+    from tests.test_procedures.test_completeness_transfer import _Clock
+
+    return service_run_playbill_line(
         instance,
         path_identity_digest="test.claims-line",
         request=LineRunRequest(line="test.claims-line"),
         actor_context=actor(),
         caller_rung=2,
-        daemon_clock=_Clock(NOW + timedelta(minutes=1)),
-        provider_runtime_operator=Operator(_MixedInvoker()),
+        daemon_clock=_Clock(NOW + timedelta(minutes=minute)),
+        provider_runtime_operator=Operator(_MixedInvoker(output=lambda _c: {"value": value + 1})),
         workspace_file_reader=_reader(instance, root),
     )
+
+
+@pytest.mark.parametrize("listed", (False, True))
+def test_measured_receipt_settles_only_when_the_scope_lists_measured(
+    tmp_path: Path, listed: bool
+) -> None:
+    from tests.support.mandates import scope_changes
+
+    instance, root, score = measured_line(tmp_path)
+    basis = ("extracted", "measured") if listed else ("extracted",)
+    _grant_settle(
+        instance, "test.claims-line", score.predicate, changes=scope_changes("create", basis=basis)
+    )
+    before = instance.accepted_coordinate()
+    state = run_measured(instance, root)
     (measured,) = candidate_claims(instance, state)
     receipt = measured.backing.procedure_evidence.value
     assert receipt.basis == "measured"
@@ -533,9 +571,29 @@ def test_measured_receipt_and_settle_fails_closed(tmp_path: Path) -> None:
     assert receipt.capture_digest == measured.backing.capture_digests[0]
     assert receipt.enumerates is None and receipt.declared_fields == {}
     assert receipt.field_path == "$item.value" and receipt.transform_node_ids == ()
+    if listed:
+        assert state.terminal_egress[0].settle_outcome == "settled"
+        assert instance.accepted_coordinate() != before
+        return
     assert state.terminal_egress[0].settle_outcome == "proposed"
-    assert state.terminal_egress[0].outside_scope_claim_types == (score.predicate,)
+    # A measured value settles only under a scope that lists measured.
+    (gap,) = state.terminal_egress[0].outside_scope
+    assert (gap.claim_type, gap.change, gap.basis, gap.term) == (
+        f"ClaimType:{score.predicate}",
+        "create",
+        "measured",
+        "basis",
+    )
     assert instance.accepted_coordinate() == before
+
+
+def test_subjects_expected_refuses_a_claims_node_without_within(tmp_path: Path) -> None:
+    """``subjects: expected`` holds structurally only where every write is fenced."""
+
+    instance, _root, score = measured_line(tmp_path)
+    with pytest.raises(AssertionError) as refused:
+        _grant_settle(instance, "test.claims-line", score.predicate, subjects="expected")
+    assert "cruxible.procedure_mandate.subjects_unfenced" in str(refused.value)
 
 
 def test_within_is_resolved_once_for_all_rows(
