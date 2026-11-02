@@ -1,7 +1,7 @@
-"""Seed accepted exact-content Claims (rulings, method laws) for read-verb tests.
+"""Seed accepted bounded-string Claims (rulings, method laws) for read-verb tests.
 
 The ClaimType ``project.work_item.status`` is re-declared with
-``value_type="exact_content"``, and each Claim's self-source body is exactly
+``value_type={"type": "string", "maxLength": 256}``, and each Claim's self-source body is exactly
 its content, so the Claim's own Capture commits the bytes its object names.
 Everything travels through the AuthoringIntent coordinator and accepted
 activation, so the reads see accepted state rather than a fixture.
@@ -18,10 +18,10 @@ from types import SimpleNamespace
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
-    AuthoringExactContentObject,
     AuthoringExistingClaimDisposition,
     SelfSourceBody,
 )
+from cruxible_client.contracts.claims import LiteralClaimObject
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
@@ -35,12 +35,12 @@ from tests.support.claim_types import claim_type_changes
 from tests.test_authoring.test_authoring_preflight import _seed_claim_surface, _self_source_payload
 from tests.test_claims.test_claims import _claim_type
 
-EXACT_PREDICATE = "project.work_item.status"
-EXACT_KIND = "project.work_item"
+VALUE_PREDICATE = "project.work_item.status"
+VALUE_KIND = "project.work_item"
 
 
 @dataclass(frozen=True)
-class ExactClaim:
+class BoundedClaim:
     subject: str
     claim_id: str
     content: bytes
@@ -52,46 +52,46 @@ class ExactClaim:
 
 def _shell(subject_id: str) -> SubjectShell:
     return SubjectShell(
-        identity=ArtifactIdentity(kind="Subject", name=f"{EXACT_KIND}/{subject_id}"),
-        subject_kind=EXACT_KIND,
+        identity=ArtifactIdentity(kind="Subject", name=f"{VALUE_KIND}/{subject_id}"),
+        subject_kind=VALUE_KIND,
         subject_id=subject_id,
     )
 
 
-def seed_exact_content(
+def seed_bounded_content(
     tmp_path: Path, contents: Mapping[str, bytes]
-) -> tuple[PlaybillInstance, dict[str, ExactClaim]]:
-    """Accept one exact-content status Claim per ``subject_id -> content``.
+) -> tuple[PlaybillInstance, dict[str, BoundedClaim]]:
+    """Accept one bounded-string status Claim per ``subject_id -> content``.
 
     ``wi-42`` is the fixture's own Subject; every other id is added to it.
     """
 
     instance, owner = initialize_local(tmp_path)
-    return instance, seed_exact_content_into(instance, owner, contents)
+    return instance, seed_bounded_content_into(instance, owner, contents)
 
 
-def seed_exact_content_into(
+def seed_bounded_content_into(
     instance: PlaybillInstance, owner: GeneratedKeyMaterial, contents: Mapping[str, bytes]
-) -> dict[str, ExactClaim]:
-    """Accept the exact-content surface and one Claim per content into ``instance``."""
+) -> dict[str, BoundedClaim]:
+    """Accept the bounded-string surface and one Claim per content into ``instance``."""
 
     _seed_claim_surface(
         instance,
         owner,
         claim_type_override=_claim_type().model_copy(
-            update=claim_type_changes(value_type="exact_content")
+            update=claim_type_changes(value_type={"type": "string", "maxLength": 256})
         ),
         additional_subjects=tuple(_shell(item) for item in contents if item != "wi-42"),
     )
-    seeded: dict[str, ExactClaim] = {}
+    seeded: dict[str, BoundedClaim] = {}
     for index, (subject_id, content) in enumerate(contents.items(), start=1):
-        seeded[subject_id] = add_exact_claim(
+        seeded[subject_id] = add_bounded_claim(
             instance, owner, subject_id, content, claim_id="CLM-" + f"{index:x}" * 32
         )
     return seeded
 
 
-def add_exact_claim(
+def add_bounded_claim(
     instance: PlaybillInstance,
     owner: GeneratedKeyMaterial,
     subject_id: str,
@@ -99,8 +99,8 @@ def add_exact_claim(
     *,
     claim_id: str,
     existing: tuple[str, ...] = (),
-) -> ExactClaim:
-    """Accept one exact-content status Claim; ``existing`` same-slot Claims stay untested."""
+) -> BoundedClaim:
+    """Accept one bounded-string status Claim; ``existing`` same-slot Claims stay untested."""
 
     actor = AuthenticatedActor(actor_id="owner")
     template = _self_source_payload()
@@ -116,9 +116,9 @@ def add_exact_claim(
             "statement": template.statement.model_copy(
                 update={
                     "subject": SemanticAddress.whole_artifact(
-                        f"subjects/{EXACT_KIND}/{subject_id}.json"
+                        f"subjects/{VALUE_KIND}/{subject_id}.json"
                     ),
-                    "object": AuthoringExactContentObject(content_base64=encoded),
+                    "object": LiteralClaimObject(value=content.decode("utf-8")),
                 }
             ),
             "existing_claim_dispositions": tuple(
@@ -137,14 +137,14 @@ def add_exact_claim(
         instance, proposal_id=submitted.status.proposal_id
     )
     activate(instance, owner, SimpleNamespace(proposal=inspection))
-    return ExactClaim(subject=f"{EXACT_KIND}/{subject_id}", claim_id=claim_id, content=content)
+    return BoundedClaim(subject=f"{VALUE_KIND}/{subject_id}", claim_id=claim_id, content=content)
 
 
 __all__ = [
-    "add_exact_claim",
-    "EXACT_KIND",
-    "EXACT_PREDICATE",
-    "ExactClaim",
-    "seed_exact_content",
-    "seed_exact_content_into",
+    "add_bounded_claim",
+    "VALUE_KIND",
+    "VALUE_PREDICATE",
+    "BoundedClaim",
+    "seed_bounded_content",
+    "seed_bounded_content_into",
 ]

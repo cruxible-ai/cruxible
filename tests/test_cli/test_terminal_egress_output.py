@@ -12,7 +12,7 @@ CANDIDATE = "sha256:" + "b" * 64
 def _settle(**update):  # type: ignore[no-untyped-def]
     return ProcedureTerminalEgress(
         node_id="settle",
-        kind="settle_change_set",
+        kind="claims",
         verdict="delivered",
         required_authority="settle",
         effective_authority="settle",
@@ -63,15 +63,14 @@ def test_an_outside_scope_settle_names_the_claim_types_it_left_out(capsys) -> No
 def test_a_capped_terminal_names_the_authority_it_needed_and_had(capsys) -> None:
     capped = ProcedureTerminalEgress(
         node_id="settle",
-        kind="settle_change_set",
+        kind="claims",
         verdict="refused_effective_authority",
         required_authority="settle",
         effective_authority="propose",
         limiting_term="line_max_authority",
     )
     assert _echo(capsys, capped) == (
-        "Terminal settle: settle_change_set needs settle; "
-        "the line_max_authority term allowed propose\n"
+        "Terminal settle: claims needs settle; the line_max_authority term allowed propose\n"
     )
 
 
@@ -151,7 +150,7 @@ def test_a_terminal_whose_items_all_restate_accepted_state_says_nothing_changed(
         capsys,
         ProcedureTerminalEgress(
             node_id="propose",
-            kind="propose_change_set",
+            kind="claims",
             verdict="delivered",
             required_authority="propose",
             effective_authority="propose",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import Sha256Value
@@ -26,6 +26,7 @@ class ExtractedBasis(_Receipt):
     extractor_version: str
     record_locator: str
     field_path: str
+    record_key: dict[str, JsonValue] = Field(default_factory=dict)
     transform_node_ids: tuple[str, ...] = ()
 
     @field_validator("capture_digest", "extract_spec_digest")
@@ -43,8 +44,15 @@ class CaptureBasis(_Receipt):
 
 class DerivedBasis(_Receipt):
     basis: Literal["derived"] = "derived"
-    inputs: tuple[ArtifactPin, ...] = Field(min_length=1)
+    inputs: tuple[ArtifactPin, ...] = ()
+    extractions: tuple[ExtractedBasis, ...] = ()
     transform_node_ids: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _sources(self) -> DerivedBasis:
+        if not self.inputs and not self.extractions:
+            raise ValueError("derived values require exact Claim inputs or extraction receipts")
+        return self
 
 
 class MeasuredBasis(_Receipt):
@@ -66,11 +74,24 @@ EvidenceBasis = Annotated[
 
 class ClaimEvidenceReceipt(_Receipt):
     law: Literal["claim-evidence-v2"] = "claim-evidence-v2"
+    node_id: str
+    template: int = Field(ge=0)
+    procedure_digest: str
+    _procedure_digest = field_validator("procedure_digest")(_digest)
     value: EvidenceBasis
 
 
+FindingKind = Literal[
+    "extract_refused",
+    "duplicate_key",
+    "incomplete_source",
+    "held_disagrees",
+    "slot_contested",
+]
+
+
 class ClaimsDiagnostic(_Receipt):
-    kind: Literal["extract_refused", "incomplete_source", "held_by_precedence", "slot_contested"]
+    kind: FindingKind
     target: str
     field: str | None = None
     problem: str | None = None
@@ -78,14 +99,8 @@ class ClaimsDiagnostic(_Receipt):
     input: str | None = None
     claim: str | None = None
     role: str | None = None
-
-
-class ExtractRefusedInboxItem(_Receipt):
-    """The core diagnostic inbox Contract; other outcomes stay in the run report."""
-
-    tag: Literal["cruxible-extract-refused-inbox-v1"] = "cruxible-extract-refused-inbox-v1"
-    kind: Literal["extract_refused"] = "extract_refused"
-    target: str
-    field: str
-    problem: str
-    lexeme: str | None = Field(default=None, max_length=512)
+    key: dict[str, JsonValue] | None = None
+    record_locators: tuple[str, ...] = Field(default=(), max_length=10)
+    record_count: int = Field(default=0, ge=0)
+    held_value: JsonValue = None
+    incoming_value: JsonValue = None

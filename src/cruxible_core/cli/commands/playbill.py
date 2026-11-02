@@ -3879,9 +3879,9 @@ def propose_capture_contract(
     help=(
         "A ClaimTypeInputRecord. A new ClaimType states predicate and cardinality. "
         "allowed_subject_kinds defaults to the predicate prefix before its last dot. "
-        "literal_schema infers a literal object; allowed_object_subject_kinds infers a "
-        "Subject object; neither means a string literal. State only one, or state "
-        "object_kind exact_content. String literals default canonical_form to [nfc, trim]. "
+        "value declares a native Contract field type (default string{max_len: 256}); "
+        "Subject links use subject<K1 | K2>. Prose lives in Documents. "
+        "String values default canonical_form to [nfc, trim]. "
         "permitted_roles defaults to [default_role] or [normative]; exactly [observation] "
         "defaults evidence_requirement to captured and needs a source or evidence policy. "
         "Other roles default to self: one own-words rule, plus one per anticipated_source_ids "
@@ -5114,7 +5114,7 @@ def set_value(
     The Claim it replaces is found for you. SUBJECT may also be kind/<key
     value> as written (kind/CVE-2021-44228): a one-key kind's Subject that does
     not exist yet is added by that key. VALUE is text: an enum member, a number or true/false
-    for such fields, a Subject as kind/id, or the text itself for exact content. --none
+    for such fields, a Subject as kind/id, or bounded text. --none
     instead states that FIELD holds nothing (a none), replacing the live value.
     """
 
@@ -5922,8 +5922,6 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
             click.echo(f"value: {printable(whole)}")
         else:
             click.echo(f"value: {printable(json.dumps(whole, ensure_ascii=False))}")
-        if result.evidence.content_digest is not None:
-            click.echo(f"content_digest: {result.evidence.content_digest}")
         for capture in result.evidence.captures:
             erased = capture.erased
             click.echo(
@@ -7208,9 +7206,9 @@ def _proposed_children_lines(
 def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
     """Print what each terminal of the run did, and the handles a manager needs.
 
-    A delivered `propose_change_set` prints the proposal id and the exact
+    A delivered `claims` prints the proposal id and the exact
     candidate digest, which are the two arguments the existing proposal
-    verbs take; a settled `settle_change_set` prints the generation it
+    verbs take; a settled `claims` prints the generation it
     accepted, and one that fell back prints its proposal and why. A capped
     terminal names the authority it needed and the authority the run had; a
     refused one prints the code the run refused with. A Line run whose change

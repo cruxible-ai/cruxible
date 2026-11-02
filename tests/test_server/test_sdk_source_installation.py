@@ -4,13 +4,18 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from cruxible_client import Cruxible
-from cruxible_client.authoring.procedures import ProcedureLimits, Sequence, eq, halt
+from cruxible_client.authoring.procedures import Handle, ProcedureLimits, Sequence, eq, halt
 from cruxible_client.contracts.authoring.inputs import ProcedureMandateInput
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
+from cruxible_client.contracts.procedures.authored import (
+    ClaimsSubjectSpec,
+    ClaimTemplateSpec,
+    ReturnFields,
+)
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
 from tests.core_support._light_capture_support import (
@@ -124,59 +129,51 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         items=100,
     )
 
-    def sequence(name: str, *, line_run: bool = False, **extra: Any) -> Sequence:
-        # A Line-run parent takes the URL as its parameter (a Line supplies it);
-        # the invoked observer takes it as input.
-        boundary = {"params": request} if line_run else {"input": request}
-        return Sequence(name, **boundary, output=result, hard_caps=limits, **extra)
+    fetch_slot = ProcedureSlot.model_validate(
+        {
+            "in": "web.fetch.request@1",
+            "out": "web.fetch.result@1",
+            "effect": "external_read",
+        }
+    )
 
-    observer = sequence(
+    def sequence(name: str) -> Sequence:
+        return Sequence(
+            name,
+            params=request,
+            output=result,
+            slots={"fetch": fetch_slot},
+            hard_caps=limits,
+        )
+
+    # Claims cite an extract of their parent's acquiring Call. The nested child
+    # still exercises typed invocation and capture emission, without presenting
+    # its opaque terminal Capture as the parent's extraction evidence.
+    observer = Sequence(
         "observe-web",
-        # One slot of web.fetch's exact signature; a Line binds it to a build.
-        slots={
-            "fetch": ProcedureSlot.model_validate(
-                {
-                    "in": "web.fetch.request@1",
-                    "out": "web.fetch.result@1",
-                    "effect": "external_read",
-                }
-            )
-        },
-    )
-    observation = observer.call(
-        "observation",
-        slot="fetch",
-        input={"url": observer.input["url"], "expected_format": "json"},
-        captures={"capture": "test.web"},
-    )
-    document = observer.extract(
-        "document",
-        capture=observation["capture"],
-        records="/",
-        row="fetch.document@1",
-        fields={"status": {"at": "/retrieved/status_code"}, "text": {"at": "/derived/text"}},
+        input=result,
+        output=result,
+        hard_caps=limits,
     )
     observer.emit(
         "test.web-output",
-        input=observation.whole,
+        input=observer.input.whole,
         result={
-            "status": document.ref("rows", "0", "status"),
-            "text": document.ref("rows", "0", "text"),
+            "status": observer.input["status"],
+            "text": observer.input["text"],
         },
     )
     authored = observer.build()
     assert "sha256:" not in authored.model_dump_json()
     preview = observer.preview()
     assert preview.ready_for_prepare, preview.errors
-    # The Procedure declares no acquisition rule: each Line over a parent
-    # names the child's capture output by invoke path.
     accept(pb.procedure(definition=authored))
 
     knowledge = pb.changes(rationale="Describe the advisory observation.")
     # Core assigns a new Subject's id from its declared kind's key (identity D1).
     declare_by_slug(knowledge, SUBJECT_KIND)
     knowledge.subject(pb.new_subject(SUBJECT_KIND, key=SUBJECT_ID))
-    definition = _claim_type(output_contract.identity.name)
+    definition = _claim_type(contract.identity.name)
     observed_rule = ClaimEvidenceAdmissionRule.model_validate(
         definition.evidence_admission_policy.rules[0].model_dump(exclude={"tag"})
     )
@@ -205,57 +202,73 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     knowledge.claim_type(definition)
     accept(knowledge)
 
-    def candidate(observed: Any, **fields: Any) -> dict[str, Any]:
-        return {
-            "tag": "playbill-source-claim-candidate-v1",
-            "subject_kind": "security.advisory",
-            "subject_id": "osv-2026-0001",
-            "predicate": "security.advisory.severity",
-            "object_kind": "literal",
-            "source_kind": "supported_by",
-            "source_value": observed.ref("terminal", "capture"),
-            "source_alias": "observed.terminal.capture",
-            **fields,
-        }
-
-    def observed_result(observed: Any) -> dict[str, Any]:
+    def observed_result(observed: Handle) -> dict[str, Any]:
         return {"status": observed.ref("value", "status"), "text": observed.ref("value", "text")}
 
-    parent = sequence("observe-parent", line_run=True)
-    observed = parent.invoke("observe-web", input={"url": parent.params["url"]}, as_="observed")
-    parent.guard(eq(observed["succeeded"], True), else_=halt("Observation failed"))
-    parent.propose(
+    def observed_result_from(document: Handle) -> dict[str, Any]:
+        return {
+            "status": document.ref("rows", "0", "status"),
+            "text": document.ref("rows", "0", "text"),
+        }
+
+    def acquire(parent: Sequence) -> Handle:
+        observation = parent.call(
+            "observation",
+            slot="fetch",
+            input={"url": parent.params["url"], "expected_format": "json"},
+            captures={"capture": "test.web"},
+        )
+        document = parent.extract(
+            "document",
+            capture=observation["capture"],
+            records="/",
+            row="fetch.document@1",
+            fields={"status": {"at": "/retrieved/status_code"}, "text": {"at": "/derived/text"}},
+        )
+        parent.guard(eq(document.ref("rows", "0", "status"), 200), else_=halt("Observation failed"))
+        observed = parent.invoke(
+            "observe-web", input=observed_result_from(document), as_="observed"
+        )
+        parent.returns(ReturnFields(fields=observed_result(observed)))
+        return document
+
+    subject = ClaimsSubjectSpec(kind=SUBJECT_KIND, key={"slug": SUBJECT_ID}, create="never")
+    parent = sequence("observe-parent")
+    document = acquire(parent)
+    parent.claims(
         (
-            candidate(
-                observed,
+            ClaimTemplateSpec(
+                type=definition.predicate,
                 value="high",
                 role="observation",
                 rationale="The acquired report is high severity.",
-                basis=[],
             ),
         ),
-        result=observed_result(observed),
+        for_each=document["records"],
+        subject=subject,
     )
     accept(pb.procedure(definition=parent))
     accepted_parent = pb.accepted_procedure("observe-parent")
     refused = accepted_parent.run(parameters=accepted_parent.params(url=URL))
     assert refused.status == "admission_refused"
-    # Child capture cannot acquire a Line's authority directly: nothing ran, nothing fetched.
+    # The child's terminal needs the Line lane: admission refuses before the
+    # parent's acquiring Call, so nothing ran and nothing was fetched.
     assert refused.run_id is None and not refused.outcome.children
     assert _fetches(refused) == 0
     now = datetime.now(timezone.utc)
     # Only the root is granted a mandate. The child inherits the same ceiling.
     accept(
-        pb.changes(rationale="Run the exact parent under a governed Line.")
-        .line(
+        pb.changes(rationale="Run the exact parent under a governed Line.").line(
             name="source-line",
             procedure="observe-parent",
-            bindings={"observed.fetch": fetch},
-            acquisition={"observed.observation.capture": _policy().model_dump(mode="json")},
+            bindings={"fetch": fetch},
+            acquisition={"observation.capture": _policy().model_dump(mode="json")},
             max_authority="propose",
             parameters={"url": URL},
         )
-        .procedure_mandate(
+    )
+    accept(
+        pb.changes(rationale="Authorize the accepted source Line.").procedure_mandate(
             ProcedureMandateInput(
                 kind="procedure_mandate",
                 name="source-authority",
@@ -277,48 +290,53 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     (child,) = run.children
     assert child.succeeded
     assert child.result.text == run.result.text
-    (observation,) = child.outcome.source_observations
+    assert _fetches(child) == 0
+    assert child.outcome.source_observations == []
+    (observation,) = run.outcome.source_observations
     assert observation.capture_digest
     capture = child.outcome.terminal_egress[0].children[0].egress_digest
     assert capture
     assert pb.coordinate == before_run  # A proposal is not an accepted state mutation.
     (proposal,) = run.outcome.terminal_egress
-    assert proposal.kind == "propose_change_set" and proposal.verdict == "delivered"
+    assert proposal.kind == "claims" and proposal.verdict == "delivered"
     assert proposal.proposal_id
     _approve_and_activate(http, instance_id, reviewer, proposal.proposal_id)
     pb.refresh()
 
-    verify_parent = sequence("verify-parent", line_run=True)
+    verify_parent = sequence("verify-parent")
     baseline = verify_parent.read_claims(
         "baseline",
         claim_type="security.advisory.severity",
         subject="osv-2026-0001",
         subject_kind="security.advisory",
     )
-    observed = verify_parent.invoke(
-        "observe-web", input={"url": verify_parent.params["url"]}, as_="observed"
-    )
-    verify_parent.guard(eq(observed["succeeded"], True), else_=halt("Observation failed"))
-    verify_parent.propose(
+    document = acquire(verify_parent)
+    verify_parent.claims(
         (
-            candidate(
-                observed,
+            ClaimTemplateSpec(
+                type=definition.predicate,
                 value=baseline["value"],
+                # Preserve the original observation alongside its verification;
+                # a lower-precedence derivation cannot replace that observation.
+                qualifier="verified",
                 role="derivation",
                 rationale="Rechecked the accepted baseline against a fresh observation.",
-                basis=[baseline.whole],
-                dispositions=[{"claim": baseline.whole, "disposition": "not_tested"}],
+                inputs=(baseline.whole,),
             ),
         ),
-        result=observed_result(observed),
+        for_each=document["records"],
+        subject=subject,
     )
     inspected = verify_parent.preview()
     assert inspected.ready_for_prepare, inspected.errors
     assert [node["kind"] for node in inspected.nodes] == [
         "read",
-        "invoke",
+        "call",
+        "extract",
         "guard",
-        "propose_change_set",
+        "invoke",
+        "project",
+        "claims",
         "halt",
     ]
     accept(pb.procedure(definition=verify_parent))
@@ -326,9 +344,8 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         pb.changes(rationale="Verify the same baseline with an exact child.").line(
             name="verify-line",
             procedure="verify-parent",
-            # The child's one slot binds under the invoke step's node path.
-            bindings={"observed.fetch": fetch},
-            acquisition={"observed.observation.capture": _policy().model_dump(mode="json")},
+            bindings={"fetch": fetch},
+            acquisition={"observation.capture": _policy().model_dump(mode="json")},
             max_authority="propose",
             parameters={"url": URL},
         )
@@ -359,13 +376,17 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     assert '"station": "newlyn"' in verified.result.text
     assert _fetches(verified) == 1
     (rechecked,) = verified.children
-    (fresh,) = rechecked.outcome.source_observations
+    assert rechecked.succeeded
+    assert rechecked.result.text == verified.result.text
+    assert _fetches(rechecked) == 0
+    assert rechecked.outcome.source_observations == []
+    (fresh,) = verified.outcome.source_observations
     assert fresh.capture_digest
     # A fresh call, not a reuse of the first run's: its own run and invocation receipt.
     assert rechecked.run_id != child.run_id
     assert fresh.invocation_receipt_digest != observation.invocation_receipt_digest
     (derived,) = verified.outcome.terminal_egress
-    assert derived.verdict == "delivered" and derived.proposal_id
+    assert derived.kind == "claims" and derived.verdict == "delivered" and derived.proposal_id
 
     def severity_claims() -> list[Any]:
         # The advisory also holds its key Claim (security.advisory.slug).
@@ -377,6 +398,11 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     pb.refresh()
     claims = severity_claims()
     assert len(claims) == 2
+    assert {view.role: view.qualifier for view in claims} == {
+        "observation": None,
+        "derivation": "verified",
+    }
+    assert all(view.value == "high" for view in claims)
     original = _proof(
         client, instance_id, next(v.claim_id for v in claims if v.role == "observation")
     )
@@ -385,6 +411,14 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     )
     from cruxible_client.contracts.claims import ClaimBacking
 
+    original_backing = ClaimBacking.model_validate(
+        next(
+            fact["value"]
+            for fact in original["facts"]
+            if fact["schema_id"] == "cruxible.claim.backing"
+        )
+    )
+    assert original_backing.capture_digests == (observation.capture_digest,)
     backing = ClaimBacking.model_validate(
         next(
             fact["value"]
@@ -392,6 +426,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
             if fact["schema_id"] == "cruxible.claim.backing"
         )
     )
+    assert backing.capture_digests == (fresh.capture_digest,)
     assert backing.input_claim_digests == (original["envelope"]["artifact_digest"],)
     assert (
         backing.reducer_digest

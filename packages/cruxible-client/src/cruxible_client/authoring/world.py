@@ -32,17 +32,16 @@ from __future__ import annotations
 
 import keyword
 import re
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from cruxible_client.authoring.sdk_types import (
     AbsentSubject,
     Cardinality,
-    ClaimObjectKind,
     ClaimRole,
     ClaimTypeRef,
-    LiteralSchemaError,
+    ClaimValueError,
     LiteralValue,
     ReferentSensitivity,
     SdkError,
@@ -62,6 +61,19 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.records import RecordConstructor
+from cruxible_client.contracts.shapes import (
+    Contract,
+    ContractRef,
+    ContractResolver,
+    FieldType,
+    NestedType,
+    SubjectType,
+    claim_literal_problem,
+    claim_value_kind,
+    render_type,
+    subject_value_kinds,
+    value_members,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.compact_query import CompactQuery
@@ -130,7 +142,6 @@ def _is_identifier(value: str) -> bool:
 CLAIM_TYPE_MEMBERS = frozenset(
     {
         "address",
-        "allowed_object_subject_kinds",
         "allowed_subject_kinds",
         "as_kind",
         "cardinality",
@@ -139,15 +150,14 @@ CLAIM_TYPE_MEMBERS = frozenset(
         "description",
         "evidence_requirement",
         "kind",
-        "literal_schema",
         "member_descriptions",
         "members",
-        "object_kind",
         "permitted_roles",
         "predicate",
         "referent_sensitivity",
         "revision_evidence",
         "value",
+        "value_type",
     }
 )
 
@@ -184,78 +194,17 @@ _TYPE_CHECKS: Mapping[str, tuple[type, ...]] = {
 }
 
 
-def literal_schema_members(schema: Mapping[str, object] | None) -> tuple[str, ...]:
-    """Return the string enum members a literal schema names, in schema order."""
-
-    if schema is None:
-        return ()
-    members = schema.get("enum")
-    if not isinstance(members, Sequence) or isinstance(members, (str, bytes)):
-        return ()
-    return tuple(item for item in members if isinstance(item, str))
-
-
-def _refuse(predicate: str, reason: str) -> LiteralSchemaError:
-    return LiteralSchemaError(predicate=predicate, reason=reason)
+def _refuse(predicate: str, reason: str) -> ClaimValueError:
+    return ClaimValueError(predicate=predicate, reason=reason)
 
 
 def admit_literal(
-    value: object,
-    *,
-    predicate: str,
-    schema: Mapping[str, object] | None,
+    value: object, *, predicate: str, field_type: FieldType, resolve: ContractResolver | None = None
 ) -> CanonicalValue:
-    """Admit one value against a ClaimType's declared literal schema.
-
-    This is a pre-wire read of the schema the ClaimType already publishes, over
-    the keywords `ClaimTypeStructure` admits plus the exact string and numeric
-    bounds. It is deliberately not a general JSON Schema implementation: an
-    unrecognised keyword is left to the daemon, which stays the only authority
-    on admission. What it buys is the round trip -- a mistyped enum member or a
-    digest that is 39 hex characters refuses here, naming the predicate, rather
-    than after a proposal.
-    """
-
     canonical = normalize_canonical(value)
-    if schema is None:
-        return canonical
-    declared = schema.get("type")
-    if isinstance(declared, str):
-        admissible = _TYPE_CHECKS.get(declared)
-        if admissible is None:
-            raise _refuse(predicate, f"declared type {declared!r} is not an exact Cruxible type")
-        if declared != "boolean" and isinstance(canonical, bool):
-            raise _refuse(predicate, f"a boolean is not {declared}")
-        if not isinstance(canonical, admissible):
-            raise _refuse(predicate, f"value is not {declared}")
-    if "const" in schema and canonical != schema["const"]:
-        raise _refuse(predicate, f"value is not the declared const {schema['const']!r}")
-    members = schema.get("enum")
-    if isinstance(members, Sequence) and not isinstance(members, (str, bytes)):
-        if canonical not in tuple(members):
-            spelled = ", ".join(repr(item) for item in members)
-            raise _refuse(predicate, f"value is outside the declared enum: {spelled}")
-    if isinstance(canonical, str):
-        pattern = schema.get("pattern")
-        if isinstance(pattern, str) and re.search(pattern, canonical) is None:
-            raise _refuse(predicate, f"value does not match the declared pattern {pattern!r}")
-        minimum_length = schema.get("minLength")
-        if isinstance(minimum_length, int) and len(canonical) < minimum_length:
-            raise _refuse(predicate, f"value is shorter than the declared {minimum_length}")
-        maximum_length = schema.get("maxLength")
-        if isinstance(maximum_length, int) and len(canonical) > maximum_length:
-            raise _refuse(predicate, f"value is longer than the declared {maximum_length}")
-    if isinstance(canonical, (int, float)) and not isinstance(canonical, bool):
-        admits: Mapping[str, Callable[[float, float], bool]] = {
-            "minimum": lambda value, bound: value >= bound,
-            "maximum": lambda value, bound: value <= bound,
-            "exclusiveMinimum": lambda value, bound: value > bound,
-            "exclusiveMaximum": lambda value, bound: value < bound,
-        }
-        for keyword_name, within in admits.items():
-            bound = schema.get(keyword_name)
-            if isinstance(bound, (int, float)) and not within(canonical, bound):
-                raise _refuse(predicate, f"value violates the declared {keyword_name} {bound!r}")
+    problem = claim_literal_problem(canonical, field_type, resolve=resolve)
+    if problem is not None:
+        raise _refuse(predicate, f"value fails {render_type(field_type)}: {problem}")
     return canonical
 
 
@@ -321,13 +270,11 @@ class WorldClaimType(ClaimTypeRef):
     a typed value that can only state a Claim under this predicate.
     """
 
-    object_kind: ClaimObjectKind
+    value_type: FieldType
     cardinality: Cardinality
     allowed_subject_kinds: tuple[str, ...]
-    allowed_object_subject_kinds: tuple[str, ...]
     permitted_roles: tuple[ClaimRole, ...]
     referent_sensitivity: ReferentSensitivity
-    literal_schema: dict[str, object] | None
     #: What the predicate means, and what each enum member means.
     description: str | None
     member_descriptions: tuple[ClaimTypeMemberDescription, ...]
@@ -353,7 +300,7 @@ class WorldClaimType(ClaimTypeRef):
         Next: ``claim_type.<member>`` or ``claim_type("<member>")`` for a typed value.
         """
 
-        return literal_schema_members(self.literal_schema)
+        return value_members(self.value_type)
 
     @property
     def as_kind(self) -> KindNamespace:
@@ -378,14 +325,19 @@ class WorldClaimType(ClaimTypeRef):
         """Mint one literal object for this predicate, admitted before the wire."""
 
         self._world._assert_current()
-        if self.object_kind is not ClaimObjectKind.LITERAL:
+        if isinstance(self.value_type, SubjectType):
             raise WorldStructureError(
-                f"ClaimType {self.address!r} takes a {self.object_kind.value} object, "
+                f"ClaimType {self.address!r} takes a {claim_value_kind(self.value_type)} object, "
                 "so it has no literal values to construct"
             )
         return LiteralValue(
             predicate=self.address,
-            value=admit_literal(value, predicate=self.address, schema=self.literal_schema),
+            value=admit_literal(
+                value,
+                predicate=self.address,
+                field_type=self.value_type,
+                resolve=self._resolve_contract,
+            ),
             coordinate=self.coordinate,
         )
 
@@ -394,10 +346,18 @@ class WorldClaimType(ClaimTypeRef):
 
         Next: pass it as ``value=`` to a write.
         """
-        if self.literal_schema is None:
-            raise WorldStructureError(f"{self.address!r} has no declared record schema")
-        record = RecordConstructor.from_json_schema(self.literal_schema)(**fields)
-        return self(record)
+        if not isinstance(self.value_type, NestedType):
+            raise WorldStructureError(f"{self.address!r} names no nested Contract")
+        contract = self._resolve_contract(self.value_type.contract)
+        if contract is None:
+            raise WorldStructureError(f"{self.value_type.contract.spelling} is unavailable")
+        return self(RecordConstructor(contract, _resolve=self._resolve_contract)(**fields))
+
+    def _resolve_contract(self, ref: ContractRef) -> Contract | None:
+        result = self._world._playbill._get(ref.identity.qualified, "proof", None, self.coordinate)
+        if result.proof is None:
+            return None
+        return Contract.model_validate(result.proof["envelope"])
 
     def __getitem__(self, subject_id: str) -> WorldSubject:
         """Read a Subject when this dotted name is also an accepted kind."""
@@ -1067,7 +1027,7 @@ class World:
 
         Each Subject kind is listed with its fields: the leaf a Subject answers
         by attribute, then what the field holds (``literal``, ``-> kind`` for
-        a Subject, ``exact_content``), its cardinality, enum members and
+        a Subject), its cardinality, enum members and
         description. Next: ``print(w.describe())``, then one of the verbs it
         lists -- ``cx.query(kind, ...)`` to read values, ``cx.get(ref)`` for
         one thing, ``w.<kind>[id].set(...)`` to write.
@@ -1100,12 +1060,12 @@ class World:
         assert node is not None and node.structure is not None
         structure = node.structure
         held = (
-            "-> " + " | ".join(structure.allowed_object_subject_kinds)
-            if structure.object_kind == "subject"
-            else structure.object_kind
+            "-> " + " | ".join(subject_value_kinds(structure.value))
+            if claim_value_kind(structure.value) == "subject"
+            else claim_value_kind(structure.value)
         )
         parts = [f"{label}: {held}, {structure.cardinality}"]
-        members = literal_schema_members(structure.literal_schema)
+        members = value_members(structure.value)
         if members:
             parts.append("[" + ", ".join(members) + "]")
         if node.meaning is not None and node.meaning.description:
@@ -1443,15 +1403,11 @@ class World:
         return WorldClaimType(
             address=structure.predicate,
             coordinate=self._coordinate,
-            object_kind=ClaimObjectKind(structure.object_kind),
+            value_type=structure.value,
             cardinality=Cardinality(structure.cardinality),
             allowed_subject_kinds=structure.allowed_subject_kinds,
-            allowed_object_subject_kinds=structure.allowed_object_subject_kinds,
             permitted_roles=tuple(ClaimRole(role) for role in structure.permitted_roles),
             referent_sensitivity=ReferentSensitivity(structure.referent_sensitivity),
-            literal_schema=(
-                None if structure.literal_schema is None else dict(structure.literal_schema)
-            ),
             description=meaning.description,
             member_descriptions=meaning.member_descriptions,
             default_role=meaning.default_role,
@@ -1766,12 +1722,7 @@ class World:
                             raise WorldStructureError(
                                 "prefetch Claim returned a different coordinate"
                             )
-                        view = self._playbill._with_exact_text(
-                            self._playbill._typed_claim_view(raw),
-                            AcceptedCoordinate.model_validate(
-                                raw.coordinate.model_dump(mode="json")
-                            ),
-                        )
+                        view = self._playbill._typed_claim_view(raw)
                         if (
                             view.claim_id in seen
                             or view.subject not in request.subject_paths
@@ -2083,9 +2034,7 @@ def build_world(
             {
                 "predicate": envelope.get("predicate"),
                 "allowed_subject_kinds": envelope.get("allowed_subject_kinds", ()),
-                "object_kind": envelope.get("object_kind"),
-                "literal_schema": envelope.get("literal_schema"),
-                "allowed_object_subject_kinds": envelope.get("allowed_object_subject_kinds", ()),
+                "value": envelope.get("value"),
                 "cardinality": envelope.get("cardinality"),
                 "permitted_roles": envelope.get("permitted_roles", ()),
                 "referent_sensitivity": envelope.get("referent_sensitivity", "identity"),
@@ -2103,7 +2052,7 @@ def build_world(
         _insert(root, structure.predicate)
         _replace(root, structure.predicate, structure=structure, meaning=_meaning(envelope))
         kinds.update(structure.allowed_subject_kinds)
-        kinds.update(structure.allowed_object_subject_kinds)
+        kinds.update(subject_value_kinds(structure.value))
     # A descriptor ClaimType (semantic.alias) admits the pseudo-kind
     # semantic.subject -- every Subject -- which is never a kind of its own.
     kinds.difference_update(DESCRIPTOR_KINDS)
@@ -2178,6 +2127,5 @@ __all__ = [
     "WorldWritable",
     "admit_literal",
     "build_world",
-    "literal_schema_members",
     "vocabulary_world",
 ]

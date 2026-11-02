@@ -298,7 +298,7 @@ def test_a_collapsed_kind_has_one_format_and_no_other_law(path, old, new):
 
 def test_sdk_root_record_constructor_accepts_a_named_owner_contract():
     from cruxible_client.authoring.procedures import procedure_record_constructor
-    from cruxible_client.contracts.procedures.contracts import ProcedureContractValidationError
+    from cruxible_client.contracts.provider_operations import OperationValueRefused
     from tests.support.procedures import boundary_contract
     from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
 
@@ -309,7 +309,15 @@ def test_sdk_root_record_constructor_accepts_a_named_owner_contract():
         boundary_contract("empty-input", {"status": "string"}),
         boundary_contract("claim-rows", {"row_count": "int"}),
     )
-    procedure = _artifact(_definition())
+    from tests.support.procedures import contract_pin, named, procedure_definition
+
+    procedure = _artifact(
+        procedure_definition(
+            base=_definition(),
+            contract_in=named(contract_pin("contract-in", contracts[0])),
+            contract_out=named(contract_pin("contract-out", contracts[1])),
+        )
+    )
 
     expected = {
         "input": ("status", "open", "row_count", 3),
@@ -319,7 +327,7 @@ def test_sdk_root_record_constructor_accepts_a_named_owner_contract():
         constructor = procedure_record_constructor(procedure, direction, contracts)
         assert set(constructor.schema.fields) == {field}
         assert dict(constructor(**{field: value})) == {field: value}
-        with pytest.raises(ProcedureContractValidationError):
+        with pytest.raises(OperationValueRefused):
             constructor(**{other: other_value})
 
 

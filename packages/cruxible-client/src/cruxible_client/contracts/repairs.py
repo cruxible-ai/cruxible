@@ -167,7 +167,7 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     # naming the path, and gets the marker refusal that path deserves.
     "source_not_projection_target": "name_this_path_explicitly_if_it_declares_a_projection_block",
     "workspace_file_catalog_invalid": "repair_the_workspace_file_catalog",
-    # A `propose_change_set` item is the Procedure author's: the template
+    # A `claims` item is the Procedure author's: the template
     # resolved to something that is not one Claim proposal item, or to a Claim
     # no observation in the item's own closure can back.
     "proposal_item_invalid": "resolve_each_candidate_template_to_one_claim_proposal_item",

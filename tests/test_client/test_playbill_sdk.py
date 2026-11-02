@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,7 +10,6 @@ import pytest
 from cruxible_client import (
     CaptureRef,
     Cardinality,
-    ClaimObjectKind,
     ClaimRole,
     ClaimTypeRef,
     Cruxible,
@@ -34,7 +32,6 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
 )
 from cruxible_client.contracts.authoring.models import (
-    AuthoringExactContentObject,
     ClaimAuthoringPayload,
     WorkingSelectionObservation,
 )
@@ -76,7 +73,9 @@ class _Client:
         self.coverage_observations: object | None = None
         self.curation_actions: list[tuple[str, dict[str, object]]] = []
         self.audit_request: dict[str, object] | None = None
-        self.claim_type_object_kinds: dict[str, str] = {"sec.vuln.affects_package": "subject"}
+        self.claim_type_value_types: dict[str, str] = {
+            "sec.vuln.affects_package": "subject<sec.package>"
+        }
         self.claim_type_reads = 0
 
     def head(self, instance_id: str, *, at: object = None) -> api.Head:
@@ -130,7 +129,10 @@ class _Client:
             predicate=predicate,
             identity=f"ClaimType:{predicate}",
             artifact_digest=_DIGEST,
-            envelope={"object_kind": self.claim_type_object_kinds.get(predicate, "literal")},
+            envelope={
+                **build_claim_type(predicate=predicate).model_dump(mode="json"),
+                "value": self.claim_type_value_types.get(predicate, "string{max_len: 256}"),
+            },
         )
 
     def whoami(self, _instance_id: str) -> object:
@@ -735,9 +737,7 @@ def test_cold_claim_prepares_one_payload_with_dependencies_and_program_stamp(
     claim_type = pb.claim_type(
         predicate="secops.policy.patch_sla",
         subject_kinds=("secops.policy",),
-        object_kind=ClaimObjectKind.LITERAL,
-        value_schema={"type": "object"},
-        object_subject_kinds=(),
+        value_type="int",
         cardinality=Cardinality.ONE,
         permitted_roles=(ClaimRole.NORMATIVE,),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
@@ -754,7 +754,7 @@ def test_cold_claim_prepares_one_payload_with_dependencies_and_program_stamp(
     draft = pb.claim(
         subject=subject.address,
         predicate=claim_type.predicate,
-        value={"kev_deadline_hours": 48},
+        value=48,
         role=ClaimRole.NORMATIVE,
         rationale="The runbook fixes the KEV deadline.",
         supported_by=pb.file("corpus/runbook.md").anchor("within 48 hours"),
@@ -825,10 +825,10 @@ def test_address_shaped_strings_follow_the_accepted_claim_type_object_kind(
 ) -> None:
     _workspace(tmp_path)
     client = _Client()
-    client.claim_type_object_kinds.update(
+    client.claim_type_value_types.update(
         {
-            "docs.reference": "literal",
-            "sec.vuln.affects_package": "subject",
+            "docs.reference": "string{max_len: 256}",
+            "sec.vuln.affects_package": "subject<sec.package>",
         }
     )
     pb = Cruxible._from_client(  # type: ignore[arg-type]
@@ -879,21 +879,12 @@ _OBJECT_KIND_CLAIM_DEFAULTS: dict[str, Any] = {
 }
 
 
-def test_address_shaped_string_on_an_exact_content_type_defers_to_the_daemon(
-    tmp_path: Path,
-) -> None:
-    """An exact_content predicate must not raise a bare, repair-less ValueError.
-
-    The SDK cannot author an ExactContentClaimObject, so it builds the literal
-    shape and lets the daemon answer with the typed
-    `cruxible.claim.object_kind_mismatch` refusal
-    (tests/test_authoring/test_authoring_preflight.py::
-    test_claim_object_kind_mismatch_is_a_typed_preflight_refusal).
-    """
+def test_address_shaped_string_on_a_native_string_type_stays_literal(tmp_path: Path) -> None:
+    """A slash in a string does not turn its native literal value into a Subject link."""
 
     _workspace(tmp_path)
     client = _Client()
-    client.claim_type_object_kinds.update({"docs.exact": "exact_content"})
+    client.claim_type_value_types.update({"docs.exact": "string{max_len: 256}"})
     pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
@@ -903,8 +894,8 @@ def test_address_shaped_string_on_an_exact_content_type_defers_to_the_daemon(
     draft = pb.claim(
         predicate="docs.exact",
         value="docs/readme",
-        rationale="An exact-content predicate keeps the daemon as the authority.",
-        self_source="exact content object kind",
+        rationale="A bounded string preserves the declared literal type.",
+        self_source="native string value type",
         **_OBJECT_KIND_CLAIM_DEFAULTS,  # type: ignore[arg-type]
     )
 
@@ -912,30 +903,29 @@ def test_address_shaped_string_on_an_exact_content_type_defers_to_the_daemon(
     assert draft.reference_expectations == ()
 
 
-def test_an_unknown_claim_type_object_kind_falls_back_to_the_literal_shape(
+def test_an_unknown_native_claim_value_type_is_refused(
     tmp_path: Path,
 ) -> None:
     _workspace(tmp_path)
     client = _Client()
-    client.claim_type_object_kinds.update({"docs.future": "kind_from_a_newer_daemon"})
+    client.claim_type_value_types.update({"docs.future": "kind_from_a_newer_daemon"})
     pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,
     )
 
-    draft = pb.claim(
-        predicate="docs.future",
-        value="docs/readme",
-        rationale="Client/daemon skew stays a typed daemon refusal.",
-        self_source="unknown object kind",
-        **_OBJECT_KIND_CLAIM_DEFAULTS,  # type: ignore[arg-type]
-    )
+    with pytest.raises(ValueError, match="unknown field type"):
+        pb.claim(
+            predicate="docs.future",
+            value="docs/readme",
+            rationale="An unknown native type cannot be guessed as a literal.",
+            self_source="unknown value type",
+            **_OBJECT_KIND_CLAIM_DEFAULTS,  # type: ignore[arg-type]
+        )
 
-    assert draft.payload.statement.object == LiteralClaimObject(value="docs/readme")
 
-
-def test_claim_type_builder_writes_v7_with_identity_rules(tmp_path: Path) -> None:
+def test_claim_type_builder_writes_native_values_with_identity_rules(tmp_path: Path) -> None:
     _workspace(tmp_path)
     pb = Cruxible._from_client(  # type: ignore[arg-type]
         _Client(),
@@ -956,9 +946,7 @@ def test_claim_type_builder_writes_v7_with_identity_rules(tmp_path: Path) -> Non
     draft = pb.claim_type(
         predicate="secops.policy.patch_sla",
         subject_kinds=("secops.policy",),
-        object_kind=ClaimObjectKind.LITERAL,
-        value_schema={"type": "object"},
-        object_subject_kinds=(),
+        value_type="int",
         cardinality=Cardinality.ONE,
         permitted_roles=(ClaimRole.NORMATIVE,),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
@@ -1394,55 +1382,36 @@ def test_refusal_diagnostic_maps_exact_payload_path_to_the_call_expression(
     assert diagnostic.call_site.expression == "ClaimRole.NORMATIVE"
 
 
-def test_exact_content_authors_the_object_the_wire_has_always_carried(
-    tmp_path: Path,
-) -> None:
-    """Card 84: rulings and method laws are exact-content Claims, and the SDK can say so."""
-
+def test_exact_content_authors_the_object_the_wire_has_always_carried(tmp_path: Path) -> None:
     _workspace(tmp_path)
     client = _Client()
-    client.claim_type_object_kinds.update({"docs.exact": "exact_content"})
-    pb = Cruxible._from_client(  # type: ignore[arg-type]
-        client,
-        instance_id="inst_test",
-        workspace=tmp_path,
-    )
-
-    draft = pb.claim(
-        predicate="docs.exact",
-        value=ExactContent("the ruling exactly as it was written\n"),
-        rationale="The statement is the wording, so the object is the wording.",
-        self_source="the ruling exactly as it was written\n",
-        **_OBJECT_KIND_CLAIM_DEFAULTS,  # type: ignore[arg-type]
-    )
-
-    assert draft.payload.statement.object == AuthoringExactContentObject(
-        content_base64=base64.b64encode(b"the ruling exactly as it was written\n").decode("ascii")
-    )
-    assert draft.payload.statement.object.content == b"the ruling exactly as it was written\n"
+    pb = Cruxible._from_client(client, instance_id="inst_test", workspace=tmp_path)
+    with pytest.raises(
+        ExactContentTypeError, match="prose lives in Documents; cite a Document section"
+    ):
+        pb.claim(
+            predicate="docs.exact",
+            value=ExactContent("the ruling exactly as it was written\n"),
+            rationale="The bytes are the object.",
+            self_source="body",
+            **_OBJECT_KIND_CLAIM_DEFAULTS,
+        )
 
 
 def test_exact_content_keeps_bytes_that_are_not_text(tmp_path: Path) -> None:
-    """A body whose exact bytes matter more than its reading is still one object."""
-
     _workspace(tmp_path)
     client = _Client()
-    client.claim_type_object_kinds.update({"docs.exact": "exact_content"})
-    pb = Cruxible._from_client(  # type: ignore[arg-type]
-        client,
-        instance_id="inst_test",
-        workspace=tmp_path,
-    )
-
-    draft = pb.claim(
-        predicate="docs.exact",
-        value=ExactContent(b"\xff\xfe not utf-8"),
-        rationale="The bytes are the object.",
-        self_source="binary body",
-        **_OBJECT_KIND_CLAIM_DEFAULTS,  # type: ignore[arg-type]
-    )
-
-    assert draft.payload.statement.object.content == b"\xff\xfe not utf-8"
+    pb = Cruxible._from_client(client, instance_id="inst_test", workspace=tmp_path)
+    with pytest.raises(
+        ExactContentTypeError, match="prose lives in Documents; cite a Document section"
+    ):
+        pb.claim(
+            predicate="docs.exact",
+            value=ExactContent(b"\xff\xfe not utf-8"),
+            rationale="The bytes are the object.",
+            self_source="body",
+            **_OBJECT_KIND_CLAIM_DEFAULTS,
+        )
 
 
 def test_exact_content_on_a_literal_predicate_refuses_before_the_wire(
@@ -1468,9 +1437,9 @@ def test_exact_content_on_a_literal_predicate_refuses_before_the_wire(
             **_OBJECT_KIND_CLAIM_DEFAULTS,  # type: ignore[arg-type]
         )
 
-    assert refused.value.code == "cruxible.sdk.exact_content_claim_type_mismatch"
+    assert refused.value.code == "cruxible.sdk.exact_content_retired"
     assert "docs.plain" in str(refused.value)
-    assert "literal" in str(refused.value)
+    assert "cite a Document section" in str(refused.value)
 
 
 def test_a_string_value_reads_the_object_kind_from_the_sets_own_definition(

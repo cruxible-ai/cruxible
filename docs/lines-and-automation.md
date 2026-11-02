@@ -524,27 +524,48 @@ attestations.
 Each ClaimType declares its `value` with the Contract field grammar. Its
 `precedence.roles` orders roles from highest to lowest;
 `precedence.revisable_by_procedures` lists the roles Procedures may replace.
-A mapping's optional `replaces` can only narrow that policy. An identical
-statement on identical source content changes nothing. A one-valued slot
-revises its one eligible holder; several eligible holders report
-`slot_contested`. Protected holders report `held_by_precedence`. A many-valued
-slot adds values without retiring the others.
+A mapping's optional `replaces` can only narrow that policy. The same extracted
+value and record key produce a re-observation of the new Capture, even when
+source bytes, the extract specification or the Procedure version change. The
+re-observation records the new production receipt; the Claim keeps its original
+receipt, the accepted generation stays unchanged, and freshness advances. A one-valued slot revises
+its one eligible holder when the value changes; several eligible holders
+report `slot_contested`. A protected holder with the same value is a counted,
+quiet no-op; a different value reports `held_disagrees` with both values.
+A many-valued slot adds values without retiring the others.
 
 Invalid mapped fields are excluded before any proposal and recorded as typed
-`extract_refused` diagnostics in the run and Line inbox. Positive values may
-write over incomplete input. A ClaimType marked `negative: true` instead uses
-its declared `unknown_member`, or skips the write and reports
-`incomplete_source`. An incomplete input never retires a Claim or revises it to a negative.
-Inbox Contract fields support the same `negative` and `unknown_member` rule.
-Declaring `may_truncate: true` on a Procedure slot makes that call's output
-incomplete.
+`extract_refused` findings. Duplicate keys under `duplicates: refuse_key`
+produce `duplicate_key` findings with the key and every record locator.
+Findings stay in the run report unless the Line explicitly routes their kinds
+to its inbox, for example `findings: {inbox: [extract_refused, duplicate_key]}`.
+Routing is bounded and deduplicated across identical reruns; omitting
+`findings` routes nothing.
+
+A ClaimType declares the members that need complete input, for example
+`requires_complete_input: [fixed, not_affected]` with
+`incomplete_fallback: unknown`. Only those members downgrade when their data
+or control lineage is incomplete; `affected` still writes. Without a fallback,
+the write is skipped and reports `incomplete_source`. An incomplete input
+never replaces a held Claim with a downgraded value. Boolean types may list
+`false` and cannot declare a fallback: incomplete `false` is skipped and
+reported as `incomplete_source`. A fallback must be outside
+`requires_complete_input`; acceptance refuses either violation with a repair.
+Dates, numbers and other types without members cannot declare this policy. Inbox Contract fields use the same member policy. Declaring
+`may_truncate: true` on a Procedure slot makes that call's output incomplete.
 
 A written value retains a `claim-evidence-v2` receipt, including the Capture,
-extract specification, extractor version, record and field location, and
-transforms. Claim derivations use `role: derivation` and `inputs` from exact
-Claim reads in that row's dependency closure; their receipts pin the versions
-read. Derived and provider-measured values remain propose-only until explicit
-Mandate basis scopes are available. Cruxible does not infer attestations.
+extract specification, extractor version, record key and field location,
+transform ids and the claims-node template entry index. `get` derives its
+value source (field, literal or parameter) from the pinned Procedure template.
+Literals and parameters retain the selected row's extraction lineage.
+Reshaping, parsing, casts, canonicalization, filtering and projection preserve
+that basis. `derive` and `aggregate` compute a `derived` value and require
+`role: derivation`; their receipts retain the computing transform ids and
+source extraction receipts. Derivations over Claim reads also bind exact
+`inputs` from that row's dependency closure. Derived and provider-measured
+values remain propose-only until explicit Mandate basis scopes are available.
+Cruxible does not infer attestations.
 
 Absence handling (`when_absent`, `covers`, `enumeration` and `mirror`) is
 refused until B4b supplies its coverage, completeness and witness rails. An
@@ -559,3 +580,8 @@ input; do not substitute an id or a separately fetched version.
 
 `subject.within` is a run-wide Subject set, resolved once before mapping rows;
 it must be independent of `$item`. Project the eligible Subjects before `claims`.
+
+List references select an element by position or project explicitly through a
+`[*]` path segment. For example, `path: [rows, '[*]', subject_id]` produces a
+list of the row's `subject_id` values. An implicit `rows.subject_id` projection
+is refused; a `shape` transform is another explicit way to project the list.

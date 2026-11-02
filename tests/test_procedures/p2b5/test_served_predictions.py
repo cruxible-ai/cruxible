@@ -153,7 +153,16 @@ def _payload(capture_digest: str, *, qualifier: str, value: object) -> ClaimAuth
     )
 
 
-def _predict(instance, owner, capture_digest, *, value="ready", presence=False, rule=None):
+def _predict(
+    instance,
+    owner,
+    capture_digest,
+    *,
+    value="ready",
+    presence=False,
+    rule=None,
+    observation_predicate=None,
+):
     maker = _presence_payload if presence else _payload
     h = _accept_payload(
         instance,
@@ -166,7 +175,7 @@ def _predict(instance, owner, capture_digest, *, value="ready", presence=False, 
         hypothesis=h,
         observation=PredictionObservationSelector(
             subject=subject_address("wi-42"),
-            predicate=PRESENCE_PREDICATE if presence else PREDICATE,
+            predicate=observation_predicate or (PRESENCE_PREDICATE if presence else PREDICATE),
             qualifier="prediction-outcome",
         ),
         rule=rule or (PredictionPresenceRule() if presence else PredictionEqualityRule()),
@@ -398,7 +407,7 @@ def _presence_claim_type() -> ClaimType:
     return base.model_copy(
         update=claim_type_changes(
             predicate=PRESENCE_PREDICATE,
-            value_type={"enum": [False, True, None]},
+            value_type={"type": "boolean"},
             identity=ArtifactIdentity(kind="ClaimType", name=PRESENCE_PREDICATE),
         )
     )
@@ -444,6 +453,21 @@ def test_presence_settles_both_directions(tmp_path: Path, predicted, observed, e
     instance, owner, capture = _world(tmp_path)
     _accept_presence_claim_type(instance, owner)
     contract = _predict(instance, owner, capture, value=predicted, presence=True)
+    if observed is None:
+        before = instance.accepted_coordinate()
+        result = AuthoringIntentCoordinator.for_instance(instance).compile(
+            actor=AuthenticatedActor(actor_id="owner"),
+            payload=_presence_payload(capture, qualifier="prediction-outcome", value=None),
+            canonical_timestamp="2026-09-02T12:02:00.000000Z",
+        )
+        assert result.verdict == "refused"
+        assert any("value_invalid" in d.code for d in result.frontier.diagnostics), (
+            result.frontier.diagnostics
+        )
+        assert instance.accepted_coordinate() == before
+        journal, stream = _journal(instance)
+        assert journal.partition_ids(stream) == ()
+        return
     observation = _accept_payload(
         instance,
         owner,
@@ -547,11 +571,17 @@ def test_attempt_without_settlement_preserves_binding_and_stays_unresolved(
 
 def test_unevaluable_observation_stays_unresolved_until_replaced(tmp_path: Path):
     instance, owner, capture = _world(tmp_path)
+    _accept_presence_claim_type(instance, owner)
+    measurement_predicate = "project.work_item.measurement"
     claim_type = _presence_claim_type().model_copy(
-        update=claim_type_changes(value_type={"enum": [False, True, None, 4]})
+        update=claim_type_changes(
+            value_type={"type": "integer"},
+            predicate=measurement_predicate,
+            identity=ArtifactIdentity(kind="ClaimType", name=measurement_predicate),
+        )
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    tree[claim_type_path(PRESENCE_PREDICATE)] = render_claim_type(claim_type)
+    tree[claim_type_path(measurement_predicate)] = render_claim_type(claim_type)
     _accept_tree(
         instance,
         owner,
@@ -565,16 +595,26 @@ def test_unevaluable_observation_stays_unresolved_until_replaced(tmp_path: Path)
         capture,
         value=True,
         presence=True,
+        observation_predicate=measurement_predicate,
         rule=PredictionThresholdRule(comparison="gte", threshold=3),
     )
-    unknown = _accept_payload(
-        instance,
-        owner,
-        _presence_payload(capture, qualifier="prediction-outcome", value=None),
-        "2026-09-02T12:02:00.000000Z",
+    before = instance.accepted_coordinate()
+    invalid = AuthoringIntentCoordinator.for_instance(instance).compile(
+        actor=AuthenticatedActor(actor_id="owner"),
+        payload=_presence_payload(capture, qualifier="prediction-outcome", value=None).model_copy(
+            update={
+                "statement": _presence_payload(
+                    capture, qualifier="prediction-outcome", value=None
+                ).statement.model_copy(update={"predicate": measurement_predicate})
+            }
+        ),
+        canonical_timestamp="2026-09-02T12:02:00.000000Z",
     )
-    with pytest.raises(PredictionRefused, match="prediction_unsettleable_rule"):
-        _settle(instance, contract, unknown)
+    assert invalid.verdict == "refused"
+    assert any("value_invalid" in d.code for d in invalid.frontier.diagnostics), (
+        invalid.frontier.diagnostics
+    )
+    assert instance.accepted_coordinate() == before
     journal, stream = _journal(instance)
     assert journal.partition_ids(stream) == ()
     assert _retained_activations(instance) == ()
@@ -582,7 +622,11 @@ def test_unevaluable_observation_stays_unresolved_until_replaced(tmp_path: Path)
         instance,
         owner,
         _presence_payload(capture, qualifier="prediction-outcome", value=4).model_copy(
-            update={"revises": unknown.identity.name}
+            update={
+                "statement": _presence_payload(
+                    capture, qualifier="prediction-outcome", value=4
+                ).statement.model_copy(update={"predicate": measurement_predicate})
+            }
         ),
         "2026-09-02T12:04:00.000000Z",
     )
@@ -646,7 +690,7 @@ def test_retained_terminal_settles_exact_investigation_and_replays(
     settled = terminal_kind == "settled"
     path = claim_path(observation.identity.name)
     receipt = TerminalEgressReceiptV4(
-        kind="settle_change_set",
+        kind="claims",
         run_id=run.run_id,
         node_id="settle-observation",
         disposition="settled" if settled else "received",

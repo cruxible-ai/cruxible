@@ -14,9 +14,14 @@ from cruxible_client.authoring.inputs import (
     ProcedureInput,
     ProcedureMandateInput,
 )
-from cruxible_client.contracts.procedures.authored import GuardStep, ProjectStep, ProposeStep
+from cruxible_client.contracts.procedures.authored import (
+    ClaimsStep,
+    GuardStep,
+    ProjectStep,
+    ReadStep,
+)
 from cruxible_client.transport.http import CruxibleClient
-from tests.support.procedures import procedure_spec_data
+from tests.support.procedures import procedure_spec_data, ref
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
 
@@ -179,16 +184,43 @@ def test_the_run_tier_follows_what_the_line_or_procedure_can_do(
             steps=[
                 GuardStep(
                     guard={"op": "eq", "left": {"literal": True}, "right": {"literal": True}},
-                    else_={"goto": "offer"},
+                    else_={"goto": "read-offer"},
                 ),
                 ProjectStep(project="result", fields={"count": 0}, leaf=True),
-                ProposeStep(propose=[{"artifact_kind": "Claim"}], id="offer", result={"count": 0}),
+                ReadStep(
+                    read="offered",
+                    claim_type="project.work_item.slug",
+                    subject="wi-42",
+                    subject_kind="project.work_item",
+                    all=1,
+                    id="read-offer",
+                ),
+                ClaimsStep(
+                    claims=[
+                        {"type": "project.work_item.slug", "value": "wi-42", "role": "normative"}
+                    ],
+                    for_each=ref("$steps.offered"),
+                    subject={"kind": "project.work_item", "key": {"slug": "wi-42"}},
+                    id="offer",
+                ),
             ],
         )
     )
+    from cruxible_client.contracts.authoring.inputs import (
+        ClaimTypeInput,
+        SubjectInput,
+        SubjectKindInput,
+    )
+    from tests.core_support._subject_kind_support import bare_slug_claim_type
+
     change_set = ChangeSetInput(
         kind="change_set",
         members=(
+            ClaimTypeInput(kind="claim_type", claim_type=bare_slug_claim_type("project.work_item")),
+            SubjectKindInput(
+                kind="subject_kind", name="project.work_item", keys=("project.work_item.slug",)
+            ),
+            SubjectInput(kind="subject", subject_kind="project.work_item", key={"slug": "wi-42"}),
             procedure,
             authoring_example("line"),  # type: ignore[arg-type]
             proposer,
@@ -207,7 +239,11 @@ def test_the_run_tier_follows_what_the_line_or_procedure_can_do(
     )
 
     def line_run(name: str) -> object:
-        return playbill_api.playbill_line_run(instance_id, name, request=LineRunRequest(line=name))
+        result = playbill_api.playbill_line_run(
+            instance_id, name, request=LineRunRequest(line=name)
+        )
+        assert result.status == "succeeded", result.model_dump_json()
+        return result
 
     def procedure_run(name: str) -> object:
         return playbill_api.playbill_procedure_run(

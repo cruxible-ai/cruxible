@@ -395,28 +395,18 @@ def test_a_dry_run_of_a_create_reports_the_subject_and_writes_nothing(
 # -- exact content ----------------------------------------------------------------
 
 
-def test_exact_content_takes_the_text_as_value_and_as_its_own_evidence(
-    instance: PlaybillInstance,
-) -> None:
-    text = "Rulings are text.\nThis one ends with a newline.\n"
-    outcome = _write(instance, _set(WI1, "ruling", text))
-    assert outcome.status == "accepted", outcome
-    assert outcome.changes[0].after == text
-    (live,) = read_live_values(
-        instance,
-        instance.accepted_coordinate(),
-        subject_paths=(subject_path(KIND, "wi-1"),),
-        predicates=(f"{KIND}.ruling",),
-    )
-    assert live.value == "sha256:" + hashlib.sha256(text.encode()).hexdigest()
-    revised = _write(instance, _set(WI1, "ruling", "Replaced."))
-    assert revised.status == "accepted" and revised.changes[0].before == text
-    assert revised.changes[0].revises == outcome.changes[0].claim
-
-    mismatch = _write(
-        instance, _set(WI1, "ruling", "Again.", evidence={"kind": "self", "self": "Again.\n"})
-    )
-    assert _refusal(mismatch).code == "cruxible.write.exact_content_evidence_mismatch"
+def test_bounded_native_text_keeps_the_writers_source_evidence(instance: PlaybillInstance) -> None:
+    # A bounded fact is literal; prose is refused with a Document repair.
+    refused = _write(instance, _set(WI1, "ruling", "Rulings are text.\nMore prose.\n"))
+    assert _refusal(refused).code == "cruxible.write.value_type_mismatch"
+    assert "Document section" in _refusal(refused).repair
+    first = _write(instance, _set(WI1, "ruling", "reviewed"))
+    assert first.status == "accepted", first
+    assert first.changes[0].after == "reviewed"
+    revised = _write(instance, _set(WI1, "ruling", "approved"))
+    assert revised.status == "accepted", revised
+    assert revised.changes[0].before == "reviewed"
+    assert revised.changes[0].revises == first.changes[0].claim
 
 
 # -- evidence ---------------------------------------------------------------------
@@ -1665,46 +1655,31 @@ def test_set_with_expect_replaces_only_the_value_it_expected(instance: PlaybillI
 
 
 def test_a_cut_value_is_never_offered_as_the_value_to_expect(instance: PlaybillInstance) -> None:
-    """A long held value shows as a preview; the repair names the read of the whole one."""
-
-    long_title = "A long title. " * 60
-    first = _write(instance, _set(WI1, "title", long_title))
-    assert first.status == "accepted", first
-
-    refusal = _refusal(_write(instance, _set(WI1, "title", "Short", expect="Other")))
-
-    assert refusal.code == "cruxible.write.slot_changed"
-    # The preview is quoted compactly, by its head and whole length.
-    assert f"({len(long_title)} chars), not 'Other' as expected" in refusal.message
-    assert "TruncatedText(" not in refusal.message and len(refusal.message) < 300
-    claim = first.changes[0].claim
-    assert refusal.repair == (
-        "Read it again; to write over what it holds now, expect its whole value, "
-        f'which get({claim}, detail="evidence") reads'
-    )
-    assert _write(instance, _set(WI1, "title", "Short", expect=long_title)).status == "accepted"
+    # D-R13 refuses prose before a Claim summary could need a whole-value preview.
+    head = instance.accepted_coordinate()
+    outcome = _write(instance, _set(WI1, "title", "A long title. " * 60))
+    refusal = _refusal(outcome)
+    assert refusal.code == "cruxible.write.value_type_mismatch"
+    assert "max_len 256" in refusal.message
+    assert len(refusal.message) < 300
+    assert instance.accepted_coordinate() == head
 
 
-def test_an_exact_content_marker_is_never_offered_as_the_value_to_expect(
-    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+def test_retired_exact_content_expect_markers_refuse_at_the_typed_boundary(
+    instance: PlaybillInstance,
 ) -> None:
-    """A held value with no text to show refuses typed, naming the whole read; never a crash."""
-
-    from cruxible_client.contracts.read_values import ExactContentRef
-
-    first = _write(instance, _set(WI1, "ruling", "The ruling.\n"))
+    # Retired marker-shaped data is never interpreted as a native string.
+    first = _write(instance, _set(WI1, "ruling", "reviewed"))
     assert first.status == "accepted", first
-    marker = ExactContentRef(exact_content="unavailable", content_digest="sha256:" + "ab" * 32)
-    monkeypatch.setattr(write_verbs.ExactContentReader, "value", lambda *_args: marker)
+    marker = {"exact_content": "unavailable", "content_digest": "sha256:" + "ab" * 32}
+    from pydantic import ValidationError
 
-    refusal = _refusal(_write(instance, _set(WI1, "ruling", "Another.", expect="Other")))
-
-    assert refusal.code == "cruxible.write.slot_changed"
-    assert "holds <unavailable sha256:abababababab>, not 'Other' as expected" in refusal.message
-    assert refusal.repair == (
-        "Read it again; to write over what it holds now, expect its whole value, "
-        f'which get({first.changes[0].claim}, detail="evidence") reads'
-    )
+    with pytest.raises(
+        ValidationError, match=r"changes\.0\.set\.expect\.str\n\s+Input should be a valid string"
+    ):
+        WriteRequest.model_validate(
+            {"because": "Reviewed.", "changes": [_set(WI1, "ruling", "approved", expect=marker)]}
+        )
 
 
 def test_expect_is_checked_like_a_value_before_it_is_compared(instance: PlaybillInstance) -> None:
@@ -1862,7 +1837,7 @@ def test_a_dry_run_takes_the_write_path_and_writes_nothing(instance: PlaybillIns
     preview = _write(
         instance,
         _set(WI1, "status", "done"),
-        _set(f"{KIND}/wi-new", "ruling", "A new ruling nobody stored yet.\n"),
+        _set(f"{KIND}/wi-new", "ruling", "A new ruling nobody stored yet."),
         dry_run=True,
     )
     assert preview.status == "would_accept", preview

@@ -315,29 +315,6 @@ def _checked(
                 digest=digest,
             )
         citing = citing_live_claims(connection, digest)
-        exact = [
-            str(row[0])
-            for claim in citing
-            for row in connection.execute(
-                "SELECT identity FROM claims WHERE identity=? AND object_content_digest IN ("
-                + ",".join("?" for _ in bodies)
-                + ")",
-                (claim, *bodies),
-            )
-        ]
-        if exact:
-            claim = exact[0].removeprefix("Claim:")
-            raise _refuse(
-                "cruxible.capture.erasure_body_in_accepted_state",
-                f"Capture {digest}'s body is also the exact content of {claim}, "
-                "which accepted state keeps",
-                repair=RepairOperation(operation="cruxible.get", arguments={"ref": claim}),
-                repair_line=(
-                    "Erasure removes evidence bodies only; a Claim's value is accepted state "
-                    "and stays, with its history"
-                ),
-                digest=digest,
-            )
         left = claims_left_without_evidence(instance, connection, citing, erasing=frozenset(bodies))
     return envelope, contract, bodies, citing, left
 

@@ -37,9 +37,9 @@ from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     CaptureEgressNode,
+    ClaimsNode,
     ProcedureDefinition,
     ProjectNode,
-    ProposeChangeSetNode,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import contract_digest
@@ -199,7 +199,7 @@ def _procedure_definition(
     contract_pin: ArtifactPin,
     output_contract_pin: ArtifactPin,
     workspace: Path,
-    terminal_kind: str = "propose_change_set",
+    terminal_kind: str = "claims",
 ) -> ProcedureDefinition:
     from tests.support.procedures import contract_pin as boundary_pin
 
@@ -247,9 +247,36 @@ def _procedure_definition(
             ),
             ProjectNode(
                 node_id="shape",
-                fields={"severity": "$steps.advisory.content.text"},
+                fields={
+                    "severity": "$steps.advisory.content.text",
+                    **(
+                        {
+                            "rows": [
+                                {
+                                    "record": "/",
+                                    "key": {},
+                                    "fields": {"observed": "$steps.advisory.content.text"},
+                                }
+                            ]
+                        }
+                        if terminal_kind != "emit_capture"
+                        else {}
+                    ),
+                },
                 as_="result",
-                next="propose",
+                next="summary" if terminal_kind != "emit_capture" else "propose",
+            ),
+            *(
+                (
+                    ProjectNode(
+                        node_id="summary",
+                        fields={"severity": "$steps.result.severity"},
+                        as_="summary",
+                        next="propose",
+                    ),
+                )
+                if terminal_kind != "emit_capture"
+                else ()
             ),
             (
                 CaptureEgressNode(
@@ -259,11 +286,22 @@ def _procedure_definition(
                     result="$steps.result",
                 )
                 if terminal_kind == "emit_capture"
-                else ProposeChangeSetNode(
-                    node_id="propose", candidate_templates=(_item(),), result="$steps.result"
+                else ClaimsNode(
+                    node_id="propose",
+                    for_each="$steps.result.rows",
+                    subject={"kind": SUBJECT_KIND, "key": {"slug": SUBJECT_ID}},
+                    claims=[
+                        {
+                            "type": {"target": {"kind": "ClaimType", "name": PREDICATE}},
+                            "value": "high",
+                            "role": "observation",
+                            "rationale": "Severity as read from the accepted advisory document.",
+                        }
+                    ],
                 )
             ),
         ),
+        returns="summary" if terminal_kind != "emit_capture" else "result",
         hard_caps=procedure_hard_caps(preset="source"),
     )
 
@@ -347,7 +385,7 @@ def _claim_proof(
     return ClaimViewRecord.model_validate(proof)
 
 
-@pytest.mark.parametrize("terminal_kind", ["propose_change_set", "emit_capture"])
+@pytest.mark.parametrize("terminal_kind", ["claims", "emit_capture"])
 def test_the_rung2_loop_runs_over_public_surfaces_only(
     installed_host: tuple[TestClient, str, Path, Path],
     terminal_kind: str,

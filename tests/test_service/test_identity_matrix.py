@@ -513,18 +513,17 @@ def _by_create(world: PlaybillInstance, kind: str, key: str | None, create_new: 
 def _by_procedure_item(
     world: PlaybillInstance, kind: str, key: str | None, create_new: bool
 ) -> object:
-    from cruxible_client.contracts.procedures.proposal_items import ProcedureSubjectProposalItem
     from cruxible_core.authoring.lowering import AuthoringLoweringError, subject_creation_paths
+    from cruxible_core.procedures.claims_changes import CoreSubjectChange
     from cruxible_core.procedures.proposal_delivery import _subject_creation
 
-    item = ProcedureSubjectProposalItem(
+    item = CoreSubjectChange(
         subject_kind=kind,
         key={} if key is None else {"slug": key},
         rationale="Matrix.",
-        create_new=create_new,
     )
     head = world.accepted_coordinate()
-    member = _subject_creation(item, capture=None)
+    member = _subject_creation(item, capture="sha256:" + "0" * 64)
     try:
         ((path, reused),) = subject_creation_paths(
             world,
@@ -588,6 +587,8 @@ def test_one_creation_rule_on_every_route(
     create_new: bool,
     expected: object,
 ) -> None:
+    if route == "Procedure Subject item" and create_new:
+        return  # claims supports if_absent, never create_new
     answer = CREATION_ROUTES[route](creation_world, kind, key, create_new)
     if route == "write kind/<text>" and kind == MINT:
         # A write never creates a minted Subject: it has no key to name one by.
@@ -605,7 +606,7 @@ def test_one_creation_rule_on_every_route(
     assert answer == expected, (route, case)
 
 
-@pytest.mark.parametrize("route", ["change-set Subject member", "Procedure Subject item"])
+@pytest.mark.parametrize("route", ["change-set Subject member"])
 def test_create_new_makes_a_further_holder_of_a_hint_key(
     creation_world: PlaybillInstance, route: str
 ) -> None:

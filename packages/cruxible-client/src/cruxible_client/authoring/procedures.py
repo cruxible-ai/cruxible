@@ -32,6 +32,9 @@ from cruxible_client.contracts.procedures.authored import (
     AggregateSpec,
     BranchAction,
     CallStep,
+    ClaimsStep,
+    ClaimsSubjectSpec,
+    ClaimTemplateSpec,
     DedupeSpec,
     DeriveCaseSpec,
     DeriveSpec,
@@ -50,7 +53,6 @@ from cruxible_client.contracts.procedures.authored import (
     ProcedureSpec,
     ProcedureSpecError,
     ProjectStep,
-    ProposeStep,
     ReadStep,
     RepeatBody,
     RepeatCall,
@@ -59,7 +61,6 @@ from cruxible_client.contracts.procedures.authored import (
     ReturnFields,
     ReturnFrom,
     SelectStep,
-    SettleStep,
     ShapeFieldSpec,
     ShapeSpec,
     Step,
@@ -84,7 +85,7 @@ from cruxible_client.contracts.procedures.models import (
     derived_terminal_capability,
 )
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
-from cruxible_client.contracts.procedures.views import query_view_schema
+from cruxible_client.contracts.procedures.views import query_view_fields
 from cruxible_client.contracts.records import RecordConstructor
 from cruxible_client.contracts.refs import Ref, item_ref, make_ref
 from cruxible_client.contracts.shapes import (
@@ -100,6 +101,7 @@ from cruxible_client.contracts.shapes import (
     Operand,
     Predicate,
     Presence,
+    parse_contract_ref,
 )
 
 
@@ -114,8 +116,6 @@ def procedure_record_constructor(
     its coordinate (with the Contracts they nest), as its readiness read returns
     them.
     """
-
-    from cruxible_client.contracts.provider_operations import contract_schema_view
 
     pin = (
         artifact.definition.contract_in
@@ -133,7 +133,8 @@ def procedure_record_constructor(
     if found is None:
         raise ValueError(f"the Procedure's {direction} Contract {pin.target.qualified} is unread")
     return RecordConstructor(
-        contract_schema_view(found, lambda ref: by_identity.get(ref.identity)),
+        found,
+        _resolve=lambda ref: by_identity.get(ref.identity),
         _omittable_fields=frozenset(artifact.definition.parameter_defaults)
         if direction == "params"
         else frozenset(),
@@ -365,7 +366,7 @@ class Sequence:
         """Read accepted state through a named Query; it runs to the end."""
 
         step = ReadStep(read=name, query=query, params=dict(params or {}), id=id, next=next)
-        return self._add(step, name, tuple(query_view_schema().fields))
+        return self._add(step, name, tuple(query_view_fields()))
 
     def read_claims(
         self,
@@ -452,7 +453,16 @@ class Sequence:
                 next=next,
             )
         )
-        return self._add(step, name, tuple(extract_view_fields(None)))
+        return self._add(
+            step,
+            name,
+            tuple(
+                extract_view_fields(
+                    parse_contract_ref(row),
+                    (self._hard_caps.items if self._hard_caps else None) or 5000,
+                )
+            ),
+        )
 
     def project(
         self,
@@ -610,27 +620,31 @@ class Sequence:
             )
         )
 
-    def propose(
+    def propose(self, *args: Any, **kwargs: Any) -> Handle:
+        raise ProcedureSpecError("retired_node", "propose", "Use the claims node via .claims().")
+
+    def settle(self, *args: Any, **kwargs: Any) -> Handle:
+        raise ProcedureSpecError("retired_node", "settle", "Use the claims node via .claims().")
+
+    def claims(
         self,
-        candidates: Ref | tuple[Template, ...],
+        templates: tuple[ClaimTemplateSpec, ...],
         *,
-        result: Template = None,
+        for_each: Ref,
+        subject: ClaimsSubjectSpec,
+        where: Predicate | None = None,
         id: str | None = None,
     ) -> None:
-        """Propose Claims: fixed item templates, or one item per element of a list."""
-
-        self._steps.append(ProposeStep(propose=candidates, result=result, id=id))
-
-    def settle(
-        self,
-        candidates: Ref | tuple[Template, ...],
-        *,
-        result: Template = None,
-        id: str | None = None,
-    ) -> None:
-        """Settle Claims under the one covering settle grant, or fall back."""
-
-        self._steps.append(SettleStep(settle=candidates, result=result, id=id))
+        """Map typed records to Claims; the run's Mandate chooses proposal or settlement."""
+        self._steps.append(
+            ClaimsStep(
+                claims=templates,
+                for_each=for_each,
+                subject=subject,
+                where=where,
+                id=id,
+            )
+        )
 
     def emit(
         self,

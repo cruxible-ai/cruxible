@@ -6,6 +6,8 @@ import base64
 import hashlib
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts.authoring.models import (
     AuthoringExactContentObject,
     WorkingAnchorWindow,
@@ -15,20 +17,17 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.captures import foreign_source_capture_contract
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
-    ExactContentClaimObject,
     parse_claim,
 )
 from cruxible_core.authoring.lowering import lower_authoring
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from tests.core_support._support import initialize_local
-from tests.support.claim_types import claim_type_changes
 from tests.test_authoring.test_authoring_preflight import (
     TIMESTAMP,
     _coordinator,
     _seed_claim_surface,
     _self_source_payload,
 )
-from tests.test_claims.test_claims import _claim_type
 
 
 def test_flow_b_lowers_to_retained_copy_self_source_without_writer_digests(
@@ -117,46 +116,27 @@ def test_flow_a_binds_only_the_selection_and_can_pass_existing_claim_laws(
     assert claim.backing.source_mappings[0].spans[0].content_digest == selected_digest
 
 
-def test_exact_content_body_digest_and_span_are_daemon_derived(tmp_path: Path) -> None:
+def test_exact_content_claim_input_refuses_with_document_repair(tmp_path: Path) -> None:
+    from cruxible_core.authoring.lowering import AuthoringLoweringError
+
     instance, owner = initialize_local(tmp_path)
-    # The object-kind law admits an object only on the ClaimType kind that declares
-    # it, and exact_content is its own first-class ClaimType.object_kind. The shared
-    # fixture type declares a literal, so this flow seeds the exact_content type it
-    # actually authors against.
-    _seed_claim_surface(
-        instance,
-        owner,
-        claim_type_override=_claim_type().model_copy(
-            update=claim_type_changes(value_type="exact_content")
-        ),
-    )
+    _seed_claim_surface(instance, owner)
     coordinator = _coordinator(instance)
-    actor = AuthenticatedActor(actor_id="owner")
-    body = b"A concise governed status explanation."
     payload = _self_source_payload().model_copy(
         update={
             "statement": _self_source_payload().statement.model_copy(
                 update={
                     "object": AuthoringExactContentObject(
-                        content_base64=base64.b64encode(body).decode("ascii")
+                        content_base64=base64.b64encode(b"Prose.").decode()
                     )
                 }
             )
         }
     )
-    intent = coordinator.create(
-        actor=actor,
-        payload=payload,
-        canonical_timestamp=TIMESTAMP,
-    ).intent
-
-    lowered = lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
-    claim_path = next(
-        path for path, _content in lowered.changed_members if path.startswith("claims/")
-    )
-    claim = parse_claim(lowered.proposed_tree[claim_path], path=claim_path)
-
-    assert isinstance(claim.statement.object, ExactContentClaimObject)
-    assert claim.statement.object.content_digest == "sha256:" + hashlib.sha256(body).hexdigest()
-    assert claim.statement.object.span is not None
-    assert claim.statement.object.span.end_byte == len(body)
+    actor = AuthenticatedActor(actor_id="owner")
+    intent = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
+    with pytest.raises(
+        AuthoringLoweringError, match="Prose lives in Documents; cite a Document section"
+    ) as refused:
+        lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
+    assert refused.value.code == "cruxible.claim.exact_content_retired"

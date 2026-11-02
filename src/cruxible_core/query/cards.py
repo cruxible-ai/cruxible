@@ -50,6 +50,7 @@ from cruxible_client.contracts.discovery import (
 from cruxible_client.contracts.providers import ProviderV1
 from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import FieldType, render_type
 from cruxible_client.contracts.source_references import CoverageDescriptor
 from cruxible_core.claims.claim_slots import classify_claim_slot
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -191,10 +192,9 @@ class ClaimTypeCardV1(_StrictCardModel):
     artifact_digest: str
     predicate: str
     allowed_subject_kinds: tuple[str, ...]
-    object_kind: Literal["literal", "subject", "exact_content"]
-    allowed_object_subject_kinds: tuple[str, ...] = ()
-    literal_schema_digest: str | None = None
-    literal_schema_summary: str | None = None
+    value: FieldType
+    value_type_digest: str | None = None
+    value_type_summary: str | None = None
     cardinality: Literal["one", "many"]
     permitted_roles: tuple[str, ...]
     referent_sensitivity: Literal["identity", "shell"]
@@ -208,7 +208,7 @@ class ClaimTypeCardV1(_StrictCardModel):
     expansion_links: tuple[GovernedOperationReference, ...] = ()
     coverage: CoverageDescriptor
 
-    @field_validator("artifact_digest", "structural_signature_digest", "literal_schema_digest")
+    @field_validator("artifact_digest", "structural_signature_digest", "value_type_digest")
     @classmethod
     def _digest(cls, value: str | None) -> str | None:
         if value is not None:
@@ -426,24 +426,13 @@ def _policy_summaries(claim_type: ClaimType) -> tuple[InterfacePolicySummaryV1, 
     return tuple(summaries)
 
 
-def _literal_schema_summary(claim_type: ClaimType) -> tuple[str | None, str | None]:
-    """Return the literal schema digest and a one-line shape, never the schema body."""
+def _value_type_summary(claim_type: ClaimType) -> tuple[str | None, str | None]:
+    """Return the native value type digest and its compact spelling."""
 
-    schema = claim_type.literal_schema
-    if schema is None:
-        return (None, None)
-    declared = schema.get("type")
-    parts = [f"type={declared}" if declared is not None else "type=unconstrained"]
-    if "enum" in schema:
-        enumerated = schema["enum"]
-        parts.append(f"enum={len(enumerated) if isinstance(enumerated, list) else 1}")
-    if "const" in schema:
-        parts.append("const=1")
-    if "format" in schema:
-        parts.append(f"format={schema['format']}")
+    value = claim_type.value.model_dump(mode="json")
     return (
-        typed_digest(Sha256Value, INTERFACE_POLICY_DIGEST_DOMAIN, schema).tagged,
-        " ".join(parts),
+        typed_digest(Sha256Value, INTERFACE_POLICY_DIGEST_DOMAIN, value).tagged,
+        render_type(claim_type.value),
     )
 
 
@@ -619,7 +608,7 @@ def build_claim_type_card(
         raise DiscoveryError("a ClaimType card requires the ClaimType vocabulary entry")
     truncated: set[str] = set()
     reasons: set[str] = set()
-    schema_digest, schema_summary = _literal_schema_summary(claim_type)
+    schema_digest, schema_summary = _value_type_summary(claim_type)
     bases = _match_bases(entry, budget=budget, reasons=reasons)
     if "term_budget_exceeded" in reasons:
         truncated.add("match_bases")
@@ -653,10 +642,9 @@ def build_claim_type_card(
         artifact_digest=claim_type_digest(claim_type).tagged,
         predicate=claim_type.predicate,
         allowed_subject_kinds=claim_type.allowed_subject_kinds,
-        object_kind=claim_type.object_kind,
-        allowed_object_subject_kinds=claim_type.allowed_object_subject_kinds,
-        literal_schema_digest=schema_digest,
-        literal_schema_summary=schema_summary,
+        value=claim_type.value,
+        value_type_digest=schema_digest,
+        value_type_summary=schema_summary,
         cardinality=claim_type.cardinality,
         permitted_roles=claim_type.permitted_roles,
         referent_sensitivity=claim_type.referent_sensitivity,

@@ -320,7 +320,6 @@ def _claim_value_row(claim: Any, *, verdict: object, status: str) -> ClaimValueR
     """One Claim's value row, for every statement object variant."""
 
     from cruxible_client.contracts.claims import (
-        ExactContentClaimObject,
         NoneClaimObject,
         SubjectClaimObject,
     )
@@ -329,8 +328,6 @@ def _claim_value_row(claim: Any, *, verdict: object, status: str) -> ClaimValueR
     claim_object = statement.object
     if isinstance(claim_object, SubjectClaimObject):
         value: object = claim_object.address.artifact_path
-    elif isinstance(claim_object, ExactContentClaimObject):
-        value = claim_object.content_digest
     elif isinstance(claim_object, NoneClaimObject):
         # A none states no value: ``object`` carries the unit it says is empty.
         value = None

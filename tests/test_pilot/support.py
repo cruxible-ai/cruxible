@@ -228,6 +228,7 @@ def pilot_world(tmp_path: Path, fixture: str, *, spec: Any = None) -> tuple[Any,
     install(
         instance,
         selected,
+        findings=("extract_refused", "duplicate_key"),
         parameters={
             "logical_source": "cisa.kev.catalog" if kev else "first.epss",
             "relative_path": "data/" + fixture,

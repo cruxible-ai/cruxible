@@ -14,7 +14,6 @@ from pathlib import Path
 
 from cruxible_client import (
     Cardinality,
-    ClaimObjectKind,
     ClaimRole,
     Cruxible,
     Disposition,
@@ -60,9 +59,7 @@ def run(
     slug = cx.claim_type(
         predicate=SLUG,
         subject_kinds=("sdk.demo",),
-        object_kind=ClaimObjectKind.LITERAL,
-        value_schema={"minLength": 1, "type": "string"},
-        object_subject_kinds=(),
+        value_type="string{min_len: 1, max_len: 256}",
         cardinality=Cardinality.ONE,
         permitted_roles=(ClaimRole.NORMATIVE,),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
@@ -78,9 +75,7 @@ def run(
     claim_type = cx.claim_type(
         predicate=PREDICATE,
         subject_kinds=("sdk.demo",),
-        object_kind=ClaimObjectKind.LITERAL,
-        value_schema={"type": "integer"},
-        object_subject_kinds=(),
+        value_type="int",
         cardinality=Cardinality.ONE,
         permitted_roles=(ClaimRole.NORMATIVE,),
         referent_sensitivity=ReferentSensitivity.IDENTITY,

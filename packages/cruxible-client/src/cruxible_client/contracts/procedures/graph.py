@@ -25,7 +25,6 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     ProcedureNode,
     ProjectNode,
-    ProposeChangeSetNode,
     ReadNode,
     RepeatNode,
     SelectNode,
@@ -91,7 +90,7 @@ def _reference_templates(
 ) -> Iterator[tuple[str, object]]:
     """Yield only fields whose values the runtime resolves as references."""
 
-    if isinstance(node, CaptureEgressNode | ProposeChangeSetNode):
+    if isinstance(node, CaptureEgressNode):
         yield "result", node.result
     if isinstance(node, ClaimsNode):
         yield "for_each", node.for_each
@@ -132,12 +131,6 @@ def _reference_templates(
         if node.for_each is not None:
             yield "for_each", node.for_each
         yield "fields", node.fields
-    elif isinstance(node, ProposeChangeSetNode):
-        templates = node.candidate_templates
-        yield (
-            "candidate_templates",
-            templates if isinstance(templates, tuple) else templates.model_dump(mode="json"),
-        )
 
 
 def reference_templates(node: ProcedureNode) -> Iterator[tuple[str, object]]:

@@ -19,7 +19,6 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_path,
     procedure_runnability,
 )
-from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.contracts import (
     AcceptedProcedureContractValidator,
     ProcedureContractItemBudgetExceeded,
@@ -76,28 +75,14 @@ from tests.test_ledger.test_activation import _sign
 READ_TIME = datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
 
 
-def test_list_contract_schema_is_recursive_without_changing_scalar_bytes() -> None:
-    scalar = PropertySchema(type="string")
-    assert "item_fields" not in scalar.model_dump(mode="json")
+def test_native_list_types_require_a_bound_and_keep_the_nested_contract():
+    from cruxible_client.contracts.shapes import parse_type, render_type
 
-    schema = PropertySchema(
-        type="list",
-        item_fields={
-            "id": PropertySchema(type="string"),
-            "parts": PropertySchema(
-                type="list",
-                item_fields={"value": PropertySchema(type="int")},
-            ),
-        },
-    )
-    assert schema.item_fields is not None
-    assert schema.item_fields["parts"].item_fields is not None
-    with pytest.raises(ValueError, match="require item_fields"):
-        PropertySchema(type="list")
-    with pytest.raises(ValueError, match="only allowed"):
-        PropertySchema(type="string", item_fields={})
-    with pytest.raises(ValueError, match="may not be primary_key"):
-        PropertySchema(type="list", item_fields={}, primary_key=True)
+    typed = parse_type("list<test.row@1>{max_items: 8}")
+    assert typed.item.contract.name == "test.row" and typed.max_items == 8
+    assert render_type(typed) == "list<test.row@1>{max_items: 8}"
+    with pytest.raises(ValueError, match="max_items"):
+        parse_type("list<int>")
 
 
 #: One work item as a Query row: what a read of the work-item Query yields.

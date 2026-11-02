@@ -19,7 +19,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from cruxible_client.contracts.builtin_claim_types import (
     SEMANTIC_SUBJECT_KIND,
@@ -33,6 +33,7 @@ from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import ClaimType, effective_canonical_form
 from cruxible_client.contracts.compact_query import QueryFilterOperator
 from cruxible_client.contracts.identity_normalizers import KeyNormalizer
+from cruxible_client.contracts.shapes import subject_value_kinds, value_members
 from cruxible_client.contracts.subject_kinds import SubjectKind
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_identity import (
@@ -58,7 +59,6 @@ ValueType = Literal[
     "timestamp",
     "date",
     "subject",
-    "exact_content",
     "json",
 ]
 """How a predicate's values compare. ``json`` is a literal with no scalar schema type."""
@@ -88,7 +88,6 @@ _OPERATORS: dict[str, frozenset[str]] = {
     "timestamp": frozenset({"eq", "ne", "lt", "lte", "gt", "gte", "in", "exists"}),
     "date": frozenset({"eq", "ne", "lt", "lte", "gt", "gte", "in", "exists"}),
     "subject": frozenset({"eq", "ne", "in", "exists", "contains"}),
-    "exact_content": frozenset({"exists"}),
     "json": frozenset({"eq", "ne", "in", "exists"}),
 }
 _SUBJECT_ID_OPERATORS = frozenset({"eq", "ne", "lt", "lte", "gt", "gte", "in", "contains"})
@@ -158,31 +157,21 @@ class PredicateInfo:
 
 
 def value_type_of(claim_type: ClaimType) -> tuple[ValueType, tuple[str, ...]]:
-    """Classify a ClaimType's object: its comparison type and any enum members."""
-
-    if claim_type.object_kind == "subject":
-        return "subject", ()
-    if claim_type.object_kind == "exact_content":
-        return "exact_content", ()
-    schema = claim_type.literal_schema or {}
-    members = schema.get("enum")
-    if isinstance(members, list) and members and all(isinstance(item, str) for item in members):
-        return "enum", tuple(str(item) for item in members)
-    declared = schema.get("type")
-    if declared == "string":
-        fmt = schema.get("format")
-        if fmt == "date-time":
-            return "timestamp", ()
-        if fmt == "date":
-            return "date", ()
-        return "string", ()
-    if declared == "integer":
-        return "integer", ()
-    if declared == "number":
-        return "decimal", ()
-    if declared == "boolean":
-        return "boolean", ()
-    return "json", ()
+    value = claim_type.value
+    return cast(
+        ValueType,
+        {
+            "subject": "subject",
+            "string": "string",
+            "int": "integer",
+            "number": "decimal",
+            "decimal": "decimal",
+            "bool": "boolean",
+            "date": "date",
+            "datetime": "timestamp",
+            "enum": "enum",
+        }.get(value.kind, "json"),
+    ), value_members(value)
 
 
 @dataclass(frozen=True)
@@ -341,10 +330,10 @@ def load_query_vocabulary(
                 members=members,
                 cardinality=claim_type.cardinality,
                 subject_kinds=tuple(claim_type.allowed_subject_kinds),
-                object_kinds=tuple(claim_type.allowed_object_subject_kinds),
+                object_kinds=tuple(subject_value_kinds(claim_type.value)),
             )
             kinds.update(concrete_subject_kinds(claim_type.allowed_subject_kinds))
-            kinds.update(claim_type.allowed_object_subject_kinds)
+            kinds.update(subject_value_kinds(claim_type.value))
         kinds.update(
             str(row[0])
             for row in projection.typed.connection.execute(
@@ -512,7 +501,7 @@ def check_value(
         return value
     value_type = info.value_type
     value = coerce_text_spelling(value, value_type)
-    if value_type not in {"subject", "exact_content"}:
+    if value_type != "subject":
         # Canonical before any check: an enum member is matched in the form the
         # predicate stores its values in.
         value = canonical_operand(info, value, field_path=field_path)

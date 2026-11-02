@@ -206,16 +206,16 @@ def test_the_one_format_pins_its_exact_wire_and_digest() -> None:
     )
 
     assert hashlib.sha256(render_claim_type(original)).hexdigest() == (
-        "ef2ae633b12d458c671da3055db4a3f0b17a81eb370eb77914a5894008793ab3"
+        "65fa7fb2dde28ff5c74d0e28f1ea11cf3a5c685992449b7bf548ad5952802aa1"
     )
     assert claim_type_digest(original).tagged == (
-        "sha256:78e9e2a8f95c2d79702c1ec1be27f794543c80658b818262c2964b82d0b047c1"
+        "sha256:086d30be223b0a7fbfd9f7af075bfa7cfe14a066afd0be7c47451843f8f7e566"
     )
     assert hashlib.sha256(render_claim_type(successor)).hexdigest() == (
-        "5b76daf2adf4e504a0fa72e8a0735421e4d987baf45676871b9a1766039836c0"
+        "0687b8d9a25e8df589ccf67df0c5565692f5014d7f3d3bc6addcf2c734954453"
     )
     assert claim_type_digest(successor).tagged == (
-        "sha256:5c053ff028cdf86d8481fc4f3d09a9ddf7b06e43aaa7c90d39c6a43213b645d8"
+        "sha256:770c549c4db2670164fa4ebc8e732a7a62ea685f1df91239c0d2f0b945c54c1a"
     )
     # Absent optional members are omitted, never written as null placeholders.
     for rendered in (render_claim_type(original), render_claim_type(successor)):

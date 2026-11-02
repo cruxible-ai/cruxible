@@ -96,12 +96,9 @@ Document's body is read with `get Document:<name> --detail body`.
 
 ## Retention
 
-A ruling or other exact-content value shows its text, read by digest from the
-body store, and `sources/LEDGER` reads each cited Capture's envelope the same
-way. Accepted bodies and Captures are retained for as long as their Claim is in
-accepted history, so what the floor shows is fixed by the coordinate. One that
-is nevertheless lost refuses a fresh render as an integrity failure; the floor
-is never published differently for the same accepted state.
+Claim values render from their accepted native objects. Prose belongs in
+Documents. `sources/LEDGER` records each cited Capture's envelope and retained
+body status; missing or damaged evidence is recorded explicitly.
 
 A change's rationale is the one `get` shows: the admission that accepted it,
 which never changes; `manifest.json` binds every rationale the changes/ files

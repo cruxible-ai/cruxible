@@ -1446,7 +1446,7 @@ def repin_projection_block(
     Omitted body preserves prose. ``render`` instead writes the body from the
     block's one query backing (``render_query_block_body``), so a rendered
     table or list needs no hand-written prose. Compact markers are the default; their manifests
-    are retained before the page write. Use a reviewed exact-content package Claim
+    are retained before the page write. Use a reviewed package Document
     for ledger recovery.
     The whole-file compare-and-swap preserves concurrent author edits.
     ``dry_run`` computes and checks the stamp on this same path and stops before

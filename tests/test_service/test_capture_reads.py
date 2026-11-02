@@ -12,7 +12,6 @@ from cruxible_core.errors import PermissionDeniedError
 from cruxible_core.service.evidence.capture_reads import (
     service_read_playbill_capture,
 )
-from tests.core_support._exact_content_support import seed_exact_content
 from tests.test_authoring.test_authoring_existing_capture import shared_capture_world
 
 
@@ -59,31 +58,16 @@ def test_capture_read_denies_before_accessing_instance() -> None:
         )
 
 
-def test_an_exact_content_digest_refuses_naming_the_claim_whose_value_it_is(
-    tmp_path: Path,
-) -> None:
-    """Regression: the digest of an exact-content value is not a Capture.
+def test_a_document_body_digest_is_not_a_capture(tmp_path: Path) -> None:
+    from tests.core_support._support import initialize_local
 
-    It names the stored bytes the Claim IS, so reading it as a Capture envelope
-    failed "strict versioned validation". The read now says what the bytes are
-    and points at get on the Claim, which shows them as text.
-    """
-
-    instance, seeded = seed_exact_content(tmp_path, {"wi-42": b"The ruling.\n"})
-    ruling = seeded["wi-42"]
-
+    instance, _owner = initialize_local(tmp_path)
+    digest = instance.store_document_body(b"The ruling.\n").digest
     with pytest.raises(ReadRefusalError) as refused:
         service_read_playbill_capture(
             instance,
-            request=CaptureReadRequest(capture_digest=ruling.digest),
+            request=CaptureReadRequest(capture_digest=digest),
             access=BodyAccessContext(principal_id="reader", can_read_body=True),
         )
-
-    error = refused.value
-    assert error.error_code == "cruxible.capture.not_a_capture"
-    assert error.http_status == 404
-    assert error.candidates == (ruling.claim_id,)
-    assert error.repair is not None and error.repair.operation == "cruxible.get"
-    assert error.repair.arguments == {"ref": ruling.claim_id}
-    assert "strict versioned validation" not in str(error)
-    assert f"the exact content of Claim {ruling.claim_id}" in str(error)
+    assert refused.value.error_code == "cruxible.capture.not_a_capture"
+    assert refused.value.http_status == 404

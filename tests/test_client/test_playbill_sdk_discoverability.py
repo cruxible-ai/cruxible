@@ -222,11 +222,10 @@ def test_read_whole_and_the_values_it_reads_are_top_level_names() -> None:
     """``cx.read_whole(preview)`` raises WholeValueUnavailable; both come from one import."""
 
     from cruxible_client.authoring.sdk_types import WholeValueUnavailable
-    from cruxible_client.contracts.read_values import ExactContentRef, ShownObject, TruncatedText
+    from cruxible_client.contracts.read_values import ShownObject, TruncatedText
 
     assert cruxible_client.WholeValueUnavailable is WholeValueUnavailable
     assert cruxible_client.TruncatedText is TruncatedText
     assert cruxible_client.ShownObject is ShownObject
-    assert cruxible_client.ExactContentRef is ExactContentRef
-    for name in ("WholeValueUnavailable", "TruncatedText", "ShownObject", "ExactContentRef"):
+    for name in ("WholeValueUnavailable", "TruncatedText", "ShownObject"):
         assert name in cruxible_client.__all__

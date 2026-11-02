@@ -443,26 +443,21 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
     assert "accepted_coordinate" not in payload
 
 
-def test_exact_content_prints_as_text_and_a_marker_says_why_when_it_cannot(
+def test_bounded_native_text_prints_on_the_card_and_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from cruxible_client.contracts.get_reads import GetEvidence
-    from cruxible_client.contracts.read_values import ExactContentRef
 
-    digest = "sha256:" + "ab" * 32
     card = GetSubjectCard(
         subject="legal.case/c-1",
         kind="legal.case",
         lifecycle="live",
         claims=(
-            GetSubjectClaim(
-                predicate="ruling", claim="CLM-1", value="Affirmed.", content_digest=digest
-            ),
+            GetSubjectClaim(predicate="ruling", claim="CLM-1", value="Affirmed."),
             GetSubjectClaim(
                 predicate="exhibit",
                 claim="CLM-2",
-                value=ExactContentRef(exact_content="binary", content_digest=digest, length=6),
-                content_digest=digest,
+                value="exhibit-6",
             ),
         ),
         incoming_count=0,
@@ -472,20 +467,18 @@ def test_exact_content_prints_as_text_and_a_marker_says_why_when_it_cannot(
 
     assert text.exit_code == 0, text.output
     assert "  ruling   Affirmed." in text.output
-    assert "  exhibit  <binary 6 bytes sha256:abababababab>" in text.output
+    assert "  exhibit  exhibit-6" in text.output
 
-    evidence = GetEvidence(
-        value="Affirmed, in full.", content_digest=digest, captures=(), attestations=()
-    )
+    evidence = GetEvidence(value="Affirmed, in full.", captures=(), attestations=())
     _stub(monkeypatch, _result("claim", detail="evidence", evidence=evidence))
     whole = CliRunner().invoke(cli, [*PREFIX, "get", "CLM-1", "--detail", "evidence"])
 
     assert whole.exit_code == 0, whole.output
     assert "value: Affirmed, in full." in whole.output
-    assert f"content_digest: {digest}" in whole.output
+    assert "content_digest" not in whole.output
 
 
-@pytest.mark.parametrize("value", ["x" * 300, "line\n" * 30])
+@pytest.mark.parametrize("value", ["x" * 256, "line " * 50])
 def test_cli_display_cuts_offer_runnable_evidence_even_below_the_summary_limit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -497,9 +490,9 @@ def test_cli_display_cuts_offer_runnable_evidence_even_below_the_summary_limit(
     from cruxible_client.contracts.read_values import CLAIM_LINE_ID_CHARS
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.storage.cas import BodyAccessContext
-    from tests.core_support._exact_content_support import seed_exact_content
+    from tests.core_support._bounded_content_support import seed_bounded_content
 
-    instance, claims = seed_exact_content(tmp_path, {"wi-42": value.encode()})
+    instance, claims = seed_bounded_content(tmp_path, {"wi-42": value.encode()})
     claim = claims["wi-42"]
 
     class LocalClient:

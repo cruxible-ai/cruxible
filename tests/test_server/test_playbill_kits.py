@@ -383,7 +383,7 @@ def test_an_upgrade_is_the_consumers_diff_against_a_self_contained_release(
     }
     seats = consumer.claim_type(SEATS)
     assert seats.lifecycle.predecessor_digest == installed_seats
-    assert seats.literal_schema == {"type": "integer", "minimum": 1}
+    assert seats.value.kind == "int" and seats.value.min == 1
     assert consumer.tree()[_path(OWNER)] == second.contents()[_path(OWNER)]
     assert playbill_api.playbill_kit_status(consumer.instance_id).kits[0].drifted == ()
 
@@ -588,7 +588,7 @@ def test_a_local_edit_takes_the_release_by_default_and_says_it_overwrites_your_e
         (_path(PLAN), "replace", "overwrites_your_edit"),
         (_path(SEATS), "unchanged", None),
     ]
-    assert consumer.claim_type(PLAN).literal_schema == {"type": "string", "maxLength": 64}
+    assert consumer.claim_type(PLAN).value.max_len == 64
     assert playbill_api.playbill_kit_status(consumer.instance_id).kits[0].drifted == ()
 
 
@@ -608,7 +608,7 @@ def test_keeping_a_local_edit_records_it_so_the_next_upgrade_does_not_ask_again(
         (_path(PLAN), "keep", "overwrites_your_edit"),
         (_path(SEATS), "unchanged", None),
     ]
-    assert consumer.claim_type(PLAN).literal_schema == {"type": "string", "minLength": 1}
+    assert consumer.claim_type(PLAN).value.min_len == 1
     (installed,) = playbill_api.playbill_kit_status(consumer.instance_id).kits
     assert installed.drifted == ()
     assert [(item.identity, item.consequence) for item in installed.kept] == [
@@ -621,7 +621,7 @@ def test_keeping_a_local_edit_records_it_so_the_next_upgrade_does_not_ask_again(
         (_path(PLAN), "keep"),
         (_path(SEATS), "replace"),
     }
-    assert consumer.claim_type(PLAN).literal_schema == {"type": "string", "minLength": 1}
+    assert consumer.claim_type(PLAN).value.min_len == 1
 
 
 def test_reverting_a_local_edit_is_no_longer_an_edit(worlds: tuple[_World, _World]) -> None:
@@ -846,7 +846,7 @@ def test_a_kept_definition_stays_held_when_a_release_narrows_its_prefix(
     assert refusal.identity == f"ClaimType:{flag}"
     assert refusal.owning_kit_id == "acme"
     assert "cruxible kit remove acme" in refusal.repair
-    assert consumer.claim_type(flag).literal_schema == {"type": "string"}
+    assert consumer.claim_type(flag).value.max_len == 256
 
     # The holder still removes it, as an unedited definition it installed.
     removal = playbill_api.playbill_kit_remove(
@@ -987,7 +987,9 @@ def test_a_consumers_own_definition_is_a_takeover_that_keep_preserves(
     assert kept.refusals == ()
     assert kept.plan[0].action == "keep"
     assert kept.plan[0].consequence == "takes_over_outside_definition"
-    assert consumer.claim_type(SEATS).literal_schema == {"type": "integer", "minimum": 1}
+    assert (
+        consumer.claim_type(SEATS).value.kind == "int" and consumer.claim_type(SEATS).value.min == 1
+    )
 
 
 @pytest.mark.parametrize("dry_run", [True, False])
@@ -1233,7 +1235,7 @@ def test_release_lineage_moves_owned_pins_and_leaves_literal_values_alone(
         release.contents()["claim-types/acme.orders/zlimit.json"],
         path="claim-types/acme.orders/zlimit.json",
     )
-    assert zlimit.literal_schema == {"type": "string", "const": local_digest}
+    assert zlimit.value.members == (local_digest,)
     consumer.add(release)
     for path, content in release.contents().items():
         assert consumer.tree()[path] == content

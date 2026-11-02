@@ -110,9 +110,9 @@ class OrientPredicate(_StrictOrientModel):
     """One predicate of a kind: compact by default, in full under ``orient(kind=...)``.
 
     ``name`` is the short name a query field uses against this kind; ``predicate``
-    is the full ClaimType predicate. ``type`` is the value type: a JSON type,
-    ``date``/``datetime``, ``enum`` (with ``members``), ``subject`` or
-    ``subject:<kinds>`` for a Subject-valued predicate, or ``exact_content``.
+    is the full ClaimType predicate. ``type`` is the native Contract type spelling,
+    including enum members and
+    ``subject<K1 | K2>`` for a Subject-valued predicate.
     ``evidence`` names the CaptureContracts the ClaimType admits; a digest that
     names no accepted contract shows as ``unresolved:<short digest>``.
     ``None`` (omitted on the wire) inherits the kind's evidence set; an empty

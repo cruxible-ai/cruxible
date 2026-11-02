@@ -1140,7 +1140,7 @@ def register_tools(
             Field(
                 description=(
                     "The value: an enum member, text, number or boolean; a Subject as kind/id "
-                    "for a Subject-valued field; the text itself for exact content; "
+                    "for a Subject-valued field; bounded text for a string field; "
                     '{"none": null} when the field holds nothing.'
                 )
             ),

@@ -19,11 +19,11 @@ from cruxible_client.contracts.procedures.graph import (
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     CaptureEgressNode,
+    ClaimsNode,
     GuardNode,
     HaltNode,
     ProcedureDefinition,
     ProjectNode,
-    ProposeChangeSetNode,
     ReadNode,
     RepeatBodyNode,
     RepeatNode,
@@ -536,21 +536,37 @@ def test_transform_specs_are_tagged_closed_and_kind_matched() -> None:
     (
         (inbox_node(fields={"note": "$steps.result"}), 1, True),
         (
-            ProposeChangeSetNode(
+            ClaimsNode(
                 node_id="propose",
-                candidate_templates=({"input": "$steps.result"},),
-                result="$steps.result",
+                for_each="$steps.result.records",
+                subject={"kind": "project.work_item", "key": {"slug": "one"}},
+                claims=[
+                    {
+                        "type": {
+                            "target": {"kind": "ClaimType", "name": "project.work_item.status"}
+                        },
+                        "value": "ready",
+                    }
+                ],
             ),
             1,
             False,
         ),
         (
-            ProposeChangeSetNode(
+            ClaimsNode(
                 node_id="propose",
-                candidate_templates=({"input": "$steps.result"},),
-                result="$steps.result",
+                for_each="$steps.result.records",
+                subject={"kind": "project.work_item", "key": {"slug": "one"}},
+                claims=[
+                    {
+                        "type": {
+                            "target": {"kind": "ClaimType", "name": "project.work_item.status"}
+                        },
+                        "value": "ready",
+                    }
+                ],
             ),
-            2,
+            3,
             True,
         ),
     ),
@@ -610,10 +626,16 @@ def test_external_provider_effects_do_not_raise_the_terminal_rung() -> None:
     "terminal",
     (
         inbox_node(fields={"note": "$steps.missing"}),
-        ProposeChangeSetNode(
+        ClaimsNode(
             node_id="propose",
-            candidate_templates=({"input": "$steps.missing"},),
-            result="$steps.result",
+            for_each="$steps.missing.records",
+            subject={"kind": "project.work_item", "key": {"slug": "one"}},
+            claims=[
+                {
+                    "type": {"target": {"kind": "ClaimType", "name": "project.work_item.status"}},
+                    "value": "ready",
+                }
+            ],
         ),
     ),
 )

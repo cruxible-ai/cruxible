@@ -30,6 +30,7 @@ from cruxible_client.contracts.identity_normalizers import (
     normalize_key_value,
     normalizer_spelling,
 )
+from cruxible_client.contracts.shapes import claim_value_kind, value_type_name
 from cruxible_client.contracts.subject_kinds import (
     KeyClaimTypeShape,
     SubjectKeyValue,
@@ -1595,12 +1596,12 @@ def key_claim_type_shape(tree: Mapping[str, bytes], predicate: str) -> KeyClaimT
     if content is None:
         return None
     claim_type = parse_claim_type(content, path=path)
-    schema_type = (claim_type.literal_schema or {}).get("type")
+    schema_type = value_type_name(claim_type.value)
     return KeyClaimTypeShape(
         predicate=predicate,
         live=claim_type.lifecycle.state == "live",
         artifact_format=claim_type.artifact_format,
-        object_kind=claim_type.object_kind,
+        object_kind=claim_value_kind(claim_type.value),
         cardinality=claim_type.cardinality,
         allowed_subject_kinds=tuple(claim_type.allowed_subject_kinds),
         literal_type=schema_type if isinstance(schema_type, str) else None,

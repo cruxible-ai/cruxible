@@ -594,3 +594,68 @@ def test_a_small_commit_after_a_large_one_does_not_encode_the_parent_change(
             if after[name] > prior[name] * LARGE_PARENT_RATIO + FLAT_SLACK[name]:
                 violations.append((label, name, prior[name], after[name]))
     assert not violations, (violations, report)
+
+
+def test_reobservation_same_value_new_bytes_visits_each_item_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-R8: one admission per changed row, one cited-envelope read per batch."""
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+    _roomy_selection_budget(monkeypatch)
+    observations = []
+    original_admit = ClaimReobservationStore._admissible
+    original_read = ContentAddressedBodyStore.read
+    active = [False]
+    counters: Counter[str] = Counter()
+    cited: set[str] = set()
+
+    def admit(self: Any, **kwargs: Any) -> Any:
+        counters["items"] += 1
+        active[0] = True
+        try:
+            return original_admit(self, **kwargs)
+        finally:
+            active[0] = False
+
+    def read(self: Any, digest: str, **kwargs: Any) -> Any:
+        if active[0] and digest in cited:
+            counters["cited_reads"] += 1
+        return original_read(self, digest, **kwargs)
+
+    monkeypatch.setattr(ClaimReobservationStore, "_admissible", admit)
+    monkeypatch.setattr(ContentAddressedBodyStore, "read", read)
+    for count in (N, 2 * N):
+        directory = tmp_path / str(count)
+        directory.mkdir()
+        instance, root, line = settle_support.settle_world(directory, claims_terminal=True)
+        _create_subjects(instance, settle_support.OWNERS[instance.root], count)
+        _settle((instance, root, line), 0, count, 0)
+        from cruxible_client.contracts.claims import parse_claim
+
+        tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
+        claims = [parse_claim(tree[path], path=path) for path in tree if path.startswith("claims/")]
+        cited.clear()
+        cited.update(capture for claim in claims for capture in claim.backing.capture_digests)
+        head = instance.accepted_coordinate()
+        counters.clear()
+        (root / fixtures.RELATIVE_PATH).write_bytes(
+            canonical.canonical_bytes(
+                {
+                    "proposals": [_item(index) for index in range(count)],
+                    "unrelated_catalog_bytes": "changed without changing any observed field",
+                }
+            )
+        )
+        state = settle_support.run_settle(
+            instance, root, line, now=fixtures.NOW + timedelta(minutes=20)
+        )
+        assert state.status == "succeeded", state.terminal
+        (egress,) = state.terminal_egress
+        assert egress.proposal_id is None and len(egress.children) == count
+        assert instance.accepted_coordinate() == head
+        assert counters == {"items": count, "cited_reads": 1}
+        observations.append(dict(counters))
+    assert observations[1]["items"] == 2 * observations[0]["items"]
+    assert observations[1]["cited_reads"] == observations[0]["cited_reads"] == 1

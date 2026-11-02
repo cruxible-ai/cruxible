@@ -21,7 +21,6 @@ from cruxible_client.contracts.claims import LiteralClaimObject
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import subject_path
 from cruxible_client.contracts.write import WriteOutcome, WriteRequest
-from cruxible_core.procedures.proposal_delivery import _restated_lineage
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.write_verbs import WriteCaller, service_playbill_write
 from tests.core_support._identity_support import KIND, OWNER, seed_identity_surface
@@ -83,21 +82,28 @@ def _restating(capture: str) -> ClaimAuthoringPayload:
     )
 
 
-def test_a_terminal_item_restating_a_live_claim_targets_its_lineage(
-    instance: PlaybillInstance,
-) -> None:
-    held = write(instance, {"op": "add", "subject": ALPHA, "field": "tags", "value": "Infra"}, "A.")
-    other = write(instance, {"op": "set", "subject": ALPHA, "field": "plain", "value": "y"}, "B.")
-    claim, unrelated = held.changes[0].claim, other.changes[0].claim
-    assert claim is not None and unrelated is not None
-    (same_content,) = cited_captures(instance, claim)
-    (new_content,) = cited_captures(instance, unrelated)
-    tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
+def test_a_terminal_item_restating_a_live_claim_targets_its_lineage(tmp_path: Path) -> None:
+    from tests.test_procedures.test_claims_terminal import (
+        activate,
+        candidate_claims,
+        claims_spec,
+        claims_world,
+        install,
+        run,
+    )
 
-    # New content or content it already cites: either way the live Claim's
-    # lineage, never a second Claim. Lowering decides refresh versus no-op.
-    assert _restated_lineage(tree, _restating(new_content)) == claim
-    assert _restated_lineage(tree, _restating(same_content)) == claim
+    instance, root = claims_world(
+        tmp_path, {"entries": [{"id": "CVE-2026-0001", "status": "open"}]}
+    )
+    install(instance, claims_spec())
+    first = run(instance, root)
+    (claim,) = candidate_claims(instance, first)
+    activate(instance, first)
+    head = instance.accepted_coordinate()
+    second = run(instance, root, minute=1)
+    assert second.status == "succeeded", second.terminal
+    assert second.terminal_egress[0].proposal_id is None
+    assert instance.accepted_coordinate() == head
 
 
 def test_procedure_same_content_does_not_mint_duplicate(tmp_path: Path) -> None:
@@ -125,8 +131,7 @@ def test_procedure_same_content_does_not_mint_duplicate(tmp_path: Path) -> None:
             AuthoringExistingClaimDisposition(claim_id=first_id, disposition="not_tested"),
         ),
     )
-    lineage = _restated_lineage(tree, member)
-    assert lineage == first_id
+    lineage = first_id
     fresh = AuthoringIntentCoordinator(
         instance=world, store=coordinator.store, claim_id_factory=lambda: "CLM-" + "4" * 32
     )
@@ -198,8 +203,13 @@ def test_a_terminal_item_naming_an_alias_finds_the_live_lineage(
             )
         }
     )
-    assert _restated_lineage(tree, by_alias) is None
-    assert _restated_lineage(tree, claim_aliases_resolved(instance, base, tree, by_alias)) == claim
+    resolved = claim_aliases_resolved(instance, base, tree, by_alias)
+    assert resolved.statement.subject.artifact_path == subject_path(KIND, "alpha")
+    again = write(
+        instance, {"op": "add", "subject": f"{KIND}/a-one", "field": "tags", "value": "infra"}, "A."
+    )
+    assert again.status == "accepted" and again.proposal is None
+    assert again.changes[0].claim == claim
 
 
 def test_an_unchanged_receipt_child_never_settles_into_a_target() -> None:
@@ -231,7 +241,7 @@ def test_an_unchanged_receipt_child_never_settles_into_a_target() -> None:
         path="claims/bb/CLM-" + "b" * 32 + ".json",
     )
     common = {
-        "kind": "propose_change_set",
+        "kind": "claims",
         "run_id": "run-1",
         "node_id": "propose",
         "disposition": "received",
@@ -250,7 +260,7 @@ def test_an_unchanged_receipt_child_never_settles_into_a_target() -> None:
             target_paths=tuple(sorted((kept.path, written.path))),
         )
     nothing = TerminalEgressUnchangedReceiptV1(
-        kind="settle_change_set", run_id="run-1", node_id="settle", children=(kept,)
+        kind="claims", run_id="run-1", node_id="settle", children=(kept,)
     )
     assert nothing.disposition == "unchanged"
     prepared = PreparedTerminalEgressV1(

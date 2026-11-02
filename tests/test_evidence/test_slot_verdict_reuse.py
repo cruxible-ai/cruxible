@@ -287,7 +287,7 @@ def test_get_does_not_serve_a_stale_verdict_after_a_ruling_is_rewritten_in_place
             {
                 "because": "The ruling as written.",
                 "changes": [
-                    {"op": "set", "subject": f"{KIND}/wi-1", "field": "ruling", "value": "Ruled.\n"}
+                    {"op": "set", "subject": f"{KIND}/wi-1", "field": "ruling", "value": "Ruled."}
                 ],
             }
         ),
@@ -306,7 +306,8 @@ def test_get_does_not_serve_a_stale_verdict_after_a_ruling_is_rewritten_in_place
     before = read()
     assert before["card"]["verdict"] == "supported"  # type: ignore[index]
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        digest = projection.typed.source(f"Claim:{claim_id}").statement.object.content_digest
+        capture = projection.typed.source(f"Claim:{claim_id}").backing.capture_digests[0]
+    _envelope, digest = _capture_and_source(instance, capture)
     _rewrite_in_place(instance.body_store()._path(digest), keep_mtime=keep_mtime)
     assert instance.body_store().availability(digest) == "corrupt"
 

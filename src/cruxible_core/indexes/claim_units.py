@@ -130,7 +130,7 @@ def literal_value_digest(value: object) -> str:
 
 
 def object_unit_text(fields: Facts) -> str | None:
-    """The unit encoding of one object, from its ``claims`` columns; None for exact content.
+    """The unit encoding of one object, from its ``claims`` columns.
 
     A Subject object is its address; a literal is its type and value (an array
     or object by its digest). An ``object_key`` unit encodes its key value the

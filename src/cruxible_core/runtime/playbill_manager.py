@@ -582,7 +582,7 @@ class PlaybillInstanceManager:
     def recover_proposal_egress(self) -> dict[str, dict[str, str]]:
         """Resolve prepared-but-unresolved proposal terminals before serving requests.
 
-        A run that died between preparing its `propose_change_set` egress and
+        A run that died between preparing its `claims` egress and
         journaling the door's receipt is driven through the same idempotent
         door again: an existing proposal under the operation's ref is
         recovered, an absent one is submitted once, and the attempt is

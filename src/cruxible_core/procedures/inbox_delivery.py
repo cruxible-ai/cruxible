@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING, cast
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import CanonicalValue
-from cruxible_client.contracts.claim_evidence import ExtractRefusedInboxItem
+from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic
+from cruxible_client.contracts.procedures.line_specs import LineFindings
 from cruxible_core.procedures.egress import (
     TerminalEgressChildReceiptV1,
     TerminalEgressError,
@@ -34,16 +35,23 @@ if TYPE_CHECKING:
 class InboxTerminalEgressSink:
     """Rung-1 egress: post each item to the Line inbox with its own evidence attached."""
 
-    def __init__(self, *, store: LineInboxStore, line: ArtifactIdentity) -> None:
+    def __init__(
+        self,
+        *,
+        store: LineInboxStore,
+        line: ArtifactIdentity,
+        findings: LineFindings = LineFindings(),
+    ) -> None:
         self.store = store
         self.line = line
+        self.finding_kinds = findings.inbox
 
-    def post_claims_diagnostics(
+    def route_findings(
         self,
         *,
         admission: ProcedureRunAdmission,
         node_id: str,
-        diagnostics: tuple[ExtractRefusedInboxItem, ...],
+        diagnostics: tuple[ClaimsDiagnostic, ...],
         at: datetime,
     ) -> None:
         """Post typed extraction refusals once per finding, after terminal delivery."""

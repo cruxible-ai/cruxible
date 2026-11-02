@@ -332,13 +332,13 @@ def test_a_card_states_the_interface_and_its_policies_without_any_policy_body() 
 
     assert card.predicate == STATUS_PREDICATE
     assert card.allowed_subject_kinds == ("project.work_item",)
-    assert card.object_kind == "literal"
+    assert card.value.kind == "string"
     assert card.cardinality == "one"
     assert card.permitted_roles == ("normative",)
     # A schema is committed by digest and described in one line; the body stays
     # behind expand, because a card is a header file, not the artifact.
-    assert card.literal_schema_summary == "type=string"
-    assert card.literal_schema_digest is not None
+    assert card.value_type_summary == "string{max_len: 256}"
+    assert card.value_type_digest is not None
     rendered = canonical_bytes(card.model_dump(mode="json"))
     assert b"transition_requirements" not in rendered
     assert b"eligible_verdicts" not in rendered.split(b'"summary"')[0]

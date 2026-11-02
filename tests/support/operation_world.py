@@ -321,6 +321,7 @@ def author_line(
     parameters: Mapping[str, object] | None = None,
     max_authority: str | None = None,
     acquisition: Mapping[str, Mapping[str, object]] | None = None,
+    findings: dict[str, object] | None = None,
     occurrence_epoch: int = 1,
     label: str = "line",
 ) -> dict[str, bytes]:
@@ -333,6 +334,7 @@ def author_line(
                 "procedure_name": procedure,
                 "bindings": dict(bindings or {}),
                 "acquisition": dict(acquisition or {}),
+                "findings": findings or {},
                 "parameters": {"value": 1} if parameters is None else dict(parameters),
                 "max_authority": max_authority,
                 "occurrence_epoch": occurrence_epoch,

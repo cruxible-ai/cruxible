@@ -49,9 +49,7 @@ is:
 
 ~~~yaml
 predicate: catalog.part.category
-literal_schema:
-  type: string
-  enum: [brakes, brake-pads, brake-rotors, filters, lighting, wipers]
+value: enum[brakes, brake-pads, brake-rotors, filters, lighting, wipers]
 ~~~
 
 ~~~text
@@ -96,7 +94,7 @@ names the value:
 ~~~text
 $ cruxible claim-type propose --input drop-wipers.yaml --name drop-wipers --dry-run
 would_block  -  verdict=refused
-  cruxible.claim.literal_schema_invalid: The Claim literal 'wipers' fails the exact schema of ClaimType 'catalog.part.category'; its members are: brake-pads, brake-rotors, filters, lighting.
+  cruxible.claim.value_invalid: The Claim literal 'wipers' does not satisfy the native value type of ClaimType 'catalog.part.category'; its members are: brake-pads, brake-rotors, filters, lighting.
 ~~~
 
 Each Claim keeps its identity, so the field's history reads as revisions
@@ -123,8 +121,7 @@ propose --template` prints this shape):
 ~~~yaml
 predicate: catalog.part.warranty_months
 allowed_subject_kinds: [catalog.part]
-object_kind: literal
-literal_schema: {type: integer, minimum: 0}
+value: int{min: 0}
 cardinality: one
 ~~~
 
@@ -159,8 +156,7 @@ spellings are the same key:
 predicate: catalog.supplier.name
 description: "The supplier's name; its key."
 allowed_subject_kinds: [catalog.supplier]
-object_kind: literal
-literal_schema: {type: string, minLength: 1}
+value: string{min_len: 1, max_len: 256}
 cardinality: one
 canonical_form: [nfkc, trim, collapse_whitespace, casefold]
 ~~~

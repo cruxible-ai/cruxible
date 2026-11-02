@@ -388,7 +388,7 @@ def test_http_migration_route_delegates_the_typed_request(
             "successor": {
                 "predicate": "project.work_item.status",
                 "allowed_subject_kinds": ["project.work_item"],
-                "object_kind": "literal",
+                "value": "string{max_len: 256}",
                 "cardinality": "one",
                 "permitted_roles": ["observation"],
                 "evidence_admission_policy": {"rules": []},

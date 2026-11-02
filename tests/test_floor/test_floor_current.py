@@ -15,7 +15,6 @@ from cruxible_client.contracts.documents import (
     document_path,
     render_document,
 )
-from cruxible_client.contracts.read_values import ExactContentRef
 from cruxible_client.contracts.write import WriteOutcome, WriteRequest
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -24,7 +23,6 @@ from cruxible_core.service.authoring.write_verbs import service_playbill_write
 from cruxible_core.service.floor.floor import service_export_playbill_floor
 from cruxible_core.service.floor.floor_current import (
     INLINE_TEXT_BYTES,
-    ValueRenderer,
     literal_scalar,
     yaml_scalar,
 )
@@ -34,7 +32,7 @@ from tests.core_support._write_support import KIND, caller, seed_write_surface
 WI1 = f"{KIND}/wi-1"
 WI2 = f"{KIND}/wi-2"
 WI3 = f"{KIND}/wi-3"
-RULING = "Rulings are text.\nEvery line of this one greps on its own.\n"
+RULING = "reviewed"
 LONG_RULING = "".join(f"Clause {index}: the floor keeps every word.\n" for index in range(80))
 NOTE = "# Design note\n\nThe floor is the grep-first front door.\n"
 BODY_READER = BodyAccessContext(principal_id="owner", can_read_body=True)
@@ -69,8 +67,9 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
         _set(WI1, "ruling", RULING),
         _set(WI1, "measured", 3),
     )
-    _write(instance, _set(WI3, "ruling", LONG_RULING))
+    _write(instance, _set(WI3, "ruling", "reviewed"))
     _add_document(instance, "design-note", NOTE.encode())
+    _add_document(instance, "long-ruling", LONG_RULING.encode())
     first = _write(instance, _set(WI2, "status", "ready"))
     _write(instance, _set(WI2, "status", "blocked"))
     _write(instance, _set(WI2, "status", "done", contend=True), at=first.coordinate.git_oid)
@@ -225,43 +224,28 @@ def test_literal_values_round_trip_through_yaml(value: object) -> None:
     assert yaml.safe_load(f"k: {literal_scalar(value)}\n") == {"k": value}
 
 
-def test_exact_content_reads_as_its_text_and_each_line_greps(world: dict[str, Any]) -> None:
+def test_native_text_values_grep_under_their_field(world: dict[str, Any]) -> None:
     text = _current(world, "wi-1")
     ruling = world["claims"]["ruling"]
-    assert f"ruling: |  # {ruling}\n" in text
-    assert "\n  Every line of this one greps on its own.\n" in text
+    assert f"ruling: reviewed  # {ruling}\n" in text
 
 
-def test_a_long_text_goes_whole_to_a_sibling_file_never_truncated(world: dict[str, Any]) -> None:
-    parsed = yaml.safe_load(_current(world, "wi-3"))
-    assert parsed["ruling"] == {
-        "full_text": "wi-3.ruling.txt",
-        "bytes": len(LONG_RULING.encode()),
-        "lines": LONG_RULING.count("\n") + 1,
-    }
-    header, full = world["files"][f"current/{KIND}/wi-3.ruling.txt"].decode().split("\n", 1)
-    assert header.startswith(f"# {WI3}  field=ruling  CLM-") and " gen " in header
-    assert full == LONG_RULING
+def test_prose_is_retained_in_document_sections(world: dict[str, Any]) -> None:
+    # Prose belongs to a Document; the floor advertises it without copying bodies.
+    instance = world["instance"]
+    files = service_export_playbill_floor(instance, access=BODY_READER)
+    assert any(b"long-ruling" in body for body in files.values())
+    assert not any(LONG_RULING.encode() in body for body in files.values())
     assert len(LONG_RULING.encode()) > INLINE_TEXT_BYTES
 
 
-def test_bytes_that_are_not_text_show_a_typed_marker_with_their_size(
-    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    instance: PlaybillInstance = world["instance"]
-    renderer = ValueRenderer(instance)
-    monkeypatch.setattr(
-        renderer._content,
-        "of",
-        lambda _obj: ExactContentRef(
-            exact_content="binary", content_digest="sha256:" + "0" * 64, length=12
-        ),
+def test_bytes_that_are_not_text_show_a_typed_marker_with_their_size(world: dict[str, Any]) -> None:
+    from cruxible_client.contracts.shapes import claim_literal_problem, parse_type
+
+    assert (
+        claim_literal_problem(b"\xff\xfeopaque", parse_type("string{max_len: 256}"))
+        == "type_mismatch"
     )
-    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        claim = projection.typed.source(f"Claim:{world['claims']['ruling']}")
-    shown = renderer.shown(claim, text_name="wi-1.ruling.txt")
-    assert shown.scalar == "{exact_content: binary, bytes: 12}"
-    assert yaml.safe_load(f"k: {shown.scalar}") == {"k": {"exact_content": "binary", "bytes": 12}}
 
 
 @pytest.mark.parametrize(("mode", "bodies"), [("READ_ONLY", False), ("GOVERNED_WRITE", True)])
@@ -622,25 +606,13 @@ def _outcome(export: Any) -> Any:
 
 @pytest.mark.parametrize("target", ["ruling", "long-ruling"])
 def test_a_lost_body_refuses_a_fresh_render(tmp_path: Any, target: str) -> None:
-    """Accepted-body retention: the floor renders exact content by digest.
-
-    A body lost anyway refuses a fresh render as an integrity failure; the
-    floor never publishes a marker, or any other bytes, in place of the text.
-    """
-
-    from cruxible_client.contracts.errors import ProjectionIntegrityError
-
+    # Native facts have no separate prose body. Rebuilding preserves their values.
     instance, _owner = seed_write_surface(tmp_path)
-    written = _write(instance, _set(WI1, "ruling", RULING), _set(WI3, "ruling", LONG_RULING))
+    text = "reviewed" if target == "ruling" else "approved"
+    _write(instance, _set(WI1, "ruling", text))
     warm = service_export_playbill_floor(instance, access=BODY_READER)
-    assert warm[f"current/{KIND}/wi-3.ruling.txt"].decode().endswith(LONG_RULING)
-    field = {"ruling": WI1, "long-ruling": WI3}[target]
-    claim_id = next(change.claim for change in written.changes if change.subject == field)
-    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        digest = projection.typed.source(f"Claim:{claim_id}").statement.object.content_digest
-    _spoil(instance, digest, "erase")
-    with pytest.raises(ProjectionIntegrityError, match="not retained"):
-        _cold(instance, access=BODY_READER)
+    assert _cold(instance, access=BODY_READER) == warm
+    assert yaml.safe_load(warm[f"current/{KIND}/wi-1.yaml"])["ruling"] == text
 
 
 def test_kept_discovery_cards_agree_with_cold_ones_after_a_capture_is_erased(

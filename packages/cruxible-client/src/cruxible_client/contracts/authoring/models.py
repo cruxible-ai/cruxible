@@ -67,7 +67,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 )
 from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
-from cruxible_client.contracts.procedures.line_specs import LineBudgetsInput
+from cruxible_client.contracts.procedures.line_specs import LineBudgetsInput, LineFindings
 from cruxible_client.contracts.procedures.windows import (
     CaptureEventNameSelector,
     FixedWindow,
@@ -88,7 +88,12 @@ from cruxible_client.contracts.query.definitions import (
 from cruxible_client.contracts.repairs import ServedRepair, served_repair_for_refusal
 from cruxible_client.contracts.resolution_contracts import ResolutionContract
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.shapes import ContractField, contract_identity, contract_path
+from cruxible_client.contracts.shapes import (
+    ContractField,
+    claim_rationale,
+    contract_identity,
+    contract_path,
+)
 from cruxible_client.contracts.subject_kinds import (
     SubjectKeyPart,
     SubjectKeyRule,
@@ -132,7 +137,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:4aa2ea9cd9d8d2fddc1bb632de78e2f11446bb58054cefdc83de1d1e8c2152aa"
+    "sha256:dde76f0b39b2b249906fb0a7c026cff7296e45865ab88363528caaefaee75d80"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -695,8 +700,8 @@ class ClaimDerivationBinding(_StrictAuthoringModel):
 
     @model_validator(mode="after")
     def _kinds(self) -> "ClaimDerivationBinding":
-        if self.procedure.target.kind != "Procedure" or not self.inputs:
-            raise ValueError("a derivation needs its Procedure and nonempty Claim inputs")
+        if self.procedure.target.kind != "Procedure":
+            raise ValueError("a derivation needs its Procedure")
         if any(pin.target.kind != "Claim" for pin in self.inputs):
             raise ValueError("derivation inputs must name Claims")
         if len({p.target.qualified for p in self.inputs}) != len(self.inputs):
@@ -787,6 +792,8 @@ class ClaimAuthoringPayload(_StrictAuthoringModel):
                 "replacing citations re-binds a live Claim, so it names what it revises"
             )
         return self
+
+    _rationale_line = field_validator("rationale")(claim_rationale)
 
 
 class AuthoringArtifactReference(_StrictAuthoringModel):
@@ -1016,6 +1023,7 @@ class LineAuthoringPayload(_StrictAuthoringModel):
     name: str
     procedure_name: str
     bindings: ProcedureBindings = Field(default_factory=dict)
+    findings: LineFindings = Field(default_factory=LineFindings)
     acquisition: dict[str, LineAcquisitionRule] = Field(default_factory=dict)
     # Caps this Line below its Procedure's capability; omitted, it is that capability.
     max_authority: Literal["observe", "propose", "settle"] | None = None

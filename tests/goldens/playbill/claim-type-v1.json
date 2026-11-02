@@ -1,13 +1,12 @@
 {
-  "artifact_digest": "sha256:78e9e2a8f95c2d79702c1ec1be27f794543c80658b818262c2964b82d0b047c1",
-  "canonical_wire": "{\n  \"admission_policy\": {\n    \"corroboration_requirements\": [],\n    \"freeze_requirements\": [],\n    \"tag\": \"playbill-claim-admission-policy-v1\"\n  },\n  \"allowed_object_subject_kinds\": [],\n  \"allowed_subject_kinds\": [\n    \"project.work_item\"\n  ],\n  \"artifact_format\": \"cruxible-claim-type-v11\",\n  \"canonical_form\": [],\n  \"cardinality\": \"one\",\n  \"evidence_admission_policy\": {\n    \"rules\": [],\n    \"tag\": \"cruxible-claim-evidence-admission-policy-v4\"\n  },\n  \"evidence_requirement\": \"self\",\n  \"identity\": {\n    \"kind\": \"ClaimType\",\n    \"name\": \"project.work_item.status\"\n  },\n  \"lifecycle\": {\n    \"predecessor_digest\": null,\n    \"state\": \"live\"\n  },\n  \"literal_schema\": {\n    \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n    \"enum\": [\n      \"blocked\",\n      \"done\",\n      \"ready\"\n    ],\n    \"type\": \"string\"\n  },\n  \"member_descriptions\": [],\n  \"negative\": false,\n  \"object_kind\": \"literal\",\n  \"permitted_roles\": [\n    \"normative\",\n    \"observation\"\n  ],\n  \"pins\": [],\n  \"precedence\": {\n    \"revisable_by_procedures\": [\n      \"environment_binding\",\n      \"observation\",\n      \"derivation\"\n    ],\n    \"roles\": [\n      \"normative\",\n      \"environment_binding\",\n      \"observation\",\n      \"derivation\"\n    ]\n  },\n  \"predicate\": \"project.work_item.status\",\n  \"referent_sensitivity\": \"identity\",\n  \"resolution_policy\": {\n    \"cardinality\": \"one\",\n    \"conflict_result\": \"unresolved\",\n    \"eligible_verdicts\": [\n      \"supported\"\n    ],\n    \"require_current\": true,\n    \"required_basis_kinds\": [],\n    \"selector\": \"only_contender\",\n    \"tag\": \"playbill-claim-resolution-policy-v1\"\n  },\n  \"revision_evidence\": \"accumulate\"\n}\n",
+  "artifact_digest": "sha256:086d30be223b0a7fbfd9f7af075bfa7cfe14a066afd0be7c47451843f8f7e566",
+  "canonical_wire": "{\n  \"admission_policy\": {\n    \"corroboration_requirements\": [],\n    \"freeze_requirements\": [],\n    \"tag\": \"playbill-claim-admission-policy-v1\"\n  },\n  \"allowed_subject_kinds\": [\n    \"project.work_item\"\n  ],\n  \"artifact_format\": \"cruxible-claim-type-v11\",\n  \"canonical_form\": [],\n  \"cardinality\": \"one\",\n  \"evidence_admission_policy\": {\n    \"rules\": [],\n    \"tag\": \"cruxible-claim-evidence-admission-policy-v4\"\n  },\n  \"evidence_requirement\": \"self\",\n  \"identity\": {\n    \"kind\": \"ClaimType\",\n    \"name\": \"project.work_item.status\"\n  },\n  \"lifecycle\": {\n    \"predecessor_digest\": null,\n    \"state\": \"live\"\n  },\n  \"member_descriptions\": [],\n  \"permitted_roles\": [\n    \"normative\",\n    \"observation\"\n  ],\n  \"pins\": [],\n  \"precedence\": {\n    \"revisable_by_procedures\": [\n      \"environment_binding\",\n      \"observation\",\n      \"derivation\"\n    ],\n    \"roles\": [\n      \"normative\",\n      \"environment_binding\",\n      \"observation\",\n      \"derivation\"\n    ]\n  },\n  \"predicate\": \"project.work_item.status\",\n  \"referent_sensitivity\": \"identity\",\n  \"requires_complete_input\": [],\n  \"resolution_policy\": {\n    \"cardinality\": \"one\",\n    \"conflict_result\": \"unresolved\",\n    \"eligible_verdicts\": [\n      \"supported\"\n    ],\n    \"require_current\": true,\n    \"required_basis_kinds\": [],\n    \"selector\": \"only_contender\",\n    \"tag\": \"playbill-claim-resolution-policy-v1\"\n  },\n  \"revision_evidence\": \"accumulate\",\n  \"value\": {\n    \"kind\": \"enum\",\n    \"members\": [\n      \"blocked\",\n      \"done\",\n      \"ready\"\n    ]\n  }\n}\n",
   "claim_type": {
     "admission_policy": {
       "corroboration_requirements": [],
       "freeze_requirements": [],
       "tag": "playbill-claim-admission-policy-v1"
     },
-    "allowed_object_subject_kinds": [],
     "allowed_subject_kinds": [
       "project.work_item"
     ],
@@ -27,18 +26,7 @@
       "predecessor_digest": null,
       "state": "live"
     },
-    "literal_schema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "enum": [
-        "blocked",
-        "done",
-        "ready"
-      ],
-      "type": "string"
-    },
     "member_descriptions": [],
-    "negative": false,
-    "object_kind": "literal",
     "permitted_roles": [
       "normative",
       "observation"
@@ -59,6 +47,7 @@
     },
     "predicate": "project.work_item.status",
     "referent_sensitivity": "identity",
+    "requires_complete_input": [],
     "resolution_policy": {
       "cardinality": "one",
       "conflict_result": "unresolved",
@@ -70,6 +59,14 @@
       "selector": "only_contender",
       "tag": "playbill-claim-resolution-policy-v1"
     },
-    "revision_evidence": "accumulate"
+    "revision_evidence": "accumulate",
+    "value": {
+      "kind": "enum",
+      "members": [
+        "blocked",
+        "done",
+        "ready"
+      ]
+    }
   }
 }

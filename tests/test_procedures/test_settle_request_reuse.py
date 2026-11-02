@@ -22,23 +22,17 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_core.indexes import evaluated_state
 from tests.test_procedures import test_procedure_settlement_delivery as SD
 from tests.test_procedures import test_procedure_source_runs as fixtures
-from tests.test_procedures.test_procedure_proposal_delivery import item_template
 
 FAN_OUT = fixtures.FAN_OUT
 SMALL, LARGE = 2, 6
 
 
 def _element(index: int, batch: int) -> dict[str, object]:
-    statement = {
-        **item_template()["statement"],  # type: ignore[dict-item]
-        "qualifier": f"q{index:03d}",
-        "object": {"kind": "literal", "value": ("high", "low", "medium")[(index + batch) % 3]},
-    }
-    return item_template(statement=statement, rationale=f"Severity item {index}.")
+    return {"id": f"q{index:03d}", "severity": ("high", "low", "medium")[(index + batch) % 3]}
 
 
 def _world(tmp_path: Path) -> tuple[Any, Path, Any]:
-    return SD.settle_world(tmp_path, candidate_templates=FAN_OUT)  # type: ignore[no-any-return]
+    return SD.settle_world(tmp_path, claims_terminal=True, claims_fixed_subject=True)  # type: ignore[no-any-return]
 
 
 def _settle(instance: Any, root: Path, line: Any, *, items: range, batch: int) -> Any:
@@ -546,7 +540,7 @@ def test_a_separately_requested_activation_always_re_evaluates_in_full(tmp_path:
     from tests.test_ledger.test_activation import _sign
 
     instance, root, line = SD.settle_world(
-        tmp_path, only_subject="someone-else", candidate_templates=FAN_OUT
+        tmp_path, only_subject="someone-else", claims_terminal=True, claims_fixed_subject=True
     )
     proposals = [_element(index, 0) for index in range(SMALL)]
     (root / fixtures.RELATIVE_PATH).write_bytes(
@@ -627,7 +621,7 @@ def _seeded_parent(tmp_path: Path) -> tuple[Any, Path, Any, Any, str]:
     from tests.test_ledger.test_activation import _sign
 
     instance, root, line = SD.settle_world(
-        tmp_path, require_claim=True, candidate_templates=FAN_OUT
+        tmp_path, require_claim=True, claims_terminal=True, claims_fixed_subject=True
     )
     (root / fixtures.RELATIVE_PATH).write_bytes(
         canonical_bytes({"severity": "high", "proposals": [_element(0, 0)]})

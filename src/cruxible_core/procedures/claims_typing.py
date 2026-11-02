@@ -39,6 +39,7 @@ from cruxible_client.contracts.shapes import (
     SubjectType,
     assignable,
     check_value,
+    claim_has_line_break,
     parse_type,
 )
 from cruxible_client.contracts.subject_kinds import key_predicate
@@ -74,12 +75,10 @@ def validate_claims_templates(
             if predicate is None:
                 raise ClaimsTypingRefused("unknown Subject key part")
             ct = source("ClaimType", predicate)
-            return cast(FieldType, ct.value) if ct.value is not None else parse_type("string")
+            return cast(FieldType, ct.value)
         if isinstance(t, EnumOfType):
             ct = source("ClaimType", t.claim_type)
-            if ct.value is not None:
-                return cast(FieldType, ct.value)
-            return EnumType(members=tuple(ct.literal_schema["enum"]))
+            return cast(FieldType, ct.value)
         return t
 
     def field_type(
@@ -206,9 +205,15 @@ def validate_claims_templates(
             if isinstance(t, FieldResultType):
                 t = t.value
             elif isinstance(t, ListType):
-                t = t.item
-                if path[0].isdigit():
-                    path = path[1:]
+                member, *rest = path
+                if member == "[*]":
+                    item = descend(t.item, rest)
+                    return None if item is None else ListType(item=item, max_items=t.max_items)
+                if not member.isdigit():
+                    raise ClaimsTypingRefused(
+                        "a list reference requires [*] or an explicit position"
+                    )
+                t, path = t.item, rest
             elif isinstance(t, NestedType):
                 fields = contract(t.contract).fields
                 if path[0] not in fields:
@@ -238,9 +243,11 @@ def validate_claims_templates(
                 raise ClaimsTypingRefused(f"{label}: value is not assignable to ClaimType.value")
             return
         if isinstance(expected, SubjectType) and isinstance(value, dict):
-            if value.get("kind") != expected.subject_kind:
+            if value.get("kind") not in expected.subject_kinds:
                 raise ClaimsTypingRefused(f"{label}: Subject kind does not match")
             return
+        if claim_has_line_break(value):
+            raise ClaimsTypingRefused(f"{label}: multiline_string; cite a Document section")
         if isinstance(check_value(value, expected, at=label), FieldInvalid):
             raise ClaimsTypingRefused(f"{label}: literal does not fit ClaimType.value")
 
@@ -257,11 +264,10 @@ def validate_claims_templates(
             predicate = key_predicate(kind, name)
             assert predicate is not None
             ct = source("ClaimType", predicate)
-            if ct.value is not None:
-                check(value, ct.value, node.for_each, f"subject.key.{name}")
+            check(value, ct.value, node.for_each, f"subject.key.{name}")
         for mapping in node.claims:
             ct = source("ClaimType", mapping.claim_type.target.name)
-            if not isinstance(ct, ClaimType) or ct.value is None:
+            if not isinstance(ct, ClaimType):
                 raise ClaimsTypingRefused("claims requires a ClaimType declaring value")
             if node.subject.kind not in ct.allowed_subject_kinds:
                 raise ClaimsTypingRefused("ClaimType does not permit this SubjectKind")

@@ -1,4 +1,4 @@
-"""The production bridge from a `propose_change_set` terminal to a durable proposal.
+"""The production bridge from a `claims` terminal to a durable proposal.
 
 A terminal item is a typed Claim or Subject proposal, never a candidate tree (a
 Subject item names its kind and key; core assigns the id). This module
@@ -27,6 +27,7 @@ Three properties are load-bearing:
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import sqlite3
 from collections.abc import Callable, Mapping
@@ -34,7 +35,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
@@ -45,13 +46,11 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
     AuthoringExistingClaimDisposition,
     AuthoringIntent,
-    AuthoringNoneClaimObject,
     CandidateStatus,
     ChangeSetAuthoringPayload,
     ChangeSetClaimIdentity,
     ClaimAuthoringPayload,
     ClaimDependencyDrafts,
-    ClaimRetirementMember,
     ExistingCaptureCitationSource,
     SelfSourceBody,
     SubjectCreationAuthoringPayload,
@@ -62,13 +61,14 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.captures import parse_capture_envelope
+from cruxible_client.contracts.captures import (
+    CaptureEnvelopeAny,
+    classify_capture_reuse,
+    parse_capture_envelope,
+)
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, parse_claim_type
 from cruxible_client.contracts.claims import (
-    ClaimRetireDependent,
-    LiteralClaimObject,
-    NoneClaimObject,
     SubjectClaimObject,
     claim_artifact_digest,
     claim_path,
@@ -81,17 +81,6 @@ from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateInvocation,
     evaluate_procedure_mandate,
     mandate_rung,
-)
-from cruxible_client.contracts.procedures.proposal_items import (
-    PROPOSAL_ITEM_MODELS,
-    ProcedureClaimProposalItem,
-    ProcedureClaimProposalItemV1,
-    ProcedureClaimRetirementItem,
-    ProcedureKeyedClaimProposalItem,
-    ProcedureNoneClaimObject,
-    ProcedureProposalItemAny,
-    ProcedureSubjectProposalItem,
-    SubjectKeyClaimObject,
 )
 from cruxible_client.contracts.proposal_models import (
     SETTLE_OUTSIDE_MANDATE_SCOPE,
@@ -121,12 +110,11 @@ from cruxible_core.authoring.lowering import (
     members_identity_overlay,
     subject_creation_paths,
 )
-from cruxible_core.claims.claim_retirement import ClaimRetireError, claim_retirement_inventory
-from cruxible_core.claims.key_claims import is_key_claim
 from cruxible_core.evidence.claim_reobservations import (
     ClaimReobservationRefused,
     ClaimReobservationStore,
 )
+from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.indexes.subject_identity import (
     IdentityView,
     KeyTuple,
@@ -137,6 +125,12 @@ from cruxible_core.indexes.subject_identity import (
     key_encoding,
     tree_key_reader,
 )
+from cruxible_core.procedures.claims_changes import (
+    CoreClaimChange,
+    CoreClaimsChange,
+    CoreReobservationChange,
+    CoreSubjectChange,
+)
 from cruxible_core.procedures.egress import (
     LINE_CHANGE_SIGNATURE_DOMAIN,
     LineProposalPreparationV1,
@@ -146,7 +140,6 @@ from cruxible_core.procedures.egress import (
     TerminalEgressChildReceiptV4,
     TerminalEgressReceiptV1,
     TerminalEgressReceiptV3,
-    TerminalEgressReceiptV4,
     TerminalEgressRequestV1,
     TerminalEgressRequestV2,
     TerminalEgressStillCurrentReceiptV1,
@@ -163,7 +156,6 @@ from cruxible_core.procedures.terminal_services import (
     ProposalDeliveryRefused,
     ProposalTerminalAdapter,
     proposal_terminal_payload_digest,
-    proposal_terminal_receipt,
     proposal_terminal_ref,
     settle_terminal_receipt,
 )
@@ -303,77 +295,26 @@ class SettleMandateSelection:
     outside_scope_claim_types: tuple[str, ...] = ()
 
 
-def _item_model(value: object) -> type[ProcedureProposalItemAny]:
-    """The item shape a resolved template's tag names; an untagged template is a v1 Claim."""
-
-    tag = value.get("tag") if isinstance(value, dict) else None
-    return (
-        PROPOSAL_ITEM_MODELS.get(tag, ProcedureClaimProposalItemV1)
-        if isinstance(tag, str)
-        else ProcedureClaimProposalItemV1
-    )
-
-
-def proposal_items(
-    request: TerminalEgressRequestV1,
-) -> tuple[ProcedureProposalItemAny, ...]:
-    """Validate every resolved template as one Claim or Subject item, typed to the item."""
-
-    items: list[ProcedureProposalItemAny] = []
-    for item in request.items:
-        try:
-            items.append(_item_model(item.value).model_validate(item.value))
-        except ValidationError as exc:
-            raise ProposalDeliveryRefused(
-                "proposal_item_invalid",
-                "A resolved candidate template is not one Claim or Subject proposal item.",
-                details={
-                    "item_key": item.item_key,
-                    "child_index": item.child_index,
-                    "errors": [
-                        {"location": list(map(str, error["loc"])), "message": error["msg"]}
-                        for error in exc.errors()
-                    ],
-                },
-            ) from exc
-    return tuple(items)
+def proposal_items(request: TerminalEgressRequestV1) -> tuple[CoreClaimsChange, ...]:
+    """Consume only executor-owned changes, never parse a terminal value as a command."""
+    try:
+        return tuple(request.claims_changes[item.item_key] for item in request.items)
+    except KeyError as exc:
+        raise ProposalDeliveryRefused(
+            "proposal_item_invalid", "Claim commands cannot come from data; use a claims node."
+        ) from exc
 
 
 def evidence_by_item(
     request: TerminalEgressRequestV1,
     manifests: Mapping[str, TerminalItemDependencyManifestV1],
-    items: tuple[ProcedureProposalItemAny, ...] | None = None,
 ) -> dict[str, str]:
     """Pick the one Capture each item's own closure reached (see ``citable_captures``)."""
 
     evidence: dict[str, str] = {}
-    parsed = proposal_items(request) if items is None else items
-    for item, typed in zip(request.items, parsed, strict=True):
+    for item in request.items:
         manifest = manifests.get(item.item_key)
         produced = citable_captures(manifest)
-        consumed = (
-            ()
-            if manifest is None
-            else (*manifest.produced_capture_digests, *manifest.admitted_capture_digests)
-        )
-        if isinstance(typed, ProcedureClaimRetirementItem):
-            continue  # a retirement cites nothing: it ends a Claim, it asserts none
-        explicit = None
-        if isinstance(typed, ProcedureClaimProposalItem | ProcedureSubjectProposalItem):
-            explicit = typed.source
-        if explicit is not None:
-            if isinstance(explicit, SelfSourceBody):
-                continue
-            selected = explicit.capture_digest
-            # An explicitly selected Capture must be in the item's own closure,
-            # produced by the run or admitted into it.
-            if selected not in consumed:
-                raise ProposalDeliveryRefused(
-                    "proposal_item_evidence_missing",
-                    "Selected evidence is outside the item's verified closure.",
-                )
-            evidence[item.item_key] = selected
-            continue
         if len(produced) == 0:
             raise ProposalDeliveryRefused(
                 "proposal_item_evidence_missing",
@@ -394,85 +335,64 @@ def evidence_by_item(
     return evidence
 
 
-def _keyless_statement(item: ProcedureClaimProposalItemV1) -> AuthoringClaimStatement:
-    """A Claim item's statement as authored; a keyed (v3) one needs ``keyed`` instead."""
-
-    if isinstance(item, ProcedureKeyedClaimProposalItem):
-        raise ProposalDeliveryRefused(
-            "proposal_item_invalid",
-            "A Claim item naming a Subject by key needs its terminal's key resolution.",
-        )
-    return item.statement
+def _keyless_statement(item: CoreClaimChange) -> AuthoringClaimStatement:
+    return AuthoringClaimStatement.model_validate(item.statement.model_dump(mode="python"))
 
 
 def _claim_members(
     request: TerminalEgressRequestV1,
     *,
-    items: tuple[ProcedureProposalItemAny, ...],
+    items: tuple[CoreClaimsChange, ...],
     evidence: Mapping[str, str],
     read: Callable[[str], bytes | None] = lambda _path: None,
     resolve: Callable[[ClaimAuthoringPayload], ClaimAuthoringPayload] = lambda member: member,
-    restated: Callable[[ClaimAuthoringPayload], str | None] = lambda _member: None,
-    statement_of: Callable[
-        [ProcedureClaimProposalItemV1], AuthoringClaimStatement
-    ] = _keyless_statement,
+    statement_of: Callable[[CoreClaimChange], AuthoringClaimStatement] = _keyless_statement,
+    claim_bound_captures: frozenset[str] = frozenset(),
 ) -> tuple[tuple[ClaimAuthoringPayload, ...], dict[str, str], dict[str, str]]:
     """Build one Claim member per Claim item; return members, item->claim id, identity->item.
 
     Subject items are not Claims (``_subject_members``); ``statement_of`` gives
     each Claim item's statement with any Subject it names by key resolved.
 
-    Each item's literal is put in its ClaimType's canonical form (v8), and the
-    Subjects it names are resolved through their aliases (``resolve``), before
-    its identity is taken, so two items that state one canonical statement are
-    the same statement twice, whatever spelling the run produced. An item naming
-    no Claim it revises, that restates a live Claim, targets that Claim's
-    lineage (``restated``): on new content its evidence is refreshed, on content
-    it already cites nothing changes. Never a second Claim of the statement.
-    Claims-terminal members carry core metadata: their eligibility law has
-    already chosen any revision/refresh, so this legacy restatement is skipped.
+    Canonicalization and alias resolution precede identity checks. Only the
+    claims eligibility law chooses a predecessor; delivery makes no second
+    restatement decision and cannot infer a refresh from item data.
     """
 
     members: list[ClaimAuthoringPayload] = []
     claim_ids: dict[str, str] = {}
     identity_to_item: dict[str, str] = {}
+    # A Capture is immutable and shared by the rows extracted from it. Build
+    # its citation source once per distinct Capture in this terminal.
+    sources = {
+        digest: ExistingCaptureCitationSource(capture_digest=digest)
+        for digest in set(evidence.values())
+    }
     for egress_item, item in zip(request.items, items, strict=True):
-        if isinstance(item, ProcedureSubjectProposalItem | ProcedureClaimRetirementItem):
+        if not isinstance(item, CoreClaimChange):
             continue
-        claim_id = item.revises or proposal_claim_id(
+        claim_id = item.predecessor or proposal_claim_id(
             admission_binding_digest=request.admission_binding_digest,
             node_id=request.node_id,
             item_key=egress_item.item_key,
         )
-        # A v1 item, or a v3 one naming no source, cites its closure's Capture.
-        source: ExistingCaptureCitationSource | SelfSourceBody
-        citation_role: Literal["evidence", "copy"] | None
-        if isinstance(item, ProcedureClaimProposalItem) and item.source is not None:
-            source, citation_role = item.source, item.citation_role
-        else:
-            source = ExistingCaptureCitationSource(capture_digest=evidence[egress_item.item_key])
-            citation_role = "evidence"
         member = ClaimAuthoringPayload(
             procedure_evidence=request.claims_evidence.get(egress_item.item_key),
             statement=statement_of(item),
             rationale=item.rationale,
-            source=source,
-            citation_role=citation_role,
-            derivation=item.derivation if isinstance(item, ProcedureClaimProposalItem) else None,
-            existing_claim_dispositions=(
-                item.existing_claim_dispositions
-                if isinstance(item, ProcedureClaimProposalItem)
-                else ()
-            ),
-            revises=item.revises,
+            source=SelfSourceBody(
+                content_base64=base64.b64encode(item.rationale.encode("utf-8")).decode("ascii")
+            )
+            if evidence[egress_item.item_key] in claim_bound_captures
+            else sources[evidence[egress_item.item_key]],
+            citation_role=None
+            if evidence[egress_item.item_key] in claim_bound_captures
+            else "evidence",
+            derivation=item.derivation,
+            revises=item.predecessor,
             dependency_drafts=ClaimDependencyDrafts(),
         )
         member = resolve(canonical_authored_claims(member, read))
-        if member.revises is None and egress_item.item_key not in request.claims_evidence:
-            refreshed = restated(member)
-            if refreshed is not None:
-                member = member.model_copy(update={"revises": refreshed})
-                claim_id = refreshed
         # The member is final here: seal it so its identity and its statement's
         # digests are taken once however many laws ask (copies are never sealed).
         seal(member)
@@ -493,14 +413,13 @@ def _claim_members(
 
 
 def _subject_creation(
-    item: ProcedureSubjectProposalItem, *, capture: str | None
+    item: CoreSubjectChange, *, capture: str | None
 ) -> SubjectCreationAuthoringPayload:
     """The creation member one Subject item lowers into: its kind and key, never an id.
 
     Key parts are named by predicate (a short name is read under the kind) and
     sorted, so one key is one member identity however the run spelled it. The
-    key Claims cite the item's own ``source``, else the Capture its closure
-    reached, else -- none reached -- the item's rationale as its own words.
+    key Claims cite the one verified Capture in their record's closure.
     """
 
     kind = item.subject_kind
@@ -511,23 +430,23 @@ def _subject_creation(
         ),
         key=lambda part: part.predicate.encode("utf-8"),
     )
-    source = item.source
-    if source is None and capture is not None:
-        source = ExistingCaptureCitationSource(capture_digest=capture)
+    if capture is None:
+        raise ProposalDeliveryRefused(
+            "proposal_item_evidence_missing", "Subject key creation requires its verified Capture."
+        )
     return SubjectCreationAuthoringPayload(
         subject_kind=kind,
         key=tuple(parts),
         rationale=item.rationale,
-        create_new=item.create_new,
-        source=source,
-        citation_role="evidence" if isinstance(source, ExistingCaptureCitationSource) else None,
+        source=ExistingCaptureCitationSource(capture_digest=capture),
+        citation_role="evidence",
     )
 
 
 def _subject_members(
     request: TerminalEgressRequestV1,
     *,
-    items: tuple[ProcedureProposalItemAny, ...],
+    items: tuple[CoreClaimsChange, ...],
     evidence: Mapping[str, str],
 ) -> tuple[tuple[SubjectCreationAuthoringPayload, ...], dict[str, str]]:
     """One creation member per Subject item; return the members and identity->item."""
@@ -535,7 +454,7 @@ def _subject_members(
     members: list[SubjectCreationAuthoringPayload] = []
     identity_to_item: dict[str, str] = {}
     for egress_item, item in zip(request.items, items, strict=True):
-        if not isinstance(item, ProcedureSubjectProposalItem):
+        if not isinstance(item, CoreSubjectChange):
             continue
         try:
             member = _subject_creation(item, capture=evidence.get(egress_item.item_key))
@@ -558,154 +477,6 @@ def _subject_members(
         identity_to_item[identity] = egress_item.item_key
         members.append(member)
     return tuple(members), identity_to_item
-
-
-RETIREMENT_TARGET_NOT_LIVE = "cruxible.procedure.retirement_target_not_live"
-KEY_CLAIM_RETIREMENT = "cruxible.procedure.key_claim_retirement"
-RETIREMENT_LINEAGE_CONFLICT = "cruxible.procedure.retirement_lineage_conflict"
-
-
-def _retirement_refusal(
-    message: str, *, code: str, item_key: str, claim_id: str, **details: object
-) -> ProposalDeliveryRefused:
-    return ProposalDeliveryRefused(
-        "proposal_item_invalid",
-        message,
-        details={"code": code, "item_key": item_key, "claim_id": claim_id, **details},
-    )
-
-
-def _retirement_members(
-    instance: PlaybillInstance,
-    request: TerminalEgressRequestV1,
-    *,
-    items: tuple[ProcedureProposalItemAny, ...],
-    base: AcceptedProjectionCoordinate,
-    base_tree: SnapshotTree,
-) -> tuple[tuple[ClaimRetirementMember, ...], dict[str, str]]:
-    """One retirement member per retirement item; return the members and item -> Claim ID.
-
-    The Claim must be live at the admitted base and not a key Claim (a key Claim
-    is its Subject's identity part and retires with the Subject). The member
-    carries the Claim's live dependent closure at the base, each retired for
-    the item's reason, exactly as the ``retire`` verb computes it.
-    """
-
-    from cruxible_client.contracts.projection import AcceptedCoordinate
-
-    members: list[ClaimRetirementMember] = []
-    retired: dict[str, str] = {}
-    for egress_item, item in zip(request.items, items, strict=True):
-        if not isinstance(item, ProcedureClaimRetirementItem):
-            continue
-        claim_id, item_key = item.retires, egress_item.item_key
-        if claim_id in retired.values():
-            raise _retirement_refusal(
-                "Two terminal items retire the same Claim.",
-                code=RETIREMENT_LINEAGE_CONFLICT,
-                item_key=item_key,
-                claim_id=claim_id,
-            )
-        path = claim_path(claim_id)
-        content = base_tree.get(path)
-        claim = None if content is None else parse_claim(content, path=path)
-        if claim is None or claim.lifecycle.state != "live":
-            raise _retirement_refusal(
-                f"The retirement item names {claim_id}, which is not a live Claim at the "
-                "run's admitted state.",
-                code=RETIREMENT_TARGET_NOT_LIVE,
-                item_key=item_key,
-                claim_id=claim_id,
-            )
-        if is_key_claim(base_tree, claim):
-            raise _retirement_refusal(
-                f"{claim_id} is a key Claim: it is part of its Subject's identity and retires "
-                "with its Subject, never on its own.",
-                code=KEY_CLAIM_RETIREMENT,
-                item_key=item_key,
-                claim_id=claim_id,
-                repair=(
-                    "Retire the Subject instead (its key Claims retire with it), or revise "
-                    "the key Claim to change the key."
-                ),
-            )
-        try:
-            inventory = claim_retirement_inventory(
-                instance,
-                tree=base_tree,
-                coordinate=AcceptedCoordinate.from_internal(base),
-                claim=claim,
-            )
-        except ClaimRetireError as exc:
-            raise _retirement_refusal(
-                f"{claim_id} cannot be retired by a Procedure: {exc}",
-                code="cruxible.authoring.claim_retirement_closure_unsupported",
-                item_key=item_key,
-                claim_id=claim_id,
-            ) from exc
-        members.append(
-            ClaimRetirementMember(
-                retires=claim_id,
-                reason=item.reason,
-                effective_until=item.effective_until,
-                dependents=tuple(
-                    sorted(
-                        (
-                            ClaimRetireDependent(
-                                artifact_identity=dependent.artifact_identity,
-                                predecessor_digest=dependent.predecessor_digest,
-                                reason=item.reason,
-                            )
-                            for dependent in inventory
-                        ),
-                        key=lambda dependent: dependent.artifact_identity.qualified.encode("utf-8"),
-                    )
-                ),
-            )
-        )
-        retired[item_key] = claim_id
-    return tuple(members), retired
-
-
-def _refuse_retired_lineage_conflicts(
-    retired: Mapping[str, str],
-    *,
-    claim_ids: Mapping[str, str],
-    members: tuple[ClaimAuthoringPayload, ...],
-    identity_to_item: Mapping[str, str],
-) -> None:
-    """Refuse a terminal that both retires a Claim's lineage and revises or judges it.
-
-    A Claim item revising (or restating, so targeting) a lineage another item
-    retires, or taking a position on it (``support``, ``contradict`` or
-    ``unsure``), asks for two different ends of one lineage in one change: the
-    terminal refuses rather than pick one. A ``not_tested`` disposition of a
-    retiring sibling is admitted: it takes no position, and the slot law still
-    demands it, because retirements stage after the Claims they sit beside. So
-    one terminal can add a value and retire its sibling, as the write verbs do.
-    """
-
-    retiring = {claim_id: item_key for item_key, claim_id in retired.items()}
-    for item_key, claim_id in claim_ids.items():
-        if claim_id in retiring:
-            raise _retirement_refusal(
-                f"One terminal both retires {claim_id} and revises its lineage.",
-                code=RETIREMENT_LINEAGE_CONFLICT,
-                item_key=item_key,
-                claim_id=claim_id,
-                retired_by=retiring[claim_id],
-            )
-    for member in members:
-        for disposition in member.existing_claim_dispositions:
-            if disposition.claim_id in retiring and disposition.disposition != "not_tested":
-                raise _retirement_refusal(
-                    f"One terminal both retires {disposition.claim_id} and dispositions it "
-                    f"{disposition.disposition}.",
-                    code=RETIREMENT_LINEAGE_CONFLICT,
-                    item_key=identity_to_item[authoring_member_identity(member)],
-                    claim_id=disposition.claim_id,
-                    retired_by=retiring[disposition.claim_id],
-                )
 
 
 def _key_refusal(message: str, *, code: str, **details: object) -> ProposalDeliveryRefused:
@@ -982,24 +753,16 @@ class _SubjectKeys:
                 reference=missing.described(),
             )
 
-    def statement(self, item: ProcedureClaimProposalItemV1) -> AuthoringClaimStatement:
-        if not isinstance(item, ProcedureKeyedClaimProposalItem):
-            return item.statement
+    def statement(self, item: CoreClaimChange) -> AuthoringClaimStatement:
         statement = item.statement
+        if isinstance(statement.subject, SemanticAddress):
+            return statement
         subject = (
             statement.subject
             if isinstance(statement.subject, SemanticAddress)
             else self.address(statement.subject)
         )
-        value: Any = statement.object
-        if isinstance(value, SubjectKeyClaimObject):
-            value = SubjectClaimObject(address=self.address(value.subject))
-        elif isinstance(value, ProcedureNoneClaimObject):
-            # A none of a Subject named by key resolves as a Subject value does.
-            of = value.of
-            if isinstance(of, SubjectKeyClaimObject):
-                of = SubjectClaimObject(address=self.address(of.subject))
-            value = AuthoringNoneClaimObject(of=of)
+        value = statement.object
         return AuthoringClaimStatement(
             subject=subject,
             predicate=statement.predicate,
@@ -1023,42 +786,6 @@ def _lowered_subject_paths(
         if identity in subject_items:
             found[identity] = (str(entry.get("path")), entry.get("resolved") is True)
     return found
-
-
-def _restated_lineage(tree: SnapshotTree, member: ClaimAuthoringPayload) -> str | None:
-    """The one live Claim a legacy proposal item restates, if exactly one.
-
-    Re-observation (identity-design-1009): an item restating a live Claim's
-    canonical statement targets that Claim's lineage. Shared lowering then
-    decides by content and citation association: new content refreshes the
-    evidence by revising it, content it already cites the same way changes
-    nothing (an unchanged receipt child). A none restates the inverse Claim of
-    its unit: the same predicate and qualifier with the same inverse key
-    (``of``), as a value restates the Claim with its object.
-    """
-
-    statement = member.statement
-    authored = statement.object
-    expected: LiteralClaimObject | SubjectClaimObject | NoneClaimObject
-    if isinstance(authored, AuthoringNoneClaimObject):
-        expected = NoneClaimObject(of=authored.of)
-    elif isinstance(authored, LiteralClaimObject | SubjectClaimObject):
-        expected = authored
-    else:
-        return None
-    same = [
-        claim
-        for claim in tree.claims_for(statement)
-        if claim.lifecycle.state == "live"
-        and claim.statement.subject == statement.subject
-        and claim.statement.predicate == statement.predicate
-        and claim.statement.qualifier == statement.qualifier
-        and claim.statement.object == expected
-        and claim.statement.role == statement.role
-        and claim.statement.effective_from == statement.effective_from
-        and claim.statement.effective_until == statement.effective_until
-    ]
-    return same[0].identity.name if len(same) == 1 else None
 
 
 _UNCHANGED_OUTCOMES = frozenset(
@@ -1137,7 +864,7 @@ def proposal_rationale(request: TerminalEgressRequestV1, *, item_count: int) -> 
 def proposal_item_reasons(
     request: TerminalEgressRequestV1,
     *,
-    items: tuple[ProcedureProposalItemAny, ...],
+    items: tuple[CoreClaimsChange, ...],
     item_paths: Mapping[str, str],
     unchanged: Mapping[str, object],
 ) -> tuple[ProposalItemReason, ...]:
@@ -1477,7 +1204,7 @@ def select_settle_mandate(
 
 
 class ProposalTerminalEgressSink:
-    """The production `propose_change_set` sink: prepare once, deliver exactly once."""
+    """The production `claims` sink: prepare once, deliver exactly once."""
 
     def __init__(
         self,
@@ -1522,34 +1249,68 @@ class ProposalTerminalEgressSink:
         decision is then made again at the head instead (``_line_proposal``).
         """
 
-        if request.kind not in {"propose_change_set", "settle_change_set"}:
+        if request.kind != "claims":
             raise ProposalDeliveryRefused(
                 "proposal_item_invalid",
-                "The proposal sink prepares proposal and settle terminals only.",
+                "The proposal sink prepares claims terminals only.",
                 details={"kind": request.kind},
             )
-        items = proposal_items(request)
         if evidence is None:
-            evidence = evidence_by_item(request, manifests or {}, items=items)
+            evidence = evidence_by_item(request, manifests or {})
         else:
-            # Self-source items retain their body in the request, not a selected
-            # Capture. Recovery must use the same rule as evidence_by_item.
-            missing = [
-                egress_item.item_key
-                for egress_item, item in zip(request.items, items, strict=True)
-                if egress_item.item_key not in evidence
-                and not isinstance(item, ProcedureClaimRetirementItem)
-                and not (
-                    isinstance(item, ProcedureClaimProposalItem | ProcedureSubjectProposalItem)
-                    and isinstance(item.source, SelfSourceBody)
-                )
-            ]
+            missing = [item.item_key for item in request.items if item.item_key not in evidence]
             if missing:
                 raise ProposalDeliveryRefused(
                     "proposal_item_evidence_missing",
                     "The journaled preparation names no Capture for a terminal item.",
                     details={"item_keys": missing},
                 )
+        items = proposal_items(request)
+        reobserved = {}
+        observed = {}
+        access = BodyAccessContext(principal_id=request.actor_context.actor_id, can_read_body=True)
+        for child, change in zip(request.items, items, strict=True):
+            if not isinstance(change, CoreReobservationChange):
+                continue
+            receipt = request.claims_evidence[child.item_key]
+            if receipt.value.basis != "extracted":
+                raise ProposalDeliveryRefused(
+                    "proposal_item_invalid", "Re-observation requires an extraction receipt"
+                )
+            capture = receipt.value.capture_digest
+            if evidence[child.item_key] != capture:
+                raise ProposalDeliveryRefused(
+                    "proposal_item_evidence_mismatch",
+                    "The re-observation receipt must cite the item's own Capture closure.",
+                )
+            if capture not in observed:
+                observed[capture] = parse_capture_envelope(
+                    self.instance.body_store().read(capture, access=access)
+                ).observed_at
+            reobserved[child.item_key] = TerminalEgressChildReceiptV3(
+                child_index=child.child_index,
+                item_key=child.item_key,
+                path=claim_path(change.claim_id),
+                egress_digest=change.artifact_digest,
+                reobserving_capture_digest=capture,
+                reobserved_at=observed[capture],
+            )
+        if reobserved and len(reobserved) == len(items):
+            prepared = PreparedTerminalEgressV1(
+                target_paths=(),
+                lowering_digest=proposal_lowering_digest(()),
+                item_paths=tuple(sorted(((key, child.path) for key, child in reobserved.items()))),
+                unchanged=tuple(reobserved.values()),
+            )
+            self._prepared[(request.admission_binding_digest, request.node_id)] = PreparedProposal(
+                prepared=prepared,
+                candidate_tree={},
+                changed_members=(),
+                item_paths={key: child.path for key, child in reobserved.items()},
+                rationale="",
+            )
+            return prepared
+
         base_tree = self.instance.immutable_tree_at(request.accepted_coordinate.git_oid)
         base = self.instance.resolve_accepted_coordinate(
             git_oid=request.accepted_coordinate.git_oid,
@@ -1576,6 +1337,32 @@ class ProposalTerminalEgressSink:
         keys = _SubjectKeys(self.instance, base=base, base_tree=base_tree)
         keys.add_created(subject_members)
 
+        # Accepted input Claims may cite Claim-bound self sources. Those remain
+        # input evidence; a derived Claim needs its own origin instead of borrowing
+        # another Claim's origin. Classify each distinct source once per preparation.
+        bodies = self.instance.body_store()
+        claim_bound_captures: set[str] = set()
+        for digest in {
+            evidence[egress.item_key]
+            for egress, change in zip(request.items, items, strict=True)
+            if isinstance(change, CoreClaimChange)
+            and change.derivation is not None
+            and change.derivation.inputs
+        }:
+            envelope = parse_capture_envelope(
+                bodies.read(
+                    digest,
+                    access=BodyAccessContext(principal_id="claims-delivery", can_read_body=True),
+                )
+            )
+            accepted_contract = self.instance.accepted_capture_contract_version(
+                AcceptedCoordinate.from_internal(base), envelope.capture_contract_digest
+            )
+            if accepted_contract is not None and classify_capture_reuse(
+                envelope, contract=accepted_contract.contract, store=bodies, claim_id=""
+            ) in {"claim_bound", "claim_bound_mismatch"}:
+                claim_bound_captures.add(digest)
+
         def claim_members() -> tuple[
             tuple[ClaimAuthoringPayload, ...], dict[str, str], dict[str, str]
         ]:
@@ -1585,8 +1372,8 @@ class ProposalTerminalEgressSink:
                 evidence=evidence,
                 read=base_tree.get,
                 resolve=resolve,
-                restated=lambda member: _restated_lineage(base_tree, member),
                 statement_of=keys.statement,
+                claim_bound_captures=frozenset(claim_bound_captures),
             )
 
         # Every keyed reference is frozen against the admitted base and the
@@ -1624,12 +1411,6 @@ class ProposalTerminalEgressSink:
                         if member.member_identity in assigned
                     },
                 )
-        retirement_members, retired = _retirement_members(
-            self.instance, request, items=items, base=base, base_tree=base_tree
-        )
-        _refuse_retired_lineage_conflicts(
-            retired, claim_ids=claim_ids, members=members, identity_to_item=identity_to_item
-        )
         ordered = _with_many_valued_dispositions(
             tuple(
                 sorted(
@@ -1643,7 +1424,7 @@ class ProposalTerminalEgressSink:
         )
         all_members: tuple[AuthoringChangeSetMember, ...] = tuple(
             sorted(
-                (*ordered, *subject_members, *retirement_members),
+                (*ordered, *subject_members),
                 key=lambda member: authoring_member_identity(member).encode("utf-8"),
             )
         )
@@ -1696,10 +1477,6 @@ class ProposalTerminalEgressSink:
             ) from exc
         target_paths = tuple(path for path, _content in lowered.changed_members)
         item_paths = {item_key: claim_path(claim_id) for item_key, claim_id in claim_ids.items()}
-        # A retirement item binds to the retired Claim's member (the receipt's child).
-        item_paths.update(
-            (item_key, claim_path(claim_id)) for item_key, claim_id in retired.items()
-        )
         unchanged: dict[str, UnchangedChildReceiptAny] = dict(
             _unchanged_children(
                 self.instance,
@@ -1710,6 +1487,8 @@ class ProposalTerminalEgressSink:
                 base_tree=base_tree,
             )
         )
+        unchanged.update(reobserved)
+        item_paths.update({key: child.path for key, child in reobserved.items()})
         if keys.references:
             # Each frozen reference must name the same Subject over the final
             # candidate state, by the same resolver (review F-002).
@@ -1762,7 +1541,7 @@ class ProposalTerminalEgressSink:
                 journaled=journaled,
                 recompiles=recompiles,
             )
-            if target_paths and request.kind == "propose_change_set"
+            if target_paths and request.capped_by is not None
             else None
         )
         if line_proposal is not None and line_proposal.decision == "still_current":
@@ -1807,7 +1586,7 @@ class ProposalTerminalEgressSink:
         # A settle capped at propose binds the mandate a proposal would (a
         # propose grant first): it never uses a settle grant's settle authority.
         outside_scope: tuple[str, ...] = ()
-        if request.kind == "settle_change_set" and request.capped_by is None:
+        if request.capped_by is None:
             selection = select_settle_mandate(
                 request,
                 admission=admission,
@@ -2069,7 +1848,7 @@ class ProposalTerminalEgressSink:
         prepared_nothing = self._prepared.get((request.admission_binding_digest, request.node_id))
         if (
             not isinstance(request, TerminalEgressRequestV2)
-            and request.kind in {"propose_change_set", "settle_change_set"}
+            and request.kind == "claims"
             and prepared_nothing is not None
             and prepared_nothing.prepared.changes_nothing
         ):
@@ -2085,7 +1864,7 @@ class ProposalTerminalEgressSink:
             )
         if (
             not isinstance(request, TerminalEgressRequestV2)
-            and request.kind == "propose_change_set"
+            and request.capped_by is not None
             and prepared_nothing is not None
             and prepared_nothing.prepared.keeps_open_proposal
         ):
@@ -2110,10 +1889,7 @@ class ProposalTerminalEgressSink:
                     for item in request.items
                 ),
             )
-        if not isinstance(request, TerminalEgressRequestV2) or request.kind not in {
-            "propose_change_set",
-            "settle_change_set",
-        }:
+        if not isinstance(request, TerminalEgressRequestV2) or request.kind != "claims":
             raise ProposalDeliveryRefused(
                 "proposal_item_invalid",
                 "The proposal sink delivers prepared v2 proposal and settle egress only.",
@@ -2161,34 +1937,13 @@ class ProposalTerminalEgressSink:
         adapter = ProposalTerminalAdapter(
             service=service, bind_projection=self.instance.bind_accepted_projection
         )
-        receipt: TerminalEgressReceiptV1
-        if request.kind == "settle_change_set":
-            receipt = self._deliver_settle(
-                request,
-                admission=admission,
-                prepared=prepared,
-                adapter=adapter,
-                existing=existing,
-            )
-        else:
-            unchanged = {child.item_key: child for child in prepared.prepared.unchanged}
-            receipt = (
-                proposal_terminal_receipt(
-                    request, result=existing, item_paths=prepared.item_paths, unchanged=unchanged
-                )
-                if existing is not None
-                else adapter.deliver(
-                    request=request,
-                    admission=admission,
-                    candidate_tree=prepared.candidate_tree,
-                    accepted_mandates=self.accepted_mandates,
-                    item_paths=prepared.item_paths,
-                    rationale=prepared.rationale,
-                    changed_paths=prepared.prepared.target_paths,
-                    delegation=self.delegation,
-                    unchanged=unchanged,
-                )
-            )
+        receipt: TerminalEgressReceiptV1 = self._deliver_settle(
+            request,
+            admission=admission,
+            prepared=prepared,
+            adapter=adapter,
+            existing=existing,
+        )
         # The exact admission this delivery submitted carries this operation's
         # reasons: linked before the run records its receipt, so a crash here
         # is redelivered through recovery and linked then. An admission
@@ -2199,7 +1954,7 @@ class ProposalTerminalEgressSink:
         if (
             line_proposal is not None
             and isinstance(receipt, TerminalEgressReceiptV3)
-            and not isinstance(receipt, TerminalEgressReceiptV4)
+            and request.capped_by is not None
         ):
             receipt = self._supersede_open_proposal(request, line_proposal, receipt)
         proposal_id = getattr(receipt, "proposal_id", None)
@@ -2238,6 +1993,7 @@ class ProposalTerminalEgressSink:
         if not unchanged:
             return
         store = ClaimReobservationStore(self.instance)
+        cited_envelopes: dict[str, CaptureEnvelopeAny] = {}
         for child in unchanged:
             if not isinstance(child, TerminalEgressChildReceiptV3):
                 continue  # a reused Subject observes nothing
@@ -2247,6 +2003,16 @@ class ProposalTerminalEgressSink:
                     claim_id=claim_id,
                     capture_digest=child.reobserving_capture_digest,
                     actor_id=request.actor_context.actor_id,
+                    extraction=request.claims_evidence.get(child.item_key),
+                    cited_envelopes=cited_envelopes,
+                    extracted_value=(
+                        change.value
+                        if isinstance(
+                            (change := request.claims_changes.get(child.item_key)),
+                            CoreReobservationChange,
+                        )
+                        else None
+                    ),
                 )
             except ClaimReobservationRefused:
                 continue
@@ -2312,8 +2078,7 @@ class ProposalTerminalEgressSink:
                 prepared.prepared.target_paths,
                 settle=admission_record.settle_submission,
             )
-            or (admission_record.settle_submission is not None)
-            != (request.kind == "settle_change_set")
+            or (admission_record.settle_submission is not None) != (request.kind == "claims")
             or (
                 admission_record.settle_submission is not None
                 and admission_record.settle_submission.mandate_digest

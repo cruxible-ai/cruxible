@@ -88,7 +88,6 @@ from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimFormatError,
     ClaimLawEvidence,
-    ExactContentClaimObject,
     LiteralClaimObject,
     NoneClaimObject,
     SubjectClaimObject,
@@ -223,6 +222,11 @@ from cruxible_client.contracts.resolution_contracts import (
     parse_resolution_contract,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import (
+    claim_value_kind,
+    subject_value_kinds,
+    tree_contract_resolver,
+)
 from cruxible_client.contracts.subject_kinds import (
     AcceptedSubjectKind,
     SubjectKindFormatError,
@@ -1006,7 +1010,7 @@ def _aggregate_activation(values: list[ActivationPolicy]) -> ActivationPolicy:
 
 
 def _claim_policy_value(
-    value: LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject,
+    value: LiteralClaimObject | SubjectClaimObject,
 ) -> object:
     if isinstance(value, LiteralClaimObject):
         return value.value
@@ -2452,15 +2456,15 @@ def _literal_object_traversal(
                 "QueryDefinition traversal names a ClaimType the pin closure did not "
                 f"resolve: {step.predicate}"
             )
-        if accepted.claim_type.object_kind == "subject":
+        if claim_value_kind(accepted.claim_type.value) == "subject":
             continue
         return CompilerDiagnostic(
             code="cruxible.query_definition.traversal_object_not_subject",
             severity="error",
             message=(
                 f"Traversal step {step.binding!r} walks predicate {step.predicate!r}, "
-                f"whose ClaimType declares object_kind="
-                f"{accepted.claim_type.object_kind!r}: relation traversal requires "
+                f"whose ClaimType declares value="
+                f"{claim_value_kind(accepted.claim_type.value)!r}: relation traversal requires "
                 "object_kind='subject'."
             ),
             subject=SemanticAddress.whole_artifact(accepted.path),
@@ -2755,9 +2759,8 @@ def _scoped_claim_types(
         scoped[item.claim_type.target] = ScopedClaimType(
             identity=claim_type.identity,
             artifact_digest=accepted.artifact_digest,
-            object_kind=claim_type.object_kind,
+            value=claim_type.value,
             allowed_subject_kinds=claim_type.allowed_subject_kinds,
-            allowed_object_subject_kinds=claim_type.allowed_object_subject_kinds,
         )
     return scoped
 
@@ -3220,6 +3223,8 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
     # The one Claim law reads which behaviours apply off the Claim itself: an
     # attributed retirement, or a live Claim.
     retiring = claim.retirement is not None
+    from cruxible_core.indexes.subject_identity import tree_key_rules
+
     law = evaluate_claim_law(
         claim,
         path=context.path,
@@ -3229,6 +3234,9 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         claim_types=context.resolved.claim_types,
         capture_contracts=context.resolved.capture_contracts,
         capture_store=context.bodies,
+        value_contracts=tree_contract_resolver(context.candidate_tree),
+        value_enums=tree_enum_resolver(context.candidate_tree),
+        value_keys=tree_key_rules(context.candidate_tree),
         providers=mapped_values(context.resolved.providers, lambda accepted: accepted.provider),
         producer_artifact_digests=_producer_versions(
             context,
@@ -3363,7 +3371,7 @@ def _inverse_key_dependents(
         and claim_type.inverse is not None
         and isinstance(claim_type.inverse.key, ClaimInverseObjectKeyPart)
         and claim_type.inverse.key.predicate in dropped
-        and kind in claim_type.allowed_object_subject_kinds
+        and kind in subject_value_kinds(claim_type.value)
     }
     return tuple(sorted(stranded, key=lambda item: item.encode("utf-8")))
 
@@ -3380,7 +3388,7 @@ def _inverse_subject_kind_keys(
     if inverse is None or inverse.key.kind != "object_key":
         return None
     keys: dict[str, tuple[str, ...] | None] = {}
-    for kind in claim_type.allowed_object_subject_kinds:
+    for kind in subject_value_kinds(claim_type.value):
         try:
             declared = live_subject_kind(context.candidate_tree, kind)
         except SubjectKindFormatError:
@@ -3467,12 +3475,36 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         predecessor=predecessor,
         accepted_artifacts=context.candidate_identities,
         subject_kind_keys=_inverse_subject_kind_keys(context, claim_type),
+        resolve_contract=_candidate_contract_resolver(context.candidate_tree),
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted ClaimType law result is incomplete")
     if claim_type.lifecycle.state == "live":
+        from cruxible_client.contracts.shapes import Contract, ContractField, evaluate_contract_law
+
+        # The same native field law validates references and key kinds. This
+        # synthetic Contract exists only during definition acceptance.
+        value_contract = Contract(
+            name="cruxible.claim-value-check",
+            version=1,
+            fields={"value": ContractField(type=claim_type.value)},
+        )
+        problems = evaluate_contract_law(
+            value_contract,
+            path="",
+            lookup=context.candidate_tree.get,
+            parent_content=None,
+            content=b"",
+        )
+        if problems:
+            return _MemberVerdict(
+                diagnostics=tuple(
+                    _diagnostic("cruxible.claim_type.value_invalid", p.message, context.path)
+                    for p in problems
+                )
+            )
         unresolved = _claim_type_unresolved_contracts(context, claim_type)
         if unresolved:
             return _MemberVerdict(

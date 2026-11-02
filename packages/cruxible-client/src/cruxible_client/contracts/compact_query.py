@@ -39,7 +39,6 @@ from cruxible_client.contracts.query.definitions import (
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.query.results import ClaimQueryResult, QueryExecutionReceipt
 from cruxible_client.contracts.read_values import (
-    ExactContentRef,
     ShownObject,
     ShownValue,
     TruncatedText,
@@ -401,7 +400,7 @@ class QueryNone(BaseModel):
 #: each inverse-bearing column's live nones.
 QueryCell = TypeAliasType(
     "QueryCell",
-    "TruncatedText | ExactContentRef | ShownObject | str | bool | int | float | None"
+    "TruncatedText | ShownObject | str | bool | int | float | None"
     " | list[QueryCell] | dict[str, list[QueryClaim]] | dict[str, list[QueryNone]]",
 )
 
@@ -452,8 +451,8 @@ class QueryResultRecord(BaseModel):
     """One page of a ``query`` answer: values first, flags per row.
 
     Rows are bounded by ``get``'s card rule: a string value over 500 characters
-    is a ``TruncatedText`` preview, and an exact-content value is its text, or an
-    ``ExactContentRef`` when it cannot be shown as text. A row cell names no
+    is a ``TruncatedText`` preview. A structured value retains its typed shape.
+    A row cell names no
     whole read; with ``claims=True`` each Claim's preview does.
     """
 

@@ -70,7 +70,13 @@ from cruxible_client.contracts.orient import (
 from cruxible_client.contracts.policy_rows import PolicyInForce
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.repairs import RepairOperation
-from cruxible_client.contracts.shapes import Contract
+from cruxible_client.contracts.shapes import (
+    Contract,
+    claim_value_kind,
+    render_type,
+    subject_value_kinds,
+    value_members,
+)
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.exhaust.journal_index import RunPageInvalidated
@@ -290,31 +296,8 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
 # -- predicate descriptors ----------------------------------------------------
 
 
-def _value_type(
-    claim_type: ClaimType,
-) -> tuple[str, tuple[str | int | float | bool | None, ...] | None]:
-    if claim_type.object_kind == "subject":
-        kinds = claim_type.allowed_object_subject_kinds
-        return ("subject:" + ",".join(kinds) if kinds else "subject"), None
-    if claim_type.object_kind == "exact_content":
-        return "exact_content", None
-    schema: Mapping[str, Any] = claim_type.literal_schema or {}
-    if "enum" in schema or "const" in schema:
-        raw = schema["enum"] if "enum" in schema else [schema["const"]]
-        members = tuple(
-            item if item is None or isinstance(item, (str, int, float, bool)) else json.dumps(item)
-            for item in (raw if isinstance(raw, list) else [raw])
-        )
-        return "enum", members
-    declared = schema.get("type")
-    fmt = schema.get("format")
-    if declared == "string" and fmt == "date":
-        return "date", None
-    if declared == "string" and fmt == "date-time":
-        return "datetime", None
-    if isinstance(declared, list):
-        return "|".join(str(item) for item in declared), None
-    return (str(declared) if declared is not None else "any"), None
+def _value_type(claim_type: ClaimType) -> tuple[str, tuple[Any, ...] | None]:
+    return render_type(claim_type.value), value_members(claim_type.value) or None
 
 
 def _short_names(predicates: Iterable[str], kind: str, state: _State) -> dict[str, str]:
@@ -517,7 +500,7 @@ def _select_names(kind: OrientKind) -> list[str]:
 
 def _enum_filter(kind: OrientKind) -> dict[str, object] | None:
     for item in kind.predicates:
-        if item.type == "enum" and item.members and item.cardinality == "one":
+        if item.members and item.cardinality == "one":
             return {"field": item.name, "eq": item.members[0]}
     return None
 
@@ -1743,7 +1726,8 @@ def _incoming(state: _State, kind: str) -> tuple[ClaimType, ...]:
             (
                 item
                 for item in state.claim_types
-                if item.object_kind == "subject" and kind in item.allowed_object_subject_kinds
+                if claim_value_kind(item.value) == "subject"
+                and kind in subject_value_kinds(item.value)
             ),
             key=lambda item: item.predicate.encode("utf-8"),
         )

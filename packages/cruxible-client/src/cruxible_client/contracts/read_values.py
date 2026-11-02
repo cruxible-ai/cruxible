@@ -3,14 +3,13 @@
 Summary reads (``get`` cards, ``query`` rows and cells, ``World.values``, write
 outcomes) bound each value: a string over ``GET_SUMMARY_TEXT_MAX_CHARS``
 characters is cut to a :class:`TruncatedText`, a declared preview that can never
-be mistaken for the value, and an exact-content value with no text to show is an
-:class:`ExactContentRef`. An object value is a :class:`ShownObject`, shown whole.
+be mistaken for the value. An object value is a :class:`ShownObject`, shown whole.
 Every other value is itself. ``ShownValue`` is that typed union. A preview names
 the exact read of its whole value (:class:`WholeValueRead`) whenever one Claim
 at one accepted generation backs it.
 
 No JSON object in a shown value is ever a bare value: it is a marker, which
-carries its required discriminator (``truncated``, ``exact_content``), or an
+carries its required discriminator (``truncated``), or an
 object value wrapped as ``{"object": {...}}``. A Claim whose value is an object
 shaped like a marker therefore reads back as that object, never as a marker.
 """
@@ -67,23 +66,6 @@ class TruncatedText(_StrictReadValueModel):
     read_whole: WholeValueRead | None = Field(default=None, exclude_if=_omit_none)
 
 
-class ExactContentRef(_StrictReadValueModel):
-    """An exact-content Claim value shown by digest, because it cannot be shown as text.
-
-    An exact-content value reads as its UTF-8 text wherever a value is shown.
-    This marker stands in for the text when there is none to show: the bytes are
-    not UTF-8 text (``binary``), or the store no longer holds them
-    (``unavailable``). It never raises. Every caller who may read a Claim reads
-    its exact-content value; nothing is withheld by permission.
-    """
-
-    exact_content: Literal["binary", "unavailable"]
-    content_digest: str
-    # The value's length in bytes, when it is known without reading the bytes
-    # (the accepted span) or they were read.
-    length: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
-
-
 class ShownObject(_StrictReadValueModel):
     """An object value, shown whole: ``object`` is the value itself, never cut.
 
@@ -97,12 +79,11 @@ class ShownObject(_StrictReadValueModel):
 
 
 #: A value as a summary read shows it: a TruncatedText preview of a long string,
-#: an ExactContentRef marker, a ShownObject for an object value, or the value
+#: a ShownObject for an object value, or the value
 #: itself (a list element-wise). The value is a string so the alias can name itself.
 ShownValue = TypeAliasType(
     "ShownValue",
-    "TruncatedText | ExactContentRef | ShownObject | str | bool | int | float | None"
-    " | list[ShownValue]",
+    "TruncatedText | ShownObject | str | bool | int | float | None | list[ShownValue]",
 )
 
 
@@ -181,7 +162,6 @@ __all__ = [
     "CLAIM_LINE_ID_CHARS",
     "GET_SUMMARY_TEXT_MAX_CHARS",
     "ClaimLine",
-    "ExactContentRef",
     "ShownObject",
     "ShownValue",
     "TruncatedText",

@@ -114,7 +114,7 @@ client moves. Borrowed contexts share their original connection’s lifetime.
 
 Canonical values and typed contracts reject unsupported encodings. An object
 with a `.value` does not implicitly serialize arbitrary Python. Use the declared
-SubjectRef/LiteralValue/ExactContent forms for knowledge; use the declared
+SubjectRef/LiteralValue forms for knowledge; use the declared
 Procedure contracts for execution values.
 
 All network operations may raise authentication, authorization, transport, or
@@ -387,9 +387,7 @@ claim_type(
     *,
     predicate: str | ClaimTypeRef,
     subject_kinds: Sequence[str],
-    object_kind: ClaimObjectKind | str,
-    value_schema: dict[str, object] | None,
-    object_subject_kinds: Sequence[str],
+    value_type: FieldType | str,
     cardinality: Cardinality | str,
     permitted_roles: Sequence[ClaimRole | str],
     referent_sensitivity: ReferentSensitivity | str,
@@ -409,10 +407,8 @@ Builds a ClaimTypeDraft with explicit object, cardinality, role, evidence, admis
 | Parameter | Default | Meaning |
 |---|---|---|
 | `predicate` | Required | ClaimType reference or canonical predicate address. |
-| `subject_kinds` | Required | Allowed or selected Subject kinds, depending on authoring versus audit. |
-| `object_kind` | Required | literal, subject, or exact_content, preferably the ClaimObjectKind enum. |
-| `value_schema` | Required | Literal-value schema; relevant to literal objects, not a free-form second ontology. |
-| `object_subject_kinds` | Required | Allowed endpoint Subject kinds for a subject-valued ClaimType. |
+| `subject_kinds` | Required | Allowed Subject kinds. |
+| `value_type` | Required | A native Contract type, such as `enum[open, closed]` or `subject<sec.package>`. Strings declare `max_len <= 256` and are one line. |
 | `cardinality` | Required | one or many. It constrains the field; it does not hide live competing Claims on reads. |
 | `permitted_roles` | Required | Claim roles admitted by this ClaimType. |
 | `referent_sensitivity` | Required | Whether dependency sensitivity follows endpoint identity or its shell. |
@@ -457,7 +453,7 @@ Builds a ClaimDraft; may read accepted metadata to interpret objects and evidenc
 |---|---|---|
 | `subject` | Required | SubjectRef or accepted canonical Subject address; a Claim is about this Subject. |
 | `predicate` | Required | ClaimType reference or canonical predicate address. |
-| `value` | Required | Object value under the selected ClaimType; use SubjectRef, LiteralValue, or ExactContent where applicable. |
+| `value` | Required | Object value under the selected ClaimType; use SubjectRef or LiteralValue for the declared type. |
 | `role` | Required | Normative, observation, environment_binding, or derivation role admitted by the ClaimType. |
 | `rationale` | Required | Author-supplied explanation retained with this Claim/change decision. |
 | `supported_by` | `None` | Independent selected evidence or an evidence-role CaptureRef. Exactly one evidence-source argument is required. |
@@ -757,7 +753,7 @@ The whole value a `TruncatedText` previews, read exactly where it was previewed:
 read_whole_many(previews: Iterable[TruncatedText]) -> dict[str, object]
 ```
 
-Many previews' whole values in few reads, keyed by each preview's `read_whole.ref`. Each value is exactly what `read_whole(preview)` returns, read where it was previewed: previews are grouped by the generation they name (`read_whole.at`) and each group is read through `claims/read-batch` pinned to that generation's git oid, at most 256 Claims and about 4 MiB of previewed text per read (400 long titles are two reads, not 400). An exact-content value is read as `read_whole` reads it, one by one. Raises `WholeValueUnavailable` for a preview that names no read, for one Claim previewed at two generations (read each with `read_whole`; one is never re-pinned to the other), and when the daemon predates git-oid pinned batch reads.
+Many previews' whole values in few reads, keyed by each preview's `read_whole.ref`. Each value is exactly what `read_whole(preview)` returns, read where it was previewed: previews are grouped by the generation they name (`read_whole.at`) and each group is read through `claims/read-batch` pinned to that generation's git oid, at most 256 Claims and about 4 MiB of previewed text per read (400 long titles are two reads, not 400). Raises `WholeValueUnavailable` for a preview that names no read, for one Claim previewed at two generations (read each with `read_whole`; one is never re-pinned to the other), and when the daemon predates git-oid pinned batch reads.
 
 <a id="api-cruxible-orient"></a>
 
@@ -1403,7 +1399,7 @@ Add one Claim to this changeset; the signature is `Cruxible.claim`'s.
 |---|---|---|
 | `subject` | Required | SubjectRef or accepted canonical Subject address; a Claim is about this Subject. |
 | `predicate` | Required | ClaimType reference or canonical predicate address. |
-| `value` | Required | Object value under the selected ClaimType; use SubjectRef, LiteralValue, or ExactContent where applicable. |
+| `value` | Required | Object value under the selected ClaimType; use SubjectRef or LiteralValue for the declared type. |
 | `role` | Required | Normative, observation, environment_binding, or derivation role admitted by the ClaimType. |
 | `rationale` | Required | Author-supplied explanation retained with this Claim/change decision. |
 | `supported_by` | `None` | Independent selected evidence or an evidence-role CaptureRef. Exactly one evidence-source argument is required. |
@@ -2213,7 +2209,6 @@ Import: `cruxible_client.authoring.sdk.ClaimView`. [Source](src/cruxible_client/
 | `lifecycle_state` | `str` | `Required` |
 | `verdict` | `str` | `Required` |
 | `captures` | `tuple[CaptureRef, ...]` | `Required` |
-| `content_digest` | `str \| None` | `None` |
 
 `claim_id` is the qualified `Claim:CLM-...`; the `claim` property is the bare
 `CLM-...` that `QueryClaimValue.claim`, query Claim cells and the keys of
@@ -2718,13 +2713,11 @@ Import: `cruxible_client.authoring.world.WorldClaimType`. [Source](src/cruxible_
 |---|---|---|
 | `address` | `str` | `Required` |
 | `coordinate` | `AcceptedCoordinate` | `Required` |
-| `object_kind` | `ClaimObjectKind` | `Required` |
+| `value_type` | `FieldType` | `Required` |
 | `cardinality` | `Cardinality` | `Required` |
 | `allowed_subject_kinds` | `tuple[str, ...]` | `Required` |
-| `allowed_object_subject_kinds` | `tuple[str, ...]` | `Required` |
 | `permitted_roles` | `tuple[ClaimRole, ...]` | `Required` |
 | `referent_sensitivity` | `ReferentSensitivity` | `Required` |
-| `literal_schema` | `dict[str, object] \| None` | `Required` |
 | `description` | `str \| None` | `Required` |
 | `member_descriptions` | `tuple[ClaimTypeMemberDescription, ...]` | `Required` |
 | `default_role` | `ClaimRole \| None` | `Required` |
@@ -2888,8 +2881,8 @@ be upgraded by passing it as independent support. `CaptureView.ref` requires a
 verified capture; `.content` requires verified available body bytes. `.text()`
 can raise decoding errors; `.json()` can raise JSON decoding errors.
 
-`ExactContent(str)` encodes UTF-8; bytes are retained exactly. It accepts no
-invented media-type field. `Duration` uses nonnegative integer microseconds and
+`ExactContent` is retired and refuses with `ExactContentTypeError`. Prose lives
+in Documents; cite a Document section. `Duration` uses nonnegative integer microseconds and
 rejects booleans. EffectivePeriod normalizes UTC and requires end > start when
 both are supplied. AccessProfile requires a canonical nonblank ID and sorted,
 unique classes. Enum values below are the actual accepted SDK spellings.
@@ -3144,6 +3137,8 @@ Import: `cruxible_client.authoring.sdk_types.LiteralValue`. [Source](src/cruxibl
 
 ## `ExactContent`
 
+Retired. Prose lives in Documents; cite a Document section.
+
 Import: `cruxible_client.authoring.sdk_types.ExactContent`. [Source](src/cruxible_client/authoring/sdk_types.py)
 
 | Field | Type | Default / construction |
@@ -3302,18 +3297,6 @@ Import: `cruxible_client.authoring.sdk_types.ActivationPolicy`. [Source](src/cru
 | `ABORT` | `'abort'` |
 | `SNAPSHOT` | `'snapshot'` |
 | `EPOCH_CHECK` | `'epoch-check'` |
-
-<a id="api-claimobjectkind"></a>
-
-## `ClaimObjectKind`
-
-Import: `cruxible_client.authoring.sdk_types.ClaimObjectKind`. [Source](src/cruxible_client/authoring/sdk_types.py)
-
-| Member | Value |
-|---|---|
-| `LITERAL` | `'literal'` |
-| `SUBJECT` | `'subject'` |
-| `EXACT_CONTENT` | `'exact_content'` |
 
 <a id="api-cardinality"></a>
 
@@ -3518,7 +3501,7 @@ form.
 | `invoke` | `invoke` | Value `{succeeded, status, receipt, value}` |
 | `select` | `select` | Joins mutually exclusive producers |
 | `inbox` | `post_inbox` | Line only; observe authority |
-| `propose` / `settle` | `propose_change_set` / `settle_change_set` | Line only |
+| `claims` | `claims` | Typed records to Claims; its Mandate chooses propose or settle. |
 | `emit` | `emit_capture` | Line only |
 | `halt` | `halt` | Ends a path without a result |
 
@@ -3539,7 +3522,7 @@ graph `definition`) refuses `procedure_authoring_form_retired`, naming the spec.
 | Run surface | Availability |
 |---|---|
 | Direct run (`Procedure.run`) | read, extract, transform, project, guard, select, halt and call; transform-only repeat; invoke subject to child closure/authority |
-| Accepted Line (`cx.line(name).run()`) | Adds authorized emit_capture, post_inbox, propose_change_set and settle_change_set paths; a Repeat whose body calls a provider also runs only on a Line |
+| Accepted Line (`cx.line(name).run()`) | Adds authorized emit_capture, post_inbox and claims paths; a Repeat whose body calls a provider also runs only on a Line |
 
 `cx.get(f"Procedure:{name}")` reports which of these applies as `runnable`
 (`direct`, `line` or `unsupported`) with the nodes behind it.
@@ -4416,20 +4399,6 @@ Duration is represented in integer microseconds, not floating-point seconds. Pro
 
 <a id="api-contractschema"></a>
 
-### `ContractSchema`
-
-Import: `cruxible_client.ContractSchema`. [Source](src/cruxible_client/contracts/procedures/contract_schema.py)
-
-Each field must explicitly supply its type, even though `PropertySchema` alone has a type default. Extra fields are disallowed by default.
-
-| Field | Type | Default / validation |
-|---|---|---|
-| `description` | `str \| None` | `None` |
-| `fields` | `dict[str, PropertySchema]` | `Required` |
-| `allow_extra` | `bool` | `False` |
-
-<a id="api-procedurebudgetv3"></a>
-
 ### `ProcedureBudget`
 
 Import: `cruxible_client.ProcedureBudget`. [Source](src/cruxible_client/contracts/procedures/models.py)
@@ -4500,7 +4469,6 @@ An owner-carried input/output contract is part of the governed Procedure envelop
 |---|---|---|
 | `tag` | `Literal['playbill-procedure-owned-contract-v1']` | `'playbill-procedure-owned-contract-v1'` |
 | `identity` | `ArtifactIdentity` | `Required` |
-| `contract_schema` | `ContractSchema` | `Field(alias='schema')` |
 
 <a id="api-procedurepinslotrefv1"></a>
 
@@ -4550,28 +4518,6 @@ Pure projection under the declared output contract. It does not invoke a provide
 
 <a id="api-propertyschema"></a>
 
-### `PropertySchema`
-
-Import: `cruxible_client.PropertySchema`. [Source](src/cruxible_client/contracts/procedures/contract_schema.py)
-
-`required` aliases the inverse of `optional`; conflicting explicit values refuse. A primary key cannot be optional or a list. Lists require `item_fields`, which non-list fields forbid. `enum` and `enum_ref` are mutually exclusive; enum values must be nonempty, unique canonical values, and a supplied default must belong to the enum. `enum_ref` requires string type. `json_schema` requires JSON type and a canonical-serializable schema.
-
-| Field | Type | Default / validation |
-|---|---|---|
-| `type` | `PropertyType` | `'string'` |
-| `primary_key` | `bool` | `False` |
-| `indexed` | `bool` | `False` |
-| `optional` | `bool` | `False` |
-| `required` | `bool \| None` | `Field(default=None, exclude=True)` |
-| `default` | `Any \| None` | `None` |
-| `enum` | `list[Any] \| None` | `None` |
-| `enum_ref` | `str \| None` | `None` |
-| `description` | `str \| None` | `None` |
-| `json_schema` | `dict[str, Any] \| None` | `None` |
-| `item_fields` | `dict[str, PropertySchema] \| None` | `Field(default=None, exclude_if=lambda value: value is None)` |
-
-<a id="api-statetapnode"></a>
-
 ### `StateTapNode`
 
 Import: `cruxible_client.StateTapNode`. [Source](src/cruxible_client/contracts/procedures/models.py)
@@ -4620,7 +4566,7 @@ An exact accepted pin is not silently converted to a different version.
 The field tables below are the declared constructor fields/defaults. Pydantic
 Field(...) entries show actual constraints/factories, not values to copy into
 payloads. Model validators impose additional cross-field rules: notably exactly
-one exact-content text/base64 representation and the discriminated member kinds.
+the discriminated member kinds. Retired exact-content inputs refuse with a Documents repair.
 Use model validation rather than constructing an unvalidated dictionary.
 
 <a id="api-literalobjectinput"></a>
@@ -4735,7 +4681,7 @@ Import: `cruxible_client.contracts.authoring.inputs.CarriedContractInput`. [Sour
 |---|---|---|
 | `name` | `str` | `Required` |
 | `description` | `str \| None` | `None` |
-| `fields` | `dict[str, PropertySchema]` | `Required` |
+| `fields` | `dict[str, ContractField]` | `Required` |
 | `allow_extra` | `bool` | `False` |
 
 <a id="api-claimdispositioninput"></a>
@@ -6820,7 +6766,7 @@ HTTP: `POST f'/api/v1/{instance_id}/authoring/submit'`.
 | WholeValueUnavailable | `read_whole` or `read_whole_many` was given a `TruncatedText` that names no whole read (a plain query row cell, a write's `after`); or `read_whole_many` was given one Claim previewed at two generations, or a daemon that cannot pin a batched read to a git oid. |
 | WriteRefusalError, ReadRefusalError | A served write or read refused; the outcome or refusal carries its code, nearest names and repair. |
 | ReferenceKindError, LiteralValueTypeError, ExactContentTypeError | Wrong reference/object relationship; repair the typed authoring input. |
-| AbsentSubject, LiteralSchemaError, SourceSelectionError | Missing vocabulary/Subject, invalid constrained value, or invalid source selection. |
+| AbsentSubject, ClaimValueError, SourceSelectionError | Missing vocabulary/Subject, invalid constrained value, or invalid source selection. |
 | CapabilityNotServed | Explicit unsupported feature with capability, code, and repair. |
 | ProcedureCompositionError | Contains `.preview`, including per-step errors and pending checks. |
 | ApprovalReviewMismatch | Review/signing context does not match; obtain and inspect a new review rather than silently signing a changed candidate. |
@@ -6860,7 +6806,6 @@ include constructor/validator definitions for request and response contracts.
 | `CompactQuery` | `cruxible_client.authoring.compact_query` · [Source](src/cruxible_client/authoring/compact_query.py) |
 | `CaptureRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `CaptureView` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
-| `ClaimObjectKind` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `ClaimAdmissionPolicy` | `cruxible_client.contracts.policies` · [Source](src/cruxible_client/contracts/policies.py) |
 | `ClaimAttestationSigner` | `cruxible_client.authoring.attestations` · [Source](src/cruxible_client/authoring/attestations.py) |
 | `ClaimRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
@@ -6871,13 +6816,12 @@ include constructor/validator definitions for request and response contracts.
 | `Disposition` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `Duration` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `CanonicalDuration` | `cruxible_client.contracts.captures` · [Source](src/cruxible_client/contracts/captures.py) |
-| `ContractSchema` | `cruxible_client.contracts.procedures.contract_schema` · [Source](src/cruxible_client/contracts/procedures/contract_schema.py) |
 | `EffectivePeriod` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `ExactContent` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `ClaimRoleNotPermittedError` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `ExactContentTypeError` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `KindNamespace` | `cruxible_client.authoring.world` · [Source](src/cruxible_client/authoring/world.py) |
-| `LiteralSchemaError` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
+| `ClaimValueError` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `LiteralValue` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `LiteralValueTypeError` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `LocalEd25519ClaimAttestationSigner` | `cruxible_client.authoring.attestations` · [Source](src/cruxible_client/authoring/attestations.py) |
@@ -6896,7 +6840,6 @@ include constructor/validator definitions for request and response contracts.
 | `ProcedurePinSlotRef` | `cruxible_client.contracts.procedures.models` · [Source](src/cruxible_client/contracts/procedures/models.py) |
 | `ProcedurePinSlot` | `cruxible_client.contracts.procedures.models` · [Source](src/cruxible_client/contracts/procedures/models.py) |
 | `ProjectNode` | `cruxible_client.contracts.procedures.models` · [Source](src/cruxible_client/contracts/procedures/models.py) |
-| `PropertySchema` | `cruxible_client.contracts.procedures.contract_schema` · [Source](src/cruxible_client/contracts/procedures/contract_schema.py) |
 | `QueryNameError` | `cruxible_client.authoring.compact_query` · [Source](src/cruxible_client/authoring/compact_query.py) |
 | `QueryRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `QueryResult` | `cruxible_client.authoring.compact_query` · [Source](src/cruxible_client/authoring/compact_query.py) |
@@ -7043,7 +6986,7 @@ repin_projection_block(client: 'CruxibleClient', instance_id: 'str', *, workspac
 Repin one block, optionally installing explicitly supplied agent-authored body bytes.
 
 Omitted body preserves prose. Compact markers are the default; their manifests
-are retained before the page write. Use a reviewed exact-content package Claim
+are retained before the page write. Use a reviewed package Document
 for ledger recovery.
 The whole-file compare-and-swap preserves concurrent author edits.
 
@@ -7176,19 +7119,6 @@ claim_existing_capture_example() -> 'ClaimInput'
 ```text
 claim_flow_a_example() -> 'ClaimInput'
 ```
-
-#### `claim_exact_content_example`
-
-```text
-claim_exact_content_example() -> 'ClaimInput'
-```
-
-A Claim whose object IS the text, not a value that names it.
-
-Rulings and method laws are this shape: the statement is the wording, so the
-object carries the body rather than a literal the ClaimType admits. `text`
-is the ordinary spelling; `content_base64` is the same object for bytes that
-are not text.
 
 #### `claim_revision_example`
 
@@ -7721,14 +7651,6 @@ themselves, which is what lets `cx.world()` name every kind without reading
 a single Subject: a kind with no ClaimType admitting it is a kind nothing
 can be said about.
 
-#### `literal_schema_members`
-
-```text
-literal_schema_members(schema: 'Mapping[str, object] | None') -> 'tuple[str, ...]'
-```
-
-Return the string enum members a literal schema names, in schema order.
-
 ### Module `cruxible_client.authoring.world_stub`
 
 [Source](src/cruxible_client/authoring/world_stub.py)
@@ -7813,7 +7735,7 @@ definitions singular.
 
 **`contracts.claim_verdicts`** — [ClaimAdjudicationRule](src/cruxible_client/contracts/claim_verdicts.py), [CaptureVerdictEvidence](src/cruxible_client/contracts/claim_verdicts.py), [EvidenceControlComponent](src/cruxible_client/contracts/claim_verdicts.py), [EvidenceFreshnessExpiration](src/cruxible_client/contracts/claim_verdicts.py), [ClaimVerdictResult](src/cruxible_client/contracts/claim_verdicts.py).
 
-**`contracts.claims`** — [ClaimFormatError](src/cruxible_client/contracts/claims.py), [ClaimUnsupportedFormatError](src/cruxible_client/contracts/claims.py), [LiteralClaimObject](src/cruxible_client/contracts/claims.py), [SubjectClaimObject](src/cruxible_client/contracts/claims.py), [ExactContentClaimObject](src/cruxible_client/contracts/claims.py), [ClaimStatement](src/cruxible_client/contracts/claims.py), [ClaimStatementCard](src/cruxible_client/contracts/claims.py), [ClaimReferentContext](src/cruxible_client/contracts/claims.py), [ClaimCitation](src/cruxible_client/contracts/claims.py), [ClaimBacking](src/cruxible_client/contracts/claims.py), [ClaimRetirementAttribution](src/cruxible_client/contracts/claims.py), [ClaimRetireDependent](src/cruxible_client/contracts/claims.py), [ClaimArtifact](src/cruxible_client/contracts/claims.py), [AcceptedClaim](src/cruxible_client/contracts/claims.py), [ClaimLawEvidence](src/cruxible_client/contracts/claims.py), [ClaimLawResult](src/cruxible_client/contracts/claims.py), [CitedSourceWindow](src/cruxible_client/contracts/claims.py), [CaptureEvidenceKindEvaluation](src/cruxible_client/contracts/claims.py).
+**`contracts.claims`** — [ClaimFormatError](src/cruxible_client/contracts/claims.py), [ClaimUnsupportedFormatError](src/cruxible_client/contracts/claims.py), [LiteralClaimObject](src/cruxible_client/contracts/claims.py), [SubjectClaimObject](src/cruxible_client/contracts/claims.py), [ClaimStatement](src/cruxible_client/contracts/claims.py), [ClaimStatementCard](src/cruxible_client/contracts/claims.py), [ClaimReferentContext](src/cruxible_client/contracts/claims.py), [ClaimCitation](src/cruxible_client/contracts/claims.py), [ClaimBacking](src/cruxible_client/contracts/claims.py), [ClaimRetirementAttribution](src/cruxible_client/contracts/claims.py), [ClaimRetireDependent](src/cruxible_client/contracts/claims.py), [ClaimArtifact](src/cruxible_client/contracts/claims.py), [AcceptedClaim](src/cruxible_client/contracts/claims.py), [ClaimLawEvidence](src/cruxible_client/contracts/claims.py), [ClaimLawResult](src/cruxible_client/contracts/claims.py), [CitedSourceWindow](src/cruxible_client/contracts/claims.py), [CaptureEvidenceKindEvaluation](src/cruxible_client/contracts/claims.py).
 
 **`contracts.compact_query`** — [QueryFilterEq](src/cruxible_client/contracts/compact_query.py), [QueryFilterNe](src/cruxible_client/contracts/compact_query.py), [QueryFilterLt](src/cruxible_client/contracts/compact_query.py), [QueryFilterLte](src/cruxible_client/contracts/compact_query.py), [QueryFilterGt](src/cruxible_client/contracts/compact_query.py), [QueryFilterGte](src/cruxible_client/contracts/compact_query.py), [QueryFilterIn](src/cruxible_client/contracts/compact_query.py), [QueryFilterExists](src/cruxible_client/contracts/compact_query.py), [QueryFilterContains](src/cruxible_client/contracts/compact_query.py), [QueryFollow](src/cruxible_client/contracts/compact_query.py), [QueryRequest](src/cruxible_client/contracts/compact_query.py), [QueryClaim](src/cruxible_client/contracts/compact_query.py), [QueryClaimValue](src/cruxible_client/contracts/compact_query.py), [QueryColumn](src/cruxible_client/contracts/compact_query.py), [QueryReplay](src/cruxible_client/contracts/compact_query.py), [QueryReceipt](src/cruxible_client/contracts/compact_query.py), [QueryResultRecord](src/cruxible_client/contracts/compact_query.py).
 
@@ -7875,7 +7797,6 @@ definitions singular.
 
 **`contracts.procedures.closure`** — [ProcedurePinClosureError](src/cruxible_client/contracts/procedures/closure.py), [ProcedureSlotBinding](src/cruxible_client/contracts/procedures/closure.py), [ProcedureSlotInterface](src/cruxible_client/contracts/procedures/closure.py), [ClosedProcedurePins](src/cruxible_client/contracts/procedures/closure.py).
 
-**`contracts.procedures.contract_schema`** — [PropertySchema](src/cruxible_client/contracts/procedures/contract_schema.py), [ContractSchema](src/cruxible_client/contracts/procedures/contract_schema.py).
 
 **`contracts.procedures.contracts`** — [ProcedureContractValidationError](src/cruxible_client/contracts/procedures/contracts.py), [ProcedureContractItemBudgetExceeded](src/cruxible_client/contracts/procedures/contracts.py), [ProcedureContractListObservation](src/cruxible_client/contracts/procedures/contracts.py), [ValidatedProcedureContract](src/cruxible_client/contracts/procedures/contracts.py), [OwnedProcedureContractValidator](src/cruxible_client/contracts/procedures/contracts.py).
 
@@ -7885,11 +7806,9 @@ definitions singular.
 
 **`contracts.procedures.measurements`** — [ProcedureMeasurementExpectation](src/cruxible_client/contracts/procedures/measurements.py), [AcceptedQueryProcedureMeasurement](src/cruxible_client/contracts/procedures/measurements.py), [ClaimAttestationProcedureMeasurement](src/cruxible_client/contracts/procedures/measurements.py), [ClaimStatementProcedureMeasurement](src/cruxible_client/contracts/procedures/measurements.py), [ProcedureMeasurementSituationShape](src/cruxible_client/contracts/procedures/measurements.py), [ProcedureMeasurementReviewTrigger](src/cruxible_client/contracts/procedures/measurements.py), [ProcedureMeasurementDeclaration](src/cruxible_client/contracts/procedures/measurements.py).
 
-**`contracts.procedures.models`** — [ProcedurePinSlot](src/cruxible_client/contracts/procedures/models.py), [ProcedurePinSlotRef](src/cruxible_client/contracts/procedures/models.py), [ProcedureBudget](src/cruxible_client/contracts/procedures/models.py), [ProcedureHardCaps](src/cruxible_client/contracts/procedures/models.py), [StateTapNode](src/cruxible_client/contracts/procedures/models.py), [SourceNode](src/cruxible_client/contracts/procedures/models.py), [ExhaustTapNode](src/cruxible_client/contracts/procedures/models.py), [CallNode](src/cruxible_client/contracts/procedures/models.py), [TransformAdapterSpec](src/cruxible_client/contracts/procedures/models.py), [TransformShapeItemsSpec](src/cruxible_client/contracts/procedures/models.py), [TransformFilterItemsSpec](src/cruxible_client/contracts/procedures/models.py), [TransformDedupeItemsSpec](src/cruxible_client/contracts/procedures/models.py), [TransformJoinItemsSpec](src/cruxible_client/contracts/procedures/models.py), [TransformAggregateItemsSpec](src/cruxible_client/contracts/procedures/models.py), [TransformNode](src/cruxible_client/contracts/procedures/models.py), [GuardNode](src/cruxible_client/contracts/procedures/models.py), [ProjectNode](src/cruxible_client/contracts/procedures/models.py), [RepeatBodyNode](src/cruxible_client/contracts/procedures/models.py), [RepeatNode](src/cruxible_client/contracts/procedures/models.py), [CaptureEgressNode](src/cruxible_client/contracts/procedures/models.py), [InboxEgressNode](src/cruxible_client/contracts/procedures/models.py), [ProposalItemsFanOut](src/cruxible_client/contracts/procedures/models.py), [ProposeChangeSetNode](src/cruxible_client/contracts/procedures/models.py), [SettleChangeSetNode](src/cruxible_client/contracts/procedures/models.py), [HaltNode](src/cruxible_client/contracts/procedures/models.py), [SelectNode](src/cruxible_client/contracts/procedures/models.py), [ReturnNode](src/cruxible_client/contracts/procedures/models.py), [ConstantNode](src/cruxible_client/contracts/procedures/models.py), [ClaimTapNode](src/cruxible_client/contracts/procedures/models.py), [InvokeNode](src/cruxible_client/contracts/procedures/models.py), [ProcedureDefinition](src/cruxible_client/contracts/procedures/models.py).
 
 **`contracts.procedures.pin_expectations`** — [PinExpectation](src/cruxible_client/contracts/procedures/pin_expectations.py).
 
-**`contracts.procedures.proposal_items`** — [ProcedureClaimProposalItemV1](src/cruxible_client/contracts/procedures/proposal_items.py), [ProcedureClaimProposalItem](src/cruxible_client/contracts/procedures/proposal_items.py).
 
 **`contracts.procedures.readings`** — [ProcedureMeasurementEligibility](src/cruxible_client/contracts/procedures/readings.py), [ProcedureMeasurementResolutionSummary](src/cruxible_client/contracts/procedures/readings.py), [ProcedureReadingSummary](src/cruxible_client/contracts/procedures/readings.py), [ProcedureMeasurementRow](src/cruxible_client/contracts/procedures/readings.py), [ProcedureMeasureRequest](src/cruxible_client/contracts/procedures/readings.py), [ProcedureMeasureResult](src/cruxible_client/contracts/procedures/readings.py), [ProcedureMeasurementContractStatus](src/cruxible_client/contracts/procedures/readings.py), [ProcedureReadingsRequest](src/cruxible_client/contracts/procedures/readings.py), [ProcedureReadingsResult](src/cruxible_client/contracts/procedures/readings.py).
 
@@ -7925,7 +7844,7 @@ definitions singular.
 
 **`contracts.query.values`** — [QueryTypedValue](src/cruxible_client/contracts/query/values.py).
 
-**`contracts.read_values`** — [WholeValueRead](src/cruxible_client/contracts/read_values.py), [TruncatedText](src/cruxible_client/contracts/read_values.py), [ExactContentRef](src/cruxible_client/contracts/read_values.py), [ShownObject](src/cruxible_client/contracts/read_values.py).
+**`contracts.read_values`** — [WholeValueRead](src/cruxible_client/contracts/read_values.py), [TruncatedText](src/cruxible_client/contracts/read_values.py), [ShownObject](src/cruxible_client/contracts/read_values.py).
 
 **`contracts.records`** — [RecordSchemaError](src/cruxible_client/contracts/records.py), [Record](src/cruxible_client/contracts/records.py), [RecordConstructor](src/cruxible_client/contracts/records.py).
 
@@ -8103,7 +8022,7 @@ This example needs no daemon and invokes no provider:
 from cruxible_client.authoring.inputs import CarriedContractInput
 from cruxible_client.authoring.procedures import Previous, Project, Sequence
 from cruxible_client.contracts.captures import CanonicalDuration
-from cruxible_client.contracts.procedures.contract_schema import PropertySchema
+from cruxible_client.contracts.shapes import ContractField, IntType
 from cruxible_client.contracts.procedures.models import (
     ProcedureBudget,
     ProcedureHardCaps,
@@ -8111,7 +8030,7 @@ from cruxible_client.contracts.procedures.models import (
 
 empty = CarriedContractInput(name="empty", fields={})
 count = CarriedContractInput(
-    name="count", fields={"count": PropertySchema(type="int")},
+    name="count", fields={"count": ContractField(type=IntType())},
 )
 duration = CanonicalDuration(microseconds=1_000_000)
 sequence = Sequence(

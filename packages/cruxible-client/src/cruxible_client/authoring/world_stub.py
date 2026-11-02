@@ -39,6 +39,7 @@ from cruxible_client.authoring.world import (
     vocabulary_world,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.shapes import claim_value_kind, subject_value_kinds, value_type_name
 from cruxible_client.contracts.workspace_layout import (
     WORLD_STUB_PATH,
     ensure_workspace_directory,
@@ -80,7 +81,6 @@ _STUB_IMPORTS = (
     "from cruxible_client.authoring.sdk import ClaimView",
     "from cruxible_client.authoring.sdk_types import (",
     "    Cardinality,",
-    "    ClaimObjectKind,",
     "    ClaimRole,",
     "    ClaimTypeRef,",
     "    LiteralValue,",
@@ -88,6 +88,7 @@ _STUB_IMPORTS = (
     "    SubjectRef,",
     ")",
     "from cruxible_client.authoring.section_evidence import AuthoredSection",
+    "from cruxible_client.contracts.shapes import FieldType",
     "from cruxible_client.authoring.world import (",
     "    KindNamespace,",
     "    Names,",
@@ -302,14 +303,12 @@ def _subject_block(world: World, node: _Node) -> list[str]:
 def _write_annotation(claim_type: WorldClaimType) -> str:
     """The value one write keyword takes: an enum member is a ``Literal``."""
 
-    object_kind = claim_type.object_kind.value
+    object_kind = claim_value_kind(claim_type.value_type)
     if object_kind == "subject":
         return "str | SubjectRef | WorldNewSubject"
-    if object_kind == "exact_content":
-        return "str"
     if claim_type.members:
         return "Literal[" + ", ".join(repr(member) for member in claim_type.members) + "]"
-    declared = (claim_type.literal_schema or {}).get("type")
+    declared = value_type_name(claim_type.value_type)
     return {"string": "str", "integer": "int", "number": "int", "boolean": "bool"}.get(
         str(declared), "str | int | bool"
     )
@@ -525,19 +524,16 @@ def _value_annotation(claim_type: WorldClaimType) -> tuple[str, tuple[str, ...]]
     daemon evaluates, and an enum member outside the schema is a type error.
     """
 
-    object_kind = claim_type.object_kind.value
+    object_kind = claim_value_kind(claim_type.value_type)
     if object_kind == "subject":
         return "str | SubjectRef", ("eq", "ne", "in", "exists", "contains")
-    if object_kind == "exact_content":
-        return "bool", ("exists",)
     members = claim_type.members
     if members:
         spelled = ", ".join(repr(member) for member in members)
         return f"Literal[{spelled}]", ("eq", "ne", "in", "exists", "contains")
-    schema = claim_type.literal_schema or {}
-    declared = schema.get("type")
+    declared = value_type_name(claim_type.value_type)
     if declared == "string":
-        annotation = "str | datetime" if schema.get("format") == "date-time" else "str"
+        annotation = "str | datetime" if claim_type.value_type.kind == "datetime" else "str"
         return annotation, ("eq", "ne", *_ORDERED_OPERATORS, "in", "exists", "contains")
     if declared == "integer":
         return "int", ("eq", "ne", *_ORDERED_OPERATORS, "in", "exists")
@@ -621,7 +617,7 @@ def _predicate_block(world: World, node: _Node) -> list[str]:
     lines.append(f'    """{node.path}"""')
     lines.append("")
     lines.append(
-        f"    # object_kind={claim_type.object_kind.value}"
+        f"    # object_kind={claim_value_kind(claim_type.value_type)}"
         f" cardinality={claim_type.cardinality.value}"
         f" referent_sensitivity={claim_type.referent_sensitivity.value}"
     )
@@ -629,22 +625,19 @@ def _predicate_block(world: World, node: _Node) -> list[str]:
         "    # permitted_roles=" + ",".join(role.value for role in claim_type.permitted_roles)
     )
     lines.append("    # allowed_subject_kinds=" + ",".join(claim_type.allowed_subject_kinds))
-    if claim_type.allowed_object_subject_kinds:
+    if subject_value_kinds(claim_type.value_type):
         lines.append(
-            "    # allowed_object_subject_kinds="
-            + ",".join(claim_type.allowed_object_subject_kinds)
+            "    # subject_value_kinds=" + ",".join(subject_value_kinds(claim_type.value_type))
         )
     body = _Body()
     body.declare("address: str")
     body.declare("coordinate: AcceptedCoordinate")
     body.declare("predicate: str")
-    body.declare("object_kind: ClaimObjectKind")
+    body.declare("value_type: FieldType")
     body.declare("cardinality: Cardinality")
     body.declare("allowed_subject_kinds: tuple[str, ...]")
-    body.declare("allowed_object_subject_kinds: tuple[str, ...]")
     body.declare("permitted_roles: tuple[ClaimRole, ...]")
     body.declare("referent_sensitivity: ReferentSensitivity")
-    body.declare("literal_schema: dict[str, object] | None")
     body.declare("members: tuple[str, ...]")
     body.declare("description: str | None")
     body.declare("member_descriptions: tuple[ClaimTypeMemberDescription, ...]")

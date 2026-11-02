@@ -136,7 +136,7 @@ def test_two_distinct_refused_proposals_cluster_by_claim_type_and_code(
     assert len(clusters) == 1
     assert clusters[0].subject.qualified == "ClaimType:project.work_item.status"
     assert clusters[0].detail == {
-        "diagnostic_code": "cruxible.claim.literal_schema_invalid",
+        "diagnostic_code": "cruxible.claim.value_invalid",
         "refusal_direction": "payload_side",
     }
     attempts = [ref for ref in clusters[0].latest_evidence_refs if ref.kind == "proposal_attempt"]

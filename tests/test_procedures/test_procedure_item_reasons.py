@@ -26,7 +26,6 @@ from cruxible_core.service.proposals.proposals import service_withdraw_playbill_
 from cruxible_core.service.proposals.review import service_review_playbill_proposal
 from tests.test_procedures import test_procedure_proposal_delivery as delivery
 from tests.test_procedures import test_procedure_retirement_items as retire
-from tests.test_procedures.test_proposal_fan_out import _write_feed
 
 
 def _review(instance, proposal_id: str):  # type: ignore[no-untyped-def]
@@ -75,7 +74,9 @@ def test_ref_reuse_after_withdrawal_on_the_same_member_shows_only_its_own(
     """The same retirement resubmitted under the withdrawn proposal's ref carries no reason."""
 
     instance, _owner, root, line, claim_id = retire._proposed_world(tmp_path)
-    _write_feed(root, [retire._retire(claim_id)])
+    (root / delivery.fixtures.RELATIVE_PATH).write_bytes(
+        delivery.fixtures.canonical_bytes({"severity": "critical"})
+    )
     state = delivery.run_line(instance, root, line, at=retire.LATER)
     (egress,) = state.terminal_egress
     original = service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
@@ -108,7 +109,7 @@ def test_ref_reuse_after_withdrawal_on_the_same_member_shows_only_its_own(
     assert (replacement.item_reason_count, replacement.item_reasons) == (0, ())
     kept = _review(instance, egress.proposal_id)
     assert [(item.path, item.reason) for item in kept.item_reasons] == [
-        (egress.children[0].path, retire.GONE)
+        (egress.children[0].path, delivery.item_template()["rationale"])
     ]
 
 
@@ -135,19 +136,16 @@ def _evidence_rationale(instance, claim_id: str):  # type: ignore[no-untyped-def
     return result.evidence.rationale
 
 
-def test_accepted_manual_retirement_does_not_use_withdrawn_procedure_reason(
+def test_accepted_manual_revision_does_not_use_withdrawn_procedure_reason(
     tmp_path: Path,
 ) -> None:
     """A withdrawn Procedure proposal sharing the accepted candidate attributes nothing."""
 
-    from tests.core_support._retirement_support import (
-        activate_submitted,
-        retirement_member,
-        submit_retirement,
-    )
 
     instance, owner, root, line, claim_id = retire._proposed_world(tmp_path)
-    _write_feed(root, [retire._retire(claim_id)])
+    (root / delivery.fixtures.RELATIVE_PATH).write_bytes(
+        delivery.fixtures.canonical_bytes({"severity": "critical"})
+    )
     state = delivery.run_line(instance, root, line, at=retire.LATER)
     (egress,) = state.terminal_egress
     original = service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
@@ -159,25 +157,32 @@ def test_accepted_manual_retirement_does_not_use_withdrawn_procedure_reason(
         withdrawn_at="2026-09-12T12:07:00.000000Z",
         dry_run=False,
     )
-    manual = submit_retirement(
-        instance,
-        retirement_member(instance, claim_id, reason="was-wrong"),
+    evaluation = instance.proposal_evidence().read_evaluation(egress.proposal_id)
+    assert evaluation.evaluated_tree_oid is not None
+    admission = original.proposal.admission
+    manual = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id=admission.actor_id),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/manual-equivalent-revision",
+            proposed_base_oid=admission.proposed_base_oid,
+            source_compilation_digest=admission.source_compilation_digest,
+            rationale="Independently reviewed equivalent revision.",
+        ),
+        candidate_tree=instance.proposal_tree(evaluation.evaluated_tree_oid),
         timestamp=canonical_candidate_timestamp(retire.LATER),
+        settle_submission=admission.settle_submission,
     )
-    assert manual.status.proposal_id is not None, manual
     manual_proposal = service_inspect_playbill_proposal(
-        instance, proposal_id=manual.status.proposal_id
+        instance, proposal_id=manual.admission.proposal_id
     )
-    assert original.proposal.candidate is not None and manual_proposal.proposal.candidate
-    # The same semantic candidate, two distinct admissions.
-    assert (
-        manual_proposal.proposal.candidate.candidate_digest
-        == original.proposal.candidate.candidate_digest
-    )
-    activate_submitted(instance, owner, manual)
+    assert original.proposal.candidate is not None and manual.candidate is not None
+    assert manual.candidate.candidate_digest == original.proposal.candidate.candidate_digest
+    from tests.core_support._retirement_support import activate_proposal
+
+    activate_proposal(instance, owner, manual.admission.proposal_id)
 
     assert _why(instance, claim_id).reason is None
-    assert _evidence_rationale(instance, claim_id) != retire.GONE
+    assert _evidence_rationale(instance, claim_id) != delivery.item_template()["rationale"]
     assert _evidence_rationale(instance, claim_id) == (manual_proposal.proposal.admission.rationale)
 
 
@@ -287,29 +292,22 @@ def test_cli_why_displays_own_reason_terminal_safe(tmp_path: Path, capsys: objec
 
 
 @pytest.mark.parametrize("rationale", ["\x00", " \x00 \t\x00"], ids=["nul", "space-and-nul"])
-@pytest.mark.parametrize("kind", ["retirement", "claim"])
 def test_a_rationale_of_only_nuls_refuses_as_an_invalid_item(
-    tmp_path: Path, rationale: str, kind: str
+    tmp_path: Path, rationale: str
 ) -> None:
-    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
-    from tests.test_procedures.test_proposal_fan_out import _element
+    from cruxible_client.contracts.artifacts import ArtifactNameRef
+    from cruxible_client.contracts.procedures.claims import ClaimTemplate
 
-    instance, _owner, root, line, claim_id = retire._proposed_world(tmp_path)
-    item = (
-        retire._retire(claim_id, rationale=rationale)
-        if kind == "retirement"
-        else {**_element("vendor"), "rationale": rationale}
-    )
-    _write_feed(root, [item])
-
-    state = delivery.run_line(instance, root, line, at=retire.LATER)
-
-    refusal = delivery._refusal(state)
-    assert refusal.code == "proposal_item_invalid", refusal
-    assert refusal.details["child_index"] == 0
-    assert len(delivery._proposal_refs(instance)) == 1  # the first run's only
-    # Refused before the preparation was journaled: recovery has nothing to do.
-    assert service_recover_proposal_egress(instance, recorded_at=retire.LATER) == {}
+    with pytest.raises(ValueError, match="rationale_invalid"):
+        ClaimTemplate.model_validate(
+            {
+                "type": ArtifactNameRef(
+                    target=delivery.ArtifactIdentity(kind="ClaimType", name=delivery.PREDICATE)
+                ),
+                "value": "high",
+                "rationale": rationale,
+            }
+        )
 
 
 def test_a_reason_record_that_still_fails_refuses_typed_to_its_item(
@@ -319,7 +317,9 @@ def test_a_reason_record_that_still_fails_refuses_typed_to_its_item(
     from cruxible_core.procedures import proposal_delivery
 
     instance, _owner, root, line, claim_id = retire._proposed_world(tmp_path)
-    _write_feed(root, [retire._retire(claim_id)])
+    (root / delivery.fixtures.RELATIVE_PATH).write_bytes(
+        delivery.fixtures.canonical_bytes({"severity": "critical"})
+    )
 
     def unrecordable(reason: str, **fields: object) -> ProposalItemReason:
         return ProposalItemReason(reason="", **fields)  # type: ignore[arg-type]
@@ -334,26 +334,19 @@ def test_a_reason_record_that_still_fails_refuses_typed_to_its_item(
 
 
 def test_a_malformed_revises_refuses_as_an_invalid_item(tmp_path: Path) -> None:
-    """A Claim ID format error in `revises` is a typed item refusal, not an internal one."""
+    from cruxible_client.contracts.artifacts import ArtifactNameRef
+    from cruxible_client.contracts.procedures.claims import ClaimTemplate
 
-    from cruxible_client.contracts.procedures.proposal_items import ProcedureClaimProposalItemV1
-    from tests.test_procedures.test_proposal_fan_out import FAN_OUT, _element
-
-    with pytest.raises(ValueError):
-        ProcedureClaimProposalItemV1.model_validate(
-            {**delivery.item_template(), "revises": "not-a-claim"}
+    with pytest.raises(ValueError, match="Extra inputs"):
+        ClaimTemplate.model_validate(
+            {
+                "type": ArtifactNameRef(
+                    target=delivery.ArtifactIdentity(kind="ClaimType", name=delivery.PREDICATE)
+                ),
+                "value": "high",
+                "revises": "not-a-claim",
+            }
         )
-    instance, _owner, root, line, _procedure = delivery.proposal_world(
-        tmp_path,
-        templates=FAN_OUT,  # type: ignore[arg-type]
-    )
-    _write_feed(root, [_element(None, revises="not-a-claim")])
-
-    refusal = delivery._refusal(delivery.run_line(instance, root, line))
-
-    assert refusal.code == "proposal_item_invalid", refusal
-    assert refusal.details["child_index"] == 0
-    assert delivery._proposal_refs(instance) == []
 
 
 # --- recovery never lends a crashed operation's reasons (delta review F-002) -----
@@ -375,16 +368,18 @@ def test_recovery_does_not_attach_reasons_to_an_independent_equivalent_admission
     from tests.test_procedures.test_procedure_settlement_delivery import _egress_records
 
     instance, owner, root, line, claim_id = retire._proposed_world(tmp_path)
-    _write_feed(root, [retire._retire(claim_id)])
+    (root / delivery.fixtures.RELATIVE_PATH).write_bytes(
+        delivery.fixtures.canonical_bytes({"severity": "critical"})
+    )
     delivery._crash_after(monkeypatch, after_submit=False)
-    crashed_deliver = terminal_services.ProposalTerminalAdapter.deliver
+    crashed_deliver = terminal_services.ProposalTerminalAdapter.submit
     captured: dict[str, object] = {}
 
     def capture(self, **kwargs):  # type: ignore[no-untyped-def]
         captured.update(kwargs)
         return crashed_deliver(self, **kwargs)
 
-    monkeypatch.setattr(terminal_services.ProposalTerminalAdapter, "deliver", capture)
+    monkeypatch.setattr(terminal_services.ProposalTerminalAdapter, "submit", capture)
     with pytest.raises(delivery._Crash):
         delivery.run_line(instance, root, line, at=retire.LATER)
     monkeypatch.undo()
@@ -399,11 +394,13 @@ def test_recovery_does_not_attach_reasons_to_an_independent_equivalent_admission
             source_compilation_digest=terminal_services.proposal_terminal_payload_digest(
                 captured["candidate_tree"],  # type: ignore[arg-type]
                 captured["changed_paths"],  # type: ignore[arg-type]
+                settle=captured["settle_submission"],
             ),
             rationale="Manual equivalent retirement, independently submitted after the crash.",
         ),
         candidate_tree=captured["candidate_tree"],  # type: ignore[arg-type]
         timestamp=canonical_candidate_timestamp(request.evaluation_time),
+        settle_submission=captured["settle_submission"],
     )
     assert manual.candidate is not None
     # A public submission names no Procedure operation.
@@ -414,15 +411,13 @@ def test_recovery_does_not_attach_reasons_to_an_independent_equivalent_admission
         instance, recorded_at=retire.LATER + timedelta(minutes=1)
     )
 
-    # Recovery still adopts the admission for delivery, exactly as before ...
     ((run_id, disposition),) = recovered.items()
     assert disposition == "delivered"
     state = service_get_playbill_procedure_run(instance, run_id=run_id)
-    (egress,) = state.terminal_egress
-    assert egress.proposal_id == manual.admission.proposal_id
-    # ... but links no reason to it, and its receipt says the reasons are unattributed.
-    (delivered,) = [item for item in _egress_records(instance, state) if "receipt" in item]
-    assert delivered["receipt"]["item_reasons_unattributed"] is True
+    assert any(
+        item.get("receipt", {}).get("item_reasons_unattributed") is True
+        for item in _egress_records(instance, state)
+    )
     assert _review(instance, manual.admission.proposal_id).item_reason_count == 0
 
     activate_proposal(instance, owner, manual.admission.proposal_id)

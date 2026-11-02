@@ -336,7 +336,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("NextRequest", "expiring_within"): "VALIDITY WINDOW",
     ("NextResult", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillNextResultV2", "evaluation_time"): "EVALUATION INSTANT",
-    ("ProcedureClaimRetirementItem", "effective_until"): "VALIDITY WINDOW",
     ("ProcedureRunState", "evaluation_time"): "EVALUATION INSTANT",
     # When the daemon last tried to push. An assertion about an attempt, not a
     # coordinate: the mirror is a copy of accepted state and its timing orders
@@ -572,8 +571,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     # The instant the daemon actually read the workspace file it receipted.
     ("SourceReadReceipt", "read_at"): "EVALUATION INSTANT",
     ("SourceEffectiveTime", "effective_from"): "VALIDITY WINDOW",
-    ("SourceClaimCandidateV1", "effective_from"): "VALIDITY WINDOW",
-    ("SourceClaimCandidateV1", "effective_until"): "VALIDITY WINDOW",
     ("SourceEffectiveTime", "effective_until"): "VALIDITY WINDOW",
     ("SubjectProfileV1", "evaluation_time"): "EVALUATION INSTANT",
     ("StaleProposal", "admitted_at"): "ASSERTION TIME",

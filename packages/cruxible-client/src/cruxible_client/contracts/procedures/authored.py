@@ -44,7 +44,6 @@ from typing_extensions import TypeAliasType
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.claims import refuse_absence
-from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.extract import CompleteWhen, ExtractField
 from cruxible_client.contracts.procedures.measurements import ProcedureMeasurementDeclaration
 from cruxible_client.contracts.procedures.models import (
@@ -53,7 +52,7 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.procedures.reads import DEFAULT_MAX_READ_ROWS
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
-from cruxible_client.contracts.refs import Ref, input_ref, step_ref
+from cruxible_client.contracts.refs import Ref, step_ref
 from cruxible_client.contracts.shapes import (
     AllOf,
     AnyOf,
@@ -74,11 +73,16 @@ from cruxible_client.contracts.shapes import (
     Predicate,
     PredicateContext,
     Presence,
+    RecordType,
+    ResultType,
     StringType,
     as_predicate,
+    assignable,
     check_value,
+    claim_rationale,
     parse_contract_ref,
     predicate_context_problem,
+    render_type,
     type_refs,
 )
 
@@ -511,6 +515,8 @@ class ClaimTemplateSpec(_Model):
     _absence = model_validator(mode="before")(refuse_absence)
     _when = field_validator("when", mode="before")(_record_predicate)
 
+    _rationale_line = field_validator("rationale")(claim_rationale)
+
 
 class ClaimsStep(StepOptions):
     claims: tuple[ClaimTemplateSpec, ...] = Field(min_length=1)
@@ -520,18 +526,6 @@ class ClaimsStep(StepOptions):
 
     _absence = model_validator(mode="before")(refuse_absence)
     _where = field_validator("where", mode="before")(_record_predicate)
-
-
-class ProposeStep(StepOptions):
-    """Propose Claims: a fixed tuple of item templates, or one item per element of a list."""
-
-    propose: Ref | tuple[Template, ...]
-    result: Template = None
-
-
-class SettleStep(StepOptions):
-    settle: Ref | tuple[Template, ...]
-    result: Template = None
 
 
 class EmitStep(StepOptions):
@@ -629,6 +623,8 @@ def _verb(value: Any) -> str | None:
 
 #: Authored step verbs the current syntax no longer has, each with its replacement.
 RETIRED_STEP_VERBS: dict[str, str] = {
+    "propose": "the typed claims step; proposal commands cannot come from data",
+    "settle": "the typed claims step; its Mandate chooses propose or settle",
     "source": "'call:' with 'captures' (the slot's out Contract carries capture<K> fields)",
     "tap": "'read:' naming its 'query'",
     "claim": "'read:' naming its 'claim_type'",
@@ -644,8 +640,6 @@ _VERBS = (
     "guard",
     "inbox",
     "claims",
-    "propose",
-    "settle",
     "emit",
     "invoke",
     "select",
@@ -661,8 +655,6 @@ Step: TypeAlias = Annotated[
     | Annotated[GuardStep, Tag("guard")]
     | Annotated[InboxStep, Tag("inbox")]
     | Annotated[ClaimsStep, Tag("claims")]
-    | Annotated[ProposeStep, Tag("propose")]
-    | Annotated[SettleStep, Tag("settle")]
     | Annotated[EmitStep, Tag("emit")]
     | Annotated[InvokeStep, Tag("invoke")]
     | Annotated[SelectStep, Tag("select")]
@@ -756,7 +748,7 @@ class ProcedureSpec(_Model):
     ) -> dict[str, Any]:
         # Honor the model's validation-mode override at the generator root.
         # Otherwise standalone serialization generation can hoist recursive
-        # PropertySchema definitions under Output but leave their Input refs.
+        # ContractField definitions under Output but leave their Input refs.
         return super().model_json_schema(
             by_alias=by_alias,
             ref_template=ref_template,
@@ -882,7 +874,7 @@ def _authored_defaults(value: Any, wire: Any) -> Any:
                 continue
             member = getattr(value, name)
             default = field.get_default(call_default_factory=True)
-            fixed_type = isinstance(value, PropertySchema) and name == "type"
+            fixed_type = isinstance(value, ContractField) and name == "type"
             if (
                 not fixed_type
                 and name not in {"kind", "tag", "op", "root"}
@@ -901,46 +893,26 @@ def _authored_defaults(value: Any, wire: Any) -> Any:
     return wire
 
 
-def extract_view_fields(
-    row_fields: Mapping[str, PropertySchema] | None,
-) -> dict[str, PropertySchema]:
-    """How later steps see an extract's value: its rows typed by the row Contract."""
-
-    opaque = PropertySchema(type="json", json_schema={"type": "array"})
+def extract_view_fields(row: ContractRef, maximum: int) -> dict[str, ContractField | None]:
     return {
-        "results": opaque,
-        "records": opaque,
-        "rows": opaque
-        if row_fields is None
-        else PropertySchema(type="list", item_fields=dict(row_fields)),
-        "header": PropertySchema(type="json", json_schema={"type": "object"}),
-        "complete": PropertySchema(type="bool"),
-        "count": PropertySchema(type="int"),
+        "results": ContractField(type=ListType(item=ResultType(contract=row), max_items=maximum)),
+        "records": ContractField(type=ListType(item=RecordType(contract=row), max_items=maximum)),
+        "rows": ContractField(type=ListType(item=NestedType(contract=row), max_items=maximum)),
+        "header": None,
+        "complete": ContractField(type=BoolType()),
+        "count": ContractField(type=IntType()),
     }
 
 
-def invoke_view_fields(
-    child_output: Mapping[str, PropertySchema] | None,
-) -> dict[str, PropertySchema] | None:
-    """How later steps see an invoke's value: ``{succeeded, status, receipt, value}``.
-
-    ``value`` (the child's output record) is present when the child succeeded.
-    """
-
-    if child_output is None:
-        return None
-    from cruxible_client.contracts.procedures.views import schema_json_type
-
+def invoke_view_fields(child_output: Contract | None) -> dict[str, ContractField | None]:
     return {
-        "succeeded": PropertySchema(type="bool"),
-        "status": PropertySchema(type="string"),
-        "receipt": PropertySchema(type="json", json_schema={"type": "object"}),
-        "value": PropertySchema(
-            type="json",
-            optional=True,
-            json_schema=schema_json_type(ContractSchema(fields=dict(child_output))),
-        ),
-        "terminal": PropertySchema(type="json", optional=True, json_schema={"type": "object"}),
+        "succeeded": ContractField(type=BoolType()),
+        "status": ContractField(type=StringType()),
+        "receipt": None,
+        "terminal": None,
+        "value": None
+        if child_output is None
+        else ContractField(type=NestedType(contract=child_output.ref), optional=True),
     }
 
 
@@ -956,18 +928,6 @@ class ProcedureSpecError(ValueError):
 # A resolver returns only the requested artifact's typed schema/binding details.
 # It never enumerates an instance. N1b owns conversion of these names to runtime pins.
 Resolver = Callable[[str, Any], Any]
-
-
-def _view_fields(
-    fields: Mapping[str, ContractField],
-    resolve_contract: Callable[[ContractRef], Contract | None],
-) -> dict[str, PropertySchema]:
-    """How the flow checker reads declared Contract fields (the operation view)."""
-
-    from cruxible_client.contracts.provider_operations import contract_schema_view
-
-    declared = Contract(name="authored.view", version=1, fields=dict(fields))
-    return dict(contract_schema_view(declared, resolve_contract).fields)
 
 
 def _literal_shape(value: object) -> ContractField | None:
@@ -1065,8 +1025,8 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         found = resolve("contract", ref)
         return found if isinstance(found, Contract) else None
 
-    def view(fields: Mapping[str, ContractField]) -> dict[str, PropertySchema]:
-        return _view_fields(fields, resolve_contract)
+    def view(fields: Mapping[str, ContractField]) -> dict[str, ContractField]:
+        return dict(fields)
 
     generated: dict[str, dict[str, ContractField]] = {}
 
@@ -1092,15 +1052,13 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         name = generated_contract_name(spec.procedure, role)
         return _ref("Contract", f"{name}/v1"), fields
 
-    schemas: dict[str, dict[str, PropertySchema] | None] = {}
+    schemas: dict[str, Mapping[str, ContractField | None] | None] = {}
     #: Each step's value in Contract fields, where the flow knows them.
     shapes: dict[str, dict[str, ContractField] | None] = {}
     aliases = {
         _output_alias(step, i)
         for i, step in enumerate(spec.steps)
-        if not isinstance(
-            step, (GuardStep, HaltStep, InboxStep, ClaimsStep, ProposeStep, SettleStep, EmitStep)
-        )
+        if not isinstance(step, (GuardStep, HaltStep, InboxStep, ClaimsStep, EmitStep))
     }
     collection_aliases = {
         step.read
@@ -1122,8 +1080,6 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
     def shape_of(ref: Ref) -> ContractField | None:
         """The Contract field a one-member reference reads, where the flow knows it."""
 
-        if len(ref.path) != 1:
-            return None
         fields = (
             input_shape
             if ref.root == "input"
@@ -1133,7 +1089,33 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             if ref.root == "step"
             else None
         )
-        return None if fields is None else fields.get(ref.path[0])
+        if fields is None or not ref.path or ref.path[0] not in fields:
+            return None
+
+        def descend(field: ContractField, path: tuple[str, ...]) -> ContractField | None:
+            if not path:
+                return field
+            member, *rest = path
+            if isinstance(field.type, ListType):
+                if member != "[*]" and not member.isdigit():
+                    raise ProcedureSpecError(
+                        "procedure_ref_unknown",
+                        ref.graph_text(),
+                        "A list reference requires [*] or an explicit position",
+                    )
+                selected = descend(ContractField(type=field.type.item), tuple(rest))
+                if selected is None or member != "[*]":
+                    return selected
+                return ContractField(
+                    type=ListType(item=selected.type, max_items=field.type.max_items)
+                )
+            if isinstance(field.type, NestedType):
+                nested = resolve_contract(field.type.contract)
+                if nested is not None and member in nested.fields:
+                    return descend(nested.fields[member], tuple(rest))
+            return None
+
+        return descend(fields[ref.path[0]], ref.path[1:])
 
     def template_shape(value: Any) -> dict[str, ContractField] | None:
         """A record template's Contract fields, when every field's type is known."""
@@ -1148,8 +1130,8 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             found[key] = field
         return found
 
-    def lookup(ref: Ref, path: str) -> PropertySchema | None:
-        fields: dict[str, PropertySchema] | None
+    def lookup(ref: Ref, path: str) -> ContractField | None:
+        fields: Mapping[str, ContractField | None] | None
         rest = ref.path
         collection = False
         if ref.root == "param":
@@ -1157,49 +1139,90 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         elif ref.root == "input":
             fields = input_fields
         elif ref.root == "item":
-            return None  # the typed item transform validates this scoped reference
+            return None
         else:
             step = str(ref.step)
             if step not in aliases:
                 _unknown(path, step, aliases)
             if step not in schemas:
                 raise ProcedureSpecError(
-                    "procedure_ref_unknown",
-                    path,
-                    f"Step {step!r} has no output before this step",
+                    "procedure_ref_unknown", path, f"Step {step!r} has no output before this step"
                 )
             fields = schemas[step]
             collection = step in collection_aliases
-        if fields is None:
+        if fields is None or not rest:
             return None
-        if not rest:
-            if collection:
-                return PropertySchema(type="list", item_fields=fields)
-            return PropertySchema(type="json", json_schema={"type": "object"})
         if collection:
-            raise ProcedureSpecError(
-                "procedure_ref_unknown",
-                path,
-                "A bounded all-Claim read is a list; select fields in an item transform",
-            )
-        field: PropertySchema | None = None
-        for index, member in enumerate(rest):
-            if member.isdigit() and field is not None and field.type == "list":
-                continue  # one element of the list: its fields are the item's
-            if member not in fields:
-                _unknown(path, member, fields)
-            field = fields[member]
-            if index < len(rest) - 1:
-                if field.item_fields is not None:
-                    fields = field.item_fields
-                elif field.type == "json":
-                    properties = (field.json_schema or {}).get("properties")
-                    if not isinstance(properties, dict):
-                        return None
-                    fields = {k: _json_field(v) for k, v in properties.items()}
-                else:
-                    _unknown(path, rest[index + 1], ())
-        return field
+            if rest[0] != "[*]" and not rest[0].isdigit():
+                raise ProcedureSpecError(
+                    "procedure_ref_unknown",
+                    path,
+                    "A list reference requires [*] or an explicit position",
+                )
+            projected = rest[0] == "[*]"
+            rest = rest[1:]
+        else:
+            projected = False
+        if not rest:
+            return None
+        if rest[0] not in fields:
+            _unknown(path, rest[0], fields)
+
+        def descend(field: ContractField | None, members: tuple[str, ...]) -> ContractField | None:
+            if field is None or not members:
+                return field
+            member, *tail = members
+            typed = field.type
+            if isinstance(typed, ListType):
+                if member != "[*]" and not member.isdigit():
+                    raise ProcedureSpecError(
+                        "procedure_ref_unknown",
+                        path,
+                        "A list reference requires [*] or an explicit position",
+                    )
+                found = descend(ContractField(type=typed.item), tuple(tail))
+                return (
+                    ContractField(type=ListType(item=found.type, max_items=typed.max_items))
+                    if found is not None and member == "[*]"
+                    else found
+                )
+            if isinstance(typed, FieldResultType):
+                if member == "value":
+                    return descend(ContractField(type=typed.value), tuple(tail))
+                if member in {"tag", "at"}:
+                    return ContractField(type=StringType())
+                return None
+            if isinstance(typed, NestedType | RecordType | ResultType):
+                target = resolve_contract(typed.contract)
+                if target is None:
+                    return None
+                if isinstance(typed, RecordType | ResultType):
+                    if member == "key":
+                        return None  # the extract declaration types its key parts
+                    if member == "record":
+                        return ContractField(type=StringType())
+                    if member == "fields":
+                        if not tail:
+                            return None
+                        selected, *remaining = tail
+                        if selected not in target.fields:
+                            _unknown(path, selected, target.fields)
+                        return descend(
+                            ContractField(type=FieldResultType(value=target.fields[selected].type)),
+                            tuple(remaining),
+                        )
+                if member not in target.fields:
+                    _unknown(path, member, target.fields)
+                return descend(target.fields[member], tuple(tail))
+            _unknown(path, member, ())
+            return None
+
+        found = descend(fields[rest[0]], rest[1:])
+        return (
+            ContractField(type=ListType(item=found.type, max_items=DEFAULT_MAX_READ_ROWS))
+            if found is not None and projected
+            else found
+        )
 
     def template(value: Any, path: str) -> Any:
         _check_refs(value, path)
@@ -1319,7 +1342,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         node: dict[str, Any] = {"node_id": id_}
         if step.next is not None:
             node["next"] = step.next
-        output: dict[str, PropertySchema] | None = None
+        output: Mapping[str, ContractField | None] | None = None
         output_shape: dict[str, ContractField] | None = None
         alias: str | None = None
         if isinstance(step, CallStep):
@@ -1382,7 +1405,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                 node["complete_when"] = step.complete_when.model_dump(mode="json")
             if step.only_keys is not None:
                 node["only_keys"] = template(step.only_keys, path + ".only_keys")
-            output = extract_view_fields(details.get("row_fields"))
+            output = extract_view_fields(parse_contract_ref(step.row), spec.hard_caps.items or 5000)
             alias = step.extract
         elif isinstance(step, ReadStep) and step.query is not None:
             if step.claim_type is not None or step.subject is not None or step.all is not None:
@@ -1419,6 +1442,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                 )
             details = {} if resolve is None else resolve("claim", step)
             output = details.get("output")
+            output_shape = output
             node.update(
                 kind="read",
                 claim_type=_ref("ClaimType", step.claim_type),
@@ -1530,26 +1554,6 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                     for claim in step.claims
                 ],
             )
-        elif isinstance(step, (ProposeStep, SettleStep)):
-            candidates: Any = step.propose if isinstance(step, ProposeStep) else step.settle
-            if isinstance(candidates, Ref):
-                candidates = {"items": candidates}
-            returned = (
-                spec.returns.id
-                if isinstance(spec.returns, (ReturnFrom, ReturnFields))
-                else spec.returns
-                if isinstance(spec.returns, str)
-                else previous
-            )
-            default_result = input_ref() if returned is None else step_ref(returned)
-            node.update(
-                kind="propose_change_set" if isinstance(step, ProposeStep) else "settle_change_set",
-                candidate_templates=template(candidates, path + ".candidates"),
-                result=template(
-                    step.result if step.result is not None else default_result,
-                    path + ".result",
-                ),
-            )
         elif isinstance(step, EmitStep):
             node.update(
                 kind="emit_capture",
@@ -1652,7 +1656,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                     if name not in (schemas.get(returns.from_) or {}):
                         _unknown("$.returns.omit", name, schemas.get(returns.from_) or {})
         output = (
-            view(spec.output)
+            cast(Mapping[str, ContractField | None], view(spec.output))
             if spec.output is not None
             else {
                 name: _template_type(value, "$.returns.fields." + name, lookup)
@@ -1822,10 +1826,10 @@ def _parameter_defaults(
     return defaults
 
 
-def _query_view_fields() -> dict[str, PropertySchema]:
-    from cruxible_client.contracts.procedures.views import query_view_schema
+def _query_view_fields() -> dict[str, ContractField | None]:
+    from cruxible_client.contracts.procedures.views import query_view_fields
 
-    return query_view_schema().fields
+    return query_view_fields()
 
 
 def _output_alias(step: Step, index: int) -> str:
@@ -1850,44 +1854,17 @@ def _step_id(step: Step, index: int) -> str:
     return f"step_{index + 1}"
 
 
-def _json_field(schema: dict[str, Any]) -> PropertySchema:
-    type_ = schema.get("type", "json")
-    if type_ == "boolean":
-        type_ = "bool"
-    if (
-        isinstance(type_, list)
-        or type_ in {"object", "array", "null", "json"}
-        or set(schema) - {"type", "enum"}
-    ):
-        return PropertySchema(type="json", json_schema=schema)
-    return PropertySchema(type=type_, enum=schema.get("enum"))
-
-
-def _template_type(value: Any, path: str, lookup: Any) -> PropertySchema:
+def _template_type(value: Any, path: str, lookup: Any) -> ContractField | None:
     if isinstance(value, Ref):
-        return lookup(value, path) or PropertySchema(type="json")
-    if isinstance(value, bool):
-        return PropertySchema(type="bool")
-    if isinstance(value, int):
-        return PropertySchema(type="integer")
-    if isinstance(value, str):
-        return PropertySchema(type="string")
-    if isinstance(value, list | tuple):
-        return PropertySchema(type="json", json_schema={"type": "array"})
-    return PropertySchema(type="json")
+        return cast(ContractField | None, lookup(value, path))
+    return _literal_shape(value)
 
 
-def _literal_type(value: object) -> PropertySchema:
-    if isinstance(value, bool):
-        return PropertySchema(type="bool")
-    if isinstance(value, int):
-        return PropertySchema(type="integer")
-    return PropertySchema(type="string")
+def _literal_type(value: object) -> ContractField | None:
+    return _literal_shape(value)
 
 
 def _check_predicate(predicate: Predicate, path: str, lookup: Any) -> None:
-    """Every reference resolves, and each comparison's operands have one type."""
-
     if isinstance(predicate, AllOf | AnyOf):
         for child in predicate.of:
             _check_predicate(child, path, lookup)
@@ -1899,20 +1876,17 @@ def _check_predicate(predicate: Predicate, path: str, lookup: Any) -> None:
         lookup(predicate.of, path)
         return
 
-    def type_of(operand: object) -> PropertySchema | None:
+    def type_of(operand: object) -> ContractField | None:
         if isinstance(operand, LiteralOperand):
             return _literal_type(operand.literal)
         if isinstance(operand, CountOperand):
-            value = lookup(operand.count, path)
-            if value is not None and value.type not in {"list", "json"}:
+            field = lookup(operand.count, path)
+            if field is not None and not isinstance(field.type, ListType):
                 raise ProcedureSpecError(
-                    "procedure_operand_type_mismatch",
-                    path,
-                    f"count requires a collection, got {value.type}",
+                    "procedure_operand_type_mismatch", path, "count requires a collection"
                 )
-            return PropertySchema(type="integer")
-        assert isinstance(operand, Ref)
-        return cast(PropertySchema | None, lookup(operand, path))
+            return ContractField(type=IntType())
+        return cast(ContractField | None, lookup(operand, path))
 
     if isinstance(predicate, Membership):
         type_of(predicate.left)
@@ -1922,45 +1896,39 @@ def _check_predicate(predicate: Predicate, path: str, lookup: Any) -> None:
     left, right = type_of(predicate.left), type_of(predicate.right)
     if left is None or right is None:
         return
-    from cruxible_client.contracts.procedures.views import schema_json_type
-
-    left_schema, right_schema = schema_json_type(left), schema_json_type(right)
-    a, b = left_schema.get("type", left.type), right_schema.get("type", right.type)
-    if isinstance(a, list):
-        a = (
-            next((kind for kind in a if kind != "null"), "null")
-            if len(set(a) - {"null"}) <= 1
-            else "union"
-        )
-    if isinstance(b, list):
-        b = (
-            next((kind for kind in b if kind != "null"), "null")
-            if len(set(b) - {"null"}) <= 1
-            else "union"
-        )
-    if a != b or (
-        predicate.op not in {"eq", "ne"} and a not in {"integer", "string", "date", "datetime"}
-    ):
+    if predicate.op not in {"eq", "ne"} and left.type.kind not in {
+        "string",
+        "enum",
+        "int",
+        "number",
+        "decimal",
+        "date",
+        "datetime",
+    }:
         raise ProcedureSpecError(
-            "procedure_operand_type_mismatch",
-            path,
-            f"Comparison operands have incompatible types {a} and {b}",
+            "procedure_operand_type_mismatch", path, "Ordering requires scalar ordered operands"
         )
-    for operand, other in ((predicate.left, right_schema), (predicate.right, left_schema)):
-        if isinstance(operand, LiteralOperand) and other.get("enum") is not None:
-            from cruxible_client.contracts.canonical import canonical_bytes
-
-            if canonical_bytes(operand.literal) not in {canonical_bytes(v) for v in other["enum"]}:
+    a, b = left.type, right.type
+    for operand, target in ((predicate.left, b), (predicate.right, a)):
+        if isinstance(operand, LiteralOperand):
+            result = check_value(operand.literal, target, at=path)
+            if isinstance(result, FieldInvalid):
                 raise ProcedureSpecError(
                     "procedure_operand_type_mismatch",
                     path,
-                    f"Literal {operand.literal!r} is outside enum {other['enum']!r}",
+                    "Comparison literal does not fit the other operand's type",
                 )
+    if not assignable(a, b) and not assignable(b, a):
+        raise ProcedureSpecError(
+            "procedure_operand_type_mismatch",
+            path,
+            f"Comparison operands have incompatible types {render_type(a)} and {render_type(b)}",
+        )
 
 
 def _check_call_input(
     value: Any,
-    fields: dict[str, PropertySchema] | None,
+    fields: Mapping[str, ContractField | None] | None,
     path: str,
     lookup: Any,
     *,
@@ -1973,33 +1941,31 @@ def _check_call_input(
             if name not in fields:
                 _unknown(path + "." + name, name, fields)
     for name, field in fields.items():
+        if field is None:
+            continue
         if name not in value:
-            if not field.optional and field.default is None:
+            if not field.optional:
                 raise ProcedureSpecError(
-                    "procedure_ref_unknown",
-                    path,
-                    f"Required field {name!r} is missing",
+                    "procedure_ref_unknown", path, f"Required field {name!r} is missing"
                 )
             continue
-        if value[name] is None and field.optional:
-            continue
-        if isinstance(value[name], Ref):
-            declared = lookup(value[name], path + "." + name)
-            if declared is None:
-                continue
-        actual = _template_type(value[name], path + "." + name, lookup)
-        from cruxible_client.contracts.procedures.views import schema_json_type
-
-        actual_type = schema_json_type(actual).get("type", actual.type)
-        expected_type = schema_json_type(field).get("type", field.type)
-        actual_types = set(actual_type) if isinstance(actual_type, list) else {actual_type}
-        expected_types = set(expected_type) if isinstance(expected_type, list) else {expected_type}
-        if field.type != "json" and not actual_types <= expected_types:
-            raise ProcedureSpecError(
-                "procedure_operand_type_mismatch",
-                path + "." + name,
-                f"Field {name!r} expects {expected_type}, got {actual_type}",
-            )
+        supplied = value[name]
+        if isinstance(supplied, Ref):
+            actual = lookup(supplied, path + "." + name)
+            if actual is not None and not assignable(actual.type, field.type):
+                raise ProcedureSpecError(
+                    "procedure_operand_type_mismatch",
+                    path + "." + name,
+                    f"Field {name!r} expects {render_type(field.type)}, "
+                    f"got {render_type(actual.type)}",
+                )
+        elif not isinstance(supplied, dict | list):
+            if isinstance(check_value(supplied, field.type, at=path), FieldInvalid):
+                raise ProcedureSpecError(
+                    "procedure_operand_type_mismatch",
+                    path + "." + name,
+                    f"Field {name!r} does not fit {render_type(field.type)}",
+                )
 
 
 def _template_aliases(value: Any) -> set[str]:
@@ -2038,7 +2004,6 @@ __all__ = [
     "ProcedureSpec",
     "ProcedureSpecError",
     "ProjectStep",
-    "ProposeStep",
     "ReadStep",
     "Ref",
     "RepeatCall",
@@ -2047,7 +2012,6 @@ __all__ = [
     "ReturnFields",
     "ReturnFrom",
     "SelectStep",
-    "SettleStep",
     "ShapeFieldSpec",
     "ShapeSpec",
     "Step",

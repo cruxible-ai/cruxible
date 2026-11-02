@@ -347,7 +347,7 @@ def test_non_scalar_fields_project_and_include_but_do_not_order(resolver):
     from cruxible_core.service.discovery.query_vocabulary import QueryVocabulary
 
     info = resolver.vocabulary.predicates["security.incident.name"]
-    opaque = replace(info, value_type="exact_content")
+    opaque = replace(info, value_type="json")
     vocabulary = QueryVocabulary(
         predicates={opaque.predicate: opaque}, kinds=("security.incident",)
     )

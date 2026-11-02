@@ -175,7 +175,7 @@ def test_a_claim_type_card_names_evidence_by_contract_identity(world: dict[str, 
     card = _get(instance, f"ClaimType:{PREDICATE}").card
     assert card is not None
     fields = card.model_dump()
-    assert fields["object"] == "string" and fields["cardinality"] == "one"
+    assert fields["object"] == 'enum["blocked", "done", "ready"]' and fields["cardinality"] == "one"
     assert fields["live_claims"] == 2 and "description" not in card.model_dump(mode="json")
 
 
@@ -905,7 +905,6 @@ def test_a_cut_value_round_trips_as_truncated_text_and_short_values_stay_themsel
 
     from cruxible_client.contracts.compact_query import QueryClaimValue
     from cruxible_client.contracts.read_values import (
-        ExactContentRef,
         ShownObject,
         TruncatedText,
         summary_value,
@@ -924,9 +923,8 @@ def test_a_cut_value_round_trips_as_truncated_text_and_short_values_stay_themsel
     assert isinstance(again.value, TruncatedText)
     assert (again.value.preview, again.value.length) == ("y" * 500, 900)
 
-    marker = ExactContentRef(exact_content="binary", content_digest="sha256:" + "a" * 64)
     decimal = ShownObject(object={"$decimal": "0.1"})
-    for shown in ("ready", 3, 1.5, True, None, ["a", 2], decimal, marker):
+    for shown in ("ready", 3, 1.5, True, None, ["a", 2], decimal):
         wire = item.model_copy(update={"value": shown}).model_dump_json()
         parsed = QueryClaimValue.model_validate_json(wire).value
         assert parsed == shown and type(parsed) is type(shown)

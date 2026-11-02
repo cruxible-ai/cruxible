@@ -13,7 +13,6 @@ from cruxible_client.authoring.inputs import (
     ClaimRetirementInput,
     ClaimTypeInput,
     ClaimTypeSuccessionInput,
-    ExactContentObjectInput,
     ExistingCaptureInput,
     LineInput,
     LiteralObjectInput,
@@ -55,6 +54,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryProjectionField,
     QuerySubjectFieldRef,
 )
+from cruxible_client.contracts.shapes import EnumType, StringType
 from cruxible_client.contracts.triggers import CronSchedule
 
 
@@ -89,8 +89,7 @@ def subject_kind_example() -> ChangeSetInput:
         identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.slug"),
         predicate="project.work_item.slug",
         allowed_subject_kinds=("project.work_item",),
-        object_kind="literal",
-        literal_schema={"minLength": 1, "type": "string"},
+        value=StringType(min_len=1, max_len=256),
         cardinality="one",
         permitted_roles=("normative",),
         evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
@@ -156,8 +155,7 @@ def change_set_example() -> ChangeSetInput:
                     identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.owner"),
                     predicate="project.work_item.owner",
                     allowed_subject_kinds=("project.work_item",),
-                    object_kind="literal",
-                    literal_schema={"type": "string"},
+                    value=StringType(max_len=256),
                     cardinality="one",
                     permitted_roles=("normative", "observation"),
                     evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
@@ -209,8 +207,7 @@ def claim_type_succession_example() -> ChangeSetInput:
                     identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.owner"),
                     predicate="project.work_item.owner",
                     allowed_subject_kinds=("project.work_item",),
-                    object_kind="literal",
-                    literal_schema={"type": "string", "enum": ["replace-me"]},
+                    value=EnumType(members=("replace-me",)),
                     cardinality="one",
                     permitted_roles=("normative", "observation"),
                     evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
@@ -396,32 +393,6 @@ def claim_subject_relation_example() -> ClaimInput:
         role="observation",
         rationale="Replace with why this vulnerability affects the accepted package.",
         source=SelfSourceInput(kind="self_source", body="affected package: replace-me\n"),
-    )
-
-
-def claim_exact_content_example() -> ClaimInput:
-    """A Claim whose object IS the text, not a value that names it.
-
-    Rulings and method laws are this shape: the statement is the wording, so the
-    object carries the body rather than a literal the ClaimType admits. `text`
-    is the ordinary spelling; `content_base64` is the same object for bytes that
-    are not text.
-    """
-
-    return ClaimInput(
-        kind="claim",
-        subject="project.method/replace-me",
-        predicate="project.method.law",
-        object=ExactContentObjectInput(
-            kind="exact_content",
-            text="Replace with the ruling exactly as it was written.\n",
-        ),
-        role="normative",
-        rationale="Replace with why this wording is the governed one.",
-        source=SelfSourceInput(
-            kind="self_source",
-            body="Replace with the ruling exactly as it was written.\n",
-        ),
     )
 
 
@@ -612,7 +583,6 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "claim-flow-a": claim_flow_a_example,
     "claim-self-source": claim_self_source_example,
     "claim-subject-relation": claim_subject_relation_example,
-    "claim-exact-content": claim_exact_content_example,
     "claim-revision": claim_revision_example,
     "procedure": procedure_example,
     "query-claims-by-type": query_claims_by_type_example,
@@ -658,7 +628,6 @@ AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
     "claim-flow-a",
     "claim-self-source",
     "claim-subject-relation",
-    "claim-exact-content",
     "claim-revision",
     "procedure",
     "claim-adjudicate-contradicting-evidence",
@@ -736,7 +705,6 @@ __all__ = [
     "claim_type_succession_example",
     "claim_existing_capture_example",
     "claim_flow_a_example",
-    "claim_exact_content_example",
     "claim_revision_example",
     "claim_self_source_example",
     "claim_subject_relation_example",

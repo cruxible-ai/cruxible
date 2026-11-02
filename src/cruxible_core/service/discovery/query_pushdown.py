@@ -42,6 +42,7 @@ from cruxible_client.contracts.query.grammar import (
     QuerySubjectFieldRef,
     QueryValueRef,
 )
+from cruxible_client.contracts.shapes import claim_value_kind, value_type_name
 from cruxible_core.indexes.sql_batch import select_in
 from cruxible_core.indexes.subject_identity import key_normalizer_of, tree_subject_kind_reader
 from cruxible_core.query.engine import _RefusalSignal, resolve_query_parameters
@@ -230,11 +231,11 @@ def select_query_facts(
         type_path = claim_type_path(ref.predicate)
         claim_type = parse_claim_type(source[type_path], path=type_path)
         scalar = filter_.value_type
-        schema = claim_type.literal_schema or {}
+        declared_type = value_type_name(claim_type.value)
         if (
-            claim_type.object_kind != "literal"
+            claim_value_kind(claim_type.value) != "literal"
             or scalar not in {"string", "integer", "boolean"}
-            or schema.get("type") != scalar
+            or declared_type != scalar
         ):
             return None
         rule = key_normalizer_of(claim_type, tree_subject_kind_reader(source))

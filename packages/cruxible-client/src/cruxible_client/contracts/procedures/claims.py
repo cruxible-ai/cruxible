@@ -12,7 +12,12 @@ from cruxible_client.contracts.artifacts import ArtifactNameRef
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.procedures.model_base import _StrictProcedureModel
-from cruxible_client.contracts.shapes import Predicate, as_predicate, predicate_context_problem
+from cruxible_client.contracts.shapes import (
+    Predicate,
+    as_predicate,
+    claim_rationale,
+    predicate_context_problem,
+)
 
 
 @lru_cache(maxsize=1024)
@@ -86,11 +91,11 @@ class ClaimTemplate(_StrictProcedureModel):
     def _derivation(self) -> ClaimTemplate:
         if self.inputs and self.role != "derivation":
             raise ValueError("claims_inputs_invalid: inputs require role: derivation")
-        if self.role == "derivation" and not self.inputs:
-            raise ValueError("claims_inputs_invalid: derivation requires read Claim inputs")
         if self.replaces is not None and len(set(self.replaces)) != len(self.replaces):
             raise ValueError("replaces must contain distinct roles")
         return self
+
+    _rationale_line = field_validator("rationale")(claim_rationale)
 
 
 class ClaimsNode(_StrictProcedureModel):
