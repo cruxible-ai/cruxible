@@ -17,7 +17,7 @@ from collections.abc import Callable
 
 from pydantic import BaseModel, ConfigDict
 
-from cruxible_client.contracts.captures import CaptureContractAny
+from cruxible_client.contracts.captures import CAPTURE_FIELD, CaptureContractAny
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     ExtractNode,
@@ -25,13 +25,7 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.provider_operations import capture_fields
 from cruxible_client.contracts.shapes import Contract, ContractRef
-from cruxible_client.contracts.workspace_file import (
-    WORKSPACE_FILE_CAPTURE_FIELD,
-    is_workspace_file_signature,
-)
-
-#: The capture field of an operation whose whole output is Capture wire.
-WHOLE_WIRE_CAPTURE_FIELD = "capture"
+from cruxible_client.contracts.workspace_file import is_workspace_file_signature
 
 ContractLookup = Callable[[ContractRef], Contract | None]
 CaptureLookup = Callable[[str], CaptureContractAny | None]
@@ -145,11 +139,11 @@ def procedure_capture_problem(
             and is_workspace_file_signature(operation_signature_digest(slot))
         ):
             # Core reads the workspace bytes itself: its one capture field is core's.
-            if set(node.captures) != {WORKSPACE_FILE_CAPTURE_FIELD}:
+            if set(node.captures) != {CAPTURE_FIELD}:
                 return (
                     "cruxible.procedure.captures_mismatch",
                     f"call {node.node_id!r}: a workspace.file read commits the bytes core read "
-                    f"as its one capture field, {WORKSPACE_FILE_CAPTURE_FIELD!r}",
+                    f"as its one capture field, {CAPTURE_FIELD!r}",
                 )
             declared: dict[str, str] | None = None
         else:
@@ -166,11 +160,11 @@ def procedure_capture_problem(
                 )
             continue
         elif not declared:
-            if set(node.captures) != {WHOLE_WIRE_CAPTURE_FIELD}:
+            if set(node.captures) != {CAPTURE_FIELD}:
                 return (
                     "cruxible.procedure.captures_mismatch",
                     f"call {node.node_id!r}: its operation returns one Capture as its whole "
-                    f"output; its captures name exactly {WHOLE_WIRE_CAPTURE_FIELD!r}",
+                    f"output; its captures name exactly {CAPTURE_FIELD!r}",
                 )
         else:
             if set(node.captures) != set(declared):
@@ -231,7 +225,7 @@ def procedure_capture_problem(
 
 
 __all__ = [
-    "WHOLE_WIRE_CAPTURE_FIELD",
+    "CAPTURE_FIELD",
     "CaptureOutputDescriptor",
     "TriggerTargetRefused",
     "capture_output_descriptors",

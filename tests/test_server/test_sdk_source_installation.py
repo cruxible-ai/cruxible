@@ -93,7 +93,8 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         prepared.submit(accept="never")
         _approve_and_activate(http, instance_id, reviewer, prepared.proposal.proposal_id)
 
-    # The fetch bundle is JSON: an extract reads it by the Contract's decoding.
+    # The fetched body is the origin's JSON: an extract reads it by the
+    # Contract's decoding.
     contract = http_contract(name="test.web", decoding=JSON_DECODING)
     output_contract = procedure_contract(name="test.web-output", max_bytes=1_048_576)
     accept(
@@ -107,7 +108,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         {
             "name": "fetch.document",
             "version": 1,
-            "fields": {"status": {"type": "int"}, "text": {"type": "string"}},
+            "fields": {"unit": {"type": "string"}, "station": {"type": "string"}},
         }
     )
     _accept(
@@ -120,7 +121,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
 
     request = {"url": "string"}
     # Typed as the extracted fetch.document row declares it.
-    result = {"status": "int", "text": "string"}
+    result = {"unit": "string", "station": "string"}
     limits = ProcedureLimits(
         wall_clock="PT60S",
         provider_calls=2,
@@ -159,8 +160,8 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         "test.web-output",
         input=observer.input.whole,
         result={
-            "status": observer.input["status"],
-            "text": observer.input["text"],
+            "unit": observer.input["unit"],
+            "station": observer.input["station"],
         },
     )
     authored = observer.build()
@@ -203,12 +204,15 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     accept(knowledge)
 
     def observed_result(observed: Handle) -> dict[str, Any]:
-        return {"status": observed.ref("value", "status"), "text": observed.ref("value", "text")}
+        return {
+            "unit": observed.ref("value", "unit"),
+            "station": observed.ref("value", "station"),
+        }
 
     def observed_result_from(document: Handle) -> dict[str, Any]:
         return {
-            "status": document.ref("rows", "0", "status"),
-            "text": document.ref("rows", "0", "text"),
+            "unit": document.ref("rows", "0", "unit"),
+            "station": document.ref("rows", "0", "station"),
         }
 
     def acquire(parent: Sequence) -> Handle:
@@ -223,9 +227,11 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
             capture=observation["capture"],
             records="/",
             row="fetch.document@1",
-            fields={"status": {"at": "/retrieved/status_code"}, "text": {"at": "/derived/text"}},
+            fields={"unit": {"at": "/unit"}, "station": {"at": "/station"}},
         )
-        parent.guard(eq(document.ref("rows", "0", "status"), 200), else_=halt("Observation failed"))
+        parent.guard(
+            eq(document.ref("rows", "0", "unit"), "metres"), else_=halt("Observation failed")
+        )
         observed = parent.invoke(
             "observe-web", input=observed_result_from(document), as_="observed"
         )
@@ -284,12 +290,12 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     before_run = pb.coordinate
     run = pb.line("source-line").run()
     assert run.succeeded, run.outcome.model_dump_json(indent=2)
-    assert run.result.status == 200
-    assert '"station": "newlyn"' in run.result.text
+    assert run.result.unit == "metres"
+    assert run.result.station == "newlyn"
     assert _fetches(run) == 1
     (child,) = run.children
     assert child.succeeded
-    assert child.result.text == run.result.text
+    assert child.result.station == run.result.station
     assert _fetches(child) == 0
     assert child.outcome.source_observations == []
     (observation,) = run.outcome.source_observations
@@ -373,11 +379,11 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     pb.refresh()
     verified = pb.line("verify-line").run()
     assert verified.succeeded, verified.outcome.model_dump_json(indent=2)
-    assert '"station": "newlyn"' in verified.result.text
+    assert verified.result.station == "newlyn"
     assert _fetches(verified) == 1
     (rechecked,) = verified.children
     assert rechecked.succeeded
-    assert rechecked.result.text == verified.result.text
+    assert rechecked.result.station == verified.result.station
     assert _fetches(rechecked) == 0
     assert rechecked.outcome.source_observations == []
     (fresh,) = verified.outcome.source_observations

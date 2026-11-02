@@ -1,30 +1,23 @@
 """Observed content identity on Captures: what was seen, by content, whatever the envelope.
 
-A workspace.file Capture records its source-read receipt's bytes digest; a
-web.fetch v3 Capture records the origin body's digest, which core recomputes
-and refuses on mismatch; every other Capture records none and reads as its
-commitment. Absent, the envelope's bytes are exactly what they were.
+A Capture's bytes are its producer's payload, verbatim (D-R25), so what it
+observed is its commitment digest: the bytes a workspace.file read, the body an
+origin sent, the document a provider made. No operation is decoded to find it,
+and the envelope records no second digest.
 """
 
 from __future__ import annotations
 
-import base64
 import hashlib
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
-from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
-    WEB_FETCH_OPERATION,
-    CaptureFormatError,
-    CaptureObservedContentMismatch,
-    ProviderInvocationCaptureEvidence,
-    ProviderProducerReceiptResolution,
-    ProviderResultToExternalCapture,
-    _verify_observed_content,
+    CaptureEnvelope,
     build_provider_external_capture_v2,
     observed_content,
 )
@@ -49,94 +42,26 @@ def _build(fixture: Any, **extra: Any) -> Any:
     )
 
 
-def _web_fetch_fixture(tmp_path: Path, *, body: bytes, stated: str | None = None) -> Any:
+def test_a_workspace_capture_observed_the_bytes_it_read(tmp_path: Path) -> None:
+    fixture, source_read, output = _workspace_fixture(tmp_path)
+    built = _build(fixture, source_read_receipt=source_read, provider_output=output)
+    assert built.envelope.commitment.digest == source_read.bytes_digest
+    assert observed_content(built.envelope).digest == source_read.bytes_digest
+
+
+def test_a_provider_capture_observed_its_payload(tmp_path: Path) -> None:
     fixture = provider_capture_fixture(tmp_path)
-    material = canonical_bytes(
-        {
-            "retrieved": {
-                "body_base64": base64.b64encode(body).decode("ascii"),
-                "body_sha256": stated or "sha256:" + hashlib.sha256(body).hexdigest(),
-            },
-        }
-    )
-    result = ProviderResultToExternalCapture(
-        **{
-            **fixture.result.model_dump(mode="python"),
-            "content_base64": base64.b64encode(material).decode("ascii"),
-            "byte_length": len(material),
-            "bytes_digest": "sha256:" + hashlib.sha256(material).hexdigest(),
-        }
-    )
-    # web.fetch is recognized by operation NAME (unlike workspace.file, which
-    # is recognized by its exact operation signature digest) -- see
-    # build_provider_external_capture_v2's `occurrence.operation.name ==
-    # WEB_FETCH_OPERATION` check in cruxible_client.contracts.captures.
-    local = fixture.occurrence.local_execution.model_copy(update={"operation": WEB_FETCH_OPERATION})
-    occurrence = fixture.occurrence.model_copy(
-        update={
-            "operation": fixture.occurrence.operation.model_copy(
-                update={"name": WEB_FETCH_OPERATION}
-            ),
-            "local_execution": local,
-        }
-    )
-    receipt = fixture.receipt.model_copy(
-        update={
-            "operation": WEB_FETCH_OPERATION,
-            "output": ProviderInvocationOutputDigest(
-                output_digest=provider_invocation_output_digest(
-                    result.model_dump(mode="json", exclude_none=True)
-                )
-            ).model_dump(mode="json"),
-        }
-    )
-    return replace(fixture, occurrence=occurrence, receipt=receipt, result=result)
+    built = _build(fixture)
+    assert observed_content(built.envelope).digest == built.envelope.commitment.digest
+    assert built.envelope.commitment.digest == fixture.result.bytes_digest
 
 
-def test_a_workspace_capture_records_the_bytes_it_read(tmp_path: Path) -> None:
-    fixture, source_read, output = _workspace_fixture(tmp_path)
-    built = _build(fixture, source_read_receipt=source_read, provider_output=output)
-    assert built.envelope.observed_content_digest == source_read.bytes_digest
-    seen = observed_content(built.envelope)
-    assert (seen.digest, seen.basis) == (source_read.bytes_digest, "workspace_file_bytes")
-
-
-def test_a_web_fetch_capture_records_the_verified_body(tmp_path: Path) -> None:
-    body = b"<html>CVE-2026-0001</html>"
-    built = _build(_web_fetch_fixture(tmp_path, body=body))
-    expected = "sha256:" + hashlib.sha256(body).hexdigest()
-    assert built.envelope.observed_content_digest == expected
-    assert observed_content(built.envelope).basis == "web_fetch_body"
-
-
-def test_a_web_fetch_body_digest_that_does_not_reproduce_refuses(tmp_path: Path) -> None:
-    fixture = _web_fetch_fixture(tmp_path, body=b"real", stated="sha256:" + "0" * 64)
-    with pytest.raises(CaptureObservedContentMismatch) as refused:
-        _build(fixture)
-    assert refused.value.error_code == "cruxible.capture.observed_content_mismatch"
-
-
-def test_any_other_capture_records_none_and_keeps_its_bytes(tmp_path: Path) -> None:
+def test_the_envelope_records_no_second_content_digest(tmp_path: Path) -> None:
     built = _build(provider_capture_fixture(tmp_path))
-    assert built.envelope.observed_content_digest is None
-    assert "observed_content_digest" not in built.envelope.model_dump(mode="json")
-    seen = observed_content(built.envelope)
-    assert (seen.digest, seen.basis) == (built.envelope.commitment.digest, "commitment")
-
-
-def test_verification_refuses_an_observed_digest_the_evidence_does_not_yield(
-    tmp_path: Path,
-) -> None:
-    fixture, source_read, output = _workspace_fixture(tmp_path)
-    built = _build(fixture, source_read_receipt=source_read, provider_output=output)
-    resolution = ProviderProducerReceiptResolution(
-        receipt=fixture.receipt, occurrence=fixture.occurrence, source_read_receipt=source_read
-    )
-    _verify_observed_content(built.envelope, b"", resolution)
-    forged = built.envelope.model_copy(update={"observed_content_digest": "sha256:" + "1" * 64})
-    with pytest.raises(CaptureFormatError, match="observed_content_digest does not correspond"):
-        _verify_observed_content(forged, b"", resolution)
-    assert isinstance(built.envelope.production_evidence, ProviderInvocationCaptureEvidence)
+    document = built.envelope.model_dump(mode="json")
+    assert "observed_content_digest" not in document
+    with pytest.raises(ValidationError):
+        CaptureEnvelope.model_validate({**document, "observed_content_digest": "sha256:" + "1"})
 
 
 def test_coverage_groups_two_captures_of_the_same_content_as_one_row(tmp_path: Path) -> None:
@@ -155,7 +80,7 @@ def test_coverage_groups_two_captures_of_the_same_content_as_one_row(tmp_path: P
     second, _reread_receipt = _reread(fixture, source_read, output)
     assert first.capture_digest != second.capture_digest
     assert first.envelope.commitment.digest == second.envelope.commitment.digest
-    assert first.envelope.observed_content_digest == second.envelope.observed_content_digest
+    assert observed_content(first.envelope) == observed_content(second.envelope)
 
     connection = sqlite3.connect(":memory:")
     connection.executescript(
@@ -179,20 +104,12 @@ def test_coverage_groups_two_captures_of_the_same_content_as_one_row(tmp_path: P
     by_content, _ = coverage_rows(world.reader, bodies=fixture.store, at=AT, version=2)
     (row,) = by_content.citations
     assert set(row.capture_digests) == {first.capture_digest, second.capture_digest}
-    assert row.observed_content_digest == source_read.bytes_digest
+    assert row.commitment_digest == source_read.bytes_digest
     by_commitment, _ = coverage_rows(world.reader, bodies=fixture.store, at=AT, version=1)
     assert len(by_commitment.citations) == 1
 
 
-# -- refusal matching keeps every key it ever produced (review F-007) -------------
-
-
-def _legacy(fixture: Any, built: Any) -> str:
-    from cruxible_client.contracts.captures import render_capture_envelope
-
-    legacy = built.envelope.model_copy(update={"observed_content_digest": None})
-    assert "observed_content_digest" not in legacy.model_dump(mode="json")
-    return fixture.store.store(render_capture_envelope(legacy)).digest
+# -- refusal matching keys a Capture by its content -----------------------------
 
 
 def _reread(fixture: Any, source_read: Any, output: Any) -> tuple[Any, Any]:
@@ -219,24 +136,22 @@ def _reread(fixture: Any, source_read: Any, output: Any) -> tuple[Any, Any]:
     ), reread
 
 
-def test_a_legacy_workspace_capture_keeps_its_verified_bytes_identity(tmp_path: Path) -> None:
+def test_two_captures_of_the_same_bytes_are_one_piece_of_evidence(tmp_path: Path) -> None:
     from cruxible_core.proposals.refusal_index import capture_evidence_content
 
     fixture, source_read, output = _workspace_fixture(tmp_path)
     built = _build(fixture, source_read_receipt=source_read, provider_output=output)
-    legacy = _legacy(fixture, built)
-    # Old and new envelopes of the same file bytes are one piece of evidence.
-    assert capture_evidence_content(fixture.store, legacy) == source_read.bytes_digest
-    assert capture_evidence_content(fixture.store, built.capture_digest) == source_read.bytes_digest
-    # Two pre-field Captures of the same bytes from different runs still match.
     again, _reread_receipt = _reread(fixture, source_read, output)
-    assert again.envelope.commitment.digest == built.envelope.commitment.digest
-    assert capture_evidence_content(fixture.store, _legacy(fixture, again)) == (
-        capture_evidence_content(fixture.store, legacy)
+    assert again.capture_digest != built.capture_digest
+    assert capture_evidence_content(fixture.store, built.capture_digest) == (
+        source_read.bytes_digest
+    )
+    assert capture_evidence_content(fixture.store, again.capture_digest) == (
+        capture_evidence_content(fixture.store, built.capture_digest)
     )
 
 
-def test_a_legacy_non_workspace_capture_keeps_its_commitment_identity(tmp_path: Path) -> None:
+def test_a_provider_capture_keys_by_its_commitment(tmp_path: Path) -> None:
     from cruxible_core.proposals.refusal_index import capture_evidence_content
 
     fixture = provider_capture_fixture(tmp_path)

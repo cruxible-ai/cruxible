@@ -272,6 +272,7 @@ from cruxible_core.procedures.node_summaries import (
     transform_summary,
 )
 from cruxible_core.procedures.ports import (
+    WORKSPACE_FILE_BUILTIN,
     AcquisitionRules,
     bound_operation,
 )
@@ -3719,7 +3720,7 @@ class ProcedureExecutor:
                     node_id=node.node_id,
                 )
         workspace_request: ExecutedWorkspaceFileSourceRequestV2 | None = None
-        if bound_operation(occurrence).builtin == "workspace.file":
+        if bound_operation(occurrence).builtin == WORKSPACE_FILE_BUILTIN:
             # The author names the workspace logically, or not at all; the daemon
             # resolves its root and executes -- and journals -- the request with
             # that root's binding digest, before anything is read.
@@ -3824,18 +3825,6 @@ class ProcedureExecutor:
                     decision=unavailable_decisions[field],
                 )
             return
-        for field, rule in rules.items():
-            offending_result_origin = disallowed_origin(rule, output)
-            if offending_result_origin is not None:
-                # F05/§4.1,§4.4: the result's own url/final_url fields (e.g. after
-                # a redirect) are checked too, before any Capture conversion.
-                raise _RunRefusal(
-                    cast(ProcedureNodeRefusalCode, ACQUISITION_ORIGIN_INELIGIBLE),
-                    f"Capture output {node.as_}.{field} result names "
-                    f"{offending_result_origin!r}, whose origin is not in the Line's permitted "
-                    "acquisition.origins for this field.",
-                    node_id=node.node_id,
-                )
         out_contract = closure_lookup(occurrence.contracts)(occurrence.operation.out)
         # An operation whose out Contract carries no capture<K> field returns
         # its whole output as Capture wire; the call's value then names only
@@ -3886,6 +3875,19 @@ class ProcedureExecutor:
                         "reason": f"capture field {field!r} is not Capture wire",
                     },
                 ) from exc
+        for field, rule in rules.items():
+            # F05/§4.1,§4.4: each capture field's own coordinate names where its
+            # bytes came from (``url``, and ``final_url`` after a redirect), and
+            # is checked too, before any Capture conversion.
+            offending_result_origin = disallowed_origin(rule, wires[field].coordinate)
+            if offending_result_origin is not None:
+                raise _RunRefusal(
+                    cast(ProcedureNodeRefusalCode, ACQUISITION_ORIGIN_INELIGIBLE),
+                    f"Capture output {node.as_}.{field} coordinate names "
+                    f"{offending_result_origin!r}, whose origin is not in the Line's permitted "
+                    "acquisition.origins for this field.",
+                    node_id=node.node_id,
+                )
         producer = self.slot_bindings[node.slot].build.target
         bound_generation = admission.accepted_coordinate.generation_root
         for field in fields:

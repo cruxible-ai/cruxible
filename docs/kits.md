@@ -133,12 +133,18 @@ contract admits, and refuses, typed, what it cannot serve.
   cruxible provider install cruxible-provider-web
   ~~~
 
-  `cruxible-provider-web` implements `web.fetch` and `search.web`. `web.fetch`
+  `cruxible-provider-web` implements `web.fetch`, `search.web` and
+  `web.render`. `web.fetch` returns the body the origin sent as its Capture,
+  verbatim, with the URL, final URL, status, media type, request digest and
+  kept headers in the Capture's coordinate; `search.web` likewise returns the
+  search instance's response body. `web.render` reads a fetched Capture and
+  returns a derived Capture citing it (the page assembled in a browser, or its
+  main content as Markdown). `web.fetch`
   refuses loopback, private, link-local (cloud metadata included), CGNAT,
   multicast and reserved addresses, on the first request and on every
   redirect, and connects only to the address it checked, so DNS rebinding
   cannot reach behind it. It needs direct outbound access and fetches pages as
-  served: there is no browser rendering.
+  served.
   Cruxible owns the `web.fetch` contract, so every package that implements it
   installs onto the same `ProviderInterface:web.fetch`.
 - **From a kit.** A kit's own domain provider arrives bundled in the kit; a

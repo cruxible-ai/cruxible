@@ -440,9 +440,10 @@ def installed_web(installer_http, provider_checkout):
     wheels = provider_checkout.wheels
     wheel = next(wheels.glob("cruxible_provider_web-*.whl"))
     members = _web_contract_members(wheel)
-    # 2 operations x (in, out) + 6 + 5 refusals, and the three nested Contracts
-    # the results pin: the coordinate, the zero-field selector, the window.
-    assert len(members) == 18
+    # 3 operations x (in, out) + 5 + 5 + 2 refusals, and the six nested
+    # Contracts they pin: the coordinate (with its headers and pages), the
+    # zero-field selector, the window and the render's cited source.
+    assert len(members) == 24
     _accept(http, instance_id, reviewer, members, name="web-contracts")
     installed = install_provider_wheel(
         client,
@@ -450,8 +451,8 @@ def installed_web(installer_http, provider_checkout):
         wheel=wheel,
         lock=provider_checkout.repository / "packages/cruxible-provider-web/uv.lock",
         dependency_wheels=(next(wheels.glob("cruxible_provider_runtime-*.whl")),),
-        # web.fetch's implementation declares the browser extra; without it the
-        # implementation is not installed at all, rendered or not.
+        # web.render's implementation declares the browser extra; without it that
+        # implementation is not installed at all. web.fetch needs none.
         extras=("browser",),
     )
     assert installed.installed and installed.registered, installed
@@ -479,29 +480,31 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
 
     http, instance_id, reviewer = installer_http
     client, installed, digests = installed_web
-    # Readiness is per operation and truthful. search.web needs nothing beyond
-    # the base install. web.fetch's implementation needs the browser extra (this
-    # install asked for it) and a Chromium matching the installed Playwright,
-    # which the install probes for rather than assumes: where none is present,
-    # the operation is installed but not ready, and the install says so.
+    # Readiness is per operation and truthful. web.fetch and search.web need
+    # nothing beyond the base install. web.render's implementation needs the
+    # browser extra (this install asked for it) and a Chromium matching the
+    # installed Playwright, which the install probes for rather than assumes:
+    # where none is present, the operation is installed but not ready, and the
+    # install says so.
     readiness = {row.operation: row for row in installed.operations}
-    assert set(readiness) == {"web.fetch", "search.web"}
+    assert set(readiness) == {"web.fetch", "search.web", "web.render"}
     assert all(row.installed for row in readiness.values()), installed.operations
     assert readiness["search.web"].missing_requirements == ()
-    assert set(readiness["web.fetch"].missing_requirements) <= {
+    assert readiness["web.fetch"].missing_requirements == ()
+    assert set(readiness["web.render"].missing_requirements) <= {
         "runtime resource: playwright.chromium"
     }
     assert installed.status == (
-        "blocked" if readiness["web.fetch"].missing_requirements else "ready"
+        "blocked" if readiness["web.render"].missing_requirements else "ready"
     )
-    # The registration pinned both operations and every declared refusal to
+    # The registration pinned every operation and every declared refusal to
     # the accepted Contracts.
     instance = get_playbill_manager().get(instance_id)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     build_path = provider_path(installed.build)
     build = parse_provider(tree[build_path], path=build_path)
     served = {operation.name: operation for operation in build.operations}
-    assert set(served) == {"web.fetch", "search.web"}
+    assert set(served) == {"web.fetch", "search.web", "web.render"}
     for operation in served.values():
         refs = (
             operation.in_,
@@ -513,11 +516,11 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     assert set(served["web.fetch"].refusals) == {
         "credential_unavailable",
         "cross_origin_credentialed_redirect",
-        "engine_unavailable",
         "provider_declined",
         "redirect_limit",
         "unsupported_redirect_scheme",
     }
+    assert set(served["web.render"].refusals) == {"engine_unavailable", "provider_declined"}
     assert set(served["search.web"].refusals) == {
         "cross_origin_credentialed_redirect",
         "provider_declined",
@@ -531,9 +534,9 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     from tests.core_support._light_capture_support import JSON_DECODING
 
     contract = http_contract(decoding=JSON_DECODING)
-    # The observation bundle is read as one record: its derived text.
-    bundle = validate_contract(
-        {"name": "test.web-bundle", "version": 1, "fields": {"text": "string"}}
+    # The fetched body is the origin's JSON, read as one record.
+    record = validate_contract(
+        {"name": "test.web-record", "version": 1, "fields": {"station": "string"}}
     )
     _accept(
         http,
@@ -541,13 +544,13 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
         reviewer,
         {
             capture_contract_path(contract.identity.name): render_capture_contract(contract),
-            contract_path(bundle.name, bundle.version): render_contract(bundle),
+            contract_path(record.name, record.version): render_contract(record),
         },
         name="web-capture-contract",
     )
     # web.fetch refuses private and loopback origins, so the run reads the
     # recording the web package ships for the reserved fixture.invalid host; it
-    # opens no socket, and needs no browser: the request does not render.
+    # opens no socket, and needs no browser.
     url = "https://fixture.invalid/api/v1/measurements.json"
     line = "test.installed-web-fetch-line"
     _author_line(
@@ -558,7 +561,7 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
             procedure="test.installed-web-fetch",
             reference_text=True,
             input={},
-            output={"text": "string"},
+            output={"station": "string"},
             slots={
                 "fetch": {
                     "in": "web.fetch.request@1",
@@ -574,13 +577,13 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
                     input={"url": url, "expected_format": "json"},
                 ),
                 {
-                    "extract": "bundle",
+                    "extract": "record",
                     "capture": "$observation.capture",
                     "records": "/",
-                    "row": "test.web-bundle@1",
-                    "fields": {"text": {"at": "derived/text"}},
+                    "row": "test.web-record@1",
+                    "fields": {"station": {"at": "station"}},
                 },
-                ProjectStep(project="result", fields={"text": "$bundle.rows.0.text"}),
+                ProjectStep(project="result", fields={"station": "$record.rows.0.station"}),
             ],
             returns="result",
             hard_caps=procedure_limits(provider_calls=1, capture_bytes=1048576),
@@ -593,7 +596,7 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     )
     state = _line_state(instance_id, line)
     assert state.status == "succeeded", state.terminal
-    assert '"station": "newlyn"' in state.result["text"]
+    assert state.result["station"] == "newlyn"
     run = client.get_procedure_run(instance_id, state.run_id)
     assert run.receipt_digest
     (observation,) = run.source_observations
@@ -605,8 +608,9 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     assert receipt.operation_signature_digest == operation_signature_digest(
         served["web.fetch"].signature()
     )
-    # The retained Capture: the exact observation bundle, its digest and length,
-    # under the request's source identity, recorded as served from a recording.
+    # The retained Capture: the exact body the origin sent, its digest and
+    # length, under the request's source identity; how it was obtained is the
+    # coordinate, recorded as served from a recording.
     access = BodyAccessContext(principal_id="test", can_read_body=True)
     envelope = parse_capture_envelope(
         instance.body_store().read(observation.capture_digest, access=access)
@@ -618,14 +622,11 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     assert envelope.source.selector == {}
     assert envelope.source.replayability == "attested_only"
     assert envelope.source_effective_time is None
-    bundle = json.loads(material)
-    retrieved = bundle["retrieved"]
-    assert retrieved["source"] == "packaged-recording"
-    assert retrieved["url"] == url
+    assert json.loads(material)["station"] == "newlyn"
     assert envelope.source.coordinate["source"] == "packaged-recording"
-    assert envelope.source.coordinate["body_sha256"] == retrieved["body_sha256"]
-    assert b"newlyn" in base64.b64decode(retrieved["body_base64"])
-    assert bundle["derived"]["text"] == state.result["text"]
+    assert envelope.source.coordinate["url"] == url
+    assert envelope.source.coordinate["final_url"] == url
+    assert envelope.source.coordinate["content_type"] == "application/json"
 
 
 _SEARCH_IN_ITS_ENVIRONMENT = """
@@ -642,8 +643,8 @@ result = SearxngSearch()(
         operation_signature_digest="sha256:" + "a" * 64,
         build_digest="sha256:" + "b" * 64,
         implementation_digest="sha256:" + "c" * 64,
-        input={"query": "tide gauge recalibration", "limit": 2},
-        coordinates={"instance_url": "https://fixture.invalid", "as_of": "2026-06-01T00:00:00Z"},
+        input={"query": "tide gauge recalibration", "time_range": "year"},
+        coordinates={"instance_url": "https://fixture.invalid"},
         budgets=Budgets(wall_clock_seconds=30.0, output_bytes=4_000_000),
         declared_endpoints=("dynamic:target-from-configuration",),
         capture_contract=None,
@@ -696,10 +697,11 @@ def test_installed_web_search_returns_its_result_contract(installer_http, instal
     decoded = ProviderResultToExternalCapture.model_validate(output)
     assert decoded.source_identity == "search.response"
     assert decoded.source_effective_time is None
-    bundle = json.loads(base64.b64decode(decoded.content_base64))
-    assert bundle["retrieved"]["source"] == "packaged-recording"
-    assert bundle["retrieved"]["result_count"] == 3
-    assert len(bundle["derived"]["results"]) == 2
+    # The Capture is the instance's answer, verbatim; no ranking is derived.
+    answer = json.loads(base64.b64decode(decoded.content_base64))
+    assert isinstance(answer["results"], list)
+    assert decoded.coordinate["source"] == "packaged-recording"
+    assert len(answer["results"]) == 3
 
 
 def _served_operation(instance, build_name, operation):

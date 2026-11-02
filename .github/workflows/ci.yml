@@ -8,9 +8,11 @@ on:
 
 env:
   # The cruxible-providers commit the provider-runtime tests run against
-  # (tests/support/provider_checkout.py): the runtime is installed from it and
-  # the provider wheels the installation tests transfer are built from it.
-  CRUXIBLE_PROVIDERS_COMMIT: 84cfdba1522423ef16354cca7c8f2d0e2261737c
+  # (tests/support/provider_checkout.py): the runtime is installed from it, the
+  # provider wheels the installation tests transfer are built from it, and the
+  # end-to-end skeleton (tests/test_e2e) runs its web.fetch. Capture = payload:
+  # cruxible-provider-web 0.4.0 (branch claude/capture-payload).
+  CRUXIBLE_PROVIDERS_COMMIT: f27a831b088d1af4d25ce2a421453f24d68abb76
 
 jobs:
   test:
@@ -23,12 +25,15 @@ jobs:
 
     env:
       CRUXIBLE_PROVIDERS_CHECKOUT: ${{ github.workspace }}/cruxible-providers
+      # The checkout is mandatory here: its tests fail rather than skip.
+      CRUXIBLE_PROVIDERS_REQUIRED: "1"
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # cruxible-providers is public, so this is an ordinary second checkout and
-      # needs no credential. Without it the provider-runtime tests skip.
+      # needs no credential. CRUXIBLE_PROVIDERS_REQUIRED makes its tests fail,
+      # never skip, if it is missing.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: cruxible-ai/cruxible-providers

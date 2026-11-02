@@ -13,7 +13,6 @@ from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
     capture_contract_digest,
     capture_contract_is_self_asserted,
-    observed_content,
     parse_capture_contract,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext, BodyProjectionProtocol
@@ -67,9 +66,8 @@ def coverage_rows(
     """Reproduce retained V1/V2 bytes using indexed joins and exact CAS envelopes.
 
     V1 groups Captures by their commitment. V2 groups them by observed content
-    (``captures.observed_content_digest``): a Capture that records none falls
-    back to its commitment, so every row of an index built before the field
-    reproduces byte for byte.
+    (``captures.observed_content_digest``), which is the digest of the exact
+    payload a Capture committed.
     """
     group_column = "evidence_commitment_digest" if version == 1 else "observed_content_digest"
     groups = reader._rows(
@@ -166,16 +164,12 @@ def coverage_rows(
             ),
         )
         if version == 2:
-            observed = observed_content(first)
             citations.append(
                 EvidenceCitationV2.model_validate(
                     {
                         **values,
                         "citation_associations": tuple(
                             associations[key] for key in sorted(associations)
-                        ),
-                        "observed_content_digest": (
-                            None if observed.basis == "commitment" else observed.digest
                         ),
                     }
                 )

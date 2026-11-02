@@ -129,10 +129,13 @@ _FETCH_COORDINATE = Contract.model_validate(
         "name": "test.sdk-fetch-coordinate",
         "version": 1,
         "fields": {
+            # The HTTP coordinate cruxible-provider-web's web.fetch records: how
+            # the bytes were obtained, never inside them.
+            "url": {"type": "string"},
+            "final_url": {"type": "string"},
             "status": {"type": "int"},
-            # What cruxible-provider-web's web.fetch also records of the exchange.
+            "content_type": {"type": "string"},
             "request_digest": {"type": "string", "optional": True},
-            "body_sha256": {"type": "string", "optional": True},
             "source": {"type": "string", "optional": True},
         },
     }
@@ -218,12 +221,18 @@ def _fetch_contract_files() -> dict[str, bytes]:
 
 
 def acquisition_result():
-    content = canonical_bytes({"derived": {"text": "critical"}, "retrieved": {"url": URL}})
+    # The Capture is the origin's body, verbatim; its metadata is the coordinate.
+    content = canonical_bytes({"station": "newlyn", "unit": "metres"})
     now = datetime.now(UTC)
     return ProviderResultToExternalCapture(
         source_identity="web.response",
         coordinate_type="http-response-v1",
-        coordinate={"status": 200},
+        coordinate={
+            "url": URL,
+            "final_url": URL,
+            "status": 200,
+            "content_type": "application/json",
+        },
         selector_type="whole-response-v1",
         selector={},
         replayability="attested_only",
@@ -283,20 +292,20 @@ def _fetch_procedure(contract: CaptureContract, *, request: dict[str, object]) -
                 slot="fetch",
                 input=request,
                 as_=_ALIAS,
-                next="bundle",
+                next="record",
             ),
             ExtractNode(
-                node_id="bundle",
+                node_id="record",
                 capture=f"$steps.{_ALIAS}.capture",
                 records="/",
-                row=_BUNDLE_ROW_REF,
-                fields={"text": {"at": "derived/text"}},
-                as_="bundle",
+                row=_RECORD_ROW_REF,
+                fields={"station": {"at": "station"}},
+                as_="record",
                 next="shape",
             ),
             ProjectNode(
                 node_id="shape",
-                fields={"severity": "$steps.bundle.rows.0.text"},
+                fields={"severity": "$steps.record.rows.0.station"},
                 as_="result",
             ),
         ),
@@ -314,14 +323,14 @@ def _fetch_procedure(contract: CaptureContract, *, request: dict[str, object]) -
     return revalidated(procedure)
 
 
-#: The web observation bundle, read as one record: its derived text.
-_BUNDLE_ROW = validate_contract(
-    {"name": "test.web-bundle", "version": 1, "fields": {"text": "string"}}
+#: The fetched JSON body, read as one record.
+_RECORD_ROW = validate_contract(
+    {"name": "test.web-record", "version": 1, "fields": {"station": "string"}}
 )
-_BUNDLE_ROW_REF = {
-    "name": _BUNDLE_ROW.name,
-    "version": _BUNDLE_ROW.version,
-    "digest": contract_digest(_BUNDLE_ROW).tagged,
+_RECORD_ROW_REF = {
+    "name": _RECORD_ROW.name,
+    "version": _RECORD_ROW.version,
+    "digest": contract_digest(_RECORD_ROW).tagged,
 }
 
 
@@ -440,7 +449,7 @@ def test_sdk_source_retains_and_reads_acquisition(
             provider_path(provider.identity.name): render_provider(provider),
             capture_contract_path(contract.identity.name): render_capture_contract(contract),
             **_fetch_contract_files(),
-            contract_path(_BUNDLE_ROW.name, _BUNDLE_ROW.version): render_contract(_BUNDLE_ROW),
+            contract_path(_RECORD_ROW.name, _RECORD_ROW.version): render_contract(_RECORD_ROW),
         },
         actor_id="operator",
         proposal_name="acquisition-deployment",

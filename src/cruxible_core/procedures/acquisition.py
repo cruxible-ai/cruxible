@@ -61,8 +61,10 @@ ACQUISITION_REPLAYABILITY_INELIGIBLE = "cruxible.acquisition.replayability_ineli
 #: omit choice, exactly like the replayability gate above.
 ACQUISITION_ORIGIN_INELIGIBLE = "cruxible.acquisition.origin_ineligible"
 
-#: The field names core treats as URL-bearing wherever they appear in a
-#: request or a result (§4.1: "the URL fields and final_url").
+#: The field names core treats as URL-bearing (§4.1: "the URL fields and
+#: final_url"), wherever they appear in a call's request and in each capture
+#: field's coordinate -- the typed metadata of how its bytes were obtained.
+#: Core never looks for them inside Capture bytes.
 _ORIGIN_CHECKED_FIELD_NAMES = frozenset({"url", "final_url"})
 
 

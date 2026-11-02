@@ -185,27 +185,23 @@ def resolve_procedure_spec(
             workspace_source = acquiring and is_workspace_file_signature(
                 operation_signature_digest(slot)
             )
+            from cruxible_client.contracts.procedures.capture_outputs import CAPTURE_FIELD
+            from cruxible_client.contracts.source_references import HTTP_RESPONSE_COORDINATE_TYPE
+
             if acquiring and not workspace_source:
-                from cruxible_client.contracts.procedures.capture_outputs import (
-                    WHOLE_WIRE_CAPTURE_FIELD,
-                )
                 from cruxible_client.contracts.provider_operations import capture_fields
                 from cruxible_client.contracts.shapes import ContractField, StringType
 
                 if not capture_fields(contract(slot.out, authored_path)):
                     # The operation returns one Capture as its whole output: the
                     # call's value names only that Capture.
-                    output_fields = {WHOLE_WIRE_CAPTURE_FIELD: ContractField(type=StringType())}
+                    output_fields = {CAPTURE_FIELD: ContractField(type=StringType())}
                     output_contract = None
             if workspace_source:
                 from cruxible_client.contracts.shapes import ContractField, StringType
-                from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_CAPTURE_FIELD
 
                 # The read's exact bytes, committed by core beside its result.
-                output_fields = {
-                    **output_fields,
-                    WORKSPACE_FILE_CAPTURE_FIELD: ContractField(type=StringType()),
-                }
+                output_fields = {**output_fields, CAPTURE_FIELD: ContractField(type=StringType())}
                 output_contract = None
             if workspace_source and capture is not None:
                 components = capture_components(capture)
@@ -224,9 +220,9 @@ def resolve_procedure_spec(
                         if getattr(capture, "replay", "exact") == "exact"
                         else "attested_only",
                     }
-                    if coordinate_type in {"http-response-v1", "workspace-file-v1"}:
+                    if coordinate_type == HTTP_RESPONSE_COORDINATE_TYPE:
                         request_defaults["coordinate"] = {"revision": "working"}
-                    if selector_type in {"whole-response-v1", "whole-file-v1"}:
+                    if selector_type == "whole-response-v1":
                         request_defaults["selector"] = {"whole": True}
                 # The daemon reads the workspace; the request is not the slot input.
                 input_view = None
