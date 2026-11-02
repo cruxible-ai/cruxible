@@ -32,7 +32,12 @@ from cruxible_core.mcp.permissions import (
 )
 from cruxible_core.mcp.target import configured_instance_id
 from cruxible_core.mcp.tools import register_tools
-from cruxible_core.mcp.wire_tags import compact_write_schema, fill_tool_arguments, hide_wire_tags
+from cruxible_core.mcp.wire_tags import (
+    compact_review_schema,
+    compact_write_schema,
+    fill_tool_arguments,
+    hide_wire_tags,
+)
 from cruxible_core.server.config import resolve_server_settings
 
 BASE_INSTRUCTIONS = """\\
@@ -143,6 +148,8 @@ def _install_tool_curation(
             inputSchema=(
                 compact_write_schema(hide_wire_tags(tool.parameters))
                 if tool.name in {"cruxible_write", "cruxible_set", "cruxible_retire"}
+                else compact_review_schema(hide_wire_tags(tool.parameters))
+                if tool.name == "cruxible_proposal_review"
                 else hide_wire_tags(tool.parameters)
             ),
             outputSchema=tool.output_schema,

@@ -591,7 +591,7 @@ class OriginatingLine(_StrictProposalModel):
 
 
 class ProposalAdmissionRecord(_StrictProposalModel):
-    tag: Literal["playbill-proposal-admission-v1"] = "playbill-proposal-admission-v1"
+    tag: Literal["playbill-proposal-admission-v2"] = "playbill-proposal-admission-v2"
     proposal_id: str
     actor_id: str
     target_ref: str

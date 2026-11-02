@@ -6,8 +6,14 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from cruxible_client.contracts.governance import (
+    ActivationPolicy,
+    ApprovalRequirement,
+    PermissionTier,
+)
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import OriginatingLine
+from cruxible_client.contracts.refusal_receipts import PriorRefusalCoverage
 
 
 class _SummaryModel(BaseModel):
@@ -30,13 +36,17 @@ class ReviewSummaryRow(_SummaryModel):
     before: dict[str, ReviewSummaryValue] | None
     after: dict[str, ReviewSummaryValue] | None
     findings: tuple[ReviewSummaryValue, ...] = ()
+    finding_count: int = Field(default=0, ge=0)
+    prior_refusals: tuple[ReviewSummaryValue, ...] = ()
+    prior_refusals_more: bool = False
 
 
 class ReviewSummaryGroup(_SummaryModel):
     group: str
     subject_kind: str
     artifact_kind: str
-    disposition: str
+    disposition: Literal["create", "replace", "retire", "delete"]
+    closure_role: Literal["authored", "generated_successor", "invalidation"]
     procedure_digest: str | None = None
     node: str | None = None
     template: int | None = None
@@ -56,12 +66,23 @@ class ProposalReviewSummary(_SummaryModel):
     originating_line: OriginatingLine | None = None
     rationale: ReviewSummaryValue | None = None
     counts: ReviewSummaryCounts
-    # Counts across all template groups for each kind on this page.
+    # Proposal-wide counts, capped independently of the group page.
     subject_kinds: dict[str, ReviewSummaryCounts]
+    subject_kind_count: int = Field(ge=0)
+    subject_kinds_truncated: bool = False
+    required_tier: PermissionTier
+    activation_policy: ActivationPolicy
+    approval_requirements: tuple[ApprovalRequirement, ...]
+    item_reasons: tuple[ReviewSummaryValue, ...] = ()
+    item_reason_count: int = Field(default=0, ge=0)
+    prior_refusal_member_count: int = Field(default=0, ge=0)
+    prior_refusal_coverage: PriorRefusalCoverage | None = None
+    projection_advisory: Literal["Workspace projection coverage requires --detail."] = (
+        "Workspace projection coverage requires --detail."
+    )
     findings: tuple[ReviewSummaryValue, ...]
     finding_count: int = Field(ge=0)
     findings_next_cursor: str | None = None
     groups: tuple[ReviewSummaryGroup, ...]
     group_count: int = Field(ge=0)
     next_cursor: str | None = None
-    detail_available: Literal[True] = True

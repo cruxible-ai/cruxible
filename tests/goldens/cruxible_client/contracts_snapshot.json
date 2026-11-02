@@ -71942,6 +71942,35 @@
     },
     "ProposalReviewSummary": {
       "fields": {
+        "activation_policy": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "activation_policy",
+          "required": true,
+          "schema": {
+            "enum": [
+              "abort",
+              "drain",
+              "epoch-check",
+              "snapshot"
+            ],
+            "title": "Activation Policy",
+            "type": "string"
+          }
+        },
+        "approval_requirements": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "approval_requirements",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ApprovalRequirement"
+            },
+            "title": "Approval Requirements",
+            "type": "array"
+          }
+        },
         "candidate_digest": {
           "has_default": false,
           "has_default_factory": false,
@@ -71959,20 +71988,6 @@
           "required": true,
           "schema": {
             "$ref": "#/$defs/ReviewSummaryCounts"
-          }
-        },
-        "detail_available": {
-          "default": true,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "detail_available",
-          "required": false,
-          "schema": {
-            "const": true,
-            "default": true,
-            "title": "Detail Available",
-            "type": "boolean"
           }
         },
         "finding_count": {
@@ -72043,6 +72058,36 @@
             "type": "array"
           }
         },
+        "item_reason_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "item_reason_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Item Reason Count",
+            "type": "integer"
+          }
+        },
+        "item_reasons": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "item_reasons",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ReviewSummaryValue"
+            },
+            "title": "Item Reasons",
+            "type": "array"
+          }
+        },
         "next_cursor": {
           "default": null,
           "default_json_serializable": true,
@@ -72082,6 +72127,53 @@
             "default": null
           }
         },
+        "prior_refusal_coverage": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "prior_refusal_coverage",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PriorRefusalCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "prior_refusal_member_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "prior_refusal_member_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Prior Refusal Member Count",
+            "type": "integer"
+          }
+        },
+        "projection_advisory": {
+          "default": "Workspace projection coverage requires --detail.",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "projection_advisory",
+          "required": false,
+          "schema": {
+            "const": "Workspace projection coverage requires --detail.",
+            "default": "Workspace projection coverage requires --detail.",
+            "title": "Projection Advisory",
+            "type": "string"
+          }
+        },
         "proposal_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -72111,6 +72203,21 @@
             "default": null
           }
         },
+        "required_tier": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "required_tier",
+          "required": true,
+          "schema": {
+            "enum": [
+              "governed_write",
+              "graph_write",
+              "admin"
+            ],
+            "title": "Required Tier",
+            "type": "string"
+          }
+        },
         "settlement_base": {
           "has_default": false,
           "has_default_factory": false,
@@ -72118,6 +72225,17 @@
           "required": true,
           "schema": {
             "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "subject_kind_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject_kind_count",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Subject Kind Count",
+            "type": "integer"
           }
         },
         "subject_kinds": {
@@ -72131,6 +72249,19 @@
             },
             "title": "Subject Kinds",
             "type": "object"
+          }
+        },
+        "subject_kinds_truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "subject_kinds_truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Subject Kinds Truncated",
+            "type": "boolean"
           }
         },
         "tag": {
@@ -72186,6 +72317,28 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "ApprovalRequirement": {
+            "additionalProperties": false,
+            "description": "One independently satisfied approval role in an evaluated candidate.",
+            "properties": {
+              "minimum_distinct_signers": {
+                "default": 1,
+                "maximum": 32,
+                "minimum": 1,
+                "title": "Minimum Distinct Signers",
+                "type": "integer"
+              },
+              "role": {
+                "title": "Role",
+                "type": "string"
+              }
+            },
+            "required": [
+              "role"
+            ],
+            "title": "ApprovalRequirement",
+            "type": "object"
+          },
           "ArtifactIdentity": {
             "additionalProperties": false,
             "description": "Kind-qualified stable identity shared by new Cruxible artifact families.",
@@ -72226,6 +72379,34 @@
             "title": "OriginatingLine",
             "type": "object"
           },
+          "PriorRefusalCoverage": {
+            "additionalProperties": false,
+            "description": "How far earlier retirements were indexed when receipts were read.\n\nPresent only while the index is catching up: receipts then reflect\nretirements accepted through ``indexed_through_generation`` of\n``accepted_generation``. Rejections are always current.",
+            "properties": {
+              "accepted_generation": {
+                "minimum": 0,
+                "title": "Accepted Generation",
+                "type": "integer"
+              },
+              "indexed_through_generation": {
+                "minimum": 0,
+                "title": "Indexed Through Generation",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "cruxible-prior-refusal-coverage-v1",
+                "default": "cruxible-prior-refusal-coverage-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "indexed_through_generation",
+              "accepted_generation"
+            ],
+            "title": "PriorRefusalCoverage",
+            "type": "object"
+          },
           "ReviewSummaryCounts": {
             "additionalProperties": false,
             "properties": {
@@ -72258,10 +72439,25 @@
                 "title": "Artifact Kind",
                 "type": "string"
               },
+              "closure_role": {
+                "enum": [
+                  "authored",
+                  "generated_successor",
+                  "invalidation"
+                ],
+                "title": "Closure Role",
+                "type": "string"
+              },
               "counts": {
                 "$ref": "#/$defs/ReviewSummaryCounts"
               },
               "disposition": {
+                "enum": [
+                  "create",
+                  "replace",
+                  "retire",
+                  "delete"
+                ],
                 "title": "Disposition",
                 "type": "string"
               },
@@ -72348,6 +72544,7 @@
               "subject_kind",
               "artifact_kind",
               "disposition",
+              "closure_role",
               "counts",
               "shared_fields",
               "varying_columns",
@@ -72387,6 +72584,12 @@
                 ],
                 "title": "Before"
               },
+              "finding_count": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Finding Count",
+                "type": "integer"
+              },
               "findings": {
                 "default": [],
                 "items": {
@@ -72398,6 +72601,19 @@
               "path": {
                 "title": "Path",
                 "type": "string"
+              },
+              "prior_refusals": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ReviewSummaryValue"
+                },
+                "title": "Prior Refusals",
+                "type": "array"
+              },
+              "prior_refusals_more": {
+                "default": false,
+                "title": "Prior Refusals More",
+                "type": "boolean"
               }
             },
             "required": [
@@ -72429,18 +72645,29 @@
         },
         "additionalProperties": false,
         "properties": {
+          "activation_policy": {
+            "enum": [
+              "abort",
+              "drain",
+              "epoch-check",
+              "snapshot"
+            ],
+            "title": "Activation Policy",
+            "type": "string"
+          },
+          "approval_requirements": {
+            "items": {
+              "$ref": "#/$defs/ApprovalRequirement"
+            },
+            "title": "Approval Requirements",
+            "type": "array"
+          },
           "candidate_digest": {
             "title": "Candidate Digest",
             "type": "string"
           },
           "counts": {
             "$ref": "#/$defs/ReviewSummaryCounts"
-          },
-          "detail_available": {
-            "const": true,
-            "default": true,
-            "title": "Detail Available",
-            "type": "boolean"
           },
           "finding_count": {
             "minimum": 0,
@@ -72478,6 +72705,20 @@
             "title": "Groups",
             "type": "array"
           },
+          "item_reason_count": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Item Reason Count",
+            "type": "integer"
+          },
+          "item_reasons": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ReviewSummaryValue"
+            },
+            "title": "Item Reasons",
+            "type": "array"
+          },
           "next_cursor": {
             "anyOf": [
               {
@@ -72501,6 +72742,29 @@
             ],
             "default": null
           },
+          "prior_refusal_coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PriorRefusalCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "prior_refusal_member_count": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Prior Refusal Member Count",
+            "type": "integer"
+          },
+          "projection_advisory": {
+            "const": "Workspace projection coverage requires --detail.",
+            "default": "Workspace projection coverage requires --detail.",
+            "title": "Projection Advisory",
+            "type": "string"
+          },
           "proposal_id": {
             "title": "Proposal Id",
             "type": "string"
@@ -72516,8 +72780,22 @@
             ],
             "default": null
           },
+          "required_tier": {
+            "enum": [
+              "governed_write",
+              "graph_write",
+              "admin"
+            ],
+            "title": "Required Tier",
+            "type": "string"
+          },
           "settlement_base": {
             "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "subject_kind_count": {
+            "minimum": 0,
+            "title": "Subject Kind Count",
+            "type": "integer"
           },
           "subject_kinds": {
             "additionalProperties": {
@@ -72525,6 +72803,11 @@
             },
             "title": "Subject Kinds",
             "type": "object"
+          },
+          "subject_kinds_truncated": {
+            "default": false,
+            "title": "Subject Kinds Truncated",
+            "type": "boolean"
           },
           "tag": {
             "const": "playbill-proposal-review-summary-v1",
@@ -72539,6 +72822,10 @@
           "settlement_base",
           "counts",
           "subject_kinds",
+          "subject_kind_count",
+          "required_tier",
+          "activation_policy",
+          "approval_requirements",
           "findings",
           "finding_count",
           "groups",
@@ -72548,6 +72835,8 @@
         "type": "object"
       },
       "required_fields": [
+        "activation_policy",
+        "approval_requirements",
         "candidate_digest",
         "counts",
         "finding_count",
@@ -72555,7 +72844,9 @@
         "group_count",
         "groups",
         "proposal_id",
+        "required_tier",
         "settlement_base",
+        "subject_kind_count",
         "subject_kinds"
       ]
     },

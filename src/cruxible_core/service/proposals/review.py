@@ -33,7 +33,11 @@ from cruxible_client.contracts.declared_blocks import (
     upgrade_presentation_policy,
 )
 from cruxible_client.contracts.documents import parse_document
-from cruxible_client.contracts.errors import ApprovalIntegrityError, ProposalIntegrityError
+from cruxible_client.contracts.errors import (
+    ApprovalIntegrityError,
+    ProposalIntegrityError,
+    ProposalReviewOptionsInvalid,
+)
 from cruxible_client.contracts.proposal_models import (
     OriginatingLine,
     ProposalItemReason,
@@ -483,7 +487,8 @@ def service_review_playbill_proposal(
     access: BodyAccessContext,
     workspace_observation: ReviewWorkspaceObservation | Mapping[str, object] | None = None,
     item_reasons_after: str | None = None,
-    item_reasons_limit: int = PROPOSAL_REVIEW_REASONS_DEFAULT_LIMIT,
+    item_reasons_limit: int | None = None,
+    include_body: bool | None = None,
     detail: bool = False,
     summary_after: str | None = None,
     summary_group: str | None = None,
@@ -500,6 +505,16 @@ def service_review_playbill_proposal(
     """
 
     if not detail:
+        if (
+            workspace_observation is not None
+            or include_body is not None
+            or item_reasons_after is not None
+            or item_reasons_limit is not None
+        ):
+            raise ProposalReviewOptionsInvalid(
+                "workspace_observation, include_body and item_reasons_* require detail=True; "
+                "use --detail or omit these options for the summary"
+            )
         from cruxible_core.service.proposals.summary import service_review_summary
 
         return service_review_summary(
@@ -571,7 +586,15 @@ def service_review_playbill_proposal(
         else evidence_store.item_reason_page(
             operation,
             after=item_reasons_after,
-            limit=max(1, min(item_reasons_limit, PROPOSAL_REVIEW_REASONS_MAX_LIMIT)),
+            limit=max(
+                1,
+                min(
+                    item_reasons_limit
+                    if item_reasons_limit is not None
+                    else PROPOSAL_REVIEW_REASONS_DEFAULT_LIMIT,
+                    PROPOSAL_REVIEW_REASONS_MAX_LIMIT,
+                ),
+            ),
         )
     )
     usable_workspace_observation, projection_evidence, eligible_coordinates = (

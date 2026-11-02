@@ -1697,6 +1697,9 @@ def _close_once(
         # holding it still (R12).
         with mode.committing():
             instance.proposal_evidence().write_withdrawal(record)
+            evaluation = instance.proposal_evidence().read_evaluation(record.proposal_id)
+            if evaluation.candidate_digest is not None:
+                instance.prune_proposal_review(evaluation.candidate_digest)
     finally:
         if record.kind == "rejected":
             # ... and once the close resolves, the rows are those of the record

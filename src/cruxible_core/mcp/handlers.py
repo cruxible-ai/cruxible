@@ -413,7 +413,7 @@ def handle_playbill_review(
     instance_id: str,
     proposal_id: str,
     *,
-    include_body: bool,
+    include_body: bool | None,
     item_reasons_after: str | None = None,
     item_reasons_limit: int | None = None,
     detail: bool = False,
@@ -423,7 +423,7 @@ def handle_playbill_review(
     rows_limit: int = 5,
     groups_limit: int = 5,
     findings_after: str | None = None,
-) -> contracts.ProposalReview | contracts.ProposalReviewSummary:
+) -> contracts.ProposalReviewResponse:
     return _daemon_call(
         lambda client: client.review_proposal(
             instance_id,

@@ -166,3 +166,30 @@ def test_an_accepted_record_over_the_file_limit_does_not_block_later_proposals()
     fork["subjects/project.work_item/c.json"] = b"x" * 31
     with pytest.raises(Exception, match="exceeds its byte limit: subjects/project.work_item/c"):
         validate_proposal_tree(fork.snapshot(), limits=limits, base_tree=root)
+
+
+@pytest.mark.parametrize("population", [100, 1000])
+def test_shared_prefix_updates_copy_each_changed_prefix_once(population, monkeypatch):
+    from cruxible_client.contracts.persistent import PersistentMap
+
+    rows = {f"subjects/demo.kind/existing-{i}.json": b"{}" for i in range(population)}
+    root = SnapshotTree(rows)
+    facts = path_facts(root)
+    edits = {f"subjects/demo.kind/new-{i}.json": b"new" for i in range(10)}
+    copied = []
+    original = PersistentMap.set
+
+    def counted(self, key, value):
+        copied.append(key)
+        return original(self, key, value)
+
+    monkeypatch.setattr(PersistentMap, "set", counted)
+    advanced = facts.advanced(root._rows, edits)
+    # Two shared directories and ten added leaves, independent of held rows.
+    assert len(copied) == len(set(copied)) == 12
+    fresh = path_facts(SnapshotTree({**rows, **edits}))
+    assert advanced.content_bytes == fresh.content_bytes
+    assert advanced.noncanonical == fresh.noncanonical
+    assert advanced.colliding == fresh.colliding
+    assert advanced.depths == fresh.depths
+    assert dict(advanced.folded.items()) == dict(fresh.folded.items())

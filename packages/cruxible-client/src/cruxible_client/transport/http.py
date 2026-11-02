@@ -86,6 +86,10 @@ from cruxible_client.errors import (
 )
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
+_PROPOSAL_REVIEW_RESPONSE: TypeAdapter[contracts.ProposalReviewResponse] = TypeAdapter(
+    contracts.ProposalReviewResponse
+)
+
 _CLAIM_TYPE_MIGRATION_RESPONSE: TypeAdapter[contracts.ClaimTypeMigrationResponse] = TypeAdapter(
     contracts.ClaimTypeMigrationResponse
 )
@@ -990,7 +994,7 @@ class CruxibleClient:
         instance_id: str,
         proposal_id: str,
         *,
-        include_body: bool = False,
+        include_body: bool | None = None,
         workspace_observation: Mapping[str, Any] | None = None,
         item_reasons_after: str | None = None,
         item_reasons_limit: int | None = None,
@@ -1001,7 +1005,7 @@ class CruxibleClient:
         rows_limit: int = 5,
         groups_limit: int = 5,
         findings_after: str | None = None,
-    ) -> contracts.ProposalReview | contracts.ProposalReviewSummary:
+    ) -> contracts.ProposalReviewResponse:
         response = self._client.post(
             f"/api/v1/{instance_id}/proposals/{proposal_id}/review",
             json={
@@ -1020,10 +1024,8 @@ class CruxibleClient:
                 "item_reasons_limit": item_reasons_limit,
             },
         )
-        payload = self._parse_json(response)
-        if payload.get("tag") == "playbill-proposal-review-summary-v1":
-            return contracts.ProposalReviewSummary.model_validate(payload)
-        return contracts.ProposalReview.model_validate(payload)
+        self._check_error(response)
+        return _PROPOSAL_REVIEW_RESPONSE.validate_json(response.content)
 
     def prepare_approval(
         self,

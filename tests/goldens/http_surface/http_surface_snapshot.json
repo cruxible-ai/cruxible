@@ -253,7 +253,7 @@
     "POST": "ProposalRejectResult"
   },
   "/api/v1/{instance_id}/proposals/{proposal_id}/review": {
-    "POST": "ProposalReview | ProposalReviewSummary"
+    "POST": null
   },
   "/api/v1/{instance_id}/proposals/{proposal_id}/withdraw": {
     "POST": "ProposalWithdrawResult"

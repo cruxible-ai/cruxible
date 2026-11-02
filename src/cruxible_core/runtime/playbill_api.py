@@ -1336,7 +1336,7 @@ def playbill_review_proposal(
     instance_id: str,
     proposal_id: str,
     *,
-    include_body: bool = False,
+    include_body: bool | None = None,
     workspace_observation: Mapping[str, object] | None = None,
     item_reasons_after: str | None = None,
     item_reasons_limit: int | None = None,
@@ -1347,12 +1347,13 @@ def playbill_review_proposal(
     rows_limit: int = 5,
     groups_limit: int = 5,
     findings_after: str | None = None,
-) -> contracts.ProposalReview | contracts.ProposalReviewSummary:
+) -> contracts.ProposalReviewResponse:
     check_permission("cruxible_proposal_review", instance_id=instance_id)
     result = service_review_playbill_proposal(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
-        access=_access(instance_id, include_body=include_body),
+        access=_access(instance_id, include_body=bool(include_body)),
+        include_body=include_body,
         workspace_observation=workspace_observation,
         detail=detail,
         summary_after=summary_after,

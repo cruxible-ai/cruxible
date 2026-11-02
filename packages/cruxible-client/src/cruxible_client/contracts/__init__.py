@@ -1057,6 +1057,11 @@ class ProposalReview(BaseModel):
     )
 
 
+ProposalReviewResponse: TypeAlias = Annotated[
+    ProposalReview | ProposalReviewSummary, Field(discriminator="tag")
+]
+
+
 class ApprovalChallenge(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

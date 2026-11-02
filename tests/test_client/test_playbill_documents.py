@@ -212,6 +212,10 @@ def test_client_review_defaults_to_summary_and_explicit_detail_keeps_full_review
                 "settlement_base": COORDINATE,
                 "counts": {"created": 1000, "revised": 0, "retired": 0},
                 "subject_kinds": {},
+                "subject_kind_count": 0,
+                "required_tier": "graph_write",
+                "activation_policy": "snapshot",
+                "approval_requirements": [],
                 "findings": [],
                 "finding_count": 0,
                 "groups": [],
@@ -230,3 +234,34 @@ def test_client_review_defaults_to_summary_and_explicit_detail_keeps_full_review
     assert requests[-1]["summary_group"] == "group"
     assert requests[-1]["rows_after"] == "row"
     assert requests[-1]["rows_limit"] == 3
+
+
+def test_review_response_discriminator_rejects_unknown_and_missing_tags():
+    from pydantic import ValidationError
+
+    for tag in (None, "unexpected-review-v1"):
+        payload = _review()
+        if tag is None:
+            del payload["tag"]
+        else:
+            payload["tag"] = tag
+        client = _client(lambda request: httpx.Response(200, json=payload))
+        with pytest.raises(ValidationError, match="tag"):
+            client.review_proposal("inst_test", "proposal", detail=True)
+
+
+def test_review_options_refusal_survives_http_error_decoding():
+    from cruxible_client.contracts.errors import ProposalReviewOptionsInvalid
+
+    client = _client(
+        lambda request: httpx.Response(
+            400,
+            json={
+                "message": "include_body requires --detail",
+                "error_type": "ProposalReviewOptionsInvalid",
+                "error_code": "cruxible.proposal.review_options_invalid",
+            },
+        )
+    )
+    with pytest.raises(ProposalReviewOptionsInvalid, match="--detail"):
+        client.review_proposal("inst_test", "proposal", include_body=True)

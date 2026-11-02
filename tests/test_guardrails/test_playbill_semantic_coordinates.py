@@ -311,16 +311,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:8087f0ad3aaae926b49da2ea4232eeccef7f3f3e3d303776766e959271cb3965"
+    expected = "sha256:6ebf237838c95f742049a1c8d5a305351445d38f245f7682d1041eea33b20577"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 50,
+            "semantic_revision": 51,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "proposal-line-origin-summary-v1",
+            "revision_name": "proposal-review-decision-summary-v2",
         },
     )
     assert computed == expected
@@ -365,8 +365,8 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "proposal-line-origin-summary-v1"
-    assert compiler_revision_label(CURRENT_COMPILER) == "proposal-line-origin-summary-v1"
+    assert CURRENT_COMPILER_REVISION == "proposal-review-decision-summary-v2"
+    assert compiler_revision_label(CURRENT_COMPILER) == "proposal-review-decision-summary-v2"
     for earlier_digest in (
         # Revision 49: before proposal Line attribution entered admission identity.
         "sha256:fad4443891a10bab14a88adaf41c70db7086e6f8017c4836b2480fb92fdca046",

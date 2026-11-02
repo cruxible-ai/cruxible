@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "b4a-c-proposal-origin-summary",
-    "surface_digest": "sha256:c3f696a0856a3fc8726542a7f84083d1565c9b44c1368493d72645d484c723d1"
+    "register_entry": "b4a-c-summary-review-fixes",
+    "surface_digest": "sha256:85d588330926be57b2d3ee45a6b7a7a3665c47e29ec8cada6b7e6a9637286869"
   },
   "surface": {
     "cli_leaves": [
@@ -1841,9 +1841,9 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/proposals/{proposal_id}/review",
         "request_model": "cruxible_core.server.playbill_request_models.ReviewRequest",
-        "request_schema_digest": "sha256:4bf044a873c6b223f65b03972c4972bc0b1b1244d907cf9d105614baaafbb175",
-        "response_model": "types.UnionType[cruxible_client.contracts.ProposalReview,cruxible_client.contracts.proposal_summary.ProposalReviewSummary]",
-        "response_schema_digest": "sha256:4417acd1826315ffab5d6532bc454bddf09c5b874ed139077514f92733d1e997"
+        "request_schema_digest": "sha256:c9b0188659fd3625397a672badd02645bcf0814bc8990217518b22ccec062392",
+        "response_model": "typing.Annotated[types.UnionType[cruxible_client.contracts.ProposalReview,cruxible_client.contracts.proposal_summary.ProposalReviewSummary],annotation=NoneType required=True discriminator='tag']",
+        "response_schema_digest": "sha256:1d9fce9dc10acf4dfcf3f91ebce4408f1a77c2decfc7627a3e8fc637e8ec6988"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.withdraw_proposal",
@@ -2715,9 +2715,9 @@
           "review_proposal"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_review",
-        "input_schema_digest": "sha256:9c15c7c51293cfcf1543b257f0b1fa8d1cd4528d41e7a3dc81fa2a4ddf9b0b58",
+        "input_schema_digest": "sha256:52c62ed49d7c31fd68b75b13d9d0d745d8c0fb371a8d2eacbb938cf58d5f177a",
         "name": "cruxible_proposal_review",
-        "output_schema_digest": "sha256:fc6ce4bbf50307b704eda62d9ccf9d559ec952521aa438ca50e728c63848867a",
+        "output_schema_digest": "sha256:ce4d9900b795c57d779c7780dbd102e66d59a75263110ad8ca870b09edfe42e3",
         "permission": "READ_ONLY"
       },
       {

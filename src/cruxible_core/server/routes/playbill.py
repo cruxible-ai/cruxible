@@ -555,13 +555,13 @@ def reject_proposal(
 
 @router.post(
     "/{instance_id}/proposals/{proposal_id}/review",
-    response_model=contracts.ProposalReview | contracts.ProposalReviewSummary,
+    response_model=contracts.ProposalReviewResponse,
 )
 def review_proposal(
     instance_id: str,
     proposal_id: str,
     req: ReviewRequest,
-) -> contracts.ProposalReview | contracts.ProposalReviewSummary:
+) -> contracts.ProposalReviewResponse:
     return playbill_api.playbill_review_proposal(
         resolve_server_instance_id(instance_id),
         proposal_id,

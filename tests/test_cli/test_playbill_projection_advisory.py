@@ -53,11 +53,15 @@ def test_cli_review_sends_bounded_coordinate_bound_projection_observation(
             assert instance_id == "inst_review"
             assert proposal_id == "sha256:" + "a" * 64
             observation = values["workspace_observation"]
-            assert isinstance(observation, dict)
-            assert "source_observations" not in observation
-            assert observation["tag"] == "playbill-review-workspace-observation-v1"
-            assert observation["projection_coverage"] == projection
             assert values["detail"] == detail
+            if detail:
+                assert isinstance(observation, dict)
+                assert "source_observations" not in observation
+                assert observation["tag"] == "playbill-review-workspace-observation-v1"
+                assert observation["projection_coverage"] == projection
+            else:
+                assert observation is None
+                assert values["include_body"] is None
             if not detail:
                 return contracts.ProposalReviewSummary.model_validate(
                     {
@@ -66,6 +70,10 @@ def test_cli_review_sends_bounded_coordinate_bound_projection_observation(
                         "settlement_base": COORDINATE,
                         "counts": {"created": 1000, "revised": 0, "retired": 0},
                         "subject_kinds": {},
+                        "subject_kind_count": 0,
+                        "required_tier": "graph_write",
+                        "activation_policy": "snapshot",
+                        "approval_requirements": [],
                         "findings": [],
                         "finding_count": 0,
                         "groups": [],

@@ -70,11 +70,26 @@ def test_http_document_lifecycle_and_explanation(
     assert summary.json()["tag"] == "playbill-proposal-review-summary-v1"
     assert summary.json()["counts"] == {"created": 1, "revised": 0, "retired": 0}
     assert "candidate" not in summary.json()
+    assert summary.json()["required_tier"] == "graph_write"
+    for option in (
+        {"include_body": True},
+        {"include_body": False},
+        {"workspace_observation": {"tag": "playbill-review-workspace-observation-v1"}},
+        {"item_reasons_after": "cursor"},
+        {"item_reasons_limit": 50},
+    ):
+        refused = client.post(f"/api/v1/{instance_id}/proposals/{proposal_id}/review", json=option)
+        assert refused.status_code == 400, refused.text
+        assert refused.json()["error_code"] == "cruxible.proposal.review_options_invalid"
     review = client.post(
         f"/api/v1/{instance_id}/proposals/{proposal_id}/review",
         json={"include_body": True, "detail": True},
     )
     assert review.status_code == 200, review.text
+    assert (
+        summary.json()["approval_requirements"]
+        == review.json()["governance"]["approval_requirements"]
+    )
     assert "Governed through HTTP" in review.json()["documents"][0]["readable_diff"]
     assert review.json()["attestation_coverage"]["coverage"] == "containing_change_set"
 
@@ -391,7 +406,7 @@ def test_http_review_refuses_an_unknown_proposal_id_as_typed_404(
 
     reviewed = client.post(
         f"/api/v1/{instance_id}/proposals/{selector}/review",
-        json={"include_body": False},
+        json={},
     )
 
     for response in (reviewed,):

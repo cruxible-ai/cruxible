@@ -2567,7 +2567,7 @@ def reject_proposal(
 
 @proposal_group.command("review")
 @click.argument("proposal_id")
-@click.option("--include-body/--redacted", default=True)
+@click.option("--include-body/--redacted", default=None)
 @click.option(
     "--workspace-root",
     default=".",
@@ -2597,7 +2597,7 @@ def reject_proposal(
 @handle_errors
 def review_proposal(
     proposal_id: str,
-    include_body: bool,
+    include_body: bool | None,
     workspace_root: str,
     item_reasons_after: str | None,
     item_reasons_limit: int | None,
@@ -2615,27 +2615,31 @@ def review_proposal(
     def _review_at_observed_coordinate(
         client: CruxibleClient, instance_id: str
     ) -> contracts.ProposalReview | contracts.ProposalReviewSummary:
-        head = client.head(instance_id)
-        next_observation = observe_next_workspace(workspace)
-        observation: dict[str, object] = {
-            "tag": "playbill-review-workspace-observation-v1",
-            "presentation_policy": next_observation.get("presentation_policy"),
-            "presentation_policy_notes": next_observation.get("presentation_policy_notes", []),
-            "projection_coverage": None,
-        }
-        projection = observe_projection_coverage(
-            workspace,
-            coordinate=contracts.AcceptedCoordinate.model_validate(
-                head.coordinate.model_dump(mode="json")
-            ),
-        )
-        if projection is not None:
-            observation["projection_coverage"] = projection
+        observation: dict[str, object] | None = None
+        if detail:
+            head = client.head(instance_id)
+            next_observation = observe_next_workspace(workspace)
+            observation = {
+                "tag": "playbill-review-workspace-observation-v1",
+                "presentation_policy": next_observation.get("presentation_policy"),
+                "presentation_policy_notes": next_observation.get("presentation_policy_notes", []),
+                "projection_coverage": None,
+            }
+            projection = observe_projection_coverage(
+                workspace,
+                coordinate=contracts.AcceptedCoordinate.model_validate(
+                    head.coordinate.model_dump(mode="json")
+                ),
+            )
+            if projection is not None:
+                observation["projection_coverage"] = projection
         resolved_id = client.resolve_proposal_selector(instance_id, proposal_id).proposal_id
         return client.review_proposal(
             instance_id,
             resolved_id,
-            include_body=include_body,
+            include_body=(True if include_body is None else include_body)
+            if detail
+            else include_body,
             detail=detail,
             summary_after=summary_after,
             summary_group=summary_group,
