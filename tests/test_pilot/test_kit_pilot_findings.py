@@ -4,6 +4,8 @@ F1 (D-R29): a date-valued source field reaches a Claim's datetime
 ``effective_from`` only through the declared extract projection
 ``utc_start_of_day``. F2: a Claims typing refusal names the authored step, the
 template and the slot it was typed against, and the Procedure that owns it.
+F5: a change set of several Procedures reports (and so accepts) every
+Procedure's co-proposed boundary Contracts.
 """
 
 from __future__ import annotations
@@ -105,3 +107,19 @@ def test_a_change_set_claims_refusal_names_its_procedure_step_and_slot(tmp_path:
     assert refused.value.offending_element == "members[1].steps[3].claims[0].effective_from"
     assert refused.value.message.startswith("Procedure security.kev-triage: claims[0] ")
     assert "the Claim's effective_from (datetime)" in refused.value.message
+
+
+def test_a_change_set_of_procedures_accepts_each_ones_boundary_contracts(tmp_path: Path) -> None:
+    from cruxible_client.contracts.procedures.artifacts import procedure_path
+    from tests.support.operation_world import author
+
+    instance, _root = pilot_world(tmp_path, "kev.json")
+    names = ("security.kev-a", "security.kev-b")
+    changed = author(
+        instance, _change_set(*(_renamed(kev_spec(), name) for name in names)), name="two"
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    for name in names:
+        boundary = {f"contracts/{name}.{role}/v1.json" for role in ("input", "output", "params")}
+        assert boundary | {procedure_path(name)} <= set(changed)
+        assert all(path in tree for path in boundary | {procedure_path(name)})

@@ -5277,7 +5277,10 @@ def _stage_change_set_member(
             base_tree=staged_tree,
             candidate_paths=candidate_paths,
         )
-        return fork_tree(lowered.proposed_tree), dict(lowered.resolved_authoring), set(), {}
+        # The Procedure's co-proposed boundary Contracts are this member's
+        # changes too, exactly as a single-Procedure lowering reports them.
+        extra = {member_path for member_path, _content in lowered.changed_members} - {path}
+        return fork_tree(lowered.proposed_tree), dict(lowered.resolved_authoring), extra, {}
     if isinstance(member, ProcedureMandateAuthoringPayload):
         mandate_path, content, digest = _render_procedure_mandate_member(
             member,
