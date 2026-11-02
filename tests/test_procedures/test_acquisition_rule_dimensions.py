@@ -205,7 +205,7 @@ def test_disallowed_origin_is_a_hard_eligibility_gate_on_url_and_final_url_field
     )
     # Reached at any depth, and under the "final_url" spelling too.
     assert (
-        disallowed_origin(rule, {"retrieved": {"final_url": "https://evil.example/x"}})
+        disallowed_origin(rule, {"pages": [{"final_url": "https://evil.example/x"}]})
         == "https://evil.example/x"
     )
     # A list of records is walked too.

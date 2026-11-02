@@ -10,9 +10,9 @@ because of it; an authored policy may.
 
 Evidence is compared by content, never by the Capture envelope's own digest,
 which also binds the run, the observation time and the contract: a Capture
-contributes its evidence commitment digest, or, for one produced through the
-core-owned workspace.file interface, the file's bytes digest that core verified
-against its source-read receipt. A re-run that re-fetches identical bytes cites
+contributes its evidence commitment digest, the digest of the exact payload it
+committed (for a workspace.file read, the file bytes core verified against its
+source-read receipt). A re-run that re-fetches identical bytes cites
 the same evidence; different bytes are a new question and match nothing.
 """
 
@@ -34,8 +34,8 @@ def claim_refusal_match_key(statement: ClaimStatement, evidence_commitments: Ite
     """The key a refusal is indexed and found under: the statement and its evidence content.
 
     ``evidence_commitments`` are the content digests of the Captures the Claim
-    cites (``CaptureEnvelope.commitment.digest``, or a workspace.file Capture's
-    verified file bytes digest), deduplicated and sorted here. Role, effective
+    cites (``CaptureEnvelope.commitment.digest``: a Capture's bytes are its
+    producer's payload), deduplicated and sorted here. Role, effective
     times and the ClaimType version are not part of the key: the same belief
     about the same thing on the same evidence matches across them.
     """

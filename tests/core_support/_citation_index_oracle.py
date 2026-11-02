@@ -93,7 +93,6 @@ class _CitationRow:
     capture_digests: set[str] = field(default_factory=set)
     claim_paths: set[str] = field(default_factory=set)
     dereference_handle_digest: str | None = None
-    observed_content_digest: str | None = None
 
 
 def build_evidence_citation_index(
@@ -189,8 +188,7 @@ def build_evidence_citation_index_v2(
     for entry in sorted(captures, key=lambda item: item.capture_digest.encode("ascii")):
         envelope = entry.envelope
         source = accepted_logical_source(envelope.source)
-        # V2 groups by what was observed, by content; a Capture recording none
-        # groups by its commitment, as V1 does.
+        # V2 groups by what was observed, by content: the payload's digest.
         observed = observed_content(envelope)
         key = (
             observed.digest.encode("ascii"),
@@ -204,9 +202,6 @@ def build_evidence_citation_index_v2(
                 byte_length=envelope.commitment.byte_length,
                 accepted_source=source,
                 access_class=entry.access_class,
-                observed_content_digest=(
-                    None if observed.basis == "commitment" else observed.digest
-                ),
             )
             rows[key] = row
         row.capture_digests.add(entry.capture_digest)
@@ -241,7 +236,6 @@ def build_evidence_citation_index_v2(
                 associations.get(key, {})[association_key]
                 for association_key in sorted(associations.get(key, {}))
             ),
-            observed_content_digest=row.observed_content_digest,
         )
         for key, row in sorted(rows.items())
     )

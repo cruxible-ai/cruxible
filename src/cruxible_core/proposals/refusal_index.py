@@ -52,10 +52,7 @@ import structlog
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.candidates import CandidateMemberLawEvidence
-from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.captures import (
-    CaptureEnvelopeAny,
-    ProviderInvocationCaptureEvidence,
     observed_content,
     parse_capture_envelope,
 )
@@ -75,7 +72,6 @@ from cruxible_client.contracts.refusal_receipts import (
     claim_producer,
     claim_refusal_match_key,
 )
-from cruxible_client.contracts.workspace_file import is_workspace_file_signature
 from cruxible_core.indexes.history.history_index import history_reads_detached
 from cruxible_core.indexes.proposals.proposal_index import _micros
 from cruxible_core.indexes.sql_batch import insert_rows, select_in
@@ -170,50 +166,12 @@ def _schema(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
 def capture_evidence_content(bodies: ContentAddressedBodyStore, capture_digest: str) -> str:
     """The content-only digest one cited Capture contributes to a match key.
 
-    A Capture is what it observed, by content: the ``observed_content_digest``
-    core records on the envelope when it builds the Capture and re-verifies with
-    it (the bytes a workspace.file read, the body a web.fetch v3 origin sent).
-
-    An envelope written before that field keeps the identity it always had, so
-    every key cached from it still reproduces: a workspace.file Capture is the
-    file's ``bytes_digest`` in its material's source echo (core verified the
-    echo against its own source-read receipt when it built the Capture, and the
-    material is read here by its committed digest); any other Capture is its
-    ``commitment.digest``. A workspace Capture whose echo cannot be read keeps
-    its commitment digest, which matches nothing it should not.
+    A Capture is what it observed, by content (``captures.observed_content``):
+    the digest of the exact payload it committed, however its envelope differs.
     """
 
     envelope = parse_capture_envelope(bodies.read(capture_digest, access=_ACCESS))
-    observed = observed_content(envelope)
-    if observed.basis != "commitment":
-        return observed.digest
-    return _legacy_workspace_content(bodies, envelope)
-
-
-def _legacy_workspace_content(
-    bodies: ContentAddressedBodyStore, envelope: CaptureEnvelopeAny
-) -> str:
-    commitment = envelope.commitment
-    evidence = getattr(envelope, "production_evidence", None)
-    if (
-        not isinstance(evidence, ProviderInvocationCaptureEvidence)
-        or not is_workspace_file_signature(evidence.operation_signature_digest)
-        or commitment.materialization != "cas"
-    ):
-        return commitment.digest
-    try:
-        material = json.loads(bodies.read(commitment.digest, access=_ACCESS))
-    except (CruxibleError, ValueError):
-        return commitment.digest
-    source = material.get("source") if isinstance(material, dict) else None
-    content = source.get("bytes_digest") if isinstance(source, dict) else None
-    if not isinstance(content, str):
-        return commitment.digest
-    try:
-        Sha256Value.from_tagged(content)
-    except ValueError:
-        return commitment.digest
-    return content
+    return observed_content(envelope).digest
 
 
 def claim_refusal_key(instance: PlaybillInstance, claim: ClaimArtifact) -> str:

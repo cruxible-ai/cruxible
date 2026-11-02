@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, Annotated, Final, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Literal, Protocol, runtime_checkable
 
 from pydantic import (
     BaseModel,
@@ -63,6 +63,7 @@ from cruxible_client.contracts.provider_execution import (
 )
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
 from cruxible_client.contracts.source_references import (
+    HTTP_RESPONSE_COORDINATE_TYPE,
     CasSourceReference,
     EvidenceCommitment,
     ExternalSourceReference,
@@ -121,17 +122,12 @@ class CaptureFormatError(FormatError):
     """A Capture contract/envelope or its canonical location is invalid."""
 
 
-class CaptureObservedContentMismatch(CaptureFormatError):
-    """A Source result's stated content digest is not the digest of the content it carries."""
-
-    error_code = "cruxible.capture.observed_content_mismatch"
-
-
-#: The ``web.fetch`` operation name: its material carries the origin's body
-#: (``retrieved.body_base64``) and its digest (``retrieved.body_sha256``), which
-#: core recomputes before trusting. Recognized by operation name until core
-#: seeds the web.fetch Contracts and can recognize it by exact signature.
-WEB_FETCH_OPERATION: Final = "web.fetch"
+#: The one capture field of a call that commits a single Capture its out
+#: Contract does not declare: an operation whose whole output is Capture wire,
+#: and the ``workspace.file`` read, whose exact bytes core reads and commits
+#: beside the operation's structured result. The call's ``captures`` names the
+#: accepted CaptureContract they are committed as.
+CAPTURE_FIELD = "capture"
 
 
 class _StrictCaptureModel(BaseModel):
@@ -600,12 +596,18 @@ def contract_materialization_modes(contract: CaptureContractAny) -> tuple[str, .
 def capture_shape_components(
     shape: CaptureShape, replay: CaptureReplay
 ) -> CaptureContractComponents:
-    """Lower the closed engine vocabulary once; accepted bytes keep the expansion."""
+    """Lower the closed engine vocabulary once; accepted bytes keep the expansion.
+
+    A shape whose Captures are a producer's payload (an HTTP body, a snapshot, a
+    foreign span) commits raw bytes (``sha256-bytes-v1``): core never parses
+    them at admission. Only ``procedure_output``, which core itself serializes,
+    commits canonical JSON.
+    """
     coordinate, selector, canonicalizer, provenance, mapping = {
         "http_response": (
-            ("http-response-v1",),
+            (HTTP_RESPONSE_COORDINATE_TYPE,),
             ("whole-response-v1",),
-            "canonical-json-v1",
+            "sha256-bytes-v1",
             "playbill.external.daemon-fetched-v1",
             "playbill.external.record-subject-v1",
         ),
@@ -626,7 +628,7 @@ def capture_shape_components(
         "database_snapshot": (
             ("database-snapshot-v1",),
             ("query-result-v1", "relation-primary-key-v1"),
-            "canonical-json-v1",
+            "sha256-bytes-v1",
             "playbill.external.daemon-fetched-v1",
             "playbill.external.record-subject-v1",
         ),
@@ -706,7 +708,7 @@ _CAPTURE_COMPONENT_PIN_NAMES: tuple[tuple[str, str], ...] = (
     ("coordinate-schema", "database-snapshot-v1"),
     ("coordinate-schema", FOREIGN_SOURCE_COORDINATE_TYPE),
     ("coordinate-schema", "postgres-lsn-v1"),
-    ("coordinate-schema", "http-response-v1"),
+    ("coordinate-schema", HTTP_RESPONSE_COORDINATE_TYPE),
     ("erasure-rule", "playbill.capture-erasure-authority-v1"),
     ("proof-adapter", "playbill.database-snapshot-proof-v1"),
     ("provenance-rule", "playbill.external.daemon-fetched-v1"),
@@ -1937,15 +1939,6 @@ class CaptureEnvelope(_StrictCaptureModel):
     reducer_digest: str | None = None
     input_receipt_set_manifest_digest: str | None = None
     production_evidence: CaptureProductionEvidence
-    #: What was observed, by content: the bytes a ``workspace.file`` read (its
-    #: source-read receipt's ``bytes_digest``) or the body a ``web.fetch`` v3
-    #: origin sent (``retrieved.body_sha256``, recomputed by core). Two Captures
-    #: of the same content share it however their envelopes differ. Absent
-    #: otherwise (and on every envelope written before it), so existing bytes
-    #: are unchanged; ``observed_content`` then reads the commitment digest.
-    observed_content_digest: str | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
 
     @field_validator(
         "capture_contract_digest",
@@ -1953,7 +1946,6 @@ class CaptureEnvelope(_StrictCaptureModel):
         "producer_binding_digest",
         "reducer_digest",
         "input_receipt_set_manifest_digest",
-        "observed_content_digest",
     )
     @classmethod
     def _digest(cls, value: str | None) -> str | None:
@@ -2711,62 +2703,22 @@ def provider_capture_receipt_matches_occurrence(
     )
 
 
-ObservedContentBasis = Literal["workspace_file_bytes", "web_fetch_body", "commitment"]
-
-
 @dataclass(frozen=True)
 class ObservedContent:
-    """What one Capture observed, by content, and what that identity rests on.
+    """What one Capture observed, by content: the digest of its exact bytes.
 
-    ``workspace_file_bytes``: the bytes a ``workspace.file`` read, as its
-    source-read receipt digests them. ``web_fetch_body``: the body a ``web.fetch``
-    v3 origin sent, verified by core. ``commitment``: no observed-content
-    identity is recorded, so the Capture's own commitment digest stands in.
+    A Capture's bytes are the payload its producer returned, verbatim (D-R25),
+    so its content identity is its commitment digest. Two Captures of the same
+    payload share it however their envelopes differ.
     """
 
     digest: str
-    basis: ObservedContentBasis
 
 
 def observed_content(envelope: CaptureEnvelopeV1 | CaptureEnvelope) -> ObservedContent:
-    """The content identity of what a Capture observed, with its basis."""
+    """The content identity of what a Capture observed."""
 
-    if not isinstance(envelope, CaptureEnvelope) or envelope.observed_content_digest is None:
-        return ObservedContent(digest=envelope.commitment.digest, basis="commitment")
-    recorded = envelope.observed_content_digest
-    evidence = envelope.production_evidence
-    workspace = isinstance(evidence, ProviderInvocationCaptureEvidence) and (
-        is_workspace_file_signature(evidence.operation_signature_digest)
-    )
-    return ObservedContent(
-        digest=recorded, basis="workspace_file_bytes" if workspace else "web_fetch_body"
-    )
-
-
-def _web_fetch_body_digest(content: bytes) -> str:
-    """The verified ``retrieved.body_sha256`` of one ``web.fetch`` v3 material.
-
-    Core recomputes ``sha256(b64decode(retrieved.body_base64))`` and refuses a
-    material whose stated digest differs, or that carries no body to digest.
-    """
-
-    try:
-        material = json.loads(content)
-        retrieved = material["retrieved"]
-        stated = retrieved["body_sha256"]
-        body = base64.b64decode(retrieved["body_base64"], validate=True)
-    except (KeyError, TypeError, ValueError, UnicodeDecodeError) as exc:
-        raise CaptureObservedContentMismatch(
-            f"{CaptureObservedContentMismatch.error_code}: the web.fetch result carries no "
-            "retrieved body and body_sha256 to verify"
-        ) from exc
-    actual = "sha256:" + hashlib.sha256(body).hexdigest()
-    if stated != actual:
-        raise CaptureObservedContentMismatch(
-            f"{CaptureObservedContentMismatch.error_code}: the web.fetch result states "
-            f"body_sha256 {stated!r}, but its retrieved body digests to {actual}"
-        )
-    return actual
+    return ObservedContent(digest=envelope.commitment.digest)
 
 
 def validate_provider_external_capture_result(
@@ -2777,7 +2729,7 @@ def validate_provider_external_capture_result(
     occurrence: ProviderExternalOccurrencePlan,
     producer: ArtifactIdentity,
     bound_generation: str,
-    field: str = "capture",
+    field: str = CAPTURE_FIELD,
     source_read_receipt: SourceReadReceipt | None = None,
 ) -> None:
     """Every Source-result validity check independent of the result's byte length.
@@ -2858,7 +2810,7 @@ def build_provider_external_capture_v2(
     occurrence: ProviderExternalOccurrencePlan,
     producer: ArtifactIdentity,
     bound_generation: str,
-    field: str = "capture",
+    field: str = CAPTURE_FIELD,
     source_read_receipt: SourceReadReceipt | None = None,
     provider_output: object | None = None,
 ) -> CaptureBuildResult:
@@ -2916,12 +2868,6 @@ def build_provider_external_capture_v2(
             raise CaptureFormatError("workspace.file result mixes source attempts")
         if result.bytes_digest != source_read_receipt.bytes_digest:
             raise CaptureFormatError("workspace.file Capture bytes are not the bytes core read")
-    observed_content_digest: str | None = None
-    if source_read_receipt is not None:
-        # Cross-checked above against this result's own source echo.
-        observed_content_digest = source_read_receipt.bytes_digest
-    elif occurrence.operation.name == WEB_FETCH_OPERATION:
-        observed_content_digest = _web_fetch_body_digest(content)
     stored = store.store(content)
     if stored.digest != result.bytes_digest:
         raise CasError("Provider Capture material CAS digest did not reproduce")
@@ -2971,7 +2917,6 @@ def build_provider_external_capture_v2(
         observed_at=result.observed_at,
         source_effective_time=result.source_effective_time,
         production_evidence=evidence,
-        observed_content_digest=observed_content_digest,
     )
     return _store_general_capture(
         store=store,
@@ -3537,38 +3482,6 @@ def _memo_answers(
     )
 
 
-def _verify_observed_content(
-    envelope: CaptureEnvelopeV1 | CaptureEnvelope,
-    material: bytes,
-    resolved_receipt: object,
-) -> None:
-    """An envelope's ``observed_content_digest`` is the one its producer evidence yields.
-
-    Absent is always admissible (every envelope written before the field). A
-    ``workspace.file`` Capture states its source-read receipt's ``bytes_digest``;
-    a ``web.fetch`` v3 Capture states the body digest core recomputes from the
-    retained material; no other Capture states one.
-    """
-
-    if not isinstance(envelope, CaptureEnvelope) or envelope.observed_content_digest is None:
-        return
-    evidence = envelope.production_evidence
-    stated = envelope.observed_content_digest
-    if isinstance(evidence, ProviderInvocationCaptureEvidence):
-        if is_workspace_file_signature(evidence.operation_signature_digest):
-            source_read = (
-                resolved_receipt.source_read_receipt
-                if isinstance(resolved_receipt, ProviderProducerReceiptResolution)
-                else None
-            )
-            if source_read is not None and stated == source_read.bytes_digest:
-                return
-        elif evidence.operation == WEB_FETCH_OPERATION:
-            if stated == _web_fetch_body_digest(material):
-                return
-    raise CaptureFormatError("Capture observed_content_digest does not correspond")
-
-
 def _verify_capture_once(
     digest: str,
     *,
@@ -3791,8 +3704,6 @@ def _verify_capture_once(
             material_evidence = (
                 envelope.production_evidence if isinstance(envelope, CaptureEnvelope) else None
             )
-            if isinstance(envelope, CaptureEnvelope):
-                _verify_observed_content(envelope, material, resolved_receipt)
             if (
                 isinstance(envelope, CaptureEnvelope)
                 and isinstance(material_evidence, ProviderInvocationCaptureEvidence)
@@ -3866,16 +3777,14 @@ def _verify_capture_once(
 
 
 __all__ = [
+    "CAPTURE_FIELD",
     "CaptureCsvDecoding",
     "CaptureDecoding",
     "CaptureDecodingLimits",
     "LazyKeyedOverlay",
     "ProducerVersions",
     "producer_version_admitted",
-    "CaptureObservedContentMismatch",
     "ObservedContent",
-    "ObservedContentBasis",
-    "WEB_FETCH_OPERATION",
     "observed_content",
     "AcceptedCaptureContract",
     "CanonicalDuration",

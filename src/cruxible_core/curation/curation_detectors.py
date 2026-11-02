@@ -948,10 +948,8 @@ class _CaptureObservation:
     selector_key: bytes
     selector_digest: str
     coordinate_digest: str
-    #: What the Capture observed, by content (``captures.observed_content``):
-    #: the commitment digest when the Capture records no observed content.
+    #: What the Capture observed, by content (``captures.observed_content``).
     commitment_digest: str
-    content_basis: str
     observed_at: datetime
 
 
@@ -1019,7 +1017,6 @@ def _freshness_calibration(
                     {"value": envelope.source.coordinate},
                 ).tagged,
                 commitment_digest=observed.digest,
-                content_basis=observed.basis,
                 observed_at=envelope.observed_at,
             )
         )
@@ -1103,13 +1100,6 @@ def _freshness_calibration(
                         "interval_microseconds": interval,
                         "prior_commitment_digest": prior.commitment_digest,
                         "selector_digest": current.selector_digest,
-                        # The digests above are observed-content identities; a
-                        # Capture recording none falls back to its commitment.
-                        **(
-                            {"content_basis": current.content_basis}
-                            if current.content_basis != "commitment"
-                            else {}
-                        ),
                     },
                 )
             )
