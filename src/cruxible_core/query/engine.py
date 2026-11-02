@@ -45,7 +45,7 @@ from cruxible_client.contracts.claims import (
     NoneClaimObject,
     SubjectClaimObject,
 )
-from cruxible_client.contracts.content_memo import request_derive
+from cruxible_client.contracts.content_memo import ValueMemo, is_sealed, request_derive
 from cruxible_client.contracts.errors import CanonicalEncodingError, CruxibleError
 from cruxible_client.contracts.identity_normalizers import (
     KeyNormalizationRefused,
@@ -992,6 +992,43 @@ def _expiry(definition: QueryDefinition, evaluation_time: datetime) -> datetime 
     return evaluation_time + timedelta(microseconds=expiry.microseconds)
 
 
+_ROW_BINDINGS: ValueMemo[QueryRowBinding] = ValueMemo(capacity=4096)
+_TRUNCATIONS: ValueMemo[QueryTruncation] = ValueMemo(capacity=256)
+
+
+def _query_truncation(
+    *,
+    clipped_budgets: tuple[QueryClippedBudget, ...],
+    truncated_includes: tuple[str, ...],
+    candidate_result_count: int,
+    returned_result_count: int,
+    evaluated_path_count: int | None,
+    retained_path_count: int | None,
+) -> QueryTruncation:
+    # Accounting still comes from this evaluation. Only the identical immutable
+    # result metadata is shared; no query answer or visibility is memoized.
+    key = (
+        clipped_budgets,
+        truncated_includes,
+        candidate_result_count,
+        returned_result_count,
+        evaluated_path_count,
+        retained_path_count,
+    )
+
+    def build() -> QueryTruncation:
+        return QueryTruncation(
+            clipped_budgets=clipped_budgets,
+            truncated_includes=truncated_includes,
+            candidate_result_count=candidate_result_count,
+            returned_result_count=returned_result_count,
+            evaluated_path_count=evaluated_path_count,
+            retained_path_count=retained_path_count,
+        )
+
+    return build() if sum(map(len, truncated_includes)) > 4096 else _TRUNCATIONS.derive(key, build)
+
+
 def _binding_row(
     backend: ClaimQueryBackendV1,
     binding: str,
@@ -1005,16 +1042,21 @@ def _binding_row(
     # witness. These are the complete scalar inputs of the served contract.
     identity = subject.shell.identity.qualified
     kind, identifier = subject.shell.subject_kind, subject.shell.subject_id
-    return request_derive(
-        ("query.row_binding", binding, identity, kind, identifier, path),
-        lambda: QueryRowBinding(
+    key = (binding, identity, kind, identifier, path)
+
+    def build() -> QueryRowBinding:
+        return QueryRowBinding(
             binding=binding,
             subject_identity=identity,
             subject_kind=kind,
             subject_id=identifier,
             subject_path=path,
-        ),
-    )
+        )
+
+    if is_sealed(subject.shell):
+        return _ROW_BINDINGS.derive(key, build)
+    # Caller-owned mutable backends keep the existing request-only carrier.
+    return request_derive(("query.row_binding", *key), build)
 
 
 def _dedupe_key(row: _Row, definition: QueryDefinition) -> bytes | None:
@@ -1483,7 +1525,7 @@ def _evaluate(
         dedupe=query.dedupe,
         rows=tuple(result_rows),
         conflicts=tuple(conflicts[key] for key in sorted(conflicts)),
-        truncation=QueryTruncation(
+        truncation=_query_truncation(
             clipped_budgets=ordered_budgets,
             truncated_includes=byte_sorted(tuple(truncated_includes)),
             candidate_result_count=candidate_result_count,

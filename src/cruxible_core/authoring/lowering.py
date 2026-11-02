@@ -131,6 +131,7 @@ from cruxible_client.contracts.claims import (
     LiteralClaimObject,
     NoneClaimObject,
     SubjectClaimObject,
+    _statement_with_claim_type_digest,
     build_claim_citation,
     claim_artifact_digest,
     claim_path,
@@ -1130,8 +1131,8 @@ def _rebound_backing(
     replaced = frozenset(getattr(payload, "replaces_citations", ()))
     if not replaced:
         return None
-    if predecessor is None or statement != predecessor.statement.model_copy(
-        update={"claim_type_digest": statement.claim_type_digest}
+    if predecessor is None or statement != _statement_with_claim_type_digest(
+        predecessor.statement, statement.claim_type_digest
     ):
         _refuse(
             "cruxible.authoring.rebind_statement_changed",
@@ -1446,7 +1447,17 @@ def _refuse_evidence_from_projection(
     )
 
 
-def _claim_pin(*, role: str, target: ArtifactIdentity, artifact_digest: str) -> ArtifactPin:
+def _claim_pin(
+    *,
+    role: str,
+    target: ArtifactIdentity,
+    artifact_digest: str,
+    previous: tuple[ArtifactPin, ...] = (),
+) -> ArtifactPin:
+    for pin in previous:
+        if pin.role == role and pin.target == target and pin.artifact_digest == artifact_digest:
+            return pin
+
     def derive() -> ArtifactPin:
         value = ArtifactPin(role=role, target=target, artifact_digest=artifact_digest)
         if not seal(value):
@@ -1908,7 +1919,11 @@ def _lower_claim(
         ),
     )
 
-    identity = ArtifactIdentity(kind="Claim", name=claim_id)
+    identity = (
+        predecessor.identity
+        if predecessor is not None
+        else ArtifactIdentity(kind="Claim", name=claim_id)
+    )
     citation = build_claim_citation(
         identity,
         capture_digest=capture_digest_value,
@@ -1923,9 +1938,7 @@ def _lower_claim(
         predecessor is not None
         and effective_revision_evidence(claim_type) == "replace"
         and statement
-        != predecessor.statement.model_copy(
-            update={"claim_type_digest": statement.claim_type_digest}
-        )
+        != _statement_with_claim_type_digest(predecessor.statement, statement.claim_type_digest)
     ):
         inherited = None
     predecessor_citations = () if inherited is None else inherited.backing.citations
@@ -2040,16 +2053,19 @@ def _lower_claim(
             role="capture-contract",
             target=contract.identity,
             artifact_digest=capture_contract_digest(contract).tagged,
+            previous=() if predecessor is None else predecessor.pins,
         ),
         _claim_pin(
             role="claim-type",
             target=claim_type.identity,
             artifact_digest=claim_type_digest(claim_type).tagged,
+            previous=() if predecessor is None else predecessor.pins,
         ),
         _claim_pin(
             role="subject",
             target=subject_identity,
             artifact_digest=subject_digest_value,
+            previous=() if predecessor is None else predecessor.pins,
         ),
     ]
     if located_contract is not None:

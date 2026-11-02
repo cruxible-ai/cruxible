@@ -615,3 +615,34 @@ def test_source_metadata_retains_exact_large_commitment_length_without_body(worl
     assert before[0]["commitment_byte_length_decimal"] == str(length)
     world.store._path(digest).unlink()
     assert world.reader.source_claim_uses("source-0") == before
+
+
+def test_republishing_equal_citations_writes_no_relationship_rows(world):
+    digest = world.capture(1)
+    claim = world.claim(1, [digest])
+    world.publish(claim)
+    before = world.connection.total_changes
+    world.publish(claim)
+    # Only the fixture's typed Claim owner is replaced. Inherited citation,
+    # group, Capture and source-reference rows do not change at all.
+    assert world.connection.total_changes - before == 1
+    assert world.reader.conflicts() == world.cold_conflicts()
+
+
+def test_batch_replacement_keeps_shared_captures_until_all_new_uses_are_published(world):
+    a, b = world.capture(1, source=1), world.capture(2, source=2)
+    world.publish(world.claim(1, [a]), world.claim(2, [b]))
+    world.publish(world.claim(1, [b]), world.claim(2, [a]))
+    assert world.reader.conflicts() == world.cold_conflicts()
+    assert {r[0] for r in world.connection.execute("SELECT capture_digest FROM captures")} == {a, b}
+    remove_owner_citations(
+        world.connection, [("Claim", world.claim(n, [a]).identity.qualified) for n in (1, 2)]
+    )
+    for table in (
+        "citation_uses",
+        "citation_group_members",
+        "captures",
+        "source_references",
+        "capture_count",
+    ):
+        assert world.connection.execute(f"SELECT count(*) FROM {table}").fetchone() == (0,)

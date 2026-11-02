@@ -107,4 +107,50 @@ def execute_values(
     return found
 
 
-__all__ = ["MAX_PARAMETERS", "execute_in", "execute_values", "insert_rows", "select_in"]
+def replace_owned_rows(
+    connection: sqlite3.Connection,
+    table: str,
+    rows: Sequence[Sequence[Any]],
+    *,
+    owner_column: str,
+    owners: Sequence[str],
+    key_columns: tuple[str, ...],
+    predicate: str = "1",
+) -> list[tuple[Any, ...]]:
+    """Replace only differing rows of the selected owners; return removed rows.
+
+    The caller supplies complete rows, with their non-null primary key first.
+    Reads are indexed by changed owners, never by the table's whole population.
+    Delete all obsolete keys before inserting, including keys whose value moved,
+    so secondary unique constraints see the same result as a full replacement.
+    """
+    desired = {tuple(row) for row in rows}
+    if len(desired) != len(rows):
+        raise sqlite3.IntegrityError("duplicate desired owner row")
+    previous = [
+        tuple(row)
+        for row in select_in(
+            connection,
+            f"SELECT * FROM {table} WHERE {predicate} AND {owner_column} IN ({{}})",
+            owners,
+        )
+    ]
+    old = set(previous)
+    removed = [row for row in previous if row not in desired]
+    execute_values(
+        connection,
+        f"DELETE FROM {table} WHERE ({','.join(key_columns)}) IN (VALUES {{}})",
+        [row[: len(key_columns)] for row in removed],
+    )
+    insert_rows(connection, table, [row for row in rows if tuple(row) not in old])
+    return removed
+
+
+__all__ = [
+    "MAX_PARAMETERS",
+    "execute_in",
+    "execute_values",
+    "insert_rows",
+    "replace_owned_rows",
+    "select_in",
+]

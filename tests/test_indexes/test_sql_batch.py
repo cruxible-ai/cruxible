@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from cruxible_core.indexes.sql_batch import MAX_PARAMETERS, execute_in, insert_rows, select_in
 
 
@@ -32,3 +34,75 @@ def test_batched_writes_touch_exactly_the_rows_per_row_statements_would() -> Non
     assert select_in(batched, "SELECT k FROM t WHERE k IN ({})", []) == []
     insert_rows(batched, "t", [(1, "replaced", None)], verb="INSERT OR REPLACE")
     assert batched.execute("SELECT v FROM t WHERE k=1").fetchone() == ("replaced",)
+
+
+def test_owned_replacement_preserves_equal_rows_and_allows_unique_target_swaps() -> None:
+    from cruxible_core.indexes.sql_batch import replace_owned_rows
+
+    with sqlite3.connect(":memory:") as connection:
+        connection.execute(
+            "CREATE TABLE pins (owner TEXT, ordinal INTEGER, target TEXT, optional TEXT, "
+            "PRIMARY KEY(owner,ordinal), UNIQUE(owner,target))"
+        )
+        original = [("a", 0, "first", None), ("a", 1, "second", "value"), ("b", 0, "other", None)]
+        insert_rows(connection, "pins", original)
+        before = connection.total_changes
+        assert (
+            replace_owned_rows(
+                connection,
+                "pins",
+                original[:2],
+                owner_column="owner",
+                owners=["a"],
+                key_columns=("owner", "ordinal"),
+            )
+            == []
+        )
+        assert connection.total_changes == before
+        changed = [("a", 0, "second", None), ("a", 1, "first", None)]
+        removed = replace_owned_rows(
+            connection,
+            "pins",
+            changed,
+            owner_column="owner",
+            owners=["a"],
+            key_columns=("owner", "ordinal"),
+        )
+        assert set(removed) == set(original[:2])
+        assert connection.execute("SELECT * FROM pins ORDER BY owner,ordinal").fetchall() == [
+            *changed,
+            original[2],
+        ]
+        replace_owned_rows(
+            connection,
+            "pins",
+            [],
+            owner_column="owner",
+            owners=["a"],
+            key_columns=("owner", "ordinal"),
+        )
+        assert connection.execute("SELECT * FROM pins").fetchall() == [original[2]]
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_owned_replacement_refuses_duplicate_rows_without_changing_the_table(existing):
+    from cruxible_core.indexes.sql_batch import replace_owned_rows
+
+    with sqlite3.connect(":memory:") as connection:
+        connection.execute(
+            "CREATE TABLE t (owner TEXT, ordinal INTEGER, PRIMARY KEY(owner,ordinal))"
+        )
+        row = ("a", 1)
+        if existing:
+            insert_rows(connection, "t", [row])
+        before = connection.execute("SELECT * FROM t").fetchall()
+        with pytest.raises(sqlite3.IntegrityError, match="duplicate"):
+            replace_owned_rows(
+                connection,
+                "t",
+                [row, row],
+                owner_column="owner",
+                owners=["a"],
+                key_columns=("owner", "ordinal"),
+            )
+        assert connection.execute("SELECT * FROM t").fetchall() == before

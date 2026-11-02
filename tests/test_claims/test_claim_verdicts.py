@@ -445,3 +445,20 @@ def test_an_inverse_ages_on_its_own_horizon_and_a_value_on_the_types() -> None:
     assert claim_adjudication_rule(
         plain, claim_type_digest=plain_digest, inverse=True
     ) == claim_adjudication_rule(plain, claim_type_digest=plain_digest)
+
+
+def test_component_reuse_recomputes_changed_upstream_control_and_refuses_duplicates():
+    from types import SimpleNamespace
+
+    upstream = ArtifactIdentity(kind="Provider", name="shared-upstream")
+    capture = _capture("cached-control", upstream=(upstream,))
+    provider = SimpleNamespace(control_domain="first", upstream_provenance=())
+    providers = {upstream.qualified: provider}
+    first = evidence_control_components((capture,), (), providers=providers)
+    assert evidence_control_components((capture,), (), providers=providers) == first
+    provider.control_domain = "second"
+    changed = evidence_control_components((capture,), (), providers=providers)
+    assert changed != first
+    assert "second" in changed[0].control_domains and "first" not in changed[0].control_domains
+    with pytest.raises(ValueError, match="globally unique"):
+        evidence_control_components((capture, capture), (), providers=providers)

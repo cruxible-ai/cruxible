@@ -360,6 +360,8 @@ def _claim_members(
     """
 
     members: list[ClaimAuthoringPayload] = []
+    dependency_drafts = ClaimDependencyDrafts()
+    seal(dependency_drafts)
     claim_ids: dict[str, str] = {}
     identity_to_item: dict[str, str] = {}
     # A Capture is immutable and shared by the rows extracted from it. Build
@@ -390,7 +392,7 @@ def _claim_members(
             else "evidence",
             derivation=item.derivation,
             revises=item.predecessor,
-            dependency_drafts=ClaimDependencyDrafts(),
+            dependency_drafts=dependency_drafts,
         )
         member = resolve(canonical_authored_claims(member, read))
         # The member is final here: seal it so its identity and its statement's
@@ -1240,6 +1242,28 @@ class ProposalTerminalEgressSink:
         journaled: PreparedTerminalEgressV1 | None = None,
         recompiles: str | None = None,
     ) -> PreparedTerminalEgressV1:
+        # One preparation owns all sibling Claims' Capture proofs. Recorded
+        # landing/erase/damage events invalidate them through the request epoch.
+        with self.instance.capture_verification_request():
+            return self._prepare_terminal_egress(
+                request=request,
+                admission=admission,
+                manifests=manifests,
+                evidence=evidence,
+                journaled=journaled,
+                recompiles=recompiles,
+            )
+
+    def _prepare_terminal_egress(
+        self,
+        *,
+        request: TerminalEgressRequestV1,
+        admission: ProcedureRunAdmission,
+        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        evidence: Mapping[str, str] | None = None,
+        journaled: PreparedTerminalEgressV1 | None = None,
+        recompiles: str | None = None,
+    ) -> PreparedTerminalEgressV1:
         """Lower the terminal's items once; report what delivery will change.
 
         ``journaled`` is the preparation recovery read back from the journal: a
@@ -1840,6 +1864,17 @@ class ProposalTerminalEgressSink:
     # -- delivery -----------------------------------------------------------
 
     def deliver_terminal_egress(
+        self,
+        *,
+        request: TerminalEgressRequestV1,
+        admission: ProcedureRunAdmission | None = None,
+    ) -> TerminalEgressReceiptV1:
+        # Submission and settlement share proofs for the duration of delivery,
+        # including inherited Captures from runs other than the current run.
+        with self.instance.capture_verification_request():
+            return self._deliver_terminal_egress(request=request, admission=admission)
+
+    def _deliver_terminal_egress(
         self,
         *,
         request: TerminalEgressRequestV1,

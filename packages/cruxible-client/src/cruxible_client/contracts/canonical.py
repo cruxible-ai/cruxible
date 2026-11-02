@@ -8,7 +8,7 @@ import threading
 import typing
 import unicodedata
 from collections import OrderedDict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import ClassVar, TypeVar, cast
@@ -222,15 +222,31 @@ def _composable_fields(cls: type[BaseModel]) -> dict[str, frozenset[type]]:
     return found
 
 
+_VALUE_ENCODERS: dict[type[BaseModel], Callable[[BaseModel], bytes]] = {}
+
+
+def _register_value_encoder(model: type[BaseModel], encode: Callable[[BaseModel], bytes]) -> None:
+    """Register an intrinsic contract leaf whose encoder keys every scalar value.
+
+    This is private, exact-type registration, never a caller-supplied model
+    hook. Unlike an object-identity memo, the encoder must observe all values
+    again on copies. Registered encoders preserve the ordinary canonical bytes.
+    """
+    _VALUE_ENCODERS[model] = encode
+
+
 def _sealed_field_bytes(value: object, classes: frozenset[type]) -> bytes | None:
     """A field value's canonical bytes from sealed models' remembered encodings, if it is one."""
 
-    if type(value) in classes and is_sealed(value):
+    if type(value) in classes and (is_sealed(value) or type(value) in _VALUE_ENCODERS):
         return model_canonical_bytes(cast(BaseModel, value))
     if (
         type(value) is tuple
         and value
-        and all(type(item) in classes and is_sealed(item) for item in value)
+        and all(
+            type(item) in classes and (is_sealed(item) or type(item) in _VALUE_ENCODERS)
+            for item in value
+        )
     ):
         return canonical_list_bytes([model_canonical_bytes(item) for item in value])
     return None
@@ -245,8 +261,14 @@ def model_canonical_bytes(model: BaseModel) -> bytes:
     Either way, a field holding sealed models (or a tuple of them) takes their
     remembered encodings and only the rest of the model is dumped and encoded:
     a record rebuilt around sealed members never re-encodes a member.
+
+    Registered intrinsic leaves instead use their complete scalar value key,
+    so a detached copy shares bytes only while all of its values still match.
     """
 
+    encoder = _VALUE_ENCODERS.get(type(model))
+    if encoder is not None:
+        return encoder(model)
     composed: dict[str, bytes] = {}
     for name, classes in _composable_fields(type(model)).items():
         encoded = _sealed_field_bytes(model.__dict__.get(name), classes)

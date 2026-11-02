@@ -32,7 +32,11 @@ from cruxible_core.evidence.citation_relations import (
     _same_version_span_key,
     external_source_relation_subject,
 )
-from cruxible_core.indexes.sql_batch import execute_in, insert_rows, select_in
+from cruxible_core.indexes.sql_batch import (
+    execute_in,
+    replace_owned_rows,
+    select_in,
+)
 from cruxible_core.storage.capture_metadata import capture_envelope
 
 OwnerKind = Literal["Claim", "attestation"]
@@ -173,47 +177,61 @@ def _insert_capture(
 
 
 def _cleanup_captures(connection: sqlite3.Connection, captures: Iterable[str]) -> None:
-    for digest in set(captures):
-        source = connection.execute(
-            "SELECT source_ref_key FROM captures WHERE capture_digest=?", (digest,)
-        ).fetchone()
-        connection.execute(
-            "DELETE FROM captures WHERE capture_digest=? AND NOT EXISTS "
-            "(SELECT 1 FROM citation_uses WHERE capture_digest=?)",
-            (digest, digest),
-        )
-        if source is not None:
-            connection.execute(
-                "DELETE FROM source_references WHERE source_ref_key=? AND NOT EXISTS "
-                "(SELECT 1 FROM captures WHERE source_ref_key=?)",
-                (source[0], source[0]),
-            )
+    # Only removed uses can orphan a Capture. Resolve the selected orphan set
+    # before deleting it, then clean its source references once per source.
+    orphaned = select_in(
+        connection,
+        "SELECT capture_digest,source_ref_key FROM captures WHERE capture_digest IN ({}) "
+        "AND NOT EXISTS (SELECT 1 FROM citation_uses u "
+        "WHERE u.capture_digest=captures.capture_digest)",
+        list(set(captures)),
+    )
+    execute_in(
+        connection, "DELETE FROM captures WHERE capture_digest IN ({})", [r[0] for r in orphaned]
+    )
+    execute_in(
+        connection,
+        "DELETE FROM source_references WHERE source_ref_key IN ({}) AND NOT EXISTS "
+        "(SELECT 1 FROM captures c WHERE c.source_ref_key=source_references.source_ref_key)",
+        [r[1] for r in orphaned],
+    )
 
 
 def remove_owner_citations(
     connection: sqlite3.Connection, owners: Iterable[tuple[str, str]]
 ) -> None:
     """Remove selected owner relationships inside the caller's publication transaction."""
+    selected: dict[str, list[str]] = {"Claim": [], "attestation": []}
+    for kind, key in owners:
+        if kind not in selected:
+            raise ProjectionFormatError("unknown citation owner kind")
+        selected[kind].append(key)
     connection.execute("SAVEPOINT remove_citations")
     try:
-        for kind, key in owners:
-            if kind not in ("Claim", "attestation"):
-                raise ProjectionFormatError("unknown citation owner kind")
-            captures = [
+        captures: list[str] = []
+        for kind, keys in selected.items():
+            captures.extend(
                 r[0]
-                for r in connection.execute(
-                    "SELECT capture_digest FROM citation_uses WHERE owner_kind=? AND owner_key=?",
-                    (kind, key),
+                for r in select_in(
+                    connection,
+                    "SELECT capture_digest FROM citation_uses "
+                    "WHERE owner_kind=? AND owner_key IN ({})",
+                    keys,
+                    prefix=(kind,),
                 )
-            ]
-            if kind == "Claim":
-                connection.execute(
-                    "DELETE FROM citation_group_members WHERE claim_identity=?", (key,)
-                )
-            connection.execute(
-                "DELETE FROM citation_uses WHERE owner_kind=? AND owner_key=?", (kind, key)
             )
-            _cleanup_captures(connection, captures)
+            execute_in(
+                connection,
+                "DELETE FROM citation_uses WHERE owner_kind=? AND owner_key IN ({})",
+                keys,
+                prefix=(kind,),
+            )
+        execute_in(
+            connection,
+            "DELETE FROM citation_group_members WHERE claim_identity IN ({})",
+            selected["Claim"],
+        )
+        _cleanup_captures(connection, captures)
         connection.execute("RELEASE remove_citations")
     except BaseException:
         connection.execute("ROLLBACK TO remove_citations")
@@ -276,27 +294,9 @@ def populate_citations(
             if not owner_exists("Claim", identity):
                 raise ProjectionFormatError("citation Claim owner is not published")
             claims.append((identity, claim))
-        # Every changed Claim's old relationships go, then all new ones are written,
-        # one statement per table: the rows the per-Claim statements left, with no
-        # cleanup able to remove a Capture a later Claim of this call cites.
+        # Preserve inherited citations and groups. Their identities commit their
+        # exact values; only relationships removed or added by this batch change.
         owned = [identity for identity, _claim in claims]
-        old_captures = [
-            r[0]
-            for r in select_in(
-                connection,
-                "SELECT capture_digest FROM citation_uses "
-                "WHERE owner_kind='Claim' AND owner_key IN ({})",
-                owned,
-            )
-        ]
-        execute_in(
-            connection, "DELETE FROM citation_group_members WHERE claim_identity IN ({})", owned
-        )
-        execute_in(
-            connection,
-            "DELETE FROM citation_uses WHERE owner_kind='Claim' AND owner_key IN ({})",
-            owned,
-        )
         uses: list[tuple[object, ...]] = []
         members: list[tuple[object, ...]] = []
         for identity, claim in claims:
@@ -327,9 +327,24 @@ def populate_citations(
                             groups.append(("same_version_span", span[0]))
                     groups_of[digest] = groups
                 members.extend((kind, key, identity, reference.citation_id) for kind, key in groups)
-        insert_rows(connection, "citation_uses", uses)
-        insert_rows(connection, "citation_group_members", members)
-        _cleanup_captures(connection, old_captures)
+        removed = replace_owned_rows(
+            connection,
+            "citation_uses",
+            uses,
+            owner_column="owner_key",
+            owners=owned,
+            key_columns=("owner_kind", "owner_key", "use_key"),
+            predicate="owner_kind='Claim'",
+        )
+        replace_owned_rows(
+            connection,
+            "citation_group_members",
+            members,
+            owner_column="claim_identity",
+            owners=owned,
+            key_columns=("group_kind", "group_key", "claim_identity", "citation_id"),
+        )
+        _cleanup_captures(connection, [row[3] for row in removed])
         connection.execute("RELEASE populate_citations")
     except BaseException:
         connection.execute("ROLLBACK TO populate_citations")

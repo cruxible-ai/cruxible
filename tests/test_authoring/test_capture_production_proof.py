@@ -799,3 +799,139 @@ def test_a_capture_provable_only_by_its_delivered_terminal_is_found_by_contract(
         instance, instance.accepted_coordinate(), terminal_capture, access=_READ
     )
     assert not isinstance(verified, str)
+
+
+def test_a_missing_run_does_not_evict_another_runs_positive_proof(world, monkeypatch):
+    source, _terminal = _genuine(world)
+    calls = _count_run_lookups(monkeypatch)
+    with world.instance.capture_verification_request() as resolver:
+        original = resolver.produced_capture(source, run_id=world.run_id)
+        assert original
+        assert resolver.produced_capture("sha256:" + "f" * 64, run_id="absent-run") == ()
+        assert resolver.produced_capture(source, run_id=world.run_id) == original
+    # The absent run is tried, caught up and tried again; the positive run is
+    # never re-read just because an unrelated lookup needed another range.
+    assert (calls["runs"], calls["journal"]) == (3, 0)
+
+
+@pytest.mark.parametrize("change", ["unchanged", "erased_payload", "no_epoch"])
+def test_inherited_memo_proof_epoch_binds_submit_and_settlement(world, monkeypatch, change):
+    from dataclasses import replace
+
+    from cruxible_client.contracts.proposal_models import ProposalReceiveLimits
+    from cruxible_core.authoring.preflight import compute_preflight
+    from cruxible_core.derived.derived_state import SnapshotTree
+    from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationScope
+    from cruxible_core.service.evidence.capture_reads import (
+        CaptureReadInvalid,
+        verify_accepted_capture,
+    )
+
+    instance = world.instance
+    capture, _terminal = _genuine(world)
+    coordinator = _coordinator(instance)
+    timestamp = "2026-09-02T13:00:00.000000Z"
+    intent = coordinator.create(
+        actor=_ACTOR,
+        payload=_citing(capture, qualifier="memo epoch"),
+        canonical_timestamp=timestamp,
+    ).intent
+    computed = compute_preflight(instance, intent=intent, actor=_ACTOR)
+    assert computed.evaluation is not None and computed.evaluation.candidate is not None
+    outcome = replace(computed.evaluation, tree=SnapshotTree(computed.evaluation.tree))
+    current = instance.accepted_coordinate()
+    adapter = instance.prepared_evaluations
+    fields = dict(
+        current=current,
+        actor=_ACTOR,
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/memo-epoch",
+            proposed_base_oid=current.git_oid,
+        ),
+        limits=ProposalReceiveLimits(),
+        timestamp=timestamp,
+    )
+    with instance.capture_verification_request() as resolver:
+        assert not isinstance(
+            verify_accepted_capture(instance, current, capture, access=_READ, captures=resolver),
+            str,
+        )
+        memo = resolver.recall_verified(capture)
+        assert memo is not None and memo.production_proven
+        if change == "no_epoch":
+            monkeypatch.setattr(resolver, "_capture_proof_epoch", lambda: None)
+        scope = PreparedEvaluationScope(adapter, adapter.epoch, stable_run="successor-run")
+        observed = scope.receipts(resolver)
+        assert observed.recall_verified(capture) is memo
+        if change == "no_epoch":
+            assert scope.ineligible
+            assert (
+                scope.admitted(
+                    outcome,
+                    current=current,
+                    actor_id=_ACTOR.actor_id,
+                    timestamp=timestamp,
+                    mandate_digest=None,
+                    claim_type_expansions=(),
+                )
+                is None
+            )
+            scope.close()
+            return
+        # The entire admission read is a request memo hit. Any resolver call
+        # would hide the missing epoch-only observation this regression covers.
+        with monkeypatch.context() as hook:
+
+            def unexpected(*args, **kwargs):
+                pytest.fail("memo hit must not call a receipt resolver")
+
+            hook.setattr(resolver, "producer_receipt", unexpected)
+            hook.setattr(resolver, "produced_capture", unexpected)
+            verified = verify_accepted_capture(
+                instance,
+                current,
+                capture,
+                access=_READ,
+                captures=observed,
+            )
+            assert not isinstance(verified, str)
+        assert len(scope._receipts) == 1
+        assert next(iter(scope._receipts.values())).method == "epoch"
+        scope.retain(outcome, operation=b"memo", **fields)
+        tree = scope.submission_tree
+        admission = scope.admitted(
+            outcome,
+            current=current,
+            actor_id=_ACTOR.actor_id,
+            timestamp=timestamp,
+            mandate_digest=None,
+            claim_type_expansions=(),
+        )
+        assert admission is not None
+        if change == "erased_payload":
+            payload = next(
+                stored.record.payload_digest
+                for stored in world.records
+                if stored.record.event_kind == "produced_capture"
+            )
+            instance.body_store().erase(payload)
+            # The same request must now refuse exactly like a new resolver.
+            for source in (resolver, instance.capture_verification_context()):
+                with pytest.raises(CaptureReadInvalid):
+                    verify_accepted_capture(
+                        instance, current, capture, access=_READ, captures=source
+                    )
+        taken = scope.take(owner=adapter, tree=tree, bodies=instance.body_store(), **fields)
+        reused = admission.reusable(
+            base=current,
+            candidate=outcome.candidate,
+            candidate_tree=outcome.tree,
+            actor_id=_ACTOR.actor_id,
+            mandate_digest=None,
+            claim_type_expansions=(),
+            bodies=instance.body_store(),
+            query_facts_provider=None,
+        )
+        assert (taken is not None) == (change == "unchanged")
+        assert (reused is not None) == (change == "unchanged")
+        scope.close()

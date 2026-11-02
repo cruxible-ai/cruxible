@@ -17,7 +17,7 @@ from cruxible_client.contracts.claim_types import (
     effective_evidence_requirement,
     effective_inverse_stale_after,
 )
-from cruxible_client.contracts.content_memo import seal, sealed_derive, sealed_memo
+from cruxible_client.contracts.content_memo import ValueMemo, seal, sealed_derive, sealed_memo
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicy
 from cruxible_client.contracts.providers import ProviderV1
 
@@ -355,6 +355,9 @@ def _control_closure(
     return closure
 
 
+_CONTROL_COMPONENTS: ValueMemo[EvidenceControlComponent] = ValueMemo(capacity=1024)
+
+
 def evidence_control_components(
     captures: tuple[CaptureVerdictEvidence, ...],
     attestations: tuple[ClaimAttestationEvidence, ...],
@@ -401,15 +404,16 @@ def evidence_control_components(
             evidence.update(prior_evidence)
             domains.update(prior_domains)
         components.append((evidence, domains))
-    result = tuple(
-        EvidenceControlComponent(
-            evidence_digests=tuple(sorted(evidence)),
-            control_domains=tuple(
+    result = []
+    for evidence, domains in components:
+        key = (
+            tuple(sorted(evidence)),
+            tuple(
                 sorted(
                     item.removeprefix("control:") for item in domains if item.startswith("control:")
                 )
             ),
-            provider_identities=tuple(
+            tuple(
                 sorted(
                     item.removeprefix("provider:")
                     for item in domains
@@ -417,8 +421,16 @@ def evidence_control_components(
                 )
             ),
         )
-        for evidence, domains in components
-    )
+
+        def build(
+            values: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]] = key,
+        ) -> EvidenceControlComponent:
+            return EvidenceControlComponent(
+                evidence_digests=values[0], control_domains=values[1], provider_identities=values[2]
+            )
+
+        weight = sum(len(value) for values in key for value in values)
+        result.append(build() if weight > 8192 else _CONTROL_COMPONENTS.derive(key, build))
     return tuple(sorted(result, key=lambda item: item.evidence_digests))
 
 
