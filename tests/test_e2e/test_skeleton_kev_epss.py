@@ -409,6 +409,7 @@ def _install(
     line: str,
     parameters: Mapping[str, Any],
     origins: tuple[str, ...] | None = None,
+    authority: str = "propose",
 ) -> None:
     author_procedure(instance, spec, name=line + "-procedure")
     author_line(
@@ -416,14 +417,14 @@ def _install(
         name=line,
         procedure=spec.procedure,
         parameters=dict(parameters),
-        max_authority="propose",
+        max_authority=authority,
         acquisition=None if origins is None else {"catalog.capture": {"origins": list(origins)}},
         label=line,
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     path = line_spec_path(line)
     accepted = parse_line_spec(tree[path], path=path)
-    # Propose-only: the Mandate grants no settle until settle scope lands (B4c).
+    # The standing propose grant; a settle grant is authored on top (see below).
     mandate = procedure_mandate(
         line,
         namespace=("claims", "subjects"),
@@ -585,7 +586,48 @@ def _extracted(claim: Any, capture_digest: str) -> ExtractedBasis:
 # -- the skeleton ---------------------------------------------------------------------
 
 
-def test_kev_and_epss_flow_from_recorded_bytes_to_proposed_claims(tmp_path: Path) -> None:
+#: The KEV Line's settle grant (B4c): per ClaimType and change kind, the bases
+#: it settles on. listed_in creates on the record (extracted) or on the complete
+#: read's absence (an inverse for an expected, unlisted CVE), and revises to its
+#: inverse on absence; the mirrored date creates extracted and retires on absence.
+KEV_SETTLE_SCOPE: dict[str, dict[str, Any]] = {
+    LISTED_IN: {
+        "create": {"basis": ["extracted", "absence"]},
+        "revise": {"basis": ["absence"]},
+    },
+    DATE_ADDED: {"create": {"basis": ["extracted"]}, "retire": {"basis": ["absence"]}},
+}
+
+
+def grant_settle(instance: Any, *, line: str, scope: Mapping[str, Mapping[str, Any]]) -> None:
+    from cruxible_client.contracts.authoring.inputs import ProcedureMandateInput
+    from cruxible_client.contracts.authoring.models import MandateScopeAuthoring
+
+    author(
+        instance,
+        ProcedureMandateInput(
+            kind="procedure_mandate",
+            name=line + "-settle",
+            line_name=line,
+            grants="settle",
+            namespace=("claims",),
+            valid_from=NOW - timedelta(days=1),
+            expires_at=NOW + timedelta(days=30),
+            subjects="expected",
+            scope=tuple(
+                MandateScopeAuthoring.model_validate({"claim_type": t, "changes": changes})
+                for t, changes in scope.items()
+            ),
+        ),
+        name=line + "-settle-grant",
+    )
+
+
+def _summaries(state: Any, kind: str) -> list[Any]:
+    return [node.summary for node in state.nodes if node.summary and node.summary.kind == kind]
+
+
+def test_kev_and_epss_flow_from_recorded_bytes_to_claims(tmp_path: Path) -> None:
     instance = skeleton_world(tmp_path)
     kev = {"url": KEV_URL, "logical_source": "cisa.kev.catalog", "expected_format": "json"}
     epss = {"url": EPSS_URL, "logical_source": "first.epss", "expected_format": "json"}
@@ -595,7 +637,10 @@ def test_kev_and_epss_flow_from_recorded_bytes_to_proposed_claims(tmp_path: Path
         line="test.kev-line",
         parameters=kev,
         origins=("https://www.cisa.gov",),
+        authority="settle",
     )
+    grant_settle(instance, line="test.kev-line", scope=KEV_SETTLE_SCOPE)
+    # EPSS stays propose-only: its changes are outside every settle grant.
     _install(instance, epss_spec(), line="test.epss-line", parameters=epss)
 
     # 1. KEV: one Capture of the catalog; listed_in for the nine listed watched
@@ -634,7 +679,14 @@ def test_kev_and_epss_flow_from_recorded_bytes_to_proposed_claims(tmp_path: Path
     assert isinstance(witnessed.value, CaptureBasis) and witnessed.value.capture_digest == capture
     assert witnessed.absence is not None and witnessed.absence.capture == capture
     assert witnessed.absence.logical_source == "cisa.kev.catalog"
-    activate(instance, first)
+    # Every change is inside the grant: the run settles (all or nothing).
+    (egress,) = first.terminal_egress
+    assert egress.settle_outcome == "settled" and egress.outside_scope == ()
+    # The run's node summaries count what each node did.
+    (extracted,) = _summaries(first, "extract")
+    assert (extracted.records, extracted.invalid_records, extracted.complete) == (12, 0, True)
+    (written,) = _summaries(first, "claims")
+    assert (written.written, written.inverse_written) == (18, 1)
 
     # 2. The catalog delists one CVE: its listed_in becomes the inverse and its
     #    mirrored date retires; the confirmed unlisted inverse writes nothing.
@@ -648,7 +700,10 @@ def test_kev_and_epss_flow_from_recorded_bytes_to_proposed_claims(tmp_path: Path
     assert retired.lifecycle.state == "retired" and retired.retirement.absence is not None
     second_capture = changed[(_cve(DELISTED), LISTED_IN)].backing.procedure_evidence.absence.capture
     _assert_payload_capture(instance, second_capture, replay.body("kev-catalog-delisted"), KEV_URL)
-    activate(instance, second)
+    assert second.terminal_egress[0].settle_outcome == "settled"
+    (delisting,) = _summaries(second, "claims")
+    assert (delisting.retired, delisting.inverse_written) == (1, 1)
+    assert delisting.re_observed >= 1  # the unchanged positives and the unlisted inverse
 
     # 3. EPSS: the API's JSON answer, verbatim, scores every watched CVE.
     replay = Replay(**{EPSS_URL: "epss-api"})
@@ -668,6 +723,10 @@ def test_kev_and_epss_flow_from_recorded_bytes_to_proposed_claims(tmp_path: Path
         assert receipt.field_path.endswith("/epss")
         assert float(score.statement.object.value) == float(record["epss"])
         assert scores[(_cve(record["cve"]), SCORE_DATE)].statement.object.value == record["date"]
+    # No settle grant covers EPSS: its changes propose, and wait for review.
+    (egress,) = third.terminal_egress
+    assert egress.proposal_id is not None and egress.settle_outcome != "settled"
+    activate(instance, third)
 
 
 def test_the_origin_gate_reads_the_coordinate_final_url(tmp_path: Path) -> None:
