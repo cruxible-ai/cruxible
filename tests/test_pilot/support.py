@@ -25,7 +25,10 @@ KEV_ROW = boundary_contract(
     "security.kev-entry",
     {"date_added": "date?", "due_date": "date?", "ransomware_use": f"enum_of {KEV}ransomware_use?"},
 )
-EPSS_ROW = boundary_contract("security.epss-raw", {"score": "string", "percentile": "string"})
+# D-R23: typing belongs in the extract, so absence and writes read one typed record.
+EPSS_ROW = boundary_contract(
+    "security.epss-row", {"score": "decimal{0..1}", "percentile": "decimal{0..1}"}
+)
 WATCH_ROW = boundary_contract(
     "security.watched-row", {"subject_kind": "string", "subject_id": "string", "cve_id": "string"}
 )
@@ -163,25 +166,17 @@ def epss_spec() -> Any:
                 "row": EPSS_ROW.ref.spelling,
                 "key": {"cve_id": {"at": "cve", "type": f"key_part<{KIND}:cve_id>"}},
                 "only_keys": "$steps.watch_keys.rows",
-                "fields": {"score": {"at": "epss"}, "percentile": {"at": "percentile"}},
+                "fields": {
+                    "score": {"at": "epss", "parse": "decimal"},
+                    "percentile": {"at": "percentile", "parse": "decimal"},
+                },
                 "header": {
                     "score_date": {"at": "/created", "parse": "datetime", "project": "utc_date"}
                 },
             },
             {
-                "transform": "typed",
-                "kind": "shape",
-                "spec": {
-                    "input": "$steps.scores.records",
-                    "fields": {
-                        "score": {"from": "$item.fields.score", "as": "decimal{0..1}"},
-                        "percentile": {"from": "$item.fields.percentile", "as": "decimal{0..1}"},
-                    },
-                },
-            },
-            {
                 "id": "write",
-                "for_each": "$steps.typed.records",
+                "for_each": "$steps.scores.records",
                 "subject": {
                     "kind": KIND,
                     "key": {"cve_id": "$item.key.cve_id"},

@@ -94,9 +94,13 @@ class AbsenceWitness(_Receipt):
     extract_spec: str
     extractor: str
     logical_source: str
-    complete_when: CompleteWhenResult
+    #: Present only when the extract declares ``complete_when``: optional extra
+    #: proof. Completeness itself is the absence of observed incompleteness.
+    complete_when: CompleteWhenResult | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     enumerated_key_digest: str
-    covers_coordinate: AcceptedCoordinate
+    expect_coordinate: AcceptedCoordinate
 
     _digests = field_validator(
         "capture", "extract_spec", "enumerated_key_digest", "procedure_digest"
@@ -104,7 +108,7 @@ class AbsenceWitness(_Receipt):
 
     @model_validator(mode="after")
     def _complete(self) -> AbsenceWitness:
-        if not self.complete_when.held:
+        if self.complete_when is not None and not self.complete_when.held:
             raise ValueError("absence witness requires a complete enumeration")
         return self
 
@@ -203,7 +207,21 @@ class CompletenessReason(_Receipt):
 
 
 class RunCompleteness(_Receipt):
-    complete: Literal[False] = False
+    """A run's completeness summary: present when incomplete or when expect met ``within``.
+
+    ``complete`` is derived: false exactly when a reason, downgrade or skipped
+    write was recorded. ``expect_outside_within`` counts expected Subjects
+    outside the step's ``within`` (never retired or inverted).
+    """
+
+    complete: bool = False
     reasons: tuple[CompletenessReason, ...] = Field(max_length=20)
     downgraded: int = Field(default=0, ge=0)
     skipped: int = Field(default=0, ge=0)
+    expect_outside_within: int = Field(default=0, ge=0, exclude_if=lambda value: value == 0)
+
+    @model_validator(mode="after")
+    def _derived(self) -> RunCompleteness:
+        if self.complete == bool(self.reasons or self.downgraded or self.skipped):
+            raise ValueError("complete must be false exactly when incompleteness was recorded")
+        return self

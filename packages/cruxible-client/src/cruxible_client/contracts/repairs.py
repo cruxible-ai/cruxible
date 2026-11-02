@@ -45,16 +45,22 @@ UNDECLARED_HAND_EDIT_CHANGE = "read_the_refusal_details_and_revise_the_named_art
 # code, and the served refusal models read it when a producer carries none.
 DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "claims_absence_invalid": (
-        "Repair covers and enumeration to reference a complete extract and available "
+        "Repair expect and for_each to reach one complete extract and available "
         "Subject keys, then rerun the Line."
     ),
-    "claims_covers_outside_only_keys": (
-        "Restrict covers to the extractor's only_keys selection, or widen that selection, "
+    "claims_expect_outside_only_keys": (
+        "Restrict expect to the extractor's only_keys selection, or widen that selection, "
         "then rerun the Line."
     ),
     "claims_enumeration_invalid": (
-        "Reference the whole extract output directly as enumeration. With covers, use "
-        "its records directly or through filter/dedupe only for for_each, then rerun the Line."
+        "With expect, point for_each at an extract's records directly or through "
+        "filter/dedupe only, and move casts into the extract (parse, row Contract types), "
+        "then rerun the Line."
+    ),
+    "claims_expect_provider_enumeration_unsupported": (
+        "Absence over a provider call's records is not yet supported (roadmap item "
+        "provider-declared-enumeration): emit the source as a Capture and extract it, "
+        "or drop expect and when_absent, then rerun the Line."
     ),
     "claims_inverse_unit_unresolved": (
         "Restore the object's single live key Claim or correct its declared inverse unit, "

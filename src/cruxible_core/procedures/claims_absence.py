@@ -25,31 +25,32 @@ from cruxible_core.procedures.claims_units import ClaimUnitUnresolved, resolve_o
 def append_absence(
     node: Any,
     *,
+    enumeration: ExtractNode,
     executor: Any,
     admission: Any,
     state: Any,
     context: Any,
     resolve: Callable[..., Any],
-    lineage: Callable[..., Any],
     values: list[Any],
     tokens: list[Any],
     evidence: list[Any],
     changes: list[Any],
     diagnostics: Any,
     reserve: Callable[[], None],
+    within: set[object] | None = None,
 ) -> None:
-    """One pass over enumeration and covers; every Claim read is an indexed slot read.
+    """One pass over the enumeration and ``expect``; every Claim read is an indexed slot read.
 
-    No covers means no absence work. Enumeration includes refused keys, so a
-    duplicate/invalid record cannot be mistaken for a missing record. Findings
-    are run-owned; the existing Line routing policy alone chooses inbox kinds.
+    The enumeration is the whole output of the extract at the root of
+    ``for_each``'s filter/dedupe chain (:func:`absence_enumeration`); it includes
+    refused keys, so a duplicate/invalid record cannot be mistaken for a missing
+    record. Findings are run-owned; the existing Line routing policy alone
+    chooses inbox kinds. Absence obeys ``within`` like every other write: an
+    expected Subject outside it is never retired or inverted, only counted.
     """
-    if node.covers is None:
-        return
     from cruxible_core.procedures.execution import (
         _exact_evidence,
         _mentions_item_reference,
-        _referenced_aliases,
         _referenced_reads,
         _RunRefusal,
     )
@@ -58,16 +59,16 @@ def append_absence(
     def refuse(message: str) -> NoReturn:
         raise _RunRefusal(message.split(":", 1)[0], message, node_id=node.node_id)
 
-    covered = resolve(node.covers)
-    enumeration = resolve(node.enumeration)
-    if not isinstance(covered, list):
-        refuse("claims_absence_invalid: covers must be a Subject list")
-    if isinstance(enumeration, dict) and isinstance(enumeration.get("results"), list):
-        enumerated = enumeration["results"]
+    extracting = enumeration
+    reference = f"$steps.{extracting.as_}"
+    expected = resolve(node.expect)
+    listed = resolve(reference)
+    if not isinstance(expected, list):
+        refuse("claims_absence_invalid: expect must be a Subject list")
+    if isinstance(listed, dict) and isinstance(listed.get("results"), list):
+        enumerated = listed["results"]
     else:
-        selected_records = (
-            enumeration.get("records") if isinstance(enumeration, dict) else enumeration
-        )
+        selected_records = listed.get("records") if isinstance(listed, dict) else listed
         if not isinstance(selected_records, list):
             refuse("claims_absence_invalid: enumeration must retain typed records/results")
         enumerated = [
@@ -77,25 +78,12 @@ def append_absence(
             else {"tag": "record", "record": _record(item, index, "enumeration")}
             for index, item in enumerate(selected_records)
         ]
-    sources: dict[str, Any] = {}
-    for alias in _referenced_aliases(node.enumeration):
-        roots, chain, blocked = lineage(alias)
-        if chain or blocked:
-            refuse("claims_enumeration_invalid: enumeration must directly name an extract")
-        sources.update((source.node_id, source) for source in roots)
-    if len(sources) != 1 or not isinstance(next(iter(sources.values())), ExtractNode):
-        refuse("claims_absence_invalid: enumeration must name one declared source lineage")
-    extracting = next(iter(sources.values()))
-    if node.enumeration != f"$steps.{extracting.as_}":
-        refuse("claims_enumeration_invalid: enumeration must reference the whole extract output")
     own = _exact_evidence(
-        [node.enumeration, node.covers], state=state, node_id=node.node_id, field="absence"
+        [reference, node.expect], state=state, node_id=node.node_id, field="absence"
     )
     captures = {
         t.digest
-        for t in _exact_evidence(
-            node.enumeration, state=state, node_id=node.node_id, field="enumeration"
-        )
+        for t in _exact_evidence(reference, state=state, node_id=node.node_id, field="enumeration")
         if t.slot in {"produced_capture", "admitted_capture"}
     }
     if len(captures) != 1:
@@ -145,7 +133,7 @@ def append_absence(
         else:
             by_subject.setdefault(path, []).append(record)
 
-    def cover_subject(row: object) -> Any:
+    def expected_subject(row: object) -> Any:
         if isinstance(row, str):
             return context.reference(node.subject.kind, row)
         if isinstance(row, dict):
@@ -155,16 +143,16 @@ def append_absence(
             return context.subject(node.subject.kind, row.get("key", row))
         return None
 
-    covers: dict[str, tuple[Any, Any]] = {}
-    for row in covered:
+    expects: dict[str, tuple[Any, Any]] = {}
+    for row in expected:
         try:
-            subject = cover_subject(row)
+            subject = expected_subject(row)
         except ValueError as exc:
             refuse(f"claims_absence_invalid: {exc}")
         if subject is None:
-            refuse("claims_absence_invalid: covers names an unresolved Subject")
-        covers[subject.artifact_path] = (subject, row)
-    if isinstance(extracting, ExtractNode) and extracting.only_keys is not None:
+            refuse("claims_absence_invalid: expect names an unresolved Subject")
+        expects[subject.artifact_path] = (subject, row)
+    if extracting.only_keys is not None:
         selected = resolve(extracting.only_keys)
         if not isinstance(selected, list):
             refuse("claims_absence_invalid: only_keys must be a key list")
@@ -173,25 +161,19 @@ def append_absence(
             subject = context.subject(node.subject.kind, key)
             if subject is not None:
                 allowed.add(subject.artifact_path)
-        if not covers.keys() <= allowed:
-            refuse("claims_covers_outside_only_keys: covers must be a subset of only_keys")
-    if check is None and any(
-        mapping.when_absent in {"mirror", "inverse"} for mapping in node.claims
-    ):
-        refuse("claims_absence_invalid: the declared complete_when result is unavailable")
+        if not expects.keys() <= allowed:
+            refuse("claims_expect_outside_only_keys: expect must be a subset of only_keys")
     complete = (
         (check is None or check.held)
         and not invalid_enumeration
-        and (enumeration.get("complete", True) if isinstance(enumeration, dict) else True)
+        and (listed.get("complete", True) if isinstance(listed, dict) else True)
         and (
-            state.completeness.at_sink(_referenced_reads(node.covers))
-            and state.completeness.reads_complete(
-                _referenced_reads(node.enumeration), records_kept=True
-            )
+            state.completeness.at_sink(_referenced_reads(node.expect))
+            and state.completeness.reads_complete(_referenced_reads(reference), records_kept=True)
         )
     )
     witness = None
-    if complete and check is not None:
+    if complete:
         witness = AbsenceWitness(
             run_id=admission.run_id,
             procedure_digest=admission.procedure_artifact_digest,
@@ -204,7 +186,7 @@ def append_absence(
             enumerated_key_digest=typed_digest(
                 Sha256Value, "cruxible-enumerated-keys-v1", {"keys": keys}
             ).tagged,
-            covers_coordinate=admission.accepted_coordinate,
+            expect_coordinate=admission.accepted_coordinate,
         )
         seal(witness)
     if not complete:
@@ -252,7 +234,10 @@ def append_absence(
         tokens.append(own)
         values.append(value)
 
-    for path, (subject, cover_row) in covers.items():
+    for path, (subject, expect_row) in expects.items():
+        if within is not None and path not in within:
+            state.completeness.expect_outside_within += 1
+            continue
         if path in refused:
             continue
         records = by_subject.get(path, [])
@@ -262,7 +247,7 @@ def append_absence(
             if not records and any(
                 predicate is not None
                 and not _mentions_item_reference(predicate)
-                and _truth(predicate, {"key": cover_row, "fields": {}}, state.parameters) != "true"
+                and _truth(predicate, {"key": expect_row, "fields": {}}, state.parameters) != "true"
                 for predicate in (node.where, mapping.when)
             ):
                 continue
@@ -368,17 +353,15 @@ def append_absence(
                         finding(claim, ct, reason)
                     continue
                 blocked_units = set()
-                if ct.inverse is not None:
+                if mapping.when_absent == "inverse":
+                    # An inverse unit another role or source holds is never overwritten.
                     blocked_units = {
                         unit_key(c.statement.object.model_dump(mode="json"), ct, context)
                         for c in held
                         if c.statement.role not in replaces
-                        or (
-                            mapping.when_absent in {"mirror", "inverse"}
-                            and not any(
-                                context.logical_source(cap) == logical_source
-                                for cap in c.backing.capture_digests
-                            )
+                        or not any(
+                            context.logical_source(cap) == logical_source
+                            for cap in c.backing.capture_digests
                         )
                     }
                 candidates = list(held)
@@ -387,6 +370,12 @@ def append_absence(
                         continue
                     candidates = [None]
                 for claim in candidates:
+                    if (
+                        mapping.when_absent == "mirror"
+                        and claim is not None
+                        and isinstance(claim.statement.object, NoneClaimObject)
+                    ):
+                        continue  # a held inverse agrees with the absence; mirror only retires
                     if claim is not None and ct.cardinality == "many":
                         try:
                             held_unit = unit_key(claim.statement.object, ct, context)
@@ -410,7 +399,7 @@ def append_absence(
                         continue
                     if (
                         claim is not None
-                        and ct.inverse is not None
+                        and blocked_units
                         and unit_key(claim.statement.object.model_dump(mode="json"), ct, context)
                         in blocked_units
                     ):
@@ -440,22 +429,21 @@ def append_absence(
                         )
                         seal(receipts[index])
                     receipt = receipts[index]
-                    if (
-                        claim is not None
-                        and mapping.when_absent == "mirror"
-                        and not isinstance(claim.statement.object, NoneClaimObject)
-                    ):
-                        append(
-                            CoreRetirementChange(
-                                rationale="Complete source no longer contains this Claim.",
-                                claim_id=claim.identity.name,
-                                artifact_digest=claim_artifact_digest(claim).tagged,
-                                claim_type=ct.predicate,
-                                witness=witness,
-                            ),
-                            receipt,
-                            {"retire": claim.identity.name, "template": index},
-                        )
+                    if mapping.when_absent == "mirror":
+                        # One meaning per word: mirror only retires, whatever the type declares.
+                        if claim is not None:
+                            append(
+                                CoreRetirementChange(
+                                    rationale="Complete source no longer contains this Claim.",
+                                    claim_id=claim.identity.name,
+                                    artifact_digest=claim_artifact_digest(claim).tagged,
+                                    claim_type=ct.predicate,
+                                    witness=witness,
+                                ),
+                                receipt,
+                                {"retire": claim.identity.name, "template": index},
+                            )
+                        continue
                     if ct.inverse is None:
                         continue
                     inverse: dict[str, Any] = {"kind": "none"}
@@ -513,10 +501,8 @@ def append_absence(
                                 refuse("claims_absence_invalid: inverse unit cannot be resolved")
                     unit = (path, index, canonical_bytes(qualifier), canonical_bytes(inverse))
                     if unit in seen_changes:
-                        if (
-                            mapping.when_absent == "inverse"
-                            and claim is not None
-                            and not isinstance(claim.statement.object, NoneClaimObject)
+                        if claim is not None and not isinstance(
+                            claim.statement.object, NoneClaimObject
                         ):
                             append(
                                 CoreRetirementChange(
@@ -559,9 +545,7 @@ def append_absence(
                                     else qualifier,
                                 },
                                 "rationale": "Complete source establishes the declared inverse.",
-                                "predecessor": claim.identity.name
-                                if claim is not None and mapping.when_absent == "inverse"
-                                else None,
+                                "predecessor": None if claim is None else claim.identity.name,
                             }
                         ),
                         receipt,

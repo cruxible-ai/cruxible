@@ -92,7 +92,7 @@ def safety_world(
     raw["steps"][-1]["claims"][0]["when_absent"] = policy
     raw["steps"][1]["complete_when"] = {"count_at": "/count"}
     raw["steps"].insert(1, {"read": "watched", "query": "security.watched-vulnerabilities"})
-    raw["steps"][-1].update(covers="$steps.watched.rows", enumeration="$steps.entries")
+    raw["steps"][-1].update(expect="$steps.watched.rows")
     install(instance, procedure_spec(base=raw, reference_text=True))
     first = run(instance, root)
     assert first.status == "succeeded", first.terminal
@@ -148,6 +148,9 @@ def test_enumerated_presence_survives_a_skipped_write(tmp_path: Path, policy, sk
     assert not proposed_claims(instance, second)
     assert not any(f.kind == "claim_not_in_source" for f in second.findings)
     assert instance.accepted_coordinate() == before
+    if skip == "within":
+        assert second.completeness is not None
+        assert second.completeness.expect_outside_within == 2
 
 
 @pytest.mark.parametrize("skip", ("inadmissible", "line_break", "metadata", "per_value_incomplete"))
@@ -186,7 +189,7 @@ def test_unusable_present_values_never_authorize_absence(tmp_path: Path, monkeyp
     assert not any(f.kind == "claim_not_in_source" for f in second.findings)
 
 
-@pytest.mark.parametrize("invalid", ("transformed", "no_count", "item_inverse"))
+@pytest.mark.parametrize("invalid", ("transformed", "provider_records", "item_inverse"))
 def test_absence_authoring_rails_fail_with_typed_codes(tmp_path: Path, invalid):
     from cruxible_core.authoring.lowering import AuthoringLoweringError
 
@@ -194,21 +197,11 @@ def test_absence_authoring_rails_fail_with_typed_codes(tmp_path: Path, invalid):
     raw["procedure"] = "test.refused-absence"
     expected = "claims_enumeration_invalid"
     if invalid == "transformed":
-        raw["steps"].insert(
-            -1,
-            {
-                "transform": "filtered",
-                "kind": "filter",
-                "spec": {
-                    "input": "$steps.entries.records",
-                    "where": {"op": "eq", "left": {"literal": 0}, "right": {"literal": 1}},
-                },
-            },
-        )
-        raw["steps"][-1]["enumeration"] = "$steps.filtered"
-    elif invalid == "no_count":
-        raw["steps"][2].pop("complete_when")
-        expected = "claims_complete_when_required"
+        # The root of for_each's chain is a query read, not an extract.
+        raw["steps"][-1]["for_each"] = "$steps.watched.rows"
+    elif invalid == "provider_records":
+        raw["steps"][-1]["for_each"] = "$steps.doc.content"
+        expected = "claims_expect_provider_enumeration_unsupported"
     else:
         raw["steps"][-1]["claims"][0]["when_absent"] = "inverse"
         expected = "claims_inverse_item_value"
@@ -283,7 +276,7 @@ def test_public_authoring_cannot_mint_an_absence_witness(tmp_path: Path, kind):
     from cruxible_core.proposals.proposals import AuthenticatedActor
     from tests.test_authoring.test_authoring_change_set_intents import _coordinator
 
-    instance, root, raw = safety_world(tmp_path)
+    instance, root, raw = safety_world(tmp_path, "mirror" if kind == "retirement" else "inverse")
     (root / "data/doc.json").write_text(json.dumps({"entries": [], "count": 0}))
     state = run(instance, root, minute=1)
     retired = proposed_claims(instance, state)
@@ -350,6 +343,66 @@ def test_unresolved_held_unit_is_a_typed_run_refusal(tmp_path: Path, monkeypatch
     assert result.terminal.code == "claims_inverse_unit_unresolved"
 
 
+@pytest.mark.parametrize("policy", ("mirror", "inverse"))
+def test_mirror_and_inverse_need_no_count_declaration(tmp_path: Path, policy):
+    """D-R19: declaring mirror/inverse is the completeness statement; no count required."""
+    instance, root, raw = safety_world(tmp_path, policy)
+    raw["steps"][2].pop("complete_when")
+    reinstall(instance, raw)
+    (root / "data/doc.json").write_text(json.dumps({"entries": []}))
+    result = run(instance, root, minute=1, line="safety-followup")
+    assert result.status == "succeeded", result.terminal
+    assert result.completeness is None
+    changed = proposed_claims(instance, result)
+    if policy == "mirror":
+        # D-R24: mirror only retires, though this ClaimType declares an inverse.
+        assert len(changed) == 2 and all(c.lifecycle.state == "retired" for c in changed)
+        witnesses = [c.retirement.absence for c in changed]
+    else:
+        assert len(changed) == 2 and all(c.statement.object.kind == "none" for c in changed)
+        witnesses = [c.backing.procedure_evidence.absence for c in changed]
+    assert all(w is not None and w.complete_when is None for w in witnesses)
+    assert not any(f.kind == "claim_not_in_source" for f in result.findings)
+
+
+@pytest.mark.parametrize("policy", ("mirror", "inverse"))
+def test_absence_obeys_within_and_counts_expected_subjects_outside_it(tmp_path: Path, policy):
+    """D-R22/D-R24: one write fence; an expected Subject outside within is only counted."""
+    instance, root, raw = safety_world(tmp_path, policy)
+    raw["steps"].insert(
+        -1,
+        {
+            "transform": "eligible",
+            "kind": "filter",
+            "spec": {
+                "input": "$steps.watched.rows",
+                "where": {
+                    "op": "eq",
+                    "left": {"$ref": "item", "path": ["fields", "cve_id"]},
+                    "right": {"literal": "CVE-2026-0001"},
+                },
+            },
+        },
+    )
+    raw["steps"][-1]["subject"]["within"] = {"$ref": "step", "step": "eligible", "path": ["rows"]}
+    reinstall(instance, raw)
+    (root / "data/doc.json").write_text(json.dumps({"entries": [], "count": 0}))
+    result = run(instance, root, minute=1, line="safety-followup")
+    assert result.status == "succeeded", result.terminal
+    changed = proposed_claims(instance, result)
+    assert len(changed) == 1
+    assert {c.statement.subject.artifact_path for c in changed} == {
+        f"subjects/{KIND}/cve-2026-0001.json"
+    }
+    if policy == "mirror":
+        assert changed[0].lifecycle.state == "retired"
+    else:
+        assert changed[0].statement.object.kind == "none"
+    assert not any(f.kind == "claim_not_in_source" for f in result.findings)
+    assert result.completeness is not None
+    assert result.completeness.complete and result.completeness.expect_outside_within == 1
+
+
 def test_surface_without_a_count_declaration_keeps_existing_completeness(tmp_path: Path):
     instance, root, raw = safety_world(tmp_path, "surface")
     raw["steps"][2].pop("complete_when")
@@ -403,7 +456,9 @@ def test_covered_shape_cast_is_refused_at_runtime(tmp_path: Path, monkeypatch, r
     # Simulate a Procedure accepted before this rail: runtime must independently
     # refuse it, before a renamed template raises or a cast causes a retirement.
     with monkeypatch.context() as old_acceptance:
-        old_acceptance.setattr(claims_typing, "preserves_claims_enumeration", lambda *_: True)
+        old_acceptance.setattr(
+            claims_typing, "absence_enumeration", lambda _node, aliases: aliases["entries"]
+        )
         reinstall(instance, raw)
     before = instance.accepted_coordinate()
     result = run(instance, root, minute=1, line="safety-followup")

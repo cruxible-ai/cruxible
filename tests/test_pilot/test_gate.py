@@ -105,7 +105,8 @@ def test_g11_epss_na_is_inadmissible_and_percentile_writes(tmp_path: Path) -> No
     assert diagnostic.kind == "extract_refused" and diagnostic.lexeme == "n/a"
     percentile = next(c for c in first if c.statement.predicate == EPSS + "percentile")
     receipt = percentile.backing.procedure_evidence.value
-    assert receipt.basis == "extracted" and receipt.transform_node_ids == ("typed",)
+    # The decimal cast is the extract's parse, not a shape (D-R23).
+    assert receipt.basis == "extracted" and receipt.transform_node_ids == ()
     assert receipt.field_path.endswith("/percentile")
 
 
@@ -257,6 +258,41 @@ def test_g4_count_mismatch_never_mirrors(tmp_path: Path) -> None:
     assert any(r.kind == "count_mismatch" for r in state.completeness.reasons)
 
 
+def kev_mirror_spec():  # type: ignore[no-untyped-def]
+    """§11.8: listed and both dates mirror; no present() guards (D-R20)."""
+    from tests.test_procedures.test_claims_absence import absence_spec
+
+    base = absence_spec("mirror").model_dump(mode="python", by_alias=True)
+    for mapping in base["steps"][-1]["claims"][:3]:
+        mapping["when_absent"] = "mirror"
+        assert "when" not in mapping
+    return procedure_spec(base=base)
+
+
+def test_g5_a_vanished_date_field_mirrors_while_the_record_stays_listed(tmp_path: Path) -> None:
+    import json
+
+    from tests.test_procedures.test_claims_absence import proposed_claims
+
+    instance, root = pilot_world(tmp_path, "kev.json", spec=kev_mirror_spec())
+    first = run(instance, root)
+    assert first.status == "succeeded", first.terminal
+    activate(instance, first)
+    path = root / "data/kev.json"
+    doc = json.loads(path.read_bytes())
+    vanished = doc["vulnerabilities"][0]
+    vanished.pop("dueDate")
+    path.write_text(json.dumps(doc))
+    second = run(instance, root, minute=1)
+    assert second.status == "succeeded", second.terminal
+    (retired,) = proposed_claims(instance, second)
+    assert retired.lifecycle.state == "retired"
+    assert retired.statement.predicate == KEV + "due_date"
+    assert vanished["cveID"].lower() in retired.statement.subject.artifact_path
+    assert retired.retirement.absence is not None
+    assert not any(f.kind == "claim_not_in_source" for f in second.findings)
+
+
 def test_g5_delisting_has_a_mirror_witness(tmp_path: Path) -> None:
     import json
 
@@ -264,17 +300,9 @@ def test_g5_delisting_has_a_mirror_witness(tmp_path: Path) -> None:
     from cruxible_client.contracts.procedures.artifacts import parse_procedure
     from cruxible_client.contracts.procedures.extract import EXTRACTOR_VERSIONS
     from cruxible_core.procedures.claims_terminal import _receipt_extract_digest
-    from tests.test_procedures.test_claims_absence import absence_spec
     from tests.test_procedures.test_procedure_source_runs import _admission
 
-    base = absence_spec("mirror").model_dump(mode="python", by_alias=True)
-    for mapping in base["steps"][-1]["claims"][:3]:
-        mapping["when_absent"] = "mirror"
-    for mapping, field in zip(
-        base["steps"][-1]["claims"][1:3], ("date_added", "due_date"), strict=True
-    ):
-        mapping["when"] = {"op": "present", "of": {"$ref": "item", "path": ["fields", field]}}
-    instance, root = pilot_world(tmp_path, "kev.json", spec=procedure_spec(base=base))
+    instance, root = pilot_world(tmp_path, "kev.json", spec=kev_mirror_spec())
     first = run(instance, root)
     assert first.status == "succeeded", first.terminal
     activate(instance, first)
@@ -315,7 +343,7 @@ def test_g5_delisting_has_a_mirror_witness(tmp_path: Path) -> None:
             witness.enumerated_key_digest
             == typed_digest(Sha256Value, "cruxible-enumerated-keys-v1", {"keys": []}).tagged
         )
-        assert witness.covers_coordinate == second.bound_coordinate
+        assert witness.expect_coordinate == second.bound_coordinate
 
 
 def test_g8_watched_read_ceiling_refuses_before_writes(tmp_path: Path) -> None:

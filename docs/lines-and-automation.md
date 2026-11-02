@@ -568,41 +568,61 @@ values remain propose-only until explicit Mandate basis scopes are available.
 Cruxible does not infer attestations.
 
 A Claims step can compare a complete enumeration with an explicit Subject
-set. Set `covers: $steps.watched.rows` and `enumeration: $steps.entries`
-on the step, then choose `when_absent` on each mapping:
+set. Set `expect: $steps.watched.rows` on the step (the Subjects whose absence
+this run judges; it should be the scope the source is complete for), then
+choose `when_absent` on each mapping. The enumeration is never authored: it is
+the whole output of the extract at the root of `for_each`'s chain, and the
+witness records that extract.
 
-| Policy | A covered, held Claim is absent from the source |
+| Policy | An expected, held Claim is absent from the source |
 |---|---|
 | `keep` | Leave it alone. |
 | `surface` (default) | Record `claim_not_in_source` in the run report. A Line may route this finding kind to its inbox. |
-| `mirror` | Retire an eligible Claim backed by the same logical source, with reason `superseded`. Other-source and protected Claims are surfaced. |
-| `inverse` | Write the ClaimType's declared inverse (`{kind: none}` on its unit), under its evidence rules and precedence policy. |
+| `mirror` | Retire an eligible Claim backed by the same logical source, with reason `superseded`. Other-source and protected Claims are surfaced. Mirror only retires: it never writes an inverse, whatever the ClaimType declares. |
+| `inverse` | Retire a held positive and write the ClaimType's declared inverse (`{kind: none}` on its unit), including for expected Subjects never held, under its evidence rules and precedence policy. |
 
-No `covers` means no absence inference. `covers` and `enumeration` are required
-together; enumeration must reference the whole extract output directly, without
-transforms. With `covers`, `for_each` must use that extract's records directly
-or through a chain of `filter` and `dedupe` transforms. Shapes, casts, joins and
-other transforms are refused at authoring and execution because presence templates
-must see the same record fields and values as the enumeration.
-Mirror and inverse require that extract to declare `complete_when`.
-If the extractor selects `only_keys`, coverage must be a subset.
+No `expect` means no absence inference. With `expect`, `for_each` must use an
+extract's records directly or through a chain of `filter` and `dedupe`
+transforms; filtering narrows what is written, not what the source lists.
+Shapes, casts, joins and other transforms are refused at authoring and
+execution (`claims_enumeration_invalid`) because presence templates must see
+the same record fields and values as the enumeration: put typing in the
+extract (`parse`, the row Contract's types) so both loops read the same typed
+record. A `for_each` rooted at a provider call's records is refused with
+`claims_expect_provider_enumeration_unsupported` until provider-declared
+enumerations are supported.
+Declaring `mirror` or `inverse` is the author's completeness statement; no
+count declaration is required. A run is complete unless it observes
+incompleteness: a declared `complete_when.count_at` mismatch, a `may_truncate`
+slot, or an invalid or duplicate record. A declared count is extra proof,
+checked and recorded in the witness. Paged sources must assemble every page
+in the Procedure or declare `may_truncate`.
+If the extractor selects `only_keys`, `expect` must be a subset. Absence obeys
+`subject.within` like every other write: an expected Subject outside `within`
+is never retired or inverted, and the run counts it in its completeness summary
+as `expect_outside_within`.
 A missing record or an explicitly absent mapped field can establish absence.
-An invalid field, invalid record, duplicate key or false `when` cannot. For a
+An invalid field, invalid record, duplicate key or false `when` cannot: `when`
+is only an applicability guard. An absent value field already skips its mapping
+and counts as `field_absent`, so a `when: present($item.fields.<f>)` guard on a
+mirrored mapping is redundant for writes and only turns off field-level mirror.
+Add it only to mean "retire this value when the record is delisted, not when
+the field disappears". For a
 many-valued slot, each held unit is compared with the enumeration, even when
 `within`, `for_each`, value admission or incomplete-input policy skips its write.
 An inverse mapping must use an item-independent value template (such as a literal
 or Line parameter) for its unit. A positive from another logical source is
 surfaced under inverse as well as mirror.
 
-Both coverage and enumeration must be complete. Otherwise destructive absence
+Both `expect` and the enumeration must be complete. Otherwise destructive absence
 becomes `surface`, with `source_incomplete: true`. A mirror retirement retains
 an absence witness: Capture, logical source, extract specification and extractor,
-evaluated count path, expected/observed counts and result, enumerated-key digest,
+the evaluated count path, expected/observed counts and result when a count is
+declared, enumerated-key digest,
 producing run/Procedure/node binding, and the accepted coordinate used
-for coverage. The executing Claims terminal produces that proof; public authoring
+to resolve `expect`. The executing Claims terminal produces that proof; public authoring
 cannot attach it. Preparation and delivery verify its run, Capture and extract
-binding. Inverses cite that proof as evidence. A mirror on a type with a
-declared inverse retires the positive and writes the inverse. Re-confirming an
+binding. Inverses cite that proof as evidence. Re-confirming an
 inverse records a re-observation; an appearing value revises it into a positive.
 Mirror retirements and inverse writes currently require proposal review even
 under a settle grant, and appear in `outside_scope_claim_types`.
@@ -610,7 +630,8 @@ under a settle grant, and appear in `outside_scope_claim_types`.
 An incomplete run includes a bounded typed `completeness` summary in its result,
 run card and activity entry: `complete: false`, reasons naming the affected
 nodes and inputs, and counts of downgraded and skipped writes. A complete run
-omits this field. The summary follows the same data and control lineage that
+omits this field unless it counted `expect_outside_within` Subjects, in which
+case the summary reads `complete: true` with that count. The summary follows the same data and control lineage that
 the write checks use.
 
 

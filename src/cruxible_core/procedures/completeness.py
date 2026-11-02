@@ -61,16 +61,23 @@ class Completeness:
     reasons: dict[str, CompletenessReason] = field(default_factory=dict)
     downgraded: int = 0
     skipped: int = 0
+    #: Expected Subjects outside ``within``: never retired or inverted, only counted.
+    expect_outside_within: int = 0
 
     def note(self, node: str, kind: CompletenessReasonKind, inputs: Iterable[str] = ()) -> None:
         if node in self.reasons or len(self.reasons) < 20:
             self.reasons[node] = CompletenessReason(node=node, kind=kind, inputs=tuple(inputs)[:20])
 
     def summary(self) -> RunCompleteness | None:
-        if not self.reasons and not self.downgraded and not self.skipped:
+        incomplete = bool(self.reasons or self.downgraded or self.skipped)
+        if not incomplete and not self.expect_outside_within:
             return None
         return RunCompleteness(
-            reasons=tuple(self.reasons.values()), downgraded=self.downgraded, skipped=self.skipped
+            complete=not incomplete,
+            reasons=tuple(self.reasons.values()),
+            downgraded=self.downgraded,
+            skipped=self.skipped,
+            expect_outside_within=self.expect_outside_within,
         )
 
     control_complete: bool = True

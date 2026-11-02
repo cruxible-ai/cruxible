@@ -54,35 +54,43 @@ class ClaimsTypingRefused(ValueError):
             self.code = code
 
 
-def preserves_claims_enumeration(node: ClaimsNode, aliases: Mapping[str | None, object]) -> bool:
-    """Only a direct record list or filter/dedupe chain preserves presence templates.
+def absence_enumeration(node: ClaimsNode, aliases: Mapping[str | None, object]) -> ExtractNode:
+    """The enumeration absence judges: the extract at the root of ``for_each``'s chain.
 
-    Walk this Procedure's referenced chain only; no accepted population reads.
-    Unknown references, subpaths and cycles fail closed.
+    It is never authored. ``for_each`` must reach the extract's output directly
+    or through filter/dedupe only, so presence templates see the records the
+    source lists. Walk this Procedure's referenced chain only; no accepted
+    population reads. Unknown references, subpaths and cycles fail closed.
     """
-    if not isinstance(node.enumeration, str):
-        return False
     reference = node.for_each
     seen: set[str] = set()
     while isinstance(reference, str):
-        if reference in {node.enumeration, f"{node.enumeration}.records"}:
-            return True
         parts = reference.split(".")
-        if (
-            len(parts) not in {2, 3}
-            or parts[0] != "$steps"
-            or (len(parts) == 3 and parts[2] != "records")
-            or parts[1] in seen
-        ):
-            return False
+        if len(parts) < 2 or parts[0] != "$steps" or parts[1] in seen:
+            break
         seen.add(parts[1])
         producer = aliases.get(parts[1])
+        if isinstance(producer, CallNode):
+            raise ClaimsTypingRefused(
+                "claims_expect_provider_enumeration_unsupported: expect over a provider "
+                "call's records is not supported yet (roadmap item "
+                "provider-declared-enumeration); extract the source's Capture instead",
+                code="cruxible.procedure.claims_expect_provider_enumeration_unsupported",
+            )
+        if len(parts) > 3 or (len(parts) == 3 and parts[2] != "records"):
+            break
+        if isinstance(producer, ExtractNode):
+            return producer
         if not isinstance(producer, TransformNode) or not isinstance(
             producer.spec, TransformFilterSpec | TransformDedupeSpec
         ):
-            return False
+            break
         reference = producer.spec.input
-    return False
+    raise ClaimsTypingRefused(
+        "claims_enumeration_invalid: expect requires for_each to use an extract's "
+        "records directly or through filter/dedupe only",
+        code="cruxible.procedure.claims_enumeration_invalid",
+    )
 
 
 def validate_claims_templates(
@@ -290,35 +298,8 @@ def validate_claims_templates(
     for node in definition.nodes:
         if not isinstance(node, ClaimsNode):
             continue
-        if node.covers is not None:
-            reference = node.enumeration
-            alias = (
-                reference.split(".")[1]
-                if isinstance(reference, str) and reference.startswith("$steps.")
-                else None
-            )
-            extracting = aliases.get(alias)
-            if not isinstance(extracting, ExtractNode) or reference != f"$steps.{extracting.as_}":
-                raise ClaimsTypingRefused(
-                    "claims_enumeration_invalid: enumeration must directly "
-                    "reference the whole extract output",
-                    code="cruxible.procedure.claims_enumeration_invalid",
-                )
-            if not preserves_claims_enumeration(node, aliases):
-                raise ClaimsTypingRefused(
-                    "claims_enumeration_invalid: covers requires for_each to use "
-                    "the enumeration records directly or through filter/dedupe only",
-                    code="cruxible.procedure.claims_enumeration_invalid",
-                )
-            if (
-                any(m.when_absent in {"mirror", "inverse"} for m in node.claims)
-                and extracting.complete_when is None
-            ):
-                raise ClaimsTypingRefused(
-                    "claims_complete_when_required: mirror and inverse "
-                    "require a declared complete_when",
-                    code="cruxible.procedure.claims_complete_when_required",
-                )
+        if node.expect is not None:
+            absence_enumeration(node, aliases)
         kind = source("SubjectKind", node.subject.kind)
         parts = [key_predicate(kind, name) for name in node.subject.key]
         if None in parts or set(parts) != set(kind.keys) or len(parts) != len(kind.keys):

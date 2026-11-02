@@ -443,7 +443,7 @@ def _normalized_absence_witness(witness: AbsenceWitness) -> _NormalizedProjectio
 
     if type(witness) is not AbsenceWitness:
         return normalize()
-    at = witness.covers_coordinate
+    at = witness.expect_coordinate
     key = (
         "projection.absence_witness",
         witness.capture,
@@ -453,10 +453,14 @@ def _normalized_absence_witness(witness: AbsenceWitness) -> _NormalizedProjectio
         witness.run_id,
         witness.procedure_digest,
         witness.node_id,
-        witness.complete_when.count_at,
-        witness.complete_when.expected,
-        witness.complete_when.observed,
-        witness.complete_when.held,
+        None
+        if witness.complete_when is None
+        else (
+            witness.complete_when.count_at,
+            witness.complete_when.expected,
+            witness.complete_when.observed,
+            witness.complete_when.held,
+        ),
         witness.enumerated_key_digest,
         at.git_oid,
         at.semantic_root,

@@ -4721,14 +4721,22 @@
                 "type": "string"
               },
               "complete_when": {
-                "$ref": "#/$defs/CompleteWhenResult"
-              },
-              "covers_coordinate": {
-                "$ref": "#/$defs/AcceptedCoordinate"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CompleteWhenResult"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "enumerated_key_digest": {
                 "title": "Enumerated Key Digest",
                 "type": "string"
+              },
+              "expect_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
               },
               "extract_spec": {
                 "title": "Extract Spec",
@@ -4763,9 +4771,8 @@
               "extract_spec",
               "extractor",
               "logical_source",
-              "complete_when",
               "enumerated_key_digest",
-              "covers_coordinate"
+              "expect_coordinate"
             ],
             "title": "AbsenceWitness",
             "type": "object"
@@ -7041,18 +7048,7 @@
                 "title": "Claims",
                 "type": "array"
               },
-              "covers": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/Ref"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "enumeration": {
+              "expect": {
                 "anyOf": [
                   {
                     "$ref": "#/$defs/Ref"
@@ -34256,8 +34252,9 @@
                   "terminal_egress_unverified",
                   "proposal_item_invalid",
                   "claims_absence_invalid",
-                  "claims_covers_outside_only_keys",
+                  "claims_expect_outside_only_keys",
                   "claims_enumeration_invalid",
+                  "claims_expect_provider_enumeration_unsupported",
                   "claims_inverse_unit_unresolved",
                   "claims_absence_binding_invalid",
                   "proposal_item_evidence_missing",
@@ -34944,8 +34941,9 @@
                   "terminal_egress_unverified",
                   "proposal_item_invalid",
                   "claims_absence_invalid",
-                  "claims_covers_outside_only_keys",
+                  "claims_expect_outside_only_keys",
                   "claims_enumeration_invalid",
+                  "claims_expect_provider_enumeration_unsupported",
                   "claims_inverse_unit_unresolved",
                   "claims_absence_binding_invalid",
                   "proposal_item_evidence_missing",
@@ -45066,9 +45064,9 @@
           },
           "RunCompleteness": {
             "additionalProperties": false,
+            "description": "A run's completeness summary: present when incomplete or when expect met ``within``.\n\n``complete`` is derived: false exactly when a reason, downgrade or skipped\nwrite was recorded. ``expect_outside_within`` counts expected Subjects\noutside the step's ``within`` (never retired or inverted).",
             "properties": {
               "complete": {
-                "const": false,
                 "default": false,
                 "title": "Complete",
                 "type": "boolean"
@@ -45077,6 +45075,12 @@
                 "default": 0,
                 "minimum": 0,
                 "title": "Downgraded",
+                "type": "integer"
+              },
+              "expect_outside_within": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Expect Outside Within",
                 "type": "integer"
               },
               "reasons": {
@@ -52633,7 +52637,7 @@
                 "title": "Claims",
                 "type": "array"
               },
-              "covers": {
+              "expect": {
                 "anyOf": [
                   {},
                   {
@@ -52641,17 +52645,7 @@
                   }
                 ],
                 "default": null,
-                "title": "Covers"
-              },
-              "enumeration": {
-                "anyOf": [
-                  {},
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Enumeration"
+                "title": "Expect"
               },
               "for_each": {
                 "title": "For Each"
@@ -60479,8 +60473,9 @@
                   "terminal_egress_unverified",
                   "proposal_item_invalid",
                   "claims_absence_invalid",
-                  "claims_covers_outside_only_keys",
+                  "claims_expect_outside_only_keys",
                   "claims_enumeration_invalid",
+                  "claims_expect_provider_enumeration_unsupported",
                   "claims_inverse_unit_unresolved",
                   "claims_absence_binding_invalid",
                   "proposal_item_evidence_missing",
@@ -63742,8 +63737,9 @@
                   "terminal_egress_unverified",
                   "proposal_item_invalid",
                   "claims_absence_invalid",
-                  "claims_covers_outside_only_keys",
+                  "claims_expect_outside_only_keys",
                   "claims_enumeration_invalid",
+                  "claims_expect_provider_enumeration_unsupported",
                   "claims_inverse_unit_unresolved",
                   "claims_absence_binding_invalid",
                   "proposal_item_evidence_missing",
@@ -65389,9 +65385,9 @@
           },
           "RunCompleteness": {
             "additionalProperties": false,
+            "description": "A run's completeness summary: present when incomplete or when expect met ``within``.\n\n``complete`` is derived: false exactly when a reason, downgrade or skipped\nwrite was recorded. ``expect_outside_within`` counts expected Subjects\noutside the step's ``within`` (never retired or inverted).",
             "properties": {
               "complete": {
-                "const": false,
                 "default": false,
                 "title": "Complete",
                 "type": "boolean"
@@ -65400,6 +65396,12 @@
                 "default": 0,
                 "minimum": 0,
                 "title": "Downgraded",
+                "type": "integer"
+              },
+              "expect_outside_within": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Expect Outside Within",
                 "type": "integer"
               },
               "reasons": {
@@ -80155,7 +80157,7 @@
                 "title": "Claims",
                 "type": "array"
               },
-              "covers": {
+              "expect": {
                 "anyOf": [
                   {},
                   {
@@ -80163,17 +80165,7 @@
                   }
                 ],
                 "default": null,
-                "title": "Covers"
-              },
-              "enumeration": {
-                "anyOf": [
-                  {},
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Enumeration"
+                "title": "Expect"
               },
               "for_each": {
                 "title": "For Each"
@@ -88785,7 +88777,7 @@
                 "title": "Claims",
                 "type": "array"
               },
-              "covers": {
+              "expect": {
                 "anyOf": [
                   {},
                   {
@@ -88793,17 +88785,7 @@
                   }
                 ],
                 "default": null,
-                "title": "Covers"
-              },
-              "enumeration": {
-                "anyOf": [
-                  {},
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Enumeration"
+                "title": "Expect"
               },
               "for_each": {
                 "title": "For Each"
@@ -96102,7 +96084,6 @@
           "json_name": "complete",
           "required": false,
           "schema": {
-            "const": false,
             "default": false,
             "title": "Complete",
             "type": "boolean"
@@ -96119,6 +96100,20 @@
             "default": 0,
             "minimum": 0,
             "title": "Downgraded",
+            "type": "integer"
+          }
+        },
+        "expect_outside_within": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "expect_outside_within",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Expect Outside Within",
             "type": "integer"
           }
         },
@@ -96194,9 +96189,9 @@
           }
         },
         "additionalProperties": false,
+        "description": "A run's completeness summary: present when incomplete or when expect met ``within``.\n\n``complete`` is derived: false exactly when a reason, downgrade or skipped\nwrite was recorded. ``expect_outside_within`` counts expected Subjects\noutside the step's ``within`` (never retired or inverted).",
         "properties": {
           "complete": {
-            "const": false,
             "default": false,
             "title": "Complete",
             "type": "boolean"
@@ -96205,6 +96200,12 @@
             "default": 0,
             "minimum": 0,
             "title": "Downgraded",
+            "type": "integer"
+          },
+          "expect_outside_within": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Expect Outside Within",
             "type": "integer"
           },
           "reasons": {
