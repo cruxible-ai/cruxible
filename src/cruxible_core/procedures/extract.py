@@ -44,6 +44,7 @@ from typing import Any, Literal
 
 from cruxible_client.contracts.canonical import canonical_bytes, normalize_canonical
 from cruxible_client.contracts.captures import CaptureDecoding
+from cruxible_client.contracts.claim_evidence import CompleteWhenResult
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.extract import (
     EXTRACTOR_VERSIONS,
@@ -633,6 +634,7 @@ class _Evaluation:
     """Layer E: completeness and header results."""
 
     complete_when_held: bool
+    complete_when_result: CompleteWhenResult | None
     header: dict[str, Held]
 
 
@@ -853,6 +855,7 @@ def _evaluate(
             keys=typing.keys,
         )
     held = index.csv_complete and index.selector_matched
+    result = None
     if node.complete_when is not None:
         stated = _read(index.header_source, node.complete_when.count_at)
         held = (
@@ -861,7 +864,22 @@ def _evaluate(
             and not isinstance(stated, bool)
             and stated == len(index.records)
         )
-    return _E.remember(e_key, _Evaluation(complete_when_held=held, header=header))  # type: ignore[no-any-return]
+        expected = (
+            int(stated)
+            if isinstance(stated, int | Decimal)
+            and not isinstance(stated, bool)
+            and stated == int(stated)
+            else None
+        )
+        result = CompleteWhenResult(
+            count_at=node.complete_when.count_at,
+            expected=expected,
+            observed=len(index.records),
+            held=held,
+        )
+    return _E.remember(  # type: ignore[no-any-return]
+        e_key, _Evaluation(complete_when_held=held, complete_when_result=result, header=header)
+    )
 
 
 @dataclass(frozen=True)
@@ -885,6 +903,7 @@ class ExtractOutcome:
     complete_when_held: bool
     invalid_records: int
     duplicates: int
+    complete_when_result: CompleteWhenResult | None = None
     invalid_fields: dict[str, int] = field(default_factory=dict)
 
     @property
@@ -1232,6 +1251,7 @@ def run_extract(
         held=held,
         held_header=evaluation.header,
         complete_when_held=evaluation.complete_when_held,
+        complete_when_result=evaluation.complete_when_result,
         invalid_records=invalid_records,
         duplicates=duplicates,
         invalid_fields=invalid_fields,

@@ -107,6 +107,8 @@ class AcceptedClaimsContext:
         from cruxible_core.errors import CoreError
 
         if capture not in self._capture_sources:
+            # Logical-source attribution reads the Capture envelope, never the
+            # source payload. B5 owns retained-payload access classification.
             try:
                 envelope = parse_capture_envelope(
                     self.instance.body_store().read(
@@ -145,13 +147,20 @@ def reselect_retained_claims(
     from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, parse_claim
     from cruxible_client.contracts.procedures.artifacts import parse_procedure
     from cruxible_client.contracts.procedures.claims import ClaimsNode
-    from cruxible_core.procedures.claims_absence import object_unit_key
     from cruxible_core.procedures.claims_changes import (
         CoreClaimChange,
         CoreReobservationChange,
         CoreRetirementChange,
     )
+    from cruxible_core.procedures.claims_units import ClaimUnitUnresolved
+    from cruxible_core.procedures.claims_units import unit_key as contract_unit
     from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
+
+    def unit_key(obj: object, ct: ClaimType, context: ClaimsContext) -> bytes:
+        try:
+            return contract_unit(obj, ct, context)
+        except ClaimUnitUnresolved as exc:
+            raise ProposalDeliveryRefused("claims_inverse_unit_unresolved", str(exc)) from exc
 
     coordinate = instance.resolve_accepted_coordinate(
         git_oid=request.accepted_coordinate.git_oid,
@@ -206,7 +215,7 @@ def reselect_retained_claims(
                 and mapping.when_absent != "inverse"
                 or claim.statement.role not in ct.precedence.replacements(role, mapping.replaces)
                 or (
-                    mapping.when_absent == "mirror"
+                    mapping.when_absent in {"mirror", "inverse"}
                     and not any(
                         context.logical_source(c) == change.witness.logical_source
                         for c in claim.backing.capture_digests
@@ -255,12 +264,24 @@ def reselect_retained_claims(
                 raise ProposalDeliveryRefused(
                     "proposal_item_invalid", "The retained ClaimType no longer declares an inverse"
                 )
-            unit = object_unit_key(statement.object.model_dump(mode="json"), ct, context)
+            unit = unit_key(statement.object.model_dump(mode="json"), ct, context)
             held = tuple(
                 c
                 for c in held
-                if object_unit_key(c.statement.object.model_dump(mode="json"), ct, context) == unit
+                if unit_key(c.statement.object.model_dump(mode="json"), ct, context) == unit
             )
+            if any(
+                c.statement.object.kind != "none"
+                and not any(
+                    context.logical_source(cap) == receipt.absence.logical_source
+                    for cap in c.backing.capture_digests
+                )
+                for c in held
+            ):
+                raise ProposalDeliveryRefused(
+                    "claims_absence_binding_invalid",
+                    "A retained positive belongs to another logical source; run the Line again",
+                )
             if any(c.statement.role not in replaces for c in held):
                 raise ProposalDeliveryRefused(
                     "proposal_item_invalid", "A higher-precedence Claim now holds this absence unit"

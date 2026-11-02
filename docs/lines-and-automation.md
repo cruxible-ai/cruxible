@@ -579,16 +579,25 @@ on the step, then choose `when_absent` on each mapping:
 | `inverse` | Write the ClaimType's declared inverse (`{kind: none}` on its unit), under its evidence rules and precedence policy. |
 
 No `covers` means no absence inference. `covers` and `enumeration` are required
-together; if the extractor selects `only_keys`, coverage must be a subset.
+together; enumeration must reference the whole extract output directly, without
+transforms. Mirror and inverse require that extract to declare `complete_when`.
+If the extractor selects `only_keys`, coverage must be a subset.
 A missing record or an explicitly absent mapped field can establish absence.
 An invalid field, invalid record, duplicate key or false `when` cannot. For a
-many-valued slot, each held unit is compared separately.
+many-valued slot, each held unit is compared with the enumeration, even when
+`within`, `for_each`, value admission or incomplete-input policy skips its write.
+An inverse mapping must use an item-independent value template (such as a literal
+or Line parameter) for its unit. A positive from another logical source is
+surfaced under inverse as well as mirror.
 
 Both coverage and enumeration must be complete. Otherwise destructive absence
 becomes `surface`, with `source_incomplete: true`. A mirror retirement retains
 an absence witness: Capture, logical source, extract specification and extractor,
-completeness result, enumerated-key digest, and the accepted coordinate used
-for coverage. Inverses cite that proof as evidence. A mirror on a type with a
+evaluated count path, expected/observed counts and result, enumerated-key digest,
+producing run/Procedure/node binding, and the accepted coordinate used
+for coverage. The executing Claims terminal produces that proof; public authoring
+cannot attach it. Preparation and delivery verify its run, Capture and extract
+binding. Inverses cite that proof as evidence. A mirror on a type with a
 declared inverse retires the positive and writes the inverse. Re-confirming an
 inverse records a re-observation; an appearing value revises it into a positive.
 Mirror retirements and inverse writes currently require proposal review even

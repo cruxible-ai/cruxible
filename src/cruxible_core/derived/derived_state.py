@@ -1018,6 +1018,9 @@ class PathFacts:
         colliding = self.colliding
         depths = dict(self.depths)
         folded = self.folded
+        # One delta may add many siblings. Accumulate their shared prefixes in
+        # the delta, then copy each persistent-map path once per changed prefix.
+        respelled: dict[str, _Spellings] = {}
         for path, new in edits.items():
             old = rows.get(path)
             if old is None and new is None:
@@ -1033,10 +1036,12 @@ class PathFacts:
             depth = path.count("/") + 1
             depths[depth] = depths.get(depth, 0) + sign
             for key, spelling in _prefixes(path):
-                before = folded.get(key, ())
-                after = _respelled(before, spelling, sign)
-                colliding += (len(after) > 1) - (len(before) > 1)
-                folded = folded.set(key, after) if after else folded.delete(key)
+                before = respelled.get(key, folded.get(key, ()))
+                respelled[key] = _respelled(before, spelling, sign)
+        for key, after in respelled.items():
+            before = folded.get(key, ())
+            colliding += (len(after) > 1) - (len(before) > 1)
+            folded = folded.set(key, after) if after else folded.delete(key)
         return PathFacts(content, noncanonical, colliding, depths, folded)
 
 

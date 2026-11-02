@@ -166,3 +166,25 @@ def test_an_accepted_record_over_the_file_limit_does_not_block_later_proposals()
     fork["subjects/project.work_item/c.json"] = b"x" * 31
     with pytest.raises(Exception, match="exceeds its byte limit: subjects/project.work_item/c"):
         validate_proposal_tree(fork.snapshot(), limits=limits, base_tree=root)
+
+
+def test_one_delta_updates_each_shared_prefix_once(monkeypatch) -> None:
+    from cruxible_client.contracts.persistent import PersistentMap
+
+    root = SnapshotTree({"subjects/work/old.json": b"old"})
+    facts = path_facts(root)
+    updates = []
+    original = PersistentMap.set
+
+    def observed(self, key, value):
+        updates.append(key)
+        return original(self, key, value)
+
+    monkeypatch.setattr(PersistentMap, "set", observed)
+    edits = {f"subjects/work/new-{index}.json": b"new" for index in range(100)}
+    result = facts.advanced(root._rows, edits)
+    assert updates.count("subjects") == 1
+    assert updates.count("subjects/work") == 1
+    assert len(updates) == 102
+    fresh = path_facts(SnapshotTree({**dict(root.items()), **edits}))
+    assert result == fresh

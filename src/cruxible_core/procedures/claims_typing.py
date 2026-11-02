@@ -48,6 +48,11 @@ from cruxible_client.contracts.subject_kinds import key_predicate
 class ClaimsTypingRefused(ValueError):
     code = "cruxible.procedure.claims_type_invalid"
 
+    def __init__(self, message: str, *, code: str | None = None) -> None:
+        super().__init__(message)
+        if code is not None:
+            self.code = code
+
 
 def validate_claims_templates(
     definition: ProcedureDefinition, lookup: Callable[[ArtifactIdentity], Any]
@@ -254,6 +259,29 @@ def validate_claims_templates(
     for node in definition.nodes:
         if not isinstance(node, ClaimsNode):
             continue
+        if node.covers is not None:
+            reference = node.enumeration
+            alias = (
+                reference.split(".")[1]
+                if isinstance(reference, str) and reference.startswith("$steps.")
+                else None
+            )
+            extracting = aliases.get(alias)
+            if not isinstance(extracting, ExtractNode) or reference != f"$steps.{extracting.as_}":
+                raise ClaimsTypingRefused(
+                    "claims_enumeration_invalid: enumeration must directly "
+                    "reference the whole extract output",
+                    code="cruxible.procedure.claims_enumeration_invalid",
+                )
+            if (
+                any(m.when_absent in {"mirror", "inverse"} for m in node.claims)
+                and extracting.complete_when is None
+            ):
+                raise ClaimsTypingRefused(
+                    "claims_complete_when_required: mirror and inverse "
+                    "require a declared complete_when",
+                    code="cruxible.procedure.claims_complete_when_required",
+                )
         kind = source("SubjectKind", node.subject.kind)
         parts = [key_predicate(kind, name) for name in node.subject.key]
         if None in parts or set(parts) != set(kind.keys) or len(parts) != len(kind.keys):
@@ -276,6 +304,15 @@ def validate_claims_templates(
                     "claims_inverse_missing: when_absent inverse requires "
                     "a declared ClaimType inverse"
                 )
+            if mapping.when_absent == "inverse":
+                from cruxible_core.procedures.execution import _mentions_item_reference
+
+                if _mentions_item_reference(mapping.value):
+                    raise ClaimsTypingRefused(
+                        "claims_inverse_item_value: inverse units require "
+                        "an item-independent value template",
+                        code="cruxible.procedure.claims_inverse_item_value",
+                    )
             role = mapping.role or ct.default_role
             if role not in ct.permitted_roles:
                 raise ClaimsTypingRefused("claims_role_forbidden: state a permitted role")

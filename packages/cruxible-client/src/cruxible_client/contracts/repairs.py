@@ -44,6 +44,26 @@ UNDECLARED_HAND_EDIT_CHANGE = "read_the_refusal_details_and_revise_the_named_art
 # is declared here beside the vocabularies it covers, never derived from the
 # code, and the served refusal models read it when a producer carries none.
 DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
+    "claims_absence_invalid": (
+        "Repair covers and enumeration to reference a complete extract and available "
+        "Subject keys, then rerun the Line."
+    ),
+    "claims_covers_outside_only_keys": (
+        "Restrict covers to the extractor's only_keys selection, or widen that selection, "
+        "then rerun the Line."
+    ),
+    "claims_enumeration_invalid": (
+        "Reference the whole extract output directly as enumeration, without transforms or "
+        "subpaths, then rerun the Line."
+    ),
+    "claims_inverse_unit_unresolved": (
+        "Restore the object's single live key Claim or correct its declared inverse unit, "
+        "then rerun the Line."
+    ),
+    "claims_absence_binding_invalid": (
+        "Run the Line again to produce an absence witness bound to this run, Capture, "
+        "extract and item; do not supply a witness through authoring."
+    ),
     # The bound provider operation refused under a code it declares: the code
     # is the refusal's `detail_code`, its declared detail is `details`.
     "operation_refused": (

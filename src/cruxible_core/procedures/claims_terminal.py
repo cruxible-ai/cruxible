@@ -31,9 +31,6 @@ from cruxible_client.contracts.procedures.models import (
     TransformNode,
 )
 from cruxible_client.contracts.shapes import (
-    FieldInvalid,
-    SubjectType,
-    check_value,
     claim_has_line_break,
     claim_rationale,
     requires_complete_input,
@@ -46,6 +43,7 @@ from cruxible_core.procedures.claims_changes import (
 )
 from cruxible_core.procedures.claims_context import ClaimsContext
 from cruxible_core.procedures.claims_diagnostics import ClaimsDiagnostics
+from cruxible_core.procedures.claims_units import ClaimUnitUnresolved, resolve_object, unit_key
 from cruxible_core.procedures.terminal_dependencies import DependencyToken
 
 if TYPE_CHECKING:
@@ -126,7 +124,6 @@ def expand_claims(
     values: list[CanonicalValue] = []
     tokens: list[frozenset[DependencyToken]] = []
     created: set[bytes] = set()
-    observed: set[tuple[str, str, bytes, bytes]] = set()
     nodes = (
         {}
         if executor.plan is None
@@ -227,6 +224,21 @@ def expand_claims(
 
         within_paths = {path_of(item) for item in within}
     attempted = 0
+
+    def reserve() -> None:
+        nonlocal attempted
+        attempted += 1
+        state.observe_items(attempted, f"terminal:{node.node_id}", "claims")
+        if attempted > max_items:
+            raise _budget_refusal(
+                budget_kind="max_items",
+                limit=max_items,
+                observed=attempted,
+                node_id=node.node_id,
+                boundary=f"terminal:{node.node_id}",
+                field_path="claims",
+            )
+
     for row_index, (row, own_tokens) in enumerate(zip(rows, row_tokens, strict=True)):
         record = _record(row, row_index, "claims")
         if (
@@ -257,17 +269,7 @@ def expand_claims(
             }
         )
         for template_index, mapping in enumerate(node.claims):
-            attempted += 1
-            state.observe_items(attempted, f"terminal:{node.node_id}", "claims")
-            if attempted > max_items:
-                raise _budget_refusal(
-                    budget_kind="max_items",
-                    limit=max_items,
-                    observed=attempted,
-                    node_id=node.node_id,
-                    boundary=f"terminal:{node.node_id}",
-                    field_path="claims",
-                )
+            reserve()
             target = (
                 f"{node.subject.kind}:"
                 + canonical_bytes(key).decode("utf-8")
@@ -323,56 +325,12 @@ def expand_claims(
                     lexeme=str(value)[:512],
                 )
                 continue
-            checked = (
-                None
-                if present
-                else check_value(
-                    value,
-                    ct.value,
-                    at=target,
-                    resolve=executor.contract_resolver,
-                    enum_members=executor.enum_resolver,
-                    keys=executor.key_rules,
-                )
-            )
-            if isinstance(ct.value, SubjectType):
-                # Values name an accepted Subject, or explicitly name its key.
-                try:
-                    if isinstance(value, dict) and value.get("kind") in ct.value.subject_kinds:
-                        address = context.subject(value["kind"], value.get("key", {}))
-                    elif isinstance(value, str):
-                        matches = [
-                            context.reference(kind, value) for kind in ct.value.subject_kinds
-                        ]
-                        resolved = [found for found in matches if found is not None]
-                        address = resolved[0] if len(resolved) == 1 else None
-                    else:
-                        address = None
-                except ValueError:
-                    address = None
-                if address is None:
-                    report(
-                        "extract_refused", target, field=str(mapping.value), problem="value_invalid"
-                    )
-                    continue
-                obj: dict[str, Any] = {
-                    "kind": "subject",
-                    "address": address.model_dump(mode="json"),
-                }
-            elif isinstance(checked, FieldInvalid):
-                report(
-                    "extract_refused",
-                    target,
-                    field=str(mapping.value),
-                    problem="value_invalid",
-                    lexeme=str(value)[:512],
-                )
+            obj = resolve_object(value, ct, context, executor, trusted=present)
+            if obj is None:
+                report("extract_refused", target, field=str(mapping.value), problem="value_invalid")
                 continue
-            else:
-                from cruxible_core.procedures.extract import wire_value
-
-                value = value if checked is None else wire_value(checked.value)
-                obj = {"kind": "literal", "value": value}
+            if obj["kind"] == "literal":
+                value = obj["value"]
             value_reads = _referenced_reads(
                 [
                     node.for_each,
@@ -428,29 +386,29 @@ def expand_claims(
                 obj = {"kind": "literal", "value": value}
             if obj["kind"] == "literal":
                 obj["value"] = canonicalize_literal(obj["value"], effective_canonical_form(ct))
-            if node.covers is not None and ct.cardinality == "many" and subject is not None:
-                from cruxible_core.procedures.claims_absence import object_unit_key
-
-                observed.add(
-                    (
-                        subject.artifact_path,
-                        ct.predicate,
-                        canonical_bytes(qualifier),
-                        object_unit_key(obj, ct, context),
-                    )
-                )
             blocked = [c for c in held if c.statement.role not in replaces]
             same_blocked = [c for c in blocked if c.statement.object.model_dump(mode="json") == obj]
+            if ct.inverse is not None:
+                try:
+                    incoming_unit = unit_key(obj, ct, context)
+                    held_units = {
+                        c.identity.name: unit_key(c.statement.object, ct, context) for c in held
+                    }
+                except ClaimUnitUnresolved:
+                    report(
+                        "extract_refused",
+                        target,
+                        field=str(mapping.value),
+                        problem="inverse_unit_unresolved",
+                    )
+                    continue
             if ct.inverse is not None and ct.cardinality == "many":
-                from cruxible_core.procedures.claims_absence import object_unit_key
-
-                incoming_unit = object_unit_key(obj, ct, context)
+                incoming_unit = unit_key(obj, ct, context)
                 inverse_blocked = [
                     c
                     for c in blocked
                     if c.statement.object.kind == "none"
-                    and object_unit_key(c.statement.object.model_dump(mode="json"), ct, context)
-                    == incoming_unit
+                    and held_units[c.identity.name] == incoming_unit
                 ]
             else:
                 inverse_blocked = []
@@ -496,10 +454,7 @@ def expand_claims(
                     if isinstance(c.statement.object, NoneClaimObject)
                     and (
                         ct.inverse.key.kind == "slot"
-                        or (
-                            object_unit_key(c.statement.object.model_dump(mode="json"), ct, context)
-                            == object_unit_key(obj, ct, context)
-                        )
+                        or (held_units[c.identity.name] == incoming_unit)
                     )
                 ]
                 if len(inverse_holders) == 1:
@@ -795,21 +750,26 @@ def expand_claims(
     if node.covers is not None:
         from cruxible_core.procedures.claims_absence import append_absence
 
-        append_absence(
-            node,
-            executor=executor,
-            admission=admission,
-            state=state,
-            context=context,
-            resolve=resolve,
-            lineage=lineage,
-            values=values,
-            tokens=tokens,
-            evidence=evidence,
-            changes=changes,
-            diagnostics=diagnostics,
-            observed=observed,
-        )
+        try:
+            append_absence(
+                node,
+                executor=executor,
+                admission=admission,
+                state=state,
+                context=context,
+                resolve=resolve,
+                lineage=lineage,
+                values=values,
+                tokens=tokens,
+                evidence=evidence,
+                changes=changes,
+                diagnostics=diagnostics,
+                reserve=reserve,
+            )
+        except ClaimUnitUnresolved as exc:
+            raise _RunRefusal(
+                "claims_inverse_unit_unresolved", str(exc), node_id=node.node_id
+            ) from exc
     return ExpandedClaims(values, tuple(tokens), diagnostics, tuple(evidence), tuple(changes))
 
 

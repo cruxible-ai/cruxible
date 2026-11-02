@@ -437,3 +437,21 @@ def test_exact_renderer_digest_controls_candidate_evaluation(tmp_path: Path) -> 
             **common,
             candidate_card_renderer_digest="sha256:" + "0" * 64,
         )
+
+
+def test_reachability_inspection_includes_the_current_request_frontier(tmp_path: Path) -> None:
+    """Native Git must see every completed object before it inspects review refs."""
+    instance, _owner = initialize_local(tmp_path)
+    ledger = instance._ledger
+    base = ledger.read_main()
+    assert base is not None
+    with ledger.request_pack():
+        pending = ledger.proposal_review_commit(
+            tree_oid=ledger.tree_oid(base),
+            base_oid=base,
+            actor_id="owner",
+            timestamp=TIMESTAMP,
+            message="Pending review inspection",
+        )
+        assert ledger.parent_of(pending) == base
+        assert pending in ledger.unreachable_commits()

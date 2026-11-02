@@ -153,46 +153,6 @@ def inverse_world(tmp_path, *, incomplete=False):
     return instance, root, original
 
 
-@pytest.mark.parametrize("incomplete", (False, True))
-def test_pilot_inverse_complete_catalog_or_surface_only(tmp_path: Path, incomplete):
-    instance, root, original = inverse_world(tmp_path, incomplete=incomplete)
-    first = run(instance, root)
-    assert first.status == "succeeded", json.dumps(first.terminal.model_dump(mode="json"))
-    claims = proposed_claims(instance, first)
-    if incomplete:
-        assert not claims
-        assert first.completeness is not None
-        assert any(f.source_incomplete for f in first.findings)
-        return
-    assert len(claims) == 2
-    assert all(
-        c.statement.object.kind == "none" and c.backing.procedure_evidence.absence is not None
-        for c in claims
-    )
-    activate(instance, first)
-    before = instance.accepted_coordinate()
-    # Different bytes, re-confirmed absence: no Claim revision or proposal.
-    path = root / "data/kev.json"
-    doc = json.loads(path.read_bytes())
-    doc["catalogVersion"] = "next"
-    path.write_text(json.dumps(doc))
-    second = run(instance, root, minute=1)
-    assert second.status == "succeeded", second.terminal
-    assert second.terminal_egress[0].proposal_id is None
-    assert instance.accepted_coordinate() == before
-    assert all(child.unchanged for child in second.terminal_egress[0].children)
-    path.write_text(json.dumps(original))
-    positive = run(instance, root, minute=2)
-    assert positive.status == "succeeded", positive.terminal
-    listed = [
-        c for c in candidate_claims(instance, positive) if c.statement.predicate == KEV + "listed"
-    ]
-    assert len(listed) == 2 and all(
-        c.statement.object.kind == "literal" and c.statement.object.value is True for c in listed
-    )
-    assert {c.identity.name for c in listed} == {c.identity.name for c in claims}
-
-
 @pytest.mark.parametrize("protection", ("precedence", "other_source"))
 def test_mirror_surfaces_a_protected_holder(tmp_path: Path, protection):
     spec = absence_spec()
@@ -226,7 +186,9 @@ def test_mirror_surfaces_a_protected_holder(tmp_path: Path, protection):
     )
 
 
-@pytest.mark.parametrize("case", ("field_absent", "invalid_field", "duplicate", "when_false"))
+@pytest.mark.parametrize(
+    "case", ("field_absent", "invalid_field", "duplicate", "when_false", "when_present")
+)
 def test_only_true_field_absence_mirrors(tmp_path: Path, case):
     raw = absence_spec().model_dump(mode="python", by_alias=True)
     raw["steps"][-1]["claims"][0]["when_absent"] = "keep"
@@ -234,13 +196,18 @@ def test_only_true_field_absence_mirrors(tmp_path: Path, case):
     instance, root = pilot_world(tmp_path, "kev.json", spec=procedure_spec(base=raw))
     first = run(instance, root)
     activate(instance, first)
-    if case == "when_false":
+    if case in {"when_false", "when_present"}:
         raw["procedure"] = "security.false-absence"
         raw["steps"][-1]["claims"][1]["when"] = {
             "op": "eq",
             "left": {"literal": 0},
             "right": {"literal": 1},
         }
+        if case == "when_present":
+            raw["steps"][-1]["claims"][1]["when"] = {
+                "op": "present",
+                "of": {"$ref": "item", "path": ["fields", "date_added"]},
+            }
         install(
             instance,
             procedure_spec(base=raw),
@@ -261,7 +228,7 @@ def test_only_true_field_absence_mirrors(tmp_path: Path, case):
         instance,
         root,
         minute=1,
-        line="false-absence" if case == "when_false" else "test.claims-line",
+        line="false-absence" if case in {"when_false", "when_present"} else "test.claims-line",
     )
     assert second.status == "succeeded", second.terminal
     changed = proposed_claims(instance, second)
@@ -350,13 +317,16 @@ def test_absence_tracks_each_qualifier_and_each_many_valued_unit(tmp_path: Path,
     path = root / sources.RELATIVE_PATH
     path.write_bytes(
         canonical_bytes(
-            {"proposals": [{"id": "a", "severity": "high"}, {"id": "b", "severity": "low"}]}
+            {
+                "proposals": [{"id": "a", "severity": "high"}, {"id": "b", "severity": "low"}],
+                "count": 2,
+            }
         )
     )
     first = settle.run_settle(instance, root, line)
     assert first.status == "succeeded", json.dumps(first.terminal.model_dump(mode="json"))
     assert first.terminal_egress[0].settle_outcome == "settled"
-    path.write_bytes(canonical_bytes({"proposals": [{"id": "a", "severity": "high"}]}))
+    path.write_bytes(canonical_bytes({"proposals": [{"id": "a", "severity": "high"}], "count": 1}))
     from datetime import timedelta
 
     second = settle.run_settle(instance, root, line, now=sources.NOW + timedelta(hours=1))

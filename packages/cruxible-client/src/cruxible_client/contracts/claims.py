@@ -204,7 +204,7 @@ class ClaimUnitKey(_StrictClaimModel):
 
 def claim_unit_key(
     statement: ClaimStatement,
-    inverse: ClaimInverse,
+    inverse: ClaimInverse | None,
     *,
     object_key_value: Callable[[SemanticAddress, str], object] | None = None,
 ) -> ClaimUnitKey | None:
@@ -215,9 +215,9 @@ def claim_unit_key(
     Claim under an inverse keyed by ``object_key``.
     """
 
-    key = inverse.key
+    key = None if inverse is None else inverse.key
     value = statement.object
-    if isinstance(key, ClaimInverseObjectKey):
+    if key is None or isinstance(key, ClaimInverseObjectKey):
         named = value.of if isinstance(value, NoneClaimObject) else value
         return (
             None

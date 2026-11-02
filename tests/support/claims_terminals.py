@@ -35,6 +35,8 @@ def delivery_definition(
         for predicate in predicates
     ]
     subject_key = {"slug": "$item.key.slug" if records != "/" and not fixed_subject else subject_id}
+    if absence == "inverse":
+        mappings = [{**mapping, "value": "high"} for mapping in mappings]
     if fixed_subject and not many:
         mappings = [{**mapping, "qualifier": "$item.key.slug"} for mapping in mappings]
     if templates is not None:
@@ -126,6 +128,7 @@ def delivery_definition(
                     else {}
                 ),
                 only_keys=only_keys,
+                complete_when={"count_at": "/count"} if absence else None,
                 fields={"severity": {"at": "severity"}},
                 as_="entries",
                 next=node_id,

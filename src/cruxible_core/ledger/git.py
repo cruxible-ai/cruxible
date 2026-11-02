@@ -2018,7 +2018,12 @@ class GitLedger:
         removal, which deliberately deletes unreachable objects fsck inventories.
         """
 
-        with _batch_reader(self.path).store.lock:
+        reader = _batch_reader(self.path)
+        with reader.store.lock:
+            # Inspection is an explicit native-Git read boundary. In-process
+            # review commits may still be in this request's frontier; publish
+            # that frontier before fsck resolves refs and inventories objects.
+            reader.flush(final=True)
             rows = (
                 self._git(["fsck", "--unreachable", "--no-reflogs", "--no-progress"])
                 .decode()

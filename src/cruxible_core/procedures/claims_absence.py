@@ -13,32 +13,13 @@ from cruxible_client.contracts.claim_evidence import (
 )
 from cruxible_client.contracts.claims import NoneClaimObject, claim_artifact_digest
 from cruxible_client.contracts.content_memo import seal
-from cruxible_client.contracts.procedures.models import CallNode, ExtractNode
+from cruxible_client.contracts.procedures.models import ExtractNode
 from cruxible_core.procedures.claims_changes import (
     CoreClaimChange,
     CoreReobservationChange,
     CoreRetirementChange,
 )
-
-
-def object_unit_key(obj: dict[str, Any], claim_type: Any, context: Any) -> bytes:
-    """Canonical unit identity for a resolved object, including object-key inverses."""
-    from cruxible_client.contracts.semantic import SemanticAddress
-
-    inverse = claim_type.inverse
-    if inverse is None:
-        return canonical_bytes(obj)
-    if inverse.key.kind == "slot":
-        return b"slot"
-    if obj["kind"] == "none":
-        return canonical_bytes(obj.get("of"))
-    if inverse.key.kind == "object":
-        return canonical_bytes(obj)
-    address = SemanticAddress.model_validate(obj["address"])
-    held = context.slot(address, inverse.key.predicate, None)
-    if len(held) != 1 or held[0].statement.object.kind != "literal":
-        raise ValueError("claims_absence_invalid: inverse object key is unresolved")
-    return canonical_bytes(held[0].statement.object.model_dump(mode="json"))
+from cruxible_core.procedures.claims_units import ClaimUnitUnresolved, resolve_object, unit_key
 
 
 def append_absence(
@@ -55,7 +36,7 @@ def append_absence(
     evidence: list[Any],
     changes: list[Any],
     diagnostics: Any,
-    observed: set[tuple[str, str, bytes, bytes]],
+    reserve: Callable[[], None],
 ) -> None:
     """One pass over enumeration and covers; every Claim read is an indexed slot read.
 
@@ -75,7 +56,7 @@ def append_absence(
     from cruxible_core.procedures.transforms import _record, _truth
 
     def refuse(message: str) -> NoReturn:
-        raise _RunRefusal("proposal_item_invalid", message, node_id=node.node_id)
+        raise _RunRefusal(message.split(":", 1)[0], message, node_id=node.node_id)
 
     covered = resolve(node.covers)
     enumeration = resolve(node.enumeration)
@@ -98,18 +79,15 @@ def append_absence(
         ]
     sources: dict[str, Any] = {}
     for alias in _referenced_aliases(node.enumeration):
-        roots, _, _ = lineage(alias)
+        roots, chain, blocked = lineage(alias)
+        if chain or blocked:
+            refuse("claims_enumeration_invalid: enumeration must directly name an extract")
         sources.update((source.node_id, source) for source in roots)
-    if len(sources) != 1 or not isinstance(next(iter(sources.values())), (ExtractNode, CallNode)):
+    if len(sources) != 1 or not isinstance(next(iter(sources.values())), ExtractNode):
         refuse("claims_absence_invalid: enumeration must name one declared source lineage")
     extracting = next(iter(sources.values()))
-    binding = (
-        executor.slot_bindings.get(extracting.slot) if isinstance(extracting, CallNode) else None
-    )
-    if isinstance(extracting, CallNode) and (
-        binding is None or binding.operation.enumerates is None
-    ):
-        refuse("claims_absence_invalid: a provider parser must declare enumerates and field paths")
+    if node.enumeration != f"$steps.{extracting.as_}":
+        refuse("claims_enumeration_invalid: enumeration must reference the whole extract output")
     own = _exact_evidence(
         [node.enumeration, node.covers], state=state, node_id=node.node_id, field="absence"
     )
@@ -129,17 +107,12 @@ def append_absence(
     from cruxible_client.contracts.procedures.extract import EXTRACTOR_VERSIONS
     from cruxible_core.procedures.claims_terminal import _receipt_extract_digest
 
-    if isinstance(extracting, ExtractNode):
-        extract_spec = _receipt_extract_digest(extracting)
-        contract = executor.capture_contracts.get(state.capture_contracts.get(capture, ""))
-        extractor = EXTRACTOR_VERSIONS[
-            getattr(getattr(contract, "decoding", None), "format", "json")
-        ]
-    else:
-        assert binding is not None
-        extract_spec = binding.operation_signature_digest
-        extractor = f"provider:{binding.operation.name}:{binding.build.artifact_digest}"
-
+    extract_spec = _receipt_extract_digest(extracting)
+    contract = executor.capture_contracts.get(state.capture_contracts.get(capture, ""))
+    if contract is None or contract.decoding is None:
+        refuse("claims_absence_invalid: enumeration CaptureKind decoding is unavailable")
+    extractor = EXTRACTOR_VERSIONS[contract.decoding.format]
+    check = state.extraction_checks.get(extracting.as_)
     by_subject: dict[str, list[dict[str, Any]]] = {}
     refused: set[str] = set()
     keys = []
@@ -202,8 +175,13 @@ def append_absence(
                 allowed.add(subject.artifact_path)
         if not covers.keys() <= allowed:
             refuse("claims_covers_outside_only_keys: covers must be a subset of only_keys")
+    if check is None and any(
+        mapping.when_absent in {"mirror", "inverse"} for mapping in node.claims
+    ):
+        refuse("claims_absence_invalid: the declared complete_when result is unavailable")
     complete = (
-        not invalid_enumeration
+        (check is None or check.held)
+        and not invalid_enumeration
         and (enumeration.get("complete", True) if isinstance(enumeration, dict) else True)
         and (
             state.completeness.at_sink(_referenced_reads(node.covers))
@@ -213,13 +191,16 @@ def append_absence(
         )
     )
     witness = None
-    if complete:
+    if complete and check is not None:
         witness = AbsenceWitness(
+            run_id=admission.run_id,
+            procedure_digest=admission.procedure_artifact_digest,
+            node_id=node.node_id,
             capture=capture,
             extract_spec=extract_spec,
             extractor=extractor,
             logical_source=logical_source,
-            complete_when=True,
+            complete_when=check,
             enumerated_key_digest=typed_digest(
                 Sha256Value, "cruxible-enumerated-keys-v1", {"keys": keys}
             ).tagged,
@@ -251,10 +232,10 @@ def append_absence(
             ClaimsDiagnostic(
                 kind="claim_not_in_source",
                 target=identity,
-                claim=None if claim is None else claim.identity.name,
+                claim=claim.identity.name,
                 subject=subject.artifact_path,
                 claim_type=ct.predicate,
-                qualifier=None if claim is None else claim.statement.qualifier,
+                qualifier=claim.statement.qualifier,
                 logical_source=logical_source,
                 capture=capture,
                 extract_spec=extract_spec,
@@ -265,19 +246,7 @@ def append_absence(
         )
 
     def append(change: Any, receipt: Any, value: Any) -> None:
-        state.observe_items(len(changes) + 1, f"terminal:{node.node_id}", "claims")
-        from cruxible_core.procedures.execution import _budget_refusal
-
-        limit = admission.budget.max_items or admission.hard_caps.max_items
-        if len(changes) >= limit:
-            raise _budget_refusal(
-                budget_kind="max_items",
-                limit=limit,
-                observed=len(changes) + 1,
-                node_id=node.node_id,
-                boundary=f"terminal:{node.node_id}",
-                field_path="claims",
-            )
+        reserve()
         changes.append(change)
         evidence.append(receipt)
         tokens.append(own)
@@ -331,6 +300,7 @@ def append_absence(
                 field_absent = False
                 suppressed = False
                 present_values = []
+                present_units: set[bytes] = set()
                 for record in slot_records:
                     raw = resolve(mapping.value, record)
                     if (
@@ -351,11 +321,29 @@ def append_absence(
                     if isinstance(raw, dict) and raw.get("tag") == "absent":
                         field_absent = True
                     else:
-                        present_values.append(
-                            raw.get("value")
-                            if isinstance(raw, dict) and raw.get("tag") == "present"
-                            else raw
-                        )
+                        trusted = isinstance(raw, dict) and raw.get("tag") == "present"
+                        present_values.append((raw.get("value") if trusted else raw, trusted))
+                if not suppressed:
+                    # Presence comes from the enumeration, independent of for_each,
+                    # within, write admission, metadata and per-value completeness.
+                    for raw_value, trusted in present_values:
+                        obj = resolve_object(raw_value, ct, context, executor, trusted=trusted)
+                        if obj is None:
+                            suppressed = True
+                            break
+                        try:
+                            present_units.add(unit_key(obj, ct, context))
+                        except ClaimUnitUnresolved:
+                            suppressed = True
+                            break
+                    for record in slot_records:
+                        if any(
+                            isinstance(resolve(metadata, record), dict)
+                            and resolve(metadata, record).get("tag") == "invalid"
+                            for metadata in (mapping.effective_from, mapping.effective_until)
+                        ):
+                            suppressed = True
+                            break
                 if suppressed:
                     continue
                 if slot_records and present_values:
@@ -382,11 +370,11 @@ def append_absence(
                 blocked_units = set()
                 if ct.inverse is not None:
                     blocked_units = {
-                        object_unit_key(c.statement.object.model_dump(mode="json"), ct, context)
+                        unit_key(c.statement.object.model_dump(mode="json"), ct, context)
                         for c in held
                         if c.statement.role not in replaces
                         or (
-                            mapping.when_absent == "mirror"
+                            mapping.when_absent in {"mirror", "inverse"}
                             and not any(
                                 context.logical_source(cap) == logical_source
                                 for cap in c.backing.capture_digests
@@ -400,14 +388,13 @@ def append_absence(
                     candidates = [None]
                 for claim in candidates:
                     if claim is not None and ct.cardinality == "many":
-                        obj = claim.statement.object
-                        unit_key = object_unit_key(obj.model_dump(mode="json"), ct, context)
-                        if (
-                            path,
-                            ct.predicate,
-                            canonical_bytes(claim.statement.qualifier),
-                            unit_key,
-                        ) in observed:
+                        try:
+                            held_unit = unit_key(claim.statement.object, ct, context)
+                        except ClaimUnitUnresolved:
+                            refuse(
+                                "claims_inverse_unit_unresolved: held object key cannot be resolved"
+                            )
+                        if held_unit in present_units:
                             continue
                     if mapping.when_absent == "surface" or not complete:
                         if not complete and mapping.when_absent in {"mirror", "inverse"}:
@@ -424,22 +411,17 @@ def append_absence(
                     if (
                         claim is not None
                         and ct.inverse is not None
-                        and object_unit_key(
-                            claim.statement.object.model_dump(mode="json"), ct, context
-                        )
+                        and unit_key(claim.statement.object.model_dump(mode="json"), ct, context)
                         in blocked_units
                     ):
                         finding(claim, ct, reason)
                         continue
                     if claim is not None and claim.statement.role not in replaces:
-                        if isinstance(claim.statement.object, NoneClaimObject):
-                            diagnostics.same += 1
-                        else:
-                            finding(claim, ct, reason)
+                        finding(claim, ct, reason)
                         continue
                     if (
                         claim is not None
-                        and mapping.when_absent == "mirror"
+                        and mapping.when_absent in {"mirror", "inverse"}
                         and not any(
                             context.logical_source(c) == logical_source
                             for c in claim.backing.capture_digests
@@ -501,7 +483,7 @@ def append_absence(
                             else:
                                 inverse["of"] = obj.model_dump(mode="json")
                         else:
-                            raw = resolve(mapping.value, {"key": cover_row, "fields": cover_row})
+                            raw = resolve(mapping.value)
                             if isinstance(raw, dict) and raw.get("kind"):
                                 named = context.subject(raw["kind"], raw.get("key", {}))
                                 if named is not None:

@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, NoReturn, cast
 
 from pydantic import ValidationError
 
@@ -184,6 +184,109 @@ if TYPE_CHECKING:
 PROPOSAL_CLAIM_ID_DOMAIN = "playbill-procedure-proposal-claim-id-v1"
 PROPOSAL_INTENT_ID_DOMAIN = PROCEDURE_OPERATION_ID_DOMAIN
 PROPOSAL_LOWERING_DOMAIN = "playbill-procedure-proposal-lowering-v1"
+
+
+def _validate_absence_bindings(
+    instance: PlaybillInstance,
+    request: TerminalEgressRequestV1,
+    admission: ProcedureRunAdmission,
+    evidence: Mapping[str, str],
+) -> None:
+    """Check only core request metadata against its admitted run and pinned extract."""
+    selected = [
+        (item, change, request.claims_evidence.get(item.item_key))
+        for item, change in zip(request.items, proposal_items(request), strict=True)
+        if isinstance(change, CoreRetirementChange)
+        or (
+            request.claims_evidence.get(item.item_key) is not None
+            and request.claims_evidence[item.item_key].absence is not None
+        )
+    ]
+    if not selected:
+        return
+    from cruxible_client.contracts.procedures.artifacts import parse_procedure
+    from cruxible_client.contracts.procedures.models import ClaimsNode, ExtractNode
+    from cruxible_core.procedures.claims_terminal import _receipt_extract_digest
+
+    content = instance.blob_at(admission.bound_coordinate.git_oid, admission.procedure_path)
+    procedure = None if content is None else parse_procedure(content, path=admission.procedure_path)
+    nodes = () if procedure is None else procedure.definition.nodes
+    node = next(
+        (n for n in nodes if isinstance(n, ClaimsNode) and n.node_id == request.node_id), None
+    )
+
+    def refuse() -> NoReturn:
+        raise ProposalDeliveryRefused(
+            "claims_absence_binding_invalid",
+            "The absence witness does not bind this run, item and declared extract; "
+            "run the Line again",
+        )
+
+    if node is None:
+        refuse()
+    for item, change, receipt in selected:
+        witness = (
+            change.witness
+            if isinstance(change, CoreRetirementChange)
+            else None
+            if receipt is None
+            else receipt.absence
+        )
+        if (
+            receipt is None
+            or witness is None
+            or receipt.absence != witness
+            or witness.run_id != request.run_id
+            or witness.run_id != admission.run_id
+            or witness.procedure_digest != admission.procedure_artifact_digest
+            or witness.procedure_digest != request.procedure_artifact_digest
+            or receipt.procedure_digest != witness.procedure_digest
+            or witness.node_id != request.node_id
+            or receipt.node_id != request.node_id
+            or witness.capture != evidence.get(item.item_key)
+            or witness.covers_coordinate != admission.accepted_coordinate
+            or receipt.template >= len(node.claims)
+        ):
+            refuse()
+        extracting = next(
+            (
+                n
+                for n in nodes
+                if isinstance(n, ExtractNode) and node.enumeration == f"$steps.{n.as_}"
+            ),
+            None,
+        )
+        if (
+            extracting is None
+            or extracting.complete_when is None
+            or witness.extract_spec != _receipt_extract_digest(extracting)
+            or witness.complete_when.count_at != extracting.complete_when.count_at
+        ):
+            refuse()
+        mapping = node.claims[receipt.template]
+        if mapping.when_absent not in {"mirror", "inverse"}:
+            refuse()
+        value = item.value
+        if isinstance(change, CoreRetirementChange):
+            if (
+                not isinstance(value, dict)
+                or value.get("retire") != change.claim_id
+                or value.get("template") != receipt.template
+                or change.claim_type != mapping.claim_type.target.name
+            ):
+                refuse()
+        elif isinstance(change, CoreClaimChange):
+            unit_wire = change.statement.object.model_dump(mode="json")
+            if unit_wire.get("of") is None:
+                unit_wire.pop("of", None)
+            if (
+                change.statement.object.kind != "none"
+                or change.statement.predicate != mapping.claim_type.target.name
+                or not isinstance(value, dict)
+                or value.get("template") != receipt.template
+                or value.get("unit") != unit_wire
+            ):
+                refuse()
 
 
 def proposal_claim_id(*, admission_binding_digest: str, node_id: str, item_key: str) -> str:
@@ -1222,6 +1325,7 @@ class ProposalTerminalEgressSink:
         self.delegation = delegation
         self.accepted_mandates = dict(accepted_mandates)
         self._proposal_service = proposal_service or instance.proposal_service
+        self._absence_evidence: dict[tuple[str, str], dict[str, str]] = {}
         self._prepared: dict[tuple[str, str], PreparedProposal] = {}
 
     def grants_settle(self) -> bool:
@@ -1292,6 +1396,11 @@ class ProposalTerminalEgressSink:
                     details={"item_keys": missing},
                 )
         items = proposal_items(request)
+        _validate_absence_bindings(self.instance, request, admission, evidence)
+        if any(receipt.absence is not None for receipt in request.claims_evidence.values()):
+            self._absence_evidence[(request.admission_binding_digest, request.node_id)] = dict(
+                evidence
+            )
         reobserved = {}
         observed = {}
         access = BodyAccessContext(principal_id=request.actor_context.actor_id, can_read_body=True)
@@ -1980,6 +2089,14 @@ class ProposalTerminalEgressSink:
             raise ProposalDeliveryRefused(
                 "procedure_authority_admission_invalid",
                 "Proposal delivery requires the exact admitted run.",
+            )
+        proof_evidence = self._absence_evidence.get(key)
+        if proof_evidence is not None:
+            _validate_absence_bindings(self.instance, request, admission, proof_evidence)
+        elif any(receipt.absence is not None for receipt in request.claims_evidence.values()):
+            raise ProposalDeliveryRefused(
+                "claims_absence_binding_invalid",
+                "No prepared run binding exists for this absence witness",
             )
         self._record_reobservations(request, prepared.prepared.unchanged)
         if prepared.creations:

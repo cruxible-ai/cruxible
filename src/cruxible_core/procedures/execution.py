@@ -16,6 +16,7 @@ from cruxible_client.contracts.captures import capture_retention_policy, parse_c
 from cruxible_client.contracts.claim_evidence import (
     ClaimEvidenceReceipt,
     ClaimsDiagnostic,
+    CompleteWhenResult,
     FindingKind,
     RunCompleteness,
 )
@@ -2229,6 +2230,7 @@ class _RunState:
     )
     claims_diagnostics: dict[str, ClaimsDiagnostics] = dataclass_field(default_factory=dict)
     absence_findings: set[str] = dataclass_field(default_factory=set)
+    extraction_checks: dict[str, CompleteWhenResult] = dataclass_field(default_factory=dict)
     claims_changes: dict[str, tuple[CoreClaimsChange, ...]] = dataclass_field(default_factory=dict)
     claims_evidence: dict[str, tuple[ClaimEvidenceReceipt | None, ...]] = dataclass_field(
         default_factory=dict
@@ -4144,6 +4146,8 @@ class ProcedureExecutor:
         value = normalize_canonical(outcome.value())
         state.observe_items(len(outcome.held), f"extract:{node.node_id}", "results")
         state.outputs[node.as_] = value
+        if outcome.complete_when_result is not None:
+            state.extraction_checks[node.as_] = outcome.complete_when_result
         state.completeness.mark(
             node.as_,
             outcome.complete and state.completeness.complete((node.capture_alias,)),
@@ -6757,10 +6761,14 @@ def _inbox_items(
 
 
 def _mentions_item_reference(value: object) -> bool:
+    if isinstance(value, BaseModel):
+        return _mentions_item_reference(value.model_dump(mode="python", by_alias=True))
     if isinstance(value, str):
         return value == "$item" or value.startswith("$item.")
     if isinstance(value, dict):
-        return any(_mentions_item_reference(member) for member in value.values())
+        return value.get("$ref") == "item" or any(
+            _mentions_item_reference(member) for member in value.values()
+        )
     if isinstance(value, list | tuple):
         return any(_mentions_item_reference(member) for member in value)
     return False

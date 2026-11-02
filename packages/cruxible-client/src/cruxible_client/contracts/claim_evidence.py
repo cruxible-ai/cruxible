@@ -73,20 +73,38 @@ EvidenceBasis = Annotated[
 ]
 
 
+class CompleteWhenResult(_Receipt):
+    count_at: str
+    expected: int | None
+    observed: int = Field(ge=0)
+    held: bool
+
+    @model_validator(mode="after")
+    def _counts(self) -> CompleteWhenResult:
+        if self.held and self.expected != self.observed:
+            raise ValueError("complete_when result does not match the enumerated count")
+        return self
+
+
 class AbsenceWitness(_Receipt):
+    run_id: str
+    procedure_digest: str
+    node_id: str
     capture: str
     extract_spec: str
     extractor: str
     logical_source: str
-    complete_when: bool
+    complete_when: CompleteWhenResult
     enumerated_key_digest: str
     covers_coordinate: AcceptedCoordinate
 
-    _digests = field_validator("capture", "extract_spec", "enumerated_key_digest")(_digest)
+    _digests = field_validator(
+        "capture", "extract_spec", "enumerated_key_digest", "procedure_digest"
+    )(_digest)
 
     @model_validator(mode="after")
     def _complete(self) -> AbsenceWitness:
-        if not self.complete_when:
+        if not self.complete_when.held:
             raise ValueError("absence witness requires a complete enumeration")
         return self
 
