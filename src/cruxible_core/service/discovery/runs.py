@@ -389,18 +389,14 @@ def procedure_run_card(
         descending=True,
         limit=OPERATIONAL_CARD_LIST_LIMIT,
     )
-    nodes: list[GetRunNode] = []
-    for stored in reversed(fired):
-        payload = run_payload(instance, stored.record.payload_digest)
-        values = payload if isinstance(payload, Mapping) else {}
-        nodes.append(
-            GetRunNode(
-                node=str(values.get("node_id", "?")),
-                kind=None if values.get("kind") is None else str(values["kind"]),
-                verdict=None if values.get("verdict") is None else str(values["verdict"]),
-                sequence=stored.record.sequence,
-            )
+    from cruxible_core.service.procedures.procedure_runs import run_node
+
+    nodes: list[GetRunNode] = [
+        run_node(
+            run_payload(instance, stored.record.payload_digest), sequence=stored.record.sequence
         )
+        for stored in reversed(fired)
+    ]
     status: RunStatus = "running"
     current: GetRunCurrentNode | None = None
     receipt_digest: str | None = None

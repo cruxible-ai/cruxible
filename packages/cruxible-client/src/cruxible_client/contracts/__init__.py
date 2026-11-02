@@ -164,6 +164,7 @@ from cruxible_client.contracts.line_inbox import InboxLinkTarget as InboxLinkTar
 from cruxible_client.contracts.line_inbox import InboxList as InboxList
 from cruxible_client.contracts.line_inbox import InboxListEntry as InboxListEntry
 from cruxible_client.contracts.line_inbox import InboxSighting as InboxSighting
+from cruxible_client.contracts.operational_reads import GetRunNode
 from cruxible_client.contracts.orient import (
     ORIENT_DEFAULT_LIMIT as ORIENT_DEFAULT_LIMIT,
 )
@@ -1562,6 +1563,8 @@ class ProcedureRunState(BaseModel):
     completeness: RunCompleteness | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    #: Every node that finished, in journal order, with its run summary.
+    nodes: list[GetRunNode] = Field(default_factory=list, exclude_if=lambda value: not value)
 
     @property
     def coordinate(self) -> AcceptedCoordinate:
