@@ -799,3 +799,16 @@ def test_a_capture_provable_only_by_its_delivered_terminal_is_found_by_contract(
         instance, instance.accepted_coordinate(), terminal_capture, access=_READ
     )
     assert not isinstance(verified, str)
+
+
+def test_a_missing_run_does_not_evict_another_runs_positive_proof(world, monkeypatch):
+    source, _terminal = _genuine(world)
+    calls = _count_run_lookups(monkeypatch)
+    with world.instance.capture_verification_request() as resolver:
+        original = resolver.produced_capture(source, run_id=world.run_id)
+        assert original
+        assert resolver.produced_capture("sha256:" + "f" * 64, run_id="absent-run") == ()
+        assert resolver.produced_capture(source, run_id=world.run_id) == original
+    # The absent run is tried, caught up and tried again; the positive run is
+    # never re-read just because an unrelated lookup needed another range.
+    assert (calls["runs"], calls["journal"]) == (3, 0)

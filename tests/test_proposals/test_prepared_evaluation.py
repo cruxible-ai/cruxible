@@ -426,3 +426,154 @@ def test_card_stripping_preserves_parent_edits_and_original_outcome(world, has_p
             assert dict(card_free_edits(submission, parent) or {}) == {"documents/new.md": b"new"}
         else:
             assert card_free_edits(submission, tree) == {}
+
+
+class ReceiptSource:
+    def __init__(self, coordinate):
+        from cruxible_client.contracts.artifacts import ArtifactIdentity
+        from cruxible_client.contracts.captures import CaptureProductionRecord
+        from cruxible_core.indexes.projection import AcceptedCoordinate
+        from cruxible_core.procedures.egress import ProcedureProducerReceiptV1
+
+        digest = "sha256:" + "a" * 64
+        self.epoch = object()
+        self.error = False
+        self.calls = []
+        self.receipt = ProcedureProducerReceiptV1(
+            admission_binding_digest=digest,
+            run_id="predecessor-run",
+            accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
+            procedure_identity=ArtifactIdentity(kind="Procedure", name="test.producer"),
+            procedure_artifact_digest=digest,
+            terminal_node_id="emit",
+            item_manifest_digests=(digest,),
+            capture_contract_digest=digest,
+        )
+        self.productions = (
+            CaptureProductionRecord(
+                capture_digest=digest,
+                capture_contract_digest=digest,
+                run_id="predecessor-run",
+                receipt_digest=digest,
+            ),
+        )
+
+    def _capture_proof_epoch(self):
+        return self.epoch
+
+    def producer_receipt(self, digest, *, run_id):
+        self.calls.append(("producer_receipt", digest, run_id))
+        if self.error:
+            raise ValueError("proof body unavailable")
+        return self.receipt
+
+    def produced_capture(self, digest, *, run_id):
+        self.calls.append(("produced_capture", digest, run_id))
+        if self.error:
+            raise ValueError("proof body unavailable")
+        return self.productions
+
+    def recall_verified(self, digest):
+        return None
+
+    def remember_verified(self, memo):
+        pass
+
+
+@pytest.mark.parametrize(
+    "change", ["unchanged", "epoch", "receipt", "production", "error", "closed"]
+)
+def test_inherited_receipts_replay_at_the_same_request_epoch(world, change):
+    from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationScope
+
+    instance = world[0]
+    adapter = PreparedEvaluationAdapter(DerivedState())
+    scope = PreparedEvaluationScope(adapter, adapter.epoch, stable_run="current-run")
+    source = ReceiptSource(instance.accepted_coordinate())
+    observed = scope.receipts(source)
+    observed.producer_receipt("receipt", run_id="predecessor-run")
+    observed.produced_capture("capture", run_id="predecessor-run")
+    # Repeated siblings retain just one observation per exact proof input.
+    observed.produced_capture("capture", run_id="predecessor-run")
+    assert len(scope._receipts) == 2
+    args = retained(world, adapter, scope)
+    if change == "epoch":
+        source.epoch = object()
+    elif change == "receipt":
+        source.receipt = source.receipt.model_copy(update={"terminal_node_id": "changed"})
+    elif change == "production":
+        source.productions = ()
+    elif change == "error":
+        source.error = True
+    elif change == "closed":
+        scope.close()
+    result = scope.take(**args)
+    assert (result is not None) == (change == "unchanged")
+    if result is not None:
+        assert source.calls[-2:] == source.calls[:2]
+    scope.close()
+
+
+@pytest.mark.parametrize(
+    "reason", ["no_epoch", "not_settling", "budget", "missing", "inconsistent"]
+)
+def test_inherited_receipts_without_replayable_bindings_disable_reuse(world, reason):
+    from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationScope
+
+    adapter = PreparedEvaluationAdapter(DerivedState())
+    scope = PreparedEvaluationScope(
+        adapter, adapter.epoch, stable_run=None if reason == "not_settling" else "current-run"
+    )
+    source = ReceiptSource(world[0].accepted_coordinate())
+    if reason == "no_epoch":
+        source.epoch = None
+    elif reason == "budget":
+        adapter.max_observations = 0
+    elif reason == "missing":
+        source.productions = ()
+    observed = scope.receipts(source)
+    observed.produced_capture("capture", run_id="predecessor-run")
+    if reason == "inconsistent":
+        source.productions = ()
+        observed.produced_capture("capture", run_id="predecessor-run")
+    assert scope.ineligible
+    scope.close()
+
+
+@pytest.mark.parametrize("change", ["unchanged", "epoch", "answer", "error"])
+def test_settlement_replays_inherited_receipts_before_reusing_admission(world, change):
+    from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationScope
+
+    instance, _coordinator_, actor, _intent_, computed = world
+    adapter = PreparedEvaluationAdapter(DerivedState())
+    scope = PreparedEvaluationScope(adapter, adapter.epoch, stable_run="current-run")
+    source = ReceiptSource(instance.accepted_coordinate())
+    scope.receipts(source).produced_capture("capture", run_id="predecessor-run")
+    outcome = replace(computed.evaluation, tree=SnapshotTree(computed.evaluation.tree))
+    admission = scope.admitted(
+        outcome,
+        current=instance.accepted_coordinate(),
+        actor_id=actor.actor_id,
+        timestamp=outcome.candidate.candidate.timestamp,
+        mandate_digest=None,
+        claim_type_expansions=(),
+    )
+    assert admission is not None
+    if change == "epoch":
+        source.epoch = object()
+    elif change == "answer":
+        source.productions = ()
+    elif change == "error":
+        source.error = True
+    actual = admission.reusable(
+        base=admission.current,
+        candidate=outcome.candidate,
+        candidate_tree=outcome.tree,
+        actor_id=actor.actor_id,
+        mandate_digest=None,
+        claim_type_expansions=(),
+        bodies=instance.body_store(),
+        query_facts_provider=None,
+    )
+    assert (actual is outcome) == (change == "unchanged")
+    scope.close()

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -16,15 +17,23 @@ from cruxible_client.contracts.canonical import (
     Sha256Value,
     normalize_ledger_path,
 )
-from cruxible_client.contracts.content_memo import is_sealed, request_derive, seal
+from cruxible_client.contracts.content_memo import (
+    ValueMemo,
+    is_sealed,
+    request_derive,
+    seal,
+    sealed_derive,
+)
 from cruxible_client.contracts.governance import governance_identifier
 from cruxible_client.contracts.projection_extensions import (
     ProjectionFact,
+    _NormalizedProjectionValue,
     normalize_projection_value,
     normalized_projection_value,
 )
 
 if TYPE_CHECKING:
+    from cruxible_client.contracts.candidates import CandidateMemberLawEvidence
     from cruxible_client.contracts.claim_attestations import VerifiedClaimAttestationV1
     from cruxible_core.proposals.settlement import ChangeSetRecord
 
@@ -340,6 +349,25 @@ def _shared_explanation(
     )
 
 
+def _record_members(
+    record: ChangeSetRecord,
+) -> Mapping[str, tuple[CandidateMemberLawEvidence, ...]]:
+    """Index one immutable generation's changed members once, including duplicates.
+
+    This cold derivation grows with the record's change, not the instance.
+    Each later Claim explanation seeks its path instead of scanning its run's
+    entire change set. Unsealed oracle inputs are deliberately derived afresh.
+    """
+
+    def build() -> Mapping[str, tuple[CandidateMemberLawEvidence, ...]]:
+        grouped: dict[str, list[CandidateMemberLawEvidence]] = {}
+        for member in record.members:
+            grouped.setdefault(member.path, []).append(member)
+        return MappingProxyType({path: tuple(members) for path, members in grouped.items()})
+
+    return sealed_derive(record, ("query.explanation.record-members",), build)
+
+
 def _record_for_current_artifact(
     records: tuple[tuple[str, ChangeSetRecord], ...],
     *,
@@ -350,11 +378,31 @@ def _record_for_current_artifact(
         (record_path, record)
         for record_path, record in records
         if any(
-            member.path == path and member.candidate_artifact_digest == artifact_digest
-            for member in record.members
+            member.candidate_artifact_digest == artifact_digest
+            for member in _record_members(record).get(path, ())
         )
     ]
     return max(matching_records, key=lambda item: item[1].sequence) if matching_records else None
+
+
+_HISTORY_VALUES: ValueMemo[_NormalizedProjectionValue] = ValueMemo(capacity=1024)
+
+
+def _history_value(path: str, record: ChangeSetRecord) -> _NormalizedProjectionValue:
+    # A generation's history entry is identical for every member it touched,
+    # and is inherited verbatim by later revisions. Key every projected field.
+    key = (path, record.candidate_digest, record.changeset_digest, record.sequence)
+    return _HISTORY_VALUES.derive(
+        key,
+        lambda: normalized_projection_value(
+            {
+                "candidate_digest": {"$digest": record.candidate_digest},
+                "change_set_path": {"$path": path},
+                "changeset_digest": {"$digest": record.changeset_digest},
+                "sequence": record.sequence,
+            }
+        ),
+    )
 
 
 def accepted_artifact_explanation_facts(
@@ -398,7 +446,7 @@ def accepted_artifact_explanation_facts(
         generation_root=accepting.generation_root,
         compiler_digest=accepting.compiler_digest,
     )
-    member = next(member for member in record.members if member.path == artifact_path)
+    member = _record_members(record)[artifact_path][0]
     shared = _shared_explanation(
         record,
         record_path=record_path,
@@ -431,14 +479,9 @@ def accepted_artifact_explanation_facts(
         return value if carry_values else deepcopy(normalize_projection_value(value))
 
     history = [
-        {
-            "candidate_digest": {"$digest": item.candidate_digest},
-            "change_set_path": {"$path": path},
-            "changeset_digest": {"$digest": item.changeset_digest},
-            "sequence": item.sequence,
-        }
+        _history_value(path, item)
         for path, item in records
-        if any(candidate_member.path == artifact_path for candidate_member in item.members)
+        if artifact_path in _record_members(item)
     ]
     return (
         ProjectionFact(

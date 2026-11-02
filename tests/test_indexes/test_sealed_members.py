@@ -104,3 +104,52 @@ def test_request_owns_a_member_when_the_process_carrier_cannot_retain_it(monkeyp
             statement_digest=member.statement_digest,
         )
     assert sealed_claim_member(content, path=path) is not member
+
+
+def test_projection_subtree_reuse_matches_cold_values_after_each_input_changes():
+    from cruxible_client.contracts.projection_extensions import normalize_projection_value
+    from cruxible_core.compiler.projection_artifacts import (
+        _normalized_pin,
+        _normalized_source_mapping,
+    )
+
+    path, content = _member()
+    member = sealed_claim_member(content, path=path)
+    mapping = member.claim.backing.source_mappings[0]
+    variants = (
+        mapping,
+        deepcopy(mapping),
+        mapping.model_copy(
+            update={
+                "subject": mapping.subject.model_copy(
+                    update={"artifact_path": "subjects/other/one.json"}
+                )
+            }
+        ),
+        mapping.model_copy(
+            update={"spans": (mapping.spans[0].model_copy(update={"end_byte": 11}),)}
+        ),
+        mapping.model_copy(
+            update={
+                "spans": (
+                    mapping.spans[0].model_copy(update={"content_digest": "sha256:" + "9" * 64}),
+                )
+            }
+        ),
+    )
+    for value in variants:
+        carried = _normalized_source_mapping(value)
+        assert normalize_projection_value(carried) == normalize_projection_value(
+            value.model_dump(mode="json")
+        )
+        with pytest.raises(TypeError):
+            carried.value["subject"] = {}
+    pin = member.claim.pins[0]
+    for value in (
+        pin,
+        deepcopy(pin),
+        pin.model_copy(update={"artifact_digest": "sha256:" + "8" * 64}),
+    ):
+        assert normalize_projection_value(_normalized_pin(value)) == normalize_projection_value(
+            value.model_dump(mode="json")
+        )

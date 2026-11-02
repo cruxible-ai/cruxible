@@ -51,7 +51,13 @@ from cruxible_client.contracts.claims import (
     claim_artifact_digest,
     parse_claim,
 )
-from cruxible_client.contracts.content_memo import request_derive, seal
+from cruxible_client.contracts.content_memo import (
+    _REQUEST_CARRIER,
+    ValueMemo,
+    request_derive,
+    seal,
+    sealed_derive,
+)
 from cruxible_client.contracts.dependencies import (
     EXACT_REGISTRY_TARGET_KINDS,
     dependency_follows_name,
@@ -280,14 +286,18 @@ def _parse_dependency_artifact(
             )
         if path.startswith("subjects/"):
             subject = parse_subject(content, path=path)
-            return ArtifactDependencyStateV1(
-                path=path,
-                artifact_kind="subject",
-                artifact_tag=subject.artifact_format,
-                identity=subject.identity,
-                artifact_digest=subject_digest(subject).tagged,
-                pins=subject.pins,
-                lifecycle=subject.lifecycle,
+            return sealed_derive(
+                subject,
+                ("core.subject_dependency_state", path),
+                lambda: ArtifactDependencyStateV1(
+                    path=path,
+                    artifact_kind="subject",
+                    artifact_tag=subject.artifact_format,
+                    identity=subject.identity,
+                    artifact_digest=subject_digest(subject).tagged,
+                    pins=subject.pins,
+                    lifecycle=subject.lifecycle,
+                ),
             )
         if path.startswith("claim-types/"):
             claim_type = parse_claim_type(content, path=path)
@@ -324,14 +334,18 @@ def _parse_dependency_artifact(
             )
         if path.startswith("claims/"):
             claim = parse_claim(content, path=path)
-            return ArtifactDependencyStateV1(
-                path=path,
-                artifact_kind="claim",
-                artifact_tag=claim.artifact_format,
-                identity=claim.identity,
-                artifact_digest=claim_artifact_digest(claim).tagged,
-                pins=claim.pins,
-                lifecycle=claim.lifecycle,
+            return sealed_derive(
+                claim,
+                ("core.claim_dependency_state", path),
+                lambda: ArtifactDependencyStateV1(
+                    path=path,
+                    artifact_kind="claim",
+                    artifact_tag=claim.artifact_format,
+                    identity=claim.identity,
+                    artifact_digest=claim_artifact_digest(claim).tagged,
+                    pins=claim.pins,
+                    lifecycle=claim.lifecycle,
+                ),
             )
         if path.startswith("procedures/"):
             procedure = parse_procedure(content, path=path)
@@ -640,6 +654,9 @@ def _sorted_edges(
     return tuple(sorted(edges, key=dependency_proof_order))
 
 
+_PROOFS: ValueMemo[DependencyProofReference] = ValueMemo(capacity=8192)
+
+
 def dependency_proof(
     *,
     source_path: str,
@@ -648,22 +665,33 @@ def dependency_proof(
     target_artifact_digest: str,
     pin_role: str,
 ) -> DependencyProofReference:
-    """Carry an exact edge across immutable selections in this request."""
-    return request_derive(
-        (
-            "core.dependency_proof",
-            source_path,
-            source_artifact_digest,
-            target_path,
-            target_artifact_digest,
-            pin_role,
-        ),
-        lambda: DependencyProofReference(
+    """Build an immutable edge once per complete content key, across requests."""
+    key = (
+        source_path,
+        source_artifact_digest,
+        target_path,
+        target_artifact_digest,
+        pin_role,
+    )
+
+    def build() -> DependencyProofReference:
+        proof = DependencyProofReference(
             source_path=source_path,
             source_artifact_digest=source_artifact_digest,
             target_path=target_path,
             target_artifact_digest=target_artifact_digest,
             pin_role=pin_role,
+        )
+        if not seal(proof):
+            raise TypeError("dependency proof must be deeply immutable")
+        return proof
+
+    return request_derive(
+        ("core.dependency_proof", *key),
+        lambda: (
+            build()
+            if _REQUEST_CARRIER.get() is None or sum(map(len, key)) > 8192
+            else _PROOFS.derive(key, build)
         ),
     )
 

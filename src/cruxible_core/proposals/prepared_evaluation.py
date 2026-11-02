@@ -9,7 +9,9 @@ The same observations carry an admission evaluation on to the settlement of the
 same request (``AdmittedEvaluation``, maintainer ruling
 settle-reuses-first-evaluation-1015). There a settle run's own producer
 receipts are stable (its fenced, append-only journal records, written under
-this request), and accepted query facts are observed and replayed like bodies.
+this request), and accepted query facts are observed and replayed like bodies. Inherited
+receipts are reusable only under a request-owned proof epoch, with their exact
+resolver answers replayed before reuse.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ import threading
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from cruxible_client.contracts.authoring_profiles import ClaimTypeExpansionEvidence
 from cruxible_client.contracts.candidates import CandidateRecord
@@ -62,6 +64,38 @@ class _BodyObservation:
     digest: str
     access: bytes | None
     result: bytes | bool
+
+
+@dataclass(frozen=True, slots=True)
+class _ReceiptObservation:
+    source: ProducerReceiptResolverProtocol
+    method: Literal["producer_receipt", "produced_capture"]
+    digest: str
+    run_id: str
+    epoch: object
+    result: (
+        ProviderProducerReceiptResolution
+        | ProcedureProducerReceiptProtocol
+        | tuple[CaptureProductionRecord, ...]
+        | None
+    )
+
+
+def _receipts_replay(observations: tuple[_ReceiptObservation, ...]) -> bool:
+    try:
+        for observed in observations:
+            source = observed.source
+            if (
+                not isinstance(source, _RequestCaptureProofEpoch)
+                or source._capture_proof_epoch() != observed.epoch
+            ):
+                return False
+            actual = getattr(source, observed.method)(observed.digest, run_id=observed.run_id)
+            if actual != observed.result or source._capture_proof_epoch() != observed.epoch:
+                return False
+    except Exception:
+        return False
+    return True
 
 
 def _binding(
@@ -143,16 +177,46 @@ class _ObservedReceipts:
     def producer_receipt(
         self, digest: str, *, run_id: str
     ) -> ProviderProducerReceiptResolution | ProcedureProducerReceiptProtocol | None:
-        if run_id != self.scope.stable_run:
+        try:
+            result = self.source.producer_receipt(digest, run_id=run_id)
+        except BaseException:
             self.scope.ineligible = True
-        return self.source.producer_receipt(digest, run_id=run_id)
+            raise
+        self._observe("producer_receipt", digest, run_id, result)
+        return result
 
     def produced_capture(
         self, capture_digest: str, *, run_id: str
     ) -> tuple[CaptureProductionRecord, ...]:
-        if run_id != self.scope.stable_run:
+        try:
+            result = self.source.produced_capture(capture_digest, run_id=run_id)
+        except BaseException:
             self.scope.ineligible = True
-        return self.source.produced_capture(capture_digest, run_id=run_id)
+            raise
+        self._observe("produced_capture", capture_digest, run_id, result)
+        return result
+
+    def _observe(
+        self,
+        method: Literal["producer_receipt", "produced_capture"],
+        digest: str,
+        run_id: str,
+        result: (
+            ProviderProducerReceiptResolution
+            | ProcedureProducerReceiptProtocol
+            | tuple[CaptureProductionRecord, ...]
+            | None
+        ),
+    ) -> None:
+        if run_id == self.scope.stable_run:
+            return
+        epoch = self._capture_proof_epoch()
+        if self.scope.stable_run is None or epoch is None or not result:
+            self.scope.ineligible = True
+            return
+        self.scope.observe_receipt(
+            _ReceiptObservation(self.source, method, digest, run_id, epoch, result)
+        )
 
     def recall_verified(self, capture_digest: str) -> VerifiedCaptureMemo | None:
         memo = self.source.recall_verified(capture_digest)
@@ -190,6 +254,7 @@ class PreparedEvaluationScope:
         self.consumed = False
         self.ineligible = False
         self._observations: dict[tuple[str, str, bytes | None], _BodyObservation] = {}
+        self._receipts: dict[tuple[str, str, str], _ReceiptObservation] = {}
         self._facts: list[FactsObservation] = []
         self._bytes = 0
         self._operation: bytes | None = None
@@ -210,7 +275,7 @@ class PreparedEvaluationScope:
         self._bytes += len(observation.digest) + len(observation.access or b"") + 128
         if (
             self._bytes > self.owner.max_bytes
-            or len(self._observations) >= self.owner.max_observations
+            or len(self._observations) + len(self._receipts) >= self.owner.max_observations
         ):
             self.ineligible = True
             self._observations.clear()
@@ -224,6 +289,28 @@ class PreparedEvaluationScope:
             self.ineligible = True
             return source
         return _ObservedBodies(source, self)
+
+    def observe_receipt(self, observation: _ReceiptObservation) -> None:
+        """Retain a settled run's inherited proof only at a request-owned epoch."""
+        if self.ineligible:
+            return
+        key = observation.method, observation.digest, observation.run_id
+        previous = self._receipts.get(key)
+        if previous is not None:
+            if previous != observation:
+                self.ineligible = True
+            return
+        # The immutable result and resolver are already held by this request;
+        # account for the additional locator and reference, without copying it.
+        self._bytes += len(observation.digest) + len(observation.run_id) + 192
+        if (
+            self._bytes > self.owner.max_bytes
+            or len(self._receipts) + len(self._observations) >= self.owner.max_observations
+        ):
+            self.ineligible = True
+            self._receipts.clear()
+        else:
+            self._receipts[key] = observation
 
     def operational(self, source: Any) -> Any:
         if source is None:
@@ -267,7 +354,7 @@ class PreparedEvaluationScope:
     def receipts(
         self, source: ProducerReceiptResolverProtocol | None
     ) -> ProducerReceiptResolverProtocol | None:
-        """Journal facts are not body observations: consulting them ends reuse."""
+        """Observe inherited receipts only when their request supplies a proof epoch."""
 
         return None if source is None else _ObservedReceipts(source, self)
 
@@ -338,6 +425,9 @@ class PreparedEvaluationScope:
             self.owner.count("invalidated")
             return None
         try:
+            if not _receipts_replay(tuple(self._receipts.values())):
+                self.owner.count("invalidated")
+                return None
             for observation in self._observations.values():
                 actual = (
                     bodies.verify(observation.digest)
@@ -408,11 +498,13 @@ class PreparedEvaluationScope:
             claim_type_expansions=claim_type_expansions,
             observations=tuple(self._observations.values()),
             facts=tuple(self._facts),
+            receipts=tuple(self._receipts.values()),
         )
 
     def close(self) -> None:
         self.closed = True
         self._observations.clear()
+        self._receipts.clear()
         self._facts.clear()
         self._outcome = None
         self.submission_tree = None
@@ -501,8 +593,11 @@ def _replays(
     bodies: BodyVerifierProtocol,
     query_facts_provider: Any,
     inputs: FactInputs | None,
+    receipts: tuple[_ReceiptObservation, ...] = (),
 ) -> bool:
     """Whether every observed body read and fact build answers now exactly as it did."""
+    if not _receipts_replay(receipts):
+        return False
     try:
         for observation in observations:
             actual = (
@@ -544,6 +639,7 @@ class AdmittedEvaluation:
     claim_type_expansions: tuple[ClaimTypeExpansionEvidence, ...]
     observations: tuple[_BodyObservation, ...]
     facts: tuple[FactsObservation, ...]
+    receipts: tuple[_ReceiptObservation, ...] = ()
 
     def reusable(
         self,
@@ -576,6 +672,7 @@ class AdmittedEvaluation:
                 bodies=bodies,
                 query_facts_provider=query_facts_provider,
                 inputs=self.owner.fact_inputs,
+                receipts=self.receipts,
             )
             or self.epoch != self.owner.epoch
         ):

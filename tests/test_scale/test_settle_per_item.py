@@ -47,6 +47,7 @@ Counted on the measuring thread only:
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import sqlite3
@@ -67,6 +68,7 @@ from cruxible_client.contracts import candidates, canonical, claims, projection_
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.exhaust.backends import LocalJournalBackend
+from cruxible_core.exhaust.journal_index import JournalIndex
 from cruxible_core.ledger import activation, recovery
 from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.proposals import settlement
@@ -229,6 +231,12 @@ def _journal_counted() -> Iterator[None]:
     original = ProcedureExecutor._append_events
     append = LocalJournalBackend.append_many
     flush = activation.flush_acceptance
+    read = JournalIndex.read_row
+
+    def read_row(self: Any, row: Any) -> Any:
+        if _COUNTS.measuring():
+            _COUNTS.counts["journal_record_reads"] += 1
+        return read(self, row)
 
     def barrier(self: Any, *args: Any, **kwargs: Any) -> Any:
         _COUNTS.in_acceptance_flush = True
@@ -255,12 +263,14 @@ def _journal_counted() -> Iterator[None]:
     activation.flush_acceptance = barrier
     ProcedureExecutor._append_events = group
     LocalJournalBackend.append_many = append_many
+    JournalIndex.read_row = read_row
     try:
         yield
     finally:
         activation.flush_acceptance = flush
         ProcedureExecutor._append_events = original
         LocalJournalBackend.append_many = append
+        JournalIndex.read_row = read
 
 
 def _encoding(original: Callable[[object], bytes]) -> Callable[[object], bytes]:
@@ -452,46 +462,41 @@ def _roomy_selection_budget(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.setattr(module, "capture_contract", roomy)
 
 
-@pytest.mark.parametrize(
-    "revise",
-    [
-        False,
-        pytest.param(
-            True,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "revise path cost (dev.roadmap_item/claim-revise-path-cost): a revised "
-                    "Claim costs 82 SQL statements and ~770 KB encoded vs 35 / ~78 KB for a "
-                    "creation (citation/pin/claim index replacement and a whole-run records "
-                    "read per Claim); first measured in B4a(a), predates it"
-                ),
-            ),
-        ),
-    ],
-    ids=["create-within", "revise-within"],
-)
-def test_a_settles_work_per_item_stays_at_its_floor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, revise: bool
-) -> None:
+def _measure_work_per_item(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, revise: bool, count: int
+) -> tuple[Counter[str], Counter[str], Counter[str]]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     _roomy_selection_budget(monkeypatch)
     with _sql_traced(tmp_path):
         instance, root, line = settle_support.settle_world(
             tmp_path,
             claims_terminal=True,
-            claims_within=tuple(subject_path(SUBJECT_KIND, _subject_id(i)) for i in range(5 * N)),
+            claims_within=tuple(
+                subject_path(SUBJECT_KIND, _subject_id(i)) for i in range(5 * count)
+            ),
         )
-        _create_subjects(instance, settle_support.OWNERS[instance.root], 5 * N)
+        _create_subjects(instance, settle_support.OWNERS[instance.root], 5 * count)
         world = (instance, root, line)
-        _settle(world, 0, N, 0)
+        _settle(world, 0, count, 0)
         if revise:
-            _settle(world, N, 4 * N, 5)
+            _settle(world, count, 4 * count, 5)
         _forget_parsed_receipts()
-        small = _settle(world, N, N, 1, revise=revise)
+        small = _settle(world, count, count, 1, revise=revise)
         _forget_parsed_receipts()
-        large = _settle(world, 2 * N, 2 * N, 2, revise=revise)
+        large = _settle(world, 2 * count, 2 * count, 2, revise=revise)
         _forget_parsed_receipts()
-        after_large = _settle(world, 4 * N, N, 3, revise=revise)
+        after_large = _settle(world, 4 * count, count, 3, revise=revise)
+
+    return small, large, after_large
+
+
+@pytest.mark.parametrize("revise", [False, True], ids=["create-within", "revise-within"])
+def test_a_settles_work_per_item_stays_at_its_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, revise: bool
+) -> None:
+    small, large, after_large = _measure_work_per_item(
+        tmp_path, monkeypatch, revise=revise, count=N
+    )
 
     assert small["journal_records"] == N
     assert large["journal_records"] == 2 * N
@@ -529,6 +534,47 @@ def test_a_settles_work_per_item_stays_at_its_floor(
                 f"{name}: after large {after_large[name]} against after small {small[name]}"
             )
     assert not violations, f"{violations}: {report}"
+
+
+def test_settle_cost_per_claim_is_flat_at_12_and_48(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    slopes = {}
+    counters = (*PER_ITEM, "file_opens", "journal_record_reads")
+    for revise in (False, True):
+        case = "revise" if revise else "create"
+        slopes[case] = {}
+        for count in (12, 48):
+            small, large, after = _measure_work_per_item(
+                tmp_path / case / str(count), monkeypatch, revise=revise, count=count
+            )
+            slopes[case][count] = {name: (large[name] - small[name]) / count for name in counters}
+            assert small["journal_records"] == count
+            assert large["journal_records"] == 2 * count
+            assert small["journal_appends"] == large["journal_appends"] == 1
+            for name, ceiling in PER_ITEM.items():
+                assert slopes[case][count][name] <= ceiling, (case, count, name, slopes)
+            for name, slack in FLAT_SLACK.items():
+                assert after[name] <= small[name] * LARGE_PARENT_RATIO + slack, (
+                    case,
+                    count,
+                    name,
+                    small[name],
+                    after[name],
+                )
+    destination = os.environ.get("CRUXIBLE_PER_ITEM_REPORT")
+    if destination:
+        Path(destination + ".scaling").write_text(json.dumps(slopes, indent=2) + "\n")
+    # Marginal costs cancel per-delivery setup, including one predecessor run
+    # read. Enlarging both the run and instance fourfold must leave each
+    # per-Claim slope flat: an O(run) cost per Claim fails this comparison.
+    growing = {
+        (case, name): (values[12][name], values[48][name])
+        for case, values in slopes.items()
+        for name in counters
+        if values[48][name] > values[12][name] * 1.1 + (1024 if name == "encoded_bytes" else 0.1)
+    }
+    assert not growing, growing
 
 
 def test_a_small_commit_after_a_large_one_does_not_encode_the_parent_change(

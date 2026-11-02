@@ -2295,17 +2295,25 @@ class PlaybillInstance:
     ) -> tuple[tuple[str, ChangeSetRecord], ...]:
         """The verified records that touched these paths, found through the index."""
 
-        recovered = self._recovered
-        with self._history_reader_for_epoch(recovered) as history:
-            sequences = sorted(
-                {location.sequence for path in paths for location in history.member_history(path)}
-            )
-        records = []
-        for sequence in sequences:
-            record = recovered.history[sequence].record
-            if record is not None:
-                records.append((f"changesets/cs-{sequence:020d}.json", record))
-        return tuple(records)
+        selected = frozenset(paths)
+        records: dict[int, tuple[str, ChangeSetRecord]] = {}
+        reader = self.retained_record_reader()
+        with self._history_reader_for_epoch(self._recovered) as history:
+            for path in sorted(selected):
+                for location in history.member_history(path):
+                    if location.sequence in records:
+                        # Every locator still binds its own exact source member.
+                        history.read_member(location, reader, carry_values=True)
+                        continue
+                    generation = history.generation(location.sequence)
+                    assert generation.source_record_path is not None
+                    records[location.sequence] = (
+                        generation.source_record_path,
+                        history.read_member_selection(
+                            location, reader, selected, carry_values=True
+                        ),
+                    )
+        return tuple(records[sequence] for sequence in sorted(records))
 
     def accepted_evaluation_time(self, oid: str) -> datetime:
         """Resolve the immutable acceptance instant for one replayed generation."""

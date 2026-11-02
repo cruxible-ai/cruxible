@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -17,6 +18,7 @@ from cruxible_client.contracts.canonical import (
     SemanticMerkleRoot,
     SemanticRoot,
     Sha256Value,
+    _register_value_encoder,
     canonical_bytes,
     canonical_list_digest,
     model_canonical_bytes,
@@ -24,7 +26,7 @@ from cruxible_client.contracts.canonical import (
     normalize_manifest_paths,
     typed_digest,
 )
-from cruxible_client.contracts.content_memo import seal, sealed_memo
+from cruxible_client.contracts.content_memo import ValueMemo, request_derive, seal, sealed_memo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.governance import (
     ActivationPolicy,
@@ -33,7 +35,6 @@ from cruxible_client.contracts.governance import (
     governance_identifier,
     validate_approval_requirements,
 )
-from cruxible_client.contracts.primitives import canonical_json
 
 
 class _StrictCandidateModel(BaseModel):
@@ -155,29 +156,61 @@ class DependencyProofReference(_StrictCandidateModel):
         return governance_identifier(value, label="dependency proof pin role")
 
 
+_PROOF_ENCODINGS: ValueMemo[bytes] = ValueMemo(capacity=4096)
+_PROOF_FIELDS = tuple(DependencyProofReference.model_fields)
+
+
+def _proof_canonical_bytes(model: BaseModel) -> bytes:
+    reference = cast(DependencyProofReference, model)
+    if type(reference) is not DependencyProofReference:
+        return canonical_bytes(reference.model_dump(mode="json"))
+    key = tuple(getattr(reference, field) for field in _PROOF_FIELDS)
+    # model_copy can bypass validation. Retain only exact strings; unusual
+    # copied values still take the ordinary encoder and all its refusals.
+    if not all(type(value) is str for value in key) or sum(map(len, key)) > 8192:
+        return canonical_bytes(reference.model_dump(mode="json"))
+    return _PROOF_ENCODINGS.derive(key, lambda: canonical_bytes(reference.model_dump(mode="json")))
+
+
+_register_value_encoder(DependencyProofReference, _proof_canonical_bytes)
+
+
 @sealed_memo
 def dependency_proof_order(reference: DependencyProofReference) -> bytes:
     """A proof reference's canonical bytes: the order proof sets are sorted and unique in.
 
-    Every field is a validated string, so when all of them are ASCII (paths,
-    digests and pin roles always are in practice) the canonical encoding is
-    exactly the compact sorted-key JSON of the dump: an ASCII string is its own
-    NFC form and holds no surrogate, and ASCII sorts the same as its UTF-8. That
-    JSON is written directly; any other reference takes the full canonical path.
+    Every field joins the value key. Sorting, validation and nested record
+    encoding share these same bytes, including after a detached model copy.
     """
 
-    payload = reference.model_dump(mode="json")
-    if all(type(value) is str and value.isascii() for value in payload.values()):
-        return canonical_json(payload).encode("ascii")
-    return canonical_bytes(payload)
+    return _proof_canonical_bytes(reference)
 
 
 def _sorted_unique_proofs(
     value: tuple[DependencyProofReference, ...], *, message: str
 ) -> tuple[DependencyProofReference, ...]:
-    encoded = tuple(dependency_proof_order(item) for item in value)
-    if encoded != tuple(sorted(set(encoded))):
-        raise ValueError(message)
+    # Candidate/evidence/receipt wrappers validate the same exact proof set.
+    # Retain only a successful check, keyed by every validated scalar field;
+    # copies and reordered/changed proofs therefore never inherit a verdict.
+    key = tuple(
+        (
+            item.tag,
+            item.source_path,
+            item.source_artifact_digest,
+            item.target_path,
+            item.target_artifact_digest,
+            item.pin_role,
+        )
+        for item in value
+    )
+
+    def validate() -> bool:
+        encoded = tuple(dependency_proof_order(item) for item in value)
+        if encoded != tuple(sorted(set(encoded))):
+            raise ValueError(message)
+        return True
+
+    request_derive(("client.sorted_unique_proofs", key), validate)
     return value
 
 
@@ -294,6 +327,11 @@ class MemberLawEvaluation(_StrictCandidateModel):
 
 @sealed_memo
 def member_law_evidence_digest(evidence: MemberLawEvaluation) -> str:
+    # The record's frozen tag is exactly this digest's domain. Its ordinary
+    # canonical bytes are therefore the complete hash preimage; rendering and
+    # digesting a sealed entry can share that one encoding, including proofs.
+    if evidence.tag == "playbill-member-law-evaluation-v2":
+        return Sha256Value(hashlib.sha256(model_canonical_bytes(evidence)).hexdigest()).tagged
     payload = evidence.model_dump(mode="json")
     payload.pop("tag")
     return typed_digest(
