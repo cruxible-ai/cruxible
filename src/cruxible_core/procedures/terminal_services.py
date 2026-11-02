@@ -14,6 +14,7 @@ from cruxible_client.contracts.candidates import (
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.errors import FormatError
+from cruxible_client.contracts.mandate_scope import SettleScopeGap
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateAny
 from cruxible_client.contracts.proposal_models import OriginatingLine, ProposalSettleSubmission
 from cruxible_core.authoring.assignment_records import procedure_operation_id
@@ -328,7 +329,7 @@ def settle_terminal_receipt(
     item_paths: Mapping[str, str] | None,
     accepted_git_oid: str | None,
     fallback_reason: str | None = None,
-    outside_scope_claim_types: tuple[str, ...] = (),
+    outside_scope: tuple[SettleScopeGap, ...] = (),
     unchanged: Mapping[str, UnchangedChildReceipt] | None = None,
 ) -> TerminalEgressReceiptV4:
     """A settle outcome: the accepted generation, or the ordinary proposal it fell back to."""
@@ -356,7 +357,7 @@ def settle_terminal_receipt(
         accepted_git_oid=accepted_git_oid,
         fallback_reason=fallback_reason,
         capped_by=served_capped_by(request),
-        outside_scope_claim_types=outside_scope_claim_types,
+        outside_scope=outside_scope,
     )
 
 

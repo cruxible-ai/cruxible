@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
 from cruxible_client.contracts.claims import ClaimType
@@ -44,7 +46,7 @@ from cruxible_core.proposals import proposals
 from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
 from tests.core_support._support import initialize_local
 from tests.support.lines import line_budgets, line_spec
-from tests.support.mandates import procedure_mandate
+from tests.support.mandates import procedure_mandate, scope_changes
 from tests.support.procedures import procedure_members
 from tests.test_authoring.test_authoring_change_set_intents import (
     SUBJECT_KIND,
@@ -100,6 +102,21 @@ def _condition_query(*, only_subject: str | None = None) -> QueryDefinition:
     )
 
 
+@pytest.fixture(autouse=True)
+def _authored_claims_count_as_extracted(monkeypatch):  # type: ignore[no-untyped-def]
+    """These Claims are authored directly, so they carry no Procedure receipt.
+
+    The verifier reads a change's basis off that receipt (and a Claim without
+    one never settles); here it is fixed to ``extracted`` so the condition law
+    is exercised alone. Basis scope is proved through real Procedure runs in
+    tests/test_procedures/test_procedure_settlement_delivery.py.
+    """
+
+    from cruxible_core.proposals import delegated_authority
+
+    monkeypatch.setattr(delegated_authority, "_change_basis", lambda _claim, _kind: "extracted")
+
+
 def _world(tmp_path, *, only_subject: str | None = None, change_kinds=("create", "revise")):
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
@@ -149,7 +166,7 @@ def _world(tmp_path, *, only_subject: str | None = None, change_kinds=("create",
                     target=status_type.identity,
                     artifact_digest=claim_type_digest(status_type).tagged,
                 ),
-                change_kinds=change_kinds,
+                changes=scope_changes(*change_kinds),
             ),
         ),
         condition=MandateCondition(

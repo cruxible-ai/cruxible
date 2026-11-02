@@ -361,8 +361,11 @@ class ProcedureMandateInput(_StrictInputModel):
     the same set); lowering pins its exact digest, so changing the Line's
     Procedure version, parameters or bindings renews the grant. ``grants`` is
     the verb the mandate delegates. A settle grant names the ClaimTypes (by
-    predicate) and change kinds it covers and the accepted query that decides
-    each target; lowering pins every exact digest.
+    predicate), per change kind the evidence bases that settle, an optional
+    ``value: {from, to}`` for enum and bool ClaimTypes, and an optional accepted
+    condition query (which may bind ``$target.value`` and ``$target.before``);
+    lowering pins every exact digest. ``subjects: expected`` limits the grant
+    to Subjects the Line's claims templates fence with ``within``.
     """
 
     tag: Literal["cruxible-procedure-mandate-input-v3"] = "cruxible-procedure-mandate-input-v3"
@@ -375,6 +378,7 @@ class ProcedureMandateInput(_StrictInputModel):
     expires_at: datetime
     scope: tuple[MandateScopeAuthoring, ...] = ()
     subject_scope: tuple[SemanticAddress, ...] | None = None
+    subjects: Literal["expected"] | None = None
     condition: MandateConditionAuthoring | None = None
     subject_creation: tuple[str, ...] = Field(
         default=(),

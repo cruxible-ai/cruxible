@@ -193,7 +193,9 @@ def epss_spec() -> Any:
     )
 
 
-def pilot_world(tmp_path: Path, fixture: str, *, spec: Any = None) -> tuple[Any, Path]:
+def pilot_world(
+    tmp_path: Path, fixture: str, *, spec: Any = None, authority: str = "propose"
+) -> tuple[Any, Path]:
     data = json.loads((FIXTURES / fixture).read_bytes())
     kev = fixture.startswith("kev")
     keys = [r["cveID" if kev else "cve"] for r in data["vulnerabilities" if kev else "data"]]
@@ -223,6 +225,7 @@ def pilot_world(tmp_path: Path, fixture: str, *, spec: Any = None) -> tuple[Any,
     install(
         instance,
         selected,
+        authority=authority,
         findings=("extract_refused", "duplicate_key"),
         parameters={
             "logical_source": "cisa.kev.catalog" if kev else "first.epss",
@@ -230,3 +233,69 @@ def pilot_world(tmp_path: Path, fixture: str, *, spec: Any = None) -> tuple[Any,
         },
     )
     return instance, root
+
+
+#: §8.1: the KEV settle grant's scope, by ClaimType field.
+KEV_SETTLE_SCOPE: dict[str, dict[str, Any]] = {
+    "listed": {"create": {"basis": ["extracted"]}, "retire": {"basis": ["absence"]}},
+    "date_added": {
+        "create": {"basis": ["extracted"]},
+        "revise": {"basis": ["extracted"]},
+        "retire": {"basis": ["absence"]},
+    },
+    "due_date": {
+        "create": {"basis": ["extracted"]},
+        "revise": {"basis": ["extracted"]},
+        "retire": {"basis": ["absence"]},
+    },
+    "ransomware_use": {"create": {"basis": ["extracted"]}, "revise": {"basis": ["extracted"]}},
+}
+
+
+def grant_kev_settle(
+    instance: Any,
+    *,
+    scope: dict[str, dict[str, Any]] | None = None,
+    values: dict[str, dict[str, Any]] | None = None,
+    line_name: str = "test.claims-line",
+) -> str:
+    """Author the §8.1 settle Mandate (no condition, ``subjects: expected``); its digest."""
+
+    from datetime import timedelta
+
+    from cruxible_client.contracts.authoring.inputs import ProcedureMandateInput
+    from cruxible_client.contracts.authoring.models import MandateScopeAuthoring
+    from cruxible_client.contracts.procedure_mandates import (
+        parse_procedure_mandate,
+        procedure_mandate_digest,
+    )
+    from tests.support.operation_world import NOW
+
+    chosen = KEV_SETTLE_SCOPE if scope is None else scope
+    author(
+        instance,
+        ProcedureMandateInput(
+            kind="procedure_mandate",
+            name="security.kev-triage-settle",
+            line_name=line_name,
+            grants="settle",
+            namespace=("claims",),
+            valid_from=NOW - timedelta(days=1),
+            expires_at=NOW + timedelta(days=30),
+            subjects="expected",
+            scope=tuple(
+                MandateScopeAuthoring.model_validate(
+                    {
+                        "claim_type": KEV + field,
+                        "changes": changes,
+                        **({"value": values[field]} if values and field in values else {}),
+                    }
+                )
+                for field, changes in chosen.items()
+            ),
+        ),
+        name="kev-settle-grant",
+    )
+    path = "procedure-mandates/security.kev-triage-settle.json"
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    return procedure_mandate_digest(parse_procedure_mandate(tree[path], path=path)).tagged

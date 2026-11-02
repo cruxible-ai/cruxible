@@ -187,7 +187,7 @@ def test_mandate_reads_carry_the_typed_scope_and_condition(tmp_path: Path) -> No
     scope = [
         {
             "claim_type": f"ClaimType:{STATUS}",
-            "change_kinds": ["create", "revise"],
+            "changes": {"create": {"basis": ["extracted"]}, "revise": {"basis": ["extracted"]}},
             "binds": "subject",
         }
     ]

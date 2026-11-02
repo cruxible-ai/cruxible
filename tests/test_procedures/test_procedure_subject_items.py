@@ -846,7 +846,7 @@ def _identity_settle_grant(instance, owner, line):
         query_definition_path,
         render_query_definition,
     )
-    from tests.support.mandates import procedure_mandate
+    from tests.support.mandates import procedure_mandate, scope_changes
     from tests.test_procedures.test_procedure_settlement_delivery import _condition
 
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
@@ -873,7 +873,7 @@ def _identity_settle_grant(instance, owner, line):
                     target=ct.identity,
                     artifact_digest=claim_type_digest(ct).tagged,
                 ),
-                change_kinds=("create", "revise"),
+                changes=scope_changes("create", "revise"),
             )
             for ct in types
         ),

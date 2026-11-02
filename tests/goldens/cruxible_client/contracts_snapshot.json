@@ -9459,10 +9459,87 @@
             "title": "LowercaseNormalizer",
             "type": "object"
           },
+          "MandateChangeScope": {
+            "additionalProperties": false,
+            "description": "The evidence bases one change kind of a scoped ClaimType settles on.",
+            "properties": {
+              "basis": {
+                "items": {
+                  "enum": [
+                    "extracted",
+                    "measured",
+                    "derived",
+                    "absence"
+                  ],
+                  "type": "string"
+                },
+                "title": "Basis",
+                "type": "array"
+              }
+            },
+            "required": [
+              "basis"
+            ],
+            "title": "MandateChangeScope",
+            "type": "object"
+          },
+          "MandateChanges": {
+            "additionalProperties": false,
+            "description": "Per change kind, the bases a settle grant covers; a kind left out never settles.",
+            "properties": {
+              "create": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateChangeScope"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "retire": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateChangeScope"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "revise": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateChangeScope"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "title": "MandateChanges",
+            "type": "object"
+          },
           "MandateConditionAuthoring": {
             "additionalProperties": false,
             "description": "The settle predicate, named by query; lowering pins the exact accepted query.",
             "properties": {
+              "before_parameter": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Before Parameter"
+              },
               "binding_parameter": {
                 "title": "Binding Parameter",
                 "type": "string"
@@ -9497,6 +9574,18 @@
                 "default": "playbill-mandate-condition-authoring-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "value_parameter": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Value Parameter"
               }
             },
             "required": [
@@ -9510,7 +9599,7 @@
           },
           "MandateScopeAuthoring": {
             "additionalProperties": false,
-            "description": "One ClaimType a settle grant covers, named by predicate; lowering pins its digest.",
+            "description": "One ClaimType a settle grant covers, named by predicate; lowering pins its digest.\n\n``changes`` lists, per change kind, the evidence bases that settle\n(``{create: {basis: [extracted]}, retire: {basis: [absence]}}``); ``value``\nlimits an enum or bool ClaimType's moves (``{from: [...], to: [...]}``).",
             "properties": {
               "binding_subject_role": {
                 "default": "subject",
@@ -9521,18 +9610,8 @@
                 "title": "Binding Subject Role",
                 "type": "string"
               },
-              "change_kinds": {
-                "items": {
-                  "enum": [
-                    "create",
-                    "revise",
-                    "retire"
-                  ],
-                  "type": "string"
-                },
-                "minItems": 1,
-                "title": "Change Kinds",
-                "type": "array"
+              "changes": {
+                "$ref": "#/$defs/MandateChanges"
               },
               "claim_type": {
                 "title": "Claim Type",
@@ -9543,13 +9622,76 @@
                 "default": "playbill-mandate-scope-authoring-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateValueCondition"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
               "claim_type",
-              "change_kinds"
+              "changes"
             ],
             "title": "MandateScopeAuthoring",
+            "type": "object"
+          },
+          "MandateValueCondition": {
+            "additionalProperties": false,
+            "description": "Enum and bool ClaimTypes only: the values a settled change may move from and to.\n\n``from`` lists the held values a change may replace (a create holds none, so\nit settles only when ``from`` is omitted); ``to`` the values it may write (a\nretirement or an inverse writes none, so it settles only when ``to`` is\nomitted). At least one is declared.",
+            "properties": {
+              "from": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "From"
+              },
+              "to": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "To"
+              }
+            },
+            "title": "MandateValueCondition",
             "type": "object"
           },
           "Membership": {
@@ -9895,7 +10037,7 @@
           },
           "ProcedureMandateInput": {
             "additionalProperties": false,
-            "description": "A propose grant, or a settle grant with its Claim scope and condition query.\n\n``line_name`` names the Line the grant authorizes (accepted, or defined in\nthe same set); lowering pins its exact digest, so changing the Line's\nProcedure version, parameters or bindings renews the grant. ``grants`` is\nthe verb the mandate delegates. A settle grant names the ClaimTypes (by\npredicate) and change kinds it covers and the accepted query that decides\neach target; lowering pins every exact digest.",
+            "description": "A propose grant, or a settle grant with its Claim scope and condition query.\n\n``line_name`` names the Line the grant authorizes (accepted, or defined in\nthe same set); lowering pins its exact digest, so changing the Line's\nProcedure version, parameters or bindings renews the grant. ``grants`` is\nthe verb the mandate delegates. A settle grant names the ClaimTypes (by\npredicate), per change kind the evidence bases that settle, an optional\n``value: {from, to}`` for enum and bool ClaimTypes, and an optional accepted\ncondition query (which may bind ``$target.value`` and ``$target.before``);\nlowering pins every exact digest. ``subjects: expected`` limits the grant\nto Subjects the Line's claims templates fence with ``within``.",
             "properties": {
               "condition": {
                 "anyOf": [
@@ -9977,6 +10119,19 @@
                 ],
                 "default": null,
                 "title": "Subject Scope"
+              },
+              "subjects": {
+                "anyOf": [
+                  {
+                    "const": "expected",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Subjects"
               },
               "suspended": {
                 "default": false,
@@ -27910,6 +28065,822 @@
         "status"
       ]
     },
+    "GetRunNode": {
+      "fields": {
+        "duration_us": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "duration_us",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Duration Us"
+          }
+        },
+        "kind": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kind"
+          }
+        },
+        "node": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "node",
+          "required": true,
+          "schema": {
+            "title": "Node",
+            "type": "string"
+          }
+        },
+        "sequence": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "sequence",
+          "required": true,
+          "schema": {
+            "minimum": 1,
+            "title": "Sequence",
+            "type": "integer"
+          }
+        },
+        "summary": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "summary",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "call": "#/$defs/CallRunSummary",
+                    "claims": "#/$defs/ClaimsRunSummary",
+                    "emit_capture": "#/$defs/EgressRunSummary",
+                    "extract": "#/$defs/ExtractRunSummary",
+                    "guard": "#/$defs/GuardRunSummary",
+                    "halt": "#/$defs/HaltRunSummary",
+                    "post_inbox": "#/$defs/EgressRunSummary",
+                    "read": "#/$defs/ReadRunSummary",
+                    "repeat": "#/$defs/RepeatRunSummary",
+                    "transform": "#/$defs/TransformRunSummary"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/ExtractRunSummary"
+                  },
+                  {
+                    "$ref": "#/$defs/TransformRunSummary"
+                  },
+                  {
+                    "$ref": "#/$defs/ReadRunSummary"
+                  },
+                  {
+                    "$ref": "#/$defs/CallRunSummary"
+                  },
+                  {
+                    "$ref": "#/$defs/GuardRunSummary"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimsRunSummary"
+                  },
+                  {
+                    "$ref": "#/$defs/EgressRunSummary"
+                  },
+                  {
+                    "$ref": "#/$defs/HaltRunSummary"
+                  },
+                  {
+                    "$ref": "#/$defs/RepeatRunSummary"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Summary"
+          }
+        },
+        "verdict": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "verdict",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Verdict"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "CallRunSummary": {
+            "additionalProperties": false,
+            "description": "One call: how many Captures it made or was admitted, and the first of them.",
+            "properties": {
+              "capture_digests": {
+                "default": [],
+                "items": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "title": "Capture Digests",
+                "type": "array"
+              },
+              "captures": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Captures",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "call",
+                "default": "call",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "captures"
+            ],
+            "title": "CallRunSummary",
+            "type": "object"
+          },
+          "ClaimsRunSummary": {
+            "additionalProperties": false,
+            "description": "One claims terminal: what it wrote, kept, retired, surfaced and skipped.\n\n``written`` and ``revised`` count new and revising Claims, ``inverse_written``\nthe declared-inverse Claims (written or revising) apart from them, and\n``subjects_created`` the Subjects created by key. ``re_observed`` counts\nheld Claims a new Capture re-confirmed, ``no_op`` restatements that changed\nnothing at all. ``downgraded`` counts values written as the ClaimType's\nunknown member over incomplete input. ``surfaced`` counts held Claims a\nsource no longer contains that were reported instead of retired;\n``skipped`` counts the other findings, by kind (an item not written, or an\nincomplete source). ``delivery`` is how the change landed.",
+            "properties": {
+              "delivery": {
+                "enum": [
+                  "settled",
+                  "proposed",
+                  "still_current",
+                  "unchanged",
+                  "empty",
+                  "delivered"
+                ],
+                "title": "Delivery",
+                "type": "string"
+              },
+              "downgraded": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Downgraded",
+                "type": "integer"
+              },
+              "inverse_written": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Inverse Written",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "claims",
+                "default": "claims",
+                "title": "Kind",
+                "type": "string"
+              },
+              "no_op": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "No Op",
+                "type": "integer"
+              },
+              "re_observed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Re Observed",
+                "type": "integer"
+              },
+              "retired": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Retired",
+                "type": "integer"
+              },
+              "revised": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Revised",
+                "type": "integer"
+              },
+              "skipped": {
+                "additionalProperties": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "propertyNames": {
+                  "enum": [
+                    "extract_refused",
+                    "duplicate_key",
+                    "incomplete_source",
+                    "held_disagrees",
+                    "slot_contested",
+                    "claim_not_in_source"
+                  ]
+                },
+                "title": "Skipped",
+                "type": "object"
+              },
+              "subjects_created": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Subjects Created",
+                "type": "integer"
+              },
+              "surfaced": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Surfaced",
+                "type": "integer"
+              },
+              "written": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Written",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "written",
+              "revised",
+              "inverse_written",
+              "subjects_created",
+              "re_observed",
+              "no_op",
+              "retired",
+              "surfaced",
+              "downgraded",
+              "delivery"
+            ],
+            "title": "ClaimsRunSummary",
+            "type": "object"
+          },
+          "EgressRunSummary": {
+            "additionalProperties": false,
+            "description": "One ``emit_capture`` or ``post_inbox`` terminal: the items it emitted.\n\n``unposted`` counts the items a post's inbox cap left out.",
+            "properties": {
+              "emitted": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Emitted",
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "emit_capture",
+                  "post_inbox"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "unposted": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Unposted",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "emitted"
+            ],
+            "title": "EgressRunSummary",
+            "type": "object"
+          },
+          "ExtractCompleteWhen": {
+            "additionalProperties": false,
+            "description": "An extract's declared count check, bounded for a summary.\n\n``count_at`` is the declared path, cut to ``NODE_SUMMARY_TEXT_MAX`` code\npoints (``count_at_truncated`` then says so). ``expected`` is absent when\nthe source enumerated no count; a count past ``NODE_SUMMARY_INT_MAX`` is\nleft out and ``out_of_range`` says so.",
+            "properties": {
+              "count_at": {
+                "maxLength": 64,
+                "title": "Count At",
+                "type": "string"
+              },
+              "count_at_truncated": {
+                "default": false,
+                "title": "Count At Truncated",
+                "type": "boolean"
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expected"
+              },
+              "held": {
+                "title": "Held",
+                "type": "boolean"
+              },
+              "observed": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Observed"
+              },
+              "out_of_range": {
+                "default": false,
+                "title": "Out Of Range",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "count_at",
+              "held"
+            ],
+            "title": "ExtractCompleteWhen",
+            "type": "object"
+          },
+          "ExtractRunSummary": {
+            "additionalProperties": false,
+            "description": "One extract: the records it read, and what its completeness rests on.\n\n``records`` counts every record read, ``invalid_records`` and\n``duplicates`` those among them that were invalid or a refused duplicate;\n``invalid_fields`` counts the invalid field results of valid records.\n``complete_when`` is the declared count check's result, when one is declared.",
+            "properties": {
+              "complete": {
+                "title": "Complete",
+                "type": "boolean"
+              },
+              "complete_when": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ExtractCompleteWhen"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "duplicates": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Duplicates",
+                "type": "integer"
+              },
+              "invalid_fields": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Invalid Fields",
+                "type": "integer"
+              },
+              "invalid_records": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Invalid Records",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "extract",
+                "default": "extract",
+                "title": "Kind",
+                "type": "string"
+              },
+              "records": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Records",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "records",
+              "invalid_records",
+              "duplicates",
+              "invalid_fields",
+              "complete"
+            ],
+            "title": "ExtractRunSummary",
+            "type": "object"
+          },
+          "GuardOperand": {
+            "additionalProperties": false,
+            "description": "One comparison a guard evaluated: its operator, and its numeric or bool operands.\n\nAn operand that is anything else (a string, a list, a record) is left out;\nso is the whole comparison when neither operand is a number or a boolean.\nA number past ``NODE_SUMMARY_INT_MAX`` is left out too, and ``out_of_range``\nsays so. ``present`` and ``absent`` carry whether the reference resolved as\n``left``.",
+            "properties": {
+              "left": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Left"
+              },
+              "operator": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "eq",
+                      "ne",
+                      "lt",
+                      "le",
+                      "gt",
+                      "ge"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "enum": [
+                      "in",
+                      "not_in",
+                      "present",
+                      "absent"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Operator"
+              },
+              "out_of_range": {
+                "default": false,
+                "title": "Out Of Range",
+                "type": "boolean"
+              },
+              "right": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Right"
+              }
+            },
+            "required": [
+              "operator"
+            ],
+            "title": "GuardOperand",
+            "type": "object"
+          },
+          "GuardRunSummary": {
+            "additionalProperties": false,
+            "description": "One guard: the branch it took, and the numeric and bool operands it compared.",
+            "properties": {
+              "branch": {
+                "enum": [
+                  "then",
+                  "else"
+                ],
+                "title": "Branch",
+                "type": "string"
+              },
+              "kind": {
+                "const": "guard",
+                "default": "guard",
+                "title": "Kind",
+                "type": "string"
+              },
+              "operands": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/GuardOperand"
+                },
+                "maxItems": 8,
+                "title": "Operands",
+                "type": "array"
+              },
+              "operands_truncated": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Operands Truncated",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "branch"
+            ],
+            "title": "GuardRunSummary",
+            "type": "object"
+          },
+          "HaltRunSummary": {
+            "additionalProperties": false,
+            "description": "One halt: the reason code it declares, when it declares one, cut to the text bound.",
+            "properties": {
+              "kind": {
+                "const": "halt",
+                "default": "halt",
+                "title": "Kind",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "reason_truncated": {
+                "default": false,
+                "title": "Reason Truncated",
+                "type": "boolean"
+              }
+            },
+            "title": "HaltRunSummary",
+            "type": "object"
+          },
+          "ReadRunSummary": {
+            "additionalProperties": false,
+            "description": "One accepted-state read: the rows it admitted.",
+            "properties": {
+              "kind": {
+                "const": "read",
+                "default": "read",
+                "title": "Kind",
+                "type": "string"
+              },
+              "rows": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Rows",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "rows"
+            ],
+            "title": "ReadRunSummary",
+            "type": "object"
+          },
+          "RepeatRunSummary": {
+            "additionalProperties": false,
+            "description": "One repeat: the attempts it used.",
+            "properties": {
+              "attempts": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Attempts",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "repeat",
+                "default": "repeat",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "attempts"
+            ],
+            "title": "RepeatRunSummary",
+            "type": "object"
+          },
+          "TransformRunSummary": {
+            "additionalProperties": false,
+            "description": "One closed transform: the records it read and the records it produced.\n\n``rows_in`` sums every records input (a join's left and right, a union's\nparts); ``rows_out`` is absent for a transform that produces one value\n(``aggregate``, ``derive``), and ``rows_in`` for one that reads none.",
+            "properties": {
+              "kind": {
+                "const": "transform",
+                "default": "transform",
+                "title": "Kind",
+                "type": "string"
+              },
+              "rows_in": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Rows In"
+              },
+              "rows_out": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Rows Out"
+              },
+              "transform_kind": {
+                "enum": [
+                  "shape",
+                  "filter",
+                  "join",
+                  "aggregate",
+                  "dedupe",
+                  "union",
+                  "derive"
+                ],
+                "title": "Transform Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "transform_kind"
+            ],
+            "title": "TransformRunSummary",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One node that finished, in journal order.\n\n``duration_us`` is absent: the journal records every event of a run at the\nrun's evaluation instant (the deterministic clock), so per-node durations\nare not derivable from it. ``summary`` is what flowed through a node that\nsucceeded (its records, rows, Captures, branch or Claim counts), by kind;\nit is absent for a node that refused or failed, and for a kind that keeps\nnone (``project``, ``select``, ``invoke``).",
+        "properties": {
+          "duration_us": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Duration Us"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kind"
+          },
+          "node": {
+            "title": "Node",
+            "type": "string"
+          },
+          "sequence": {
+            "minimum": 1,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "call": "#/$defs/CallRunSummary",
+                    "claims": "#/$defs/ClaimsRunSummary",
+                    "emit_capture": "#/$defs/EgressRunSummary",
+                    "extract": "#/$defs/ExtractRunSummary",
+                    "guard": "#/$defs/GuardRunSummary",
+                    "halt": "#/$defs/HaltRunSummary",
+                    "post_inbox": "#/$defs/EgressRunSummary",
+                    "read": "#/$defs/ReadRunSummary",
+                    "repeat": "#/$defs/RepeatRunSummary",
+                    "transform": "#/$defs/TransformRunSummary"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/ExtractRunSummary"
+                  },
+                  {
+                    "$ref": "#/$defs/TransformRunSummary"
+                  },
+                  {
+                    "$ref": "#/$defs/ReadRunSummary"
+                  },
+                  {
+                    "$ref": "#/$defs/CallRunSummary"
+                  },
+                  {
+                    "$ref": "#/$defs/GuardRunSummary"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimsRunSummary"
+                  },
+                  {
+                    "$ref": "#/$defs/EgressRunSummary"
+                  },
+                  {
+                    "$ref": "#/$defs/HaltRunSummary"
+                  },
+                  {
+                    "$ref": "#/$defs/RepeatRunSummary"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Summary"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Verdict"
+          }
+        },
+        "required": [
+          "node",
+          "sequence"
+        ],
+        "title": "GetRunNode",
+        "type": "object"
+      },
+      "required_fields": [
+        "node",
+        "sequence"
+      ]
+    },
     "GitWorkspaceNote": {
       "fields": {
         "code": {
@@ -42499,9 +43470,74 @@
             "title": "LiveView",
             "type": "object"
           },
+          "MandateChangeScope": {
+            "additionalProperties": false,
+            "description": "The evidence bases one change kind of a scoped ClaimType settles on.",
+            "properties": {
+              "basis": {
+                "items": {
+                  "enum": [
+                    "extracted",
+                    "measured",
+                    "derived",
+                    "absence"
+                  ],
+                  "type": "string"
+                },
+                "title": "Basis",
+                "type": "array"
+              }
+            },
+            "required": [
+              "basis"
+            ],
+            "title": "MandateChangeScope",
+            "type": "object"
+          },
+          "MandateChanges": {
+            "additionalProperties": false,
+            "description": "Per change kind, the bases a settle grant covers; a kind left out never settles.",
+            "properties": {
+              "create": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateChangeScope"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "retire": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateChangeScope"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "revise": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateChangeScope"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "title": "MandateChanges",
+            "type": "object"
+          },
           "MandateScope": {
             "additionalProperties": false,
-            "description": "One ClaimType a settle grant covers.\n\n``claim_type`` is its ``ClaimType:<predicate>`` ref, ``change_kinds`` the\nchanges the grant may settle on it, and ``binds`` which referent of the\nchanged Claim (its ``subject`` or its ``object``) binds the condition\nquery's parameter.",
+            "description": "One ClaimType a settle grant covers.\n\n``claim_type`` is its ``ClaimType:<predicate>`` ref, ``changes`` the\nchange kinds the grant may settle on it with the evidence bases each\nsettles on, ``value`` an enum or bool ClaimType's allowed moves, and\n``binds`` which referent of the changed Claim (its ``subject`` or its\n``object``) binds the condition query's parameter.",
             "properties": {
               "binds": {
                 "enum": [
@@ -42511,29 +43547,83 @@
                 "title": "Binds",
                 "type": "string"
               },
-              "change_kinds": {
-                "items": {
-                  "enum": [
-                    "create",
-                    "revise",
-                    "retire"
-                  ],
-                  "type": "string"
-                },
-                "title": "Change Kinds",
-                "type": "array"
+              "changes": {
+                "$ref": "#/$defs/MandateChanges"
               },
               "claim_type": {
                 "title": "Claim Type",
                 "type": "string"
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateValueCondition"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
               "claim_type",
-              "change_kinds",
+              "changes",
               "binds"
             ],
             "title": "MandateScope",
+            "type": "object"
+          },
+          "MandateValueCondition": {
+            "additionalProperties": false,
+            "description": "Enum and bool ClaimTypes only: the values a settled change may move from and to.\n\n``from`` lists the held values a change may replace (a create holds none, so\nit settles only when ``from`` is omitted); ``to`` the values it may write (a\nretirement or an inverse writes none, so it settles only when ``to`` is\nomitted). At least one is declared.",
+            "properties": {
+              "from": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "From"
+              },
+              "to": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "To"
+              }
+            },
+            "title": "MandateValueCondition",
             "type": "object"
           },
           "OrientActivityCaptureErased": {
@@ -61787,6 +62877,19 @@
             "type": "object"
           }
         },
+        "nodes": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "nodes",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/GetRunNode"
+            },
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
         "outcomes": {
           "has_default": false,
           "has_default_factory": false,
@@ -62259,6 +63362,39 @@
             "title": "BoundObservationWindow",
             "type": "object"
           },
+          "CallRunSummary": {
+            "additionalProperties": false,
+            "description": "One call: how many Captures it made or was admitted, and the first of them.",
+            "properties": {
+              "capture_digests": {
+                "default": [],
+                "items": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "title": "Capture Digests",
+                "type": "array"
+              },
+              "captures": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Captures",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "call",
+                "default": "call",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "captures"
+            ],
+            "title": "CallRunSummary",
+            "type": "object"
+          },
           "CanonicalDuration": {
             "additionalProperties": false,
             "properties": {
@@ -62530,6 +63666,117 @@
             "title": "ClaimsDiagnostic",
             "type": "object"
           },
+          "ClaimsRunSummary": {
+            "additionalProperties": false,
+            "description": "One claims terminal: what it wrote, kept, retired, surfaced and skipped.\n\n``written`` and ``revised`` count new and revising Claims, ``inverse_written``\nthe declared-inverse Claims (written or revising) apart from them, and\n``subjects_created`` the Subjects created by key. ``re_observed`` counts\nheld Claims a new Capture re-confirmed, ``no_op`` restatements that changed\nnothing at all. ``downgraded`` counts values written as the ClaimType's\nunknown member over incomplete input. ``surfaced`` counts held Claims a\nsource no longer contains that were reported instead of retired;\n``skipped`` counts the other findings, by kind (an item not written, or an\nincomplete source). ``delivery`` is how the change landed.",
+            "properties": {
+              "delivery": {
+                "enum": [
+                  "settled",
+                  "proposed",
+                  "still_current",
+                  "unchanged",
+                  "empty",
+                  "delivered"
+                ],
+                "title": "Delivery",
+                "type": "string"
+              },
+              "downgraded": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Downgraded",
+                "type": "integer"
+              },
+              "inverse_written": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Inverse Written",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "claims",
+                "default": "claims",
+                "title": "Kind",
+                "type": "string"
+              },
+              "no_op": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "No Op",
+                "type": "integer"
+              },
+              "re_observed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Re Observed",
+                "type": "integer"
+              },
+              "retired": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Retired",
+                "type": "integer"
+              },
+              "revised": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Revised",
+                "type": "integer"
+              },
+              "skipped": {
+                "additionalProperties": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "propertyNames": {
+                  "enum": [
+                    "extract_refused",
+                    "duplicate_key",
+                    "incomplete_source",
+                    "held_disagrees",
+                    "slot_contested",
+                    "claim_not_in_source"
+                  ]
+                },
+                "title": "Skipped",
+                "type": "object"
+              },
+              "subjects_created": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Subjects Created",
+                "type": "integer"
+              },
+              "surfaced": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Surfaced",
+                "type": "integer"
+              },
+              "written": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Written",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "written",
+              "revised",
+              "inverse_written",
+              "subjects_created",
+              "re_observed",
+              "no_op",
+              "retired",
+              "surfaced",
+              "downgraded",
+              "delivery"
+            ],
+            "title": "ClaimsRunSummary",
+            "type": "object"
+          },
           "CompletenessReason": {
             "additionalProperties": false,
             "properties": {
@@ -62567,6 +63814,419 @@
               "kind"
             ],
             "title": "CompletenessReason",
+            "type": "object"
+          },
+          "EgressRunSummary": {
+            "additionalProperties": false,
+            "description": "One ``emit_capture`` or ``post_inbox`` terminal: the items it emitted.\n\n``unposted`` counts the items a post's inbox cap left out.",
+            "properties": {
+              "emitted": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Emitted",
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "emit_capture",
+                  "post_inbox"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "unposted": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Unposted",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "emitted"
+            ],
+            "title": "EgressRunSummary",
+            "type": "object"
+          },
+          "ExtractCompleteWhen": {
+            "additionalProperties": false,
+            "description": "An extract's declared count check, bounded for a summary.\n\n``count_at`` is the declared path, cut to ``NODE_SUMMARY_TEXT_MAX`` code\npoints (``count_at_truncated`` then says so). ``expected`` is absent when\nthe source enumerated no count; a count past ``NODE_SUMMARY_INT_MAX`` is\nleft out and ``out_of_range`` says so.",
+            "properties": {
+              "count_at": {
+                "maxLength": 64,
+                "title": "Count At",
+                "type": "string"
+              },
+              "count_at_truncated": {
+                "default": false,
+                "title": "Count At Truncated",
+                "type": "boolean"
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expected"
+              },
+              "held": {
+                "title": "Held",
+                "type": "boolean"
+              },
+              "observed": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Observed"
+              },
+              "out_of_range": {
+                "default": false,
+                "title": "Out Of Range",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "count_at",
+              "held"
+            ],
+            "title": "ExtractCompleteWhen",
+            "type": "object"
+          },
+          "ExtractRunSummary": {
+            "additionalProperties": false,
+            "description": "One extract: the records it read, and what its completeness rests on.\n\n``records`` counts every record read, ``invalid_records`` and\n``duplicates`` those among them that were invalid or a refused duplicate;\n``invalid_fields`` counts the invalid field results of valid records.\n``complete_when`` is the declared count check's result, when one is declared.",
+            "properties": {
+              "complete": {
+                "title": "Complete",
+                "type": "boolean"
+              },
+              "complete_when": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ExtractCompleteWhen"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "duplicates": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Duplicates",
+                "type": "integer"
+              },
+              "invalid_fields": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Invalid Fields",
+                "type": "integer"
+              },
+              "invalid_records": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Invalid Records",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "extract",
+                "default": "extract",
+                "title": "Kind",
+                "type": "string"
+              },
+              "records": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Records",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "records",
+              "invalid_records",
+              "duplicates",
+              "invalid_fields",
+              "complete"
+            ],
+            "title": "ExtractRunSummary",
+            "type": "object"
+          },
+          "GetRunNode": {
+            "additionalProperties": false,
+            "description": "One node that finished, in journal order.\n\n``duration_us`` is absent: the journal records every event of a run at the\nrun's evaluation instant (the deterministic clock), so per-node durations\nare not derivable from it. ``summary`` is what flowed through a node that\nsucceeded (its records, rows, Captures, branch or Claim counts), by kind;\nit is absent for a node that refused or failed, and for a kind that keeps\nnone (``project``, ``select``, ``invoke``).",
+            "properties": {
+              "duration_us": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Duration Us"
+              },
+              "kind": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Kind"
+              },
+              "node": {
+                "title": "Node",
+                "type": "string"
+              },
+              "sequence": {
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "summary": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "call": "#/$defs/CallRunSummary",
+                        "claims": "#/$defs/ClaimsRunSummary",
+                        "emit_capture": "#/$defs/EgressRunSummary",
+                        "extract": "#/$defs/ExtractRunSummary",
+                        "guard": "#/$defs/GuardRunSummary",
+                        "halt": "#/$defs/HaltRunSummary",
+                        "post_inbox": "#/$defs/EgressRunSummary",
+                        "read": "#/$defs/ReadRunSummary",
+                        "repeat": "#/$defs/RepeatRunSummary",
+                        "transform": "#/$defs/TransformRunSummary"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/ExtractRunSummary"
+                      },
+                      {
+                        "$ref": "#/$defs/TransformRunSummary"
+                      },
+                      {
+                        "$ref": "#/$defs/ReadRunSummary"
+                      },
+                      {
+                        "$ref": "#/$defs/CallRunSummary"
+                      },
+                      {
+                        "$ref": "#/$defs/GuardRunSummary"
+                      },
+                      {
+                        "$ref": "#/$defs/ClaimsRunSummary"
+                      },
+                      {
+                        "$ref": "#/$defs/EgressRunSummary"
+                      },
+                      {
+                        "$ref": "#/$defs/HaltRunSummary"
+                      },
+                      {
+                        "$ref": "#/$defs/RepeatRunSummary"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Summary"
+              },
+              "verdict": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Verdict"
+              }
+            },
+            "required": [
+              "node",
+              "sequence"
+            ],
+            "title": "GetRunNode",
+            "type": "object"
+          },
+          "GuardOperand": {
+            "additionalProperties": false,
+            "description": "One comparison a guard evaluated: its operator, and its numeric or bool operands.\n\nAn operand that is anything else (a string, a list, a record) is left out;\nso is the whole comparison when neither operand is a number or a boolean.\nA number past ``NODE_SUMMARY_INT_MAX`` is left out too, and ``out_of_range``\nsays so. ``present`` and ``absent`` carry whether the reference resolved as\n``left``.",
+            "properties": {
+              "left": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Left"
+              },
+              "operator": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "eq",
+                      "ne",
+                      "lt",
+                      "le",
+                      "gt",
+                      "ge"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "enum": [
+                      "in",
+                      "not_in",
+                      "present",
+                      "absent"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Operator"
+              },
+              "out_of_range": {
+                "default": false,
+                "title": "Out Of Range",
+                "type": "boolean"
+              },
+              "right": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Right"
+              }
+            },
+            "required": [
+              "operator"
+            ],
+            "title": "GuardOperand",
+            "type": "object"
+          },
+          "GuardRunSummary": {
+            "additionalProperties": false,
+            "description": "One guard: the branch it took, and the numeric and bool operands it compared.",
+            "properties": {
+              "branch": {
+                "enum": [
+                  "then",
+                  "else"
+                ],
+                "title": "Branch",
+                "type": "string"
+              },
+              "kind": {
+                "const": "guard",
+                "default": "guard",
+                "title": "Kind",
+                "type": "string"
+              },
+              "operands": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/GuardOperand"
+                },
+                "maxItems": 8,
+                "title": "Operands",
+                "type": "array"
+              },
+              "operands_truncated": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Operands Truncated",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "branch"
+            ],
+            "title": "GuardRunSummary",
+            "type": "object"
+          },
+          "HaltRunSummary": {
+            "additionalProperties": false,
+            "description": "One halt: the reason code it declares, when it declares one, cut to the text bound.",
+            "properties": {
+              "kind": {
+                "const": "halt",
+                "default": "halt",
+                "title": "Kind",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "reason_truncated": {
+                "default": false,
+                "title": "Reason Truncated",
+                "type": "boolean"
+              }
+            },
+            "title": "HaltRunSummary",
             "type": "object"
           },
           "HandEditInstruction": {
@@ -65156,12 +66816,12 @@
                 "default": null,
                 "title": "Operation Key"
               },
-              "outside_scope_claim_types": {
+              "outside_scope": {
                 "default": [],
                 "items": {
-                  "type": "string"
+                  "$ref": "#/$defs/SettleScopeGap"
                 },
-                "title": "Outside Scope Claim Types",
+                "title": "Outside Scope",
                 "type": "array"
               },
               "prior_refusal_coverage": {
@@ -65341,6 +67001,29 @@
             "title": "ProcedureTerminalEgressChild",
             "type": "object"
           },
+          "ReadRunSummary": {
+            "additionalProperties": false,
+            "description": "One accepted-state read: the rows it admitted.",
+            "properties": {
+              "kind": {
+                "const": "read",
+                "default": "read",
+                "title": "Kind",
+                "type": "string"
+              },
+              "rows": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Rows",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "rows"
+            ],
+            "title": "ReadRunSummary",
+            "type": "object"
+          },
           "RepairOperation": {
             "additionalProperties": false,
             "properties": {
@@ -65359,6 +67042,29 @@
               "operation"
             ],
             "title": "RepairOperation",
+            "type": "object"
+          },
+          "RepeatRunSummary": {
+            "additionalProperties": false,
+            "description": "One repeat: the attempts it used.",
+            "properties": {
+              "attempts": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Attempts",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "repeat",
+                "default": "repeat",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "attempts"
+            ],
+            "title": "RepeatRunSummary",
             "type": "object"
           },
           "ResolutionContractReference": {
@@ -65423,6 +67129,61 @@
               "reasons"
             ],
             "title": "RunCompleteness",
+            "type": "object"
+          },
+          "SettleScopeGap": {
+            "additionalProperties": false,
+            "description": "One reason a settle grant's scope left a change out, so the whole change proposed.\n\n``basis`` is the changed value's evidence basis (``None`` when the change\ncarries none a grant can name).",
+            "properties": {
+              "basis": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "extracted",
+                      "measured",
+                      "derived",
+                      "absence"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Basis"
+              },
+              "change": {
+                "enum": [
+                  "create",
+                  "revise",
+                  "retire"
+                ],
+                "title": "Change",
+                "type": "string"
+              },
+              "claim_type": {
+                "title": "Claim Type",
+                "type": "string"
+              },
+              "term": {
+                "enum": [
+                  "claim_type",
+                  "change_kind",
+                  "basis",
+                  "value",
+                  "subject"
+                ],
+                "title": "Term",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_type",
+              "change",
+              "term"
+            ],
+            "title": "SettleScopeGap",
             "type": "object"
           },
           "SourceReadReceipt": {
@@ -65521,6 +67282,64 @@
               "read_at"
             ],
             "title": "SourceReadReceipt",
+            "type": "object"
+          },
+          "TransformRunSummary": {
+            "additionalProperties": false,
+            "description": "One closed transform: the records it read and the records it produced.\n\n``rows_in`` sums every records input (a join's left and right, a union's\nparts); ``rows_out`` is absent for a transform that produces one value\n(``aggregate``, ``derive``), and ``rows_in`` for one that reads none.",
+            "properties": {
+              "kind": {
+                "const": "transform",
+                "default": "transform",
+                "title": "Kind",
+                "type": "string"
+              },
+              "rows_in": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Rows In"
+              },
+              "rows_out": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Rows Out"
+              },
+              "transform_kind": {
+                "enum": [
+                  "shape",
+                  "filter",
+                  "join",
+                  "aggregate",
+                  "dedupe",
+                  "union",
+                  "derive"
+                ],
+                "title": "Transform Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "transform_kind"
+            ],
+            "title": "TransformRunSummary",
             "type": "object"
           },
           "TriggerEventReference": {
@@ -65648,6 +67467,13 @@
             "additionalProperties": true,
             "title": "Next Operation",
             "type": "object"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/$defs/GetRunNode"
+            },
+            "title": "Nodes",
+            "type": "array"
           },
           "outcomes": {
             "items": {
@@ -66601,19 +68427,19 @@
             "title": "Operation Key"
           }
         },
-        "outside_scope_claim_types": {
+        "outside_scope": {
           "default": [],
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
-          "json_name": "outside_scope_claim_types",
+          "json_name": "outside_scope",
           "required": false,
           "schema": {
             "default": [],
             "items": {
-              "type": "string"
+              "$ref": "#/$defs/SettleScopeGap"
             },
-            "title": "Outside Scope Claim Types",
+            "title": "Outside Scope",
             "type": "array"
           }
         },
@@ -67355,6 +69181,61 @@
             ],
             "title": "ProcedureTerminalEgressChild",
             "type": "object"
+          },
+          "SettleScopeGap": {
+            "additionalProperties": false,
+            "description": "One reason a settle grant's scope left a change out, so the whole change proposed.\n\n``basis`` is the changed value's evidence basis (``None`` when the change\ncarries none a grant can name).",
+            "properties": {
+              "basis": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "extracted",
+                      "measured",
+                      "derived",
+                      "absence"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Basis"
+              },
+              "change": {
+                "enum": [
+                  "create",
+                  "revise",
+                  "retire"
+                ],
+                "title": "Change",
+                "type": "string"
+              },
+              "claim_type": {
+                "title": "Claim Type",
+                "type": "string"
+              },
+              "term": {
+                "enum": [
+                  "claim_type",
+                  "change_kind",
+                  "basis",
+                  "value",
+                  "subject"
+                ],
+                "title": "Term",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_type",
+              "change",
+              "term"
+            ],
+            "title": "SettleScopeGap",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -67553,12 +69434,12 @@
             "default": null,
             "title": "Operation Key"
           },
-          "outside_scope_claim_types": {
+          "outside_scope": {
             "default": [],
             "items": {
-              "type": "string"
+              "$ref": "#/$defs/SettleScopeGap"
             },
-            "title": "Outside Scope Claim Types",
+            "title": "Outside Scope",
             "type": "array"
           },
           "prior_refusal_coverage": {

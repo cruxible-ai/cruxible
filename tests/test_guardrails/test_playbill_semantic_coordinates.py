@@ -368,7 +368,9 @@ def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     assert CURRENT_COMPILER_REVISION == "capture-payload-v1"
     assert compiler_revision_label(CURRENT_COMPILER) == "capture-payload-v1"
     for earlier_digest in (
-        # Revision 53: Captures wrapped (web.fetch observation bundle, observed-content layer).
+        # Revision 54 (settle-scope-basis-v1): Captures still wrapped, before capture = payload.
+        "sha256:ae9bfa79ced58d272e46a8b752554951905c85956697a75c2f7a0133a30ce816",
+        # Revision 53: Mandate scope by change kind only, before basis-scoped grants.
         "sha256:d41c727371f5f1c98a883ff7aa34c1bf5d88de77853466bd79aa4c73f6a8acf4",
         # Revision 52: authored enumeration + covers, before D-R19..D-R24.
         "sha256:ea86ed754f352c9dc58025cc6625ce9b3a3b42915664e2d380dde531838a4ac5",

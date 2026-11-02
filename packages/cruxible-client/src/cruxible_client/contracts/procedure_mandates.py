@@ -35,6 +35,16 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
+from cruxible_client.contracts.mandate_scope import (
+    MANDATE_BASIS_ORDER,
+    MANDATE_CHANGE_KIND_ORDER,
+    MandateBasis,
+    MandateChangeKind,
+    MandateChanges,
+    MandateChangeScope,
+    MandateValueCondition,
+    MandateValueMember,
+)
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -231,6 +241,15 @@ def evaluate_procedure_mandate_v2_law(
             binding_kinds.update(subject_value_kinds(claim_type.value))
         else:
             binding_kinds.update(claim_type.allowed_subject_kinds)
+    for item in mandate.scope:
+        if item.value is not None:
+            refusal = _value_condition_refusal(item, claim_types[item.claim_type.target])
+            if refusal is not None:
+                return _law_refusal(refusal[0], refusal[1], path=path)
+    if mandate.subjects == "expected":
+        refusal = _expected_subjects_refusal(mandate, procedure)
+        if refusal is not None:
+            return _law_refusal(refusal[0], refusal[1], path=path)
     condition = mandate.condition
     if condition is not None:
         if condition_query is None or (
@@ -243,6 +262,11 @@ def evaluate_procedure_mandate_v2_law(
                 path=path,
             )
         refusal = condition_query_refusal(condition_query.query, condition)
+        if refusal is not None:
+            return _law_refusal(refusal[0], refusal[1], path=path)
+        refusal = _target_value_parameter_refusal(
+            mandate, condition, condition_query.query, claim_types
+        )
         if refusal is not None:
             return _law_refusal(refusal[0], refusal[1], path=path)
         entry_kinds = set(getattr(condition_query.query.entry, "subject_kinds", ()))
@@ -261,6 +285,126 @@ def evaluate_procedure_mandate_v2_law(
         narrowing=predecessor is not None
         and mandate_change_is_narrowing(mandate, predecessor.mandate),
     )
+
+
+def _value_condition_refusal(
+    item: "MandateClaimScope", claim_type: ScopedClaimType
+) -> tuple[str, str] | None:
+    """A ``value: {from, to}`` condition names members of an enum or bool ClaimType only."""
+
+    from cruxible_client.contracts.shapes import BoolType, EnumType
+
+    assert item.value is not None
+    value = claim_type.value
+    members: tuple[MandateValueMember, ...]
+    if isinstance(value, BoolType):
+        members = (False, True)
+    elif isinstance(value, EnumType):
+        members = value.members
+    else:
+        return (
+            "cruxible.procedure_mandate.value_condition_unsupported",
+            f"ClaimType {claim_type.identity.qualified} is not an enum or bool type; bind "
+            "$target.value in the condition query instead of value: {from, to}.",
+        )
+    for side in (item.value.from_, item.value.to):
+        stray = [
+            member
+            for member in side or ()
+            if member not in members or isinstance(member, bool) != isinstance(value, BoolType)
+        ]
+        if stray:
+            return (
+                "cruxible.procedure_mandate.value_condition_member_unknown",
+                f"ClaimType {claim_type.identity.qualified} has no value "
+                f"{', '.join(json.dumps(member) for member in stray)}.",
+            )
+    return None
+
+
+def _expected_subjects_refusal(
+    mandate: "ProcedureMandate", procedure: AcceptedProcedure
+) -> tuple[str, str] | None:
+    """``subjects: expected`` holds by construction only when every write is fenced.
+
+    Every claims node that writes a scoped ClaimType must fence its Subjects
+    with ``within`` (absence acts only on ``expect`` Subjects inside it), and a
+    Procedure that invokes another cannot be checked from its own definition.
+    """
+
+    from cruxible_client.contracts.procedures.claims import ClaimsNode
+
+    scoped = {item.claim_type.target for item in mandate.scope}
+    for node in procedure.procedure.definition.nodes:
+        if getattr(node, "kind", None) == "invoke":
+            return (
+                "cruxible.procedure_mandate.subjects_unverifiable",
+                "subjects: expected is checked against the Line's own claims templates; "
+                "a Procedure that invokes another cannot be checked.",
+            )
+        if not isinstance(node, ClaimsNode) or node.subject.within is not None:
+            continue
+        if any(template.claim_type.target in scoped for template in node.claims):
+            return (
+                "cruxible.procedure_mandate.subjects_unfenced",
+                f"subjects: expected needs claims node {node.node_id!r} to fence the "
+                "Subjects it writes with within.",
+            )
+    return None
+
+
+def query_value_type(value: FieldType) -> str | None:
+    """The query value type a ClaimType's value binds as, or None when it cannot."""
+
+    from cruxible_client.contracts.shapes import (
+        BoolType,
+        DateTimeType,
+        DateType,
+        DecimalType,
+        EnumType,
+        IntType,
+        NumberType,
+        StringType,
+        SubjectType,
+    )
+
+    if isinstance(value, StringType | EnumType | DateType):
+        return "string"
+    if isinstance(value, BoolType):
+        return "boolean"
+    if isinstance(value, IntType):
+        return "integer"
+    if isinstance(value, DecimalType | NumberType):
+        return "decimal"
+    if isinstance(value, DateTimeType):
+        return "timestamp"
+    if isinstance(value, SubjectType):
+        return "subject_reference"
+    return None
+
+
+def _target_value_parameter_refusal(
+    mandate: "ProcedureMandate",
+    condition: "MandateCondition",
+    query: "QueryDefinition",
+    claim_types: Mapping[ArtifactIdentity, ScopedClaimType],
+) -> tuple[str, str] | None:
+    """``$target.value`` and ``$target.before`` bind typed: one type every scope shares."""
+
+    declared = {item.name: item for item in query.parameters}
+    for name in (condition.value_parameter, condition.before_parameter):
+        if name is None:
+            continue
+        expected = declared[name].value_type
+        for item in mandate.scope:
+            claim_type = claim_types[item.claim_type.target]
+            if query_value_type(claim_type.value) != expected:
+                return (
+                    "cruxible.procedure_mandate.condition_value_type_mismatch",
+                    f"Condition parameter {name} is {expected}; ClaimType "
+                    f"{claim_type.identity.qualified}'s value does not bind as it.",
+                )
+    return None
 
 
 class ProcedureMandateInvocation(_StrictProcedureMandateModel):
@@ -371,9 +515,7 @@ def evaluate_procedure_mandate(
 # -- Successor: conditional settle authority (compiler revision 30) ---------------
 
 MandateGrant = Literal["propose", "settle"]
-MandateChangeKind = Literal["create", "revise", "retire"]
 _GRANT_ORDER: Final = {"propose": 0, "settle": 1}
-MANDATE_CHANGE_KIND_ORDER: Final[tuple[MandateChangeKind, ...]] = ("create", "revise", "retire")
 _PARAMETER_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 # Settle authority may only reach accepted Claims; a mandate can never cover the
 # artifacts that govern authority itself (mandates, laws, policy, ClaimTypes).
@@ -393,25 +535,26 @@ def mandate_grant(mandate: "ProcedureMandateAny") -> MandateGrant:
 
 
 class MandateClaimScope(_StrictProcedureMandateModel):
-    """One ClaimType a settle grant covers, and the change kinds it may settle."""
+    """One ClaimType a settle grant covers: per change kind, the bases it settles on."""
 
     tag: Literal["playbill-mandate-claim-scope-v1"] = "playbill-mandate-claim-scope-v1"
     claim_type: ArtifactPin
-    change_kinds: tuple[MandateChangeKind, ...]
+    changes: MandateChanges
     # Which referent of the changed Claim binds the condition query's parameter.
     binding_subject_role: Literal["subject", "object"] = "subject"
+    value: MandateValueCondition | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def _shape(self) -> "MandateClaimScope":
         if self.claim_type.role != "claim-type" or self.claim_type.target.kind != "ClaimType":
             raise ValueError("a mandate Claim scope must pin one exact ClaimType")
-        if not self.change_kinds or self.change_kinds != tuple(
-            kind for kind in MANDATE_CHANGE_KIND_ORDER if kind in self.change_kinds
-        ):
-            raise ValueError(
-                "mandate change kinds must be nonempty, unique and canonically ordered"
-            )
         return self
+
+    @property
+    def change_kinds(self) -> tuple[MandateChangeKind, ...]:
+        return self.changes.kinds
 
 
 class MandateCondition(_StrictProcedureMandateModel):
@@ -426,6 +569,11 @@ class MandateCondition(_StrictProcedureMandateModel):
     tag: Literal["playbill-mandate-condition-v1"] = "playbill-mandate-condition-v1"
     query: ArtifactPin
     binding_parameter: str
+    #: Optional parameters Core binds to the changed Claim's typed new value
+    #: (``$target.value``) and the value it replaces (``$target.before``). Core
+    #: always supplies them, null when absent, so a default never stands in.
+    value_parameter: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    before_parameter: str | None = Field(default=None, exclude_if=lambda value: value is None)
     fixed_parameters: dict[str, object] = {}
     required_fields: tuple[str, ...]
     fallback: Literal["refuse", "propose"]
@@ -446,13 +594,28 @@ class MandateCondition(_StrictProcedureMandateModel):
             raise ValueError("a mandate condition must pin one exact QueryDefinition")
         if not _PARAMETER_RE.fullmatch(self.binding_parameter):
             raise ValueError("mandate binding_parameter must be a canonical parameter name")
-        if self.binding_parameter in self.fixed_parameters:
-            raise ValueError("the binding parameter is bound by Core, never fixed by the mandate")
+        bound = self.bound_parameters
+        if len(set(bound)) != len(bound) or any(
+            not _PARAMETER_RE.fullmatch(name) for name in bound
+        ):
+            raise ValueError("mandate target parameters must be distinct canonical names")
+        if set(bound) & set(self.fixed_parameters):
+            raise ValueError("a target parameter is bound by Core, never fixed by the mandate")
         if not self.required_fields or self.required_fields != tuple(
             sorted(set(self.required_fields))
         ):
             raise ValueError("mandate required_fields must be nonempty, sorted and unique")
         return self
+
+    @property
+    def bound_parameters(self) -> tuple[str, ...]:
+        """Every parameter Core binds from the target: subject, then value and before."""
+
+        return tuple(
+            name
+            for name in (self.binding_parameter, self.value_parameter, self.before_parameter)
+            if name is not None
+        )
 
 
 class ProcedureMandate(_StrictProcedureMandateModel):
@@ -469,6 +632,13 @@ class ProcedureMandate(_StrictProcedureMandateModel):
     expires_at: datetime
     scope: tuple[MandateClaimScope, ...] = ()
     subject_scope: tuple[SemanticAddress, ...] | None = None
+    #: ``expected``: every target is a Subject the Line's claims templates fence
+    #: with ``within`` (absence acts only on ``expect`` inside it), checked
+    #: structurally when the grant is accepted.
+    subjects: Literal["expected"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    #: Optional settlement predicate; without one, scope alone decides.
     condition: MandateCondition | None = None
     #: The Subject kinds a settle grant may create (identity D1): a new Subject
     #: of one of them, and the key Claims its creation writes, settle as part of
@@ -520,8 +690,8 @@ class ProcedureMandate(_StrictProcedureMandateModel):
         ) or any(not _SUBJECT_KIND_RE.fullmatch(kind) for kind in self.subject_creation):
             raise ValueError("mandate subject_creation must name Subject kinds, sorted and unique")
         if self.grants == "settle":
-            if not self.scope or self.condition is None:
-                raise ValueError("a settle grant requires a Claim scope and a condition query")
+            if not self.scope:
+                raise ValueError("a settle grant requires a Claim scope")
             if any(
                 member != SETTLE_NAMESPACE_ROOT
                 and not member.startswith(SETTLE_NAMESPACE_ROOT + "/")
@@ -532,6 +702,7 @@ class ProcedureMandate(_StrictProcedureMandateModel):
             self.scope
             or self.condition is not None
             or self.subject_scope is not None
+            or self.subjects is not None
             or self.subject_creation
         ):
             raise ValueError("a propose grant carries no settle scope or condition")
@@ -583,16 +754,41 @@ def mandate_change_is_narrowing(new: ProcedureMandateAny, old: ProcedureMandateA
         if (
             previous is None
             or previous.binding_subject_role != item.binding_subject_role
-            or not set(item.change_kinds) <= set(previous.change_kinds)
+            or not _changes_narrow(item.changes, previous.changes)
+            or not _value_narrows(item.value, previous.value)
         ):
             return False
     if old.subject_scope is not None and (
         new.subject_scope is None or not set(new.subject_scope) <= set(old.subject_scope)
     ):
         return False
+    if old.subjects is not None and new.subjects != old.subjects:
+        return False
     if not set(new.subject_creation) <= set(old.subject_creation):
         return False
     return True
+
+
+def _changes_narrow(new: MandateChanges, old: MandateChanges) -> bool:
+    for kind in MANDATE_CHANGE_KIND_ORDER:
+        scope = new.of(kind)
+        previous = old.of(kind)
+        if scope is not None and (previous is None or not set(scope.basis) <= set(previous.basis)):
+            return False
+    return True
+
+
+def _value_narrows(new: MandateValueCondition | None, old: MandateValueCondition | None) -> bool:
+    """A value condition only narrows when each side admits no value the old one refused."""
+
+    if old is None:
+        return True
+    if new is None:
+        return False
+    return all(
+        previous is None or (current is not None and set(current) <= set(previous))
+        for current, previous in ((new.from_, old.from_), (new.to, old.to))
+    )
 
 
 def parse_procedure_mandate_any(
@@ -679,12 +875,18 @@ def condition_query_refusal(
         )
     declared = {item.name: item for item in query.parameters}
     fixed = set(condition.fixed_parameters)
-    if condition.binding_parameter not in declared or (fixed | {condition.binding_parameter}) != {
-        name for name, item in declared.items() if item.required or name in fixed
-    }:
+    bound = set(condition.bound_parameters)
+    binding = declared.get(condition.binding_parameter)
+    if (
+        binding is None
+        or not binding.required
+        or not (bound | fixed) <= set(declared)
+        or {name for name, item in declared.items() if item.required} - (bound | fixed)
+    ):
         return (
             "cruxible.procedure_mandate.condition_parameters_mismatch",
-            "Core binds exactly the binding parameter; the mandate fixes every other one.",
+            "Core binds the target parameters (the required binding parameter, and any "
+            "value or before parameter); the mandate fixes every other required one.",
         )
     projected = set() if query.projection is None else {f.name for f in query.projection.fields}
     if not set(condition.required_fields) <= projected:
@@ -697,9 +899,16 @@ def condition_query_refusal(
 
 __all__ = [
     "mandate_creates_subject",
+    "MANDATE_BASIS_ORDER",
     "MANDATE_CHANGE_KIND_ORDER",
+    "MandateBasis",
     "MandateChangeKind",
+    "MandateChangeScope",
+    "MandateChanges",
     "MandateClaimScope",
+    "MandateValueCondition",
+    "MandateValueMember",
+    "query_value_type",
     "MandateCondition",
     "MandateGrant",
     "ProcedureMandateAny",

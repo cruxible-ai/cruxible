@@ -24,7 +24,8 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from cruxible_client.contracts.claim_evidence import RunCompleteness
 from cruxible_client.contracts.line_dispatch import LineTriggerVersion
-from cruxible_client.contracts.procedure_mandates import MandateChangeKind
+from cruxible_client.contracts.mandate_scope import MandateChanges, MandateValueCondition
+from cruxible_client.contracts.procedures.node_summary import NodeRunSummary
 from cruxible_client.contracts.procedures.results import (
     ProcedureTerminal,
     ProcedureTerminalEgress,
@@ -247,14 +248,16 @@ def _omit_false(value: object) -> bool:
 class MandateScope(_StrictOperationalModel):
     """One ClaimType a settle grant covers.
 
-    ``claim_type`` is its ``ClaimType:<predicate>`` ref, ``change_kinds`` the
-    changes the grant may settle on it, and ``binds`` which referent of the
-    changed Claim (its ``subject`` or its ``object``) binds the condition
-    query's parameter.
+    ``claim_type`` is its ``ClaimType:<predicate>`` ref, ``changes`` the
+    change kinds the grant may settle on it with the evidence bases each
+    settles on, ``value`` an enum or bool ClaimType's allowed moves, and
+    ``binds`` which referent of the changed Claim (its ``subject`` or its
+    ``object``) binds the condition query's parameter.
     """
 
     claim_type: str
-    change_kinds: tuple[MandateChangeKind, ...]
+    changes: MandateChanges
+    value: MandateValueCondition | None = Field(default=None, exclude_if=_omit_none)
     binds: Literal["subject", "object"]
 
 
@@ -269,6 +272,8 @@ class MandateConditionView(_StrictOperationalModel):
 
     query: str
     binding_parameter: str
+    value_parameter: str | None = Field(default=None, exclude_if=_omit_none)
+    before_parameter: str | None = Field(default=None, exclude_if=_omit_none)
     fixed_parameters: dict[str, JsonValue] = Field(
         default_factory=dict, exclude_if=lambda value: not value
     )
@@ -297,6 +302,7 @@ class GetMandateCard(_StrictOperationalModel):
     namespace: tuple[str, ...] = ()
     scope: tuple[MandateScope, ...] = ()
     subject_scope: tuple[str, ...] | None = Field(default=None, exclude_if=_omit_none)
+    subjects: Literal["expected"] | None = Field(default=None, exclude_if=_omit_none)
     condition: MandateConditionView | None = Field(default=None, exclude_if=_omit_none)
     subject_creation: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     suspended: bool = Field(default=False, exclude_if=_omit_false)
@@ -308,7 +314,10 @@ class GetRunNode(_StrictOperationalModel):
 
     ``duration_us`` is absent: the journal records every event of a run at the
     run's evaluation instant (the deterministic clock), so per-node durations
-    are not derivable from it.
+    are not derivable from it. ``summary`` is what flowed through a node that
+    succeeded (its records, rows, Captures, branch or Claim counts), by kind;
+    it is absent for a node that refused or failed, and for a kind that keeps
+    none (``project``, ``select``, ``invoke``).
     """
 
     node: str
@@ -316,6 +325,7 @@ class GetRunNode(_StrictOperationalModel):
     verdict: str | None = Field(default=None, exclude_if=_omit_none)
     sequence: int = Field(ge=1)
     duration_us: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
+    summary: NodeRunSummary | None = Field(default=None, exclude_if=_omit_none)
 
 
 class GetRunCurrentNode(_StrictOperationalModel):

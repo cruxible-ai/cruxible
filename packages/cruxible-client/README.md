@@ -4831,7 +4831,7 @@ Import: `cruxible_client.contracts.authoring.inputs.ProcedureMandateInput`. [Sou
 | `namespace` | `tuple[str, ...]` | `Required` |
 | `valid_from` | `datetime` | `Required` |
 | `expires_at` | `datetime` | `Required` |
-| `scope` | `tuple[MandateScopeAuthoring, ...]` | `()`; for a settle grant, the ClaimTypes and change kinds it may settle |
+| `scope` | `tuple[MandateScopeAuthoring, ...]` | `()`; for a settle grant, the ClaimTypes it may settle and, per change kind, the evidence bases (`extracted`, `measured`, `derived`, `absence`) that settle; `value: {from, to}` for enum and bool types |
 | `subject_scope` | `tuple[SemanticAddress, ...] \| None` | `None` |
 | `condition` | `MandateConditionAuthoring \| None` | `None`; a settle grant's condition query, with its fallback (`refuse` or `propose`) |
 | `suspended` | `bool` | `False` |

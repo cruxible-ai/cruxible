@@ -8,6 +8,7 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.mandate_scope import MandateChanges, MandateValueCondition
 from cruxible_client.contracts.procedure_mandates import (
     AcceptedProcedureMandate,
     MandateClaimScope,
@@ -47,7 +48,8 @@ from cruxible_client.contracts.query.grammar import (
     QueryProjection,
     QueryProjectionField,
 )
-from tests.support.mandates import procedure_mandate
+from cruxible_client.contracts.shapes import parse_type
+from tests.support.mandates import procedure_mandate, scope_changes
 from tests.support.procedures import procedure_members
 from tests.test_procedures.test_procedure_mandates import (
     _accepted_line,
@@ -142,7 +144,7 @@ def _settle(
                 claim_type=ArtifactPin(
                     role="claim-type", target=EXPOSURE, artifact_digest=EXPOSURE_DIGEST
                 ),
-                change_kinds=change_kinds,
+                changes=scope_changes(*change_kinds),
             ),
         ),
         condition=MandateCondition(
@@ -177,16 +179,22 @@ def _law(
     *,
     procedure: AcceptedProcedure | None = None,
     line: AcceptedLineSpec | None = None,
+    value: object = None,
 ):
     accepted_procedure = procedure or _procedure()
     accepted_line = line or _accepted_line(_line(procedure=accepted_procedure))
+    claim_types = _claim_types()
+    if value is not None:
+        claim_types = {
+            EXPOSURE: claim_types[EXPOSURE].model_copy(update={"value": parse_type(value)})
+        }
     return evaluate_procedure_mandate_v2_law(
         mandate,
         path=procedure_mandate_path(mandate.identity.name),
         predecessor=predecessor,
         line=accepted_line,
         procedure=accepted_procedure,
-        claim_types=_claim_types(),
+        claim_types=claim_types,
         condition_query=query,
     )
 
@@ -219,7 +227,6 @@ def test_v2_round_trips_and_parses_beside_v1() -> None:
     ("updates", "message"),
     [
         ({"scope": ()}, "settle grant requires"),
-        ({"condition": None}, "settle grant requires"),
         ({"namespace": ("claims", "procedure-mandates")}, "only reach accepted Claims"),
         ({"namespace": ("governance",)}, "only reach accepted Claims"),
     ],
@@ -317,7 +324,7 @@ def test_law_refuses_scope_the_condition_cannot_bind() -> None:
                     claim_type=ArtifactPin(
                         role="claim-type", target=EXPOSURE, artifact_digest="sha256:" + "9" * 64
                     ),
-                    change_kinds=("revise",),
+                    changes=scope_changes("revise"),
                 ),
             )
         }
@@ -332,7 +339,7 @@ def test_law_refuses_scope_the_condition_cannot_bind() -> None:
                     claim_type=ArtifactPin(
                         role="claim-type", target=EXPOSURE, artifact_digest=EXPOSURE_DIGEST
                     ),
-                    change_kinds=("revise",),
+                    changes=scope_changes("revise"),
                     binding_subject_role="object",
                 ),
             )
@@ -359,7 +366,7 @@ def test_narrowing_takes_the_fast_path_and_widening_does_not() -> None:
     narrowing = {
         "suspend": successor(suspended=True),
         "fewer change kinds": successor(
-            scope=(base.scope[0].model_copy(update={"change_kinds": ("revise",)}),)
+            scope=(base.scope[0].model_copy(update={"changes": scope_changes("revise")}),)
         ),
         "earlier expiry": successor(expires_at=datetime(2026, 6, 1, tzinfo=timezone.utc)),
         "demote to propose": successor(
@@ -375,11 +382,24 @@ def test_narrowing_takes_the_fast_path_and_widening_does_not() -> None:
         "later expiry": successor(expires_at=datetime(2028, 1, 1, tzinfo=timezone.utc)),
         "more change kinds": successor(
             scope=(
-                base.scope[0].model_copy(update={"change_kinds": ("create", "revise", "retire")}),
+                base.scope[0].model_copy(
+                    update={"changes": scope_changes("create", "revise", "retire")}
+                ),
             )
         ),
         "changed condition": successor(
             condition=base.condition.model_copy(update={"fallback": "refuse"})
+        ),
+        "another basis": successor(
+            scope=(
+                base.scope[0].model_copy(
+                    update={
+                        "changes": scope_changes(
+                            "create", "revise", basis=("extracted", "measured")
+                        )
+                    }
+                ),
+            )
         ),
     }
     for label, mandate in narrowing.items():
@@ -534,7 +554,7 @@ def _world(tmp_path):
                     target=claim_type.identity,
                     artifact_digest=claim_type_digest(claim_type).tagged,
                 ),
-                change_kinds=("create", "revise"),
+                changes=scope_changes("create", "revise"),
             ),
         ),
     )
@@ -716,7 +736,7 @@ def test_settle_authoring_names_its_scope_and_condition_and_lowering_pins_them(t
         scope=(
             MandateScopeAuthoring(
                 claim_type=mandate.scope[0].claim_type.target.name,
-                change_kinds=("revise", "create"),
+                changes=scope_changes("create", "revise"),
             ),
         ),
         condition=MandateConditionAuthoring(
@@ -737,3 +757,158 @@ def test_settle_authoring_names_its_scope_and_condition_and_lowering_pins_them(t
     with pytest.raises(AuthoringLoweringError) as refused:
         _render_procedure_mandate_member(missing, tree=grown)
     assert refused.value.code == "cruxible.authoring.procedure_mandate_condition_query_missing"
+
+
+# --- B4c: basis scope, value conditions, typed target values, subjects ---------
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({}, "at least one change kind"),
+        ({"retire": {"basis": ["extracted"]}}, "retire scope settles only on basis absence"),
+        ({"create": {"basis": []}}, "nonempty, unique and in canonical order"),
+        ({"create": {"basis": ["derived", "extracted"]}}, "canonical order"),
+        ({"create": {"basis": ["inferred"]}}, "basis"),
+    ],
+)
+def test_scope_changes_name_bases_per_change_kind(changes, message) -> None:
+    with pytest.raises(ValueError, match=message):
+        MandateChanges.model_validate(changes)
+
+
+def test_a_settle_grant_may_omit_its_condition() -> None:
+    query = _accepted_query(_query())
+    mandate = _settle(query, condition=None)
+    path = procedure_mandate_path("triage")
+    assert parse_procedure_mandate_any(render_procedure_mandate(mandate), path=path) == mandate
+    assert _law(mandate, None).verdict == "accepted"
+
+
+def test_the_scope_wire_names_each_basis_per_change_kind() -> None:
+    query = _accepted_query(_query())
+    mandate = _settle(
+        query,
+        scope=(
+            MandateClaimScope(
+                claim_type=ArtifactPin(
+                    role="claim-type", target=EXPOSURE, artifact_digest=EXPOSURE_DIGEST
+                ),
+                changes=MandateChanges.model_validate(
+                    {"create": {"basis": ["extracted"]}, "retire": {"basis": ["absence"]}}
+                ),
+                value=MandateValueCondition.model_validate({"from": ["open"], "to": ["fixed"]}),
+            ),
+        ),
+    )
+    wire = render_procedure_mandate(mandate)
+    assert b'"changes":{"create":{"basis":["extracted"]},"retire":{"basis":["absence"]}}' in (
+        wire.replace(b" ", b"").replace(b"\n", b"")
+    )
+    assert b'"from"' in wire and b"from_" not in wire
+    path = procedure_mandate_path("triage")
+    assert parse_procedure_mandate_any(wire, path=path) == mandate
+
+
+def _valued(query, value: dict) -> ProcedureMandate:  # type: ignore[no-untyped-def]
+    return _settle(
+        query,
+        scope=(
+            MandateClaimScope(
+                claim_type=ArtifactPin(
+                    role="claim-type", target=EXPOSURE, artifact_digest=EXPOSURE_DIGEST
+                ),
+                changes=scope_changes("revise"),
+                value=MandateValueCondition.model_validate(value),
+            ),
+        ),
+    )
+
+
+def test_a_value_condition_names_members_of_an_enum_or_bool_type_only() -> None:
+    query = _accepted_query(_query())
+    enum = "enum[fixed, open]"
+    assert _law(_valued(query, {"from": ["open"], "to": ["fixed"]}), query, value=enum).verdict == (
+        "accepted"
+    )
+    assert _law(_valued(query, {"to": [True]}), query, value="bool").verdict == "accepted"
+    assert _code(_law(_valued(query, {"to": ["fixed"]}), query)) == (
+        "cruxible.procedure_mandate.value_condition_unsupported"
+    )
+    assert _code(_law(_valued(query, {"to": ["closed"]}), query, value=enum)) == (
+        "cruxible.procedure_mandate.value_condition_member_unknown"
+    )
+    assert _code(_law(_valued(query, {"to": ["true"]}), query, value="bool")) == (
+        "cruxible.procedure_mandate.value_condition_member_unknown"
+    )
+    with pytest.raises(ValueError, match="declares from, to, or both"):
+        MandateValueCondition.model_validate({})
+
+
+def test_value_conditions_narrow_only_by_subset() -> None:
+    query = _accepted_query(_query())
+    base = _valued(query, {"to": ["fixed", "open"]})
+    narrower = _valued(query, {"to": ["fixed"]})
+    wider = _valued(query, {"from": ["open"]})
+    assert mandate_change_is_narrowing(narrower, base)
+    assert not mandate_change_is_narrowing(wider, base)
+    unbounded = base.model_copy(
+        update={"scope": (base.scope[0].model_copy(update={"value": None}),)}
+    )
+    assert not mandate_change_is_narrowing(unbounded, base)
+    assert mandate_change_is_narrowing(base, unbounded)
+
+
+def _target_query(value_type: str = "string", *, required: bool = False) -> QueryDefinition:
+    query = _query()
+    return query.model_copy(
+        update={
+            "parameters": (
+                *query.parameters,
+                QueryParameterDeclaration(
+                    name="status_value", value_type=value_type, required=required
+                ),
+            )
+        }
+    )
+
+
+def _bind_value(query: AcceptedQueryDefinition, **condition: object) -> ProcedureMandate:
+    mandate = _settle(query)
+    bound = MandateCondition.model_validate(
+        {**mandate.condition.model_dump(mode="python"), **condition}
+    )
+    return mandate.model_copy(update={"condition": bound})
+
+
+def test_target_value_and_before_bind_typed_parameters() -> None:
+    query = _accepted_query(_target_query())
+    assert _law(_bind_value(query, value_parameter="status_value"), query).verdict == "accepted"
+    assert _law(_bind_value(query, before_parameter="status_value"), query).verdict == ("accepted")
+    mistyped = _accepted_query(_target_query("integer"))
+    assert _code(_law(_bind_value(mistyped, value_parameter="status_value"), mistyped)) == (
+        "cruxible.procedure_mandate.condition_value_type_mismatch"
+    )
+    # A target parameter must be declared, and a required one must be bound.
+    assert _code(_law(_bind_value(query, value_parameter="undeclared"), query)) == (
+        "cruxible.procedure_mandate.condition_parameters_mismatch"
+    )
+    required = _accepted_query(_target_query(required=True))
+    assert _code(_law(_settle(required), required)) == (
+        "cruxible.procedure_mandate.condition_parameters_mismatch"
+    )
+    with pytest.raises(ValueError, match="distinct"):
+        _bind_value(query, value_parameter="asset_id")
+    with pytest.raises(ValueError, match="bound by Core"):
+        _bind_value(query, value_parameter="environment")
+
+
+def test_subjects_expected_is_settle_only_and_narrows_away_only_by_keeping_it() -> None:
+    query = _accepted_query(_query())
+    expected = _settle(query, subjects="expected")
+    assert _law(expected, query).verdict == "accepted"
+    open_ = _settle(query)
+    assert mandate_change_is_narrowing(expected, open_)
+    assert not mandate_change_is_narrowing(open_, expected)
+    with pytest.raises(ValueError, match="propose grant carries no settle"):
+        _settle(query, grants="propose", scope=(), condition=None, subjects="expected")

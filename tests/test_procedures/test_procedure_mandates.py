@@ -42,7 +42,7 @@ from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
 from tests.core_support._support import initialize_local
 from tests.support.lines import line_budgets, line_spec
-from tests.support.mandates import procedure_mandate
+from tests.support.mandates import procedure_mandate, scope_changes
 from tests.support.procedures import procedure_members
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
@@ -109,7 +109,7 @@ def _settle_scope() -> tuple[MandateClaimScope, ...]:
                 target=ArtifactIdentity(kind="ClaimType", name="security.vulnerability.triaged"),
                 artifact_digest=_D0,
             ),
-            change_kinds=("create", "revise"),
+            changes=scope_changes("create", "revise"),
         ),
     )
 

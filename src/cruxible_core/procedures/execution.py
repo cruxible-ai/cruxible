@@ -123,6 +123,13 @@ from cruxible_client.contracts.procedures.models import (
     iter_role_references,
     predicate_step_aliases,
 )
+from cruxible_client.contracts.procedures.node_summary import (
+    ClaimsDelivery,
+    EgressRunSummary,
+    NodeRunSummary,
+    ReadRunSummary,
+    RepeatRunSummary,
+)
 from cruxible_client.contracts.procedures.reads import effective_read_rows
 from cruxible_client.contracts.procedures.results import (
     InboxPostTruncation,
@@ -253,6 +260,17 @@ from cruxible_core.procedures.input_planes import (
     validate_run_input_vector,
 )
 from cruxible_core.procedures.line_admission import LINE_ARM_ADMISSION_GATE
+from cruxible_core.procedures.node_summaries import (
+    call_summary,
+    claims_delivery,
+    claims_summary,
+    extract_summary,
+    guard_summary,
+    halt_summary,
+    record_summary,
+    row_count,
+    transform_summary,
+)
 from cruxible_core.procedures.ports import (
     AcquisitionRules,
     bound_operation,
@@ -2235,6 +2253,12 @@ class _RunState:
     claims_evidence: dict[str, tuple[ClaimEvidenceReceipt | None, ...]] = dataclass_field(
         default_factory=dict
     )
+    #: Each node's run summary, set as it runs and journaled on its node_fired.
+    node_summaries: dict[str, NodeRunSummary] = dataclass_field(default_factory=dict)
+    #: Rows each admitted accepted-state read returned, by input name.
+    read_rows_by_input: dict[str, int] = dataclass_field(default_factory=dict)
+    #: How each claims terminal's change landed, from its delivery.
+    claims_deliveries: dict[str, ClaimsDelivery] = dataclass_field(default_factory=dict)
 
     def observe_items(self, observed: int, boundary: str, field_path: str) -> None:
         candidate = (boundary.encode("utf-8"), field_path.encode("utf-8"))
@@ -2837,6 +2861,9 @@ class ProcedureExecutor:
             outcomes={item.input_name: item for item in prepared.acquisition_outcomes},
             acquisition_plan=prepared.acquisition_plan,
             read_rows=sum(item.rows for item in prepared.accepted_state_materials),
+            read_rows_by_input={
+                item.input.input_name: item.rows for item in prepared.accepted_state_materials
+            },
         )
         for accepted_state in prepared.accepted_state_materials:
             access = BodyAccessContext(
@@ -3248,6 +3275,7 @@ class ProcedureExecutor:
                 self._track_completeness(node, state)
                 if isinstance(node, ExtractNode):
                     self._route_findings(node.node_id, admission, state)
+                summary = state.node_summaries.get(node.node_id)
                 self._append_event(
                     admission,
                     records,
@@ -3257,6 +3285,7 @@ class ProcedureExecutor:
                         "kind": node.kind,
                         "verdict": "succeeded",
                         **self._diagnostic_report(node.node_id, state),
+                        **({} if summary is None else {"summary": summary.model_dump(mode="json")}),
                     },
                 )
                 if isinstance(node, HaltNode):
@@ -3412,6 +3441,16 @@ class ProcedureExecutor:
         if isinstance(node, ReadNode):
             if node.as_ not in state.outputs:
                 raise ExecutionError("admitted read material is absent")
+            rows = state.read_rows_by_input.get(
+                node.as_, state.read_rows_by_input.get(node.node_id)
+            )
+            if rows is None:
+                rows = row_count(state.outputs[node.as_])
+            if rows is not None:
+                found = rows
+                record_summary(
+                    state.node_summaries, node.node_id, lambda: ReadRunSummary(rows=found)
+                )
             self._extend_alias(
                 state, node.as_, _node_policy_tokens(node, self.references) | state.control
             )
@@ -3420,9 +3459,15 @@ class ProcedureExecutor:
             self._run_claims(node, admission=admission, state=state, records=records)
             return None
         if isinstance(node, HaltNode):
+            record_summary(state.node_summaries, node.node_id, lambda: halt_summary(node.reason))
             return None
         if isinstance(node, CallNode) and node.acquires:
             self._run_acquiring_call(node, admission=admission, state=state, records=records)
+            record_summary(
+                state.node_summaries,
+                node.node_id,
+                lambda: call_summary(node.captures, state.outputs.get(node.as_)),
+            )
             return None
         if isinstance(node, ExtractNode):
             self._run_extract(node, state=state)
@@ -3433,6 +3478,11 @@ class ProcedureExecutor:
                 admission=admission,
                 state=state,
                 records=records,
+            )
+            record_summary(
+                state.node_summaries,
+                node.node_id,
+                lambda: call_summary(node.captures, state.outputs.get(node.as_)),
             )
             return None
         if isinstance(node, TransformNode):
@@ -3501,6 +3551,9 @@ class ProcedureExecutor:
                     "selected_arm": "on_true" if verdict else "on_false",
                     "operands": trace,
                 },
+            )
+            record_summary(
+                state.node_summaries, node.node_id, lambda: guard_summary(verdict, trace)
             )
             return "on_true" if verdict else "on_false"
         if isinstance(node, RepeatNode):
@@ -4145,6 +4198,7 @@ class ProcedureExecutor:
                     )
                 )
         value = normalize_canonical(outcome.value())
+        record_summary(state.node_summaries, node.node_id, lambda: extract_summary(outcome))
         state.observe_items(len(outcome.held), f"extract:{node.node_id}", "results")
         state.outputs[node.as_] = value
         if outcome.complete_when_result is not None:
@@ -4177,17 +4231,28 @@ class ProcedureExecutor:
         *,
         outputs: dict[str, CanonicalValue],
         state: _RunState,
+        rows_in: list[int | None] | None = None,
     ) -> tuple[CanonicalValue, bool]:
-        """One closed transform over ``outputs``: its value, and whether it is complete."""
+        """One closed transform over ``outputs``: its value, and whether it is complete.
+
+        ``rows_in``, when given, receives the row count of each record input as
+        the transform resolved it (a length read, never a second resolution).
+        """
+
+        # Identities, so a union of many inputs checks each in constant time.
+        record_inputs = frozenset() if rows_in is None else frozenset(map(id, _record_inputs(spec)))
 
         def resolve(reference: object) -> object:
-            return _resolve_node_template(
+            resolved = _resolve_node_template(
                 reference,
                 node_id=node_id,
                 input_payload=state.input_payload,
                 parameters=state.parameters,
                 outputs=outputs,
             )
+            if rows_in is not None and id(reference) in record_inputs:
+                rows_in.append(row_count(resolved))
+            return resolved
 
         try:
             return apply_closed_transform(
@@ -4213,15 +4278,22 @@ class ProcedureExecutor:
     ) -> None:
         """One closed transform over records: typed, three-valued, completeness carried."""
 
+        rows_in: list[int | None] = []
         value, complete = self._apply_closed(
             node.node_id,
             node.transform_kind,
             node.spec,
             outputs=state.outputs,
             state=state,
+            rows_in=rows_in,
         )
         aliases = _referenced_aliases(node.spec)
         state.outputs[node.as_] = value
+        record_summary(
+            state.node_summaries,
+            node.node_id,
+            lambda: transform_summary(node.transform_kind, rows_in, value),
+        )
         state.completeness.mark(
             node.as_,
             complete
@@ -4702,6 +4774,7 @@ class ProcedureExecutor:
                 "Claims terminal needs accepted slot reads",
                 node_id=node.node_id,
             )
+        downgraded_before = state.completeness.downgraded
         expanded = expand_claims(
             node, executor=self, admission=admission, state=state, context=self.claims_context
         )
@@ -4718,6 +4791,17 @@ class ProcedureExecutor:
             admission=admission,
             state=state,
             records=records,
+        )
+        downgraded = state.completeness.downgraded - downgraded_before
+        record_summary(
+            state.node_summaries,
+            node.node_id,
+            lambda: claims_summary(
+                expanded.changes,
+                expanded.diagnostics,
+                downgraded=downgraded,
+                delivery=state.claims_deliveries.get(node.node_id, "empty"),
+            ),
         )
 
     def _inbox_items(
@@ -4840,6 +4924,7 @@ class ProcedureExecutor:
             # A fan-out over an empty list has nothing to emit: no egress is
             # prepared or delivered (a proposal with no member is no proposal),
             # and the run ends at this terminal with its typed result.
+            self._note_delivery(node, state, delivery="empty", emitted=0, truncation=None)
             return
         required = TERMINAL_REQUIRED_RUNGS[node.kind]
         payload: dict[str, object] = {
@@ -4908,6 +4993,7 @@ class ProcedureExecutor:
             self._append_event(
                 admission, records, "terminal_egress", {**payload, "verdict": "delivered"}
             )
+            self._note_delivery(node, state, delivery="empty", emitted=0, truncation=truncation)
             return
         try:
             request, prepared = self._terminal_egress_request(
@@ -5043,6 +5129,13 @@ class ProcedureExecutor:
         )
         if request.kind == "post_inbox":
             state.inbox_items += len(request.items)
+        self._note_delivery(
+            node,
+            state,
+            delivery=claims_delivery(receipt) if isinstance(node, ClaimsNode) else "empty",
+            emitted=len(request.items),
+            truncation=truncation,
+        )
         if isinstance(request, TerminalEgressRequestV2) and request.kind == "emit_capture":
             assert isinstance(receipt, TerminalEgressReceiptV2)  # verified above
             for child in receipt.children:
@@ -5074,6 +5167,29 @@ class ProcedureExecutor:
                         "observed_at": format_datetime(request.evaluation_time),
                     },
                 )
+
+    @staticmethod
+    def _note_delivery(
+        node: CaptureEgressNode | InboxEgressNode | ClaimsNode,
+        state: _RunState,
+        *,
+        delivery: ClaimsDelivery,
+        emitted: int,
+        truncation: Mapping[str, object] | None,
+    ) -> None:
+        """Keep what a delivered terminal emitted, for its node summary."""
+
+        if isinstance(node, ClaimsNode):
+            state.claims_deliveries[node.node_id] = delivery
+            return
+        unposted = 0
+        if truncation is not None:
+            unposted = int(cast(int, truncation["selected"])) - int(cast(int, truncation["posted"]))
+        record_summary(
+            state.node_summaries,
+            node.node_id,
+            lambda: EgressRunSummary(kind=node.kind, emitted=emitted, unposted=unposted),
+        )
 
     def _deliver_terminal_egress(
         self,
@@ -6020,6 +6136,10 @@ class ProcedureExecutor:
                 },
             )
             if verdict:
+                used = attempt
+                record_summary(
+                    state.node_summaries, node.node_id, lambda: RepeatRunSummary(attempts=used)
+                )
                 state.outputs[node.as_] = normalize_canonical(
                     {"attempts": attempts, "final": local_outputs}
                 )
@@ -6393,6 +6513,23 @@ def _node_policy_tokens(node: object, resolved: Mapping[str, str]) -> frozenset[
 
     return frozenset(
         policy_token(resolved[reference.target.qualified]) for reference in iter_references(node)
+    )
+
+
+def _record_inputs(spec: object) -> tuple[object, ...]:
+    """A closed transform's record inputs, as authored references.
+
+    A ``derive`` reads named values, not records: it has none.
+    """
+
+    if getattr(spec, "tag", None) == "cruxible-transform-derive-spec-v1":
+        return ()
+    for name in ("input", "inputs"):
+        found = getattr(spec, name, None)
+        if found is not None:
+            return tuple(found) if name == "inputs" else (found,)
+    return tuple(
+        found for name in ("left", "right") if (found := getattr(spec, name, None)) is not None
     )
 
 
