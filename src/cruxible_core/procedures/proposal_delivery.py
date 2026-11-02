@@ -268,7 +268,10 @@ def _validate_absence_bindings(
         ):
             refuse()
         mapping = node.claims[receipt.template]
-        if mapping.when_absent not in {"mirror", "inverse"}:
+        if mapping.when_absent not in {"mirror", "inverse"} or (
+            # mirror only retires; only inverse writes or re-observes an inverse.
+            mapping.when_absent == "mirror" and not isinstance(change, CoreRetirementChange)
+        ):
             refuse()
         value = item.value
         if isinstance(change, CoreRetirementChange):

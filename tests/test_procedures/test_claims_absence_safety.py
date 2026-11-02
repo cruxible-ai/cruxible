@@ -148,6 +148,9 @@ def test_enumerated_presence_survives_a_skipped_write(tmp_path: Path, policy, sk
     assert not proposed_claims(instance, second)
     assert not any(f.kind == "claim_not_in_source" for f in second.findings)
     assert instance.accepted_coordinate() == before
+    if skip == "within":
+        assert second.completeness is not None
+        assert second.completeness.expect_outside_within == 2
 
 
 @pytest.mark.parametrize("skip", ("inadmissible", "line_break", "metadata", "per_value_incomplete"))
@@ -273,7 +276,7 @@ def test_public_authoring_cannot_mint_an_absence_witness(tmp_path: Path, kind):
     from cruxible_core.proposals.proposals import AuthenticatedActor
     from tests.test_authoring.test_authoring_change_set_intents import _coordinator
 
-    instance, root, raw = safety_world(tmp_path)
+    instance, root, raw = safety_world(tmp_path, "mirror" if kind == "retirement" else "inverse")
     (root / "data/doc.json").write_text(json.dumps({"entries": [], "count": 0}))
     state = run(instance, root, minute=1)
     retired = proposed_claims(instance, state)
@@ -352,14 +355,52 @@ def test_mirror_and_inverse_need_no_count_declaration(tmp_path: Path, policy):
     assert result.completeness is None
     changed = proposed_claims(instance, result)
     if policy == "mirror":
-        retired = [c for c in changed if c.lifecycle.state == "retired"]
-        assert len(retired) == 2
-        witnesses = [c.retirement.absence for c in retired]
+        # D-R24: mirror only retires, though this ClaimType declares an inverse.
+        assert len(changed) == 2 and all(c.lifecycle.state == "retired" for c in changed)
+        witnesses = [c.retirement.absence for c in changed]
     else:
         assert len(changed) == 2 and all(c.statement.object.kind == "none" for c in changed)
         witnesses = [c.backing.procedure_evidence.absence for c in changed]
     assert all(w is not None and w.complete_when is None for w in witnesses)
     assert not any(f.kind == "claim_not_in_source" for f in result.findings)
+
+
+@pytest.mark.parametrize("policy", ("mirror", "inverse"))
+def test_absence_obeys_within_and_counts_expected_subjects_outside_it(tmp_path: Path, policy):
+    """D-R22/D-R24: one write fence; an expected Subject outside within is only counted."""
+    instance, root, raw = safety_world(tmp_path, policy)
+    raw["steps"].insert(
+        -1,
+        {
+            "transform": "eligible",
+            "kind": "filter",
+            "spec": {
+                "input": "$steps.watched.rows",
+                "where": {
+                    "op": "eq",
+                    "left": {"$ref": "item", "path": ["fields", "cve_id"]},
+                    "right": {"literal": "CVE-2026-0001"},
+                },
+            },
+        },
+    )
+    raw["steps"][-1]["subject"]["within"] = {"$ref": "step", "step": "eligible", "path": ["rows"]}
+    reinstall(instance, raw)
+    (root / "data/doc.json").write_text(json.dumps({"entries": [], "count": 0}))
+    result = run(instance, root, minute=1, line="safety-followup")
+    assert result.status == "succeeded", result.terminal
+    changed = proposed_claims(instance, result)
+    assert len(changed) == 1
+    assert {c.statement.subject.artifact_path for c in changed} == {
+        f"subjects/{KIND}/cve-2026-0001.json"
+    }
+    if policy == "mirror":
+        assert changed[0].lifecycle.state == "retired"
+    else:
+        assert changed[0].statement.object.kind == "none"
+    assert not any(f.kind == "claim_not_in_source" for f in result.findings)
+    assert result.completeness is not None
+    assert result.completeness.complete and result.completeness.expect_outside_within == 1
 
 
 def test_surface_without_a_count_declaration_keeps_existing_completeness(tmp_path: Path):

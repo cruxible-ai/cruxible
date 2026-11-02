@@ -346,8 +346,9 @@ def test_absence_tracks_each_qualifier_and_each_many_valued_unit(tmp_path: Path,
     if variant == "qualifiers":
         assert retired[0].statement.qualifier == "b"
     if variant == "mirror_with_inverse":
-        inverse = [c for c in changes if c.statement.object.kind == "none"]
-        assert len(inverse) == 1 and inverse[0].statement.object.of.value == "low"
+        # D-R24: mirror only retires, even on a type that declares an inverse.
+        assert not [c for c in changes if c.statement.object.kind == "none"]
+        assert len(changes) == 1
 
 
 def test_expect_must_be_a_subset_of_only_keys_before_any_write(tmp_path: Path):

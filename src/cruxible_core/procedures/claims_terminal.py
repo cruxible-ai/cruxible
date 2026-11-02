@@ -783,6 +783,7 @@ def expand_claims(
                 changes=changes,
                 diagnostics=diagnostics,
                 reserve=reserve,
+                within=within_paths,
             )
         except ClaimUnitUnresolved as exc:
             raise _RunRefusal(

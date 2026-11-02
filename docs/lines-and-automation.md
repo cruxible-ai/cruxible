@@ -578,8 +578,8 @@ witness records that extract.
 |---|---|
 | `keep` | Leave it alone. |
 | `surface` (default) | Record `claim_not_in_source` in the run report. A Line may route this finding kind to its inbox. |
-| `mirror` | Retire an eligible Claim backed by the same logical source, with reason `superseded`. Other-source and protected Claims are surfaced. |
-| `inverse` | Write the ClaimType's declared inverse (`{kind: none}` on its unit), under its evidence rules and precedence policy. |
+| `mirror` | Retire an eligible Claim backed by the same logical source, with reason `superseded`. Other-source and protected Claims are surfaced. Mirror only retires: it never writes an inverse, whatever the ClaimType declares. |
+| `inverse` | Retire a held positive and write the ClaimType's declared inverse (`{kind: none}` on its unit), including for expected Subjects never held, under its evidence rules and precedence policy. |
 
 No `expect` means no absence inference. With `expect`, `for_each` must use an
 extract's records directly or through a chain of `filter` and `dedupe`
@@ -597,7 +597,10 @@ incompleteness: a declared `complete_when.count_at` mismatch, a `may_truncate`
 slot, or an invalid or duplicate record. A declared count is extra proof,
 checked and recorded in the witness. Paged sources must assemble every page
 in the Procedure or declare `may_truncate`.
-If the extractor selects `only_keys`, `expect` must be a subset.
+If the extractor selects `only_keys`, `expect` must be a subset. Absence obeys
+`subject.within` like every other write: an expected Subject outside `within`
+is never retired or inverted, and the run counts it in its completeness summary
+as `expect_outside_within`.
 A missing record or an explicitly absent mapped field can establish absence.
 An invalid field, invalid record, duplicate key or false `when` cannot. For a
 many-valued slot, each held unit is compared with the enumeration, even when
@@ -614,8 +617,7 @@ declared, enumerated-key digest,
 producing run/Procedure/node binding, and the accepted coordinate used
 to resolve `expect`. The executing Claims terminal produces that proof; public authoring
 cannot attach it. Preparation and delivery verify its run, Capture and extract
-binding. Inverses cite that proof as evidence. A mirror on a type with a
-declared inverse retires the positive and writes the inverse. Re-confirming an
+binding. Inverses cite that proof as evidence. Re-confirming an
 inverse records a re-observation; an appearing value revises it into a positive.
 Mirror retirements and inverse writes currently require proposal review even
 under a settle grant, and appear in `outside_scope_claim_types`.
@@ -623,7 +625,8 @@ under a settle grant, and appear in `outside_scope_claim_types`.
 An incomplete run includes a bounded typed `completeness` summary in its result,
 run card and activity entry: `complete: false`, reasons naming the affected
 nodes and inputs, and counts of downgraded and skipped writes. A complete run
-omits this field. The summary follows the same data and control lineage that
+omits this field unless it counted `expect_outside_within` Subjects, in which
+case the summary reads `complete: true` with that count. The summary follows the same data and control lineage that
 the write checks use.
 
 

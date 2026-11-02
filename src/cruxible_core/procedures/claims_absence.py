@@ -37,6 +37,7 @@ def append_absence(
     changes: list[Any],
     diagnostics: Any,
     reserve: Callable[[], None],
+    within: set[object] | None = None,
 ) -> None:
     """One pass over the enumeration and ``expect``; every Claim read is an indexed slot read.
 
@@ -44,7 +45,8 @@ def append_absence(
     ``for_each``'s filter/dedupe chain (:func:`absence_enumeration`); it includes
     refused keys, so a duplicate/invalid record cannot be mistaken for a missing
     record. Findings are run-owned; the existing Line routing policy alone
-    chooses inbox kinds.
+    chooses inbox kinds. Absence obeys ``within`` like every other write: an
+    expected Subject outside it is never retired or inverted, only counted.
     """
     from cruxible_core.procedures.execution import (
         _exact_evidence,
@@ -233,6 +235,9 @@ def append_absence(
         values.append(value)
 
     for path, (subject, expect_row) in expects.items():
+        if within is not None and path not in within:
+            state.completeness.expect_outside_within += 1
+            continue
         if path in refused:
             continue
         records = by_subject.get(path, [])
@@ -348,17 +353,15 @@ def append_absence(
                         finding(claim, ct, reason)
                     continue
                 blocked_units = set()
-                if ct.inverse is not None:
+                if mapping.when_absent == "inverse":
+                    # An inverse unit another role or source holds is never overwritten.
                     blocked_units = {
                         unit_key(c.statement.object.model_dump(mode="json"), ct, context)
                         for c in held
                         if c.statement.role not in replaces
-                        or (
-                            mapping.when_absent in {"mirror", "inverse"}
-                            and not any(
-                                context.logical_source(cap) == logical_source
-                                for cap in c.backing.capture_digests
-                            )
+                        or not any(
+                            context.logical_source(cap) == logical_source
+                            for cap in c.backing.capture_digests
                         )
                     }
                 candidates = list(held)
@@ -367,6 +370,12 @@ def append_absence(
                         continue
                     candidates = [None]
                 for claim in candidates:
+                    if (
+                        mapping.when_absent == "mirror"
+                        and claim is not None
+                        and isinstance(claim.statement.object, NoneClaimObject)
+                    ):
+                        continue  # a held inverse agrees with the absence; mirror only retires
                     if claim is not None and ct.cardinality == "many":
                         try:
                             held_unit = unit_key(claim.statement.object, ct, context)
@@ -390,7 +399,7 @@ def append_absence(
                         continue
                     if (
                         claim is not None
-                        and ct.inverse is not None
+                        and blocked_units
                         and unit_key(claim.statement.object.model_dump(mode="json"), ct, context)
                         in blocked_units
                     ):
@@ -420,22 +429,21 @@ def append_absence(
                         )
                         seal(receipts[index])
                     receipt = receipts[index]
-                    if (
-                        claim is not None
-                        and mapping.when_absent == "mirror"
-                        and not isinstance(claim.statement.object, NoneClaimObject)
-                    ):
-                        append(
-                            CoreRetirementChange(
-                                rationale="Complete source no longer contains this Claim.",
-                                claim_id=claim.identity.name,
-                                artifact_digest=claim_artifact_digest(claim).tagged,
-                                claim_type=ct.predicate,
-                                witness=witness,
-                            ),
-                            receipt,
-                            {"retire": claim.identity.name, "template": index},
-                        )
+                    if mapping.when_absent == "mirror":
+                        # One meaning per word: mirror only retires, whatever the type declares.
+                        if claim is not None:
+                            append(
+                                CoreRetirementChange(
+                                    rationale="Complete source no longer contains this Claim.",
+                                    claim_id=claim.identity.name,
+                                    artifact_digest=claim_artifact_digest(claim).tagged,
+                                    claim_type=ct.predicate,
+                                    witness=witness,
+                                ),
+                                receipt,
+                                {"retire": claim.identity.name, "template": index},
+                            )
+                        continue
                     if ct.inverse is None:
                         continue
                     inverse: dict[str, Any] = {"kind": "none"}
@@ -493,10 +501,8 @@ def append_absence(
                                 refuse("claims_absence_invalid: inverse unit cannot be resolved")
                     unit = (path, index, canonical_bytes(qualifier), canonical_bytes(inverse))
                     if unit in seen_changes:
-                        if (
-                            mapping.when_absent == "inverse"
-                            and claim is not None
-                            and not isinstance(claim.statement.object, NoneClaimObject)
+                        if claim is not None and not isinstance(
+                            claim.statement.object, NoneClaimObject
                         ):
                             append(
                                 CoreRetirementChange(
@@ -539,9 +545,7 @@ def append_absence(
                                     else qualifier,
                                 },
                                 "rationale": "Complete source establishes the declared inverse.",
-                                "predecessor": claim.identity.name
-                                if claim is not None and mapping.when_absent == "inverse"
-                                else None,
+                                "predecessor": None if claim is None else claim.identity.name,
                             }
                         ),
                         receipt,
