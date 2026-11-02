@@ -3690,8 +3690,9 @@ must already exist. FIELD is a field of the kind as
 `orient` names it, or the full predicate. VALUE is text: an enum member, an
 integer or `true`/`false` for such fields (values are booleans, integers or
 text; a field cannot be defined with a non-integer `number`), a Subject as `kind/id` (`@kind/id`
-names the same Subject, in SUBJECT too), or the text itself for exact content
-(which is also its own evidence). The default evidence
+names the same Subject, in SUBJECT too). Prose belongs in a Document section:
+use `files propose` for Document changes, then cite the section as evidence for
+a bounded Claim value (see `write` above). The default evidence
 is `--because` as self evidence; `--evidence-file` cites text found once in a
 catalogued workspace file, read on this side, and `--capture` an existing
 Capture by its sha256 digest or its handle `CAP-<12+ hex>` (a digest prefix

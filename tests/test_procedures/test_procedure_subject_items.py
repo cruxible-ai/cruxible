@@ -1,14 +1,9 @@
-"""A `propose_change_set` terminal creates Subjects by kind and key, never by id (identity D1).
+"""Claims bind declared keys at the accepted coordinate and pin existing Subjects.
 
-A Subject item names a declared kind and its key values; core assigns the id. A
-key a live Subject already holds names that Subject, and the item creates
-nothing (reported ``reused``). A Claim item of the same terminal names a Subject
-the run knows only by its key with a ``SubjectKeyReference`` (v3 item): it
-resolves to the Subject the terminal's own Subject item lands on, else through
-the common resolver over the base (exact live id, alias, key, exact retired
-id), and refuses when none or several hold it. Every reference is checked again
-over the final candidate; one that resolves otherwise there refuses the terminal
-(``cruxible.procedure.identity_reference_unstable``).
+Identity changes in a record cannot redirect sibling mappings: existing keys
+resolve to exact Subject addresses, missing create:never keys are filtered,
+and create:if_absent assigns a new Subject only when the accepted key is absent.
+Aliases are values, not an alternate interpretation of a declared key.
 """
 
 from __future__ import annotations
@@ -18,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
@@ -215,108 +211,399 @@ def test_a_key_reference_no_subject_holds_refuses_naming_the_creation(tmp_path: 
 
 
 def test_a_subject_item_of_an_undeclared_kind_refuses(tmp_path: Path) -> None:
-    # Native templates bind vocabulary when accepted, before a run can write.
-    with pytest.raises(AssertionError, match="cruxible.change_set.unresolved_pin"):
-        subject_world(
-            tmp_path, (subject_item(subject_kind="security.vendor", key={"slug": "acme"}),)
-        )
+    from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+    from cruxible_core.procedures.claims_typing import (
+        ClaimsTypingRefused,
+        validate_claims_templates,
+    )
+    from tests.core_support._candidate_support import submit_member_candidate
+    from tests.support.procedures import procedure_members
+
+    instance, _owner, _root = _identity_world(tmp_path, "click")
+    procedure, contracts = _identity_procedure(instance, kind="security.vendor")
+    base = instance.accepted_coordinate()
+    with instance.bind_accepted_projection(base) as projection:
+        with pytest.raises(ClaimsTypingRefused, match="SubjectKind:security.vendor must be live"):
+            validate_claims_templates(
+                procedure.definition, lambda identity: projection.typed.source(identity.qualified)
+            )
+    inspection = submit_member_candidate(
+        instance,
+        members={**procedure_members(procedure), **contracts},
+        actor_id="owner",
+        proposal_name="undeclared-kind",
+        proposal_family="procedure",
+        timestamp=fixtures.SECOND_STAMP,
+    )
+    assert inspection.proposal.candidate is None
+    (refused,) = inspection.proposal.evaluation.diagnostics
+    assert isinstance(refused, CompilerDiagnostic)
+    assert refused.code == ClaimsTypingRefused.code
+    assert "SubjectKind:security.vendor" in refused.message
+    assert instance.accepted_coordinate() == base
 
 
 def test_create_new_on_a_unique_kind_refuses(tmp_path: Path) -> None:
-    from pydantic import ValidationError
-
     from cruxible_client.contracts.procedures.claims import ClaimsSubject
 
-    with pytest.raises(ValidationError) as refused:
+    with pytest.raises(
+        ValidationError, match=r"create\n\s+Input should be 'never' or 'if_absent'"
+    ) as refused:
         ClaimsSubject(kind=KIND, key={"slug": "click"}, create="create_new")
     assert refused.value.errors()[0]["type"] == "literal_error"
     assert refused.value.errors()[0]["loc"] == ("create",)
 
 
-# -- E-b delta review F-002: one terminal's key changes are one overlay -------------------
+# -- Identity changes cannot redirect claims bound at the accepted coordinate -----------
 
 
-def test_a_reference_that_a_key_move_and_recreation_would_redirect_refuses(tmp_path: Path) -> None:
-    """Retired command items cannot redirect a reference or choose a predecessor."""
-    from pydantic import ValidationError
+def _identity_world(tmp_path: Path, *slugs: str):
+    """Accepted packages and direct evidence rules for identity-changing templates."""
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.authoring.inputs import SubjectInput
+    from cruxible_client.contracts.claim_types import claim_type_digest, parse_claim_type
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
+    )
+    from tests.support.operation_world import author
 
-    from cruxible_client.contracts.procedures.authored import ProjectStep
-    from tests.support.procedures import procedure_spec
-
-    command = _qualified_alias("click", "other name")
-    command["revises"] = "CLM-arbitrary-predecessor"
-    with pytest.raises(ValidationError, match="procedure_node_kind_retired.*typed claims step"):
-        procedure_spec(
-            procedure="retired-key-redirect",
-            input={},
-            output={},
-            steps=[
-                ProjectStep(project="rows", fields={}),
-                {"propose": (command, keyed_claim_item("other name"))},
-            ],
+    instance, owner, root, _line = subject_world(tmp_path, (subject_item(),))
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    updates = {}
+    for predicate in (SLUG, "semantic.alias"):
+        path = claim_type_path(predicate)
+        original = parse_claim_type(tree[path], path=path)
+        revised = original.model_copy(
+            update={
+                "allowed_subject_kinds": tuple(
+                    sorted(set(original.allowed_subject_kinds) | {KIND})
+                ),
+                # These probes deliberately move normative identity Claims.
+                "precedence": original.precedence.model_copy(
+                    update={
+                        "revisable_by_procedures": original.precedence.roles,
+                    }
+                ),
+                "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                    rules=(
+                        ClaimEvidenceAdmissionRule(
+                            rule_id="identity-observation",
+                            claim_roles=("normative",),
+                            capture_contracts=(capture_contract().identity.name,),
+                            admission="direct",
+                            subject_binding="exact_claim_subject",
+                        ),
+                    )
+                ),
+                "lifecycle": ArtifactLifecycle(
+                    predecessor_digest=claim_type_digest(original).tagged
+                ),
+            }
         )
-
-
-def test_a_frozen_key_missing_the_terminal_would_supply_refuses_as_unstable(tmp_path: Path) -> None:
-    """Retired command items cannot redirect a reference or choose a predecessor."""
-    from pydantic import ValidationError
-
-    from cruxible_client.contracts.procedures.authored import ProjectStep
-    from tests.support.procedures import procedure_spec
-
-    command = _qualified_alias("click", "other name")
-    command["revises"] = "CLM-arbitrary-predecessor"
-    with pytest.raises(ValidationError, match="procedure_node_kind_retired.*typed claims step"):
-        procedure_spec(
-            procedure="retired-key-redirect",
-            input={},
-            output={},
-            steps=[
-                ProjectStep(project="rows", fields={}),
-                {"propose": (command, keyed_claim_item("other name"))},
-            ],
+        updates[path] = render_claim_type(revised)
+    fixtures._accept_more(instance, owner, updates, name="identity-evidence")
+    for index, slug in enumerate(slugs):
+        author(
+            instance,
+            SubjectInput(
+                kind="subject",
+                subject_kind=KIND,
+                key={"slug": slug},
+                rationale="The source names this package.",
+            ),
+            name=f"package-{index}",
         )
+    return instance, owner, root
 
 
-def test_a_keyed_alias_owner_that_redirects_a_sibling_reference_refuses(tmp_path: Path) -> None:
-    """Retired command items cannot redirect a reference or choose a predecessor."""
-    from pydantic import ValidationError
+def _identity_procedure(
+    instance, *, mappings=None, create="never", kind=KIND, name="identity-probe"
+):
+    """One typed claims node over independently keyed source records."""
+    from cruxible_client.contracts.procedures.artifacts import parse_procedure, procedure_path
+    from cruxible_client.contracts.procedures.claims import ClaimsNode
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+    from cruxible_client.contracts.shapes import (
+        Contract,
+        contract_digest,
+        contract_path,
+        render_contract,
+    )
+    from tests.support.claims_terminals import delivery_definition
 
-    from cruxible_client.contracts.procedures.authored import ProjectStep
-    from tests.support.procedures import procedure_spec
-
-    command = _qualified_alias("click", "other name")
-    with pytest.raises(ValidationError, match="procedure_node_kind_retired.*typed claims step"):
-        procedure_spec(
-            procedure="retired-key-redirect",
-            input={},
-            output={},
-            steps=[
-                ProjectStep(project="rows", fields={}),
-                {"propose": (command, keyed_claim_item("other name"))},
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = procedure_path(fixtures.PROCEDURE_NAME)
+    original = parse_procedure(tree[path], path=path)
+    definition, contracts = delivery_definition(
+        original,
+        subject_kind=kind,
+        subject_id="click",
+        predicates=(SEVERITY,),
+        records="/proposals/*",
+        create=create == "if_absent",
+    )
+    row = Contract.model_validate(
+        {
+            "name": "security.identity-row",
+            "version": 1,
+            "fields": {
+                "severity": "string{max_len: 256}",
+                "new_key": "string{min_len: 1, max_len: 256}?",
+                "alias": "string{min_len: 1, max_len: 256}?",
+            },
+        }
+    )
+    source, extract, terminal = definition.nodes
+    extract = type(extract).model_validate(
+        {
+            **extract.model_dump(mode="python", by_alias=True),
+            "row": row.ref.model_copy(update={"digest": contract_digest(row).tagged}),
+            "fields": {name: {"at": name} for name in row.fields},
+        }
+    )
+    terminal = ClaimsNode.model_validate(
+        {
+            **terminal.model_dump(mode="python", by_alias=True),
+            "claims": mappings
+            or [
+                {
+                    "type": {"target": ArtifactIdentity(kind="ClaimType", name=SEVERITY)},
+                    "value": "$item.fields.severity",
+                    "role": "observation",
+                }
             ],
-        )
+        }
+    )
+    definition = definition.model_copy(update={"name": name, "nodes": (source, extract, terminal)})
+    procedure = original.model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="Procedure", name=name),
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+        }
+    )
+    return procedure, {
+        contract_path(c.name, c.version): render_contract(c) for c in (row, contracts[1])
+    }
 
 
-def test_a_keyed_owner_moving_its_key_then_referenced_by_it_refuses(tmp_path: Path) -> None:
-    """Retired command items cannot redirect a reference or choose a predecessor."""
-    from pydantic import ValidationError
+def _identity_terminal(
+    instance, owner, root, records, *, mappings=None, create="never", name="identity-probe"
+):
+    from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
+    from tests.support.procedures import procedure_members
 
-    from cruxible_client.contracts.procedures.authored import ProjectStep
-    from tests.support.procedures import procedure_spec
+    procedure, contracts = _identity_procedure(
+        instance, mappings=mappings, create=create, name=name
+    )
+    line = fixtures._served_line(instance, procedure, fixtures._policy()).model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="Line", name=name),
+            "max_authority": "propose",
+        }
+    )
+    mandate = fixtures._line_mandate(line, procedure).model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ProcedureMandate", name=name + "-mandate"),
+            "namespace": ("claims", "subjects"),
+        }
+    )
+    fixtures._accept_more(
+        instance,
+        owner,
+        {
+            **procedure_members(procedure),
+            **contracts,
+            line_spec_path(name): render_line_spec(line),
+            procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
+        },
+        name=name,
+    )
+    (root / fixtures.RELATIVE_PATH).write_bytes(fixtures.canonical_bytes({"proposals": records}))
+    return line
 
-    command = _qualified_alias("click", "other name")
-    command["revises"] = "CLM-arbitrary-predecessor"
-    with pytest.raises(ValidationError, match="procedure_node_kind_retired.*typed claims step"):
-        procedure_spec(
-            procedure="retired-key-redirect",
-            input={},
-            output={},
-            steps=[
-                ProjectStep(project="rows", fields={}),
-                {"propose": (command, keyed_claim_item("other name"))},
-            ],
-        )
+
+def _mapping(predicate, value, **extra):
+    return {
+        "type": {"target": ArtifactIdentity(kind="ClaimType", name=predicate)},
+        "value": value,
+        **extra,
+    }
+
+
+def _identity_claims(instance, egress):
+    """Only changed live Claims in this proposal, with exact Subject addresses."""
+    inspection = service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    tree = instance.proposal_tree(inspection.proposal.evaluation.evaluated_tree_oid)
+    return [
+        parse_claim(tree[path], path=path)
+        for path in egress.target_paths
+        if path.startswith("claims/")
+    ]
+
+
+def _identity_accept(instance, owner, egress):
+    accept_proposal(
+        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    )
+
+
+def _holder(instance, key):
+    from cruxible_core.procedures.claims_context import AcceptedClaimsContext
+
+    subject = AcceptedClaimsContext(instance, instance.accepted_coordinate()).subject(
+        KIND, {"slug": key}
+    )
+    return None if subject is None else subject.artifact_path
+
+
+_KEY_MOVE = _mapping(SLUG, "$item.fields.new_key", role="normative")
+_SEVERITY = _mapping(SEVERITY, "$item.fields.severity", role="observation")
+
+
+def test_a_key_move_and_recreation_keep_the_original_claims_subject(tmp_path: Path) -> None:
+    instance, owner, root = _identity_world(tmp_path, "click")
+    old = f"subjects/{KIND}/click.json"
+    line = _identity_terminal(
+        instance,
+        owner,
+        root,
+        [{"id": "click", "new_key": "renamed", "severity": "high"}],
+        mappings=[_KEY_MOVE, _SEVERITY],
+        create="if_absent",
+    )
+    moved = _delivered(instance, delivery.run_line(instance, root, line))
+    assert not any(path.startswith("subjects/") for path in moved.target_paths)
+    claims = _identity_claims(instance, moved)
+    assert {c.statement.subject.artifact_path for c in claims} == {old}
+    severity = next(c for c in claims if c.statement.predicate == SEVERITY)
+    _identity_accept(instance, owner, moved)
+    assert _holder(instance, "renamed") == old and _holder(instance, "click") is None
+
+    recreation = _identity_terminal(
+        instance,
+        owner,
+        root,
+        [{"id": "click", "severity": "low"}],
+        create="if_absent",
+        name="recreate-key",
+    )
+    # The old Subject still owns the exact id "click". A newly assigned
+    # click-<hex> must not make the terminal's creation reference resolve there.
+    base = instance.accepted_coordinate()
+    refs = set(delivery._proposal_refs(instance))
+    refusal = delivery._refusal(delivery.run_line(instance, root, recreation))
+    assert refusal.code == "proposal_lowering_refused"
+    assert refusal.details["code"] == "cruxible.procedure.identity_reference_unstable"
+    (changed,) = refusal.details["references"]
+    assert changed["reference"] == {"subject_kind": KIND, "key": {"slug": "click"}}
+    assert changed["frozen"].startswith(f"subjects/{KIND}/click-")
+    assert changed["final"] == old
+    assert instance.accepted_coordinate() == base
+    assert set(delivery._proposal_refs(instance)) == refs
+    from datetime import timedelta
+
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+
+    assert (
+        service_recover_proposal_egress(instance, recorded_at=fixtures.NOW + timedelta(minutes=1))
+        == {}
+    )
+    assert _holder(instance, "click") is None and _holder(instance, "renamed") == old
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    from cruxible_client.contracts.claims import claim_path
+
+    retained = parse_claim(
+        tree[claim_path(severity.identity.name)], path=claim_path(severity.identity.name)
+    )
+    assert retained.statement.subject.artifact_path == old and retained.lifecycle.state == "live"
+
+
+def test_a_missing_key_supplied_by_a_sibling_waits_for_the_next_run(tmp_path: Path) -> None:
+    instance, owner, root = _identity_world(tmp_path, "click", "flask")
+    flask = f"subjects/{KIND}/flask.json"
+    line = _identity_terminal(
+        instance,
+        owner,
+        root,
+        [
+            {"id": "flask", "new_key": "requests", "severity": "high"},
+            {"id": "requests", "severity": "low"},
+        ],
+        mappings=[_KEY_MOVE, _SEVERITY],
+    )
+    assert _holder(instance, "requests") is None
+    first = _delivered(instance, delivery.run_line(instance, root, line))
+    claims = _identity_claims(instance, first)
+    assert {(c.statement.predicate, c.statement.object.value) for c in claims} == {
+        (SLUG, "requests"),
+        (SEVERITY, "high"),
+    }
+    assert {c.statement.subject.artifact_path for c in claims} == {flask}
+    _identity_accept(instance, owner, first)
+    assert _holder(instance, "requests") == flask
+    (root / fixtures.RELATIVE_PATH).write_bytes(
+        fixtures.canonical_bytes({"proposals": [{"id": "requests", "severity": "low"}]})
+    )
+    from datetime import timedelta
+
+    second = _delivered(
+        instance, delivery.run_line(instance, root, line, at=fixtures.NOW + timedelta(minutes=1))
+    )
+    (changed,) = _identity_claims(instance, second)
+    assert changed.statement.subject.artifact_path == flask
+    assert changed.statement.predicate == SEVERITY and changed.statement.object.value == "low"
+
+
+def test_a_keyed_alias_owner_cannot_redirect_a_sibling_key(tmp_path: Path) -> None:
+    instance, owner, root = _identity_world(tmp_path, "click", "other name")
+    line = _identity_terminal(
+        instance,
+        owner,
+        root,
+        [
+            {"id": "click", "alias": "other name", "severity": "high"},
+            {"id": "other name", "severity": "low"},
+        ],
+        mappings=[_mapping("semantic.alias", "$item.fields.alias", role="normative"), _SEVERITY],
+    )
+    egress = _delivered(instance, delivery.run_line(instance, root, line))
+    claims = _identity_claims(instance, egress)
+    (alias,) = [c for c in claims if c.statement.predicate == "semantic.alias"]
+    assert alias.statement.subject.artifact_path == f"subjects/{KIND}/click.json"
+    assert alias.statement.qualifier is None and alias.statement.object.value == "other name"
+    assert {
+        c.statement.subject.artifact_path: c.statement.object.value
+        for c in claims
+        if c.statement.predicate == SEVERITY
+    } == {f"subjects/{KIND}/click.json": "high", f"subjects/{KIND}/other-name.json": "low"}
+    _identity_accept(instance, owner, egress)
+    assert _holder(instance, "other name") == f"subjects/{KIND}/other-name.json"
+
+
+def test_a_keyed_owner_moving_its_key_keeps_both_mappings_on_that_owner(tmp_path: Path) -> None:
+    instance, owner, root = _identity_world(tmp_path, "click")
+    line = _identity_terminal(
+        instance,
+        owner,
+        root,
+        [
+            {"id": "click", "new_key": "requests", "severity": "high"},
+            {"id": "requests", "severity": "low"},
+        ],
+        mappings=[_KEY_MOVE, _SEVERITY],
+    )
+    base = instance.accepted_coordinate()
+    egress = _delivered(instance, delivery.run_line(instance, root, line))
+    assert instance.accepted_coordinate() == base
+    claims = _identity_claims(instance, egress)
+    assert len(claims) == 2
+    assert {c.statement.subject.artifact_path for c in claims} == {f"subjects/{KIND}/click.json"}
+    assert {c.statement.object.value for c in claims} == {"requests", "high"}
+    _identity_accept(instance, owner, egress)
+    assert _holder(instance, "requests") == f"subjects/{KIND}/click.json"
+    assert _holder(instance, "click") is None
 
 
 def test_a_stable_terminal_still_creates_and_names_its_subject(tmp_path: Path) -> None:
@@ -458,36 +745,231 @@ def _qualified_alias(owner_slug: str, value: str) -> dict[str, object]:
     }
 
 
-def test_a_qualified_alias_redirecting_a_sibling_reference_refuses(tmp_path: Path) -> None:
-    """Retired command items cannot redirect a reference or choose a predecessor."""
-    from pydantic import ValidationError
+def test_a_qualified_alias_cannot_redirect_a_sibling_key(tmp_path: Path) -> None:
+    instance, owner, root = _identity_world(tmp_path, "click", "other name")
+    line = _identity_terminal(
+        instance,
+        owner,
+        root,
+        [
+            {"id": "click", "alias": "other name", "severity": "high"},
+            {"id": "other name", "severity": "low"},
+        ],
+        mappings=[
+            _mapping(
+                "semantic.alias", "$item.fields.alias", role="normative", qualifier="local-name"
+            ),
+            _SEVERITY,
+        ],
+    )
+    egress = _delivered(instance, delivery.run_line(instance, root, line))
+    claims = _identity_claims(instance, egress)
+    (alias,) = [c for c in claims if c.statement.predicate == "semantic.alias"]
+    assert alias.statement.qualifier == "local-name"
+    assert alias.statement.subject.artifact_path == f"subjects/{KIND}/click.json"
+    (sibling,) = [
+        c for c in claims if c.statement.predicate == SEVERITY and c.statement.object.value == "low"
+    ]
+    assert sibling.statement.subject.artifact_path == f"subjects/{KIND}/other-name.json"
+    _identity_accept(instance, owner, egress)
+    assert _holder(instance, "other name") == sibling.statement.subject.artifact_path
 
-    from cruxible_client.contracts.procedures.authored import ProjectStep
-    from tests.support.procedures import procedure_spec
 
-    command = _qualified_alias("click", "other name")
-    with pytest.raises(ValidationError, match="procedure_node_kind_retired.*typed claims step"):
-        procedure_spec(
-            procedure="retired-key-redirect",
-            input={},
-            output={},
-            steps=[
-                ProjectStep(project="rows", fields={}),
-                {"propose": (command, keyed_claim_item("other name"))},
-            ],
-        )
-
-
-def test_a_qualified_alias_terminal_refuses_before_its_door_so_recovery_has_nothing(
-    tmp_path: Path,
+def test_a_qualified_alias_recovery_preserves_sibling_subjects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Retired command items cannot redirect a reference or choose a predecessor."""
-    from pydantic import ValidationError
+    from datetime import timedelta
 
+    from cruxible_core.service.procedures.procedure_runs import service_get_playbill_procedure_run
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+
+    instance, owner, root = _identity_world(tmp_path, "click", "other name")
+    line = _identity_terminal(
+        instance,
+        owner,
+        root,
+        [
+            {"id": "click", "alias": "other name", "severity": "high"},
+            {"id": "other name", "severity": "low"},
+        ],
+        mappings=[
+            _mapping(
+                "semantic.alias", "$item.fields.alias", role="normative", qualifier="local-name"
+            ),
+            _SEVERITY,
+        ],
+    )
+    base = instance.accepted_coordinate()
+    refs = set(delivery._proposal_refs(instance))
+    with monkeypatch.context() as crash:
+        delivery._crash_after(crash, after_submit=True)
+        with pytest.raises(delivery._Crash, match="^$"):
+            delivery.run_line(instance, root, line)
+    assert len(set(delivery._proposal_refs(instance)) - refs) == 1
+    recovered = service_recover_proposal_egress(
+        instance, recorded_at=fixtures.NOW + timedelta(minutes=1)
+    )
+    ((run_id, disposition),) = recovered.items()
+    assert disposition == "delivered" and instance.accepted_coordinate() == base
+    state = service_get_playbill_procedure_run(instance, run_id=run_id)
+    (egress,) = state.terminal_egress
+    claims = _identity_claims(instance, egress)
+    (alias,) = [c for c in claims if c.statement.predicate == "semantic.alias"]
+    assert alias.statement.qualifier == "local-name"
+    assert alias.statement.subject.artifact_path == f"subjects/{KIND}/click.json"
+    assert alias.statement.object.value == "other name"
+    assert {
+        c.statement.subject.artifact_path: c.statement.object.value
+        for c in claims
+        if c.statement.predicate == SEVERITY
+    } == {f"subjects/{KIND}/click.json": "high", f"subjects/{KIND}/other-name.json": "low"}
+    assert (
+        service_recover_proposal_egress(instance, recorded_at=fixtures.NOW + timedelta(minutes=2))
+        == {}
+    )
+    assert len(set(delivery._proposal_refs(instance)) - refs) == 1
+    _identity_accept(instance, owner, egress)
+    assert _holder(instance, "other name") == f"subjects/{KIND}/other-name.json"
+
+
+def _identity_settle_grant(instance, owner, line):
+    from cruxible_client.contracts.artifacts import ArtifactPin
+    from cruxible_client.contracts.claim_types import claim_type_digest, parse_claim_type
+    from cruxible_client.contracts.procedure_mandates import (
+        MandateClaimScope,
+        MandateCondition,
+        procedure_mandate_digest,
+    )
+    from cruxible_client.contracts.procedures.line_specs import line_spec_digest
+    from cruxible_client.contracts.query.definitions import (
+        query_definition_digest,
+        query_definition_path,
+        render_query_definition,
+    )
+    from tests.support.mandates import procedure_mandate
+    from tests.test_procedures.test_procedure_settlement_delivery import _condition
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    query = _condition(only_subject=None)
+    query = query.model_copy(
+        update={
+            "entry": query.entry.model_copy(update={"subject_kinds": (KIND, "semantic.subject")})
+        }
+    )
+    types = [
+        parse_claim_type(tree[claim_type_path(p)], path=claim_type_path(p))
+        for p in (SEVERITY, "semantic.alias")
+    ]
+    mandate = procedure_mandate(
+        "identity-settle",
+        grants="settle",
+        line=ArtifactPin(
+            role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
+        ),
+        scope=tuple(
+            MandateClaimScope(
+                claim_type=ArtifactPin(
+                    role="claim-type",
+                    target=ct.identity,
+                    artifact_digest=claim_type_digest(ct).tagged,
+                ),
+                change_kinds=("create", "revise"),
+            )
+            for ct in types
+        ),
+        condition=MandateCondition(
+            query=ArtifactPin(
+                role="condition-query",
+                target=query.identity,
+                artifact_digest=query_definition_digest(query).tagged,
+            ),
+            binding_parameter="advisory_id",
+            required_fields=("id",),
+            fallback="refuse",
+        ),
+    )
+    fixtures._accept_more(
+        instance,
+        owner,
+        {
+            query_definition_path(query.identity.name): render_query_definition(query),
+            procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
+        },
+        name="identity-settle",
+    )
+    return {procedure_mandate_digest(mandate).tagged: mandate}
+
+
+def test_propose_and_settle_preparation_pin_the_same_subjects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.procedures import proposal_delivery
+
+    instance, owner, root = _identity_world(tmp_path, "click", "other name")
+    line = _identity_terminal(
+        instance,
+        owner,
+        root,
+        [
+            {"id": "click", "alias": "other name", "severity": "high"},
+            {"id": "other name", "severity": "low"},
+        ],
+        mappings=[
+            _mapping(
+                "semantic.alias", "$item.fields.alias", role="normative", qualifier="local-name"
+            ),
+            _SEVERITY,
+        ],
+    )
+    mandates = _identity_settle_grant(instance, owner, line)
+    seen = []
+    prepare = proposal_delivery.ProposalTerminalEgressSink.prepare_terminal_egress
+
+    def recorded(self, **arguments):
+        result = prepare(self, **arguments)
+        seen.append((arguments, result))
+        return result
+
+    monkeypatch.setattr(
+        proposal_delivery.ProposalTerminalEgressSink, "prepare_terminal_egress", recorded
+    )
+    egress = _delivered(instance, delivery.run_line(instance, root, line))
+    ((arguments, proposed),) = seen
+    request = arguments["request"]
+    assert request.kind == "claims" and request.required_rung == 2
+    settling = type(request).model_validate(
+        {
+            **request.model_dump(mode="python"),
+            "effective_rung": 3,
+            "required_rung": 3,
+            "granted_operation": "activate_change_set",
+            "capped_by": None,
+        }
+    )
+    sink = proposal_delivery.ProposalTerminalEgressSink(
+        instance=instance, accepted_mandates=mandates
+    )
+    prepared = prepare(sink, **{**arguments, "request": settling})
+    assert prepared.procedure_mandate_digest in mandates
+    assert prepared.lowering_digest == proposed.lowering_digest
+    assert prepared.item_paths == proposed.item_paths
+    assert prepared.target_paths == proposed.target_paths
+    claims = _identity_claims(instance, egress)
+    (alias,) = [c for c in claims if c.statement.predicate == "semantic.alias"]
+    assert alias.statement.qualifier == "local-name"
+    assert alias.statement.subject.artifact_path == f"subjects/{KIND}/click.json"
+    assert alias.statement.object.value == "other name"
+    assert {
+        c.statement.subject.artifact_path: c.statement.object.value
+        for c in claims
+        if c.statement.predicate == SEVERITY
+    } == {f"subjects/{KIND}/click.json": "high", f"subjects/{KIND}/other-name.json": "low"}
+
+
+def test_retired_command_node_refuses_before_identity_lowering() -> None:
     from cruxible_client.contracts.procedures.authored import ProjectStep
     from tests.support.procedures import procedure_spec
 
-    command = _qualified_alias("click", "other name")
     with pytest.raises(ValidationError, match="procedure_node_kind_retired.*typed claims step"):
         procedure_spec(
             procedure="retired-key-redirect",
@@ -495,27 +977,12 @@ def test_a_qualified_alias_terminal_refuses_before_its_door_so_recovery_has_noth
             output={},
             steps=[
                 ProjectStep(project="rows", fields={}),
-                {"propose": (command, keyed_claim_item("other name"))},
-            ],
-        )
-
-
-def test_settle_preparation_refuses_the_same_unstable_terminal(tmp_path: Path) -> None:
-    """Retired command items cannot redirect a reference or choose a predecessor."""
-    from pydantic import ValidationError
-
-    from cruxible_client.contracts.procedures.authored import ProjectStep
-    from tests.support.procedures import procedure_spec
-
-    command = _qualified_alias("click", "other name")
-    with pytest.raises(ValidationError, match="procedure_node_kind_retired.*typed claims step"):
-        procedure_spec(
-            procedure="retired-key-redirect",
-            input={},
-            output={},
-            steps=[
-                ProjectStep(project="rows", fields={}),
-                {"propose": (command, keyed_claim_item("other name"))},
+                {
+                    "propose": (
+                        _qualified_alias("click", "other name"),
+                        keyed_claim_item("other name"),
+                    )
+                },
             ],
         )
 

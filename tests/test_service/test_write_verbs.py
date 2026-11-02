@@ -1674,7 +1674,9 @@ def test_retired_exact_content_expect_markers_refuse_at_the_typed_boundary(
     marker = {"exact_content": "unavailable", "content_digest": "sha256:" + "ab" * 32}
     from pydantic import ValidationError
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError, match=r"changes\.0\.set\.expect\.str\n\s+Input should be a valid string"
+    ):
         WriteRequest.model_validate(
             {"because": "Reviewed.", "changes": [_set(WI1, "ruling", "approved", expect=marker)]}
         )
