@@ -1,0 +1,188 @@
+{
+    "title": "CISA Catalog of Known Exploited Vulnerabilities",
+    "catalogVersion": "2026.10.30",
+    "dateReleased": "2026-10-30T17:02:45.3665Z",
+    "count": 1766,
+    "vulnerabilities": [
+        {
+            "cveID": "CVE-2026-118527",
+            "vendorProject": "Ivanti",
+            "product": "Connect Secure",
+            "vulnerabilityName": "Ivanti Connect Secure Generation of Predictable Numbers or Identifiers Vulnerability",
+            "dateAdded": "2026-10-30",
+            "shortDescription": "Ivanti Connect Secure contains a generation of predictable numbers or identifiers vulnerability that allows a remote authenticated attacker to upload files with attacker-controlled content to a known location on disk. This vulnerability can be chained with CVE-2026-104935 and CVE-2026-111357.",
+            "requiredAction": "Apply mitigations in accordance with vendor instructions, ensuring compliance with CISA\u2019s BOD 26-04 Prioritizing Security Updates Based on Risk (see URL in Notes) guidance and CISA\u2019s \u201cForensics Triage Requirements\u201d (see URL in Notes). Follow applicable BOD 26-04 guidance for cloud services or discontinue use of the product if mitigations are unavailable. Stakeholders are responsible for evaluating each asset's internet exposure and ensuring adherence to BOD 26-04 patching guidelines.",
+            "dueDate": "2026-11-13",
+            "knownRansomwareCampaignUse": "Unknown",
+            "forensicTriage": "No",
+            "notes": "https:\/\/hub.ivanti.com\/s\/article\/Security-Advisory-Ivanti-Connect-Secure-CVE-2026-104935?language=en_US ; ; BOD 26-04: https:\/\/www.cisa.gov\/news-events\/directives\/bod-26-04-prioritizing-security-updates-based-risk ; Forensics Triage Requirements: https:\/\/www.cisa.gov\/news-events\/directives\/bod-26-04-implementation-guidance-prioritizing-security-updates-based-risk ; https:\/\/nvd.nist.gov\/vuln\/detail\/CVE-2026-118527",
+            "cwes": [
+                "CWE-340"
+            ]
+        },
+        {
+            "cveID": "CVE-2026-111357",
+            "vendorProject": "Ivanti",
+            "product": "Connect Secure",
+            "vulnerabilityName": "Ivanti Connect Secure Missing Authentication for Critical Function Vulnerability",
+            "dateAdded": "2026-10-30",
+            "shortDescription": "Ivanti Connect Secure contains a missing authentication for critical function vulnerability that could allow a local authenticated attacker to escalate their privileges. This vulnerability can be chained with CVE-2026-104935 and CVE-2026-118527.",
+            "requiredAction": "Apply mitigations in accordance with vendor instructions, ensuring compliance with CISA\u2019s BOD 26-04 Prioritizing Security Updates Based on Risk (see URL in Notes) guidance and CISA\u2019s \u201cForensics Triage Requirements\u201d (see URL in Notes). Follow applicable BOD 26-04 guidance for cloud services or discontinue use of the product if mitigations are unavailable. Stakeholders are responsible for evaluating each asset's internet exposure and ensuring adherence to BOD 26-04 patching guidelines.",
+            "dueDate": "2026-11-02",
+            "knownRansomwareCampaignUse": "Unknown",
+            "forensicTriage": "Yes",
+            "notes": "https:\/\/hub.ivanti.com\/s\/article\/Security-Advisory-Ivanti-Connect-Secure-CVE-2026-104935?language=en_US ; https:\/\/www.cisa.gov\/news-events\/alerts\/2026\/10\/13\/cisa-urges-patching-newly-exploited-vulnerability-ivanti-connect-secure ; BOD 26-04: https:\/\/www.cisa.gov\/news-events\/directives\/bod-26-04-prioritizing-security-updates-based-risk ; Forensics Triage Requirements: https:\/\/www.cisa.gov\/news-events\/directives\/bod-26-04-implementation-guidance-prioritizing-security-updates-based-risk ; https:\/\/nvd.nist.gov\/vuln\/detail\/CVE-2026-111357",
+            "cwes": [
+                "CWE-306",
+                "CWE-862",
+                "CWE-345"
+            ]
+        },
+        {
+            "cveID": "CVE-2026-97229",
+            "vendorProject": "GitLab",
+            "product": "Community Edition and Enterprise Edition",
+            "vulnerabilityName": "GitLab Community Edition and Enterprise Edition Integer Overflow or Wraparound Vulnerability",
+            "dateAdded": "2026-10-29",
+            "shortDescription": "GitLab Community Edition and Enterprise Edition contain a integer overflow or wraparound vulnerability that could allow an unauthenticated user to execute arbitrary code on the GitLab server via a specially crafted regular expression in a CI\/CD configuration, due to insufficient regular expression validation.",
+            "requiredAction": "Apply mitigations in accordance with vendor instructions, ensuring compliance with CISA\u2019s BOD 26-04 Prioritizing Security Updates Based on Risk (see URL in Notes) guidance and CISA\u2019s \u201cForensics Triage Requirements\u201d (see URL in Notes). Follow applicable BOD 26-04 guidance for cloud services or discontinue use of the product if mitigations are unavailable. Stakeholders are responsible for evaluating each asset's internet exposure and ensuring adherence to BOD 26-04 patching guidelines.",
+            "dueDate": "2026-11-01",
+            "knownRansomwareCampaignUse": "Unknown",
+            "forensicTriage": "Yes",
+            "notes": "Other products can potentially be affected by the same underlying Ruby\/Onigmo Integer Overflow issue in CI\/CD Regular Expression Compiler. For more information please see: https:\/\/www.ruby-lang.org\/en\/news\/2026\/10\/23\/regexp-fixes-for-gitlab-cves ; https:\/\/docs.gitlab.com\/releases\/patches\/patch-release-gitlab-19-4-2-released\/ ; BOD 26-04: https:\/\/www.cisa.gov\/news-events\/directives\/bod-26-04-prioritizing-security-updates-based-risk ; Forensics Triage Requirements: https:\/\/www.cisa.gov\/news-events\/directives\/bod-26-04-implementation-guidance-prioritizing-security-updates-based-risk ; https:\/\/nvd.nist.gov\/vuln\/detail\/CVE-2026-97229",
+            "cwes": [
+                "CWE-190"
+            ]
+        },
+        {
+            "cveID": "CVE-2023-44487",
+            "vendorProject": "IETF",
+            "product": "HTTP\/2",
+            "vulnerabilityName": "HTTP\/2 Rapid Reset Attack Vulnerability",
+            "dateAdded": "2023-10-10",
+            "shortDescription": "HTTP\/2 contains a rapid reset vulnerability that allows for a distributed denial-of-service attack (DDoS).",
+            "requiredAction": "Apply mitigations per vendor instructions, follow applicable BOD 22-01 guidance for cloud services, or discontinue use of the product if mitigations are unavailable.",
+            "dueDate": "2023-10-31",
+            "knownRansomwareCampaignUse": "Unknown",
+            "forensicTriage": "No",
+            "notes": "This vulnerability affects a common open-source component, third-party library, or protocol used by different products. For more information, please see: HTTP\/2 Rapid Reset Vulnerability, CVE-2023-44487 | CISA: https:\/\/www.cisa.gov\/news-events\/alerts\/2023\/10\/10\/http2-rapid-reset-vulnerability-cve-2023-44487; https:\/\/blog.cloudflare.com\/technical-breakdown-http2-rapid-reset-ddos-attack\/;  https:\/\/nvd.nist.gov\/vuln\/detail\/CVE-2023-44487",
+            "cwes": [
+                "CWE-400"
+            ]
+        },
+        {
+            "cveID": "CVE-2023-4863",
+            "vendorProject": "Google",
+            "product": "Chromium WebP",
+            "vulnerabilityName": "Google Chromium WebP Heap-Based Buffer Overflow Vulnerability",
+            "dateAdded": "2023-09-13",
+            "shortDescription": "Google Chromium WebP contains a heap-based buffer overflow vulnerability that allows a remote attacker to perform an out-of-bounds memory write via a crafted HTML page. This vulnerability can affect applications that use the WebP Codec.",
+            "requiredAction": "Apply mitigations per vendor instructions or discontinue use of the product if mitigations are unavailable.",
+            "dueDate": "2023-10-04",
+            "knownRansomwareCampaignUse": "Unknown",
+            "forensicTriage": "No",
+            "notes": "https:\/\/chromereleases.googleblog.com\/2023\/09\/stable-channel-update-for-desktop_11.html?m=1; https:\/\/nvd.nist.gov\/vuln\/detail\/CVE-2023-4863",
+            "cwes": [
+                "CWE-787"
+            ]
+        },
+        {
+            "cveID": "CVE-2014-0160",
+            "vendorProject": "OpenSSL",
+            "product": "OpenSSL",
+            "vulnerabilityName": "OpenSSL Information Disclosure Vulnerability",
+            "dateAdded": "2022-05-04",
+            "shortDescription": "The TLS and DTLS implementations in OpenSSL do not properly handle Heartbeat Extension packets, which allows remote attackers to obtain sensitive information.",
+            "requiredAction": "Apply updates per vendor instructions.",
+            "dueDate": "2022-05-25",
+            "knownRansomwareCampaignUse": "Unknown",
+            "forensicTriage": "No",
+            "notes": "https:\/\/nvd.nist.gov\/vuln\/detail\/CVE-2014-0160",
+            "cwes": [
+                "CWE-125"
+            ]
+        },
+        {
+            "cveID": "CVE-2022-22965",
+            "vendorProject": "VMware",
+            "product": "Spring Framework",
+            "vulnerabilityName": "Spring Framework JDK 9+ Remote Code Execution Vulnerability",
+            "dateAdded": "2022-04-04",
+            "shortDescription": "Spring MVC or Spring WebFlux application running on JDK 9+ may be vulnerable to remote code execution (RCE) via data binding.",
+            "requiredAction": "Apply updates per vendor instructions.",
+            "dueDate": "2022-04-25",
+            "knownRansomwareCampaignUse": "Unknown",
+            "forensicTriage": "No",
+            "notes": "https:\/\/nvd.nist.gov\/vuln\/detail\/CVE-2022-22965",
+            "cwes": [
+                "CWE-94"
+            ]
+        },
+        {
+            "cveID": "CVE-2017-0144",
+            "vendorProject": "Microsoft",
+            "product": "SMBv1",
+            "vulnerabilityName": "Microsoft SMBv1 Remote Code Execution Vulnerability",
+            "dateAdded": "2022-02-10",
+            "shortDescription": "The SMBv1 server in multiple Microsoft Windows versions allows remote attackers to execute arbitrary code via crafted packets.",
+            "requiredAction": "Apply updates per vendor instructions.",
+            "dueDate": "2022-08-10",
+            "knownRansomwareCampaignUse": "Known",
+            "forensicTriage": "No",
+            "notes": "https:\/\/nvd.nist.gov\/vuln\/detail\/CVE-2017-0144",
+            "cwes": [
+                "CWE-20"
+            ]
+        },
+        {
+            "cveID": "CVE-2021-44228",
+            "vendorProject": "Apache",
+            "product": "Log4j2",
+            "vulnerabilityName": "Apache Log4j2 Remote Code Execution Vulnerability",
+            "dateAdded": "2021-12-10",
+            "shortDescription": "Apache Log4j2 contains a vulnerability where JNDI features do not protect against attacker-controlled JNDI-related endpoints, allowing for remote code execution.",
+            "requiredAction": "For all affected software assets for which updates exist, the only acceptable remediation actions are: 1) Apply updates; OR 2) remove affected assets from agency networks. Temporary mitigations using one of the measures provided at https:\/\/www.cisa.gov\/uscert\/ed-22-02-apache-log4j-recommended-mitigation-measures are only acceptable until updates are available.",
+            "dueDate": "2021-12-24",
+            "knownRansomwareCampaignUse": "Known",
+            "forensicTriage": "No",
+            "notes": "https:\/\/nvd.nist.gov\/vuln\/detail\/CVE-2021-44228",
+            "cwes": [
+                "CWE-20",
+                "CWE-400",
+                "CWE-502"
+            ]
+        },
+        {
+            "cveID": "CVE-2019-0708",
+            "vendorProject": "Microsoft",
+            "product": "Remote Desktop Services",
+            "vulnerabilityName": "Microsoft Remote Desktop Services Remote Code Execution Vulnerability",
+            "dateAdded": "2021-11-03",
+            "shortDescription": "Microsoft Remote Desktop Services, formerly known as Terminal Service, contains an unspecified vulnerability that allows an unauthenticated attacker to connect to the target system using RDP and send specially crafted requests. Successful exploitation allows for remote code execution. The vulnerability is also known under the moniker of BlueKeep.",
+            "requiredAction": "Apply updates per vendor instructions.",
+            "dueDate": "2022-05-03",
+            "knownRansomwareCampaignUse": "Known",
+            "forensicTriage": "No",
+            "notes": "https:\/\/nvd.nist.gov\/vuln\/detail\/CVE-2019-0708",
+            "cwes": [
+                "CWE-416"
+            ]
+        },
+        {
+            "cveID": "CVE-2021-26855",
+            "vendorProject": "Microsoft",
+            "product": "Exchange Server",
+            "vulnerabilityName": "Microsoft Exchange Server Remote Code Execution Vulnerability",
+            "dateAdded": "2021-11-03",
+            "shortDescription": "Microsoft Exchange Server contains an unspecified vulnerability that allows for remote code execution. This vulnerability is part of the ProxyLogon exploit chain.",
+            "requiredAction": "Apply updates per vendor instructions.",
+            "dueDate": "2022-05-03",
+            "knownRansomwareCampaignUse": "Known",
+            "forensicTriage": "No",
+            "notes": "Reference CISA's ED 21-02 (https:\/\/www.cisa.gov\/news-events\/directives\/ed-21-02-mitigate-microsoft-exchange-premises-product-vulnerabilities) for further guidance and requirements. Note: The due date for addressing this vulnerability aligns with the requirements outlined in ED 21-02. https:\/\/nvd.nist.gov\/vuln\/detail\/CVE-2021-26855",
+            "cwes": [
+                "CWE-918"
+            ]
+        }
+    ]
+}
