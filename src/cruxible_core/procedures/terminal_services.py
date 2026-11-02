@@ -15,7 +15,7 @@ from cruxible_client.contracts.candidates import (
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateAny
-from cruxible_client.contracts.proposal_models import ProposalSettleSubmission
+from cruxible_client.contracts.proposal_models import OriginatingLine, ProposalSettleSubmission
 from cruxible_core.authoring.assignment_records import procedure_operation_id
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.procedures.egress import (
@@ -266,6 +266,14 @@ class ProposalTerminalAdapter:
                     procedure_operation=procedure_operation_id(
                         admission_binding_digest=request.admission_binding_digest,
                         node_id=request.node_id,
+                    ),
+                    originating_line=(
+                        None
+                        if admission.line_identity is None or admission.line_spec_digest is None
+                        else OriginatingLine(
+                            identity=admission.line_identity,
+                            artifact_digest=admission.line_spec_digest,
+                        )
                     ),
                     handoff=handoff,
                 )

@@ -282,7 +282,11 @@ from cruxible_client.contracts.procedures.windows import (
     TriggerEventReference as TriggerEventReference,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate as AcceptedCoordinate
+from cruxible_client.contracts.proposal_models import OriginatingLine as OriginatingLine
 from cruxible_client.contracts.proposal_models import ProposalItemReason as ProposalItemReason
+from cruxible_client.contracts.proposal_summary import (
+    ProposalReviewSummary as ProposalReviewSummary,
+)
 from cruxible_client.contracts.provider_installation import (
     InstalledProvider as InstalledProvider,
 )
@@ -1035,6 +1039,7 @@ class ProposalReview(BaseModel):
     members: list[ReviewedMember]
     governance: dict[str, Any]
     provenance: dict[str, Any]
+    originating_line: OriginatingLine | None = None
     rationale: str | None = None
     item_reasons: list[ProposalItemReason] = Field(default_factory=list)
     item_reason_count: int = 0
@@ -1050,6 +1055,11 @@ class ProposalReview(BaseModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+
+
+ProposalReviewResponse: TypeAlias = Annotated[
+    ProposalReview | ProposalReviewSummary, Field(discriminator="tag")
+]
 
 
 class ApprovalChallenge(BaseModel):

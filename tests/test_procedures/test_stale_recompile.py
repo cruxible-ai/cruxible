@@ -138,6 +138,11 @@ def test_eight_distinct_product_proposals_recompile_lazily(
         assert successor.candidate is not None
         assert successor.candidate.members == oracle.proposal.candidate.members
         assert successor.admission.admitted_at == source.admission.admitted_at
+        assert successor.admission.originating_line == source.admission.originating_line
+        assert (
+            successor.admission.originating_line.identity
+            == lines[proposals.index(proposal_id)].identity
+        )
 
 
 def test_missing_prepared_journal_leaves_the_proposal_unchanged(

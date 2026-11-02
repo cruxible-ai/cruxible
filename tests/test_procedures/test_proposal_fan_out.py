@@ -375,6 +375,7 @@ def test_a_400_item_terminal_keeps_every_reason_and_reads_one_in_constant_work(
             access=access,
             item_reasons_after=after,
             item_reasons_limit=150,
+            detail=True,
         )
         assert review.item_reason_count == count
         assert len(review.item_reasons) <= 150

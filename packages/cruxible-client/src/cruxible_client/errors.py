@@ -12,6 +12,7 @@ from cruxible_client.contracts.errors import (
     ObjectFormatConflict,
     ProposalActivationRequestInvalid,
     ProposalNotFoundError,
+    ProposalReviewOptionsInvalid,
     ProposalSelectorAmbiguousError,
     ReadRefusalError,
     SinceRequestInvalid,
@@ -260,6 +261,8 @@ def response_to_error(status: int, body: ErrorResponse) -> CoreError:
         )
     elif body.error_type == "ProposalActivationRequestInvalid":
         exc = ProposalActivationRequestInvalid(body.message)
+    elif body.error_type == "ProposalReviewOptionsInvalid":
+        exc = ProposalReviewOptionsInvalid(body.message)
     elif body.error_type == "ProposalNotFoundError":
         exc = ProposalNotFoundError(
             str(context.get("selector", "unknown")),

@@ -12,6 +12,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.actor_types import TransportCapability
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring_profiles import ClaimTypeExpansionEvidence
 from cruxible_client.contracts.candidates import (
     CandidateRecord,
@@ -569,8 +570,28 @@ class ProposalReadmissionLink(_StrictProposalModel):
         ).tagged
 
 
+class OriginatingLine(_StrictProposalModel):
+    """The root Line and exact accepted version responsible for a proposal."""
+
+    identity: ArtifactIdentity
+    artifact_digest: str
+
+    @field_validator("identity")
+    @classmethod
+    def _line(cls, value: ArtifactIdentity) -> ArtifactIdentity:
+        if value.kind != "Line":
+            raise ValueError("originating Line must name a Line")
+        return value
+
+    @field_validator("artifact_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
 class ProposalAdmissionRecord(_StrictProposalModel):
-    tag: Literal["playbill-proposal-admission-v1"] = "playbill-proposal-admission-v1"
+    tag: Literal["playbill-proposal-admission-v2"] = "playbill-proposal-admission-v2"
     proposal_id: str
     actor_id: str
     target_ref: str
@@ -603,6 +624,9 @@ class ProposalAdmissionRecord(_StrictProposalModel):
     # their bytes. A terminal's item reasons attach only to an admission that
     # names its exact operation here.
     procedure_operation: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    originating_line: OriginatingLine | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("rationale")
     @classmethod

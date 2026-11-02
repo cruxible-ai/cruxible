@@ -101,6 +101,7 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(
         instance,
         proposal_id=proposal_id,
         access=BodyAccessContext(principal_id="owner", can_read_body=True),
+        detail=True,
     )
     assert review.coordinate_kind == "provisional"
     assert review.base_oid == review.settlement_base.git_oid
@@ -165,6 +166,7 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(
         instance,
         proposal_id=proposal_id,
         access=BodyAccessContext(principal_id="reader"),
+        detail=True,
     )
     assert redacted.documents[0].readable_diff is None
     assert redacted.documents[0].candidate_source_mapping is None
@@ -238,6 +240,7 @@ def test_lifecycle_review_names_the_proposing_actor(tmp_path: Path) -> None:
         instance,
         proposal_id=proposal.proposal.admission.proposal_id,
         access=BodyAccessContext(principal_id="owner", can_read_body=True),
+        detail=True,
     )
     rendered = render_playbill_proposal_review(review)
     assert f"{owner.principal.principal_id}'s own signature" in rendered
@@ -348,6 +351,7 @@ def test_review_uses_projection_evidence_from_a_newer_accepted_head(tmp_path: Pa
         proposal_id=proposal_id,
         access=access,
         workspace_observation=_review_observation(instance, coordinate=base),
+        detail=True,
     )
     assert at_base.projection_advisory is not None
     assert at_base.projection_evidence is not None
@@ -361,6 +365,7 @@ def test_review_uses_projection_evidence_from_a_newer_accepted_head(tmp_path: Pa
         proposal_id=proposal_id,
         access=access,
         workspace_observation=_review_observation(instance, coordinate=head),
+        detail=True,
     )
 
     assert at_head.projection_advisory is not None
@@ -391,6 +396,7 @@ def test_review_names_projection_evidence_older_than_the_settlement_base(
         proposal_id=second.proposal.proposal.admission.proposal_id,
         access=BodyAccessContext(principal_id="owner", can_read_body=True),
         workspace_observation=_review_observation(instance, coordinate=stale),
+        detail=True,
     )
 
     assert review.projection_advisory is None
@@ -424,6 +430,7 @@ def test_review_names_rejected_projection_evidence(
         proposal_id=proposed.proposal.proposal.admission.proposal_id,
         access=BodyAccessContext(principal_id="owner", can_read_body=True),
         workspace_observation=observation,
+        detail=True,
     )
 
     assert review.projection_advisory is None

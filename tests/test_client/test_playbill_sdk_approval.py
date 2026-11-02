@@ -93,7 +93,8 @@ class Client:
         self.prepared = 0
         self.receipt_change = False
 
-    def review_proposal(self, *_args: object, include_body: bool):
+    def review_proposal(self, *_args: object, include_body: bool, detail: bool):
+        assert detail
         assert include_body
         return self.review
 

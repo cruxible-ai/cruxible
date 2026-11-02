@@ -1018,6 +1018,10 @@ class PathFacts:
         colliding = self.colliding
         depths = dict(self.depths)
         folded = self.folded
+        # Shared directory prefixes change once per edited path, but need only
+        # one persistent path-copy per distinct prefix in this change. This
+        # staging map grows with edited prefixes, never the instance inventory.
+        changed_folded: dict[str, _Spellings] = {}
         for path, new in edits.items():
             old = rows.get(path)
             if old is None and new is None:
@@ -1033,10 +1037,14 @@ class PathFacts:
             depth = path.count("/") + 1
             depths[depth] = depths.get(depth, 0) + sign
             for key, spelling in _prefixes(path):
-                before = folded.get(key, ())
+                before = changed_folded.get(key)
+                if before is None:
+                    before = folded.get(key, ())
                 after = _respelled(before, spelling, sign)
                 colliding += (len(after) > 1) - (len(before) > 1)
-                folded = folded.set(key, after) if after else folded.delete(key)
+                changed_folded[key] = after
+        for key, after in changed_folded.items():
+            folded = folded.set(key, after) if after else folded.delete(key)
         return PathFacts(content, noncanonical, colliding, depths, folded)
 
 

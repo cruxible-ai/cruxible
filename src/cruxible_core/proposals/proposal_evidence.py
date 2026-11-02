@@ -831,6 +831,7 @@ class ProposalEvidenceStore:
                 candidate_tree_oid=value.candidate_tree_oid,
                 admitted_at=value.admitted_at,
                 limits=value.limits,
+                originating_line=value.originating_line,
             )
             if value.proposal_id != expected_id:
                 raise ProposalIntegrityError("proposal admission does not reproduce its identity")

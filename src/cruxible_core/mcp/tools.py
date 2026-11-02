@@ -426,15 +426,29 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         proposal_id: str,
-        include_body: bool = False,
+        include_body: bool | None = None,
         item_reasons_after: str | None = None,
         item_reasons_limit: int | None = None,
-    ) -> contracts.ProposalReview:
-        """Render a structured candidate review; a Procedure proposal's item reasons page."""
+        detail: bool = False,
+        summary_after: str | None = None,
+        summary_group: str | None = None,
+        rows_after: str | None = None,
+        rows_limit: int = 5,
+        groups_limit: int = 5,
+        findings_after: str | None = None,
+    ) -> contracts.ProposalReviewResponse:
+        """Factored proposal summary; page groups/rows, or set detail for the full review."""
         return handlers.handle_playbill_review(
             require_instance_id(instance_id),
             proposal_id,
             include_body=include_body,
+            detail=detail,
+            summary_after=summary_after,
+            summary_group=summary_group,
+            rows_after=rows_after,
+            rows_limit=rows_limit,
+            groups_limit=groups_limit,
+            findings_after=findings_after,
             item_reasons_after=item_reasons_after,
             item_reasons_limit=item_reasons_limit,
         )

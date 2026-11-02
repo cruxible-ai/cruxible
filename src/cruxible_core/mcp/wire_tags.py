@@ -172,6 +172,40 @@ def compact_write_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return typing.cast(dict[str, Any], compact(schema))
 
 
+def compact_review_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Compact review's optional scalars without dropping their null choices.
+
+    JSON Schema's type array is equivalent to anyOf of bare type branches.
+    Redundant null-default annotations are omitted; required fields and the
+    callable's defaults still govern omission. Constraints, refs and descriptions
+    stay intact. This runs once at catalog construction, over this tool's schema.
+    """
+
+    def compact(value: Any) -> Any:
+        if isinstance(value, list):
+            return [compact(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        result = {key: compact(item) for key, item in value.items()}
+        branches = result.get("anyOf")
+        if (
+            "type" not in result
+            and isinstance(branches, list)
+            and branches
+            and all(
+                isinstance(item, dict) and set(item) == {"type"} and isinstance(item["type"], str)
+                for item in branches
+            )
+        ):
+            result["type"] = [item["type"] for item in branches]
+            del result["anyOf"]
+            if result.get("default", object()) is None:
+                del result["default"]
+        return result
+
+    return typing.cast(dict[str, Any], compact(compact_write_schema(schema)))
+
+
 def exposed_wire_tags(schema: object) -> list[str]:
     """Every format tag an input schema still offers as a const or enum value."""
 

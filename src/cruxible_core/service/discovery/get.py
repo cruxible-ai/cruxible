@@ -1918,6 +1918,7 @@ def _proposal_card(
         actor=entry.actor_id,
         admitted_at=entry.admitted_at,
         rationale=None if admission is None else admission.rationale,
+        originating_line=None if admission is None else admission.originating_line,
         changes=tuple(changes),
         refusal=refusal,
         next=() if step is None else (_render_proposal_step(surface, step, resolved.identity),),

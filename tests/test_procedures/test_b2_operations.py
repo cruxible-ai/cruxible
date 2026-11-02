@@ -685,6 +685,7 @@ def _direct_propose_or_settle_delivers(tmp_path, *, verb, with_call):  # type: i
         assert egress.accepted_git_oid is None
     # Producing the proposal activated nothing: a direct run never settles.
     assert instance.accepted_coordinate() == base
+    assert instance.proposal_evidence().read_admission(egress.proposal_id).originating_line is None
     return instance, result
 
 

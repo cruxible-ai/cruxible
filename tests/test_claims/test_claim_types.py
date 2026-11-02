@@ -533,6 +533,7 @@ def test_profile_evidence_and_complete_expansion_are_visible_in_atomic_review(
         instance,
         proposal_id=proposal.admission.proposal_id,
         access=BodyAccessContext(principal_id="owner", can_read_body=False),
+        detail=True,
     )
     assert len(review.members) == 1
     result = review.members[0].law_evidence["result"]

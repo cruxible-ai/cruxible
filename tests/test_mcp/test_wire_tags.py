@@ -248,3 +248,27 @@ def test_generated_read_only_metadata_does_not_enter_the_authored_input_schema()
         ).retained
         is not None
     )
+
+
+def test_review_compaction_preserves_nullable_choices_and_constrained_branches():
+    from cruxible_core.mcp.wire_tags import compact_review_schema
+
+    original = {
+        "title": "Review",
+        "properties": {
+            "after": {
+                "title": "After",
+                "description": "Cursor",
+                "anyOf": [{"type": "string"}, {"type": "null"}],
+                "default": None,
+            },
+            "limit": {"anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
+            "title": {"type": "string"},
+        },
+    }
+    result = compact_review_schema(original)
+    assert "title" not in result
+    assert result["properties"]["after"] == {"description": "Cursor", "type": ["string", "null"]}
+    assert result["properties"]["limit"] == original["properties"]["limit"]
+    assert result["properties"]["title"] == {"type": "string"}
+    assert original["title"] == "Review"

@@ -4351,7 +4351,9 @@ cruxible proposal list [--status open|awaiting_readmit|settled|incomplete] [--li
 cruxible proposal readmit PROPOSAL_ID [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal withdraw PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal reject PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OID] [--json]
-cruxible proposal review PROPOSAL_ID [--include-body|--redacted]
+cruxible proposal review PROPOSAL_ID [--detail] [--include-body|--redacted]
+  [--summary-after CURSOR] [--summary-group GROUP] [--rows-after CURSOR]
+  [--rows-limit N] [--groups-limit N] [--findings-after CURSOR]
   [--workspace-root DIR] [--item-reasons-after CURSOR] [--item-reasons-limit N] [--json]
 cruxible proposal approve PROPOSAL_ID
   [--signer-id ID] [--key FILE] [--yes] [--hold] [--json]
@@ -4360,7 +4362,7 @@ cruxible get PROPOSAL_ID [--detail proof]
 ~~~
 
 `get` is the one proposal read. Its card names the status, verdict, actor,
-rationale and changes; a refused proposal's card carries every refusal
+rationale, originating Line and exact digest (when run from a Line), and changes; a refused proposal's card carries every refusal
 diagnostic with its code, message and repair, and `--detail proof` adds the
 admission, evaluation and candidate records.
 
@@ -4569,8 +4571,24 @@ distinct candidate digest. Match both IDs when inspecting the group. Activation
 checks original and materialized advisory aliases; recovery restores valid
 incomplete projections without treating modified records as accepted evidence.
 
-`proposal review` prints that pointer and those ref names; `--json` remains the
-structured read. A Procedure's proposal also prints one page of its items'
+`proposal review` returns a factored summary by default, identically on CLI,
+MCP and HTTP. It counts creations, revisions and retirements per Subject kind,
+states shared fields once, and shows varying columns and the first five rows
+of each exact claims-template group (Procedure digest, node and template index).
+Findings come first, followed by revisions and retirements before creations.
+Each row preserves before/after values. Large field values are explicitly marked
+`truncated`; use `--detail --json` for the complete artifacts.
+
+`--summary-after` pages groups; `--summary-group` with `--rows-after` pages rows
+of one group. `--rows-limit` and `--groups-limit` default to five and allow at
+most ten. `--findings-after` pages findings. Cursors belong to the exact candidate
+and group; the response provides each next cursor. Summary pages have fixed
+bounds on groups, rows and field bytes. A cold proposal builds a disposable
+projection in member batches; subsequent pages use indexed reads.
+
+`--detail` retains the full review, including the Git pointer and note refs;
+`--detail --json` returns its complete structured form. A Procedure's detailed
+proposal review also prints one page of its items'
 reasons, each under the Claim or Subject path it explains (50 by default,
 `--item-reasons-limit` up to 500); `--item-reasons-after` with the printed
 cursor reads the next page. `proposal approve` shows the reason and change summary before
