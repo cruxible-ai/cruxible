@@ -69,13 +69,11 @@ def test_a_parse_runs_once_per_exact_bytes_and_a_refusal_is_never_kept(monkeypat
     again = parse_claim_type(bytes(bytearray(content)), path=path)
     # Every caller gets the one sealed parse; it cannot change, at any depth.
     assert first == value == again and again is first and parsed == [path]
-    assert is_sealed(first) and isinstance(first.literal_schema, FrozenDict)
+    assert is_sealed(first) and is_sealed(first.value)
     with pytest.raises(ValidationError):
         first.identity.name = "poisoned"  # type: ignore[misc]
-    with pytest.raises(TypeError):
-        first.literal_schema["type"] = "integer"  # type: ignore[index]
-    with pytest.raises(TypeError):
-        first.literal_schema.update(type="integer")  # type: ignore[union-attr]
+    with pytest.raises(ValidationError):
+        first.value.max_len = 12  # type: ignore[misc]
     assert parse_claim_type(content, path=path) == value
     # A different path is a different parse (and still refuses as before).
     with pytest.raises(ClaimTypeFormatError):
@@ -116,7 +114,11 @@ def test_a_sealed_digest_is_computed_once_and_equals_the_fresh_one(monkeypatch):
 
 def test_copies_of_a_sealed_artifact_are_never_served_its_digest():
     claim_types._CLAIM_TYPE_PARSES.clear()
-    value = _claim_type("memo.contract-3")
+    from cruxible_client.contracts.shapes import parse_type
+
+    value = _claim_type("memo.contract-3").model_copy(
+        update={"value": parse_type("variant{one: test.one@1}")}
+    )
     sealed = parse_claim_type(render_claim_type(value), path=claim_type_path(value.predicate))
     digest = claim_type_digest(sealed)
     # model_copy with an update: a new, unsealed object digests its own content.
@@ -128,14 +130,14 @@ def test_copies_of_a_sealed_artifact_are_never_served_its_digest():
     # changing it changes its digest and never the sealed original's.
     for duplicate in (copy.deepcopy(sealed), pickle.loads(pickle.dumps(sealed))):
         assert not is_sealed(duplicate) and duplicate == sealed
-        assert type(duplicate.literal_schema) is dict
-        duplicate.literal_schema["type"] = "integer"  # type: ignore[index]
-        assert claim_type_digest(duplicate) == claim_type_digest(changed) != digest
+        assert type(duplicate.value.arms) is dict
+        duplicate.value.arms["two"] = duplicate.value.arms["one"]
+        assert claim_type_digest(duplicate) == _fresh_digest(duplicate) != digest
     assert claim_type_digest(sealed) == digest
     assert _fresh_digest(sealed) == digest
     # A shallow copy of a sealed container is the caller's own plain container.
-    assert type(copy.copy(sealed.literal_schema)) is dict
-    assert type(dict(sealed.literal_schema)) is dict  # type: ignore[arg-type]
+    assert type(copy.copy(sealed.value.arms)) is dict
+    assert type(dict(sealed.value.arms)) is dict  # type: ignore[arg-type]
 
 
 class _Leaf(BaseModel):
@@ -225,10 +227,13 @@ def test_digests_follow_the_current_content_of_shallowly_frozen_models():
     object has its digest remembered.
     """
 
-    value = _claim_type("memo.contract-1")
+    from cruxible_client.contracts.shapes import parse_type
+
+    value = _claim_type("memo.contract-1").model_copy(
+        update={"value": parse_type("variant{one: test.one@1}")}
+    )
     before = claim_type_digest(value)
-    assert value.literal_schema is not None
-    value.literal_schema["type"] = "integer"
+    value.value.arms["two"] = value.value.arms["one"]
     after = claim_type_digest(value)
     assert after != before
     assert after == _fresh_digest(value)
@@ -272,20 +277,17 @@ def test_memos_are_bounded():
     assert values.derive(["unhashable"], lambda: 7) == 7
 
 
-def test_owner_contract_schemas_are_frozen_so_procedures_can_be_sealed():
-    from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
-    from cruxible_client.contracts.records import record_normalization_schema
+def test_native_contracts_are_frozen_so_procedures_can_be_sealed():
+    from cruxible_client.contracts.shapes import Contract
 
-    field = PropertySchema(type="json", required=True, json_schema={"type": ["object", "null"]})
-    assert field.optional is False
+    contract = Contract.model_validate(
+        {"name": "test.sealed", "version": 1, "fields": {"name": "string"}}
+    )
+    assert seal(contract) and isinstance(contract.fields, FrozenDict)
+    with pytest.raises(TypeError):
+        contract.fields.clear()
     with pytest.raises(ValidationError):
-        field.optional = True  # type: ignore[misc]
-    schema = ContractSchema(fields={"payload": field, "name": PropertySchema(type="string")})
-    adjusted = record_normalization_schema(schema, {"payload": None, "name": "x"})
-    assert adjusted.fields["payload"].optional is True and adjusted is not schema
-    assert schema.fields["payload"].optional is False
-    assert seal(schema) and isinstance(schema.fields, FrozenDict)
-    assert isinstance(schema.fields["payload"].json_schema, FrozenDict)
+        contract.fields["name"].optional = True
 
 
 def test_a_keyed_derivation_is_remembered_per_sealed_object_and_key():

@@ -34,7 +34,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
     render_line_spec,
 )
-from cruxible_client.contracts.procedures.models import SettleChangeSetNode
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
     QueryEvaluationPolicy,
@@ -63,7 +62,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.support.mandates import procedure_mandate
-from tests.support.procedures import procedure_definition, procedure_members
+from tests.support.procedures import procedure_members
 from tests.test_procedures import test_procedure_source_runs as fixtures
 from tests.test_procedures.test_procedure_proposal_delivery import (
     PREDICATE,
@@ -154,7 +153,7 @@ def _predicate_item(predicate: str) -> dict[str, object]:
 LEVEL_KIND = "security.severity_level"
 
 
-def _level_kind_members(*, rules: bool = True) -> dict[str, bytes]:
+def _level_kind_members(*, rules: bool = True, kind: str = LEVEL_KIND) -> dict[str, bytes]:
     """Severity levels keyed by a slug whose key Claims cite the run's own Capture.
 
     ``rules=False`` gives the slug no evidence rule at all, as the shipped example
@@ -170,7 +169,7 @@ def _level_kind_members(*, rules: bool = True) -> dict[str, bytes]:
     from cruxible_client.contracts.subject_kinds import render_subject_kind, subject_kind_path
     from tests.core_support._subject_kind_support import keyed_subject_kind, slug_claim_type
 
-    slug = slug_claim_type(LEVEL_KIND).model_copy(  # type: ignore[attr-defined]
+    slug = slug_claim_type(kind).model_copy(  # type: ignore[attr-defined]
         update={
             "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
@@ -194,9 +193,7 @@ def _level_kind_members(*, rules: bool = True) -> dict[str, bytes]:
         slug = slug.model_copy(update={"evidence_admission_policy": ClaimEvidenceAdmissionPolicy()})
     return {
         claim_type_path(slug.predicate): render_claim_type(slug),
-        subject_kind_path(LEVEL_KIND): render_subject_kind(
-            keyed_subject_kind(LEVEL_KIND, (slug.predicate,))
-        ),
+        subject_kind_path(kind): render_subject_kind(keyed_subject_kind(kind, (slug.predicate,))),
     }
 
 
@@ -231,7 +228,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
     require_claim: bool = False,
     scope_predicates: tuple[str, ...] = (PREDICATE,),
     item_predicates: tuple[str, ...] = (PREDICATE,),
-    subject_items: tuple[dict[str, object], ...] = (),
+    create_subject: bool = False,
     subject_creation: tuple[str, ...] = (),
     candidate_templates: Any = None,
     change_kinds: tuple[str, ...] = ("create", "revise"),
@@ -241,73 +238,21 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
 ):
     instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
     source, shape = procedure.definition.nodes
-    definition = procedure_definition(
-        base=procedure.definition,
-        nodes=fixtures.with_fan_out(
-            (
-                source,
-                shape.model_copy(update={"next": "settle"}),
-                SettleChangeSetNode(
-                    node_id="settle",
-                    candidate_templates=(
-                        (
-                            *subject_items,
-                            *(_predicate_item(predicate) for predicate in item_predicates),
-                        )
-                        if candidate_templates is None
-                        else candidate_templates
-                    ),
-                    result="$steps.result",
-                ),
-            ),
-            candidate_templates,
-        ),
-    )
-    if claims_terminal:
-        from cruxible_client.contracts.artifacts import ArtifactNameRef
-        from cruxible_client.contracts.procedures.claims import ClaimsNode
-        from cruxible_client.contracts.procedures.extract import ExtractNode
-        from cruxible_client.contracts.shapes import contract_digest
-        from tests.support.procedures import boundary_contract, contract_pin, named
+    from tests.support.claims_terminals import delivery_definition
 
-        row = boundary_contract("security.cost-row", {"severity": "string"})
-        out = boundary_contract("security.cost-output", {})
-        definition = procedure_definition(
-            base=procedure.definition,
-            contract_out=named(contract_pin("contract-out", out)),
-            returns=None,
-            nodes=(
-                source.model_copy(update={"next": "entries"}),
-                ExtractNode(
-                    node_id="entries",
-                    capture=f"$steps.{fixtures.SOURCE_ALIAS}.capture",
-                    records="/proposals/*",
-                    row=row.ref.model_copy(update={"digest": contract_digest(row).tagged}),
-                    key={"slug": {"at": "id", "type": "string"}},
-                    fields={"severity": {"at": "severity"}},
-                    as_="entries",
-                    next="settle",
-                ),
-                ClaimsNode(
-                    node_id="settle",
-                    for_each="$steps.entries.records",
-                    subject={
-                        "kind": SUBJECT_KIND,
-                        "key": {"slug": "$item.key.slug"},
-                        **({"within": list(claims_within)} if claims_within else {}),
-                    },
-                    claims=[
-                        {
-                            "type": ArtifactNameRef(
-                                target=ArtifactIdentity(kind="ClaimType", name=PREDICATE)
-                            ),
-                            "value": "$item.fields.severity",
-                            "role": "observation",
-                        }
-                    ],
-                ),
-            ),
-        )
+    definition, contracts = delivery_definition(
+        procedure,
+        subject_kind=SUBJECT_KIND,
+        subject_id=SUBJECT_ID,
+        predicates=item_predicates,
+        node_id="settle",
+        records="/proposals/*" if claims_terminal else "/",
+        within=claims_within,
+        templates=candidate_templates,
+        create=create_subject,
+    )
+    if not claims_terminal:
+        (root / fixtures.RELATIVE_PATH).write_bytes(fixtures.canonical_bytes({"severity": "high"}))
     with_terminal = procedure.model_copy(
         update={
             "definition": definition,
@@ -354,7 +299,8 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
         from cruxible_client.contracts.shapes import StringType
 
         claim_types = {
-            name: ct.model_copy(update={"value": StringType()}) for name, ct in claim_types.items()
+            name: ct.model_copy(update={"value": StringType(max_len=256)})
+            for name, ct in claim_types.items()
         }
     query = _condition(only_subject=only_subject, require_claim=require_claim)
     members: dict[str, bytes] = {
@@ -365,14 +311,17 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
             claim_type_path(item.predicate): render_claim_type(item)
             for item in claim_types.values()
         },
-        subject_path(SUBJECT_KIND, SUBJECT_ID): render_subject(_subject()),
+        **(
+            {subject_path(SUBJECT_KIND, SUBJECT_ID): render_subject(_subject())}
+            if not create_subject
+            else {}
+        ),
         query_definition_path(query.identity.name): render_query_definition(query),
-        **(_level_kind_members(rules=level_rules) if subject_items else {}),
+        **(_level_kind_members(rules=level_rules, kind=SUBJECT_KIND) if create_subject else {}),
     }
-    if claims_terminal:
-        from tests.support.procedures import contract_files
+    from tests.support.procedures import contract_files
 
-        members.update(contract_files(row, out))
+    members.update(contract_files(*contracts))
     for index in range(mandates):
         mandate = procedure_mandate(
             f"settle-{index}",
@@ -464,7 +413,7 @@ def test_a_true_condition_settles_the_claim_into_accepted_state(tmp_path: Path) 
     assert state.status == "succeeded", state.terminal
     egress = _egress(state)
     assert (egress.kind, egress.verdict, egress.settle_outcome) == (
-        "settle_change_set",
+        "claims",
         "delivered",
         "settled",
     )
@@ -622,7 +571,7 @@ def test_a_settle_terminal_capped_at_propose_proposes_for_the_cap(
     assert state.status == "succeeded", state.terminal
     egress = _egress(state)
     assert (egress.kind, egress.verdict, egress.settle_outcome) == (
-        "settle_change_set",
+        "claims",
         "delivered",
         "proposed",
     )
@@ -1422,10 +1371,10 @@ def test_a_capped_settle_request_names_exactly_the_cap_its_rung_allows(tmp_path:
         "line_requested_rung",
         2,
     )
-    assert (capped.required_rung, capped.granted_operation) == (2, "propose_change_set")
+    assert (capped.required_rung, capped.granted_operation) == (2, "propose")
     plain = _prepared_request(tmp_path / "plain")
     assert (plain.capped_by, plain.effective_rung, plain.required_rung) == (None, 3, 3)
-    as_propose = {"required_rung": 2, "granted_operation": "propose_change_set"}
+    as_propose = {"required_rung": 2, "granted_operation": "propose"}
 
     # Below settle, only the limiting term caps it.
     with pytest.raises(ValidationError, match="names its limiting term"):
@@ -1438,8 +1387,8 @@ def test_a_capped_settle_request_names_exactly_the_cap_its_rung_allows(tmp_path:
     with pytest.raises(ValidationError, match="required rung disagrees"):
         _rekeyed(capped, required_rung=3, granted_operation="activate_change_set")
     # Only a settle terminal is capped.
-    with pytest.raises(ValidationError, match="only a settle terminal is capped"):
-        _rekeyed(capped, kind="propose_change_set")
+    with pytest.raises(ValidationError, match="only a settle terminal is capped|Input should be"):
+        _rekeyed(capped, kind="propose")
     # The cap is part of the operation: dropping it without a new key refuses.
     stale = capped.model_dump(mode="python")
     stale.pop("capped_by")
@@ -2082,19 +2031,30 @@ def test_next_coverage_is_read_after_its_own_catch_up(
 # --- a settle grant creates Subjects only of the kinds it names (identity D1) ---
 
 
-def test_a_settle_grant_naming_a_kind_settles_its_new_subjects(tmp_path: Path) -> None:
+def test_new_subject_falls_back_when_parent_condition_cannot_read_it(tmp_path: Path) -> None:
     instance, root, line = settle_world(
-        tmp_path, subject_items=(_level_item(),), subject_creation=(LEVEL_KIND,)
+        tmp_path, create_subject=True, subject_creation=(SUBJECT_KIND,)
     )
     base = instance.accepted_coordinate()
     state = run_settle(instance, root, line)
     assert state.status == "succeeded", state.terminal
     egress = _egress(state)
-    assert (egress.verdict, egress.settle_outcome) == ("delivered", "settled"), egress
+    assert (egress.verdict, egress.settle_outcome) == ("delivered", "proposed"), egress
+    # Its ordinary Claim targets a new Subject absent from the parent-state
+    # condition query, so authority falls back to a reviewable proposal.
+    assert egress.fallback_reason
+    from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
+    from tests.core_support._knowledge_loop_support import accept_proposal
+
+    accept_proposal(
+        instance,
+        OWNERS[instance.root],
+        service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id),
+    )
     head = instance.accepted_coordinate()
     assert head != base
     tree = instance.tree_at(head.git_oid)
-    created = f"subjects/{LEVEL_KIND}/high.json"
+    created = subject_path(SUBJECT_KIND, SUBJECT_ID)
     assert created in egress.target_paths and created in tree
     # The level's key Claim settled with it; only the advisory's Claim was a
     # condition target.
@@ -2103,10 +2063,10 @@ def test_a_settle_grant_naming_a_kind_settles_its_new_subjects(tmp_path: Path) -
         for path in egress.target_paths
         if path.startswith("claims/")
     )
-    assert predicates == sorted((PREDICATE, f"{LEVEL_KIND}.slug"))
+    assert predicates == sorted((PREDICATE, f"{SUBJECT_KIND}.slug"))
 
 
-def test_a_settled_creation_covers_its_key_claim_with_no_evidence_rule(tmp_path: Path) -> None:
+def test_reviewed_native_creation_supports_its_key_without_a_rule(tmp_path: Path) -> None:
     """A settle creation's key Claim is supported though its key ClaimType has no rule."""
 
     from cruxible_client.contracts.claim_reads import ClaimValuesRequest
@@ -2114,18 +2074,27 @@ def test_a_settled_creation_covers_its_key_claim_with_no_evidence_rule(tmp_path:
 
     instance, root, line = settle_world(
         tmp_path,
-        subject_items=(_level_item(),),
-        subject_creation=(LEVEL_KIND,),
+        create_subject=True,
+        subject_creation=(SUBJECT_KIND,),
         level_rules=False,
     )
     egress = _egress(run_settle(instance, root, line))
-    assert (egress.verdict, egress.settle_outcome) == ("delivered", "settled"), egress
+    assert (egress.verdict, egress.settle_outcome) == ("delivered", "proposed"), egress
+
+    from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
+    from tests.core_support._knowledge_loop_support import accept_proposal
+
+    accept_proposal(
+        instance,
+        OWNERS[instance.root],
+        service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id),
+    )
 
     (row,) = service_read_claim_values(
         instance,
         request=ClaimValuesRequest(
-            subject_paths=(f"subjects/{LEVEL_KIND}/high.json",),
-            predicates=(f"{LEVEL_KIND}.slug",),
+            subject_paths=(subject_path(SUBJECT_KIND, SUBJECT_ID),),
+            predicates=(f"{SUBJECT_KIND}.slug",),
             evaluation_time=fixtures.NOW,
         ),
     ).values
@@ -2133,7 +2102,7 @@ def test_a_settled_creation_covers_its_key_claim_with_no_evidence_rule(tmp_path:
 
 
 def test_a_settle_grant_naming_no_kind_never_creates_a_subject(tmp_path: Path) -> None:
-    instance, root, line = settle_world(tmp_path, subject_items=(_level_item(),))
+    instance, root, line = settle_world(tmp_path, create_subject=True)
     base = instance.accepted_coordinate()
     state = run_settle(instance, root, line)
     egress = _egress(state)

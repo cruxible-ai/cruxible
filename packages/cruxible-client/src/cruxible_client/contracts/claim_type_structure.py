@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
-from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.errors import CanonicalEncodingError
+from cruxible_client.contracts.shapes import FieldType, coerce_field_type
 
 CLAIM_TYPE_STRUCTURAL_SIGNATURE_DOMAIN = "playbill-claim-type-structural-signature-v1"
 
@@ -37,9 +37,13 @@ class ClaimTypeStructure(_StrictClaimTypeStructureModel):
 
     predicate: str
     allowed_subject_kinds: tuple[str, ...]
-    object_kind: ClaimObjectKind
-    literal_schema: dict[str, object] | None = None
-    allowed_object_subject_kinds: tuple[str, ...] = ()
+    value: FieldType
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _value(cls, value: Any) -> object:
+        return coerce_field_type(value)
+
     cardinality: ClaimCardinality
     permitted_roles: tuple[ClaimRole, ...]
     referent_sensitivity: ReferentSensitivity = "identity"
@@ -49,7 +53,7 @@ class ClaimTypeStructure(_StrictClaimTypeStructureModel):
     def _predicate(cls, value: str) -> str:
         return _semantic_kind(value, label="ClaimType predicate")
 
-    @field_validator("allowed_subject_kinds", "allowed_object_subject_kinds")
+    @field_validator("allowed_subject_kinds")
     @classmethod
     def _kinds(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))) != value:
@@ -65,58 +69,10 @@ class ClaimTypeStructure(_StrictClaimTypeStructureModel):
             raise ValueError("ClaimType roles must be nonempty, sorted, and unique")
         return value
 
-    @field_validator("literal_schema")
-    @classmethod
-    def _literal_schema(
-        cls,
-        value: dict[str, object] | None,
-    ) -> dict[str, object] | None:
-        if value is None:
-            return None
-        # This proves the schema is an exact Cruxible canonical value rather
-        # than a Python object whose floats or keys could canonicalize loosely.
-        try:
-            canonical_bytes(value)
-        except CanonicalEncodingError as exc:
-            raise ValueError("literal_schema must be exact canonical JSON") from exc
-        if not value:
-            raise ValueError("literal_schema must be an explicit nonempty JSON Schema")
-        schema_uri = value.get("$schema")
-        if schema_uri is not None and schema_uri != "https://json-schema.org/draft/2020-12/schema":
-            raise ValueError("literal_schema must use JSON Schema draft 2020-12 when declared")
-        declared_type = value.get("type")
-        if declared_type is None and "enum" not in value and "const" not in value:
-            raise ValueError("literal_schema must constrain type, enum, or const")
-        if declared_type is not None and declared_type not in {
-            "array",
-            "boolean",
-            "integer",
-            "null",
-            "number",
-            "object",
-            "string",
-        }:
-            raise ValueError("literal_schema contains an unsupported exact type")
-        return value
-
     @model_validator(mode="after")
-    def _object_contract(self) -> "ClaimTypeStructure":
+    def _subject_range(self) -> ClaimTypeStructure:
         if not self.allowed_subject_kinds:
             raise ValueError("ClaimType requires at least one allowed subject kind")
-        if self.object_kind == "literal":
-            if self.literal_schema is None:
-                raise ValueError("literal ClaimType requires an exact literal_schema")
-            if self.allowed_object_subject_kinds:
-                raise ValueError("literal ClaimType cannot admit object Subject kinds")
-        elif self.object_kind == "subject":
-            if self.literal_schema is not None:
-                raise ValueError("subject-valued ClaimType cannot carry literal_schema")
-            if not self.allowed_object_subject_kinds:
-                raise ValueError("subject-valued ClaimType requires allowed object Subject kinds")
-        elif self.literal_schema is not None or self.allowed_object_subject_kinds:
-            raise ValueError(
-                "exact-content ClaimType cannot carry literal or object-Subject schema"
-            )
         return self
 
 

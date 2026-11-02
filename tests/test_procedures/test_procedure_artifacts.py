@@ -32,7 +32,6 @@ from cruxible_client.contracts.procedures.models import (
     HaltNode,
     ProcedureDefinition,
     ProjectNode,
-    ProposeChangeSetNode,
     ReadNode,
 )
 from cruxible_client.contracts.refs import step_ref
@@ -236,40 +235,13 @@ def test_graph_refuses_backward_edge() -> None:
         )
 
 
-def test_proposal_terminal_has_no_activation_or_direct_write_capability() -> None:
-    terminal = ProposeChangeSetNode(
-        node_id="propose",
-        candidate_templates=({"artifact_kind": "Claim", "input": "$steps.result"},),
-        result="$steps.result",
-    )
-    definition = _definition(
-        nodes=(
-            ProjectNode(
-                node_id="shape",
-                fields={"status": "ready"},
-                as_="result",
-            ),
-            terminal,
-        ),
-        terminal_capability=2,
-    )
-
-    assert definition.nodes[-1].model_dump(mode="json") == {
-        "kind": "propose_change_set",
-        "node_id": "propose",
-        "candidate_templates": [{"artifact_kind": "Claim", "input": "$steps.result"}],
-        "result": "$steps.result",
-    }
-    with pytest.raises(ValidationError, match="extra_forbidden"):
-        ProposeChangeSetNode.model_validate(
-            {
-                **terminal.model_dump(mode="json"),
-                "activate": True,
-            }
-        )
-    payload = definition.model_dump(mode="json", by_alias=True)
-    payload["nodes"][1] = {"kind": "apply_entities", "node_id": "write"}
-    with pytest.raises(ValidationError, match="union_tag_invalid"):
+@pytest.mark.parametrize("kind", ["propose_change_set", "settle_change_set"])
+def test_retired_command_terminal_names_the_claims_replacement(kind: str) -> None:
+    payload = _definition().model_dump(mode="json", by_alias=True)
+    payload["nodes"] = [
+        {"kind": kind, "node_id": "write", "candidate_templates": [{"activate": True}]}
+    ]
+    with pytest.raises(ValueError, match="procedure_node_kind_retired.*claims"):
         ProcedureDefinition.model_validate(payload)
 
 

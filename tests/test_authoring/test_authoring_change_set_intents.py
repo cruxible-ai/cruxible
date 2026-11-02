@@ -821,7 +821,7 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
             "literal_schema",
             (schema_claim_member, _create("wi-2")),
             schema_claim_member,
-            "cruxible.claim.literal_schema_invalid",
+            "cruxible.claim.value_invalid",
             "",
             "object",
         ),
@@ -874,7 +874,7 @@ def test_a_singular_intent_is_never_re_addressed_to_a_member(
     ).intent
 
     offending = _refused_diagnostics(coordinator, intent.intent_id, actor)
-    diagnostic = offending["cruxible.claim.literal_schema_invalid"]
+    diagnostic = offending["cruxible.claim.value_invalid"]
     # Its own statement field is addressed as authored; the artifact path rides along.
     assert diagnostic.offending_element == "statement.object"
     assert _repair_replacement(diagnostic) == {

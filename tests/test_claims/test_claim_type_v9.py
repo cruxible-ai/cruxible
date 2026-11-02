@@ -56,10 +56,8 @@ def many_subject(inverse: ClaimInverse, **update: object) -> ClaimType:
         inverse,
         identity={"kind": "ClaimType", "name": "project.work_item.blocks"},
         predicate="project.work_item.blocks",
-        object_kind="subject",
-        literal_schema=None,
+        value_type=("project.release",),
         member_descriptions=(),
-        allowed_object_subject_kinds=("project.release",),
         cardinality="many",
         resolution_policy=resolution,
         **update,
@@ -114,9 +112,7 @@ def test_the_key_fits_the_cardinality_and_object() -> None:
         ClaimInverse(key=ClaimInverseObjectKey(kind="object"), evidence_rules=("source",))
     ).model_dump(mode="python")
     literal_many.update(
-        object_kind="literal",
-        literal_schema={"type": "string"},
-        allowed_object_subject_kinds=(),
+        value={"kind": "string", "max_len": 256},
         inverse=ClaimInverse(
             key=ClaimInverseObjectKeyPart(kind="object_key", predicate="project.release.name"),
             evidence_rules=("source",),
@@ -158,19 +154,9 @@ def test_the_law_refuses_rules_the_type_does_not_declare() -> None:
     assert refused.diagnostics[0].code == "cruxible.claim_type.inverse_rule_unresolved"
 
 
-def test_the_law_refuses_an_exact_content_inverse() -> None:
-    exact = v9(
-        ClaimInverse(key=ClaimInverseObjectKey(kind="object"), evidence_rules=("source",)),
-        object_kind="exact_content",
-        literal_schema=None,
-        member_descriptions=(),
-        cardinality="many",
-        resolution_policy=v7().resolution_policy.model_copy(
-            update={"cardinality": "many", "selector": "all"}
-        ),
-    )
-    refused = evaluate_claim_type_law(exact, path=PATH, predecessor=None)
-    assert refused.diagnostics[0].code == "cruxible.claim_type.inverse_object_kind"
+def test_exact_content_inverse_is_retired_at_definition() -> None:
+    with pytest.raises(ValidationError, match="prose lives in Documents"):
+        v9(object_kind="exact_content")
 
 
 def test_an_object_key_must_be_a_key_of_every_object_kind() -> None:
@@ -243,8 +229,7 @@ def test_lint_warns_when_an_enum_member_already_states_the_negative(tmp_path: Pa
         "predicate": "project.work_item.phase",
         "description": "The work item's phase.",
         "allowed_subject_kinds": ["project.work_item"],
-        "object_kind": "literal",
-        "literal_schema": {"enum": ["done", "not_done"], "type": "string"},
+        "value": "enum[done, not_done]",
         "cardinality": "one",
         "inverse": {"key": {"kind": "slot"}, "evidence_rules": ["self"]},
     }
@@ -260,7 +245,7 @@ def test_lint_warns_when_an_enum_member_already_states_the_negative(tmp_path: Pa
     ]
     plain = lint_claim_type_input(
         instance,
-        ClaimTypeInputRecord.model_validate({**record, "literal_schema": {"type": "string"}}),
+        ClaimTypeInputRecord.model_validate({**record, "value": "string{max_len: 256}"}),
         coordinate=instance.accepted_coordinate(),
     )
     assert plain.warnings == ()
@@ -369,8 +354,7 @@ def test_lint_warns_when_stale_is_eligible_but_current_is_required(tmp_path: Pat
         "predicate": "project.work_item.phase",
         "description": "The work item's phase.",
         "allowed_subject_kinds": ["project.work_item"],
-        "object_kind": "literal",
-        "literal_schema": {"type": "string"},
+        "value": "string{max_len: 256}",
         "cardinality": "one",
         "resolution_policy": resolution,
     }

@@ -103,6 +103,7 @@ from cruxible_client.contracts.query.grammar import (
 )
 from cruxible_client.contracts.query.results import ClaimQueryResult
 from cruxible_client.contracts.read_values import summary_value, whole_value_read
+from cruxible_client.contracts.shapes import subject_value_kinds
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_aliases import resolve_subject_ref
@@ -1704,7 +1705,7 @@ def _artifact_answer(
                     members=members,
                     cardinality=source.cardinality,
                     subject_kinds=tuple(source.allowed_subject_kinds),
-                    object_kinds=tuple(source.allowed_object_subject_kinds),
+                    object_kinds=tuple(subject_value_kinds(source.value)),
                 )
             rows.append({**claim_type_row(info, contracts), **_claim_type_detail(source, owners)})
         else:

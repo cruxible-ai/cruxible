@@ -29,27 +29,60 @@ def claim_type_changes(*, value_type: ClaimValueType, **overrides: Any) -> dict[
     This deliberately does not validate: tests also copy artifacts to exercise
     admission refusals, just as they do with ``model_copy(update=...)``.
     """
+    from cruxible_client.contracts.shapes import coerce_field_type
+
+    # Older fixture helpers express the object category separately. Normalize it
+    # here only: product input accepts the native value declaration exclusively.
+    category = overrides.pop("object_kind", None)
+    schema_override = overrides.pop("literal_schema", None)
+    ranges = overrides.pop("allowed_object_subject_kinds", None)
+    if category == "subject" or ranges:
+        value_type = tuple(ranges or ("semantic.subject",))
+    elif schema_override is not None:
+        value_type = schema_override
+
     if isinstance(value_type, Mapping):
-        fields: dict[str, Any] = {
-            "object_kind": "literal",
-            "literal_schema": dict(value_type),
-            "allowed_object_subject_kinds": (),
-        }
+        schema = dict(value_type)
+        if isinstance(schema.get("const"), str):
+            native = {"kind": "enum", "members": (schema["const"],)}
+        elif "kind" in schema:
+            native = schema
+        elif isinstance(schema.get("enum"), list) and all(
+            isinstance(member, str) for member in schema["enum"]
+        ):
+            native = {"kind": "enum", "members": schema["enum"]}
+        else:
+            kind = {"integer": "int", "boolean": "bool", "number": "number"}.get(
+                schema.get("type"), schema.get("type", "string")
+            )
+            if kind == "string" and schema.get("format") in {"date", "date-time"}:
+                kind = "date" if schema["format"] == "date" else "datetime"
+            names = {
+                "minLength": "min_len",
+                "maxLength": "max_len",
+                "minimum": "min",
+                "maximum": "max",
+                "pattern": "pattern",
+            }
+            native = {
+                "kind": kind,
+                **{target: schema[source] for source, target in names.items() if source in schema},
+            }
+            if kind == "string":
+                native.setdefault("max_len", 256)
     elif isinstance(value_type, tuple):
-        fields = {
-            "object_kind": "subject",
-            "literal_schema": None,
-            "allowed_object_subject_kinds": value_type,
-        }
+        native = {"kind": "subject", "subject_kinds": value_type}
     elif value_type == "exact_content":
-        fields = {
-            "object_kind": "exact_content",
-            "literal_schema": None,
-            "allowed_object_subject_kinds": (),
-        }
+        # Existing fixtures can still attempt the retired object; acceptance must refuse it.
+        native = {"kind": "string", "max_len": 256}
     else:
-        raise TypeError(f"Unknown test ClaimType value type: {value_type!r}")
-    return {**fields, **overrides}
+        native = value_type
+    from cruxible_client.contracts.shapes import StringType
+
+    selected = coerce_field_type(overrides.pop("value", native))
+    if isinstance(selected, StringType) and selected.max_len is None:
+        selected = selected.model_copy(update={"max_len": 256})
+    return {"value": selected, **overrides}
 
 
 def claim_type(
@@ -102,12 +135,6 @@ def claim_type_input(
     fields = claim_type_changes(
         value_type={"type": "string"} if value_type is None else value_type, **overrides
     )
-    # Authoring inputs serialize only stated fields. Literal fixtures do not
-    # state an empty Subject range merely because artifacts default to one.
-    if (isinstance(value_type, Mapping) or value_type is None) and (
-        "allowed_object_subject_kinds" not in overrides
-    ):
-        fields.pop("allowed_object_subject_kinds", None)
     return ClaimTypeInputRecord.model_validate(
         {
             "predicate": predicate,

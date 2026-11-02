@@ -46,7 +46,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
     render_line_spec,
 )
-from cruxible_client.contracts.procedures.models import ProposeChangeSetNode
 from cruxible_client.contracts.procedures.results import ProcedureNodeRefusal
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
@@ -141,20 +140,20 @@ def terminal_procedure(
     more work than the defaults cover on a slow host.
     """
 
-    source, shape = procedure.definition.nodes
-    nodes = (
-        source,
-        shape.model_copy(update={"next": "propose"}),
-        ProposeChangeSetNode(
-            node_id="propose",
-            candidate_templates=templates or (item_template(),),
-            result="$steps.result",
-        ),
+    from tests.support.claims_terminals import delivery_definition
+
+    definition, _contracts = delivery_definition(
+        procedure,
+        subject_kind=SUBJECT_KIND,
+        subject_id=SUBJECT_ID,
+        predicates=(PREDICATE,),
+        node_id="propose",
+        templates=templates or (item_template(),),
     )
-    if document:
-        nodes = fixtures.severity_from_document(nodes)
     update: dict[str, object] = {
-        "nodes": fixtures.with_fan_out(nodes, templates),
+        "nodes": definition.nodes,
+        "contract_out": definition.contract_out,
+        "returns": None,
     }
     caps = {}
     if wall_clock_seconds is not None:
@@ -208,10 +207,24 @@ def proposal_world(  # type: ignore[no-untyped-def]
     )
     contract = capture_contract()
     accepted_claim_type = claim_type or _claim_type(contract.identity.name)
+    from tests.support.claims_terminals import delivery_definition
+    from tests.support.procedures import contract_files
+
+    _definition, boundary_contracts = delivery_definition(
+        procedure,
+        subject_kind=SUBJECT_KIND,
+        subject_id=SUBJECT_ID,
+        predicates=(PREDICATE,),
+        node_id="propose",
+    )
+    if not document:
+        (root / fixtures.RELATIVE_PATH).write_bytes(fixtures.canonical_bytes({"severity": "high"}))
+
     members = core_assigned(
         instance,
         {
             **procedure_members(with_terminal),
+            **contract_files(*boundary_contracts),
             line_spec_path(line.identity.name): render_line_spec(line),
             claim_type_path(accepted_claim_type.predicate): render_claim_type(accepted_claim_type),
             subject_path(SUBJECT_KIND, SUBJECT_ID): render_subject(_subject()),
@@ -284,7 +297,7 @@ def test_a_line_terminal_produces_a_proposal_the_manager_accepts_and_reads_back(
     assert len(state.terminal_egress) == 1
     egress = state.terminal_egress[0]
     assert egress.node_id == "propose"
-    assert egress.kind == "propose_change_set"
+    assert egress.kind == "claims"
     assert egress.verdict == "delivered"
     assert egress.effective_authority == "propose"
     assert egress.operation_key is not None
@@ -422,46 +435,46 @@ def test_a_source_failure_stops_the_run_before_the_terminal(tmp_path: Path) -> N
     assert _proposal_refs(instance) == []
 
 
-def test_a_template_that_is_not_a_claim_item_refuses_typed_to_the_item(tmp_path: Path) -> None:
-    instance, _owner, root, line, _procedure = proposal_world(
-        tmp_path,
-        templates=({"severity": "$steps.result.severity", "note": "not an item"},),
-    )
+def test_retired_command_template_names_the_claims_replacement(tmp_path: Path) -> None:
+    from cruxible_client.contracts.procedures.nodes import RetiredNodeKind, refuse_retired_kinds
 
-    state = run_line(instance, root, line)
-
-    refusal = _refusal(state)
-    assert refusal.code == "proposal_item_invalid", refusal
-    assert refusal.details["child_index"] == 0
-    assert refusal.details["errors"], refusal.details
-    assert _proposal_refs(instance) == []
-    (egress,) = state.terminal_egress
-    assert egress.verdict == "refused"
-    assert egress.refusal_code == "proposal_item_invalid"
+    with pytest.raises(RetiredNodeKind, match="claims"):
+        refuse_retired_kinds(
+            [
+                {
+                    "kind": "propose_change_set",
+                    "node_id": "write",
+                    "candidate_templates": [{"not": "a Claim"}],
+                }
+            ]
+        )
 
 
-def test_an_item_whose_closure_reached_no_capture_refuses_evidence_missing(
-    tmp_path: Path,
-) -> None:
-    """A literal item reads nothing the Source produced, so it has no evidence to cite."""
-
+def test_literal_mapping_cites_its_selected_records_capture(tmp_path: Path) -> None:
+    # D-R4: a declared constant over a selected record cites that record's extract.
     instance, _owner, root, line, _procedure = proposal_world(
         tmp_path,
         templates=(
             item_template(
                 statement={
-                    **item_template()["statement"],  # type: ignore[dict-item]
+                    **item_template()["statement"],
                     "object": {"kind": "literal", "value": "high"},
                 }
             ),
         ),
     )
-
     state = run_line(instance, root, line)
-
-    refusal = _refusal(state)
-    assert refusal.code == "proposal_item_evidence_missing", refusal
-    assert _proposal_refs(instance) == []
+    assert state.status == "succeeded", state.terminal
+    egress = state.terminal_egress[0]
+    inspection = service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    tree = instance.proposal_tree(
+        inspection.proposal.admission.candidate_commit_oid, proposal_id=egress.proposal_id
+    )
+    claim = parse_claim(tree[egress.children[0].path], path=egress.children[0].path)
+    assert (
+        claim.backing.procedure_evidence.value.capture_digest
+        == state.source_observations[0].capture_digest
+    )
 
 
 def test_a_claim_type_that_does_not_admit_the_capture_refuses_through_shared_lowering(
@@ -533,7 +546,7 @@ class _Crash(BaseException):
 def _crash_after(monkeypatch: pytest.MonkeyPatch, *, after_submit: bool) -> None:
     """Kill the process at the proposal door: after the ref is created, or before it."""
 
-    original_deliver = terminal_services.ProposalTerminalAdapter.deliver
+    original_deliver = terminal_services.ProposalTerminalAdapter.submit
     original_append = ProcedureExecutor._append_event
     crashed = {"value": False}
 
@@ -550,7 +563,7 @@ def _crash_after(monkeypatch: pytest.MonkeyPatch, *, after_submit: bool) -> None
             raise _Crash()
         return original_append(self, admission, records, event_kind, payload)
 
-    monkeypatch.setattr(terminal_services.ProposalTerminalAdapter, "deliver", crashing_deliver)
+    monkeypatch.setattr(terminal_services.ProposalTerminalAdapter, "submit", crashing_deliver)
     monkeypatch.setattr(ProcedureExecutor, "_append_event", dead_append)
 
 
@@ -627,75 +640,14 @@ def test_a_crash_at_the_proposal_door_recovers_one_proposal_and_publishes_its_re
 
 
 @pytest.mark.parametrize("verb", ["propose", "settle"])
-def test_a_crash_after_a_provider_free_directs_proposal_recovers_it_without_redispatch(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    verb: str,
-) -> None:
-    """Terminal recovery never gates eligibility on ``plans_providers``.
+def test_provider_free_command_procedures_refuse_before_dispatch(tmp_path: Path, verb: str) -> None:
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec
+    from tests.test_procedures.test_claims_terminal import claims_spec
 
-    A provider-free direct Procedure (no Call, no Source: ``budget.provider_calls
-    == 0``) delivers a real proposal exactly like a run that planned Provider
-    occurrences (C3: one admitted-run family for every run kind), and a crash
-    after the proposal door kept its ref recovers it the same way -- one
-    proposal, no redispatch. A ``settle`` terminal in a direct run falls back
-    to the same ``propose`` delivery (ruling C4).
-    """
-    from cruxible_core.service.procedures.procedure_runs import (
-        ProcedureRunRequest,
-        service_run_playbill_procedure,
-    )
-    from tests.support import operation_world
-    from tests.test_procedures.test_b2_operations import (
-        _author_widget_kind,
-        _plain_terminal_spec,
-    )
-
-    instance = operation_world.world(tmp_path)
-    _author_widget_kind(instance)
-    name = f"test.{verb}-plain-direct-recovery"
-    operation_world.author_procedure(instance, _plain_terminal_spec(name=name, verb=verb))
-    _crash_after_submit(monkeypatch)
-    with pytest.raises(_Crash):
-        service_run_playbill_procedure(
-            instance,
-            name=name,
-            request=ProcedureRunRequest(input={}, evaluation_time=operation_world.NOW),
-            actor_context=operation_world.actor(),
-        )
-    monkeypatch.undo()
-    refs_after_crash = _proposal_refs(instance)
-    assert len(refs_after_crash) == 1
-
-    # The run is recoverable: a provider-free direct run is read back from its
-    # one current admission exactly like a provider-planned one.
-    recovered = service_recover_proposal_egress(
-        instance, recorded_at=operation_world.NOW + timedelta(minutes=1)
-    )
-    ((run_id, disposition),) = recovered.items()
-    assert disposition == "delivered"
-    # Exactly one proposal exists; redriving the idempotent door did not
-    # dispatch a second one.
-    assert _proposal_refs(instance) == refs_after_crash
-    state = service_get_playbill_procedure_run(instance, run_id=run_id)
-    assert state.status == "operational_failed"
-    assert state.terminal is not None and state.terminal.code == "terminal_egress_recovered"
-    (egress,) = state.terminal_egress
-    assert egress.verdict == "delivered"
-    assert egress.proposal_id is not None and egress.candidate_digest is not None
-    if verb == "settle":
-        assert egress.settle_outcome == "proposed"
-        assert egress.accepted_git_oid is None
-    inspection = service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
-    assert inspection.proposal.candidate is not None
-    assert inspection.proposal.candidate.candidate_digest == egress.candidate_digest
-    # Recovery is idempotent: a second sweep finds nothing to do.
-    assert (
-        service_recover_proposal_egress(
-            instance, recorded_at=operation_world.NOW + timedelta(minutes=2)
-        )
-        == {}
-    )
+    raw = claims_spec().model_dump(mode="json", by_alias=True)
+    raw["steps"][-1] = {verb: [{"source": {"content_base64": "aGk="}}]}
+    with pytest.raises(ValueError, match="procedure_node_kind_retired.*claims"):
+        ProcedureSpec.model_validate(raw)
 
 
 def test_a_duplicate_delivery_of_one_operation_returns_the_same_receipt(
@@ -887,7 +839,7 @@ def test_delivery_hands_the_door_lowering_paths_and_reads_no_second_base_tree(
         return lowered
 
     monkeypatch.setattr(delivery_module.authoring_lowering, "lower_authoring", observing_lower)
-    original_deliver = terminal_services.ProposalTerminalAdapter.deliver
+    original_deliver = terminal_services.ProposalTerminalAdapter.submit
 
     def observing_deliver(self, **kwargs):  # type: ignore[no-untyped-def]
         seen["changed_paths"] = kwargs.get("changed_paths")
@@ -895,7 +847,7 @@ def test_delivery_hands_the_door_lowering_paths_and_reads_no_second_base_tree(
         seen["reads_before_door"] = list(reads)
         return original_deliver(self, **kwargs)
 
-    monkeypatch.setattr(terminal_services.ProposalTerminalAdapter, "deliver", observing_deliver)
+    monkeypatch.setattr(terminal_services.ProposalTerminalAdapter, "submit", observing_deliver)
 
     state = run_line(instance, root, line)
 
@@ -1035,7 +987,7 @@ def test_recovery_finds_a_crashed_occurrence_after_a_completed_one_in_the_same_p
     assert first.status == "succeeded", first.terminal
     # The later run reads a changed file: an identical change would keep the
     # first run's open proposal and never reach the door.
-    (root / fixtures.RELATIVE_PATH).write_bytes(b"critical")
+    (root / fixtures.RELATIVE_PATH).write_bytes(fixtures.canonical_bytes({"severity": "critical"}))
     _crash_after(monkeypatch, after_submit=False)
     with pytest.raises(_Crash):
         run_line(instance, root, line, at=NOW + timedelta(hours=1))
@@ -1106,7 +1058,7 @@ def test_a_crash_after_the_resolving_record_finalizes_the_run_without_redelivery
     ((run_id, status),) = _finalized_runs(instance).items()
     assert status == "running"
     door_calls = []
-    original_deliver = terminal_services.ProposalTerminalAdapter.deliver
+    original_deliver = terminal_services.ProposalTerminalAdapter.submit
     monkeypatch.setattr(
         terminal_services.ProposalTerminalAdapter,
         "deliver",
@@ -1702,7 +1654,7 @@ def test_one_item_adds_a_value_to_a_many_valued_slot_that_already_holds_one(
         ),
     )
     (existing,) = _live_slot_claims(instance)
-    (root / fixtures.RELATIVE_PATH).write_bytes(b"critical")
+    (root / fixtures.RELATIVE_PATH).write_bytes(fixtures.canonical_bytes({"severity": "critical"}))
 
     second = run_line(instance, root, line, at=NOW + timedelta(minutes=5))
 
@@ -1947,7 +1899,7 @@ def _revising_line(instance, owner, procedure, templates):  # type: ignore[no-un
     """Accept a second Procedure, Line and mandate whose terminal carries ``templates``."""
 
     source, shape, terminal = procedure.definition.nodes
-    assert isinstance(terminal, ProposeChangeSetNode)
+    assert terminal.kind == "claims"
     definition = procedure.definition.model_copy(
         update={
             "name": "osv-advisory-revise",
@@ -1997,7 +1949,9 @@ def _two_values(tmp_path: Path):  # type: ignore[no-untyped-def]
         tmp_path, claim_type=_many_valued_claim_type()
     )
     for minutes, severity in ((0, "high"), (5, "critical")):
-        (root / fixtures.RELATIVE_PATH).write_bytes(severity.encode())
+        (root / fixtures.RELATIVE_PATH).write_bytes(
+            fixtures.canonical_bytes({"severity": severity})
+        )
         state = run_line(instance, root, line, at=NOW + timedelta(minutes=minutes))
         assert state.status == "succeeded", state.terminal
         accept_proposal(
@@ -2008,7 +1962,7 @@ def _two_values(tmp_path: Path):  # type: ignore[no-untyped-def]
             ),
         )
     first, second = sorted(claim.identity.name for claim in _live_slot_claims(instance))
-    (root / fixtures.RELATIVE_PATH).write_bytes(b"low")
+    (root / fixtures.RELATIVE_PATH).write_bytes(fixtures.canonical_bytes({"severity": "low"}))
     return instance, owner, root, procedure, first, second
 
 
@@ -2031,89 +1985,32 @@ def _slots(instance: PlaybillInstance) -> dict[str, str | None]:
     }
 
 
-def test_two_revisions_move_two_claims_into_one_many_valued_slot(tmp_path: Path) -> None:
-    instance, owner, root, procedure, first, second = _two_values(tmp_path)
-    line = _revising_line(
-        instance,
-        owner,
-        procedure,
-        (_revision(first, qualifier="new"), _revision(second, qualifier="new", dated=True)),
-    )
+def test_mapping_cannot_choose_a_revision_target(tmp_path: Path) -> None:
+    from cruxible_client.contracts.artifacts import ArtifactNameRef
+    from cruxible_client.contracts.procedures.claims import ClaimTemplate
 
-    state = run_line(instance, root, line, at=NOW + timedelta(minutes=10))
-
-    assert state.status == "succeeded", state.terminal
-    (egress,) = state.terminal_egress
-    assert egress.verdict == "delivered"
-    accept_proposal(
-        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
-    )
-    assert _slots(instance) == {first: "new", second: "new"}
-
-
-def test_a_revision_moving_a_claim_out_leaves_the_slot_it_left(tmp_path: Path) -> None:
-    """The first revision moves out of the slot before the second is lowered into it.
-
-    The disposition fill follows that move: the second revision, staying in the
-    slot the first one left, is dispositioned against nothing. Without the
-    movement-out bookkeeping it would still disposition the moved Claim (which
-    lowering tolerates as voluntary, so the end-to-end run alone cannot tell).
-    """
-
-    from cruxible_client.contracts.authoring.models import (
-        AuthoringClaimStatement,
-        ClaimAuthoringPayload,
-        ClaimDependencyDrafts,
-        ExistingCaptureCitationSource,
-        authoring_member_identity,
-    )
-
-    instance, owner, root, procedure, first, second = _two_values(tmp_path)
-
-    def payload(claim_id: str, qualifier: str | None) -> ClaimAuthoringPayload:
-        statement = {
-            **item_template()["statement"],  # type: ignore[dict-item]
-            "qualifier": qualifier,
-            "object": {"kind": "literal", "value": "low"},
-        }
-        return ClaimAuthoringPayload(
-            statement=AuthoringClaimStatement.model_validate(statement),
-            rationale="Restated.",
-            source=ExistingCaptureCitationSource(capture_digest="sha256:" + "c" * 64),
-            citation_role="evidence",
-            revises=claim_id,
-            dependency_drafts=ClaimDependencyDrafts(),
+    with pytest.raises(ValueError, match="Extra inputs"):
+        ClaimTemplate.model_validate(
+            {
+                "type": ArtifactNameRef(target=ArtifactIdentity(kind="ClaimType", name=PREDICATE)),
+                "value": "high",
+                "revises": "caller-chosen lineage",
+            }
         )
 
-    members = tuple(
-        sorted(
-            (payload(first, "new"), payload(second, None)),
-            key=lambda member: authoring_member_identity(member).encode("utf-8"),
+
+def test_mapping_cannot_supply_dispositions(tmp_path: Path) -> None:
+    from cruxible_client.contracts.artifacts import ArtifactNameRef
+    from cruxible_client.contracts.procedures.claims import ClaimTemplate
+
+    with pytest.raises(ValueError, match="Extra inputs"):
+        ClaimTemplate.model_validate(
+            {
+                "type": ArtifactNameRef(target=ArtifactIdentity(kind="ClaimType", name=PREDICATE)),
+                "value": "high",
+                "existing_claim_dispositions": "caller-chosen lineage",
+            }
         )
-    )
-    assert [member.revises for member in members] == [first, second]
-    filled = delivery_module._with_many_valued_dispositions(
-        members,
-        claim_ids={},
-        base_tree=instance.immutable_tree_at(instance.accepted_coordinate().git_oid),
-    )
-    assert [member.existing_claim_dispositions for member in filled] == [(), ()]
-    line = _revising_line(
-        instance,
-        owner,
-        procedure,
-        (_revision(first, qualifier="new"), _revision(second, qualifier=None)),
-    )
-
-    state = run_line(instance, root, line, at=NOW + timedelta(minutes=10))
-
-    assert state.status == "succeeded", state.terminal
-    (egress,) = state.terminal_egress
-    assert egress.verdict == "delivered"
-    accept_proposal(
-        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
-    )
-    assert _slots(instance) == {first: "new", second: None}
 
 
 # --- earlier refusals of a proposed item resurface on the run result ---------
@@ -2364,7 +2261,7 @@ def test_a_terminal_canonicalizes_each_item_before_taking_its_identity(tmp_path:
 
     The advisory later spells the same severity " High ". Under the predicate's
     form it is the live Claim's statement, so the terminal finds that Claim and
-    revises it on the new content instead of proposing a second Claim.
+    records its new Capture as a re-observation without a Claim revision.
     """
 
     instance, owner, root, line, _procedure = proposal_world(
@@ -2375,16 +2272,20 @@ def test_a_terminal_canonicalizes_each_item_before_taking_its_identity(tmp_path:
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     live = parse_claim(tree[first_child.path], path=first_child.path)
     assert live.statement.object.model_dump(mode="json")["value"] == "HIGH"
-    (root / fixtures.RELATIVE_PATH).write_bytes(b" High ")
+    (root / fixtures.RELATIVE_PATH).write_bytes(fixtures.canonical_bytes({"severity": " High "}))
 
     second = run_line(instance, root, line, at=NOW + timedelta(hours=1))
 
     assert second.status == "succeeded", second.terminal
     (egress,) = second.terminal_egress
     (child,) = egress.children
-    assert not child.unchanged
+    assert child.unchanged
     assert child.path == first_child.path
-    assert egress.target_paths == (first_child.path,)
+    assert egress.target_paths == ()
+    assert egress.proposal_id is None
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+
+    assert len(ClaimReobservationStore(instance).history(live.identity.name)) == 1
 
 
 def _inverse_claim_type() -> ClaimType:
@@ -2426,57 +2327,20 @@ def _live_nones(instance: PlaybillInstance) -> dict[str, Any]:
     }
 
 
-def test_a_restated_none_revises_its_lineage_and_another_unit_lands_beside_it(
+def test_inverse_absence_is_explicitly_deferred_to_b4b(
     tmp_path: Path,
 ) -> None:
-    """A none without `revises` restates the live none of its unit, as a value would.
+    from cruxible_client.contracts.artifacts import ArtifactNameRef
+    from cruxible_client.contracts.procedures.claims import ClaimTemplate
 
-    Re-reading new content for the same unit revises that none's lineage with
-    the fresh evidence; a none of another unit is a second none, not a revision.
-    """
-
-    instance, owner, root, line, _procedure = proposal_world(
-        tmp_path, templates=(_none_item(),), claim_type=_inverse_claim_type(), document=True
-    )
-    first = _accept_first_run(instance, owner, root, line)
-    (first_child,) = first.children
-    (held,) = _live_nones(instance).values()
-    (root / fixtures.RELATIVE_PATH).write_bytes(
-        fixtures.canonical_bytes(
-            {"advisory_id": "OSV-2026-0001", "severity": "high", "revision": 2}
+    with pytest.raises(ValueError, match="B4b"):
+        ClaimTemplate.model_validate(
+            {
+                "type": ArtifactNameRef(target=ArtifactIdentity(kind="ClaimType", name=PREDICATE)),
+                "value": "high",
+                "when_absent": "inverse",
+            }
         )
-    )
-
-    restated = run_line(instance, root, line, at=NOW + timedelta(hours=1))
-
-    assert restated.status == "succeeded", restated.terminal
-    (egress,) = restated.terminal_egress
-    (child,) = egress.children
-    assert not child.unchanged
-    assert child.path == first_child.path
-    assert egress.target_paths == (first_child.path,)
-    accept_proposal(
-        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
-    )
-    (revised,) = _live_nones(instance).values()
-    assert revised.identity.name == held.identity.name
-    (observation,) = restated.source_observations
-    assert observation.capture_digest in revised.backing.capture_digests
-    assert observation.capture_digest not in held.backing.capture_digests
-
-    (root / fixtures.RELATIVE_PATH).write_bytes(fixtures.canonical_bytes({"severity": "critical"}))
-    other = run_line(instance, root, line, at=NOW + timedelta(hours=2))
-
-    assert other.status == "succeeded", other.terminal
-    (egress,) = other.terminal_egress
-    (child,) = egress.children
-    assert child.path != first_child.path
-    accept_proposal(
-        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
-    )
-    nones = _live_nones(instance)
-    assert sorted(nones) == ["critical", "high"]
-    assert nones["high"].identity.name == held.identity.name
 
 
 def test_an_unchanged_terminal_does_not_record_for_a_claim_retired_after_prepare(

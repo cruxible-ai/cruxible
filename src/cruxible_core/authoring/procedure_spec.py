@@ -14,7 +14,6 @@ from cruxible_client.contracts.procedures.authored import (
 )
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.provider_operations import (
-    contract_schema_view,
     operation_signature_digest,
 )
 from cruxible_client.contracts.shapes import Contract, ContractRef, contract_digest
@@ -125,9 +124,9 @@ def resolve_procedure_spec(
                 output = resolve_ref(
                     contract_ref_for_identity(child.definition.contract_out.target)
                 )
-                return None if output is None else contract_schema_view(output, resolve_ref).fields
+                return output
             if kind == "claim":
-                from cruxible_client.contracts.procedures.views import claim_view_schema
+                from cruxible_client.contracts.procedures.views import claim_view_contract
 
                 claim_type = source(
                     "ClaimType:" + name.claim_type.removeprefix("ClaimType:"),
@@ -146,7 +145,7 @@ def resolve_procedure_spec(
                         "Declare one of the ClaimType subject kinds: "
                         + str(shape.allowed_subject_kinds),
                     )
-                return {"output": claim_view_schema(shape).fields, "subject_kind": subject_kind}
+                return {"output": claim_view_contract(shape).fields, "subject_kind": subject_kind}
             if kind == "slot":
                 assert isinstance(name, ProcedureSlot)
                 return pinned(name, "$.slots")
@@ -160,7 +159,7 @@ def resolve_procedure_spec(
                     "row": ref.model_copy(
                         update={"digest": contract_digest(row).tagged}
                     ).model_dump(mode="json"),
-                    "row_fields": contract_schema_view(row, resolve_ref).fields,
+                    "row_fields": row.fields,
                 }
             step = name
             authored_path = step_paths.get(id(step), "$.steps")
@@ -178,8 +177,8 @@ def resolve_procedure_spec(
             )
             capture = captures[0] if len(captures) == 1 else None
             slot = pinned(spec.slots[step.slot], "$.slots." + step.slot)
-            input_view = contract_schema_view(contract(slot.in_, authored_path), resolve_ref)
-            output_view = contract_schema_view(contract(slot.out, authored_path), resolve_ref)
+            input_view: Contract | None = contract(slot.in_, authored_path)
+            output_view = contract(slot.out, authored_path)
             request_defaults: dict[str, Any] = {}
             output_fields: Any = output_view.fields
             output_contract: Any = dict(contract(slot.out, authored_path).fields)
@@ -190,22 +189,22 @@ def resolve_procedure_spec(
                 from cruxible_client.contracts.procedures.capture_outputs import (
                     WHOLE_WIRE_CAPTURE_FIELD,
                 )
-                from cruxible_client.contracts.procedures.contract_schema import PropertySchema
                 from cruxible_client.contracts.provider_operations import capture_fields
+                from cruxible_client.contracts.shapes import ContractField, StringType
 
                 if not capture_fields(contract(slot.out, authored_path)):
                     # The operation returns one Capture as its whole output: the
                     # call's value names only that Capture.
-                    output_fields = {WHOLE_WIRE_CAPTURE_FIELD: PropertySchema(type="string")}
+                    output_fields = {WHOLE_WIRE_CAPTURE_FIELD: ContractField(type=StringType())}
                     output_contract = None
             if workspace_source:
-                from cruxible_client.contracts.procedures.contract_schema import PropertySchema
+                from cruxible_client.contracts.shapes import ContractField, StringType
                 from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_CAPTURE_FIELD
 
                 # The read's exact bytes, committed by core beside its result.
                 output_fields = {
                     **output_fields,
-                    WORKSPACE_FILE_CAPTURE_FIELD: PropertySchema(type="string"),
+                    WORKSPACE_FILE_CAPTURE_FIELD: ContractField(type=StringType()),
                 }
                 output_contract = None
             if workspace_source and capture is not None:

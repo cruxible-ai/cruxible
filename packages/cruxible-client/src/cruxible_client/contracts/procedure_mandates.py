@@ -38,6 +38,7 @@ from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import FieldType, claim_value_kind, subject_value_kinds
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 
 if TYPE_CHECKING:
@@ -144,9 +145,8 @@ class ScopedClaimType(_StrictProcedureMandateModel):
 
     identity: ArtifactIdentity
     artifact_digest: str
-    object_kind: Literal["literal", "subject", "exact_content"]
+    value: FieldType
     allowed_subject_kinds: tuple[str, ...]
-    allowed_object_subject_kinds: tuple[str, ...] = ()
 
 
 def evaluate_procedure_mandate_v2_law(
@@ -222,13 +222,13 @@ def evaluate_procedure_mandate_v2_law(
                 path=path,
             )
         if item.binding_subject_role == "object":
-            if claim_type.object_kind != "subject":
+            if claim_value_kind(claim_type.value) != "subject":
                 return _law_refusal(
                     "cruxible.procedure_mandate.binding_role_unavailable",
                     f"ClaimType {claim_type.identity.qualified} has no object Subject to bind.",
                     path=path,
                 )
-            binding_kinds.update(claim_type.allowed_object_subject_kinds)
+            binding_kinds.update(subject_value_kinds(claim_type.value))
         else:
             binding_kinds.update(claim_type.allowed_subject_kinds)
     condition = mandate.condition

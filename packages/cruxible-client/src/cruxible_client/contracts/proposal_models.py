@@ -406,7 +406,7 @@ Longer reasons are kept to this many characters and marked ``truncated``.
 class ProposalItemReason(_StrictProposalModel):
     """One Procedure terminal item's own reason, kept with the member it explains.
 
-    A ``propose_change_set`` or ``settle_change_set`` item states why in its
+    A ``claims`` or ``claims`` item states why in its
     ``rationale``; the change set's rationale names only the run and the item
     count, and each item's reason is recorded here, keyed by the immutable
     Procedure operation (``operation``: the terminal's admission binding and

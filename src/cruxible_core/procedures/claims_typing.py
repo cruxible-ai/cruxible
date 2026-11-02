@@ -77,9 +77,7 @@ def validate_claims_templates(
             return cast(FieldType, ct.value) if ct.value is not None else parse_type("string")
         if isinstance(t, EnumOfType):
             ct = source("ClaimType", t.claim_type)
-            if ct.value is not None:
-                return cast(FieldType, ct.value)
-            return EnumType(members=tuple(ct.literal_schema["enum"]))
+            return cast(FieldType, ct.value)
         return t
 
     def field_type(
@@ -244,9 +242,11 @@ def validate_claims_templates(
                 raise ClaimsTypingRefused(f"{label}: value is not assignable to ClaimType.value")
             return
         if isinstance(expected, SubjectType) and isinstance(value, dict):
-            if value.get("kind") != expected.subject_kind:
+            if value.get("kind") not in expected.subject_kinds:
                 raise ClaimsTypingRefused(f"{label}: Subject kind does not match")
             return
+        if isinstance(value, str) and ("\n" in value or "\r" in value):
+            raise ClaimsTypingRefused(f"{label}: multiline_string; cite a Document section")
         if isinstance(check_value(value, expected, at=label), FieldInvalid):
             raise ClaimsTypingRefused(f"{label}: literal does not fit ClaimType.value")
 

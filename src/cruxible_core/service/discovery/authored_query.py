@@ -11,6 +11,7 @@ from cruxible_client.contracts.builtin_claim_types import concrete_subject_kinds
 from cruxible_client.contracts.claim_types import claim_type_digest, parse_claim_type
 from cruxible_client.contracts.compact_query import QueryFilterOperator
 from cruxible_client.contracts.query.grammar import QueryValueType
+from cruxible_client.contracts.shapes import subject_value_kinds
 from cruxible_client.contracts.subject_kinds import parse_subject_kind
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_identity import key_normalizer_of, tree_subject_kind_reader
@@ -170,7 +171,7 @@ def _predicate_info(path: str, content: bytes) -> PredicateInfo | None:
         members=members,
         cardinality=claim_type.cardinality,
         subject_kinds=claim_type.allowed_subject_kinds,
-        object_kinds=claim_type.allowed_object_subject_kinds,
+        object_kinds=subject_value_kinds(claim_type.value),
     )
 
 

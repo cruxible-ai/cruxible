@@ -1,4 +1,4 @@
-"""Recover a `propose_change_set` egress a process died around.
+"""Recover a `claims` egress a process died around.
 
 A terminal journals a `prepared` record carrying its exact v2 request before
 the proposal door is called, a resolving record (`delivered`, `refused`, or
@@ -408,7 +408,7 @@ def _resolve_prepared(
     if (
         request.run_id != admission.run_id
         or request.admission_binding_digest != admission.admission_binding_digest
-        or request.kind not in {"propose_change_set", "settle_change_set"}
+        or request.kind not in {"claims"}
     ):
         raise ProcedureRunRecoveryRequired(
             f"{ProcedureRunRecoveryRequired.code}: run {admission.run_id} journaled a prepared "
@@ -521,7 +521,7 @@ def _resolve_unchanged(
     if (
         request.run_id != admission.run_id
         or request.admission_binding_digest != admission.admission_binding_digest
-        or request.kind not in {"propose_change_set", "settle_change_set"}
+        or request.kind not in {"claims"}
         or not journaled.proposes_nothing
     ):
         raise ProcedureRunRecoveryRequired(

@@ -602,73 +602,6 @@ class InboxEgressNode(_StrictProcedureModel):
         return self
 
 
-def _candidate_items(value: object) -> object:
-    """Authoring refuses a literal attempt to supply a core-produced receipt."""
-    if isinstance(value, (list, tuple)):
-        for item in value:
-            if isinstance(item, dict) and "procedure_evidence" in item:
-                raise ValueError(
-                    "claims_evidence_core_only: procedure_evidence is produced by the claims "
-                    "terminal, never supplied in a candidate item; use a claims template"
-                )
-    return normalize_canonical(value)
-
-
-class ProposalItemsFanOut(_StrictProcedureModel):
-    """Candidates from data: each element of ``items`` is one Claim proposal item.
-
-    ``items`` resolves at run time (typically ``$steps.<alias>.items``, a list a
-    provider, Source or transform produced); every element becomes one item of
-    the one proposal, with its own dependency closure and evidence, exactly as
-    the capture and inbox terminals fan out ``{"items": ...}``.
-    """
-
-    items: object
-
-    _items = field_validator("items", mode="before")(_candidate_items)
-
-
-class ProposeChangeSetNode(_StrictProcedureModel):
-    """Terminal output into proposal receive; it has no activation field.
-
-    ``candidate_templates`` is a fixed, non-empty list of item templates, or
-    ``{"items": ...}`` to fan out over data (:class:`ProposalItemsFanOut`).
-    """
-
-    kind: Literal["propose_change_set"] = "propose_change_set"
-    node_id: str
-    candidate_templates: tuple[object, ...] | ProposalItemsFanOut
-    result: object
-
-    _result = field_validator("result", mode="before")(normalize_canonical)
-
-    @field_validator("candidate_templates", mode="before")
-    @classmethod
-    def _templates(cls, value: object) -> object:
-        if isinstance(value, ProposalItemsFanOut):
-            return value
-        if isinstance(value, dict):
-            if set(value) != {"items"}:
-                raise ValueError("a propose_change_set fan-out is exactly {'items': <reference>}")
-            return ProposalItemsFanOut(items=value["items"])
-        if not isinstance(value, (list, tuple)) or not value:
-            raise ValueError("propose_change_set requires at least one candidate template")
-        normalized = _candidate_items(list(value))
-        assert isinstance(normalized, list)
-        return tuple(normalized)
-
-
-class SettleChangeSetNode(ProposeChangeSetNode):
-    """Terminal settle: the proposal terminal's Claims, settled under delegated authority.
-
-    It carries no mandate: Core selects the one accepted settle ProcedureMandate
-    that covers the change, evaluates its condition, and falls back as that
-    mandate declares. Compiler revision 31.
-    """
-
-    kind: Literal["settle_change_set"] = "settle_change_set"  # type: ignore[assignment]
-
-
 class HaltNode(_StrictProcedureModel):
     """A successful graph leaf that deliberately produces no result."""
 
@@ -682,8 +615,6 @@ TERMINAL_REQUIRED_RUNGS = {
     "emit_capture": 0,
     "post_inbox": 1,
     "claims": 3,
-    "propose_change_set": 2,
-    "settle_change_set": 3,
 }
 TERMINAL_NODE_KINDS = frozenset((*TERMINAL_REQUIRED_RUNGS, "halt"))
 
@@ -700,6 +631,8 @@ def is_terminal_node(node: object) -> bool:
 
 #: Node kinds graph format 7 no longer has, each with what replaces it.
 RETIRED_NODE_KINDS: dict[str, str] = {
+    "propose_change_set": "the typed claims node; proposal commands cannot come from data",
+    "settle_change_set": "the typed claims node; its Mandate chooses propose or settle",
     "source": "a 'call' whose slot's out Contract carries capture<K> fields (with 'captures')",
     "state_tap": "a 'read' naming its 'query'",
     "state_claim": "a 'read' naming its 'claim_type'",
@@ -842,15 +775,13 @@ ProcedureNode = Annotated[
     | CaptureEgressNode
     | InboxEgressNode
     | ClaimsNode
-    | ProposeChangeSetNode
-    | SettleChangeSetNode
     | HaltNode
     | SelectNode,
     Field(discriminator="kind"),
 ]
 
 #: Terminals a graph may end in; egress nodes are the ones that act outward.
-EgressNode: TypeAlias = CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode
+EgressNode: TypeAlias = CaptureEgressNode | InboxEgressNode | ClaimsNode
 
 
 __all__ = [
@@ -880,9 +811,7 @@ __all__ = [
     "ProcedureNode",
     "ProcedureTransformSpec",
     "ProjectNode",
-    "ProposalItemsFanOut",
     "ClaimsNode",
-    "ProposeChangeSetNode",
     "RETIRED_NODE_KINDS",
     "RETIRED_TRANSFORM_KINDS",
     "RUNG_AUTHORITY",
@@ -890,7 +819,6 @@ __all__ = [
     "RepeatBodyNode",
     "RepeatNode",
     "SelectNode",
-    "SettleChangeSetNode",
     "TERMINAL_NODE_KINDS",
     "TERMINAL_REQUIRED_RUNGS",
     "TransformKind",

@@ -85,6 +85,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
     ContractField,
     ContractTypeRefused,
+    claim_rationale,
     contract_type_refusal,
     parse_field_spelling,
 )
@@ -215,6 +216,8 @@ class ClaimInput(_StrictInputModel):
         description="Claim ID this Claim revises; omit to state a new Claim.",
     )
     dispositions: tuple[ClaimDispositionInput, ...] = ()
+
+    _rationale_line = field_validator("rationale")(claim_rationale)
 
 
 class ProcedureInput(_StrictInputModel):

@@ -28,7 +28,6 @@
         "claim-flow-a",
         "claim-self-source",
         "claim-subject-relation",
-        "claim-exact-content",
         "claim-revision",
         "procedure",
         "claim-adjudicate-contradicting-evidence",
@@ -1376,7 +1375,7 @@
           },
           "ProposalItemReason": {
             "additionalProperties": false,
-            "description": "One Procedure terminal item's own reason, kept with the member it explains.\n\nA ``propose_change_set`` or ``settle_change_set`` item states why in its\n``rationale``; the change set's rationale names only the run and the item\ncount, and each item's reason is recorded here, keyed by the immutable\nProcedure operation (``operation``: the terminal's admission binding and\nnode, the identity its core creation records use) and the path of the\nClaim (or Subject) it lowered into. A proposal reads them only through its\nown ``ProposalItemReasonLink``, never through its (reusable) ref. It is\nprovenance, not evidence: the Claim's Captures are unchanged.",
+            "description": "One Procedure terminal item's own reason, kept with the member it explains.\n\nA ``claims`` or ``claims`` item states why in its\n``rationale``; the change set's rationale names only the run and the item\ncount, and each item's reason is recorded here, keyed by the immutable\nProcedure operation (``operation``: the terminal's admission binding and\nnode, the identity its core creation records use) and the path of the\nClaim (or Subject) it lowered into. A proposal reads them only through its\nown ``ProposalItemReasonLink``, never through its (reusable) ref. It is\nprovenance, not evidence: the Claim's Captures are unchanged.",
             "properties": {
               "child_index": {
                 "minimum": 0,
@@ -4603,7 +4602,6 @@
               "claim-flow-a",
               "claim-self-source",
               "claim-subject-relation",
-              "claim-exact-content",
               "claim-revision",
               "procedure",
               "claim-adjudicate-contradicting-evidence",
@@ -6465,14 +6463,6 @@
               "admission_policy": {
                 "$ref": "#/$defs/ClaimAdmissionPolicy"
               },
-              "allowed_object_subject_kinds": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Allowed Object Subject Kinds",
-                "type": "array"
-              },
               "allowed_subject_kinds": {
                 "items": {
                   "type": "string"
@@ -6612,19 +6602,6 @@
                   "state": "live"
                 }
               },
-              "literal_schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Literal Schema"
-              },
               "member_descriptions": {
                 "default": [],
                 "items": {
@@ -6632,15 +6609,6 @@
                 },
                 "title": "Member Descriptions",
                 "type": "array"
-              },
-              "object_kind": {
-                "enum": [
-                  "literal",
-                  "subject",
-                  "exact_content"
-                ],
-                "title": "Object Kind",
-                "type": "string"
               },
               "permitted_roles": {
                 "items": {
@@ -6731,105 +6699,97 @@
                 "default": null
               },
               "value": {
-                "anyOf": [
+                "discriminator": {
+                  "mapping": {
+                    "bool": "#/$defs/BoolType",
+                    "capture": "#/$defs/CaptureType",
+                    "contract": "#/$defs/NestedType",
+                    "date": "#/$defs/DateType",
+                    "datetime": "#/$defs/DateTimeType",
+                    "decimal": "#/$defs/DecimalType",
+                    "duration": "#/$defs/DurationType",
+                    "enum": "#/$defs/EnumType",
+                    "enum_of": "#/$defs/EnumOfType",
+                    "field_result": "#/$defs/FieldResultType",
+                    "int": "#/$defs/IntType",
+                    "key": "#/$defs/KeyType",
+                    "key_part": "#/$defs/KeyPartType",
+                    "list": "#/$defs/ListType",
+                    "number": "#/$defs/NumberType",
+                    "record": "#/$defs/RecordType",
+                    "refusal": "#/$defs/RefusalType",
+                    "result": "#/$defs/ResultType",
+                    "string": "#/$defs/StringType",
+                    "subject": "#/$defs/SubjectType",
+                    "variant": "#/$defs/VariantType"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
                   {
-                    "discriminator": {
-                      "mapping": {
-                        "bool": "#/$defs/BoolType",
-                        "capture": "#/$defs/CaptureType",
-                        "contract": "#/$defs/NestedType",
-                        "date": "#/$defs/DateType",
-                        "datetime": "#/$defs/DateTimeType",
-                        "decimal": "#/$defs/DecimalType",
-                        "duration": "#/$defs/DurationType",
-                        "enum": "#/$defs/EnumType",
-                        "enum_of": "#/$defs/EnumOfType",
-                        "field_result": "#/$defs/FieldResultType",
-                        "int": "#/$defs/IntType",
-                        "key": "#/$defs/KeyType",
-                        "key_part": "#/$defs/KeyPartType",
-                        "list": "#/$defs/ListType",
-                        "number": "#/$defs/NumberType",
-                        "record": "#/$defs/RecordType",
-                        "refusal": "#/$defs/RefusalType",
-                        "result": "#/$defs/ResultType",
-                        "string": "#/$defs/StringType",
-                        "subject": "#/$defs/SubjectType",
-                        "variant": "#/$defs/VariantType"
-                      },
-                      "propertyName": "kind"
-                    },
-                    "oneOf": [
-                      {
-                        "$ref": "#/$defs/StringType"
-                      },
-                      {
-                        "$ref": "#/$defs/IntType"
-                      },
-                      {
-                        "$ref": "#/$defs/DecimalType"
-                      },
-                      {
-                        "$ref": "#/$defs/NumberType"
-                      },
-                      {
-                        "$ref": "#/$defs/BoolType"
-                      },
-                      {
-                        "$ref": "#/$defs/DateType"
-                      },
-                      {
-                        "$ref": "#/$defs/DateTimeType"
-                      },
-                      {
-                        "$ref": "#/$defs/DurationType"
-                      },
-                      {
-                        "$ref": "#/$defs/EnumType"
-                      },
-                      {
-                        "$ref": "#/$defs/EnumOfType"
-                      },
-                      {
-                        "$ref": "#/$defs/ListType"
-                      },
-                      {
-                        "$ref": "#/$defs/NestedType"
-                      },
-                      {
-                        "$ref": "#/$defs/VariantType"
-                      },
-                      {
-                        "$ref": "#/$defs/KeyType"
-                      },
-                      {
-                        "$ref": "#/$defs/KeyPartType"
-                      },
-                      {
-                        "$ref": "#/$defs/SubjectType"
-                      },
-                      {
-                        "$ref": "#/$defs/CaptureType"
-                      },
-                      {
-                        "$ref": "#/$defs/FieldResultType"
-                      },
-                      {
-                        "$ref": "#/$defs/RecordType"
-                      },
-                      {
-                        "$ref": "#/$defs/ResultType"
-                      },
-                      {
-                        "$ref": "#/$defs/RefusalType"
-                      }
-                    ]
+                    "$ref": "#/$defs/StringType"
                   },
                   {
-                    "type": "null"
+                    "$ref": "#/$defs/IntType"
+                  },
+                  {
+                    "$ref": "#/$defs/DecimalType"
+                  },
+                  {
+                    "$ref": "#/$defs/NumberType"
+                  },
+                  {
+                    "$ref": "#/$defs/BoolType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateTimeType"
+                  },
+                  {
+                    "$ref": "#/$defs/DurationType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumOfType"
+                  },
+                  {
+                    "$ref": "#/$defs/ListType"
+                  },
+                  {
+                    "$ref": "#/$defs/NestedType"
+                  },
+                  {
+                    "$ref": "#/$defs/VariantType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyPartType"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectType"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureType"
+                  },
+                  {
+                    "$ref": "#/$defs/FieldResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RecordType"
+                  },
+                  {
+                    "$ref": "#/$defs/ResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RefusalType"
                   }
                 ],
-                "default": null,
                 "title": "Value"
               }
             },
@@ -6837,7 +6797,7 @@
               "identity",
               "predicate",
               "allowed_subject_kinds",
-              "object_kind",
+              "value",
               "cardinality",
               "permitted_roles",
               "evidence_admission_policy",
@@ -10498,12 +10458,6 @@
                       "$ref": "#/$defs/ClaimsStep"
                     },
                     {
-                      "$ref": "#/$defs/ProposeStep"
-                    },
-                    {
-                      "$ref": "#/$defs/SettleStep"
-                    },
-                    {
                       "$ref": "#/$defs/EmitStep"
                     },
                     {
@@ -10614,61 +10568,6 @@
               "project"
             ],
             "title": "ProjectStep",
-            "type": "object"
-          },
-          "ProposeStep": {
-            "additionalProperties": false,
-            "description": "Propose Claims: a fixed tuple of item templates, or one item per element of a list.",
-            "properties": {
-              "id": {
-                "anyOf": [
-                  {
-                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Id"
-              },
-              "next": {
-                "anyOf": [
-                  {
-                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Next"
-              },
-              "propose": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/Ref"
-                  },
-                  {
-                    "items": {
-                      "$ref": "#/$defs/Template"
-                    },
-                    "type": "array"
-                  }
-                ],
-                "title": "Propose"
-              },
-              "result": {
-                "$ref": "#/$defs/Template",
-                "default": null
-              }
-            },
-            "required": [
-              "propose"
-            ],
-            "title": "ProposeStep",
             "type": "object"
           },
           "PurlTypeNormalizer": {
@@ -13211,60 +13110,6 @@
             "title": "SemanticSelector",
             "type": "object"
           },
-          "SettleStep": {
-            "additionalProperties": false,
-            "properties": {
-              "id": {
-                "anyOf": [
-                  {
-                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Id"
-              },
-              "next": {
-                "anyOf": [
-                  {
-                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Next"
-              },
-              "result": {
-                "$ref": "#/$defs/Template",
-                "default": null
-              },
-              "settle": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/Ref"
-                  },
-                  {
-                    "items": {
-                      "$ref": "#/$defs/Template"
-                    },
-                    "type": "array"
-                  }
-                ],
-                "title": "Settle"
-              }
-            },
-            "required": [
-              "settle"
-            ],
-            "title": "SettleStep",
-            "type": "object"
-          },
           "ShapeFieldSpec": {
             "additionalProperties": false,
             "description": "One shaped field: read ``from`` the record (``$item.fields.<f>``/``$item.key.<k>``),\nor a literal ``value``; ``as`` casts it explicitly.",
@@ -13747,7 +13592,7 @@
           },
           "SubjectType": {
             "additionalProperties": false,
-            "description": "A Subject of one kind. Reads produce it; an operation may only echo its input's.",
+            "description": "A Subject of one of the explicitly named kinds, in canonical order.",
             "properties": {
               "kind": {
                 "const": "subject",
@@ -13755,13 +13600,17 @@
                 "title": "Kind",
                 "type": "string"
               },
-              "subject_kind": {
-                "title": "Subject Kind",
-                "type": "string"
+              "subject_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "title": "Subject Kinds",
+                "type": "array"
               }
             },
             "required": [
-              "subject_kind"
+              "subject_kinds"
             ],
             "title": "SubjectType",
             "type": "object"
@@ -14081,7 +13930,6 @@
               "claim-flow-a",
               "claim-self-source",
               "claim-subject-relation",
-              "claim-exact-content",
               "claim-revision",
               "procedure",
               "claim-adjudicate-contradicting-evidence",
@@ -23993,6 +23841,360 @@
         "facts",
         "statement",
         "tag"
+      ]
+    },
+    "ClaimsDiagnostic": {
+      "fields": {
+        "claim": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claim",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim"
+          }
+        },
+        "field": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "field",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Field"
+          }
+        },
+        "held_value": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "held_value",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/JsonValue",
+            "default": null
+          }
+        },
+        "incoming_value": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "incoming_value",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/JsonValue",
+            "default": null
+          }
+        },
+        "input": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "input",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Input"
+          }
+        },
+        "key": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "key",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/$defs/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Key"
+          }
+        },
+        "kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": true,
+          "schema": {
+            "enum": [
+              "extract_refused",
+              "duplicate_key",
+              "incomplete_source",
+              "held_by_precedence",
+              "held_disagrees",
+              "slot_contested"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "lexeme": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lexeme",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lexeme"
+          }
+        },
+        "problem": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "problem",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Problem"
+          }
+        },
+        "record_locators": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "record_locators",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Record Locators",
+            "type": "array"
+          }
+        },
+        "role": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "role",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Role"
+          }
+        },
+        "target": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "target",
+          "required": true,
+          "schema": {
+            "title": "Target",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "JsonValue": {}
+        },
+        "additionalProperties": false,
+        "properties": {
+          "claim": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim"
+          },
+          "field": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Field"
+          },
+          "held_value": {
+            "$ref": "#/$defs/JsonValue",
+            "default": null
+          },
+          "incoming_value": {
+            "$ref": "#/$defs/JsonValue",
+            "default": null
+          },
+          "input": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Input"
+          },
+          "key": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/$defs/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Key"
+          },
+          "kind": {
+            "enum": [
+              "extract_refused",
+              "duplicate_key",
+              "incomplete_source",
+              "held_by_precedence",
+              "held_disagrees",
+              "slot_contested"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "lexeme": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lexeme"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Problem"
+          },
+          "record_locators": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Record Locators",
+            "type": "array"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Role"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "target"
+        ],
+        "title": "ClaimsDiagnostic",
+        "type": "object"
+      },
+      "required_fields": [
+        "kind",
+        "target"
       ]
     },
     "CompilerUpgradeNotice": {
@@ -53898,11 +54100,9 @@
                       "invoke": "#/$defs/InvokeNode",
                       "post_inbox": "#/$defs/InboxEgressNode",
                       "project": "#/$defs/ProjectNode",
-                      "propose_change_set": "#/$defs/ProposeChangeSetNode",
                       "read": "#/$defs/ReadNode",
                       "repeat": "#/$defs/RepeatNode",
                       "select": "#/$defs/SelectNode",
-                      "settle_change_set": "#/$defs/SettleChangeSetNode",
                       "transform": "#/$defs/TransformNode"
                     },
                     "propertyName": "kind"
@@ -53940,12 +54140,6 @@
                     },
                     {
                       "$ref": "#/$defs/ClaimsNode"
-                    },
-                    {
-                      "$ref": "#/$defs/ProposeChangeSetNode"
-                    },
-                    {
-                      "$ref": "#/$defs/SettleChangeSetNode"
                     },
                     {
                       "$ref": "#/$defs/HaltNode"
@@ -54481,58 +54675,6 @@
             "title": "ProjectNode",
             "type": "object"
           },
-          "ProposalItemsFanOut": {
-            "additionalProperties": false,
-            "description": "Candidates from data: each element of ``items`` is one Claim proposal item.\n\n``items`` resolves at run time (typically ``$steps.<alias>.items``, a list a\nprovider, Source or transform produced); every element becomes one item of\nthe one proposal, with its own dependency closure and evidence, exactly as\nthe capture and inbox terminals fan out ``{\"items\": ...}``.",
-            "properties": {
-              "items": {
-                "title": "Items"
-              }
-            },
-            "required": [
-              "items"
-            ],
-            "title": "ProposalItemsFanOut",
-            "type": "object"
-          },
-          "ProposeChangeSetNode": {
-            "additionalProperties": false,
-            "description": "Terminal output into proposal receive; it has no activation field.\n\n``candidate_templates`` is a fixed, non-empty list of item templates, or\n``{\"items\": ...}`` to fan out over data (:class:`ProposalItemsFanOut`).",
-            "properties": {
-              "candidate_templates": {
-                "anyOf": [
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "$ref": "#/$defs/ProposalItemsFanOut"
-                  }
-                ],
-                "title": "Candidate Templates"
-              },
-              "kind": {
-                "const": "propose_change_set",
-                "default": "propose_change_set",
-                "title": "Kind",
-                "type": "string"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "result": {
-                "title": "Result"
-              }
-            },
-            "required": [
-              "node_id",
-              "candidate_templates",
-              "result"
-            ],
-            "title": "ProposeChangeSetNode",
-            "type": "object"
-          },
           "ReadNode": {
             "additionalProperties": false,
             "description": "A read of accepted state: one named Query, or one ClaimType's Claims about a Subject.\n\nExactly one of ``query`` and ``claim_type`` is set. A read runs to the end:\nit evaluates under the run's Procedure read ceiling, never the Query's\ninteractive budgets, and refuses ``read_ceiling_exceeded`` rather than\nreturning a clipped result.",
@@ -55037,44 +55179,6 @@
             "title": "SemanticSelector",
             "type": "object"
           },
-          "SettleChangeSetNode": {
-            "additionalProperties": false,
-            "description": "Terminal settle: the proposal terminal's Claims, settled under delegated authority.\n\nIt carries no mandate: Core selects the one accepted settle ProcedureMandate\nthat covers the change, evaluates its condition, and falls back as that\nmandate declares. Compiler revision 31.",
-            "properties": {
-              "candidate_templates": {
-                "anyOf": [
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "$ref": "#/$defs/ProposalItemsFanOut"
-                  }
-                ],
-                "title": "Candidate Templates"
-              },
-              "kind": {
-                "const": "settle_change_set",
-                "default": "settle_change_set",
-                "title": "Kind",
-                "type": "string"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "result": {
-                "title": "Result"
-              }
-            },
-            "required": [
-              "node_id",
-              "candidate_templates",
-              "result"
-            ],
-            "title": "SettleChangeSetNode",
-            "type": "object"
-          },
           "ShapeField": {
             "additionalProperties": false,
             "description": "One shaped field: read ``from`` the current record (``$item.fields.<f>``,\n``$item.key.<k>``), or a literal ``value``; ``as`` casts it explicitly.",
@@ -55178,7 +55282,7 @@
           },
           "SubjectType": {
             "additionalProperties": false,
-            "description": "A Subject of one kind. Reads produce it; an operation may only echo its input's.",
+            "description": "A Subject of one of the explicitly named kinds, in canonical order.",
             "properties": {
               "kind": {
                 "const": "subject",
@@ -55186,13 +55290,17 @@
                 "title": "Kind",
                 "type": "string"
               },
-              "subject_kind": {
-                "title": "Subject Kind",
-                "type": "string"
+              "subject_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "title": "Subject Kinds",
+                "type": "array"
               }
             },
             "required": [
-              "subject_kind"
+              "subject_kinds"
             ],
             "title": "SubjectType",
             "type": "object"
@@ -61302,6 +61410,32 @@
             "type": "string"
           }
         },
+        "findings": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "findings",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ClaimsDiagnostic"
+            },
+            "title": "Findings",
+            "type": "array"
+          }
+        },
+        "findings_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "findings_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Findings Count",
+            "type": "integer"
+          }
+        },
         "head_at_admission": {
           "has_default": false,
           "has_default_factory": false,
@@ -64392,7 +64526,7 @@
           },
           "ProcedureTerminalEgress": {
             "additionalProperties": false,
-            "description": "What one terminal node of a run did, reconstructed from its journal.\n\nAdditive and optional: a run with no terminal carries none. A delivered\n`propose_change_set` names the proposal and the exact candidate it produced,\nso a manager can retrieve, review and activate that candidate through the\nexisting proposal doors; producing it never activates it. A refused or\nfailed egress names the code the run refused with, so the run reads as the\nreason it stopped rather than as a bare failure.",
+            "description": "What one terminal node of a run did, reconstructed from its journal.\n\nAdditive and optional: a run with no terminal carries none. A delivered\n`claims` names the proposal and the exact candidate it produced,\nso a manager can retrieve, review and activate that candidate through the\nexisting proposal doors; producing it never activates it. A refused or\nfailed egress names the code the run refused with, so the run reads as the\nreason it stopped rather than as a bare failure.",
             "properties": {
               "accepted_git_oid": {
                 "anyOf": [
@@ -64537,9 +64671,7 @@
                 "enum": [
                   "claims",
                   "emit_capture",
-                  "post_inbox",
-                  "propose_change_set",
-                  "settle_change_set"
+                  "post_inbox"
                 ],
                 "title": "Kind",
                 "type": "string"
@@ -64989,6 +65121,18 @@
           "evaluation_time": {
             "title": "Evaluation Time",
             "type": "string"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/$defs/ClaimsDiagnostic"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "findings_count": {
+            "default": 0,
+            "title": "Findings Count",
+            "type": "integer"
           },
           "head_at_admission": {
             "$ref": "#/$defs/AcceptedCoordinate"
@@ -65888,9 +66032,7 @@
             "enum": [
               "claims",
               "emit_capture",
-              "post_inbox",
-              "propose_change_set",
-              "settle_change_set"
+              "post_inbox"
             ],
             "title": "Kind",
             "type": "string"
@@ -66636,7 +66778,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "What one terminal node of a run did, reconstructed from its journal.\n\nAdditive and optional: a run with no terminal carries none. A delivered\n`propose_change_set` names the proposal and the exact candidate it produced,\nso a manager can retrieve, review and activate that candidate through the\nexisting proposal doors; producing it never activates it. A refused or\nfailed egress names the code the run refused with, so the run reads as the\nreason it stopped rather than as a bare failure.",
+        "description": "What one terminal node of a run did, reconstructed from its journal.\n\nAdditive and optional: a run with no terminal carries none. A delivered\n`claims` names the proposal and the exact candidate it produced,\nso a manager can retrieve, review and activate that candidate through the\nexisting proposal doors; producing it never activates it. A refused or\nfailed egress names the code the run refused with, so the run reads as the\nreason it stopped rather than as a bare failure.",
         "properties": {
           "accepted_git_oid": {
             "anyOf": [
@@ -66781,9 +66923,7 @@
             "enum": [
               "claims",
               "emit_capture",
-              "post_inbox",
-              "propose_change_set",
-              "settle_change_set"
+              "post_inbox"
             ],
             "title": "Kind",
             "type": "string"
@@ -69024,7 +69164,7 @@
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "One Procedure terminal item's own reason, kept with the member it explains.\n\nA ``propose_change_set`` or ``settle_change_set`` item states why in its\n``rationale``; the change set's rationale names only the run and the item\ncount, and each item's reason is recorded here, keyed by the immutable\nProcedure operation (``operation``: the terminal's admission binding and\nnode, the identity its core creation records use) and the path of the\nClaim (or Subject) it lowered into. A proposal reads them only through its\nown ``ProposalItemReasonLink``, never through its (reusable) ref. It is\nprovenance, not evidence: the Claim's Captures are unchanged.",
+        "description": "One Procedure terminal item's own reason, kept with the member it explains.\n\nA ``claims`` or ``claims`` item states why in its\n``rationale``; the change set's rationale names only the run and the item\ncount, and each item's reason is recorded here, keyed by the immutable\nProcedure operation (``operation``: the terminal's admission binding and\nnode, the identity its core creation records use) and the path of the\nClaim (or Subject) it lowered into. A proposal reads them only through its\nown ``ProposalItemReasonLink``, never through its (reusable) ref. It is\nprovenance, not evidence: the Claim's Captures are unchanged.",
         "properties": {
           "child_index": {
             "minimum": 0,
@@ -71563,7 +71703,7 @@
           },
           "ProposalItemReason": {
             "additionalProperties": false,
-            "description": "One Procedure terminal item's own reason, kept with the member it explains.\n\nA ``propose_change_set`` or ``settle_change_set`` item states why in its\n``rationale``; the change set's rationale names only the run and the item\ncount, and each item's reason is recorded here, keyed by the immutable\nProcedure operation (``operation``: the terminal's admission binding and\nnode, the identity its core creation records use) and the path of the\nClaim (or Subject) it lowered into. A proposal reads them only through its\nown ``ProposalItemReasonLink``, never through its (reusable) ref. It is\nprovenance, not evidence: the Claim's Captures are unchanged.",
+            "description": "One Procedure terminal item's own reason, kept with the member it explains.\n\nA ``claims`` or ``claims`` item states why in its\n``rationale``; the change set's rationale names only the run and the item\ncount, and each item's reason is recorded here, keyed by the immutable\nProcedure operation (``operation``: the terminal's admission binding and\nnode, the identity its core creation records use) and the path of the\nClaim (or Subject) it lowered into. A proposal reads them only through its\nown ``ProposalItemReasonLink``, never through its (reusable) ref. It is\nprovenance, not evidence: the Claim's Captures are unchanged.",
             "properties": {
               "child_index": {
                 "minimum": 0,
@@ -78118,14 +78258,6 @@
               "admission_policy": {
                 "$ref": "#/$defs/ClaimAdmissionPolicy"
               },
-              "allowed_object_subject_kinds": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Allowed Object Subject Kinds",
-                "type": "array"
-              },
               "allowed_subject_kinds": {
                 "items": {
                   "type": "string"
@@ -78265,19 +78397,6 @@
                   "state": "live"
                 }
               },
-              "literal_schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Literal Schema"
-              },
               "member_descriptions": {
                 "default": [],
                 "items": {
@@ -78285,15 +78404,6 @@
                 },
                 "title": "Member Descriptions",
                 "type": "array"
-              },
-              "object_kind": {
-                "enum": [
-                  "literal",
-                  "subject",
-                  "exact_content"
-                ],
-                "title": "Object Kind",
-                "type": "string"
               },
               "permitted_roles": {
                 "items": {
@@ -78384,105 +78494,97 @@
                 "default": null
               },
               "value": {
-                "anyOf": [
+                "discriminator": {
+                  "mapping": {
+                    "bool": "#/$defs/BoolType",
+                    "capture": "#/$defs/CaptureType",
+                    "contract": "#/$defs/NestedType",
+                    "date": "#/$defs/DateType",
+                    "datetime": "#/$defs/DateTimeType",
+                    "decimal": "#/$defs/DecimalType",
+                    "duration": "#/$defs/DurationType",
+                    "enum": "#/$defs/EnumType",
+                    "enum_of": "#/$defs/EnumOfType",
+                    "field_result": "#/$defs/FieldResultType",
+                    "int": "#/$defs/IntType",
+                    "key": "#/$defs/KeyType",
+                    "key_part": "#/$defs/KeyPartType",
+                    "list": "#/$defs/ListType",
+                    "number": "#/$defs/NumberType",
+                    "record": "#/$defs/RecordType",
+                    "refusal": "#/$defs/RefusalType",
+                    "result": "#/$defs/ResultType",
+                    "string": "#/$defs/StringType",
+                    "subject": "#/$defs/SubjectType",
+                    "variant": "#/$defs/VariantType"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
                   {
-                    "discriminator": {
-                      "mapping": {
-                        "bool": "#/$defs/BoolType",
-                        "capture": "#/$defs/CaptureType",
-                        "contract": "#/$defs/NestedType",
-                        "date": "#/$defs/DateType",
-                        "datetime": "#/$defs/DateTimeType",
-                        "decimal": "#/$defs/DecimalType",
-                        "duration": "#/$defs/DurationType",
-                        "enum": "#/$defs/EnumType",
-                        "enum_of": "#/$defs/EnumOfType",
-                        "field_result": "#/$defs/FieldResultType",
-                        "int": "#/$defs/IntType",
-                        "key": "#/$defs/KeyType",
-                        "key_part": "#/$defs/KeyPartType",
-                        "list": "#/$defs/ListType",
-                        "number": "#/$defs/NumberType",
-                        "record": "#/$defs/RecordType",
-                        "refusal": "#/$defs/RefusalType",
-                        "result": "#/$defs/ResultType",
-                        "string": "#/$defs/StringType",
-                        "subject": "#/$defs/SubjectType",
-                        "variant": "#/$defs/VariantType"
-                      },
-                      "propertyName": "kind"
-                    },
-                    "oneOf": [
-                      {
-                        "$ref": "#/$defs/StringType"
-                      },
-                      {
-                        "$ref": "#/$defs/IntType"
-                      },
-                      {
-                        "$ref": "#/$defs/DecimalType"
-                      },
-                      {
-                        "$ref": "#/$defs/NumberType"
-                      },
-                      {
-                        "$ref": "#/$defs/BoolType"
-                      },
-                      {
-                        "$ref": "#/$defs/DateType"
-                      },
-                      {
-                        "$ref": "#/$defs/DateTimeType"
-                      },
-                      {
-                        "$ref": "#/$defs/DurationType"
-                      },
-                      {
-                        "$ref": "#/$defs/EnumType"
-                      },
-                      {
-                        "$ref": "#/$defs/EnumOfType"
-                      },
-                      {
-                        "$ref": "#/$defs/ListType"
-                      },
-                      {
-                        "$ref": "#/$defs/NestedType"
-                      },
-                      {
-                        "$ref": "#/$defs/VariantType"
-                      },
-                      {
-                        "$ref": "#/$defs/KeyType"
-                      },
-                      {
-                        "$ref": "#/$defs/KeyPartType"
-                      },
-                      {
-                        "$ref": "#/$defs/SubjectType"
-                      },
-                      {
-                        "$ref": "#/$defs/CaptureType"
-                      },
-                      {
-                        "$ref": "#/$defs/FieldResultType"
-                      },
-                      {
-                        "$ref": "#/$defs/RecordType"
-                      },
-                      {
-                        "$ref": "#/$defs/ResultType"
-                      },
-                      {
-                        "$ref": "#/$defs/RefusalType"
-                      }
-                    ]
+                    "$ref": "#/$defs/StringType"
                   },
                   {
-                    "type": "null"
+                    "$ref": "#/$defs/IntType"
+                  },
+                  {
+                    "$ref": "#/$defs/DecimalType"
+                  },
+                  {
+                    "$ref": "#/$defs/NumberType"
+                  },
+                  {
+                    "$ref": "#/$defs/BoolType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateTimeType"
+                  },
+                  {
+                    "$ref": "#/$defs/DurationType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumOfType"
+                  },
+                  {
+                    "$ref": "#/$defs/ListType"
+                  },
+                  {
+                    "$ref": "#/$defs/NestedType"
+                  },
+                  {
+                    "$ref": "#/$defs/VariantType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyPartType"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectType"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureType"
+                  },
+                  {
+                    "$ref": "#/$defs/FieldResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RecordType"
+                  },
+                  {
+                    "$ref": "#/$defs/ResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RefusalType"
                   }
                 ],
-                "default": null,
                 "title": "Value"
               }
             },
@@ -78490,7 +78592,7 @@
               "identity",
               "predicate",
               "allowed_subject_kinds",
-              "object_kind",
+              "value",
               "cardinality",
               "permitted_roles",
               "evidence_admission_policy",
@@ -80169,11 +80271,9 @@
                       "invoke": "#/$defs/InvokeNode",
                       "post_inbox": "#/$defs/InboxEgressNode",
                       "project": "#/$defs/ProjectNode",
-                      "propose_change_set": "#/$defs/ProposeChangeSetNode",
                       "read": "#/$defs/ReadNode",
                       "repeat": "#/$defs/RepeatNode",
                       "select": "#/$defs/SelectNode",
-                      "settle_change_set": "#/$defs/SettleChangeSetNode",
                       "transform": "#/$defs/TransformNode"
                     },
                     "propertyName": "kind"
@@ -80211,12 +80311,6 @@
                     },
                     {
                       "$ref": "#/$defs/ClaimsNode"
-                    },
-                    {
-                      "$ref": "#/$defs/ProposeChangeSetNode"
-                    },
-                    {
-                      "$ref": "#/$defs/SettleChangeSetNode"
                     },
                     {
                       "$ref": "#/$defs/HaltNode"
@@ -80721,58 +80815,6 @@
               "as"
             ],
             "title": "ProjectNode",
-            "type": "object"
-          },
-          "ProposalItemsFanOut": {
-            "additionalProperties": false,
-            "description": "Candidates from data: each element of ``items`` is one Claim proposal item.\n\n``items`` resolves at run time (typically ``$steps.<alias>.items``, a list a\nprovider, Source or transform produced); every element becomes one item of\nthe one proposal, with its own dependency closure and evidence, exactly as\nthe capture and inbox terminals fan out ``{\"items\": ...}``.",
-            "properties": {
-              "items": {
-                "title": "Items"
-              }
-            },
-            "required": [
-              "items"
-            ],
-            "title": "ProposalItemsFanOut",
-            "type": "object"
-          },
-          "ProposeChangeSetNode": {
-            "additionalProperties": false,
-            "description": "Terminal output into proposal receive; it has no activation field.\n\n``candidate_templates`` is a fixed, non-empty list of item templates, or\n``{\"items\": ...}`` to fan out over data (:class:`ProposalItemsFanOut`).",
-            "properties": {
-              "candidate_templates": {
-                "anyOf": [
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "$ref": "#/$defs/ProposalItemsFanOut"
-                  }
-                ],
-                "title": "Candidate Templates"
-              },
-              "kind": {
-                "const": "propose_change_set",
-                "default": "propose_change_set",
-                "title": "Kind",
-                "type": "string"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "result": {
-                "title": "Result"
-              }
-            },
-            "required": [
-              "node_id",
-              "candidate_templates",
-              "result"
-            ],
-            "title": "ProposeChangeSetNode",
             "type": "object"
           },
           "QueryArtifactDefinition": {
@@ -82121,44 +82163,6 @@
             "title": "SemanticSelector",
             "type": "object"
           },
-          "SettleChangeSetNode": {
-            "additionalProperties": false,
-            "description": "Terminal settle: the proposal terminal's Claims, settled under delegated authority.\n\nIt carries no mandate: Core selects the one accepted settle ProcedureMandate\nthat covers the change, evaluates its condition, and falls back as that\nmandate declares. Compiler revision 31.",
-            "properties": {
-              "candidate_templates": {
-                "anyOf": [
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "$ref": "#/$defs/ProposalItemsFanOut"
-                  }
-                ],
-                "title": "Candidate Templates"
-              },
-              "kind": {
-                "const": "settle_change_set",
-                "default": "settle_change_set",
-                "title": "Kind",
-                "type": "string"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "result": {
-                "title": "Result"
-              }
-            },
-            "required": [
-              "node_id",
-              "candidate_templates",
-              "result"
-            ],
-            "title": "SettleChangeSetNode",
-            "type": "object"
-          },
           "ShapeField": {
             "additionalProperties": false,
             "description": "One shaped field: read ``from`` the current record (``$item.fields.<f>``,\n``$item.key.<k>``), or a literal ``value``; ``as`` casts it explicitly.",
@@ -82262,7 +82266,7 @@
           },
           "SubjectType": {
             "additionalProperties": false,
-            "description": "A Subject of one kind. Reads produce it; an operation may only echo its input's.",
+            "description": "A Subject of one of the explicitly named kinds, in canonical order.",
             "properties": {
               "kind": {
                 "const": "subject",
@@ -82270,13 +82274,17 @@
                 "title": "Kind",
                 "type": "string"
               },
-              "subject_kind": {
-                "title": "Subject Kind",
-                "type": "string"
+              "subject_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "title": "Subject Kinds",
+                "type": "array"
               }
             },
             "required": [
-              "subject_kind"
+              "subject_kinds"
             ],
             "title": "SubjectType",
             "type": "object"
@@ -86849,14 +86857,6 @@
               "admission_policy": {
                 "$ref": "#/$defs/ClaimAdmissionPolicy"
               },
-              "allowed_object_subject_kinds": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Allowed Object Subject Kinds",
-                "type": "array"
-              },
               "allowed_subject_kinds": {
                 "items": {
                   "type": "string"
@@ -86996,19 +86996,6 @@
                   "state": "live"
                 }
               },
-              "literal_schema": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Literal Schema"
-              },
               "member_descriptions": {
                 "default": [],
                 "items": {
@@ -87016,15 +87003,6 @@
                 },
                 "title": "Member Descriptions",
                 "type": "array"
-              },
-              "object_kind": {
-                "enum": [
-                  "literal",
-                  "subject",
-                  "exact_content"
-                ],
-                "title": "Object Kind",
-                "type": "string"
               },
               "permitted_roles": {
                 "items": {
@@ -87115,105 +87093,97 @@
                 "default": null
               },
               "value": {
-                "anyOf": [
+                "discriminator": {
+                  "mapping": {
+                    "bool": "#/$defs/BoolType",
+                    "capture": "#/$defs/CaptureType",
+                    "contract": "#/$defs/NestedType",
+                    "date": "#/$defs/DateType",
+                    "datetime": "#/$defs/DateTimeType",
+                    "decimal": "#/$defs/DecimalType",
+                    "duration": "#/$defs/DurationType",
+                    "enum": "#/$defs/EnumType",
+                    "enum_of": "#/$defs/EnumOfType",
+                    "field_result": "#/$defs/FieldResultType",
+                    "int": "#/$defs/IntType",
+                    "key": "#/$defs/KeyType",
+                    "key_part": "#/$defs/KeyPartType",
+                    "list": "#/$defs/ListType",
+                    "number": "#/$defs/NumberType",
+                    "record": "#/$defs/RecordType",
+                    "refusal": "#/$defs/RefusalType",
+                    "result": "#/$defs/ResultType",
+                    "string": "#/$defs/StringType",
+                    "subject": "#/$defs/SubjectType",
+                    "variant": "#/$defs/VariantType"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
                   {
-                    "discriminator": {
-                      "mapping": {
-                        "bool": "#/$defs/BoolType",
-                        "capture": "#/$defs/CaptureType",
-                        "contract": "#/$defs/NestedType",
-                        "date": "#/$defs/DateType",
-                        "datetime": "#/$defs/DateTimeType",
-                        "decimal": "#/$defs/DecimalType",
-                        "duration": "#/$defs/DurationType",
-                        "enum": "#/$defs/EnumType",
-                        "enum_of": "#/$defs/EnumOfType",
-                        "field_result": "#/$defs/FieldResultType",
-                        "int": "#/$defs/IntType",
-                        "key": "#/$defs/KeyType",
-                        "key_part": "#/$defs/KeyPartType",
-                        "list": "#/$defs/ListType",
-                        "number": "#/$defs/NumberType",
-                        "record": "#/$defs/RecordType",
-                        "refusal": "#/$defs/RefusalType",
-                        "result": "#/$defs/ResultType",
-                        "string": "#/$defs/StringType",
-                        "subject": "#/$defs/SubjectType",
-                        "variant": "#/$defs/VariantType"
-                      },
-                      "propertyName": "kind"
-                    },
-                    "oneOf": [
-                      {
-                        "$ref": "#/$defs/StringType"
-                      },
-                      {
-                        "$ref": "#/$defs/IntType"
-                      },
-                      {
-                        "$ref": "#/$defs/DecimalType"
-                      },
-                      {
-                        "$ref": "#/$defs/NumberType"
-                      },
-                      {
-                        "$ref": "#/$defs/BoolType"
-                      },
-                      {
-                        "$ref": "#/$defs/DateType"
-                      },
-                      {
-                        "$ref": "#/$defs/DateTimeType"
-                      },
-                      {
-                        "$ref": "#/$defs/DurationType"
-                      },
-                      {
-                        "$ref": "#/$defs/EnumType"
-                      },
-                      {
-                        "$ref": "#/$defs/EnumOfType"
-                      },
-                      {
-                        "$ref": "#/$defs/ListType"
-                      },
-                      {
-                        "$ref": "#/$defs/NestedType"
-                      },
-                      {
-                        "$ref": "#/$defs/VariantType"
-                      },
-                      {
-                        "$ref": "#/$defs/KeyType"
-                      },
-                      {
-                        "$ref": "#/$defs/KeyPartType"
-                      },
-                      {
-                        "$ref": "#/$defs/SubjectType"
-                      },
-                      {
-                        "$ref": "#/$defs/CaptureType"
-                      },
-                      {
-                        "$ref": "#/$defs/FieldResultType"
-                      },
-                      {
-                        "$ref": "#/$defs/RecordType"
-                      },
-                      {
-                        "$ref": "#/$defs/ResultType"
-                      },
-                      {
-                        "$ref": "#/$defs/RefusalType"
-                      }
-                    ]
+                    "$ref": "#/$defs/StringType"
                   },
                   {
-                    "type": "null"
+                    "$ref": "#/$defs/IntType"
+                  },
+                  {
+                    "$ref": "#/$defs/DecimalType"
+                  },
+                  {
+                    "$ref": "#/$defs/NumberType"
+                  },
+                  {
+                    "$ref": "#/$defs/BoolType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateType"
+                  },
+                  {
+                    "$ref": "#/$defs/DateTimeType"
+                  },
+                  {
+                    "$ref": "#/$defs/DurationType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumType"
+                  },
+                  {
+                    "$ref": "#/$defs/EnumOfType"
+                  },
+                  {
+                    "$ref": "#/$defs/ListType"
+                  },
+                  {
+                    "$ref": "#/$defs/NestedType"
+                  },
+                  {
+                    "$ref": "#/$defs/VariantType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyType"
+                  },
+                  {
+                    "$ref": "#/$defs/KeyPartType"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectType"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureType"
+                  },
+                  {
+                    "$ref": "#/$defs/FieldResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RecordType"
+                  },
+                  {
+                    "$ref": "#/$defs/ResultType"
+                  },
+                  {
+                    "$ref": "#/$defs/RefusalType"
                   }
                 ],
-                "default": null,
                 "title": "Value"
               }
             },
@@ -87221,7 +87191,7 @@
               "identity",
               "predicate",
               "allowed_subject_kinds",
-              "object_kind",
+              "value",
               "cardinality",
               "permitted_roles",
               "evidence_admission_policy",
@@ -88937,11 +88907,9 @@
                       "invoke": "#/$defs/InvokeNode",
                       "post_inbox": "#/$defs/InboxEgressNode",
                       "project": "#/$defs/ProjectNode",
-                      "propose_change_set": "#/$defs/ProposeChangeSetNode",
                       "read": "#/$defs/ReadNode",
                       "repeat": "#/$defs/RepeatNode",
                       "select": "#/$defs/SelectNode",
-                      "settle_change_set": "#/$defs/SettleChangeSetNode",
                       "transform": "#/$defs/TransformNode"
                     },
                     "propertyName": "kind"
@@ -88979,12 +88947,6 @@
                     },
                     {
                       "$ref": "#/$defs/ClaimsNode"
-                    },
-                    {
-                      "$ref": "#/$defs/ProposeChangeSetNode"
-                    },
-                    {
-                      "$ref": "#/$defs/SettleChangeSetNode"
                     },
                     {
                       "$ref": "#/$defs/HaltNode"
@@ -89489,58 +89451,6 @@
               "as"
             ],
             "title": "ProjectNode",
-            "type": "object"
-          },
-          "ProposalItemsFanOut": {
-            "additionalProperties": false,
-            "description": "Candidates from data: each element of ``items`` is one Claim proposal item.\n\n``items`` resolves at run time (typically ``$steps.<alias>.items``, a list a\nprovider, Source or transform produced); every element becomes one item of\nthe one proposal, with its own dependency closure and evidence, exactly as\nthe capture and inbox terminals fan out ``{\"items\": ...}``.",
-            "properties": {
-              "items": {
-                "title": "Items"
-              }
-            },
-            "required": [
-              "items"
-            ],
-            "title": "ProposalItemsFanOut",
-            "type": "object"
-          },
-          "ProposeChangeSetNode": {
-            "additionalProperties": false,
-            "description": "Terminal output into proposal receive; it has no activation field.\n\n``candidate_templates`` is a fixed, non-empty list of item templates, or\n``{\"items\": ...}`` to fan out over data (:class:`ProposalItemsFanOut`).",
-            "properties": {
-              "candidate_templates": {
-                "anyOf": [
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "$ref": "#/$defs/ProposalItemsFanOut"
-                  }
-                ],
-                "title": "Candidate Templates"
-              },
-              "kind": {
-                "const": "propose_change_set",
-                "default": "propose_change_set",
-                "title": "Kind",
-                "type": "string"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "result": {
-                "title": "Result"
-              }
-            },
-            "required": [
-              "node_id",
-              "candidate_templates",
-              "result"
-            ],
-            "title": "ProposeChangeSetNode",
             "type": "object"
           },
           "QueryArtifactDefinition": {
@@ -91165,44 +91075,6 @@
             "title": "SemanticSelector",
             "type": "object"
           },
-          "SettleChangeSetNode": {
-            "additionalProperties": false,
-            "description": "Terminal settle: the proposal terminal's Claims, settled under delegated authority.\n\nIt carries no mandate: Core selects the one accepted settle ProcedureMandate\nthat covers the change, evaluates its condition, and falls back as that\nmandate declares. Compiler revision 31.",
-            "properties": {
-              "candidate_templates": {
-                "anyOf": [
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "$ref": "#/$defs/ProposalItemsFanOut"
-                  }
-                ],
-                "title": "Candidate Templates"
-              },
-              "kind": {
-                "const": "settle_change_set",
-                "default": "settle_change_set",
-                "title": "Kind",
-                "type": "string"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "result": {
-                "title": "Result"
-              }
-            },
-            "required": [
-              "node_id",
-              "candidate_templates",
-              "result"
-            ],
-            "title": "SettleChangeSetNode",
-            "type": "object"
-          },
           "ShapeField": {
             "additionalProperties": false,
             "description": "One shaped field: read ``from`` the current record (``$item.fields.<f>``,\n``$item.key.<k>``), or a literal ``value``; ``as`` casts it explicitly.",
@@ -91356,7 +91228,7 @@
           },
           "SubjectType": {
             "additionalProperties": false,
-            "description": "A Subject of one kind. Reads produce it; an operation may only echo its input's.",
+            "description": "A Subject of one of the explicitly named kinds, in canonical order.",
             "properties": {
               "kind": {
                 "const": "subject",
@@ -91364,13 +91236,17 @@
                 "title": "Kind",
                 "type": "string"
               },
-              "subject_kind": {
-                "title": "Subject Kind",
-                "type": "string"
+              "subject_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "title": "Subject Kinds",
+                "type": "array"
               }
             },
             "required": [
-              "subject_kind"
+              "subject_kinds"
             ],
             "title": "SubjectType",
             "type": "object"

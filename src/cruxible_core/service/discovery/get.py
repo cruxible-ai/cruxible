@@ -125,7 +125,12 @@ from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.read_values import TruncatedText, summary_value, whole_value_read
 from cruxible_client.contracts.repairs import RepairOperation, served_repair_for_refusal
 from cruxible_client.contracts.semantic import SemanticAddress, SourceMapping
-from cruxible_client.contracts.shapes import Contract, contract_ref_for_identity, render_type
+from cruxible_client.contracts.shapes import (
+    Contract,
+    contract_ref_for_identity,
+    render_type,
+    value_members,
+)
 from cruxible_client.contracts.subject_kinds import SubjectKind
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import utc_now
@@ -1387,18 +1392,7 @@ def _subject_card(
 
 
 def _object_description(claim_type: ClaimType) -> tuple[str, tuple[Any, ...] | None]:
-    if claim_type.object_kind == "subject":
-        kinds = ",".join(claim_type.allowed_object_subject_kinds)
-        return (f"subject:{kinds}" if kinds else "subject"), None
-    if claim_type.object_kind == "exact_content":
-        return "exact_content", None
-    schema = claim_type.literal_schema or {}
-    members = schema.get("enum")
-    kind = schema.get("type")
-    return (
-        str(kind) if isinstance(kind, str) else "literal",
-        tuple(members) if isinstance(members, list) else None,
-    )
+    return render_type(claim_type.value), value_members(claim_type.value) or None
 
 
 def _claim_type_card(

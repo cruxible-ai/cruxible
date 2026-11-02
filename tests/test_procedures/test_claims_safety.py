@@ -13,6 +13,7 @@ from cruxible_client.contracts.claims import claim_artifact_digest
 from cruxible_client.contracts.procedures.claims import ClaimTemplate
 from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
 from cruxible_core.procedures.claims_terminal import bind_claim_input
+from cruxible_core.procedures.execution import run_value_digest
 from cruxible_core.procedures.terminal_dependencies import AliasProvenanceV1, accepted_state_token
 from tests.core_support._identity_support import accept_tree
 from tests.test_procedures.test_claims_terminal import (
@@ -136,9 +137,10 @@ def read_claim(tmp_path: Path) -> dict[str, Any]:
 
     activate(instance, state)
     return {
-        "claim": claim.model_dump(mode="json"),
+        "claim_id": claim.identity.name,
         "path": claim_path(claim.identity.name),
         "artifact_digest": claim_artifact_digest(claim).tagged,
+        "captures": list(claim.backing.capture_digests),
     }
 
 
@@ -150,6 +152,7 @@ def test_derived_input_binds_the_exact_version_read(read_claim: dict[str, Any]) 
         provenance={"read": AliasProvenanceV1(whole=frozenset({token}))},
         read_aliases=frozenset({"read"}),
         own_tokens=frozenset({token}),
+        read_digests={"read": run_value_digest("state-result", read_claim)},
     )
     assert pin.artifact_digest == read_claim["artifact_digest"]
     assert captures
@@ -167,6 +170,7 @@ def test_derived_input_refuses_an_input_that_is_not_the_exact_read(
             provenance={"read": AliasProvenanceV1(whole=frozenset({token}))},
             read_aliases=frozenset({"read"}),
             own_tokens=frozenset({token}),
+            read_digests={"read": run_value_digest("state-result", read_claim)},
         )
 
 
@@ -182,6 +186,7 @@ def test_derived_input_refuses_a_forged_version_even_on_an_equal_read(
             provenance={"read": AliasProvenanceV1(whole=frozenset({token}))},
             read_aliases=frozenset({"read"}),
             own_tokens=frozenset({token}),
+            read_digests={"read": run_value_digest("state-result", read_claim)},
         )
 
 
@@ -197,6 +202,7 @@ def test_derived_input_refuses_a_claim_read_in_another_rows_closure(
             provenance={"sibling": AliasProvenanceV1(whole=frozenset({sibling}))},
             read_aliases=frozenset({"sibling"}),
             own_tokens=frozenset({own}),
+            read_digests={"read": run_value_digest("state-result", read_claim)},
         )
 
 

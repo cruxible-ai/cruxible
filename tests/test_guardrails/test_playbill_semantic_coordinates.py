@@ -311,16 +311,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:9cfd6cedc09425d53ae982a50143ea6fc31c48f3d7d2e81e36840cbf7c329055"
+    expected = "sha256:2364b8899dd680d0b1507fdbcc19f00297b0b9d33946b3893c0f6672226c2068"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 45,
+            "semantic_revision": 47,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "claims-value-completeness-v1",
+            "revision_name": "native-claims-only-v1",
         },
     )
     assert computed == expected
@@ -365,8 +365,8 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "claims-value-completeness-v1"
-    assert compiler_revision_label(CURRENT_COMPILER) == "claims-value-completeness-v1"
+    assert CURRENT_COMPILER_REVISION == "native-claims-only-v1"
+    assert compiler_revision_label(CURRENT_COMPILER) == "native-claims-only-v1"
     for earlier_digest in (
         "sha256:56542b566100db8fadfd4bfcea8f0fe58e37de444885906f3914ec1cc225d085",
         # Revision 36 (light-artifacts-v1): flat-manifest sroot-v1 genesis.

@@ -185,10 +185,10 @@ class ProposalTerminalAdapter:
         admission retains it; a proposal terminal passes none. A settle that
         activates in the same request passes its own ``handoff``.
         """
-        if (settle_submission is not None) != (request.kind == "settle_change_set"):
+        if (settle_submission is not None) != (request.kind == "claims"):
             raise EffectfulTerminalError("exactly a settle terminal names its submission mode")
 
-        if request.kind not in {"propose_change_set", "settle_change_set"}:
+        if request.kind not in {"claims"}:
             raise EffectfulTerminalError("proposal adapter serves proposal and settle only")
         if changed_paths is None:
             # A caller that lowered the tree already knows exactly which paths

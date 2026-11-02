@@ -50,7 +50,6 @@ Run alone with ``CRUXIBLE_PER_CHANGE_REPORT=<path>`` to write every measurement.
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import sys
@@ -75,7 +74,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
     render_line_spec,
 )
-from cruxible_client.contracts.procedures.models import ProposeChangeSetNode
 from cruxible_core.compiler import assembler
 from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.indexes import sqlite as projection_sqlite
@@ -87,9 +85,7 @@ from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
-from cruxible_core.service.procedures.procedure_runs import LineRunRequest
 from tests.core_support._write_support import KIND
-from tests.core_support._write_support import seed_write_vocabulary as _seed_vocabulary
 from tests.support.procedures import procedure_members
 from tests.test_scale import _counters, _worlds
 from tests.test_scale._counters import COUNTERS, counting, trace_sqlite
@@ -138,29 +134,14 @@ assert tuple(SLACK) == ALL
 def _created(index: int) -> dict[str, object]:
     """A Subject created by its key, as an import Line creates one per exported row."""
 
-    return {
-        "tag": "playbill-procedure-subject-proposal-item-v1",
-        "subject_kind": KIND,
-        "key": {"slug": f"made-{index:03d}"},
-        "rationale": "Listed in the export.",
-        "source": {
-            "tag": "playbill-self-source-body-v1",
-            "content_base64": base64.b64encode(f"made {index}\n".encode()).decode(),
-        },
-    }
+    return {"id": f"made-{index:03d}", "severity": "Listed in the export."}
 
 
 def _propose_line(
-    name: str, templates: tuple[dict[str, object], ...], namespace: tuple[str, ...]
+    world: World, name: str, templates: tuple[dict[str, object], ...], namespace: tuple[str, ...]
 ) -> dict[str, bytes]:
-    procedure = _worlds._procedure(  # noqa: SLF001
-        name,
-        terminal=ProposeChangeSetNode(
-            node_id="propose", candidate_templates=templates, result="$steps.result"
-        ),
-        capability=2,
-    )
-    line = _worlds._line(f"{name}-line", procedure, authority="propose")  # noqa: SLF001
+    procedure, members = _worlds.native_procedure(world, name, templates, create=name == CREATE)
+    line = _worlds._line(f"{name}-line", procedure, authority="propose", world=world)  # noqa: SLF001
     mandate = ProcedureMandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name=f"{name}-mandate"),
         line=ArtifactPin(
@@ -172,6 +153,7 @@ def _propose_line(
         expires_at=_worlds._FAR_FUTURE,  # noqa: SLF001
     )
     return {
+        **members,
         **procedure_members(authored_procedure(procedure)),
         line_spec_path(line.identity.name): render_line_spec(line),
         procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
@@ -183,6 +165,7 @@ def _definitions(world: World) -> dict[str, bytes]:
 
     return {
         **_propose_line(
+            world,
             LINE,
             tuple(
                 _worlds._item(world.subject(index), "high")  # noqa: SLF001
@@ -191,6 +174,7 @@ def _definitions(world: World) -> dict[str, bytes]:
             ("claims",),
         ),
         **_propose_line(
+            world,
             CREATE,
             tuple(_created(index) for index in range(ITEMS)),
             ("claims", f"subjects/{KIND}"),
@@ -217,7 +201,7 @@ def _build(directory: Path, name: str, items: int) -> World:
         owner=owner,
         workspace=_worlds._git_workspace(directory / "workspace"),  # noqa: SLF001
     )
-    _seed_vocabulary(world.instance, actor_id=_worlds.OPERATOR)
+    _worlds.seed_native_vocabulary(world)
     for start in range(0, items, BATCH):
         changes = []
         for index in range(start, min(items, start + BATCH)):
@@ -227,6 +211,9 @@ def _build(directory: Path, name: str, items: int) -> World:
         outcome = _worlds.write(world, changes)
         assert outcome.status == "accepted", outcome
         settle_advertisement(world.instance)
+    from cruxible_core.runtime.host_api import attach_workspace
+
+    attach_workspace(instance_id, str(world.workspace))
     _worlds.accept_members(world, _definitions(world), name=f"cost-definitions-{name}")
     # The next facts are built once here, so the measured tick is a catch-up.
     _worlds.tick(world, "facts")
@@ -347,10 +334,7 @@ def _create_100(world: World) -> object:
 
 def _run(name: str) -> Callable[[World], object]:
     def run(world: World) -> object:
-        digest = _worlds.line_digest(name)
-        state = playbill_api.playbill_line_run(
-            world.instance_id, digest, request=LineRunRequest(line=digest)
-        )
+        state = _worlds.run_native_line(world, name)
         assert state.status == "succeeded", state.terminal
         (egress,) = state.terminal_egress
         assert egress.verdict == "delivered", egress

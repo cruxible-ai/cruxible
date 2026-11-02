@@ -45,7 +45,14 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
     ClaimResolutionPolicy,
 )
-from cruxible_client.contracts.shapes import FieldType, coerce_field_type
+from cruxible_client.contracts.shapes import (
+    FieldType,
+    StringType,
+    SubjectType,
+    coerce_field_type,
+    subject_value_kinds,
+    value_members,
+)
 
 _PREDICATE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})+$")
 
@@ -282,23 +289,36 @@ class ClaimType(_StrictClaimTypeModel):
     identity: ArtifactIdentity
     predicate: str
     allowed_subject_kinds: tuple[str, ...]
-    value: FieldType | None = Field(default=None, exclude_if=lambda value: value is None)
+    value: FieldType
     precedence: ClaimPrecedence = ClaimPrecedence()
     requires_complete_input: tuple[StrictStr | StrictBool, ...] = ()
     incomplete_fallback: StrictStr | StrictBool | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _retired_fields(cls, value: object) -> object:
+        if isinstance(value, dict):
+            if value.get("object_kind") == "exact_content":
+                raise ValueError(
+                    "cruxible.claim.exact_content_retired: prose lives in Documents; "
+                    "cite a Document section"
+                )
+            if any(
+                name in value
+                for name in ("object_kind", "literal_schema", "allowed_object_subject_kinds")
+            ):
+                raise ValueError(
+                    "cruxible.claim_type.retired_schema: declare the native value type instead"
+                )
+        return value
+
     @field_validator("value", mode="before")
     @classmethod
     def _value_type(cls, value: Any) -> object:
         return None if value is None else coerce_field_type(value)
 
-    object_kind: Literal["literal", "subject", "exact_content"]
-    literal_schema: dict[str, object] | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-    allowed_object_subject_kinds: tuple[str, ...] = ()
     cardinality: Literal["one", "many"]
     permitted_roles: tuple[
         Literal["normative", "observation", "environment_binding", "derivation"], ...
@@ -392,14 +412,14 @@ class ClaimType(_StrictClaimTypeModel):
                 f"an inverse keyed by {key.kind} needs a many-valued ClaimType; a one-valued "
                 "type's unit is its slot"
             )
-        if isinstance(key, ClaimInverseObjectKeyPart) and self.object_kind != "subject":
+        if isinstance(key, ClaimInverseObjectKeyPart) and not isinstance(self.value, SubjectType):
             raise ValueError("an inverse keyed by object_key needs a Subject-valued ClaimType")
 
     def _validate_canonical_form(self) -> None:
-        if self.canonical_form and self.object_kind != "literal":
+        if self.canonical_form and isinstance(self.value, SubjectType):
             raise ValueError("a canonical_form applies only to literal ClaimTypes")
-        members = None if self.literal_schema is None else self.literal_schema.get("enum")
-        if self.canonical_form and isinstance(members, list):
+        members = value_members(self.value)
+        if self.canonical_form and bool(members):
             for member in members:
                 if not is_canonical_literal(member, self.canonical_form):
                     raise ValueError(
@@ -416,9 +436,9 @@ class ClaimType(_StrictClaimTypeModel):
             if self.default_role not in self.permitted_roles:
                 raise ValueError("default_role must be one of the ClaimType's permitted_roles")
         if self.member_descriptions:
-            members = None if self.literal_schema is None else self.literal_schema.get("enum")
-            if not isinstance(members, list):
-                raise ValueError("member descriptions need a literal_schema with a top-level enum")
+            members = value_members(self.value)
+            if not bool(members):
+                raise ValueError("member descriptions need an enum value type")
             admitted = {_member_key(item) for item in members}
             for item in self.member_descriptions:
                 if _member_key(item.member) not in admitted:
@@ -453,9 +473,7 @@ class ClaimType(_StrictClaimTypeModel):
         ClaimTypeStructure(
             predicate=self.predicate,
             allowed_subject_kinds=self.allowed_subject_kinds,
-            object_kind=self.object_kind,
-            literal_schema=self.literal_schema,
-            allowed_object_subject_kinds=self.allowed_object_subject_kinds,
+            value=self.value,
             cardinality=self.cardinality,
             permitted_roles=self.permitted_roles,
             referent_sensitivity=self.referent_sensitivity,
@@ -469,9 +487,7 @@ class ClaimType(_StrictClaimTypeModel):
         return ClaimTypeStructure(
             predicate=self.predicate,
             allowed_subject_kinds=self.allowed_subject_kinds,
-            object_kind=self.object_kind,
-            literal_schema=self.literal_schema,
-            allowed_object_subject_kinds=self.allowed_object_subject_kinds,
+            value=self.value,
             cardinality=self.cardinality,
             permitted_roles=self.permitted_roles,
             referent_sensitivity=self.referent_sensitivity,
@@ -724,13 +740,6 @@ def _inverse_law_refusal(
     inverse = claim_type.inverse
     if inverse is None:
         return None
-    if claim_type.object_kind == "exact_content":
-        return _diagnostic(
-            "cruxible.claim_type.inverse_object_kind",
-            "An inverse cannot be declared for an exact_content ClaimType: its unit would be "
-            "bytes, and absence of bytes is not a statement about the world. Remove `inverse`.",
-            path=path,
-        )
     declared = {rule.rule_id for rule in claim_type.evidence_admission_policy.rules}
     unknown = [rule for rule in inverse.evidence_rules if rule not in declared]
     if unknown:
@@ -765,10 +774,10 @@ def _inverse_law_refusal(
             )
         missing = [
             kind
-            for kind in claim_type.allowed_object_subject_kinds
+            for kind in subject_value_kinds(claim_type.value)
             if key.predicate not in (subject_kind_keys.get(kind) or ())
         ]
-        if missing or not claim_type.allowed_object_subject_kinds:
+        if missing or not subject_value_kinds(claim_type.value):
             return _diagnostic(
                 "cruxible.claim_type.inverse_key_unresolved",
                 f"inverse key {key.predicate!r} must be a key ClaimType of every object "
@@ -799,6 +808,20 @@ def evaluate_claim_type_law(
         return ClaimTypeLawResult(
             verdict="refused",
             diagnostics=(_diagnostic("cruxible.claim_type.path_mismatch", str(exc), path=path),),
+        )
+    if isinstance(claim_type.value, StringType) and (
+        claim_type.value.max_len is None or claim_type.value.max_len > 256
+    ):
+        return ClaimTypeLawResult(
+            verdict="refused",
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.claim_type.string_unbounded",
+                    "string ClaimTypes require max_len <= 256; use an enum, a key, "
+                    "a subject<K> link, or cite a Document section",
+                    path=path,
+                ),
+            ),
         )
     refusal = _requirement_law_refusal(claim_type, path=path) or _inverse_law_refusal(
         claim_type, path=path, subject_kind_keys=subject_kind_keys

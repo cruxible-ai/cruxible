@@ -4,9 +4,6 @@
     "freeze_requirements": [],
     "tag": "playbill-claim-admission-policy-v1"
   },
-  "allowed_object_subject_kinds": [
-    "semantic.subject"
-  ],
   "allowed_subject_kinds": [
     "semantic.subject"
   ],
@@ -51,7 +48,6 @@
     "state": "live"
   },
   "member_descriptions": [],
-  "object_kind": "subject",
   "permitted_roles": [
     "normative",
     "observation"
@@ -84,5 +80,11 @@
     "selector": "all",
     "tag": "playbill-claim-resolution-policy-v1"
   },
-  "revision_evidence": "replace"
+  "revision_evidence": "replace",
+  "value": {
+    "kind": "subject",
+    "subject_kinds": [
+      "semantic.subject"
+    ]
+  }
 }

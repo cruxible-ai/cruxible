@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable, Mapping
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -688,73 +688,6 @@ def refusal_detail_contract(
 # -- compiler typing views -------------------------------------------------------------
 
 
-def contract_schema_view(contract: Contract, resolve: ContractLookup) -> Any:
-    """The Procedure source compiler's typing view of one Contract.
-
-    The compiler types values with the owned-Contract schema grammar. This view
-    is derived, never authored or accepted: scalars map to their schema type,
-    a list of a nested Contract to a list of its view, and every other
-    structured type to an untyped object or array the compiler cannot look
-    inside.
-    """
-
-    from cruxible_client.contracts.procedures.contract_schema import (
-        ContractSchema,
-        PropertySchema,
-    )
-    from cruxible_client.contracts.shapes import (
-        BoolType,
-        DateTimeType,
-        DateType,
-        EnumType,
-        IntType,
-        StringType,
-        SubjectType,
-    )
-
-    def view(field_type: object, *, optional: bool, depth: int = 0) -> PropertySchema:
-        if isinstance(field_type, StringType | SubjectType | CaptureType):
-            return PropertySchema(type="string", optional=optional)
-        if isinstance(field_type, EnumType):
-            return PropertySchema(type="string", enum=list(field_type.members), optional=optional)
-        if isinstance(field_type, IntType):
-            return PropertySchema(type="int", optional=optional)
-        if isinstance(field_type, BoolType):
-            return PropertySchema(type="bool", optional=optional)
-        if isinstance(field_type, DateType):
-            return PropertySchema(type="date", optional=optional)
-        if isinstance(field_type, DateTimeType):
-            return PropertySchema(type="datetime", optional=optional)
-        if (
-            isinstance(field_type, ListType)
-            and isinstance(field_type.item, NestedType)
-            and depth < 8
-        ):
-            nested = resolve(field_type.item.contract)
-            if nested is not None:
-                return PropertySchema(
-                    type="list",
-                    item_fields={
-                        name: view(item.type, optional=item.optional, depth=depth + 1)
-                        for name, item in nested.fields.items()
-                    },
-                    optional=optional,
-                )
-        if isinstance(field_type, ListType):
-            return PropertySchema(type="json", json_schema={"type": "array"}, optional=optional)
-        if isinstance(field_type, NestedType):
-            return PropertySchema(type="json", json_schema={"type": "object"}, optional=optional)
-        return PropertySchema(type="json", optional=optional)
-
-    return ContractSchema(
-        description=contract.description,
-        fields={
-            name: view(item.type, optional=item.optional) for name, item in contract.fields.items()
-        },
-        allow_extra=False,
-    )
-
-
 __all__ = [
     "OPERATION_EFFECTS",
     "OPERATION_SIGNATURE_DOMAIN",
@@ -773,7 +706,6 @@ __all__ = [
     "capture_fields",
     "closure_lookup",
     "contract_closure",
-    "contract_schema_view",
     "operation_signature_digest",
     "refusal_detail_contract",
     "validate_operation_value",

@@ -355,7 +355,7 @@ def test_the_affects_package_migration_lands_as_one_generation(tmp_path: Path) -
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     type_path = claim_type_path(PREDICATE)
     migrated_type = parse_claim_type(tree[type_path], path=type_path)
-    assert migrated_type.object_kind == "subject"
+    assert migrated_type.value.kind == "subject"
     assert migrated_type.lifecycle.predecessor_digest is not None
 
     for key in ("wi-42", "wi-2"):
@@ -434,7 +434,7 @@ def test_a_carry_of_an_out_of_enum_value_refuses(tmp_path: Path) -> None:
     result = coordinator.preflight(intent.intent_id, actor=actor)
     assert result.verdict == "refused"
     codes = {item.code for item in result.frontier.diagnostics}
-    assert codes == {"cruxible.claim.literal_schema_invalid"}, codes
+    assert codes == {"cruxible.claim.value_invalid"}, codes
 
 
 def test_an_enum_narrowing_carries_what_fits_and_re_authors_what_does_not(

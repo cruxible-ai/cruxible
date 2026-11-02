@@ -19,11 +19,10 @@ from cruxible_client.contracts.procedures.authored import (
     ProcedureSpecError,
     lower_procedure_spec,
 )
-from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.decompile import decompile_procedure
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import ProcedureDefinition
-from cruxible_client.contracts.shapes import validate_contract
+from cruxible_client.contracts.shapes import ContractField, IntType, validate_contract
 from tests.support.procedures import procedure_members, ref
 
 
@@ -255,6 +254,32 @@ CORPUS = json.loads(
 )
 
 
+def _control_flow_artifact(raw):
+    """Keep the corpus's control flow as a native halt example.
+
+    Command terminals themselves are tested as retired below; this independent
+    expected graph still pins decompilation of the surrounding calls and guards.
+    """
+    data = json.loads(json.dumps(raw))
+    for i, node in enumerate(data["definition"]["nodes"]):
+        if node["kind"] in {"propose_change_set", "settle_change_set"}:
+            data["definition"]["nodes"][i] = {
+                "kind": "halt",
+                "node_id": node.get("node_id", node.get("id")),
+            }
+    from cruxible_client.contracts.procedures.wire_v3 import expand_procedure
+
+    data = expand_procedure(data)
+    from cruxible_client.contracts.procedures.models import derived_terminal_capability
+
+    data["definition"]["terminal_capability"] = derived_terminal_capability(
+        data["definition"]["nodes"]
+    )
+    definition = ProcedureDefinition.model_validate(data["definition"])
+    data["definition_digest"] = compute_procedure_definition_digest(definition).tagged
+    return ProcedureArtifact.model_validate(data)
+
+
 OPERATIONS = json.loads(
     (Path(__file__).parents[1] / "fixtures/procedures/security-p1-operations.json").read_text()
 )
@@ -269,7 +294,6 @@ CORPUS_CONTRACTS = {
 
 def _corpus_resolver(original):
     """Independent schema metadata for unbound operation signatures, not providers."""
-    by_request = {entry["signature"]["in"]["name"]: entry for entry in OPERATIONS.values()}
     sources = {
         node.as_: node
         for node in original.definition.nodes
@@ -284,11 +308,15 @@ def _corpus_resolver(original):
         if kind == "contract":
             return CORPUS_CONTRACTS.get(value.name)
         signature = original.definition.slots[value.slot]
-        entry = by_request[signature.in_.name]
+        entry = next(
+            entry
+            for entry in OPERATIONS.values()
+            if entry["signature"]["in"]["name"] == signature.in_.name
+        )
         acquiring = bool(getattr(value, "captures", None))
-        schema = (entry.get("source_view") or entry["output"]) if acquiring else entry["output"]
+        names = (entry.get("source_view") or entry["output"]) if acquiring else entry["output"]
         return {
-            "output": ContractSchema.model_validate(schema).fields,
+            "output": {name: None for name in names["fields"]},
             "input": None,
             "request_defaults": sources[value.call].input if acquiring else {},
         }
@@ -298,7 +326,9 @@ def _corpus_resolver(original):
 
 @pytest.mark.parametrize("filename", sorted(CORPUS))
 def test_every_kit_procedure_renders_typed_and_lowers_to_stored_bytes(filename):
-    original = ProcedureArtifact.model_validate(CORPUS[filename])
+    with pytest.raises(ValueError, match="procedure_node_kind_retired.*claims"):
+        ProcedureArtifact.model_validate(CORPUS[filename])
+    original = _control_flow_artifact(CORPUS[filename])
     authored = decompile_procedure(original)
     rendered = json.dumps(authored.model_dump(mode="json", by_alias=True))
     assert '"$steps.' not in rendered and '"$input' not in rendered  # every reference is typed
@@ -316,7 +346,7 @@ def test_every_kit_procedure_renders_typed_and_lowers_to_stored_bytes(filename):
 
 
 def _inventory_import_worked_example():
-    original = ProcedureArtifact.model_validate(CORPUS["security.inventory-import.json"])
+    original = _control_flow_artifact(CORPUS["security.inventory-import.json"])
     scope = {"scope": ref("$input.scope")}
     authored = spec(
         procedure="security.inventory-import",
@@ -384,7 +414,7 @@ def _inventory_import_worked_example():
                 "id": "changed",
                 "else": {"halt": "no_change", "id": "nochange"},
             },
-            {"propose": ref("$steps.parse.items")},
+            {"halt": None, "id": "propose"},
         ],
     )
 
@@ -416,14 +446,14 @@ def test_inventory_import_worked_example_has_eleven_nodes():
         "project",
         "guard",
         "guard",
-        "propose_change_set",
+        "halt",
         "halt",
         "halt",
     ]
     lowered_call = lowered.definition["nodes"][4]
     assert lowered_call["input"]["held"] == "$steps.held.result.rows"
     assert "items" not in lowered.definition["nodes"][5]["fields"]
-    assert lowered.definition["nodes"][8]["result"] == "$steps.summary"
+    assert lowered.definition["nodes"][8]["kind"] == "halt"
     assert lowered.definition["nodes"][6]["on_false"] == "other"
     assert "refusal_code" not in lowered.definition["nodes"][6]
     assert lowered.definition["hard_caps"]["max_capture_bytes"] == 1048576
@@ -467,7 +497,7 @@ def test_decompile_shows_cap_durations_compactly_without_moving_stored_bytes():
         parse_iso_duration_microseconds,
     )
 
-    original = ProcedureArtifact.model_validate(CORPUS["security.inventory-import.json"])
+    original = _control_flow_artifact(CORPUS["security.inventory-import.json"])
     authored = decompile_procedure(original)
     assert authored.hard_caps.wall_clock == "PT300S"
     # Display only: each text parses back to the stored microseconds (the corpus
@@ -491,7 +521,7 @@ def test_decompile_shows_cap_durations_compactly_without_moving_stored_bytes():
 def test_decompile_inventory_recognizes_return_and_halt_patterns():
     from cruxible_client.contracts.procedures.authored import HaltAction
 
-    original = ProcedureArtifact.model_validate(CORPUS["security.inventory-import.json"])
+    original = _control_flow_artifact(CORPUS["security.inventory-import.json"])
     authored = decompile_procedure(original)
     assert len(authored.steps) == 8
     assert authored.returns.id == "summary"
@@ -1036,7 +1066,7 @@ def test_parameter_name_can_match_a_collection_step_alias():
     lowered = lower_procedure_spec(
         authored,
         resolve=lambda kind, step: {
-            "output": {"value": PropertySchema(type="integer")},
+            "output": {"value": ContractField(type=IntType())},
             "subject_kind": "catalog.entry",
         },
     )

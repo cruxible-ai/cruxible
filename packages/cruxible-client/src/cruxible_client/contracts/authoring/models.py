@@ -88,7 +88,12 @@ from cruxible_client.contracts.query.definitions import (
 from cruxible_client.contracts.repairs import ServedRepair, served_repair_for_refusal
 from cruxible_client.contracts.resolution_contracts import ResolutionContract
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.shapes import ContractField, contract_identity, contract_path
+from cruxible_client.contracts.shapes import (
+    ContractField,
+    claim_rationale,
+    contract_identity,
+    contract_path,
+)
 from cruxible_client.contracts.subject_kinds import (
     SubjectKeyPart,
     SubjectKeyRule,
@@ -132,7 +137,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:4e027fbcf050b19289643d92d0030f4c71a7de61fefa161d85319e68141fdfc6"
+    "sha256:7a0837fe7534a32f9cd3475174f5a743796edf118ff06f764de056e5e5d010cd"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -787,6 +792,8 @@ class ClaimAuthoringPayload(_StrictAuthoringModel):
                 "replacing citations re-binds a live Claim, so it names what it revises"
             )
         return self
+
+    _rationale_line = field_validator("rationale")(claim_rationale)
 
 
 class AuthoringArtifactReference(_StrictAuthoringModel):

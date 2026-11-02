@@ -112,6 +112,15 @@ from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.providers import ProviderV1, provider_digest
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
+from cruxible_client.contracts.shapes import (
+    ContractResolver,
+    EnumResolver,
+    KeyCanonicalizer,
+    claim_literal_problem,
+    claim_value_kind,
+    render_type,
+    subject_value_kinds,
+)
 from cruxible_client.contracts.source_references import (
     CasSourceReference,
     EvidenceCommitment,
@@ -929,141 +938,6 @@ def _diagnostic(code: str, message: str, *, path: str, field: str | None = None)
             ),
         ),
     )
-
-
-_JSON_TYPES = {
-    "null": lambda value: value is None,
-    "boolean": lambda value: isinstance(value, bool),
-    "integer": lambda value: isinstance(value, int) and not isinstance(value, bool),
-    "number": lambda value: isinstance(value, (int, float)) and not isinstance(value, bool),
-    "string": lambda value: isinstance(value, str),
-    "array": lambda value: isinstance(value, list),
-    "object": lambda value: isinstance(value, dict),
-}
-_NUMERIC_BOUNDS: tuple[tuple[str, Callable[[float, float], bool]], ...] = (
-    ("minimum", lambda value, bound: value >= bound),
-    ("maximum", lambda value, bound: value <= bound),
-    ("exclusiveMinimum", lambda value, bound: value > bound),
-    ("exclusiveMaximum", lambda value, bound: value < bound),
-)
-_SHOWN_MAX = 60
-
-
-def _shown(value: object) -> str:
-    """A value as a refusal quotes it: JSON, cut to a readable length."""
-
-    try:
-        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
-    except (TypeError, ValueError):
-        text = repr(value)
-    return text if len(text) <= _SHOWN_MAX else text[: _SHOWN_MAX - 1] + "\u2026"
-
-
-def _json_type(value: object) -> str:
-    return next(
-        (
-            name
-            for name in ("null", "boolean", "integer", "number", "string", "array", "object")
-            if _JSON_TYPES[name](value)
-        ),
-        type(value).__name__,
-    )
-
-
-def _literal_violation(
-    value: object, schema: Mapping[str, object], *, at: str, numeric_bounds: bool
-) -> str | None:
-    """The first constraint of ``schema`` that ``value`` violates, or ``None``."""
-
-    where = f"at {at}: " if at else ""
-    if "const" in schema and canonical_bytes(value) != canonical_bytes(schema["const"]):
-        return f"{where}const {_shown(schema['const'])}, got {_shown(value)}"
-    if "enum" in schema:
-        enum = schema["enum"]
-        if not isinstance(enum, list) or canonical_bytes(value) not in {
-            canonical_bytes(item) for item in enum
-        }:
-            members = ", ".join(_shown(item) for item in enum) if isinstance(enum, list) else "?"
-            return f"{where}enum [{members}], got {_shown(value)}"
-    kind = schema.get("type")
-    if kind is not None:
-        check = _JSON_TYPES.get(str(kind))
-        if check is None or not check(value):
-            return f"{where}type {kind}, got {_json_type(value)} {_shown(value)}"
-    if isinstance(value, str):
-        minimum_length = schema.get("minLength")
-        maximum_length = schema.get("maxLength")
-        pattern = schema.get("pattern")
-        if isinstance(minimum_length, int) and len(value) < minimum_length:
-            return f"{where}minLength {minimum_length}, got {len(value)}"
-        if isinstance(maximum_length, int) and len(value) > maximum_length:
-            return f"{where}maxLength {maximum_length}, got {len(value)}"
-        if isinstance(pattern, str) and re.search(pattern, value) is None:
-            return f"{where}pattern {_shown(pattern)}, got {_shown(value)}"
-    if numeric_bounds and isinstance(value, (int, float)) and not isinstance(value, bool):
-        for keyword, within in _NUMERIC_BOUNDS:
-            bound = schema.get(keyword)
-            if (
-                isinstance(bound, (int, float))
-                and not isinstance(bound, bool)
-                and not within(value, bound)
-            ):
-                return f"{where}{keyword} {_shown(bound)}, got {_shown(value)}"
-    if isinstance(value, dict):
-        required = schema.get("required", [])
-        if isinstance(required, list) and not set(required).issubset(value):
-            missing = sorted(str(name) for name in set(required) - set(value))
-            return f"{where}required {_shown(missing)}, missing {_shown(missing[0])}"
-        properties = schema.get("properties", {})
-        if isinstance(properties, dict):
-            for name, member in value.items():
-                member_schema = properties.get(name)
-                if isinstance(member_schema, dict):
-                    found = _literal_violation(
-                        member,
-                        member_schema,
-                        at=f"{at}.{name}" if at else str(name),
-                        numeric_bounds=numeric_bounds,
-                    )
-                    if found is not None:
-                        return found
-                if member_schema is None and schema.get("additionalProperties") is False:
-                    return f"{where}additionalProperties false, got {_shown(name)}"
-    item_schema = schema.get("items")
-    if isinstance(value, list) and isinstance(item_schema, dict):
-        for index, item in enumerate(value):
-            found = _literal_violation(
-                item, item_schema, at=f"{at}[{index}]", numeric_bounds=numeric_bounds
-            )
-            if found is not None:
-                return found
-    return None
-
-
-def _validate_literal_schema(value: object, schema: Mapping[str, object]) -> bool:
-    """Deterministic closed subset sufficient for ClaimType literal schemas."""
-
-    return _literal_violation(value, schema, at="", numeric_bounds=False) is None
-
-
-def literal_satisfies_schema(value: object, schema: Mapping[str, object]) -> bool:
-    """Whether one literal satisfies a ClaimType's literal schema, as the Claim law reads it."""
-
-    return _validate_literal_schema(value, schema)
-
-
-def literal_schema_violation(value: object, schema: Mapping[str, object]) -> str | None:
-    """Name the literal-schema constraint ``value`` violates, with what it got, or ``None``.
-
-    For example ``maxLength 200, got 230`` or ``enum ["a", "b"], got "c"``; a
-    nested member is named by its path (``at items[2]: ...``). It reads every
-    keyword the Claim law reads (``literal_satisfies_schema``) and, as the
-    write verbs and the SDK's pre-wire admission do, the declared numeric bounds
-    (``minimum``, ``maximum``, ``exclusiveMinimum``, ``exclusiveMaximum``),
-    which the law itself does not.
-    """
-
-    return _literal_violation(value, schema, at="", numeric_bounds=True)
 
 
 @dataclass(frozen=True)
@@ -1944,9 +1818,7 @@ def _inverse_object_refusal(
             problem = f"names its unit by the key {key.predicate!r}: `of` is that key's value"
         elif key_type is None:
             problem = f"is keyed by {key.predicate!r}, which does not resolve"
-        elif key_type.claim_type.literal_schema is not None and not _validate_literal_schema(
-            value.of.value, key_type.claim_type.literal_schema
-        ):
+        elif claim_literal_problem(value.of.value, key_type.claim_type.value) is not None:
             problem = f"names a key value {value.of.value!r} that {key.predicate!r} does not admit"
         elif not is_canonical_literal(value.of.value, key_type.claim_type.canonical_form or ()):
             problem = (
@@ -2100,6 +1972,9 @@ def evaluate_claim_law(
     erasure_contract: Callable[[RecordedCaptureErasure], AcceptedCaptureContract | None]
     | None = None,
     origin_replay_exempt: bool = False,
+    value_contracts: ContractResolver | None = None,
+    value_enums: EnumResolver | None = None,
+    value_keys: KeyCanonicalizer | None = None,
 ) -> ClaimLawResult:
     """Evaluate one Claim against exact resolved dependencies and immutable Captures.
 
@@ -2356,6 +2231,13 @@ def evaluate_claim_law(
             path=path,
         )
 
+    if isinstance(statement.object, ExactContentClaimObject):
+        return _diagnostic(
+            "cruxible.claim.exact_content_retired",
+            "Prose lives in Documents; cite a Document section",
+            path=path,
+            field="object",
+        )
     object_subject: _ResolvedReferent | None = None
     # What the object section judges: an inverse keyed by object is judged as the
     # object it says is absent; any other inverse has no object to judge.
@@ -2385,32 +2267,33 @@ def evaluate_claim_law(
     if (
         judged_object is not None
         and not claim_type_retirement_shape_exempt
-        and judged_object.kind != contract.object_kind
+        and judged_object.kind != claim_value_kind(contract.value)
     ):
         return _diagnostic(
             "cruxible.claim.object_kind_mismatch",
             f"The Claim object kind {judged_object.kind!r} differs from ClaimType "
-            f"{contract.predicate!r}, which states {contract.object_kind!r}.",
+            f"{contract.predicate!r}, which states {claim_value_kind(contract.value)!r}.",
             path=path,
             field="object",
         )
     if isinstance(judged_object, LiteralClaimObject):
-        if not claim_type_retirement_shape_exempt and (
-            contract.literal_schema is None
-            or not _validate_literal_schema(judged_object.value, contract.literal_schema)
+        if (
+            not claim_type_retirement_shape_exempt
+            and (
+                problem := claim_literal_problem(
+                    judged_object.value,
+                    contract.value,
+                    resolve=value_contracts,
+                    enums=value_enums,
+                    keys=value_keys,
+                )
+            )
+            is not None
         ):
-            members = (
-                None if contract.literal_schema is None else contract.literal_schema.get("enum")
-            )
-            admitted = (
-                "; its members are: " + ", ".join(str(item) for item in members)
-                if isinstance(members, list) and members
-                else ""
-            )
             return _diagnostic(
-                "cruxible.claim.literal_schema_invalid",
-                f"The Claim literal {judged_object.value!r} fails the exact schema of "
-                f"ClaimType {contract.predicate!r}{admitted}.",
+                "cruxible.claim.value_invalid",
+                f"Claim value fails {render_type(contract.value)}: {problem}; "
+                "use an enum, a key, a subject<K> link, or cite a Document section",
                 path=path,
                 field="object",
             )
@@ -2450,13 +2333,13 @@ def evaluate_claim_law(
             )
         if (
             not claim_type_retirement_shape_exempt
-            and object_subject.semantic_kind not in contract.allowed_object_subject_kinds
+            and object_subject.semantic_kind not in subject_value_kinds(contract.value)
         ):
             return _diagnostic(
                 "cruxible.claim.object_subject_kind_forbidden",
                 f"Object Subject kind {object_subject.semantic_kind!r} is not admitted by "
                 f"ClaimType {contract.predicate!r}; admitted kinds: "
-                f"{', '.join(contract.allowed_object_subject_kinds) or 'none'}.",
+                f"{', '.join(subject_value_kinds(contract.value)) or 'none'}.",
                 path=path,
                 field="object",
             )
@@ -3293,8 +3176,6 @@ __all__ = [
     "claim_retirement_pin_digest_updates",
     "claim_path",
     "claim_referent_context_digest",
-    "literal_satisfies_schema",
-    "literal_schema_violation",
     "claim_statement_address",
     "claim_statement_digest",
     "claim_statement_card",

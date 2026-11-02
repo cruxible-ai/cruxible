@@ -111,7 +111,6 @@ from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import reset_registry
 from cruxible_core.service.discovery.audit import PlaybillAuditRequestV1
 from cruxible_core.service.discovery.next import NextRequest, NextWorkspaceObservation
-from cruxible_core.service.procedures.procedure_runs import LineRunRequest
 from tests.core_support._write_support import KIND
 from tests.test_scale import _worlds
 from tests.test_scale._counters import COUNTERS, counting, trace_sqlite
@@ -536,10 +535,7 @@ def _authoring_trigger(world: World) -> object:
 
 def _run_line(name: str) -> Callable[[World], object]:
     def run(world: World) -> object:
-        digest = _worlds.line_digest(name)
-        state = playbill_api.playbill_line_run(
-            world.instance_id, digest, request=LineRunRequest(line=digest)
-        )
+        state = _worlds.run_native_line(world, name)
         assert state.status == "succeeded", state.terminal
         (egress,) = state.terminal_egress
         assert egress.verdict == "delivered", egress

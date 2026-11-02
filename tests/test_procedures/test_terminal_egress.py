@@ -305,12 +305,10 @@ def test_the_mandate_term_names_whichever_source_reached_the_rung() -> None:
     assert term.reason == "The exact accepted Procedure mandate grants settle."
 
 
-@pytest.mark.parametrize("kind", ["post_inbox", "propose_change_set", "settle_change_set"])
+@pytest.mark.parametrize("kind", ["post_inbox"])
 def test_terminal_fan_out_obeys_run_budget_with_scalar_return(tmp_path, kind):
     from cruxible_client.contracts.procedures.models import (
         ProjectNode,
-        ProposeChangeSetNode,
-        SettleChangeSetNode,
     )
     from tests.test_procedures.test_procedure_proposal_delivery import item_template
 
@@ -319,13 +317,6 @@ def test_terminal_fan_out_obeys_run_budget_with_scalar_return(tmp_path, kind):
     if kind == "post_inbox":
         terminal = inbox_node(
             fields={"id": "$item.id"}, for_each="$steps.fan.items", contract=ITEM, max_items=1
-        )
-    else:
-        node_type = ProposeChangeSetNode if kind == "propose_change_set" else SettleChangeSetNode
-        terminal = node_type(
-            node_id="inbox",
-            candidate_templates={"items": "$steps.fan.items"},
-            result="$steps.summary",
         )
     definition = procedure_definition(
         base=original,

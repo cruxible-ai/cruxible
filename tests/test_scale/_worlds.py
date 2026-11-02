@@ -20,7 +20,7 @@ fresh where it lives.
 
 from __future__ import annotations
 
-import base64
+import json
 import os
 import subprocess
 from dataclasses import dataclass, field
@@ -71,8 +71,6 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
-    ProposeChangeSetNode,
-    SettleChangeSetNode,
 )
 from cruxible_client.contracts.query.definitions import (
     CLAIM_TYPE_PIN_ROLE,
@@ -92,8 +90,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryProjectionField,
     QuerySubjectFieldRef,
 )
-from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.subjects import parse_subject, subject_digest, subject_path
+from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_client.contracts.triggers import (
     GenerationAcceptedSchedule,
     parse_trigger,
@@ -283,9 +280,7 @@ def boundary_members(name: str) -> dict[str, bytes]:
     return contract_files(*(_contract(name, role)[0] for role in _ROLE_PINS))
 
 
-def _procedure(
-    name: str, *, terminal: ProposeChangeSetNode | SettleChangeSetNode | None, capability: int
-) -> AcceptedProcedure:
+def _procedure(name: str, *, terminal: None, capability: int) -> AcceptedProcedure:
     """A Procedure with no Source and no Provider: one Project node, then its terminal."""
 
     _, contract_in, _ = _contract(name, "input")
@@ -349,7 +344,9 @@ def _pin(accepted: AcceptedProcedure) -> ArtifactPin:
     )
 
 
-def _line(name: str, accepted: AcceptedProcedure, *, authority: str) -> LineSpec:
+def _line(
+    name: str, accepted: AcceptedProcedure, *, authority: str, world: World | None = None
+) -> LineSpec:
     pin = _pin(accepted)
     line = LineSpec(
         identity=ArtifactIdentity(kind="Line", name=name),
@@ -366,36 +363,155 @@ def _line(name: str, accepted: AcceptedProcedure, *, authority: str) -> LineSpec
         epsilon={"$decimal": "0.1"},
     )
 
+    if accepted.procedure.definition.slots:
+        from tests.test_procedures import test_procedure_source_runs as sources
+
+        assert world is not None
+        native = sources._served_line(world.instance, accepted.procedure, sources._policy())
+        line = line.model_copy(
+            update={
+                "bindings": native.bindings,
+                "acquisition": native.acquisition,
+                "budgets": native.budgets,
+            }
+        )
     return line
 
 
 def _item(subject: str, value: str) -> dict[str, object]:
-    kind, subject_id = subject.split("/", 1)
-    return {
-        "tag": "playbill-procedure-claim-proposal-item-v2",
-        "statement": {
-            "tag": "playbill-authoring-claim-statement-v1",
-            "subject": SemanticAddress.whole_artifact(subject_path(kind, subject_id)).model_dump(
-                mode="json"
+    return {"id": subject.split("/", 1)[1], "severity": value}
+
+
+def _native_capture():
+    from tests.core_support._light_capture_support import record_contract
+
+    contract = record_contract()
+    return contract.model_copy(
+        update={
+            "selection_budget": contract.selection_budget.model_copy(update={"max_bytes": 1 << 20})
+        }
+    )
+
+
+def seed_native_vocabulary(world: World) -> None:
+    """The import Lines cite extracted rows, alongside the ordinary write evidence."""
+    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
+
+    capture = _native_capture()
+    types = tuple(
+        item.model_copy(
+            update={
+                "evidence_admission_policy": item.evidence_admission_policy.model_copy(
+                    update={
+                        "rules": (
+                            *item.evidence_admission_policy.rules,
+                            ClaimEvidenceAdmissionRule(
+                                rule_id="native-import",
+                                claim_roles=item.permitted_roles,
+                                capture_contracts=(capture.identity.name,),
+                                admission="direct",
+                                subject_binding="exact_claim_subject",
+                            ),
+                        )
+                    }
+                )
+            }
+        )
+        if item.predicate in (f"{KIND}.priority", f"{KIND}.title")
+        else item
+        for item in CLAIM_TYPES
+    )
+    _seed_vocabulary(
+        world.instance, actor_id=OPERATOR, claim_types=types, capture_contracts=(capture,)
+    )
+
+
+def native_procedure(
+    world: World, name: str, rows: tuple[dict[str, object], ...], *, create: bool = False
+):
+    """Benchmark the supported Source -> extract -> claims path with inert rows."""
+    from tests.support.claims_terminals import delivery_definition
+    from tests.support.procedures import contract_files, revalidated
+    from tests.test_procedures import test_procedure_source_runs as sources
+
+    relative = f"data/{name}.json"
+    (world.workspace / "data").mkdir(exist_ok=True)
+    (world.workspace / relative).write_text(json.dumps({"proposals": rows}))
+    base = sources._procedure(
+        world.instance, root=world.workspace, contract=_native_capture(), relative_path=relative
+    )
+    definition, contracts = delivery_definition(
+        base,
+        subject_kind=KIND,
+        subject_id="unused",
+        predicates=(f"{KIND}.title" if create else f"{KIND}.priority",),
+        node_id="claims",
+        records="/proposals/*",
+        create=create,
+    )
+    terminal = definition.nodes[-1]
+    mapping = terminal.claims[0].model_copy(
+        update={
+            "role": "observation" if create else "normative",
+            "rationale": "Observed in the imported row.",
+        }
+    )
+    terminal = terminal.model_copy(update={"claims": (mapping,)})
+    definition = definition.model_copy(
+        update={
+            "name": name,
+            "contract_in": named(_contract(name, "input")[1]),
+            "parameter_contract": named(_contract(name, "params")[1]),
+            "nodes": (*definition.nodes[:-1], terminal),
+            "hard_caps": definition.hard_caps.model_copy(
+                update={
+                    "max_items": 200,
+                    "max_provider_calls": 1,
+                    "max_capture_bytes": 1 << 20,
+                    "max_wall_clock": CanonicalDuration(microseconds=600_000_000),
+                }
             ),
-            "predicate": f"{KIND}.priority",
-            "qualifier": None,
-            "object": {"kind": "literal", "value": value},
-            "role": "normative",
-            "effective_from": None,
-            "effective_until": None,
-        },
-        "rationale": f"The scale guard sets {subject} priority.",
-        "revises": None,
-        "source": {
-            "tag": "playbill-self-source-body-v1",
-            "content_base64": base64.b64encode(f"{subject} {value}\n".encode()).decode(),
-        },
-    }
+        }
+    )
+    procedure = revalidated(
+        base.model_copy(
+            update={
+                "identity": ArtifactIdentity(kind="Procedure", name=name),
+                "definition": definition,
+                "definition_digest": compute_procedure_definition_digest(definition).tagged,
+            }
+        )
+    )
+    accepted = AcceptedProcedure(
+        path=procedure_path(name),
+        procedure=procedure,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+    return accepted, {**boundary_members(name), **contract_files(*contracts)}
 
 
-def _claim_type_pin(field_name: str) -> ArtifactPin:
-    (claim_type,) = (item for item in CLAIM_TYPES if item.predicate == f"{KIND}.{field_name}")
+def run_native_line(world: World, name: str):
+    from unittest.mock import patch
+
+    from cruxible_core.service.procedures.procedure_runs import LineRunRequest
+    from tests.test_procedures import test_procedure_source_runs as sources
+
+    digest = line_digest(name)
+    operator = sources._Operator(sources._WorkspaceInvoker())
+    with patch.object(get_playbill_manager(), "provider_runtime_operator", return_value=operator):
+        return playbill_api.playbill_line_run(
+            world.instance_id, digest, request=LineRunRequest(line=digest)
+        )
+
+
+def _claim_type_pin(field_name: str, world: World) -> ArtifactPin:
+    from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
+
+    path = claim_type_path(f"{KIND}.{field_name}")
+    claim_type = parse_claim_type(
+        world.instance.immutable_tree_at(world.instance.accepted_coordinate().git_oid)[path],
+        path=path,
+    )
     return ArtifactPin(
         role=CLAIM_TYPE_PIN_ROLE,
         target=claim_type.identity,
@@ -445,32 +561,21 @@ def definitions(world: World) -> dict[str, bytes]:
     status_type = next(item for item in CLAIM_TYPES if item.predicate == f"{KIND}.status")
     query = work_item_query(QUERY_NAME, claim_type=status_type)
     condition = _condition()
-    propose = _procedure(
+    propose, propose_members = native_procedure(
+        world,
         PROPOSE,
-        terminal=ProposeChangeSetNode(
-            node_id="propose",
-            candidate_templates=tuple(
-                _item(world.subject(index), "high") for index in range(TERMINAL_ITEMS)
-            ),
-            result="$steps.result",
-        ),
-        capability=2,
+        tuple(_item(world.subject(index), "high") for index in range(TERMINAL_ITEMS)),
     )
-    settle = _procedure(
+    settle, settle_members = native_procedure(
+        world,
         SETTLE,
-        terminal=SettleChangeSetNode(
-            node_id="settle",
-            candidate_templates=tuple(
-                _item(world.subject(TERMINAL_ITEMS + index), "low")
-                for index in range(TERMINAL_ITEMS)
-            ),
-            result="$steps.result",
+        tuple(
+            _item(world.subject(TERMINAL_ITEMS + index), "low") for index in range(TERMINAL_ITEMS)
         ),
-        capability=3,
     )
     tick = _procedure(TICK, terminal=None, capability=1)
-    propose_line = _line(f"{PROPOSE}-line", propose, authority="propose")
-    settle_line = _line(f"{SETTLE}-line", settle, authority="settle")
+    propose_line = _line(f"{PROPOSE}-line", propose, authority="propose", world=world)
+    settle_line = _line(f"{SETTLE}-line", settle, authority="settle", world=world)
     tick_line = _line(f"{TICK}-line", tick, authority="observe")
     propose_mandate = ProcedureMandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name=f"{PROPOSE}-mandate"),
@@ -488,7 +593,9 @@ def definitions(world: World) -> dict[str, bytes]:
         valid_from=_FAR_PAST,
         expires_at=_FAR_FUTURE,
         scope=(
-            MandateClaimScope(claim_type=_claim_type_pin("priority"), change_kinds=("create",)),
+            MandateClaimScope(
+                claim_type=_claim_type_pin("priority", world), change_kinds=("create",)
+            ),
         ),
         condition=MandateCondition(
             query=ArtifactPin(
@@ -532,7 +639,7 @@ def definitions(world: World) -> dict[str, bytes]:
             parse_trigger(_CURATION_DETECT.read_bytes(), path="triggers/curation-detect.json")
         ),
     }
-    return members
+    return {**members, **propose_members, **settle_members}
 
 
 def line_digest(name: str) -> str:
@@ -794,7 +901,7 @@ def build_world(directory: Path, shape: Shape) -> World:
         owner=owner,
         workspace=_git_workspace(directory / "workspace"),
     )
-    _seed_vocabulary(world.instance, actor_id=OPERATOR)
+    seed_native_vocabulary(world)
     settle_advertisement(world.instance)
     _bulk(world)
     accept_members(

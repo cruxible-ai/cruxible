@@ -369,14 +369,19 @@ class KeyPartType(_Shape):
 
 
 class SubjectType(_Shape):
-    """A Subject of one kind. Reads produce it; an operation may only echo its input's."""
+    """A Subject of one of the explicitly named kinds, in canonical order."""
 
     kind: Literal["subject"] = "subject"
-    subject_kind: str
+    subject_kinds: tuple[str, ...] = Field(min_length=1)
 
-    _subject_kind = field_validator("subject_kind")(
-        lambda value: _nfc_identifier(value, _KIND_NAME_RE, label="SubjectKind")
-    )
+    @field_validator("subject_kinds")
+    @classmethod
+    def _kinds(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("subject union members must be unique")
+        for member in value:
+            _nfc_identifier(member, _KIND_NAME_RE, label="SubjectKind")
+        return tuple(sorted(value, key=lambda member: member.encode("utf-8")))
 
 
 class CaptureType(_Shape):
@@ -602,11 +607,19 @@ def _read_type(reader: _Spelling, depth: int = 0) -> dict[str, Any]:
         _p, part = reader.take("name")
         reader.take("sym", ">")
         return {"kind": "key_part", "subject_kind": target, "part": part}
-    if name in ("key", "subject", "capture"):
+    if name == "subject":
+        reader.take("sym", "<")
+        members = [reader.take("name")[1]]
+        while reader.peek() == ("sym", "|"):
+            reader.take("sym", "|")
+            members.append(reader.take("name")[1])
+        reader.take("sym", ">")
+        return {"kind": "subject", "subject_kinds": members}
+    if name in ("key", "capture"):
         reader.take("sym", "<")
         _k, target = reader.take("name")
         reader.take("sym", ">")
-        field = {"key": "subject_kind", "subject": "subject_kind", "capture": "capture_kind"}[name]
+        field = "subject_kind" if name == "key" else "capture_kind"
         return {"kind": name, field: target}
     if name == "field_result":
         reader.take("sym", "<")
@@ -742,7 +755,9 @@ def render_type(field_type: FieldType) -> str:
     if isinstance(field_type, VariantType):
         arms = ", ".join(f"{tag}: {ref.spelling}" for tag, ref in field_type.arms.items())
         return "variant{" + arms + "}"
-    if isinstance(field_type, KeyType | SubjectType):
+    if isinstance(field_type, SubjectType):
+        return "subject<" + " | ".join(field_type.subject_kinds) + ">"
+    if isinstance(field_type, KeyType):
         return f"{kind}<{field_type.subject_kind}>"
     if isinstance(field_type, KeyPartType):
         return f"key_part<{field_type.subject_kind}:{field_type.part}>"
@@ -753,6 +768,65 @@ def render_type(field_type: FieldType) -> str:
     if isinstance(field_type, RecordType | ResultType | RefusalType):
         return f"{kind}<{field_type.contract.spelling}>"
     return kind
+
+
+def value_type_name(value: FieldType) -> str:
+    return {
+        "int": "integer",
+        "number": "number",
+        "decimal": "number",
+        "bool": "boolean",
+        "enum": "string",
+        "datetime": "string",
+        "date": "string",
+    }.get(value.kind, value.kind)
+
+
+def claim_value_kind(value: FieldType | None) -> Literal["literal", "subject"]:
+    return "subject" if isinstance(value, SubjectType) else "literal"
+
+
+def subject_value_kinds(value: FieldType | None) -> tuple[str, ...]:
+    return value.subject_kinds if isinstance(value, SubjectType) else ()
+
+
+def value_members(value: FieldType | None) -> tuple[str, ...]:
+    return value.members if isinstance(value, EnumType) else ()
+
+
+def claim_has_line_break(value: str) -> bool:
+    return any(char in value for char in "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029")
+
+
+def claim_literal_problem(
+    value: object,
+    field_type: FieldType,
+    *,
+    resolve: ContractResolver | None = None,
+    enums: EnumResolver | None = None,
+    keys: KeyCanonicalizer | None = None,
+) -> str | None:
+    if isinstance(value, str) and claim_has_line_break(value):
+        return "multiline_string: use a Document section for prose"
+    result = check_value(
+        value,
+        field_type,
+        at="value",
+        resolve=resolve,
+        enum_members=enums,
+        keys=keys,
+        _problem_only=True,
+    )
+    return result.problem.code if isinstance(result, FieldInvalid) else None
+
+
+def claim_rationale(value: str) -> str:
+    if not value.replace("\x00", "").strip() or len(value) > 280 or claim_has_line_break(value):
+        raise ValueError(
+            "cruxible.claim.rationale_invalid: rationale must be one line of at most "
+            "280 characters; put prose in a Document section"
+        )
+    return value
 
 
 # -- the Contract artifact --------------------------------------------------------------
@@ -925,6 +999,15 @@ class Contract(_Shape):
 def coerce_field_type(value: FieldType | str | Mapping[str, object]) -> FieldType:
     """A type from its spelling or its structured form; refusals carry their code."""
 
+    if (
+        value == "exact_content"
+        or isinstance(value, Mapping)
+        and value.get("kind") == "exact_content"
+    ):
+        raise ContractTypeRefused(
+            "cruxible.claim.exact_content_retired: prose lives in Documents; "
+            "cite a Document section"
+        )
     if isinstance(value, str):
         return parse_type(value)
     _refuse_structured(value)
@@ -1264,6 +1347,10 @@ class FieldPresent(_Shape):
     at: str
 
 
+# Presence-only checks share the validator without allocating an unused value model.
+_VALID_VALUE = FieldPresent(value=None, at="")
+
+
 class FieldAbsent(_Shape):
     tag: Literal["absent"] = "absent"
 
@@ -1412,8 +1499,12 @@ def check_value(
     resolve: ContractResolver | None = None,
     enum_members: EnumResolver | None = None,
     keys: KeyCanonicalizer | None = None,
+    _problem_only: bool = False,
 ) -> FieldPresent | FieldInvalid:
     """Check one present value against one type; a problem is a result, never an exception."""
+
+    def present(value: Any, at: str) -> FieldPresent:
+        return _VALID_VALUE if _problem_only else FieldPresent(value=value, at=at)
 
     if isinstance(field_type, StringType):
         if not isinstance(value, str):
@@ -1424,13 +1515,13 @@ def check_value(
             return _invalid("out_of_range", field, value)
         if field_type.pattern is not None and re.fullmatch(field_type.pattern, value) is None:
             return _invalid("pattern_mismatch", field, value)
-        return FieldPresent(value=value, at=at)
+        return present(value=value, at=at)
     if isinstance(field_type, IntType):
         if isinstance(value, bool) or not isinstance(value, int):
             return _invalid("type_mismatch", field, value)
         if not _in_range(value, field_type.min, field_type.max):
             return _invalid("out_of_range", field, value)
-        return FieldPresent(value=value, at=at)
+        return present(value=value, at=at)
     if isinstance(field_type, DecimalType):
         if isinstance(value, bool) or not isinstance(value, (int, str, Decimal)):
             return _invalid("type_mismatch", field, value)
@@ -1444,7 +1535,7 @@ def check_value(
         high = None if field_type.max is None else Decimal(field_type.max)
         if not _in_range(number, low, high):
             return _invalid("out_of_range", field, value)
-        return FieldPresent(value=number, at=at)
+        return present(value=number, at=at)
     if isinstance(field_type, NumberType):
         try:
             canonical = canonical_number(value)
@@ -1454,14 +1545,14 @@ def check_value(
         high = None if field_type.max is None else Decimal(field_type.max)
         if not _in_range(Decimal(canonical), low, high):
             return _invalid("out_of_range", field, value)
-        return FieldPresent(value=canonical, at=at)
+        return present(value=canonical, at=at)
     if isinstance(field_type, BoolType):
         if not isinstance(value, bool):
             return _invalid("type_mismatch", field, value)
-        return FieldPresent(value=value, at=at)
+        return present(value=value, at=at)
     if isinstance(field_type, DateType):
         if isinstance(value, date) and not isinstance(value, datetime):
-            return FieldPresent(value=value, at=at)
+            return present(value=value, at=at)
         if not isinstance(value, str):
             return _invalid("type_mismatch", field, value)
         try:
@@ -1470,10 +1561,10 @@ def check_value(
             return _invalid("type_mismatch", field, value)
         if parsed_date.isoformat() != value:
             return _invalid("canonical_form_failed", field, value)
-        return FieldPresent(value=parsed_date, at=at)
+        return present(value=parsed_date, at=at)
     if isinstance(field_type, DateTimeType):
         if isinstance(value, datetime):
-            return FieldPresent(value=parse_datetime(value), at=at)
+            return present(value=parse_datetime(value), at=at)
         if not isinstance(value, str):
             return _invalid("type_mismatch", field, value)
         try:
@@ -1482,12 +1573,12 @@ def check_value(
             return _invalid("type_mismatch", field, value)
         if format_datetime(moment) != value.replace("Z", "+00:00"):
             return _invalid("canonical_form_failed", field, value)
-        return FieldPresent(value=moment, at=at)
+        return present(value=moment, at=at)
     if isinstance(field_type, DurationType):
         from cruxible_client.contracts.captures import CanonicalDuration
 
         try:
-            return FieldPresent(value=CanonicalDuration.model_validate(value), at=at)
+            return present(value=CanonicalDuration.model_validate(value), at=at)
         except ValidationError:
             return _invalid("type_mismatch", field, value)
     if isinstance(field_type, EnumType | EnumOfType):
@@ -1505,7 +1596,7 @@ def check_value(
             return _invalid("not_in_enum", field, value)
         if value not in members:
             return _invalid("not_in_enum", field, value)
-        return FieldPresent(value=value, at=at)
+        return present(value=value, at=at)
     if isinstance(field_type, ListType):
         if not isinstance(value, (list, tuple)):
             return _invalid("type_mismatch", field, value)
@@ -1525,7 +1616,7 @@ def check_value(
             if isinstance(checked, FieldInvalid):
                 return checked
             items.append(checked.value)
-        return FieldPresent(value=items, at=at)
+        return present(value=items, at=at)
     if isinstance(field_type, NestedType | VariantType):
         if isinstance(field_type, VariantType):
             if not isinstance(value, Mapping) or value.get("tag") not in field_type.arms:
@@ -1550,16 +1641,26 @@ def check_value(
                         update={"field": f"{field or ''}.{inner.field or name}"}
                     )
                 )
-        return FieldPresent(value=dict(value), at=at)
+        return present(value=dict(value), at=at)
     if isinstance(field_type, KeyType | KeyPartType):
         return check_key_value(value, field_type, at=at, field=field, keys=keys)
     if isinstance(field_type, SubjectType):
         if isinstance(value, str) and value:
-            return FieldPresent(value=value, at=at)
+            reference = value.removeprefix("subjects/").removesuffix(".json")
+            kind, separator, identity = reference.partition("/")
+            if (
+                separator
+                and identity
+                and (
+                    kind in field_type.subject_kinds
+                    or "semantic.subject" in field_type.subject_kinds
+                )
+            ):
+                return present(value=value, at=at)
         return _invalid("type_mismatch", field, value)
     if isinstance(field_type, CaptureType):
         if isinstance(value, str) and _DIGEST_RE.fullmatch(value):
-            return FieldPresent(value=value, at=at)
+            return present(value=value, at=at)
         return _invalid("type_mismatch", field, value)
     if isinstance(field_type, FieldResultType):
         return _check_field_result(
@@ -1580,7 +1681,7 @@ def check_value(
         )
         if envelope is None:
             return _invalid("type_mismatch", field, value)
-        return FieldPresent(value=envelope, at=at)
+        return present(value=envelope, at=at)
     if isinstance(field_type, ResultType):
         return _check_result(
             value,
@@ -1957,6 +2058,12 @@ def edge_refusal(src: FieldType, dst: FieldType, *, via: EdgeVia | None = None) 
         if isinstance(src, FieldResultType):
             return "a field_result<T> is read through $item.fields.f, never as a value"
         return f"{render_type(src)} does not flow into {render_type(dst)}; cast it with as:"
+    if isinstance(src, SubjectType) and isinstance(dst, SubjectType):
+        return (
+            None
+            if set(src.subject_kinds) <= set(dst.subject_kinds)
+            else "the source Subject kinds exceed the destination union"
+        )
     if isinstance(src, StringType) and isinstance(dst, StringType):
         if dst.pattern is not None and src.pattern != dst.pattern:
             return "the destination string pattern is not implied by the source"

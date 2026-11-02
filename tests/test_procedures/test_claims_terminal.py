@@ -55,7 +55,7 @@ ROW = Contract.model_validate(
     {
         "name": "test.claim-row",
         "version": 1,
-        "fields": {"status": "enum[open, closed, unknown]", "note": "string?"},
+        "fields": {"status": "enum[open, closed, unknown]", "note": "string{max_len: 256}?"},
     }
 )
 
@@ -182,7 +182,7 @@ def claims_spec(
                 "capture": "$steps.doc.capture",
                 "records": "/entries/*",
                 "row": ROW.ref.spelling,
-                "key": {"cve_id": {"at": "id", "type": "string"}},
+                "key": {"cve_id": {"at": "id", "type": f"key_part<{KIND}:cve_id>"}},
                 "fields": {"status": {"at": "status"}, "note": {"at": "note"}},
             },
             {

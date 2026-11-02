@@ -33,6 +33,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
 )
+from cruxible_client.contracts.shapes import StringType, SubjectType
 
 #: The pseudo-kind a descriptor ClaimType admits: every Subject, whatever its kind.
 SEMANTIC_SUBJECT_KIND: Final = "semantic.subject"
@@ -66,8 +67,7 @@ SEMANTIC_ALIAS_CLAIM_TYPE: Final = ClaimType(
     identity=ArtifactIdentity(kind="ClaimType", name=SEMANTIC_ALIAS_PREDICATE),
     predicate=SEMANTIC_ALIAS_PREDICATE,
     allowed_subject_kinds=(SEMANTIC_SUBJECT_KIND,),
-    object_kind="literal",
-    literal_schema={"minLength": 1, "type": "string"},
+    value=StringType(min_len=1, max_len=256),
     cardinality="many",
     permitted_roles=("normative", "observation"),
     evidence_admission_policy=_self_evidence(),
@@ -90,8 +90,7 @@ SEMANTIC_DISTINCT_FROM_CLAIM_TYPE: Final = ClaimType(
     identity=ArtifactIdentity(kind="ClaimType", name=SEMANTIC_DISTINCT_FROM_PREDICATE),
     predicate=SEMANTIC_DISTINCT_FROM_PREDICATE,
     allowed_subject_kinds=(SEMANTIC_SUBJECT_KIND,),
-    object_kind="subject",
-    allowed_object_subject_kinds=(SEMANTIC_SUBJECT_KIND,),
+    value=SubjectType(subject_kinds=(SEMANTIC_SUBJECT_KIND,)),
     cardinality="many",
     permitted_roles=("normative", "observation"),
     evidence_admission_policy=_self_evidence(),
@@ -118,9 +117,7 @@ DESCRIPTOR_PREDICATES: Final = frozenset(
 )
 
 
-def admits_object_subject(
-    predicate: str, allowed_object_subject_kinds: tuple[str, ...], kind: str
-) -> bool:
+def admits_object_subject(predicate: str, subject_kinds: tuple[str, ...], kind: str) -> bool:
     """Whether a ClaimType admits a Subject of ``kind`` as its object, as the Claim law reads it.
 
     A descriptor predicate's object is judged as ``semantic.subject``; any other
@@ -128,8 +125,8 @@ def admits_object_subject(
     """
 
     if predicate in DESCRIPTOR_PREDICATES:
-        return SEMANTIC_SUBJECT_KIND in allowed_object_subject_kinds
-    return kind in allowed_object_subject_kinds
+        return SEMANTIC_SUBJECT_KIND in subject_kinds
+    return kind in subject_kinds
 
 
 def applies_to_kind(allowed_subject_kinds: tuple[str, ...], kind: str) -> bool:

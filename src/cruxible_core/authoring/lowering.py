@@ -216,9 +216,13 @@ from cruxible_client.contracts.query.definitions import (
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_client.contracts.shapes import (
     ContractRef,
+    claim_has_line_break,
+    claim_value_kind,
     contract_digest,
     contract_path,
+    map_type_refs,
     parse_contract,
+    subject_value_kinds,
     tree_contract_resolver,
     type_refs,
 )
@@ -1287,6 +1291,7 @@ def _install_claim_dependencies(
                 repair_kind="replace_dependency_claim_type",
                 repair_description="Use the ClaimType named by statement.predicate.",
             )
+        claim_type_draft = _pin_claim_type_value(claim_type_draft, base_tree)
         rendered = render_claim_type(claim_type_draft)
         accepted = base_tree.get(draft_path)
         if accepted is not None and accepted != rendered:
@@ -1554,10 +1559,30 @@ def _lower_claim(
     subject_identity, subject_digest_value = _referent(
         candidate_base_tree, payload.statement.subject, descriptor=descriptor
     )
+    if isinstance(payload.statement.object, AuthoringExactContentObject):
+        _refuse(
+            "cruxible.claim.exact_content_retired",
+            "statement.object",
+            "Prose lives in Documents; cite a Document section",
+            repair_kind="cite_document_section",
+            repair_description="Put prose in a Document and cite a Document section.",
+        )
+    if (
+        isinstance(payload.statement.object, LiteralClaimObject)
+        and isinstance(payload.statement.object.value, str)
+        and claim_has_line_break(payload.statement.object.value)
+    ):
+        _refuse(
+            "cruxible.claim.multiline_string",
+            "statement.object",
+            "String Claims cannot contain newlines",
+            repair_kind="cite_document_section",
+            repair_description="Prose lives in Documents; cite a Document section.",
+        )
     statement_object = _exact_object(instance, payload.statement.object)
     # A none's shape is judged against the ClaimType's inverse by the Claim law.
     if not isinstance(statement_object, NoneClaimObject) and (
-        statement_object.kind != claim_type.object_kind
+        statement_object.kind != claim_value_kind(claim_type.value)
     ):
         _refuse(
             "cruxible.claim.object_kind_mismatch",
@@ -1565,9 +1590,10 @@ def _lower_claim(
             "The Claim object kind differs from its accepted ClaimType.",
             repair_kind="replace_object",
             repair_description=(
-                f"Use a {claim_type.object_kind} object for ClaimType {claim_type.predicate!r}."
+                f"Use a {claim_value_kind(claim_type.value)} object "
+                f"for ClaimType {claim_type.predicate!r}."
             ),
-            replacement={"required_object_kind": claim_type.object_kind},
+            replacement={"required_object_kind": claim_value_kind(claim_type.value)},
         )
     statement_object = _canonical_object(statement_object, claim_type)
     qualifier = payload.statement.qualifier
@@ -1605,7 +1631,7 @@ def _lower_claim(
         # The Claim law judges a descriptor relation's object as semantic.subject.
         if not admits_object_subject(
             claim_type.predicate,
-            claim_type.allowed_object_subject_kinds,
+            subject_value_kinds(claim_type.value),
             object_subject.subject_kind,
         ):
             _refuse(
@@ -1617,9 +1643,7 @@ def _lower_claim(
                 repair_description=(
                     "Choose an accepted Subject whose kind is listed by the ClaimType."
                 ),
-                replacement={
-                    "allowed_subject_kinds": list(claim_type.allowed_object_subject_kinds)
-                },
+                replacement={"allowed_subject_kinds": list(subject_value_kinds(claim_type.value))},
             )
         object_referent = (
             object_subject.identity,
@@ -2733,6 +2757,19 @@ def _pin_query_contract_ref(
     return ref.model_copy(update={"digest": digest})
 
 
+def _pin_claim_type_value(definition: ClaimType, tree: Mapping[str, bytes]) -> ClaimType:
+    if not type_refs(definition.value):
+        return definition
+    return definition.model_copy(
+        update={
+            "value": map_type_refs(
+                definition.value,
+                lambda ref: _pin_query_contract_ref(ref, tree=tree, label="ClaimType.value"),
+            )
+        }
+    )
+
+
 def _render_non_procedure_member(
     payload: ResolutionContractAuthoringPayload
     | AttestationAuthoringPayload
@@ -2792,7 +2829,11 @@ def _render_non_procedure_member(
             capture_contract_digest(contract).tagged,
         )
     if isinstance(payload, ClaimTypeAuthoringPayload):
-        definition = payload.claim_type
+        definition = (
+            _pin_claim_type_value(payload.claim_type, tree)
+            if tree is not None
+            else payload.claim_type
+        )
         return (
             claim_type_path(definition.predicate),
             render_claim_type(definition),
@@ -5580,7 +5621,7 @@ def _stage_claim_type_succession(
                 "supplied_dependents": sorted(supplied, key=lambda item: item.encode("utf-8")),
             },
         )
-    if successor.object_kind != predecessor.object_kind:
+    if claim_value_kind(successor.value) != claim_value_kind(predecessor.value):
         for position, dependent in enumerate(member.dependents):
             row = required[dependent.identity.qualified]
             live_claim = row.artifact_kind == "claim" and "retire" in row.permitted_dispositions
@@ -5599,8 +5640,8 @@ def _stage_claim_type_succession(
                     replacement={
                         "identity": dependent.identity.qualified,
                         "permitted_dispositions": ["retire", "re_author"],
-                        "predecessor_object_kind": predecessor.object_kind,
-                        "successor_object_kind": successor.object_kind,
+                        "predecessor_object_kind": claim_value_kind(predecessor.value),
+                        "successor_object_kind": claim_value_kind(successor.value),
                     },
                 )
     # Two trees, deliberately. A re-authoring sibling is lowered against the
@@ -5609,6 +5650,7 @@ def _stage_claim_type_succession(
     # takes the tree with the PREDECESSOR still installed: what it migrates
     # every dependent away from is exactly the digest it reads there.
     lowering_tree = fork_tree(staged_tree)
+    successor = _pin_claim_type_value(successor, lowering_tree)
     lowering_tree[type_path] = render_claim_type(successor)
     working = fork_tree(staged_tree)
     authored: dict[str, bytes] = {}

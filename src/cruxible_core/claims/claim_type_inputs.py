@@ -58,7 +58,14 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
 )
 from cruxible_client.contracts.public_names import public_name, stored_contract_name
-from cruxible_client.contracts.shapes import FieldType, coerce_field_type
+from cruxible_client.contracts.shapes import (
+    BoolType,
+    EnumType,
+    FieldType,
+    StringType,
+    coerce_field_type,
+    value_members,
+)
 from cruxible_client.contracts.subject_kinds import SubjectKind
 from cruxible_client.contracts.temporal import parse_iso_duration_microseconds
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -103,9 +110,6 @@ _STRUCTURAL_INPUT_FIELDS = (
     "requires_complete_input",
     "incomplete_fallback",
     "allowed_subject_kinds",
-    "object_kind",
-    "literal_schema",
-    "allowed_object_subject_kinds",
     "cardinality",
     "permitted_roles",
     "referent_sensitivity",
@@ -124,7 +128,6 @@ _REQUIRED_NEW_FIELDS = ("cardinality",)
 #: Fields that always have a value: named or left out, never ``null``.
 _NEVER_NULL_FIELDS = (
     "allowed_subject_kinds",
-    "object_kind",
     "cardinality",
     "permitted_roles",
     "referent_sensitivity",
@@ -200,9 +203,9 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
 
     A new ClaimType states ``predicate`` and ``cardinality``. The predicate's
     prefix before its last dot supplies ``allowed_subject_kinds``; state it for
-    a multi-kind field. ``literal_schema`` infers a literal object,
-    ``allowed_object_subject_kinds`` a Subject object; state only one. Neither
-    means a string literal. State ``object_kind: exact_content`` explicitly.
+    a multi-kind field. ``value`` declares a native Contract field type;
+    omitted, it is ``string{max_len: 256}``. Subject-valued fields state
+    ``subject<K>`` or ``subject<K1 | K2>``. Prose belongs in Documents.
     Every other field takes its default, written out in full in the stored ClaimType
     (``cruxible claim-type propose --template --expanded`` prints them):
 
@@ -226,8 +229,8 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
     (RFC 7396) against the accepted predecessor for every field but
     ``predicate``: a field left out keeps the predecessor's value, so an
     unrelated edit never drops what the type means or how it is backed. An
-    explicit ``null`` clears a field that may be empty (``literal_schema``,
-    ``evidence_freshness``, ``attestation_consequence_policy``,
+    explicit ``null`` clears a field that may be empty (``evidence_freshness``,
+    ``attestation_consequence_policy``,
     ``unsure_hold_for``, ``description``, ``member_descriptions`` (``[]`` too),
     ``default_role``, ``canonical_form``, ``inverse``); the others always have a value, so
     they are named or left out, never ``null``. Durations (``evidence_freshness.stale_after``,
@@ -258,6 +261,23 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
     requires_complete_input: tuple[StrictStr | StrictBool, ...] = ()
     incomplete_fallback: StrictStr | StrictBool | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _retired(cls, value: object) -> object:
+        if isinstance(value, dict) and value.get("object_kind") == "exact_content":
+            raise ValueError(
+                "cruxible.claim.exact_content_retired: prose lives in Documents; "
+                "cite a Document section"
+            )
+        if isinstance(value, dict) and any(
+            name in value
+            for name in ("object_kind", "literal_schema", "allowed_object_subject_kinds")
+        ):
+            raise ValueError(
+                "cruxible.claim_type.retired_schema: declare value with the Contract type grammar"
+            )
+        return value
+
     @field_validator("value", mode="before")
     @classmethod
     def _value_type(cls, value: Any) -> object:
@@ -265,9 +285,6 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
 
     predicate: str
     allowed_subject_kinds: tuple[str, ...] | None = None
-    object_kind: Literal["literal", "subject", "exact_content"] | None = None
-    literal_schema: dict[str, object] | None = None
-    allowed_object_subject_kinds: tuple[str, ...] = ()
     cardinality: Literal["one", "many"] | None = None
     permitted_roles: (
         tuple[Literal["normative", "observation", "environment_binding", "derivation"], ...] | None
@@ -455,22 +472,13 @@ def claim_type_input_defaults(
         )
     if "allowed_subject_kinds" not in stated:
         data["allowed_subject_kinds"] = [value.predicate.rpartition(".")[0]]
-    if "object_kind" not in stated:
-        if value.literal_schema is not None and value.allowed_object_subject_kinds:
-            raise FormatError(
-                "cruxible.claim_type.input_invalid: state literal_schema or "
-                "allowed_object_subject_kinds, not both; they infer different object kinds"
-            )
-        data["object_kind"] = "subject" if value.allowed_object_subject_kinds else "literal"
-    if data["object_kind"] == "literal" and "literal_schema" not in stated:
-        data["literal_schema"] = {"type": "string"}
-    schema = data.get("literal_schema")
-    if (
-        "canonical_form" not in stated
-        and data["object_kind"] == "literal"
-        and isinstance(schema, dict)
-        and schema.get("type") == "string"
-    ):
+    if "value" not in stated:
+        data["value"] = StringType(max_len=256).model_dump(mode="json")
+    if "canonical_form" not in stated and coerce_field_type(data["value"]).kind in {
+        "string",
+        "enum",
+        "enum_of",
+    }:
         data["canonical_form"] = ["nfc", "trim"]
     if "permitted_roles" not in stated:
         data["permitted_roles"] = [value.default_role or "normative"]
@@ -500,29 +508,6 @@ def claim_type_input_defaults(
             "conflict_result": "unresolved",
         }
     return ClaimTypeInputRecord.model_validate(data)
-
-
-def _admits_fraction(schema: object) -> bool:
-    if isinstance(schema, dict):
-        declared = schema.get("type")
-        if declared == "number" or (isinstance(declared, list) and "number" in declared):
-            return True
-        return any(_admits_fraction(item) for item in schema.values())
-    if isinstance(schema, list):
-        return any(_admits_fraction(item) for item in schema)
-    return False
-
-
-def _refuse_number_schema(value: ClaimTypeInputRecord) -> None:
-    """A stated ``type: number`` admits fractions no canonical value can encode."""
-
-    if value.states("literal_schema") and _admits_fraction(value.literal_schema):
-        raise ClaimTypeNumberSchemaIntegerOnly(
-            f"{ClaimTypeNumberSchemaIntegerOnly.error_code}: literal_schema admits "
-            "`type: number`, but Claim values are integers or text (canonical JSON holds no "
-            "fractions). Repair: state `type: integer` in a scaled unit (cents, basis points), "
-            "or `type: string` with a pattern for a decimal"
-        )
 
 
 #: What a lint warning means, for surfaces that print more than its code.
@@ -732,13 +717,13 @@ def _description_fields(
             else [item.model_dump(mode="json") for item in predecessor.member_descriptions]
         )
     members.sort(key=lambda item: canonical_bytes(item["member"]))
-    enum = None if value.literal_schema is None else value.literal_schema.get("enum")
+    enum = list(value_members(value.value))
     admitted = {canonical_bytes(item) for item in enum} if isinstance(enum, list) else set()
     stale = [item["member"] for item in members if canonical_bytes(item["member"]) not in admitted]
     if stale:
         raise ClaimTypeMemberDescriptionsStale(
             f"{ClaimTypeMemberDescriptionsStale.error_code}: member_descriptions name "
-            f"{', '.join(repr(item) for item in stale)}, which the literal_schema enum no "
+            f"{', '.join(repr(item) for item in stale)}, which the value enum no "
             "longer admits; describe the current members, or pass member_descriptions: null "
             "to clear them"
         )
@@ -796,7 +781,6 @@ def lower_claim_type_input(
     predecessor = None
     if path in tree:
         predecessor = parse_claim_type(tree[path], path=path)
-    _refuse_number_schema(value)
     value = claim_type_input_defaults(value, predecessor)
     payload = value.model_dump(mode="json")
     payload.pop("anticipated_source_ids", None)
@@ -1076,12 +1060,11 @@ def lint_claim_type_input(
                 replacement_rule_fragment={"require_current": False},
             )
         )
-    schema = effective.literal_schema
+    value_type = effective.value
     if (
         effective.inverse is not None
         and (effective.cardinality or "") == "one"
-        and isinstance(schema, dict)
-        and ("enum" in schema or schema.get("type") == "boolean")
+        and isinstance(value_type, EnumType | BoolType)
     ):
         # A member of the enum (or false) states the negative as a found value.
         warnings.append(

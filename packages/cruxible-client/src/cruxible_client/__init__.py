@@ -32,12 +32,12 @@ if TYPE_CHECKING:
         ClaimRole,
         ClaimRoleNotPermittedError,
         ClaimTypeRef,
+        ClaimValueError,
         Disposition,
         Duration,
         EffectivePeriod,
         ExactContent,
         ExactContentTypeError,
-        LiteralSchemaError,
         LiteralValue,
         LiteralValueTypeError,
         PendingClaimTypeRef,
@@ -71,10 +71,6 @@ if TYPE_CHECKING:
     from cruxible_client.contracts.policies import (
         ClaimAdmissionPolicy,
         ClaimResolutionPolicy,
-    )
-    from cruxible_client.contracts.procedures.contract_schema import (
-        ContractSchema,
-        PropertySchema,
     )
     from cruxible_client.contracts.procedures.models import (
         ProcedureBudget,
@@ -121,13 +117,12 @@ __all__ = [
     "Disposition",
     "Duration",
     "CanonicalDuration",
-    "ContractSchema",
     "EffectivePeriod",
     "ExactContent",
     "ClaimRoleNotPermittedError",
     "ExactContentTypeError",
     "KindNamespace",
-    "LiteralSchemaError",
+    "ClaimValueError",
     "LiteralValue",
     "LiteralValueTypeError",
     "LocalEd25519ClaimAttestationSigner",
@@ -144,7 +139,6 @@ __all__ = [
     "ProcedureHardCaps",
     "ProcedureSlot",
     "ProjectNode",
-    "PropertySchema",
     "QueryNameError",
     "QueryRef",
     "QueryResult",
@@ -222,7 +216,7 @@ def __getattr__(name: str) -> Any:
         "ExactContent",
         "ClaimRoleNotPermittedError",
         "ExactContentTypeError",
-        "LiteralSchemaError",
+        "ClaimValueError",
         "LiteralValue",
         "LiteralValueTypeError",
         "PendingClaimTypeRef",
@@ -268,10 +262,6 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.contracts import policies
 
         return getattr(policies, name)
-    if name in {"ContractSchema", "PropertySchema"}:
-        from cruxible_client.contracts.procedures import contract_schema
-
-        return getattr(contract_schema, name)
     if name in {
         "ProcedureBudget",
         "ProcedureDefinition",

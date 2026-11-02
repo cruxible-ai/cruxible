@@ -4,7 +4,6 @@
     "freeze_requirements": [],
     "tag": "playbill-claim-admission-policy-v1"
   },
-  "allowed_object_subject_kinds": [],
   "allowed_subject_kinds": [
     "semantic.subject"
   ],
@@ -53,12 +52,7 @@
     "predecessor_digest": null,
     "state": "live"
   },
-  "literal_schema": {
-    "minLength": 1,
-    "type": "string"
-  },
   "member_descriptions": [],
-  "object_kind": "literal",
   "permitted_roles": [
     "normative",
     "observation"
@@ -91,5 +85,10 @@
     "selector": "all",
     "tag": "playbill-claim-resolution-policy-v1"
   },
-  "revision_evidence": "replace"
+  "revision_evidence": "replace",
+  "value": {
+    "kind": "string",
+    "max_len": 256,
+    "min_len": 1
+  }
 }

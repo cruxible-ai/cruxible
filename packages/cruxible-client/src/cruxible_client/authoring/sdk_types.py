@@ -17,6 +17,7 @@ from cruxible_client._error_base import CoreError
 from cruxible_client.contracts.canonical import CanonicalValue
 from cruxible_client.contracts.capture_reads import CaptureRead
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.shapes import FieldType
 from cruxible_client.contracts.temporal import ensure_utc
 
 
@@ -132,11 +133,11 @@ class ClaimRef(_ShortRefRepr):
 class PendingClaimTypeRef(ClaimTypeRef):
     """A ClaimType the same changeset defines, referenced before acceptance.
 
-    Carries the object kind it was defined with so a Claim in the same set can
+    Carries the native value type so a Claim in the same set can
     be lowered without reading a ClaimType that is not accepted yet.
     """
 
-    object_kind: str
+    value_type: FieldType
 
 
 @dataclass(frozen=True, repr=False)
@@ -494,17 +495,15 @@ class LiteralValueTypeError(SdkError):
 
 
 class ExactContentTypeError(SdkError):
-    """Exact bytes were passed to a ClaimType whose object is not exact content."""
+    """Exact-content Claims are retired; prose belongs in Documents."""
 
-    code = "cruxible.sdk.exact_content_claim_type_mismatch"
+    code = "cruxible.sdk.exact_content_retired"
 
-    def __init__(self, *, predicate: str, object_kind: str) -> None:
+    def __init__(self, *, predicate: str) -> None:
         self.predicate = predicate
-        self.object_kind = object_kind
         super().__init__(
-            f"ClaimType {predicate!r} states a {object_kind} object, so it cannot carry the "
-            "exact bytes of a body. Repair: state this under a predicate whose object_kind "
-            f"is exact_content, or pass the {object_kind} value {predicate!r} admits."
+            f"Exact-content Claim {predicate!r} is retired: prose lives in Documents; "
+            "cite a Document section."
         )
 
 
@@ -534,10 +533,10 @@ class ClaimRoleNotPermittedError(SdkError):
         )
 
 
-class LiteralSchemaError(SdkError):
-    """A value refused by its ClaimType's declared literal schema."""
+class ClaimValueError(SdkError):
+    """A value refused by its ClaimType's declared native value type."""
 
-    code = "cruxible.sdk.literal_schema_violation"
+    code = "cruxible.sdk.value_invalid"
 
     def __init__(self, *, predicate: str, reason: str) -> None:
         self.predicate = predicate
@@ -595,7 +594,7 @@ __all__ = [
     "ExactContent",
     "ExactContentTypeError",
     "IncompatibleDaemonVersion",
-    "LiteralSchemaError",
+    "ClaimValueError",
     "LiteralValue",
     "LiteralValueTypeError",
     "PendingClaimTypeRef",

@@ -1094,7 +1094,7 @@ class ProcedureTerminalEgress(_StrictResultModel):
     """What one terminal node of a run did, reconstructed from its journal.
 
     Additive and optional: a run with no terminal carries none. A delivered
-    `propose_change_set` names the proposal and the exact candidate it produced,
+    `claims` names the proposal and the exact candidate it produced,
     so a manager can retrieve, review and activate that candidate through the
     existing proposal doors; producing it never activates it. A refused or
     failed egress names the code the run refused with, so the run reads as the
@@ -1107,8 +1107,6 @@ class ProcedureTerminalEgress(_StrictResultModel):
         "claims",
         "emit_capture",
         "post_inbox",
-        "propose_change_set",
-        "settle_change_set",
     ]
     verdict: TerminalEgressVerdict
     required_authority: AuthorityVerb
@@ -1185,7 +1183,7 @@ class ProcedureTerminalEgress(_StrictResultModel):
             and self.line_open_proposal.outcome == "still_current"
         )
         if self.line_open_proposal is not None and (
-            self.verdict != "delivered" or self.kind != "propose_change_set"
+            self.verdict != "delivered" or self.kind != "claims"
         ):
             raise ValueError("only a delivered Line proposal terminal weighs its open proposal")
         changed_nothing = (
@@ -1194,15 +1192,9 @@ class ProcedureTerminalEgress(_StrictResultModel):
             or (self.kind == "claims" and not self.children and not self.proposal_id)
         )
         delivered_settle = (
-            self.verdict == "delivered"
-            and self.kind in {"claims", "settle_change_set"}
-            and not changed_nothing
+            self.verdict == "delivered" and self.kind in {"claims"} and not changed_nothing
         )
-        if (
-            self.verdict == "delivered"
-            and self.kind in {"claims", "propose_change_set", "settle_change_set"}
-            and not changed_nothing
-        ):
+        if self.verdict == "delivered" and self.kind in {"claims"} and not changed_nothing:
             if self.proposal_id is None or self.candidate_digest is None:
                 raise ValueError(
                     "a delivered proposal egress names its proposal and exact candidate"
@@ -1216,7 +1208,7 @@ class ProcedureTerminalEgress(_StrictResultModel):
         if (self.verdict in {"refused", "failed"}) != (self.refusal_code is not None):
             raise ValueError("a refused or failed egress carries exactly its refusal code")
         if self.capped_by is not None and (
-            self.kind not in {"claims", "settle_change_set"} or self.settle_outcome == "settled"
+            self.kind not in {"claims"} or self.settle_outcome == "settled"
         ):
             raise ValueError("only a settle terminal that did not settle is capped")
         if self.inbox_truncation is not None and self.kind != "post_inbox":

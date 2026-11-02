@@ -108,13 +108,10 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
-    ProposalItemsFanOut,
-    ProposeChangeSetNode,
     ReadNode,
     RepeatBodyNode,
     RepeatNode,
     SelectNode,
-    SettleChangeSetNode,
     TransformNode,
     authority_for_rung,
     budget_within_caps,
@@ -209,6 +206,7 @@ from cruxible_core.procedures.acquisition import (
     apply_acquisition_result,
     disallowed_origin,
 )
+from cruxible_core.procedures.claims_changes import CoreClaimsChange
 from cruxible_core.procedures.claims_diagnostics import ClaimsDiagnostics
 from cruxible_core.procedures.completeness import (
     Completeness,
@@ -217,6 +215,7 @@ from cruxible_core.procedures.completeness import (
     dropped_rows,
 )
 from cruxible_core.procedures.egress import (
+    RUNG_REQUIRED_OPERATIONS,
     SERVED_AUTHORITY_TERMS,
     EffectiveRungTermV1,
     EffectiveRungV1,
@@ -227,7 +226,6 @@ from cruxible_core.procedures.egress import (
     TerminalAuthorityRefusal,
     TerminalEgressError,
     TerminalEgressItemV1,
-    TerminalEgressKindV1,
     TerminalEgressPreparerProtocol,
     TerminalEgressReceiptV1,
     TerminalEgressReceiptV2,
@@ -2226,6 +2224,7 @@ class _RunState:
         dataclass_field(default_factory=dict)
     )
     claims_diagnostics: dict[str, ClaimsDiagnostics] = dataclass_field(default_factory=dict)
+    claims_changes: dict[str, tuple[CoreClaimsChange, ...]] = dataclass_field(default_factory=dict)
     claims_evidence: dict[str, tuple[ClaimEvidenceReceipt | None, ...]] = dataclass_field(
         default_factory=dict
     )
@@ -3233,7 +3232,7 @@ class ProcedureExecutor:
                     node_id=node.node_id,
                     wall_clock=not isinstance(
                         node,
-                        ClaimsNode | CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
+                        ClaimsNode | CaptureEgressNode | InboxEgressNode,
                     ),
                 )
                 self._track_completeness(node, state)
@@ -3312,7 +3311,7 @@ class ProcedureExecutor:
                     elif isinstance(node, ClaimsNode) and definition.returns is None:
                         result = {}
                         state.return_tokens = state.control
-                    elif isinstance(node, CaptureEgressNode | ProposeChangeSetNode):
+                    elif isinstance(node, CaptureEgressNode):
                         result = _resolve_node_template(
                             node.result,
                             node_id=node.node_id,
@@ -3505,7 +3504,7 @@ class ProcedureExecutor:
             return None
         if isinstance(
             node,
-            CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
+            CaptureEgressNode | InboxEgressNode,
         ):
             self._run_terminal(node, admission=admission, state=state, records=records)
             return None
@@ -4671,20 +4670,13 @@ class ProcedureExecutor:
         )
         state.claims_diagnostics[node.node_id] = expanded.diagnostics
         state.claims_evidence[node.node_id] = expanded.evidence
+        state.claims_changes[node.node_id] = expanded.changes
         self._run_terminal(
-            SettleChangeSetNode(
-                node_id=node.node_id,
-                candidate_templates=({},),
-                result={},
-            ),
+            node,
             admission=admission,
             state=state,
             records=records,
         )
-        for claim_id, receipt, value in expanded.reobservations:
-            self.claims_context.reobserve(
-                claim_id, receipt, value, admission.actor_context.actor_id
-            )
 
     def _inbox_items(
         self,
@@ -4749,7 +4741,7 @@ class ProcedureExecutor:
 
     def _run_terminal(
         self,
-        node: CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
+        node: CaptureEgressNode | InboxEgressNode | ClaimsNode,
         *,
         admission: ProcedureRunAdmission,
         state: _RunState,
@@ -4843,7 +4835,7 @@ class ProcedureExecutor:
         # for that cap; one capped below propose is refused like any other.
         capped_by: EffectiveRungTermV1 | None = None
         if not rung.permits(node.kind):
-            if isinstance(node, SettleChangeSetNode) and rung.permits("propose_change_set"):
+            if isinstance(node, ClaimsNode) and rung.effective_rung >= 2:
                 capped_by = rung.limiting_term
             else:
                 self._append_event(
@@ -4861,7 +4853,7 @@ class ProcedureExecutor:
                     node_id=node.node_id,
                 )
         elif (
-            isinstance(node, SettleChangeSetNode)
+            isinstance(node, ClaimsNode)
             and isinstance(self.egress_sink, SettleGrantHolderProtocol)
             and not self.egress_sink.grants_settle()
         ):
@@ -4885,6 +4877,7 @@ class ProcedureExecutor:
                 manifests=manifests,
                 capped_by=capped_by,
                 claims_evidence=state.claims_evidence.get(node.node_id, ()),
+                claims_changes=state.claims_changes.get(node.node_id, ()),
             )
         except TerminalEgressError as exc:
             refusal = self._terminal_refusal(exc, node_id=node.node_id)
@@ -4920,8 +4913,7 @@ class ProcedureExecutor:
         # unchanged, or that keeps its Line's open proposal, too: its delivery
         # records re-observations, a durable effect.
         effectful = (
-            isinstance(request, TerminalEgressRequestV2)
-            and request.kind in {"propose_change_set", "settle_change_set"}
+            isinstance(request, TerminalEgressRequestV2) and request.kind in {"claims"}
         ) or (prepared is not None and prepared.proposes_nothing)
         if isinstance(request, TerminalEgressRequestV2) and effectful:
             payload = {
@@ -5097,7 +5089,7 @@ class ProcedureExecutor:
 
     def _terminal_egress_request(
         self,
-        node: CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
+        node: CaptureEgressNode | InboxEgressNode | ClaimsNode,
         *,
         admission: ProcedureRunAdmission,
         rung: EffectiveRungV1,
@@ -5106,10 +5098,11 @@ class ProcedureExecutor:
         manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
         capped_by: EffectiveRungTermV1 | None = None,
         claims_evidence: tuple[ClaimEvidenceReceipt | None, ...] = (),
+        claims_changes: tuple[CoreClaimsChange, ...] = (),
     ) -> tuple[TerminalEgressRequestV1, PreparedTerminalEgressV1 | None]:
         """Hand the sink the exact pins this terminal kind's law traverses.
 
-        A `propose_change_set` on a v5 admission is prepared first: the sink
+        A `claims` on a v5 admission is prepared first: the sink
         lowers the items through shared authoring and reports the paths that
         lowering actually changed and the exact live mandate it bound, and the
         v2 request is built from THOSE, so the mandate law sees what will be
@@ -5125,7 +5118,7 @@ class ProcedureExecutor:
                 label=f"emit_capture {node.node_id!r} CaptureContract",
             )
         # The authority asked for: a capped settle asks for propose's alone.
-        asked: TerminalEgressKindV1 = "propose_change_set" if capped_by is not None else node.kind
+        required_rung = 2 if capped_by is not None else TERMINAL_REQUIRED_RUNGS[node.kind]
         request = TerminalEgressRequestV1(
             kind=node.kind,
             run_id=admission.run_id,
@@ -5135,9 +5128,9 @@ class ProcedureExecutor:
             procedure_artifact_digest=admission.procedure_artifact_digest,
             admission_binding_digest=admission.admission_binding_digest,
             effective_rung=rung.effective_rung,
-            required_rung=TERMINAL_REQUIRED_RUNGS[asked],
+            required_rung=required_rung,
             limiting_term=rung.limiting_term,
-            granted_operation=rung.granted_operation(asked),
+            granted_operation=RUNG_REQUIRED_OPERATIONS[required_rung],
             capped_by=capped_by,
             bound_artifact_pin=bound_pin,
             inbox_dedupe_key=node.dedupe_key if isinstance(node, InboxEgressNode) else (),
@@ -5153,6 +5146,12 @@ class ProcedureExecutor:
             ),
             # Only the claims terminal produces receipts (one per child); any
             # other terminal's items carry none.
+            claims_changes={
+                child.item_key: change
+                for child, change in zip(children, claims_changes, strict=True)
+            }
+            if claims_changes
+            else {},
             claims_evidence=(
                 {
                     child.item_key: receipt
@@ -5181,7 +5180,7 @@ class ProcedureExecutor:
             )
         if (
             v2_capable
-            and isinstance(node, ProposeChangeSetNode)
+            and isinstance(node, ClaimsNode)
             and isinstance(self.egress_sink, TerminalEgressPreparerProtocol)
         ):
             prepared = self.egress_sink.prepare_terminal_egress(
@@ -5213,7 +5212,7 @@ class ProcedureExecutor:
 
     def _record_terminal_items(
         self,
-        node: CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
+        node: CaptureEgressNode | InboxEgressNode | ClaimsNode,
         *,
         admission: ProcedureRunAdmission,
         state: _RunState,
@@ -5234,16 +5233,12 @@ class ProcedureExecutor:
         base = _node_policy_tokens(node, self.references) | state.control
         if node.node_id in state.claims_items:
             values, item_tokens = state.claims_items[node.node_id]
-        elif isinstance(node, ProposeChangeSetNode) and isinstance(
-            node.candidate_templates, ProposalItemsFanOut
-        ):
-            values, item_tokens = _fan_out_items(
-                node.candidate_templates, state=state, node_id=node.node_id
-            )
         elif isinstance(node, InboxEgressNode):
             values, item_tokens = self._inbox_items(node, state=state)
-        else:
+        elif isinstance(node, CaptureEgressNode):
             values, item_tokens = _terminal_items(_terminal_item_templates(node), state=state)
+        else:
+            raise ExecutionError("Claims must be expanded by the claims executor")
         # Check the selected rows before inbox clipping, dependency journaling,
         # proposal lowering or delivery. A scalar return cannot hide this fan-out.
         boundary = f"terminal:{node.node_id}"
@@ -5258,23 +5253,6 @@ class ProcedureExecutor:
                 boundary=boundary,
                 field_path="items",
             )
-        if isinstance(node, ProposeChangeSetNode):
-            from cruxible_core.procedures.source_candidates import bind_source_candidate
-
-            try:
-                values = [
-                    bind_source_candidate(
-                        value,
-                        procedure_identity=admission.procedure_identity,
-                        procedure_digest=admission.procedure_artifact_digest,
-                        outputs=state.outputs,
-                        provenance=state.provenance,
-                        item_tokens=base | item_tokens[index],
-                    )
-                    for index, value in enumerate(values)
-                ]
-            except (ValueError, KeyError) as exc:
-                raise _RunRefusal("proposal_item_invalid", str(exc), node_id=node.node_id) from exc
         selected = len(values)
         if limit is not None:
             values, item_tokens = list(values[:limit]), tuple(item_tokens[:limit])
@@ -6543,44 +6521,11 @@ def _inbox_cap(node: InboxEgressNode) -> tuple[int, Literal["declared", "default
     return INBOX_RUN_ITEM_CAP_DEFAULT, "default"
 
 
-def _terminal_item_templates(node: CaptureEgressNode | ProposeChangeSetNode) -> object:
-    if isinstance(node, ProposeChangeSetNode):
-        templates = node.candidate_templates
-        if isinstance(templates, tuple):
-            return list(templates)
-        return {"items": templates.items}
+def _terminal_item_templates(node: CaptureEgressNode) -> object:
     return node.input
 
 
 _CAPTURE_SLOTS = frozenset({"produced_capture", "admitted_capture"})
-
-
-def _fan_out_items(
-    fan_out: ProposalItemsFanOut,
-    *,
-    state: _RunState,
-    node_id: str,
-) -> tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]:
-    """One proposal item per element of a list the run produced, each with its own closure.
-
-    Data decides the shape here, so a reference that does not resolve or a
-    value that is not a list is a typed refusal, never an internal failure,
-    and an object is never unwrapped. Each element's evidence closure is its
-    own lineage where the producing step kept one: a Capture another element
-    came from is not offered to it. Without per-element lineage, a list built
-    from more than one Capture is refused rather than giving every element
-    the union.
-    """
-
-    return _fan_out_list(
-        fan_out.items,
-        state=state,
-        node_id=node_id,
-        field="candidate_templates.items",
-        noun="proposal items",
-        invalid_code="proposal_item_invalid",
-        ambiguous_code="proposal_item_evidence_ambiguous",
-    )
 
 
 def _fan_out_list(

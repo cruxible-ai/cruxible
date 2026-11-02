@@ -11,7 +11,6 @@ from typing import Any, get_args
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 
-from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     ProcedureNode,
@@ -44,7 +43,6 @@ def compact_procedure(value: Any) -> Any:
             default = field.get_default(call_default_factory=True)
             if (
                 name not in {"kind", "tag", "op", "artifact_format"}
-                and not (isinstance(value, PropertySchema) and name == "type")
                 and default is not PydanticUndefined
                 and member == default
             ):

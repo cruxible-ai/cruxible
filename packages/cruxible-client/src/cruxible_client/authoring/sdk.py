@@ -46,7 +46,6 @@ from cruxible_client.authoring.sdk_types import (
     CaptureRef,
     CaptureView,
     Cardinality,
-    ClaimObjectKind,
     ClaimRef,
     ClaimRole,
     ClaimRoleNotPermittedError,
@@ -109,7 +108,6 @@ from cruxible_client.contracts.authoring.models import (
     AttestationAuthoringPayload,
     AuthoringChangeSetMember,
     AuthoringClaimStatement,
-    AuthoringExactContentObject,
     AuthoringExistingClaimDisposition,
     AuthoringIntentView,
     AuthoringProgramOperation,
@@ -238,7 +236,12 @@ from cruxible_client.contracts.resolution_contracts import (
     ResolutionContractReference,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.shapes import Contract
+from cruxible_client.contracts.shapes import (
+    Contract,
+    FieldType,
+    claim_value_kind,
+    coerce_field_type,
+)
 from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyReference
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
@@ -286,9 +289,6 @@ _SUBJECT_REF_RE = re.compile(
     r"^(?P<kind>[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*)/"
     r"(?P<identifier>[^/\\\x00-\x1f\x7f]{1,1024})$"
 )
-# Object kinds this client understands from an accepted ClaimType envelope.
-# Anything outside the set is skew, not caller error; see _claim_type_object_kind.
-_CLAIM_TYPE_OBJECT_KINDS = frozenset({"literal", "subject", "exact_content"})
 _CLAIM_ADAPTER: TypeAdapter[ClaimArtifact] = TypeAdapter(ClaimArtifact)
 
 
@@ -1404,7 +1404,7 @@ class ChangeSetDraft:
         return PendingClaimTypeRef(
             address=value.predicate,
             coordinate=self._playbill.coordinate,
-            object_kind=value.object_kind,
+            value_type=value.value,
         )
 
     def retire(
@@ -3011,9 +3011,7 @@ class Cruxible:
         *,
         predicate: str | ClaimTypeRef,
         subject_kinds: Sequence[str],
-        object_kind: ClaimObjectKind | str,
-        value_schema: dict[str, object] | None,
-        object_subject_kinds: Sequence[str],
+        value_type: FieldType | str,
         cardinality: Cardinality | str,
         permitted_roles: Sequence[ClaimRole | str],
         referent_sensitivity: ReferentSensitivity | str,
@@ -3034,7 +3032,7 @@ class Cruxible:
         Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
 
-        kind = _enum(object_kind, ClaimObjectKind, label="claim-type object kind")
+        native_value_type = coerce_field_type(value_type)
         arity = _enum(cardinality, Cardinality, label="claim-type cardinality")
         sensitivity = _enum(
             referent_sensitivity, ReferentSensitivity, label="claim-type referent sensitivity"
@@ -3094,9 +3092,7 @@ class Cruxible:
             identity=ArtifactIdentity(kind="ClaimType", name=name),
             predicate=name,
             allowed_subject_kinds=tuple(subject_kinds),
-            object_kind=kind.value,
-            literal_schema=value_schema,
-            allowed_object_subject_kinds=tuple(object_subject_kinds),
+            value=native_value_type,
             cardinality=arity.value,
             permitted_roles=tuple(role.value for role in roles),
             referent_sensitivity=sensitivity.value,
@@ -3671,26 +3667,9 @@ class Cruxible:
             elif subject_name.endswith(".yaml"):
                 subject_name = subject_name.removesuffix(".yaml")
         predicate_name = _address(predicate, RefKind.CLAIM_TYPE)
-        statement_object: LiteralClaimObject | SubjectClaimObject | AuthoringExactContentObject
+        statement_object: LiteralClaimObject | SubjectClaimObject
         if isinstance(value, ExactContent):
-            # Exact bytes name their own kind, so the only question left is
-            # whether the predicate states one. Asking here turns a shape the
-            # daemon would refuse into a refusal that names the predicate and
-            # the kind it does state, before anything is written.
-            object_kind = self._claim_type_object_kind(
-                predicate_name=predicate_name,
-                predicate=predicate,
-                claim_type_definition=claim_type_definition,
-                staged_claim_types=staged_claim_types,
-            )
-            if object_kind != "exact_content":
-                raise ExactContentTypeError(
-                    predicate=predicate_name,
-                    object_kind=object_kind,
-                )
-            statement_object = AuthoringExactContentObject(
-                content_base64=base64.b64encode(value.content).decode("ascii")
-            )
+            raise ExactContentTypeError(predicate=predicate_name)
         elif isinstance(value, LiteralValue):
             # A typed literal already names the ClaimType that admits it, so it
             # answers the object kind without a read and refuses the wrong
@@ -3873,8 +3852,6 @@ class Cruxible:
                 (
                     "statement.object.address"
                     if isinstance(statement_object, SubjectClaimObject)
-                    else "statement.object.content_base64"
-                    if isinstance(statement_object, AuthoringExactContentObject)
                     else "statement.object.value"
                 ),
             ),
@@ -3896,11 +3873,6 @@ class Cruxible:
             "value": (
                 statement_object.address.model_dump(mode="json")
                 if isinstance(statement_object, SubjectClaimObject)
-                # The program stamp records the decision, not the body: exact
-                # content is already stored and digested by the daemon, and a
-                # second copy of it here would put the same bytes in the stamp.
-                else statement_object.content_base64
-                if isinstance(statement_object, AuthoringExactContentObject)
                 else statement_object.value
             ),
             "role": claim_role.value,
@@ -4007,7 +3979,7 @@ class Cruxible:
         predicate: str | ClaimTypeRef,
         claim_type_definition: ClaimTypeDraft | None,
         staged_claim_types: Mapping[str, ClaimType] | None = None,
-    ) -> Literal["literal", "subject", "exact_content"]:
+    ) -> Literal["literal", "subject"]:
         """Resolve the exact ClaimType before interpreting an untyped object.
 
         Three answers a change set already holds, tried before the accepted
@@ -4018,28 +3990,17 @@ class Cruxible:
         """
 
         if claim_type_definition is not None:
-            return claim_type_definition.definition.object_kind
+            return claim_value_kind(claim_type_definition.definition.value)
         if isinstance(predicate, PendingClaimTypeRef):
-            if predicate.object_kind not in _CLAIM_TYPE_OBJECT_KINDS:
-                return "literal"
-            return cast(
-                Literal["literal", "subject", "exact_content"],
-                predicate.object_kind,
-            )
+            return claim_value_kind(predicate.value_type)
         staged = (staged_claim_types or {}).get(predicate_name)
-        if staged is not None and staged.object_kind in _CLAIM_TYPE_OBJECT_KINDS:
-            return staged.object_kind
-        object_kind = self._accepted_claim_type_envelope(predicate_name, predicate).get(
-            "object_kind"
+        if staged is not None:
+            return claim_value_kind(staged.value)
+        return claim_value_kind(
+            ClaimType.model_validate(
+                self._accepted_claim_type_envelope(predicate_name, predicate)
+            ).value
         )
-        if object_kind not in _CLAIM_TYPE_OBJECT_KINDS:
-            # An envelope kind this client does not know is daemon/client skew,
-            # not a caller mistake. Falling back to the literal shape keeps the
-            # daemon's preflight the single authority: it answers with the typed
-            # `playbill.claim.object_kind_mismatch` refusal and its repair,
-            # instead of the SDK raising an untyped, repair-less ValueError.
-            return "literal"
-        return cast(Literal["literal", "subject", "exact_content"], object_kind)
 
     def query_definition(
         self,

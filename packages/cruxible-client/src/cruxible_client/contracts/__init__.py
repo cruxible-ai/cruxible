@@ -62,6 +62,7 @@ from cruxible_client.contracts.capture_contract_inputs import (
     CaptureContractInputRecord as CaptureContractInputRecord,
 )
 from cruxible_client.contracts.change_control import StateCoordinate
+from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic
 from cruxible_client.contracts.claims import ClaimStatementCard as ClaimStatementCard
 from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.compact_query import (
@@ -394,7 +395,6 @@ AuthoringExampleName = Literal[
     "claim-flow-a",
     "claim-self-source",
     "claim-subject-relation",
-    "claim-exact-content",
     "claim-revision",
     "procedure",
     "claim-adjudicate-contradicting-evidence",
@@ -1547,6 +1547,8 @@ class ProcedureRunState(BaseModel):
     children: list[ProcedureChildInvocation] = Field(default_factory=list)
     source_observations: list[ProcedureSourceObservation] = Field(default_factory=list)
     terminal_egress: list[ProcedureTerminalEgress] = Field(default_factory=list)
+    findings: list[ClaimsDiagnostic] = Field(default_factory=list)
+    findings_count: int = 0
 
     @property
     def coordinate(self) -> AcceptedCoordinate:

@@ -5,11 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import CanonicalValue
 from cruxible_client.contracts.captures import CaptureContractAny as CaptureContract
+from cruxible_client.contracts.claims import SubjectClaimObject
 from cruxible_client.contracts.errors import ExecutionError, JournalError
 from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionRule
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
@@ -427,6 +428,25 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
             raise ExecutionError(
                 "Claim selection must be complete and satisfy its declared cardinality"
             )
+        from cruxible_client.contracts.procedures.views import claim_view_contract
+        from cruxible_client.contracts.provider_operations import validate_operation_value
+        from cruxible_client.contracts.shapes import tree_contract_resolver
+        from cruxible_core.claims.enum_resolution import accepted_enum_resolver
+
+        view_contract = claim_view_contract(selected_type.structure)
+        contract_lookup = tree_contract_resolver(self.instance.immutable_tree_at(internal.git_oid))
+        enum_lookup = accepted_enum_resolver(self.instance, internal)
+        from cruxible_core.indexes.subject_identity import tree_key_rules
+
+        key_lookup = tree_key_rules(self.instance.immutable_tree_at(internal.git_oid))
+
+        def subject_value(path: str) -> str:
+            if path.startswith("claim-types/"):
+                return "semantic.claim_type/" + path.removeprefix("claim-types/").removesuffix(
+                    ".json"
+                ).replace("/", ".")
+            return path.removeprefix("subjects/").removesuffix(".json")
+
         values = []
         for view in selected:
             claim = _claim_from_view(view)
@@ -440,27 +460,41 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
                 raise ExecutionError("Selected Claim has no current verdict and currency")
             obj = claim.statement.object.model_dump(mode="json")
             value = obj.get("value") if obj["kind"] == "literal" else obj
-            values.append(
-                dict(
-                    value=value,
-                    claim_id=claim.identity.name,
-                    revision=claim_artifact_digest(claim).tagged,
-                    subject=claim.statement.subject.model_dump(mode="json"),
-                    predicate=claim.statement.predicate,
-                    qualifier=claim.statement.qualifier,
-                    role=claim.statement.role,
-                    object_kind=obj["kind"],
-                    lifecycle_state=claim.lifecycle.state,
-                    captures=list(claim.backing.capture_digests),
-                    verdict=verdict["verdict"],
-                    currency=verdict["currency"],
-                    identity=claim.identity.qualified,
-                    artifact_digest=claim_artifact_digest(claim).tagged,
-                    statement_digest=claim_statement_digest(claim.statement).tagged,
-                    path=view.envelope["path"],
-                    claim=claim.model_dump(mode="json"),
-                )
+            payload = dict(
+                value=value,
+                claim_id=claim.identity.name,
+                revision=claim_artifact_digest(claim).tagged,
+                subject=subject_value(claim.statement.subject.artifact_path),
+                predicate=claim.statement.predicate,
+                qualifier=claim.statement.qualifier,
+                role=claim.statement.role,
+                object_kind=obj["kind"],
+                lifecycle_state=claim.lifecycle.state,
+                captures=list(claim.backing.capture_digests),
+                verdict=verdict["verdict"],
+                currency=verdict["currency"],
+                identity=claim.identity.qualified,
+                artifact_digest=claim_artifact_digest(claim).tagged,
+                statement_digest=claim_statement_digest(claim.statement).tagged,
+                path=view.envelope["path"],
             )
+            if obj["kind"] == "subject":
+                payload["value"] = subject_value(
+                    cast(SubjectClaimObject, claim.statement.object).address.artifact_path
+                )
+            elif obj["kind"] == "none":
+                payload.pop("value", None)
+            if payload["qualifier"] is None:
+                payload.pop("qualifier")
+
+            validate_operation_value(
+                payload,
+                view_contract,
+                resolve=contract_lookup,
+                enum_members=enum_lookup,
+                keys=key_lookup,
+            )
+            values.append(payload)
         return StateTapReadResultV1(
             value=values[0] if cardinality == "one" else values,
             # What the selection ran under: the read ceiling, no interactive cap.

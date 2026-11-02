@@ -3879,9 +3879,9 @@ def propose_capture_contract(
     help=(
         "A ClaimTypeInputRecord. A new ClaimType states predicate and cardinality. "
         "allowed_subject_kinds defaults to the predicate prefix before its last dot. "
-        "literal_schema infers a literal object; allowed_object_subject_kinds infers a "
-        "Subject object; neither means a string literal. State only one, or state "
-        "object_kind exact_content. String literals default canonical_form to [nfc, trim]. "
+        "value declares a native Contract field type (default string{max_len: 256}); "
+        "Subject links use subject<K1 | K2>. Prose lives in Documents. "
+        "String values default canonical_form to [nfc, trim]. "
         "permitted_roles defaults to [default_role] or [normative]; exactly [observation] "
         "defaults evidence_requirement to captured and needs a source or evidence policy. "
         "Other roles default to self: one own-words rule, plus one per anticipated_source_ids "
@@ -7208,9 +7208,9 @@ def _proposed_children_lines(
 def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
     """Print what each terminal of the run did, and the handles a manager needs.
 
-    A delivered `propose_change_set` prints the proposal id and the exact
+    A delivered `claims` prints the proposal id and the exact
     candidate digest, which are the two arguments the existing proposal
-    verbs take; a settled `settle_change_set` prints the generation it
+    verbs take; a settled `claims` prints the generation it
     accepted, and one that fell back prints its proposal and why. A capped
     terminal names the authority it needed and the authority the run had; a
     refused one prints the code the run refused with. A Line run whose change

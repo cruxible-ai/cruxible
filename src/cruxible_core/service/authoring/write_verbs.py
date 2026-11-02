@@ -99,7 +99,6 @@ from cruxible_client.contracts.claims import (
     SubjectClaimObject,
     claim_artifact_digest,
     claim_path,
-    literal_schema_violation,
     new_claim_id,
     parse_claim,
 )
@@ -125,6 +124,11 @@ from cruxible_client.contracts.read_values import (
 )
 from cruxible_client.contracts.recompilation import ProposalRecompiled
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import (
+    claim_literal_problem,
+    claim_value_kind,
+    subject_value_kinds,
+)
 from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.subject_kinds import (
     SubjectKeyPart,
@@ -756,7 +760,7 @@ class _Planner:
         found: dict[str, object] = {}
         for item in items:
             shown: object
-            if info.claim_type.object_kind == "literal":
+            if claim_value_kind(info.claim_type.value) == "literal":
                 shown = self.literal(
                     info, item, index=index, field_name=field_name, path=path
                 ).value
@@ -766,12 +770,14 @@ class _Planner:
                 # holds is simply not what it holds.
                 shown = (
                     self.expected_subject(str(subject_reference(item)), index=index, path=path)
-                    if info.claim_type.object_kind == "subject"
+                    if claim_value_kind(info.claim_type.value) == "subject"
                     else item
                 )
             else:
                 taken = (
-                    "a Subject as kind/id" if info.claim_type.object_kind == "subject" else "text"
+                    "a Subject as kind/id"
+                    if claim_value_kind(info.claim_type.value) == "subject"
+                    else "text"
                 )
                 raise _refuse(
                     "cruxible.write.value_type_mismatch",
@@ -1456,12 +1462,7 @@ class _Planner:
                     repair=f"Use one of: {spelled}",
                     field_path=path,
                 )
-        schema = info.claim_type.literal_schema
-        violated = (
-            "the field declares no literal schema"
-            if schema is None
-            else literal_schema_violation(value, schema)
-        )
+        violated = claim_literal_problem(value, info.claim_type.value)
         if violated is not None:
             expected = info.value_type if info.value_type != "json" else "value"
             raise _refuse(
@@ -1491,7 +1492,7 @@ class _Planner:
         added: Mapping[str, SubjectShell],
     ) -> tuple[SubjectClaimObject, str | None]:
         path = f"changes[{index}].value"
-        allowed = tuple(info.claim_type.allowed_object_subject_kinds)
+        allowed = tuple(subject_value_kinds(info.claim_type.value))
         if isinstance(value, CreatedSubject):
             bound = self.bound(value.created, index=index, path=path)
             if not admits_object_subject(info.claim_type.predicate, allowed, bound.kind):
@@ -1627,7 +1628,7 @@ class _Planner:
                         path=f"{path}.none",
                     )
                 )
-            if claim_type.object_kind == "subject":
+            if claim_value_kind(claim_type.value) == "subject":
                 of, _shown = self.subject_value(
                     info, value.none, index=index, field_name=field_name, added={}
                 )
@@ -2162,20 +2163,7 @@ class _Planner:
                 if isinstance(of, LiteralClaimObject)
                 else of.address.artifact_path.removeprefix("subjects/").removesuffix(".json")
             }
-        elif claim_type.object_kind == "exact_content":
-            if not isinstance(change.value, str) or not change.value:
-                raise _refuse(
-                    "cruxible.write.value_type_mismatch",
-                    f"{name} is exact content, so its value is text",
-                    change=index,
-                    repair="Pass the text itself as the value",
-                    field_path=f"{prefix}.value",
-                )
-            exact = change.value.encode("utf-8")
-            statement_object = AuthoringExactContentObject(
-                content_base64=base64.b64encode(exact).decode("ascii")
-            )
-        elif claim_type.object_kind == "subject":
+        elif claim_value_kind(claim_type.value) == "subject":
             statement_object, shown_after = self.subject_value(
                 info,
                 change.value,
@@ -2186,7 +2174,7 @@ class _Planner:
         elif isinstance(change.value, CreatedSubject):
             raise _refuse(
                 "cruxible.write.value_type_mismatch",
-                f"{name} takes a {claim_type.object_kind.replace('_', ' ')} value, not a Subject",
+                f"{name} takes a {claim_value_kind(claim_type.value)} value, not a Subject",
                 change=index,
                 repair="Pass the value itself",
                 field_path=f"{prefix}.value",

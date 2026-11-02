@@ -18,24 +18,17 @@ def _literal() -> dict[str, object]:
     return {
         "predicate": "project.work_item.status",
         "allowed_subject_kinds": ["project.work_item"],
-        "object_kind": "literal",
-        "literal_schema": {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "enum": ["blocked", "done", "ready"],
-            "type": "string",
-        },
-        "allowed_object_subject_kinds": [],
+        "value": "enum[blocked, done, ready]",
         "cardinality": "one",
         "permitted_roles": ["normative", "observation"],
         "referent_sensitivity": "identity",
     }
 
 
-def test_claim_type_structure_validates_exact_literal_schema_without_digesting_artifact() -> None:
+def test_claim_type_structure_validates_native_value_without_digesting_artifact() -> None:
     structure = ClaimTypeStructure.model_validate(_literal())
-    assert canonical_bytes(structure.literal_schema) == (
-        b'{"$schema":"https://json-schema.org/draft/2020-12/schema",'
-        b'"enum":["blocked","done","ready"],"type":"string"}'
+    assert canonical_bytes(structure.value.model_dump(mode="json")) == (
+        b'{"kind":"enum","members":["blocked","done","ready"]}'
     )
     assert not hasattr(structure, "artifact_format")
     assert not hasattr(structure, "artifact_digest")
@@ -44,16 +37,9 @@ def test_claim_type_structure_validates_exact_literal_schema_without_digesting_a
 @pytest.mark.parametrize(
     ("updates", "message"),
     [
-        ({"literal_schema": None}, "literal_schema"),
-        ({"object_kind": "subject"}, "cannot carry literal_schema"),
-        (
-            {
-                "object_kind": "subject",
-                "literal_schema": None,
-                "allowed_object_subject_kinds": [],
-            },
-            "allowed object Subject kinds",
-        ),
+        ({"value": None}, "value"),
+        ({"value": "subject<>"}, "subject"),
+        ({"literal_schema": {}}, "Extra inputs"),
         ({"allowed_subject_kinds": []}, "allowed subject kind"),
         ({"permitted_roles": []}, "roles"),
         ({"referent_sensitivity": "bytes"}, "referent_sensitivity"),
@@ -73,7 +59,7 @@ def test_claim_type_structural_diagnostics_are_explicitly_local_only() -> None:
     assert valid.coverage == "local_only"
     assert valid.structure is not None
 
-    invalid = check_claim_type_structure({**_literal(), "literal_schema": None})
+    invalid = check_claim_type_structure({**_literal(), "value": None})
     assert invalid.status == "invalid"
     assert invalid.coverage == "local_only"
     assert [item.code for item in invalid.diagnostics] == ["cruxible.claim_type.structure_invalid"]

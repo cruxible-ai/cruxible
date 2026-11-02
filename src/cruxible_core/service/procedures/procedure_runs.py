@@ -2871,8 +2871,7 @@ def _with_prior_refusals(
     """
 
     if egress.proposal_id is None or egress.kind not in {
-        "propose_change_set",
-        "settle_change_set",
+        "claims",
     }:
         return egress
     try:
@@ -3254,8 +3253,8 @@ def service_run_playbill_procedure(
             caller_rung=caller_rung,
         )
     readiness = _readiness(accepted, coordinate=coordinate)
-    # A Procedure whose terminals act outward (propose_change_set,
-    # settle_change_set, emit_capture, post_inbox) still runs directly: it
+    # A Procedure whose terminals act outward (claims, emit_capture,
+    # post_inbox) still runs directly: it
     # instantiates the ephemeral Line spec above and is capped at propose
     # (ruling C4). Only node kinds no run lane executes at all are refused
     # here; the terminal's own authority cap is enforced at execution.

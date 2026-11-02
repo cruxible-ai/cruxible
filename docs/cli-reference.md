@@ -1385,8 +1385,9 @@ claim_types`, one ClaimType with `cruxible get ClaimType:PREDICATE`.
 
 A ClaimType is the governed interface a predicate must satisfy before any Claim
 may state it. `propose --input` takes a `ClaimTypeInputRecord`. A new
-ClaimType states `predicate`, `allowed_subject_kinds`, `object_kind` and
-`cardinality` (and `literal_schema` or `allowed_object_subject_kinds`); every
+ClaimType states `predicate` and `cardinality`; `value` declares its native
+Contract field type and defaults to `string{max_len: 256}`. `allowed_subject_kinds`
+defaults to the predicate prefix. Every
 other field has a default: `permitted_roles` of `[default_role]` or
 `[normative]`, one own-words evidence rule (plus one per
 `anticipated_source_ids` entry), no admission requirements, and supported,
@@ -2272,7 +2273,7 @@ nodes behind that answer. Procedures are graph format 6 and pin every Provider
 exactly; open slots belong only to a Blueprint. The direct lane runs `state_tap`,
 `state_claim`, `transform`, `project`, `guard`, `repeat`, `select`, `constant`,
 `return`, `invoke`, `halt`, `source` and `call` nodes. The terminals --
-`emit_capture`, `post_inbox`, `propose_change_set`, `settle_change_set` -- run
+`emit_capture`, `post_inbox`, `claims` -- run
 only as a Line: a direct invocation carries no requested authority, no
 occurrence, and no mandate coordinate, and none is fabricated for it.
 
@@ -2720,7 +2721,7 @@ procedure` template's `hard_caps.max_wall_clock` is 30 minutes: a wall-clock
 cap catches an obviously bad run, not compute management, so the example
 leaves a large safety factor rather than a tight one.
 
-A Line whose Procedure ends in a `propose_change_set` terminal produces a
+A Line whose Procedure ends in a `claims` terminal capped at propose produces a
 proposal. Its `candidate_templates` are a fixed list of templates, or
 `{"items": "$steps.<alias>.<list>"}` to fan out over data: each element a
 provider, Source or transform produced becomes one item of the one proposal,
@@ -2853,7 +2854,7 @@ Capture refuses `proposal_lowering_refused` naming the lowering diagnostic; a
 mandate that does not cover the request refuses `procedure_mandate_*` naming
 the failed law. None of these creates a proposal ref.
 
-A Line whose Procedure ends in a `settle_change_set` terminal lands the change
+A Line whose Procedure ends in a `claims` terminal under a settle Mandate lands the change
 without candidate approvals when, and only when, exactly one live settle
 ProcedureMandate for that Procedure covers every Claim the change touches: its
 namespace, its ClaimType scope and change kinds (`create`, `revise`,
@@ -3056,7 +3057,7 @@ is no longer live at the accepted head, is refused with
 selector, mechanical rule, and bound window. `--request` takes the advanced
 request: an exact contract reference, an explicit anchor event, or terminal
 evidence. Terminal-backed settlement additionally requires one delivered
-`settle_change_set` receipt from the same investigation whose outcome is
+`claims` receipt from the same investigation whose outcome is
 `settled`; one that fell back to a proposal does not qualify. It records
 the activation and resolution in operational exhaust; it does not create or
 mutate Claims. A failed attempt or an unevaluable

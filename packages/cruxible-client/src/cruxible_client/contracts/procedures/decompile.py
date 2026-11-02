@@ -33,12 +33,9 @@ from cruxible_client.contracts.procedures.models import (
     InvokeNode,
     ProcedureDefinition,
     ProjectNode,
-    ProposalItemsFanOut,
-    ProposeChangeSetNode,
     ReadNode,
     RepeatNode,
     SelectNode,
-    SettleChangeSetNode,
     TransformNode,
 )
 from cruxible_client.contracts.procedures.reads import DEFAULT_MAX_READ_ROWS
@@ -327,15 +324,6 @@ def decompile_procedure(
                     for claim in node.claims
                 ],
             )
-        elif isinstance(node, ProposeChangeSetNode):
-            templates = node.candidate_templates
-            candidates = (
-                typed_template(templates.items)
-                if isinstance(templates, ProposalItemsFanOut)
-                else typed_template(list(templates))
-            )
-            verb = "settle" if isinstance(node, SettleChangeSetNode) else "propose"
-            step = {verb: candidates, "result": typed_template(node.result)}
         elif isinstance(node, InboxEgressNode):
             step = dict(
                 inbox=node.contract.spelling,

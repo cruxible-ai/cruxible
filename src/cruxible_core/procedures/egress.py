@@ -12,8 +12,8 @@ scarcity is a property of the refusal, not a later reconstruction.
 
 Egress above the cap does not exist, and egress below it is typed by kind:
 ``emit_capture`` emits inert evidence, ``post_inbox`` posts items to the inbox for intelligence,
-``propose_change_set`` reaches proposal *receive* only under a rung-2 grant, and
-``settle_change_set`` settles under one exact rung-3 Procedure mandate or falls
+``claims`` reaches proposal *receive* only under a rung-2 grant, and
+``claims`` settles under one exact rung-3 Procedure mandate or falls
 back to an ordinary proposal.  A receipt cannot relabel one as another: its
 disposition is keyed to its kind, so a proposal can never report itself settled.
 
@@ -82,6 +82,7 @@ from cruxible_client.contracts.repairs import (
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.procedures.claims_changes import CoreClaimsChange
 from cruxible_core.procedures.terminal_dependencies import (
     TAINT_ACCEPTED_STATE,
     TAINT_CONSERVATIVE_DEFAULT,
@@ -98,15 +99,14 @@ if TYPE_CHECKING:
 TerminalEgressKindV1 = Literal[
     "emit_capture",
     "post_inbox",
-    "propose_change_set",
-    "settle_change_set",
+    "claims",
 ]
 #: Terminals that change accepted state under an exact Procedure mandate.
-EFFECTFUL_TERMINAL_KINDS: frozenset[str] = frozenset({"propose_change_set", "settle_change_set"})
+EFFECTFUL_TERMINAL_KINDS: frozenset[str] = frozenset({"claims"})
 
 TerminalEgressDispositionV1 = Literal["emitted", "posted", "received", "settled"]
 
-MandateOperationV1 = Literal["compile_capture", "propose_change_set", "activate_change_set"]
+MandateOperationV1 = Literal["compile_capture", "propose", "activate_change_set"]
 
 EffectiveRungTermV1 = Literal[
     "procedure_terminal_capability",
@@ -166,7 +166,7 @@ MANDATE_FREE_RUNG_CEILING = 1
 RUNG_REQUIRED_OPERATIONS: dict[int, MandateOperationV1 | None] = {
     0: "compile_capture",
     1: None,
-    2: "propose_change_set",
+    2: "propose",
     3: "activate_change_set",
 }
 
@@ -174,13 +174,12 @@ RUNG_REQUIRED_OPERATIONS: dict[int, MandateOperationV1 | None] = {
 TERMINAL_EGRESS_DISPOSITIONS: dict[TerminalEgressKindV1, TerminalEgressDispositionV1] = {
     "emit_capture": "emitted",
     "post_inbox": "posted",
-    "propose_change_set": "received",
-    "settle_change_set": "settled",
+    "claims": "settled",
 }
 #: A settle terminal whose condition does not hold may fall back to an ordinary
 #: proposal; its receipt then reports the proposal's disposition, never settled.
 TERMINAL_EGRESS_FALLBACK_DISPOSITIONS: dict[str, TerminalEgressDispositionV1] = {
-    "settle_change_set": "received",
+    "claims": "received",
 }
 
 
@@ -468,7 +467,7 @@ def compute_ephemeral_run_effective_rung(
 
     Ruling C4: a direct run has no accepted Line, so no Procedure mandate ever
     covers it. Its ceiling is fixed at propose -- it runs a
-    ``propose_change_set`` terminal in full, and a ``settle_change_set``
+    ``claims`` terminal in full, and a ``claims``
     terminal falls back to an ordinary proposal exactly as it would under an
     accepted Line whose live mandate does not grant settle. The ephemeral
     spec's own digest stands in for the Line and mandate coordinates a real
@@ -588,6 +587,9 @@ class TerminalEgressRequestV1(_StrictEgressModel):
     #: identity in the inbox (absent: the whole item).
     inbox_dedupe_key: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     #: Core-produced Claims receipts, outside provider/authored item values.
+    claims_changes: dict[str, CoreClaimsChange] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
     claims_evidence: dict[str, ClaimEvidenceReceipt] = Field(
         default_factory=dict, exclude_if=lambda value: not value
     )
@@ -613,6 +615,13 @@ class TerminalEgressRequestV1(_StrictEgressModel):
             raise ValueError(_INHERITED_MANDATE_REFUSAL)
         if self.inbox_dedupe_key and self.kind != "post_inbox":
             raise ValueError("only a post_inbox terminal declares an inbox dedupe_key")
+        if self.kind == "claims":
+            if set(self.claims_changes) != {item.item_key for item in self.items}:
+                raise ValueError(
+                    "claims egress requires the executor's typed changes; use a claims node"
+                )
+        elif self.claims_changes or self.claims_evidence:
+            raise ValueError("only the claims executor produces Claim changes and evidence")
         if not self.items:
             raise ValueError("terminal egress requires at least one child item")
         if tuple(item.child_index for item in self.items) != tuple(range(len(self.items))):
@@ -719,14 +728,14 @@ def _requested_rung(request: TerminalEgressRequestV1) -> int:
 
     if request.capped_by is None:
         return TERMINAL_REQUIRED_RUNGS[request.kind]
-    if request.kind != "settle_change_set":
+    if request.kind != "claims":
         raise ValueError("only a settle terminal is capped")
     # Below settle the limiting term caps it; at settle only a missing settle
     # grant does (a caller's tier lifted the mandate term past its mandates).
-    reaches = request.effective_rung >= TERMINAL_REQUIRED_RUNGS["settle_change_set"]
+    reaches = request.effective_rung >= TERMINAL_REQUIRED_RUNGS["claims"]
     if request.capped_by != ("mandate_grant" if reaches else request.limiting_term):
         raise ValueError("a capped settle names its limiting term, or the absent settle grant")
-    return TERMINAL_REQUIRED_RUNGS["propose_change_set"]
+    return 2
 
 
 def terminal_operation_key(request: TerminalEgressRequestV1) -> str:
@@ -981,11 +990,12 @@ def build_terminal_egress_request_v2(
         terminal_operation_key(provisional) if request.kind in EFFECTFUL_TERMINAL_KINDS else None
     )
     wire = provisional.model_copy(update={"operation_key": operation_key}).model_dump(
-        mode="python", exclude={"claims_evidence"}
+        mode="python", exclude={"claims_evidence", "claims_changes"}
     )
     # These immutable core-produced models were validated at expansion; do not
     # serialize and rebuild every receipt just to successor the request.
     wire["claims_evidence"] = request.claims_evidence
+    wire["claims_changes"] = request.claims_changes
     return TerminalEgressRequestV2.model_validate(wire)
 
 
@@ -1094,7 +1104,7 @@ class TerminalEgressUnchangedReceiptV1(TerminalEgressReceiptV1):
 
     @model_validator(mode="after")
     def _shape(self) -> "TerminalEgressUnchangedReceiptV1":
-        if self.kind not in {"propose_change_set", "settle_change_set"}:
+        if self.kind not in {"claims"}:
             raise ValueError("only proposal and settle egress report an unchanged terminal")
         if self.bound_artifact_digest is not None:
             raise ValueError("an unchanged terminal traversed no artifact")
@@ -1138,7 +1148,7 @@ class TerminalEgressStillCurrentReceiptV1(TerminalEgressReceiptV1):
 
     @model_validator(mode="after")
     def _shape(self) -> "TerminalEgressStillCurrentReceiptV1":
-        if self.kind != "propose_change_set":
+        if self.kind != "claims":
             raise ValueError("only a Line's proposal terminal keeps its open proposal")
         if self.bound_artifact_digest is not None:
             raise ValueError("a still-current terminal traversed no artifact")
@@ -1201,12 +1211,10 @@ class TerminalEgressReceiptV3(TerminalEgressReceiptV2):
 
     @model_validator(mode="after")
     def _proposal_shape(self) -> "TerminalEgressReceiptV3":
-        if self.kind not in {"propose_change_set", "settle_change_set"}:
+        if self.kind not in {"claims"}:
             raise ValueError("only proposal and settle egress report a proposal receipt")
-        if (self.kind == "settle_change_set") != isinstance(self, TerminalEgressReceiptV4):
-            raise ValueError("settle egress reports a settlement receipt, and only it does")
         if self.superseded_proposal_id is not None and (
-            self.kind != "propose_change_set" or self.superseded_proposal_id == self.proposal_id
+            self.kind != "claims" or self.superseded_proposal_id == self.proposal_id
         ):
             raise ValueError("only a Line's proposal supersedes another proposal")
         if any(
@@ -1653,9 +1661,9 @@ def verify_terminal_egress_receipt(
         if isinstance(receipt, TerminalEgressReceiptV3):
             if receipt.target_paths != request.target_paths:
                 raise TerminalEgressError("proposal egress did not settle the exact target paths")
-        elif request.kind in {"propose_change_set", "settle_change_set"}:
+        elif request.kind in {"claims"}:
             raise TerminalEgressError("proposal egress requires a receipt naming its proposal")
-        if request.kind == "settle_change_set" and (
+        if request.kind == "claims" and (
             not isinstance(receipt, TerminalEgressReceiptV4)
             or receipt.procedure_mandate_digest
             != (request.procedure_mandate_digest or request.ephemeral_spec_digest)

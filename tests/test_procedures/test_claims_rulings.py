@@ -250,3 +250,44 @@ def test_static_projection_preserves_the_projected_element_type() -> None:
     bad["steps"][0]["fields"]["names"]["path"] = ["rows", "name"]
     with pytest.raises(ProcedureSpecError, match="requires"):
         lower_procedure_spec(procedure_spec(base=bad), resolve=resolve)
+
+
+def test_reobservation_recovery_replays_the_core_changes_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash after one journal append resumes without losing or duplicating observations."""
+    from datetime import timedelta
+
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+    from tests.support.operation_world import NOW
+
+    instance, root = pilot_world(tmp_path, "kev.json")
+    first = run(instance, root)
+    claims = candidate_claims(instance, first)
+    activate(instance, first)
+    before = instance.accepted_coordinate()
+    path = root / "data/kev.json"
+    document = json.loads(path.read_text())
+    document["catalogVersion"] = "2026.11.01"
+    path.write_text(json.dumps(document))
+
+    class Crash(BaseException):
+        pass
+
+    original = ClaimReobservationStore.record
+
+    def crash_after_append(self, **kwargs):
+        original(self, **kwargs)
+        raise Crash()
+
+    monkeypatch.setattr(ClaimReobservationStore, "record", crash_after_append)
+    with pytest.raises(Crash):
+        run(instance, root, minute=1)
+    monkeypatch.undo()
+    recovered = service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(minutes=2))
+    assert set(recovered.values()) == {"delivered"}
+    assert instance.accepted_coordinate() == before
+    store = ClaimReobservationStore(instance)
+    for claim in claims:
+        assert len(store.history(claim.identity.name)) == 1
+    assert store.head_sequence() == len(claims)

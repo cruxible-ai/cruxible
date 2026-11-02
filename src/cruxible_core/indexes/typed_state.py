@@ -63,7 +63,7 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.providers import parse_provider
 from cruxible_client.contracts.query.definitions import parse_query_definition
 from cruxible_client.contracts.resolution_contracts import parse_resolution_contract
-from cruxible_client.contracts.shapes import parse_contract
+from cruxible_client.contracts.shapes import claim_value_kind, parse_contract, subject_value_kinds
 from cruxible_client.contracts.subject_kinds import parse_subject_kind
 from cruxible_client.contracts.subjects import parse_subject
 from cruxible_client.contracts.triggers import parse_trigger
@@ -702,6 +702,7 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
         inverse = getattr(source, "inverse", None)
         key = None if inverse is None else inverse.key
         result.update(
+            object_kind=claim_value_kind(source.value),
             inverse_key=None if key is None else key.kind,
             inverse_key_predicate=getattr(key, "predicate", None),
         )
@@ -748,7 +749,7 @@ def claim_type_names(source: ClaimType) -> tuple[tuple[str, str, str, str], ...]
         return ()
     names = {("predicate", source.predicate)} | {
         ("subject_kind", name)
-        for name in (*source.allowed_subject_kinds, *source.allowed_object_subject_kinds)
+        for name in (*source.allowed_subject_kinds, *subject_value_kinds(source.value))
     }
     return tuple(
         (source.identity.qualified, kind, name, name.rsplit(".", 1)[-1])

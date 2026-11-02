@@ -307,7 +307,7 @@ many values a Subject has:
 predicate: catalog.part.warranty_months
 allowed_subject_kinds: [catalog.part]
 object_kind: literal
-literal_schema: {type: integer, minimum: 0}
+value: int{min: 0}
 cardinality: one
 ~~~
 

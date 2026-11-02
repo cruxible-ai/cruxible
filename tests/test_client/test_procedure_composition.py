@@ -347,24 +347,36 @@ def test_sequence_through_sdk_authoring_acceptance_and_existing_executor(tmp_pat
     assert result.result == {"count": 7}
 
 
-def test_a_settle_step_ends_its_path_and_derives_settle_authority():
-    from tests.support.procedures import refs
-    from tests.test_procedures.test_procedure_proposal_delivery import item_template
+def test_claims_step_is_terminal_and_derives_maximum_authority():
+    from cruxible_client.contracts.procedures.authored import ClaimsSubjectSpec, ClaimTemplateSpec
 
     plan = sequence(slots=SLOTS)
-    plan.call(
+    fetched = plan.call(
         "result",
         captures={"capture": "security.http"},
         input={"url": "https://example.org"},
         slot=PROVIDER_SLOT,
     )
+    entries = plan.extract(
+        "entries",
+        capture=fetched["capture"],
+        records="/entries/*",
+        row="test.row@1",
+        fields={"status": {"at": "status"}},
+    )
     plan.project("summary", output={"count": "int"}, fields={"count": 1})
-    plan.settle((refs(item_template()),), id="settle")
+    plan.claims(
+        (ClaimTemplateSpec(type="catalog.part.in_stock", value=True),),
+        for_each=entries["records"],
+        subject=ClaimsSubjectSpec(kind="catalog.part", key={"slug": "part"}),
+        id="settle",
+    )
     preview = plan.preview()
     assert preview.ready_for_prepare, preview.errors
     assert preview.terminals == ("settle",)
-    assert preview.nodes[-1]["kind"] == "settle_change_set"
+    assert preview.nodes[-1]["kind"] == "claims"
     assert lower_procedure_spec(plan.build().spec).definition["terminal_capability"] == 3
+    assert not hasattr(plan, "propose") and not hasattr(plan, "settle")
 
 
 def test_a_post_inbox_step_reading_an_unproduced_output_is_refused():
@@ -426,54 +438,33 @@ def test_a_valid_post_inbox_step_ends_its_path_and_preserves_its_bounds():
     assert [d.code for d in over.preview().errors] == ["graph_invalid"]
 
 
-def test_typed_item_templates_lower_to_the_frozen_tags_and_item_references():
-    """A keyed claim item template names the current row with a typed item reference."""
+def test_claims_templates_lower_typed_subject_keys_and_values():
+    from cruxible_client.contracts.procedures.authored import ClaimsSubjectSpec, ClaimTemplateSpec
 
-    from cruxible_client.contracts.procedures.proposal_items import (
-        ProcedureClaimStatement,
-        ProcedureKeyedClaimProposalItem,
-    )
-    from cruxible_client.contracts.subject_kinds import SubjectKeyReference
-
-    typed = ProcedureKeyedClaimProposalItem(
-        statement=ProcedureClaimStatement(
-            subject=SubjectKeyReference(subject_kind="catalog.part", key="PART"),
-            predicate="catalog.part.in_stock",
-            object={"kind": "literal", "value": True},
-            role="observation",
-        ),
-        rationale="The stock file lists the part.",
-    ).model_dump(mode="json")
-    template = {
-        **typed,
-        "statement": {
-            **typed["statement"],
-            "subject": {**typed["statement"]["subject"], "key": item("part_id")},
-            "object": {"kind": "literal", "value": item("in_stock")},
-        },
-    }
-    fixed = sequence()
-    fixed.project("summary", output={"count": "int"}, fields={"count": 1})
-    fixed.settle((template,), id="settle")
-    (node,) = [
-        n
-        for n in lower_procedure_spec(fixed.build().spec).definition["nodes"]
-        if n["kind"] == "settle_change_set"
-    ]
-    lowered = node["candidate_templates"][0]
-    assert lowered["tag"] == "playbill-procedure-claim-proposal-item-v3"
-    assert lowered["statement"]["tag"] == "playbill-procedure-claim-statement-v1"
-    assert lowered["statement"]["subject"]["key"] == "$item.part_id"
-    assert lowered["statement"]["object"] == {"kind": "literal", "value": "$item.in_stock"}
-    # One item per element of a list the run produced: a typed reference.
-    fanned = sequence(slots=SLOTS)
-    parts = fanned.call(
+    plan = sequence(slots=SLOTS)
+    fetched = plan.call(
         "parts",
         captures={"capture": "security.http"},
         input={"url": "https://example.org"},
         slot=PROVIDER_SLOT,
     )
-    fanned.project("summary", output={"count": "int"}, fields={"count": 1})
-    fanned.settle(parts["items"], id="settle")
-    nodes = lower_procedure_spec(fanned.build().spec).definition["nodes"]
-    assert nodes[-1]["candidate_templates"] == {"items": "$steps.parts.items"}
+    entries = plan.extract(
+        "entries",
+        capture=fetched["capture"],
+        records="/entries/*",
+        row="test.row@1",
+        fields={"in_stock": {"at": "in_stock", "type": "bool"}},
+        key={"part_id": {"at": "part_id"}},
+    )
+    plan.project("summary", output={"count": "int"}, fields={"count": 1})
+    plan.claims(
+        (ClaimTemplateSpec(type="catalog.part.in_stock", value=item("fields", "in_stock")),),
+        for_each=entries["records"],
+        subject=ClaimsSubjectSpec(kind="catalog.part", key={"slug": item("key", "part_id")}),
+        id="write",
+    )
+    node = lower_procedure_spec(plan.build().spec).definition["nodes"][-1]
+    assert node["kind"] == "claims"
+    assert node["subject"]["key"]["slug"] == "$item.key.part_id"
+    assert node["claims"][0]["value"] == "$item.fields.in_stock"
+    assert "candidate_templates" not in node
