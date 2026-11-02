@@ -20,6 +20,7 @@ from cruxible_client.contracts.approval_policy import (
 from cruxible_client.contracts.artifacts import (
     ArtifactKindRegistry,
     ArtifactPathKind,
+    ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
     canonical_bytes,
@@ -34,7 +35,7 @@ from cruxible_client.contracts.claim_types import (
     claim_type_projection_structure,
     parse_claim_type,
 )
-from cruxible_client.contracts.content_memo import ParseMemo
+from cruxible_client.contracts.content_memo import ParseMemo, ValueMemo, request_derive
 from cruxible_client.contracts.dependencies import dependency_pins
 from cruxible_client.contracts.documents import document_digest, parse_document
 from cruxible_client.contracts.errors import (
@@ -52,7 +53,9 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 )
 from cruxible_client.contracts.projection_extensions import (
     ProjectionFact,
+    _NormalizedProjectionValue,
     current_extension_registry,
+    normalized_projection_value,
 )
 from cruxible_client.contracts.semantic import (
     ContentSpan,
@@ -360,6 +363,77 @@ def _procedure_node_span(
     )
 
 
+_SOURCE_MAPPINGS: ValueMemo[_NormalizedProjectionValue] = ValueMemo(capacity=1024)
+_PIN_VALUES: ValueMemo[_NormalizedProjectionValue] = ValueMemo(capacity=1024)
+
+
+def _normalized_pin(pin: ArtifactPin) -> _NormalizedProjectionValue:
+    if type(pin) is not ArtifactPin:
+        return normalized_projection_value(pin.model_dump(mode="json"))
+    key = (pin.role, pin.target.kind, pin.target.name, pin.artifact_digest)
+    return _PIN_VALUES.derive(key, lambda: normalized_projection_value(pin.model_dump(mode="json")))
+
+
+def _normalized_source_mapping(mapping: SourceMapping) -> _NormalizedProjectionValue:
+    """Normalize an inherited mapping once, under its complete immutable value.
+
+    Bound both entries and individual keys; large mappings take the ordinary
+    cold path. No Claim identity or acceptance-dependent fact is cached here.
+    """
+    if type(mapping) is not SourceMapping:
+        return normalized_projection_value(mapping.model_dump(mode="json"))
+    subject = mapping.subject
+    spans = tuple(
+        (span.tag, span.content_digest, span.start_byte, span.end_byte) for span in mapping.spans
+    )
+    key = (
+        mapping.tag,
+        subject.tag,
+        subject.artifact_path,
+        subject.selector.scheme,
+        subject.selector.value,
+        spans,
+    )
+    weight = (
+        len(subject.artifact_path)
+        + len(subject.selector.value)
+        + sum(
+            len(digest) + (start.bit_length() + end.bit_length()) // 8 + 128
+            for _tag, digest, start, end in spans
+        )
+    )
+
+    def normalize() -> _NormalizedProjectionValue:
+        # A revision retains multiple source windows for the same semantic
+        # address. Normalize that exact address once inside this request, not
+        # once for every window. This pays for the cold first address too.
+        address_key = (
+            "projection.source_mapping_subject",
+            subject.tag,
+            subject.artifact_path,
+            subject.selector.scheme,
+            subject.selector.value,
+        )
+
+        def normalize_address() -> _NormalizedProjectionValue:
+            # Serialize through the declared SourceMapping field, preserving
+            # its ordinary treatment of caller-supplied address subclasses.
+            value = mapping.model_dump(mode="json", include={"subject"})["subject"]
+            return normalized_projection_value(value)
+
+        try:
+            hash(address_key)
+        except TypeError:
+            address = normalize_address()
+        else:
+            address = request_derive(address_key, normalize_address)
+        value = mapping.model_dump(mode="json", exclude={"subject"})
+        value["subject"] = address
+        return normalized_projection_value(value)
+
+    return normalize() if weight > 4096 else _SOURCE_MAPPINGS.derive(key, normalize)
+
+
 def _claim_static_facts(
     claim: ClaimArtifact,
     *,
@@ -370,15 +444,24 @@ def _claim_static_facts(
 ) -> tuple[ProjectionFact, ...]:
     """Compile only byte-dependent Claim facts; acceptance proofs stay per-build."""
     from cruxible_client.contracts.claims import claim_statement_address
-    from cruxible_client.contracts.projection_extensions import normalized_projection_value
 
     identity = claim.identity.qualified
+    statement_address = claim_statement_address(path)
+    # Source windows and the identity row name this exact address. Pay for its
+    # normalization once in this request, including on a cold projection build.
+    address_value = request_derive(
+        (
+            "projection.source_mapping_subject",
+            statement_address.tag,
+            statement_address.artifact_path,
+            statement_address.selector.scheme,
+            statement_address.selector.value,
+        ),
+        lambda: normalized_projection_value(statement_address.model_dump(mode="json")),
+    )
     # Each mapping occurs both in backing and as its own fact. Normalize its
     # immutable subtree once, then compose the exact same value into both rows.
-    mappings = [
-        normalized_projection_value(m.model_dump(mode="json"))
-        for m in claim.backing.source_mappings
-    ]
+    mappings = [_normalized_source_mapping(m) for m in claim.backing.source_mappings]
     backing = claim.backing.model_dump(mode="json")
     backing["source_mappings"] = mappings
     facts: list[ProjectionFact] = []
@@ -393,7 +476,7 @@ def _claim_static_facts(
                     "artifact_digest": {"$digest": artifact_digest},
                     "identity": claim.identity.model_dump(mode="json"),
                     "input_digest": {"$digest": input_digest},
-                    "statement_address": claim_statement_address(path).model_dump(mode="json"),
+                    "statement_address": address_value,
                     "statement_digest": {"$digest": statement_digest},
                 },
             ),
@@ -418,7 +501,7 @@ def _claim_static_facts(
                 fact_key="accepted_revision",
                 value={
                     "lifecycle": claim.lifecycle.model_dump(mode="json"),
-                    "pins": [pin.model_dump(mode="json") for pin in claim.pins],
+                    "pins": [_normalized_pin(pin) for pin in claim.pins],
                     **(
                         {"retirement": claim.retirement.model_dump(mode="json")}
                         if claim.retirement is not None

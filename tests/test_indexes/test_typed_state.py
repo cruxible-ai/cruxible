@@ -651,3 +651,67 @@ def test_live_slot_claim_reads_seek_the_subject_predicate_index():
         small,
         large,
     )
+
+
+def test_claim_revision_clears_old_object_columns_and_only_updates_changed_fields(tmp_path):
+    from cruxible_client.contracts.claims import LiteralClaimObject, claim_path, render_claim
+    from cruxible_core.indexes.typed_sqlite import parse_static_owners, replace_rows
+    from tests.test_claims.test_claims import _claim
+    from tests.test_indexes.test_indexed_evaluation import _fixture
+
+    claim = _claim(
+        claim_id="CLM-0123456789abcdef0123456789abcdef",
+        capture_digest="sha256:" + "1" * 64,
+        source_digest="sha256:" + "2" * 64,
+        source_length=1,
+    )
+    path = claim_path(claim.identity.name)
+    tree, _, _ = _fixture(tmp_path, {path: render_claim(claim)})
+    warm = tree._accepted_reader()
+    try:
+        warm._connection.executescript(
+            "CREATE TEMP TABLE recounted (identity TEXT);"
+            "CREATE TEMP TRIGGER watch_recount AFTER UPDATE OF lifecycle,predicate,subject_path "
+            "ON claims BEGIN INSERT INTO recounted VALUES (NEW.identity); END;"
+        )
+        for index, value in enumerate((17, True, {"nested": [1, 2]}, None, "ready", "ready")):
+            successor = claim.model_copy(
+                update={
+                    "statement": claim.statement.model_copy(
+                        update={"object": LiteralClaimObject(value=value)}
+                    )
+                }
+            )
+            sources = {path: render_claim(successor)}
+            previous_changes = warm._connection.total_changes
+            replace_rows(
+                warm._connection,
+                request=warm.accepted,
+                parsed=parse_static_owners(sources, accepted=warm.accepted),
+                sources=sources,
+                changed_paths=(path,),
+            )
+            if index == 5:
+                assert warm._connection.total_changes == previous_changes
+            directory = tmp_path / f"object-{index}"
+            directory.mkdir()
+            cold_tree, _, _ = _fixture(directory, sources)
+            cold = cold_tree._accepted_reader()
+            try:
+                for table in (
+                    "claims",
+                    "pins",
+                    "members",
+                    "predicate_counts",
+                    "predicate_subjects",
+                    "claim_units",
+                    "subject_keys",
+                ):
+                    assert [
+                        tuple(row) for row in warm._connection.execute(f"SELECT * FROM {table}")
+                    ] == [tuple(row) for row in cold._connection.execute(f"SELECT * FROM {table}")]
+            finally:
+                cold.close()
+        assert warm._connection.execute("SELECT count(*) FROM recounted").fetchone()[0] == 0
+    finally:
+        warm.close()

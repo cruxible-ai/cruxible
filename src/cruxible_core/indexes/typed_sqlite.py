@@ -351,7 +351,11 @@ def row_counts(connection: sqlite3.Connection) -> dict[str, int]:
 
 
 def insert_members(
-    connection: sqlite3.Connection, blobs: Mapping[str, bytes], object_format: str
+    connection: sqlite3.Connection,
+    blobs: Mapping[str, bytes],
+    object_format: str,
+    *,
+    replace_existing: bool = False,
 ) -> None:
     rows = []
     for path, content in sorted(blobs.items()):
@@ -361,7 +365,20 @@ def insert_members(
             object_format, b"blob " + str(len(content)).encode("ascii") + b"\0" + content
         ).hexdigest()
         rows.append((path, digest, file_digest(content).tagged, len(content)))
-    insert_rows(connection, "members", rows)
+    insert_rows(
+        connection,
+        "members",
+        rows,
+        suffix=(
+            " ON CONFLICT(path) DO UPDATE SET git_blob_oid=excluded.git_blob_oid,"
+            "file_digest=excluded.file_digest,byte_length=excluded.byte_length "
+            "WHERE members.git_blob_oid!=excluded.git_blob_oid "
+            "OR members.file_digest!=excluded.file_digest "
+            "OR members.byte_length!=excluded.byte_length"
+            if replace_existing
+            else ""
+        ),
+    )
 
 
 def replace_rows(
@@ -431,8 +448,23 @@ def replace_rows(
     remove_provider_domains(
         connection, [identity for _path, identity, kind in replaced if kind == "provider"]
     )
+    incoming_claims = {row.identity for row in parsed.envelopes if row.kind == "claim"}
+    incoming_claim_paths = {
+        row.path: row.identity for row in parsed.envelopes if row.kind == "claim"
+    }
+    updated_claims = frozenset(
+        (identity, path)
+        for path, identity, kind in replaced
+        if kind == "claim" and incoming_claim_paths.get(path) == identity
+    )
+    updated_claim_paths = {path for _identity, path in updated_claims}
+    # A retained Claim's citations have no foreign key to its typed row. Leave
+    # them in place while replacing the owner; population below applies only
+    # the relationship delta, after the new owner is published.
     owners: list[tuple[str, str]] = [
-        ("Claim", identity) for _path, identity, kind in replaced if kind == "claim"
+        ("Claim", identity)
+        for _path, identity, kind in replaced
+        if kind == "claim" and (bodies is None or identity not in incoming_claims)
     ]
     attested = [identity for _path, identity, kind in replaced if kind == "attestation"]
     if attested:
@@ -452,7 +484,7 @@ def replace_rows(
         [identity for _path, identity, kind in replaced if kind == "provider"],
     )
     identities = [identity for _path, identity, _kind in replaced]
-    for table in ("provider_pinners", "pins", "claim_type_names", "vocabulary_terms"):
+    for table in ("provider_pinners", "claim_type_names", "vocabulary_terms"):
         execute_in(connection, f"DELETE FROM {table} WHERE source_identity IN ({{}})", identities)
     execute_in(
         connection,
@@ -460,11 +492,26 @@ def replace_rows(
         [identity for _path, identity, kind in replaced if kind == "exhaust-promotion"],
     )
     for owner in OWNER_CODECS:
-        execute_in(connection, f"DELETE FROM {owner.table} WHERE path IN ({{}})", changed)
+        execute_in(
+            connection,
+            f"DELETE FROM {owner.table} WHERE path IN ({{}})",
+            [path for path in changed if owner.kind != "claim" or path not in updated_claim_paths],
+        )
     execute_in(connection, "DELETE FROM principals WHERE path IN ({})", changed)
-    execute_in(connection, "DELETE FROM members WHERE path IN ({})", changed)
-    insert_members(connection, sources, request.git_object_format)
-    insert_owners(connection, parsed=parsed, blobs=sources, resolve_digest=resolve_digest)
+    execute_in(
+        connection,
+        "DELETE FROM members WHERE path IN ({})",
+        [path for path in changed if path not in sources],
+    )
+    insert_members(connection, sources, request.git_object_format, replace_existing=True)
+    insert_owners(
+        connection,
+        parsed=parsed,
+        blobs=sources,
+        resolve_digest=resolve_digest,
+        replaced_pin_sources=tuple(identities),
+        updated_claims=updated_claims,
+    )
     from cruxible_core.indexes.provider_heads import refresh_provider_heads
 
     refresh_provider_heads(connection, sources, historical_source=historical_provider_source)
@@ -515,19 +562,29 @@ def replace_rows(
             },
         )
     if bodies is not None:
+        published = {
+            "Claim": {
+                row[0]
+                for row in select_in(
+                    connection,
+                    "SELECT identity FROM claims WHERE identity IN ({})",
+                    sorted(incoming_claims),
+                )
+            },
+            "attestation": {
+                row[0]
+                for row in select_in(
+                    connection,
+                    "SELECT envelope_digest FROM attestations WHERE identity IN ({})",
+                    [row.identity for row in parsed.envelopes if row.kind == "attestation"],
+                )
+            },
+        }
         populate_citations(
             connection,
             sources,
             bodies=bodies,
-            owner_exists=lambda kind, identity: (
-                connection.execute(
-                    "SELECT 1 FROM claims WHERE identity=?"
-                    if kind == "Claim"
-                    else "SELECT 1 FROM attestations WHERE envelope_digest=?",
-                    (identity,),
-                ).fetchone()
-                is not None
-            ),
+            owner_exists=lambda kind, identity: identity in published[kind],
         )
     for fact in parsed.semantic_facts:
         if fact.schema_id not in ("cruxible.procedure.track_record", "cruxible.line.track_record"):

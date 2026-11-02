@@ -354,6 +354,16 @@ def _generation_at(recovered: RecoveredInstanceState, sequence: int) -> Recovere
 _ACCEPTING_ADMISSIONS: OrderedDict[str, tuple[AcceptingAdmission | None]] = OrderedDict()
 
 
+def _record_source_binding(
+    source: Callable[[str, str], bytes | None], owner: object
+) -> tuple[str, object]:
+    # Retaining the instance's own bound method would make an extra owner cycle
+    # and defer its SQLite/checkpoint finalizers to an unrelated later request.
+    if getattr(source, "__self__", None) is owner:
+        return "instance-method", getattr(source, "__func__")
+    return "adapter", source
+
+
 class PlaybillInstance:
     """A verified opt-in Cruxible substrate rooted outside agent workspaces."""
 
@@ -456,6 +466,7 @@ class PlaybillInstance:
         self.verified_record_facts: OrderedDict[
             AcceptedGenerationLocation, GenerationRecordFacts
         ] = OrderedDict()
+        self._verified_record_source = _record_source_binding(self.blob_at, self)
 
     @staticmethod
     def _accepted_query_facts(
@@ -2295,17 +2306,26 @@ class PlaybillInstance:
     ) -> tuple[tuple[str, ChangeSetRecord], ...]:
         """The verified records that touched these paths, found through the index."""
 
-        recovered = self._recovered
-        with self._history_reader_for_epoch(recovered) as history:
-            sequences = sorted(
-                {location.sequence for path in paths for location in history.member_history(path)}
-            )
-        records = []
-        for sequence in sequences:
-            record = recovered.history[sequence].record
-            if record is not None:
-                records.append((f"changesets/cs-{sequence:020d}.json", record))
-        return tuple(records)
+        selected = frozenset(paths)
+        records: dict[int, tuple[str, ChangeSetRecord]] = {}
+        reader = self.retained_record_reader()
+        with self._history_reader_for_epoch(self._recovered) as history:
+            for path in sorted(selected):
+                for location in history.member_history(path):
+                    if location.sequence in records:
+                        # Every locator still binds its own exact source member.
+                        history.read_member(location, reader, carry_values=True)
+                        continue
+                    generation = history.generation(location.sequence)
+                    if generation.source_record_path is None:
+                        raise ProjectionIntegrityError("accepted member has no source record path")
+                    records[location.sequence] = (
+                        generation.source_record_path,
+                        history.read_member_selection(
+                            location, reader, selected, carry_values=True
+                        ),
+                    )
+        return tuple(records[sequence] for sequence in sorted(records))
 
     def accepted_evaluation_time(self, oid: str) -> datetime:
         """Resolve the immutable acceptance instant for one replayed generation."""
@@ -2465,8 +2485,17 @@ class PlaybillInstance:
     def retained_record_reader(self) -> RetainedRecordReader:
         """A record reader sharing this instance's verified change-set records."""
 
+        source = self.blob_at
+        binding = _record_source_binding(source, self)
+        if binding != self._verified_record_source:
+            # A different source adapter has not verified the old adapter's
+            # bytes. Give it a fresh pool; readers already holding the previous
+            # adapter keep their own pool and cannot populate the new one.
+            self.verified_change_set_records = OrderedDict()
+            self.verified_record_facts = OrderedDict()
+            self._verified_record_source = binding
         return RetainedRecordReader(
-            self.blob_at,
+            source,
             verified=self.verified_change_set_records,
             facts=self.verified_record_facts,
         )
@@ -2564,11 +2593,7 @@ class PlaybillInstance:
             self._ledger,
             bodies=self.body_store(),
             history=lambda: self.accepted_history_reader(at=at),
-            records=RetainedRecordReader(
-                self._ledger.blob_at,
-                verified=self.verified_change_set_records,
-                facts=self.verified_record_facts,
-            ),
+            records=self.retained_record_reader,
             fact_memo=self._owner_facts,
         )
 

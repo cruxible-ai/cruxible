@@ -36,6 +36,7 @@ from cruxible_client.contracts.candidates import (
     CandidateMemberLawEvidence,
     MemberLawEvaluation,
 )
+from cruxible_client.contracts.content_memo import seal
 from cruxible_client.contracts.errors import FormatError, ProjectionIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow
@@ -395,19 +396,28 @@ class RetainedRecordReader:
         generation: AcceptedGenerationLocation,
         ordinal: int,
         canonical_cache: BoundedCache[bool] | None = None,
+        *,
+        carry_values: bool = False,
     ) -> CandidateMemberLawEvidence:
         """A detached copy of one member, without copying its whole record."""
 
         record = self._in_place(generation, canonical_cache).record
         if not 0 <= ordinal < len(record.members):
             raise ProjectionIntegrityError("accepted member source record binding differs")
-        return record.members[ordinal].model_copy(deep=True)
+        member = record.members[ordinal]
+        if carry_values:
+            if not seal(member):
+                raise ProjectionIntegrityError("carried history member must be immutable")
+            return member
+        return member.model_copy(deep=True)
 
     def selection(
         self,
         generation: AcceptedGenerationLocation,
         paths: frozenset[str],
         canonical_cache: BoundedCache[bool] | None = None,
+        *,
+        carry_values: bool = False,
     ) -> ChangeSetRecord:
         """The verified record restricted to its entries at ``paths``, for the compiler.
 
@@ -429,11 +439,17 @@ class RetainedRecordReader:
         fields: dict[str, object] = {
             name: getattr(record, name) for name in type(record).model_fields
         }
-        fields["members"] = tuple(
-            record.members[position].model_copy(deep=True) for position in member_positions
-        )
+
+        def selected_value(value: Any) -> Any:
+            if carry_values:
+                if not seal(value):
+                    raise ProjectionIntegrityError("carried history value must be immutable")
+                return value
+            return value.model_copy(deep=True)
+
+        fields["members"] = tuple(selected_value(record.members[p]) for p in member_positions)
         fields["law_evidence"] = tuple(
-            record.law_evidence[position].model_copy(deep=True)
+            selected_value(record.law_evidence[position])
             for position in sorted(
                 position for path in selected for position in indexed.law.get(path, ())
             )
@@ -444,7 +460,10 @@ class RetainedRecordReader:
         fields["law_digests"] = dict(record.law_digests)
         for name in ("approvals", "approval_requirements", "actor_binding", "activation_policy"):
             fields[name] = copy.deepcopy(fields[name])
-        return type(record).model_construct(_fields_set=record.model_fields_set, **fields)
+        result = type(record).model_construct(_fields_set=record.model_fields_set, **fields)
+        if carry_values and not seal(result):
+            raise ProjectionIntegrityError("carried history selection must be immutable")
+        return result
 
     def law_evidence(
         self,
@@ -916,10 +935,15 @@ class HistoryReader:
         self,
         location: AcceptedMemberLocation,
         load_record: Callable[[str, str], bytes | None] | RetainedRecordReader,
+        *,
+        carry_values: bool = False,
     ) -> CandidateMemberLawEvidence:
         """One exact retained member, verified as ``read_member_record`` verifies it."""
         member = self._reader(load_record).member(
-            self.generation(location.sequence), location.member_ordinal, self._canonical_cache
+            self.generation(location.sequence),
+            location.member_ordinal,
+            self._canonical_cache,
+            carry_values=carry_values,
         )
         _verify_member(member, location)
         return member
@@ -929,13 +953,18 @@ class HistoryReader:
         location: AcceptedMemberLocation,
         load_record: Callable[[str, str], bytes | None] | RetainedRecordReader,
         paths: frozenset[str],
+        *,
+        carry_values: bool = False,
     ) -> ChangeSetRecord:
         """The located member's record restricted to ``paths``, verified like the whole."""
         if location.member_path not in paths:
             raise ProjectionIntegrityError("a member selection must include its located member")
-        self.read_member(location, load_record)
+        self.read_member(location, load_record, carry_values=carry_values)
         return self._reader(load_record).selection(
-            self.generation(location.sequence), paths, self._canonical_cache
+            self.generation(location.sequence),
+            paths,
+            self._canonical_cache,
+            carry_values=carry_values,
         )
 
     def read_claim_law_evidence(

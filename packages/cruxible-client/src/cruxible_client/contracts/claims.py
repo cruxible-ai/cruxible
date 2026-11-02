@@ -1529,6 +1529,20 @@ def _citation_origin_refusal(
     return None
 
 
+def _request_verdict_capture(**fields: Any) -> CaptureVerdictEvidence:
+    """Share identical verdict inputs only inside the current artifact request.
+
+    The key contains every constructor field, including freshly recomputed
+    admission, provenance and availability. No Claim verdict is retained.
+    """
+    key = ("claim.verdict_capture", *sorted(fields.items()))
+    try:
+        hash(key)
+    except TypeError:
+        return CaptureVerdictEvidence(**fields)
+    return request_derive(key, lambda: CaptureVerdictEvidence(**fields), retain=seal)
+
+
 def _is_claim_type_rederivation(
     claim: ClaimArtifact,
     *,
@@ -1538,12 +1552,12 @@ def _is_claim_type_rederivation(
 ) -> bool:
     """Recognize the exact machine-generated delta for ClaimType succession."""
 
-    expected_statement = predecessor.statement.model_copy(
-        update={"claim_type_digest": claim_type_digest}
-    )
+    expected_statement = _statement_with_claim_type_digest(predecessor.statement, claim_type_digest)
     expected_pins = tuple(
         pin.model_copy(update={"artifact_digest": claim_type_digest})
-        if pin.role == "claim-type" and pin.target == claim_type_identity
+        if pin.role == "claim-type"
+        and pin.target == claim_type_identity
+        and pin.artifact_digest != claim_type_digest
         else pin
         for pin in predecessor.pins
     )
@@ -1555,6 +1569,15 @@ def _is_claim_type_rederivation(
         and claim.pins == expected_pins
         and claim.lifecycle.state == predecessor.lifecycle.state
         and retirement_matches
+    )
+
+
+def _statement_with_claim_type_digest(statement: ClaimStatement, digest: str) -> ClaimStatement:
+    """Keep an unchanged validated statement when comparing revision deltas."""
+    return (
+        statement
+        if statement.claim_type_digest == digest
+        else statement.model_copy(update={"claim_type_digest": digest})
     )
 
 
@@ -2081,8 +2104,8 @@ def evaluate_claim_law(
         and predecessor is not None
         and not carry
         and claim.statement
-        != predecessor.claim.statement.model_copy(
-            update={"claim_type_digest": claim.statement.claim_type_digest}
+        != _statement_with_claim_type_digest(
+            predecessor.claim.statement, claim.statement.claim_type_digest
         )
     )
     # A re-bind: the same statement, some inherited citations replaced (rev 10).
@@ -2094,8 +2117,8 @@ def evaluate_claim_law(
         and not carry
         and not replacing
         and claim.statement
-        == predecessor.claim.statement.model_copy(
-            update={"claim_type_digest": claim.statement.claim_type_digest}
+        == _statement_with_claim_type_digest(
+            predecessor.claim.statement, claim.statement.claim_type_digest
         )
     ):
         current_ids = {item.citation_id for item in claim.backing.citations}
@@ -2956,8 +2979,11 @@ def evaluate_claim_law(
             else f"{envelope.producer.kind.casefold()}.{envelope.producer.name}"
         )
         upstream = () if producer_provider is None else producer_provider.upstream_provenance
+        # Shared Captures produce the same immutable verdict input for sibling
+        # Claims. Admission was recomputed above; include every resulting field
+        # in the request key rather than caching a Claim's admission or verdict.
         verdict_capture_evidence.append(
-            CaptureVerdictEvidence(
+            _request_verdict_capture(
                 capture_digest=capture_digest_value,
                 admission=capture_admission,
                 basis_kind=(

@@ -736,3 +736,116 @@ def test_subject_identity_comparison_preserves_the_exact_contract_type():
             subject_kind="work",
             subject_id="item",
         )
+
+
+def test_intrinsic_proof_bytes_survive_copies_without_hiding_changed_values(monkeypatch):
+    from cruxible_client.contracts import candidates, canonical
+
+    reference = candidates.DependencyProofReference(
+        source_path="subjects/kïnd/é.json",
+        source_artifact_digest="sha256:" + "1" * 64,
+        target_path="claim-types/x.json",
+        target_artifact_digest="sha256:" + "2" * 64,
+        pin_role="claim-type",
+    )
+    candidates._PROOF_ENCODINGS.clear()
+    encoded = []
+    original = canonical.canonical_bytes
+
+    def counted(value):
+        encoded.append(value)
+        return original(value)
+
+    monkeypatch.setattr(candidates, "canonical_bytes", counted)
+    expected = original(reference.model_dump(mode="json"))
+    for value in (reference, copy.deepcopy(reference), reference.model_copy()):
+        assert canonical.model_canonical_bytes(value) == expected
+    assert len(encoded) == 1
+    changed = reference.model_copy(update={"pin_role": "subject"})
+    assert canonical.model_canonical_bytes(changed) == original(changed.model_dump(mode="json"))
+    assert len(encoded) == 2
+
+    class ExtendedProof(candidates.DependencyProofReference):
+        extra: str = "additional wire field"
+
+    extended = ExtendedProof(**reference.model_dump())
+    assert candidates.dependency_proof_order(extended) == original(extended.model_dump(mode="json"))
+
+
+def test_reused_proof_set_validation_still_refuses_reordered_and_duplicate_copies():
+    from cruxible_client.contracts.candidates import (
+        DependencyProofReference,
+        _sorted_unique_proofs,
+        dependency_proof_order,
+    )
+
+    first = DependencyProofReference(
+        source_path="subjects/kind/one.json",
+        source_artifact_digest="sha256:" + "3" * 64,
+        target_path="subjects/kind/two.json",
+        target_artifact_digest="sha256:" + "4" * 64,
+        pin_role="subject",
+    )
+    second = first.model_copy(update={"target_artifact_digest": "sha256:" + "5" * 64})
+    values = tuple(sorted((first, second), key=dependency_proof_order))
+    with artifact_request():
+        assert _sorted_unique_proofs(values, message="invalid") == values
+        detached = copy.deepcopy(values)
+        assert _sorted_unique_proofs(detached, message="invalid") is detached
+        for bad in (tuple(reversed(detached)), (detached[0], detached[0])):
+            with pytest.raises(ValueError, match="invalid"):
+                _sorted_unique_proofs(bad, message="invalid")
+
+
+@pytest.mark.parametrize("field", ["pin_role", "source_path", "target_artifact_digest"])
+def test_unhashable_proof_copies_raise_validation_errors(field):
+    from cruxible_client.contracts.candidates import DependencyProofReference, _sorted_unique_proofs
+
+    proof = DependencyProofReference(
+        source_path="subjects/kind/one.json",
+        source_artifact_digest="sha256:" + "3" * 64,
+        target_path="subjects/kind/two.json",
+        target_artifact_digest="sha256:" + "4" * 64,
+        pin_role="subject",
+    )
+    with artifact_request(), pytest.raises(ValueError):
+        _sorted_unique_proofs((proof.model_copy(update={field: []}),), message="invalid")
+
+
+def test_member_law_digest_keeps_its_frozen_preimage_for_sealed_and_copied_records():
+    from cruxible_client.contracts.candidates import (
+        DependencyProofReference,
+        LawEvaluationCoordinate,
+        MemberLawEvaluation,
+        member_law_evidence_digest,
+    )
+    from cruxible_client.contracts.canonical import Sha256Value
+
+    digest = "sha256:" + "6" * 64
+    evidence = MemberLawEvaluation(
+        path="subjects/kind/one.json",
+        law_identifier="playbill.subject.v1",
+        law_digest=digest,
+        evaluation_time="2026-10-01T12:00:00.000000Z",
+        evaluation_coordinate=LawEvaluationCoordinate(
+            git_oid="1" * 64,
+            semantic_root=digest,
+            generation_root=digest,
+            compiler_digest=digest,
+        ),
+        dependency_proof_refs=(
+            DependencyProofReference(
+                source_path="subjects/kind/one.json",
+                source_artifact_digest=digest,
+                target_path="subjects/kind/two.json",
+                target_artifact_digest=digest,
+                pin_role="subject",
+            ),
+        ),
+        result={"label": "é", "nested": [1, None, True]},
+    )
+    for value in (evidence, copy.deepcopy(evidence), evidence.model_copy(update={"tag": "other"})):
+        payload = value.model_dump(mode="json")
+        payload.pop("tag")
+        expected = typed_digest(Sha256Value, "playbill-member-law-evaluation-v2", payload).tagged
+        assert member_law_evidence_digest(value) == expected

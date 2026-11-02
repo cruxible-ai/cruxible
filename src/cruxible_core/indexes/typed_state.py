@@ -75,7 +75,12 @@ from cruxible_core.compiler.projection_artifacts import (
 from cruxible_core.exhaust.promotions import parse_exhaust_promotion
 from cruxible_core.indexes.claim_units import SCHEMA_STATEMENTS as CLAIM_UNITS_SCHEMA
 from cruxible_core.indexes.claim_units import literal_value_digest, object_unit_text
-from cruxible_core.indexes.sql_batch import insert_rows, select_in
+from cruxible_core.indexes.sql_batch import (
+    execute_values,
+    insert_rows,
+    replace_owned_rows,
+    select_in,
+)
 
 SQLValue = str | int | None
 
@@ -883,8 +888,10 @@ def insert_owners(
     parsed: ParsedProjectionTree,
     blobs: Mapping[str, bytes],
     resolve_digest: Callable[[str], Iterable[str]] | None = None,
+    replaced_pin_sources: tuple[str, ...] = (),
+    updated_claims: frozenset[tuple[str, str]] = frozenset(),
 ) -> None:
-    """Insert validated changed owners after removing both old and new paths.
+    """Publish validated owners, updating retained Claims and differing pin rows.
 
     Rows are written one statement per table (and chunk), in the order the
     per-row statements wrote them within each table. No owner table references
@@ -898,15 +905,28 @@ def insert_owners(
                 raise ProjectionIntegrityError("artifact uses a reserved singleton identity")
             continue
         owned.append(row)
-    # Each owner's identity and path must be new: to the database and, as each
-    # was checked after the ones before it were written, to the batch itself.
+    # Each identity and path must be unique in the batch and database, except
+    # the exact retained Claim identity/path pairs the delta writer supplies.
     identities = [row.identity for row in owned]
     paths = [row.path for row in owned]
     if (
         len(set(identities)) != len(identities)
         or len(set(paths)) != len(paths)
-        or select_in(connection, "SELECT 1 FROM artifact_lookup WHERE identity IN ({})", identities)
-        or select_in(connection, "SELECT 1 FROM artifact_lookup WHERE path IN ({})", paths)
+        or any(
+            kind != "claim" or (identity, path) not in updated_claims
+            for identity, path, kind in (
+                *select_in(
+                    connection,
+                    "SELECT identity,path,kind FROM artifact_lookup WHERE identity IN ({})",
+                    identities,
+                ),
+                *select_in(
+                    connection,
+                    "SELECT identity,path,kind FROM artifact_lookup WHERE path IN ({})",
+                    paths,
+                ),
+            )
+        )
     ):
         raise ProjectionIntegrityError("cross-kind artifact identity/path collision")
     tables: dict[tuple[str, tuple[str, ...]], list[tuple[SQLValue, ...]]] = {}
@@ -935,12 +955,63 @@ def insert_owners(
                 source.lifecycle.status if row.kind == "document" else source.lifecycle.state
             )
         values.update(owner_values(owner, source))
+        if row.kind == "claim" and updated_claims:
+            # An UPDATE must also clear nullable fields the old object used.
+            # Include the complete Claim row, as a fresh INSERT would default
+            # every omitted object/selector/literal field to NULL.
+            columns = (
+                "identity",
+                "path",
+                "format_tag",
+                "artifact_digest",
+                "predecessor_digest",
+                "revision",
+                "lifecycle",
+                *(name for name, _definition in owner.fields),
+            )
+            values = {column: values.get(column) for column in columns}
         tables.setdefault((owner.table, tuple(values)), []).append(tuple(values.values()))
         if isinstance(source, ClaimType):
             names.extend(claim_type_names(source))
         terms.extend(vocabulary_terms(source, path=row.path))
     for (table, columns), rows in tables.items():
-        insert_rows(connection, f"{table} ({','.join(columns)})", rows)
+        if table != "claims" or not updated_claims:
+            insert_rows(connection, f"{table} ({','.join(columns)})", rows)
+            continue
+        previous = {
+            row[0]: dict(zip(columns, row, strict=True))
+            for row in select_in(
+                connection,
+                "SELECT * FROM claims WHERE identity IN ({})",
+                [identity for identity, _path in updated_claims],
+            )
+        }
+        inserts = []
+        updates: dict[tuple[str, ...], list[tuple[SQLValue, ...]]] = {}
+        for claim_row in rows:
+            values = dict(zip(columns, claim_row, strict=True))
+            old = previous.get(values["identity"])
+            if old is None:
+                inserts.append(claim_row)
+                continue
+            differing = tuple(column for column in columns if old[column] != values[column])
+            if differing:
+                updates.setdefault(differing, []).append(
+                    (values["identity"], *(values[column] for column in differing))
+                )
+        insert_rows(connection, f"{table} ({','.join(columns)})", inserts)
+        # Set only columns that changed: query-count triggers are declared
+        # UPDATE OF lifecycle,predicate,subject_path and must not recount a
+        # Claim merely because its evidence or literal value was revised.
+        for differing, changed_rows in updates.items():
+            execute_values(
+                connection,
+                "WITH changed_claims(identity," + ",".join(differing) + ") AS (VALUES {}) "
+                "UPDATE claims SET "
+                + ",".join(f"{column}=c.{column}" for column in differing)
+                + " FROM changed_claims c WHERE claims.identity=c.identity",
+                changed_rows,
+            )
     insert_rows(connection, "claim_type_names", names)
     insert_rows(connection, "vocabulary_terms", terms)
     principals = []
@@ -975,7 +1046,6 @@ def insert_owners(
             )
         )
         ordinal[pin.source_identity] = index + 1
-    insert_rows(connection, "pins", pins)
     pinners: list[tuple[SQLValue, ...]] = []
     for pin in parsed.pins:
         source = sources.get(pin.source_identity)
@@ -1024,7 +1094,14 @@ def insert_owners(
             consumed.append(
                 (row.identity, "consumed_claim_input", index, identity, digest, status, None)
             )
-    insert_rows(connection, "pins", consumed)
+    replace_owned_rows(
+        connection,
+        "pins",
+        [*pins, *consumed],
+        owner_column="source_identity",
+        owners=replaced_pin_sources,
+        key_columns=("source_identity", "edge_kind", "ordinal"),
+    )
 
 
 def principal_registry(
@@ -1087,6 +1164,9 @@ class TypedStateReader:
 
         if records is None and history is not None:
             records = RetainedRecordReader(repository.blob_at)
+        # A bound projection can serve indexed members without any retained
+        # change-set records. Instance sources supply a factory, opened only
+        # when selected historical facts actually need those records.
         self.records = records
         self._member_bytes: dict[str, bytes] = {}
         self.work = {"members_read": 0, "source_bytes": 0, "owners_selected": 0}
@@ -1401,21 +1481,25 @@ class TypedStateReader:
         coordinates = {}
         self.prefetch_members(paths)
         if self.history is not None:
-            assert self.records is not None
+            record_reader = self.records
+            if callable(record_reader):
+                record_reader = record_reader()
+                self.records = record_reader
+            assert record_reader is not None
             selected = frozenset(paths)
             with self.history() as history:
                 for path in paths:
                     for location in history.member_history(path):
                         if location.sequence in records:
                             # Already selected; still verify this path's own member.
-                            history.read_member(location, self.records)
+                            history.read_member(location, record_reader)
                             continue
                         generation = history.generation(location.sequence)
                         # Only the selected paths' members bear on their facts,
                         # so the record is copied for those members alone.
                         records[location.sequence] = (
                             generation.source_record_path,
-                            history.read_member_selection(location, self.records, selected),
+                            history.read_member_selection(location, record_reader, selected),
                         )
                         coordinates[location.sequence] = AcceptedCoordinate(
                             git_oid=generation.git_oid,

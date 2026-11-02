@@ -709,8 +709,10 @@ class JournalProducerReceiptResolver:
         """Answer from a kept positive result, or derive the answer as a fresh context would.
 
         Only positive answers are kept, each only while the journal payloads it
-        was derived from are held (``_still_proven``). A refusal or a miss is
-        never kept: the context forgets what it derived and reads the cited run.
+        was derived from are held (``_still_proven``). A refusal is re-derived;
+        a miss reads the cited run without evicting other runs' proven answers.
+        Revisions alternate predecessor and current runs, so evicting on a miss
+        would make each sibling Claim pay to read the whole predecessor run.
         On a miss it brings the journal index up to the records appended since
         its last sync -- never the whole journal -- and reads the run once more,
         so a record appended since is seen; still missing, the caller refuses.
@@ -721,10 +723,9 @@ class JournalProducerReceiptResolver:
             if found() is not None:
                 return
         except CaptureFormatError:
-            pass
-        self._forget()
+            self._forget()
         self._index_run(run_id)
-        if found() is None and not self._full:
+        if found() is None:
             self._catch_up()
             self._index_run(run_id)
 
