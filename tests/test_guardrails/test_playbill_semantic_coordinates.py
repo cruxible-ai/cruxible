@@ -311,16 +311,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:d41c727371f5f1c98a883ff7aa34c1bf5d88de77853466bd79aa4c73f6a8acf4"
+    expected = "sha256:ae9bfa79ced58d272e46a8b752554951905c85956697a75c2f7a0133a30ce816"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 53,
+            "semantic_revision": 54,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "claims-absence-expect-v1",
+            "revision_name": "settle-scope-basis-v1",
         },
     )
     assert computed == expected
@@ -365,9 +365,11 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "claims-absence-expect-v1"
-    assert compiler_revision_label(CURRENT_COMPILER) == "claims-absence-expect-v1"
+    assert CURRENT_COMPILER_REVISION == "settle-scope-basis-v1"
+    assert compiler_revision_label(CURRENT_COMPILER) == "settle-scope-basis-v1"
     for earlier_digest in (
+        # Revision 53: Mandate scope by change kind only, before basis-scoped grants.
+        "sha256:d41c727371f5f1c98a883ff7aa34c1bf5d88de77853466bd79aa4c73f6a8acf4",
         # Revision 52: authored enumeration + covers, before D-R19..D-R24.
         "sha256:ea86ed754f352c9dc58025cc6625ce9b3a3b42915664e2d380dde531838a4ac5",
         # Revision 49: before proposal Line attribution entered admission identity.
