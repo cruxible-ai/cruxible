@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Final, Literal, Protocol
 
 from cruxible_client.contracts.procedures.acquisition_rules import (
     AcquisitionRule,
@@ -23,6 +23,8 @@ OperationEffect = Literal["pure", "external_read", "external_mutation"]
 #: Core built-in operations the executor serves specially, named by the port so
 #: the executor never compares signatures itself.
 BuiltinOperation = Literal["workspace.file"]
+#: The workspace builtin, recognized by its exact signature in ``bound_operation``.
+WORKSPACE_FILE_BUILTIN: Final[BuiltinOperation] = "workspace.file"
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +58,7 @@ def bound_operation(occurrence: ProviderExternalOccurrencePlan) -> BoundOperatio
         effect=occurrence.effect_class,
         entrypoint=occurrence.local_execution.entrypoint,
         builtin=(
-            "workspace.file"
+            WORKSPACE_FILE_BUILTIN
             if is_workspace_file_signature(occurrence.operation_signature_digest)
             else None
         ),

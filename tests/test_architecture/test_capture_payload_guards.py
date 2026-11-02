@@ -1,20 +1,28 @@
 """Capture = payload, enforced (D-R25..D-R27; procedures-e2e.md R1-R4, §4).
 
-Static guards over core's source (``src/cruxible_core`` and the client package):
+Guards over core's source (``src/cruxible_core`` and the client package):
 
-(a) no provider id or operation name -- as a string literal or an identifier --
-    outside the builtin registry; the allow-list names ``workspace.file`` only;
-(b) no reads of Capture-wrapper keys (``body_base64``, ``retrieved``,
-    ``exchanges``, ``derived``); L3 transport uses are allow-listed by file with
-    a reason (compilation bundles, dereference selections); the provider-result
-    ``content_base64`` wire field is not a wrapper key;
+(a) name-based dispatch is refused structurally: no comparison, membership,
+    ``match`` or dict lookup branches a provider/operation/builtin identifier (or
+    a local alias of one) on a string that is not core-declared vocabulary
+    (``_payload_guard_analysis.dispatch_violations``); the builtin names branch
+    only at their recognition sites. As a second, vocabulary layer, no known
+    provider id or operation name appears as a literal or identifier, and
+    ``workspace.file`` is spelled only at its declaration sites.
+(b) Capture bytes cross one boundary: they are read from the body store only by
+    the declared readers and decoded only by the extract runtime
+    (``decoding_violations``); and no core function reads a wrapper key
+    (``body_base64``, ``retrieved``, ``exchanges``, ``derived``) except the L3
+    transport functions allow-listed per function.
 (d) no kit or domain names in core logic; docstrings, ``description=``/``help=``
     text and the allow-listed examples module are documentation.
 
 (c) -- Capture admission never parses content -- is a runtime guard and lives in
 ``tests/test_e2e/test_skeleton_kev_epss.py`` beside the skeleton it shares.
 
-The allow-list (``payload_guard_allowlist.json``) is the only way past a guard.
+Every exemption is in ``payload_guard_allowlist.json``, scoped to a function
+(``<path>::<qualified function>``) with its reason, and must still be needed.
+Mutation tests below hold each guard to the bypasses it exists to stop.
 """
 
 from __future__ import annotations
@@ -22,11 +30,20 @@ from __future__ import annotations
 import ast
 import json
 import re
+import textwrap
 from collections.abc import Iterator
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
 from tests.support.provider_checkout import provider_checkout_path
+from tests.test_architecture._payload_guard_analysis import (
+    Corpus,
+    Function,
+    decoding_violations,
+    dispatch_violations,
+    material_read_sites,
+)
 
 REPO = Path(__file__).resolve().parents[2]
 SOURCES = (REPO / "src/cruxible_core", REPO / "packages/cruxible-client/src/cruxible_client")
@@ -95,11 +112,13 @@ def _identifier_form(name: str) -> str:
     return re.sub(r"[.-]", "_", name).lower()
 
 
-ALLOWED_NAMES = frozenset(ALLOW["provider_names"])
-NAME_LITERAL = _bounded(tuple(name for name in _names() if name not in ALLOWED_NAMES))
+BUILTIN = ALLOW["builtin"]
+#: The vocabulary layer: every known name but the builtin, which is checked by site.
+NAME_LITERAL = _bounded(tuple(name for name in _names() if name not in BUILTIN))
+BUILTIN_LITERAL = _bounded(("workspace.file",))
 #: In an identifier ``_`` joins words, so a name is a token between other words.
 NAME_IDENTIFIER = _bounded(
-    tuple(_identifier_form(name) for name in _names() if name not in ALLOWED_NAMES),
+    tuple(_identifier_form(name) for name in _names() if name not in BUILTIN),
     separators="",
 )
 DOMAIN = re.compile(
@@ -108,10 +127,22 @@ DOMAIN = re.compile(
 )
 
 
+@lru_cache(maxsize=1)
+def _repository_modules() -> dict[str, ast.Module]:
+    return {
+        path.relative_to(REPO).as_posix(): ast.parse(path.read_text(encoding="utf-8"))
+        for base in SOURCES
+        for path in sorted(base.rglob("*.py"))
+    }
+
+
+@lru_cache(maxsize=1)
+def _corpus() -> Corpus:
+    return Corpus.of(_repository_modules())
+
+
 def _modules() -> Iterator[tuple[str, ast.Module]]:
-    for base in SOURCES:
-        for path in sorted(base.rglob("*.py")):
-            yield path.relative_to(REPO).as_posix(), ast.parse(path.read_text(encoding="utf-8"))
+    yield from _repository_modules().items()
 
 
 def _documentation(tree: ast.Module) -> set[int]:
@@ -137,6 +168,22 @@ def _strings(tree: ast.Module) -> Iterator[ast.Constant]:
             yield node
 
 
+def _function_strings(corpus: Corpus) -> Iterator[tuple[Function, ast.Constant]]:
+    """Every non-documentation string constant, with the function that holds it."""
+
+    from tests.test_architecture._payload_guard_analysis import _own_nodes
+
+    documentation = {path: _documentation(tree) for path, tree in corpus.modules.items()}
+    for function in corpus.functions:
+        for node in _own_nodes(function):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and id(node) not in documentation[function.path]
+            ):
+                yield function, node
+
+
 def _identifiers(tree: ast.Module) -> Iterator[tuple[int, str]]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
@@ -151,7 +198,128 @@ def _identifiers(tree: ast.Module) -> Iterator[tuple[int, str]]:
             yield node.lineno, node.asname or node.name
 
 
-def test_a_no_provider_or_operation_names_outside_the_builtin_registry() -> None:
+def _corpus_of(sources: dict[str, str]) -> Corpus:
+    return Corpus.of({path: ast.parse(textwrap.dedent(text)) for path, text in sources.items()})
+
+
+def _builtin_dispatch_sites() -> dict[str, list[str]]:
+    return {name: list(entry.get("dispatch", {})) for name, entry in BUILTIN.items()}
+
+
+def _dispatch(corpus: Corpus) -> list[str]:
+    return dispatch_violations(
+        corpus,
+        builtin_sites=_builtin_dispatch_sites(),
+        dispatch_sites=ALLOW["dispatch_sites"],
+    )
+
+
+# -- (a) dispatch, structurally -------------------------------------------------------
+
+
+def test_a_no_name_based_dispatch_in_core() -> None:
+    found = _dispatch(_corpus())
+    assert not found, (
+        "core never branches on a provider id, operation name or builtin name outside its "
+        "recognition sites (R3); act on the declared type instead:\n" + "\n".join(found)
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # An unknown name: no vocabulary needed to refuse it.
+        """
+        def route(operation):
+            if operation == "x":
+                return 1
+        """,
+        # An alias of the identifier, against a set.
+        """
+        def route(occurrence):
+            op = occurrence.operation.name
+            return op in {"vendor.fetch", "vendor.parse"}
+        """,
+        # Through a module-level constant.
+        """
+        SPECIAL = "vendor.fetch"
+
+        def route(receipt):
+            return receipt.provider_id != SPECIAL
+        """,
+        # Dict-key dispatch, subscripted and by .get.
+        """
+        HANDLERS = {"vendor.fetch": 1, "vendor.parse": 2}
+
+        def route(occurrence):
+            return HANDLERS[occurrence.operation.name]
+        """,
+        """
+        HANDLERS = {"vendor.fetch": 1}
+
+        def route(provider):
+            return HANDLERS.get(provider.identity.name)
+        """,
+        # match on the identifier.
+        """
+        def route(bound):
+            match bound.entrypoint:
+                case "vendor.module:Fetch":
+                    return 1
+        """,
+        # The builtin, branched on outside its recognition sites.
+        """
+        def route(bound):
+            return bound.builtin == "workspace.file"
+        """,
+    ],
+    ids=["unknown-name", "alias", "constant", "dict-subscript", "dict-get", "match", "builtin"],
+)
+def test_a_name_based_dispatch_is_caught(source: str) -> None:
+    corpus = _corpus_of({"src/cruxible_core/mutant.py": source})
+    assert _dispatch(corpus), source
+
+
+def test_a_declared_vocabulary_and_the_real_builtin_site_pass() -> None:
+    corpus = _corpus_of(
+        {
+            "src/cruxible_core/mutant.py": """
+            from typing import Literal
+
+            Kind = Literal["call", "transform"]
+
+            def route(body):
+                return body.operation == "call"
+            """
+        }
+    )
+    assert _dispatch(corpus) == []
+    real = next(
+        function
+        for function in _corpus().functions
+        if function.site in BUILTIN["workspace.file"]["dispatch"]
+    )
+    assert real.qualname == "ProcedureExecutor._run_acquiring_call"
+
+
+def test_a_every_dispatch_exemption_is_still_needed() -> None:
+    from tests.test_architecture._payload_guard_analysis import _branch_values
+
+    corpus = _corpus()
+    by_site = {function.site: function for function in corpus.functions}
+    exempt = {
+        **ALLOW["dispatch_sites"],
+        **{site: name for name, entry in BUILTIN.items() for site in entry.get("dispatch", {})},
+    }
+    for site in exempt:
+        assert site in by_site, f"allow-listed site {site} does not exist"
+        assert list(_branch_values(by_site[site], corpus)), f"{site} no longer branches"
+
+
+# -- (a) the vocabulary layer -----------------------------------------------------------
+
+
+def test_a_no_known_provider_or_operation_names_in_core() -> None:
     found = []
     for path, tree in _modules():
         found += [
@@ -164,14 +332,32 @@ def test_a_no_provider_or_operation_names_outside_the_builtin_registry() -> None
             for line, name in _identifiers(tree)
             if NAME_IDENTIFIER.search(name.lower())
         ]
-    assert not found, (
-        "core never branches on a provider id or operation name (R3); act on the declared "
-        "type instead:\n" + "\n".join(found)
+    assert not found, "core never spells a provider id or operation name (R3):\n" + "\n".join(found)
+
+
+def test_a_the_builtin_is_spelled_only_at_its_declaration_sites() -> None:
+    sites = BUILTIN["workspace.file"]["declarations"]
+    found = sorted(
+        {
+            f"{function.site}:{node.lineno}"
+            for function, node in _function_strings(_corpus())
+            if BUILTIN_LITERAL.search(node.value) and function.site not in sites
+        }
     )
+    assert not found, (
+        "workspace.file is recognized by its builtin signature; spell it only where it is "
+        "declared (use WORKSPACE_FILE_BUILTIN to branch on it):\n" + "\n".join(found)
+    )
+    used = {
+        function.site
+        for function, node in _function_strings(_corpus())
+        if BUILTIN_LITERAL.search(node.value)
+    }
+    assert set(sites) <= used, sorted(set(sites) - used)
 
 
-def test_the_name_allow_list_is_the_builtin_only() -> None:
-    assert ALLOWED_NAMES == {"workspace.file"}
+def test_the_builtin_allow_list_holds_core_builtins_only() -> None:
+    assert set(BUILTIN) == {"workspace.file", "cruxible-builtin"}
 
 
 def test_the_vocabulary_covers_the_providers_checkout() -> None:
@@ -190,8 +376,92 @@ def test_the_vocabulary_covers_the_providers_checkout() -> None:
     assert operations <= set(OPERATIONS), sorted(operations - set(OPERATIONS))
 
 
-def _wrapper_reads(tree: ast.Module) -> Iterator[tuple[int, str]]:
-    for node in ast.walk(tree):
+# -- (b) the Capture-byte boundary -------------------------------------------------------
+
+
+def _decoding(corpus: Corpus) -> list[str]:
+    return decoding_violations(
+        corpus,
+        read_sites=ALLOW["material_readers"],
+        decode_sites=ALLOW["material_decoders"],
+    )
+
+
+def test_b_capture_bytes_are_decoded_only_by_extract() -> None:
+    found = _decoding(_corpus())
+    assert not found, (
+        "core reads Capture bytes only through extract under the CaptureKind's decoding "
+        "(R1):\n" + "\n".join(found)
+    )
+
+
+def test_b_the_declared_readers_are_exactly_the_readers() -> None:
+    readers = {site.rsplit(":", 1)[0] for site in material_read_sites(_corpus())}
+    assert readers == set(ALLOW["material_readers"])
+
+
+_LEGACY_WORKSPACE_READER = """
+import json
+
+def _legacy_workspace_content(bodies, envelope):
+    commitment = envelope.commitment
+    material = json.loads(bodies.read(commitment.digest, access=_ACCESS))
+    source = material.get("source") if isinstance(material, dict) else None
+    return source.get("bytes_digest")
+"""
+
+
+@pytest.mark.parametrize(
+    ("path", "source"),
+    [
+        # The deleted refusal-index reader, restored.
+        ("src/cruxible_core/proposals/refusal_index.py", _LEGACY_WORKSPACE_READER),
+        # A declared reader that starts decoding a new wrapper key.
+        (
+            "packages/cruxible-client/src/cruxible_client/contracts/captures.py",
+            """
+            import json
+
+            def _verify_capture_once(store, envelope, access):
+                material = store.read(envelope.commitment.digest, access=access)
+                return json.loads(material)["payload"]
+            """,
+        ),
+        # The same, one call away.
+        (
+            "packages/cruxible-client/src/cruxible_client/contracts/captures.py",
+            """
+            import json
+
+            def _unwrap_payload_mutant(content):
+                return json.loads(content)["payload"]
+
+            def _verify_capture_once(store, envelope, access):
+                material = store.read(envelope.commitment.digest, access=access)
+                return _unwrap_payload_mutant(material)
+            """,
+        ),
+        # Text-decoding the bytes by way of a local commitment digest.
+        (
+            "packages/cruxible-client/src/cruxible_client/contracts/claims.py",
+            """
+            def _resolve_cited_source_window(store, envelope, access):
+                digest = envelope.commitment.digest
+                content = store.read(digest, access=access)
+                return content.decode("utf-8")
+            """,
+        ),
+    ],
+    ids=["legacy-reader", "new-wrapper-key", "one-call-away", "text-decode"],
+)
+def test_b_decoding_capture_bytes_outside_extract_is_caught(path: str, source: str) -> None:
+    assert _decoding(_corpus_of({path: source})), source
+
+
+def _wrapper_reads(function: Function) -> Iterator[tuple[int, str]]:
+    from tests.test_architecture._payload_guard_analysis import _own_nodes
+
+    for node in _own_nodes(function):
         if (
             isinstance(node, ast.Subscript)
             and isinstance(node.ctx, ast.Load)
@@ -224,25 +494,45 @@ def _wrapper_reads(tree: ast.Module) -> Iterator[tuple[int, str]]:
             yield node.lineno, node.attr
 
 
-def test_b_no_capture_wrapper_reads_in_core() -> None:
-    allowed = {path: set(entry["keys"]) for path, entry in ALLOW["wrapper_reads"].items()}
-    found = [
-        f"{path}:{line}: reads {key!r}"
-        for path, tree in _modules()
-        for line, key in _wrapper_reads(tree)
-        if key not in allowed.get(path, set())
+def _wrapper_violations(corpus: Corpus) -> list[str]:
+    allowed = {site: set(entry["keys"]) for site, entry in ALLOW["wrapper_reads"].items()}
+    return [
+        f"{function.site}:{line}: reads {key!r}"
+        for function in corpus.functions
+        for line, key in _wrapper_reads(function)
+        if key not in allowed.get(function.site, set())
     ]
+
+
+def test_b_no_capture_wrapper_reads_in_core() -> None:
+    found = _wrapper_violations(_corpus())
     assert not found, (
-        "core reads Capture bytes only through extract under the CaptureKind's decoding "
-        "(R1); a provider payload carries no wrapper:\n" + "\n".join(found)
+        "a provider payload carries no wrapper; transport reads are exempt per function:\n"
+        + "\n".join(found)
     )
 
 
-def test_b_every_wrapper_allow_list_entry_is_still_needed() -> None:
-    reads = {path: {key for _line, key in _wrapper_reads(tree)} for path, tree in _modules()}
-    for path, entry in ALLOW["wrapper_reads"].items():
+def test_b_every_wrapper_exemption_is_still_needed_and_scoped() -> None:
+    reads = {
+        function.site: {key for _line, key in _wrapper_reads(function)}
+        for function in _corpus().functions
+    }
+    for site, entry in ALLOW["wrapper_reads"].items():
         assert entry["reason"]
-        assert set(entry["keys"]) <= reads.get(path, set()), (path, entry["keys"])
+        assert set(entry["keys"]) <= reads.get(site, set()), (site, entry["keys"])
+    # The exemption covers its function, not its file: a second function there is caught.
+    mutant = _corpus_of(
+        {
+            "packages/cruxible-client/src/cruxible_client/contracts/source_references.py": """
+            def peek(result):
+                return result.body_base64
+            """
+        }
+    )
+    assert _wrapper_violations(mutant)
+
+
+# -- (d) domain names ----------------------------------------------------------------------
 
 
 def test_d_no_kit_or_domain_names_in_core_logic() -> None:
@@ -279,11 +569,10 @@ def test_d_no_kit_or_domain_names_in_core_logic() -> None:
         (DOMAIN, "security.vulnerability"),
     ],
 )
-def test_the_guards_catch_what_they_forbid(guard: re.Pattern[str], sample: str) -> None:
+def test_the_word_guards_catch_what_they_forbid(guard: re.Pattern[str], sample: str) -> None:
     assert guard.search(sample.replace("_", " ") if guard is DOMAIN else sample)
 
 
-def test_the_name_guard_ignores_the_builtin_and_runtime_library() -> None:
-    assert not NAME_LITERAL.search("workspace.file.request@1")
+def test_the_name_guard_ignores_the_runtime_library() -> None:
     assert not NAME_LITERAL.search("cruxible-provider-runtime")
     assert not NAME_IDENTIFIER.search("workspace_file_contracts")

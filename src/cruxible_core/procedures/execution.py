@@ -272,6 +272,7 @@ from cruxible_core.procedures.node_summaries import (
     transform_summary,
 )
 from cruxible_core.procedures.ports import (
+    WORKSPACE_FILE_BUILTIN,
     AcquisitionRules,
     bound_operation,
 )
@@ -3719,7 +3720,7 @@ class ProcedureExecutor:
                     node_id=node.node_id,
                 )
         workspace_request: ExecutedWorkspaceFileSourceRequestV2 | None = None
-        if bound_operation(occurrence).builtin == "workspace.file":
+        if bound_operation(occurrence).builtin == WORKSPACE_FILE_BUILTIN:
             # The author names the workspace logically, or not at all; the daemon
             # resolves its root and executes -- and journals -- the request with
             # that root's binding digest, before anything is read.
