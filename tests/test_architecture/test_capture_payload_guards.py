@@ -157,7 +157,7 @@ def _documentation(tree: ast.Module) -> set[int]:
     return found
 
 
-def _strings(tree: ast.Module) -> Iterator[ast.Constant]:
+def _strings(tree: ast.Module) -> Iterator[tuple[int, str]]:
     documentation = _documentation(tree)
     for node in ast.walk(tree):
         if (
@@ -165,10 +165,10 @@ def _strings(tree: ast.Module) -> Iterator[ast.Constant]:
             and isinstance(node.value, str)
             and id(node) not in documentation
         ):
-            yield node
+            yield node.lineno, node.value
 
 
-def _function_strings(corpus: Corpus) -> Iterator[tuple[Function, ast.Constant]]:
+def _function_strings(corpus: Corpus) -> Iterator[tuple[Function, int, str]]:
     """Every non-documentation string constant, with the function that holds it."""
 
     from tests.test_architecture._payload_guard_analysis import _own_nodes
@@ -181,7 +181,7 @@ def _function_strings(corpus: Corpus) -> Iterator[tuple[Function, ast.Constant]]
                 and isinstance(node.value, str)
                 and id(node) not in documentation[function.path]
             ):
-                yield function, node
+                yield function, node.lineno, node.value
 
 
 def _identifiers(tree: ast.Module) -> Iterator[tuple[int, str]]:
@@ -267,13 +267,43 @@ def test_a_no_name_based_dispatch_in_core() -> None:
                 case "vendor.module:Fetch":
                     return 1
         """,
+        # A function-local dict, looked up by the identifier.
+        """
+        def route(operation):
+            handlers = {"vendor.fetch": 1}
+            return handlers.get(operation)
+        """,
+        # A chain of constant aliases.
+        """
+        SPECIAL = "vendor.fetch"
+        ALIAS = SPECIAL
+
+        def route(operation):
+            return operation == ALIAS
+        """,
+        # A provider's own name.
+        """
+        def route(provider):
+            return provider.name == "vendor.fetch"
+        """,
         # The builtin, branched on outside its recognition sites.
         """
         def route(bound):
             return bound.builtin == "workspace.file"
         """,
     ],
-    ids=["unknown-name", "alias", "constant", "dict-subscript", "dict-get", "match", "builtin"],
+    ids=[
+        "unknown-name",
+        "alias",
+        "constant",
+        "dict-subscript",
+        "dict-get",
+        "match",
+        "local-dict",
+        "constant-chain",
+        "provider-name",
+        "builtin",
+    ],
 )
 def test_a_name_based_dispatch_is_caught(source: str) -> None:
     corpus = _corpus_of({"src/cruxible_core/mutant.py": source})
@@ -302,6 +332,40 @@ def test_a_declared_vocabulary_and_the_real_builtin_site_pass() -> None:
     assert real.qualname == "ProcedureExecutor._run_acquiring_call"
 
 
+def test_a_constants_resolve_by_module_and_import_not_by_bare_name() -> None:
+    """An unrelated module's KIND never stands in for this one's (no false positive)."""
+
+    valid = {
+        "src/cruxible_core/kinds.py": """
+        from typing import Literal
+
+        Kind = Literal["call"]
+        KIND = "call"
+
+        def route(operation):
+            return operation == KIND
+        """,
+        "src/cruxible_core/elsewhere.py": """
+        KIND = "unrelated-format@1"
+        """,
+    }
+    assert _dispatch(_corpus_of(valid)) == []
+    # Imported bindings resolve to their own module's value, aliases included.
+    imported = {
+        **valid,
+        "src/cruxible_core/user.py": """
+        from cruxible_core.elsewhere import KIND as OTHER
+        from cruxible_core import kinds
+
+        def route(operation):
+            return operation == kinds.KIND or operation == OTHER
+        """,
+    }
+    assert [item.split(": ", 1)[1] for item in _dispatch(_corpus_of(imported))] == [
+        "branches on 'unrelated-format@1' (not a core-declared vocabulary member)"
+    ]
+
+
 def test_a_every_dispatch_exemption_is_still_needed() -> None:
     from tests.test_architecture._payload_guard_analysis import _branch_values
 
@@ -323,9 +387,9 @@ def test_a_no_known_provider_or_operation_names_in_core() -> None:
     found = []
     for path, tree in _modules():
         found += [
-            f"{path}:{node.lineno}: {match.group(0)!r}"
-            for node in _strings(tree)
-            if (match := NAME_LITERAL.search(node.value))
+            f"{path}:{line}: {match.group(0)!r}"
+            for line, text in _strings(tree)
+            if (match := NAME_LITERAL.search(text))
         ]
         found += [
             f"{path}:{line}: identifier {name!r}"
@@ -339,9 +403,9 @@ def test_a_the_builtin_is_spelled_only_at_its_declaration_sites() -> None:
     sites = BUILTIN["workspace.file"]["declarations"]
     found = sorted(
         {
-            f"{function.site}:{node.lineno}"
-            for function, node in _function_strings(_corpus())
-            if BUILTIN_LITERAL.search(node.value) and function.site not in sites
+            f"{function.site}:{line}"
+            for function, line, text in _function_strings(_corpus())
+            if BUILTIN_LITERAL.search(text) and function.site not in sites
         }
     )
     assert not found, (
@@ -350,8 +414,8 @@ def test_a_the_builtin_is_spelled_only_at_its_declaration_sites() -> None:
     )
     used = {
         function.site
-        for function, node in _function_strings(_corpus())
-        if BUILTIN_LITERAL.search(node.value)
+        for function, _line, text in _function_strings(_corpus())
+        if BUILTIN_LITERAL.search(text)
     }
     assert set(sites) <= used, sorted(set(sites) - used)
 
@@ -451,8 +515,43 @@ def _legacy_workspace_content(bodies, envelope):
                 return content.decode("utf-8")
             """,
         ),
+        # A declared reader passing the read inline to a decoding helper.
+        (
+            "src/cruxible_core/procedures/execution.py",
+            """
+            import json
+
+            def unwrap(content):
+                return json.loads(content)["payload"]
+
+            class ProcedureExecutor:
+                def _capture_body(self, envelope):
+                    return unwrap(self.bodies.read(envelope.commitment.digest, access=self.access))
+            """,
+        ),
+        # A caller decoding what a declared reader returned.
+        (
+            "src/cruxible_core/procedures/execution.py",
+            """
+            import json
+
+            class ProcedureExecutor:
+                def _capture_body(self, envelope):
+                    return self.bodies.read(envelope.commitment.digest, access=self.access)
+
+                def _peek(self, envelope):
+                    return json.loads(self._capture_body(envelope))["payload"]
+            """,
+        ),
     ],
-    ids=["legacy-reader", "new-wrapper-key", "one-call-away", "text-decode"],
+    ids=[
+        "legacy-reader",
+        "new-wrapper-key",
+        "one-call-away",
+        "text-decode",
+        "inline-read-argument",
+        "reader-return-in-caller",
+    ],
 )
 def test_b_decoding_capture_bytes_outside_extract_is_caught(path: str, source: str) -> None:
     assert _decoding(_corpus_of({path: source})), source
@@ -542,9 +641,9 @@ def test_d_no_kit_or_domain_names_in_core_logic() -> None:
         if path in exempt:
             continue
         found += [
-            f"{path}:{node.lineno}: {match.group(0)!r}"
-            for node in _strings(tree)
-            if (match := DOMAIN.search(node.value))
+            f"{path}:{line}: {match.group(0)!r}"
+            for line, text in _strings(tree)
+            if (match := DOMAIN.search(text))
         ]
         found += [
             f"{path}:{line}: identifier {name!r}"

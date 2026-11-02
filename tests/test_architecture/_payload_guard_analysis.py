@@ -80,8 +80,11 @@ class Corpus:
     modules: dict[str, ast.Module]
     functions: list[Function] = field(default_factory=list)
     by_name: dict[str, list[Function]] = field(default_factory=lambda: defaultdict(list))
-    string_constants: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
-    dict_constants: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
+    #: Per module: module-level name -> the expression it is bound to.
+    bindings: dict[str, dict[str, ast.expr]] = field(default_factory=dict)
+    #: Per module: imported name -> (source module path, name there), or the
+    #: module itself (name ``""``) for ``import x as y`` / ``from pkg import module``.
+    imports: dict[str, dict[str, tuple[str, str]]] = field(default_factory=dict)
     vocabulary: set[str] = field(default_factory=set)
 
     @classmethod
@@ -92,16 +95,13 @@ class Corpus:
             for function in _functions(path, tree):
                 corpus.functions.append(function)
                 corpus.by_name[function.qualname.rsplit(".", 1)[-1]].append(function)
+            bindings: dict[str, ast.expr] = {}
             for statement in tree.body:
                 target, value = _assignment(statement)
-                if target is None or value is None:
-                    continue
-                strings = _plain_strings(value)
-                if strings:
-                    corpus.string_constants[target] |= strings
-                if isinstance(value, ast.Dict):
-                    keys = {k.value for k in value.keys if isinstance(k, ast.Constant)}
-                    corpus.dict_constants[target] |= {k for k in keys if isinstance(k, str)}
+                if target is not None and value is not None:
+                    bindings[target] = value
+            corpus.bindings[path] = bindings
+            corpus.imports[path] = _imports(path, tree, set(corpus.modules))
             for node in ast.walk(tree):
                 if isinstance(node, ast.Subscript) and _name_of(node.value) == "Literal":
                     corpus.vocabulary |= {
@@ -111,6 +111,42 @@ class Corpus:
                     }
         corpus.vocabulary -= BUILTIN_NAMES
         return corpus
+
+
+def _module_path(dotted: str, paths: set[str]) -> str | None:
+    """The corpus path of a dotted core module, when it is one."""
+
+    parts = dotted.split(".")
+    roots = {
+        "cruxible_core": "src/cruxible_core",
+        "cruxible_client": "packages/cruxible-client/src/cruxible_client",
+    }
+    if parts[0] not in roots:
+        return None
+    base = "/".join([roots[parts[0]], *parts[1:]])
+    for candidate in (f"{base}.py", f"{base}/__init__.py"):
+        if candidate in paths:
+            return candidate
+    return None
+
+
+def _imports(path: str, tree: ast.Module, paths: set[str]) -> dict[str, tuple[str, str]]:
+    found: dict[str, tuple[str, str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                target = _module_path(alias.name, paths)
+                if target is not None:
+                    found[alias.asname or alias.name.split(".")[0]] = (target, "")
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            source = _module_path(node.module, paths)
+            for alias in node.names:
+                submodule = _module_path(f"{node.module}.{alias.name}", paths)
+                if submodule is not None:
+                    found[alias.asname or alias.name] = (submodule, "")
+                elif source is not None:
+                    found[alias.asname or alias.name] = (source, alias.name)
+    return found
 
 
 def _name_of(node: ast.AST) -> str | None:
@@ -128,21 +164,6 @@ def _assignment(statement: ast.stmt) -> tuple[str | None, ast.expr | None]:
     if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
         return statement.target.id, statement.value
     return None, None
-
-
-def _plain_strings(value: ast.expr) -> set[str]:
-    if isinstance(value, ast.Constant) and isinstance(value.value, str):
-        return {value.value}
-    if isinstance(value, (ast.Tuple, ast.List, ast.Set)):
-        items = [_plain_strings(item) for item in value.elts]
-        return set().union(*items) if items and all(items) else set()
-    if (
-        isinstance(value, ast.Call)
-        and _name_of(value.func) in {"frozenset", "set", "tuple"}
-        and len(value.args) == 1
-    ):
-        return _plain_strings(value.args[0])
-    return set()
 
 
 def _functions(path: str, tree: ast.Module) -> Iterator[Function]:
@@ -197,9 +218,11 @@ def _is_subject(expression: ast.AST, aliases: set[str]) -> bool:
             return True
         if expression.attr == "name":
             inner = expression.value
-            if isinstance(inner, ast.Name) and inner.id in aliases:
+            if isinstance(inner, ast.Name) and (
+                inner.id in aliases or inner.id in SUBJECT_IDENTIFIERS
+            ):
                 return True
-            if isinstance(inner, ast.Attribute) and inner.attr == "operation":
+            if isinstance(inner, ast.Attribute) and inner.attr in SUBJECT_IDENTIFIERS:
                 return True
             if isinstance(inner, ast.Attribute) and inner.attr in {"identity", "distribution"}:
                 return _is_subject(inner.value, aliases)
@@ -225,43 +248,109 @@ def _aliases(function: Function) -> set[str]:
     return aliases
 
 
-def _values(expression: ast.AST, corpus: Corpus) -> set[str]:
-    found = _plain_strings(expression)  # type: ignore[arg-type]
-    if found:
-        return found
-    name = _name_of(expression)
-    if name is not None and name in corpus.string_constants:
-        return set(corpus.string_constants[name])
+#: How far a chain of constant aliases (``B = A``, imports) is followed.
+_ALIAS_DEPTH = 8
+
+
+@dataclass(frozen=True)
+class _Scope:
+    """Where a name is looked up: a function's locals, then its module, then imports."""
+
+    corpus: Corpus
+    path: str
+    local: Mapping[str, ast.expr]
+
+
+def _local_bindings(function: Function) -> dict[str, ast.expr]:
+    if function.qualname == "<module>":
+        return {}
+    found: dict[str, ast.expr] = {}
+    for node in _own_nodes(function):
+        if isinstance(node, ast.stmt):
+            target, value = _assignment(node)
+            if target is not None and value is not None:
+                found[target] = value
+    return found
+
+
+def _resolve(expression: ast.AST, scope: _Scope, depth: int = 0) -> ast.expr | None:
+    """The expression a name or ``module.NAME`` is bound to, following aliases."""
+
+    if depth > _ALIAS_DEPTH:
+        return None
+    corpus = scope.corpus
+    if isinstance(expression, ast.Name):
+        bound = scope.local.get(expression.id)
+        if bound is not None and bound is not expression:
+            return _settle(bound, scope, depth)
+        bound = corpus.bindings.get(scope.path, {}).get(expression.id)
+        if bound is not None:
+            return _settle(bound, _Scope(corpus, scope.path, {}), depth)
+        imported = corpus.imports.get(scope.path, {}).get(expression.id)
+        if imported is not None and imported[1]:
+            source, name = imported
+            return _resolve(ast.Name(id=name), _Scope(corpus, source, {}), depth + 1)
+        return None
+    if isinstance(expression, ast.Attribute) and isinstance(expression.value, ast.Name):
+        imported = corpus.imports.get(scope.path, {}).get(expression.value.id)
+        if imported is not None and not imported[1]:
+            return _resolve(
+                ast.Name(id=expression.attr), _Scope(corpus, imported[0], {}), depth + 1
+            )
+    return None
+
+
+def _settle(bound: ast.expr, scope: _Scope, depth: int) -> ast.expr | None:
+    if isinstance(bound, (ast.Name, ast.Attribute)):
+        return _resolve(bound, scope, depth + 1)
+    return bound
+
+
+def _values(expression: ast.AST, scope: _Scope) -> set[str]:
+    if isinstance(expression, ast.Constant):
+        return {expression.value} if isinstance(expression.value, str) else set()
     if isinstance(expression, (ast.Tuple, ast.List, ast.Set)):
-        return set().union(*(_values(item, corpus) for item in expression.elts))
-    return set()
+        return set().union(*(_values(item, scope) for item in expression.elts))
+    if (
+        isinstance(expression, ast.Call)
+        and _name_of(expression.func) in {"frozenset", "set", "tuple"}
+        and len(expression.args) == 1
+    ):
+        return _values(expression.args[0], scope)
+    bound = _resolve(expression, scope)
+    return set() if bound is None else _values(bound, scope)
 
 
-def _dict_keys(expression: ast.AST, corpus: Corpus) -> set[str]:
+def _dict_keys(expression: ast.AST, scope: _Scope) -> set[str]:
     if isinstance(expression, ast.Dict):
-        return {k.value for k in expression.keys if isinstance(k, ast.Constant)} - {None}
-    name = _name_of(expression)
-    return set(corpus.dict_constants.get(name, set())) if name else set()
+        return {
+            key.value
+            for key in expression.keys
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        }
+    bound = _resolve(expression, scope)
+    return _dict_keys(bound, scope) if isinstance(bound, ast.Dict) else set()
 
 
 def _branch_values(function: Function, corpus: Corpus) -> Iterator[tuple[int, str]]:
     aliases = _aliases(function)
+    scope = _Scope(corpus, function.path, _local_bindings(function))
     for node in _own_nodes(function):
         if isinstance(node, ast.Compare):
             sides = [node.left, *node.comparators]
             if any(_is_subject(side, aliases) for side in sides):
                 for side in sides:
                     if not _is_subject(side, aliases):
-                        for value in _values(side, corpus):
+                        for value in _values(side, scope):
                             yield node.lineno, value
         elif isinstance(node, ast.Match) and _is_subject(node.subject, aliases):
             for case in node.cases:
                 for pattern in ast.walk(case.pattern):
                     if isinstance(pattern, ast.MatchValue):
-                        for value in _values(pattern.value, corpus):
+                        for value in _values(pattern.value, scope):
                             yield node.lineno, value
         elif isinstance(node, ast.Subscript) and _is_subject(node.slice, aliases):
-            for value in _dict_keys(node.value, corpus):
+            for value in _dict_keys(node.value, scope):
                 yield node.lineno, value
         elif (
             isinstance(node, ast.Call)
@@ -270,7 +359,7 @@ def _branch_values(function: Function, corpus: Corpus) -> Iterator[tuple[int, st
             and node.args
             and _is_subject(node.args[0], aliases)
         ):
-            for value in _dict_keys(node.func.value, corpus):
+            for value in _dict_keys(node.func.value, scope):
                 yield node.lineno, value
 
 
@@ -350,16 +439,17 @@ def _targets(target: ast.AST) -> Iterator[str]:
             yield from _targets(item)
 
 
-def _tainted(function: Function, seeds: set[str], reads: list[ast.Call]) -> set[str]:
-    read_ids = {id(node) for node in reads}
+def _carries(expression: ast.AST, names: set[str], material: set[int]) -> bool:
+    """Whether ``expression`` holds Capture bytes: a tainted name or a material call."""
+
+    return any(
+        id(node) in material or (isinstance(node, ast.Name) and node.id in names)
+        for node in ast.walk(expression)
+    )
+
+
+def _tainted(function: Function, seeds: set[str], material: set[int]) -> set[str]:
     names = set(seeds)
-
-    def carries(expression: ast.AST) -> bool:
-        return any(
-            id(node) in read_ids or (isinstance(node, ast.Name) and node.id in names)
-            for node in ast.walk(expression)
-        )
-
     grew = True
     while grew:
         grew = False
@@ -372,7 +462,7 @@ def _tainted(function: Function, seeds: set[str], reads: list[ast.Call]) -> set[
             elif isinstance(node, ast.withitem) and node.optional_vars is not None:
                 pairs = [(node.optional_vars, node.context_expr)]
             for target, value in pairs:
-                if carries(value):
+                if _carries(value, names, material):
                     new = set(_targets(target)) - names
                     if new:
                         names |= new
@@ -380,17 +470,13 @@ def _tainted(function: Function, seeds: set[str], reads: list[ast.Call]) -> set[
     return names
 
 
-def _decoded(function: Function, names: set[str], reads: list[ast.Call]) -> list[int]:
-    read_ids = {id(node) for node in reads}
+def _decoded(function: Function, names: set[str], material: set[int]) -> list[int]:
     lines = []
     for node in _own_nodes(function):
         if not isinstance(node, ast.Call):
             continue
         operand = _sink(node)
-        if operand is not None and any(
-            id(item) in read_ids or (isinstance(item, ast.Name) and item.id in names)
-            for item in ast.walk(operand)
-        ):
+        if operand is not None and _carries(operand, names, material):
             lines.append(node.lineno)
     return lines
 
@@ -413,66 +499,104 @@ def material_read_sites(corpus: Corpus) -> list[str]:
     ]
 
 
+def _callee(corpus: Corpus, node: ast.Call) -> Function | None:
+    """The one core function a call names, when the name is unambiguous."""
+
+    targets = corpus.by_name.get(_name_of(node.func) or "", [])
+    return targets[0] if len(targets) == 1 else None
+
+
+def _material_calls(function: Function, corpus: Corpus, returning: set[str]) -> set[int]:
+    """Direct material reads and calls to functions that return Capture bytes."""
+
+    found = {id(node) for node in _material_reads(function)}
+    for node in _own_nodes(function):
+        if isinstance(node, ast.Call):
+            callee = _callee(corpus, node)
+            if callee is not None and callee.site in returning:
+                found.add(id(node))
+    return found
+
+
+def _returning(corpus: Corpus) -> set[str]:
+    """Sites of functions whose return value is Capture bytes (to a fixpoint)."""
+
+    returning: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for function in corpus.functions:
+            if function.qualname == "<module>" or function.site in returning:
+                continue
+            material = _material_calls(function, corpus, returning)
+            names = _tainted(function, set(), material)
+            if any(
+                isinstance(node, ast.Return)
+                and node.value is not None
+                and _carries(node.value, names, material)
+                for node in _own_nodes(function)
+            ):
+                returning.add(function.site)
+                changed = True
+    return returning
+
+
 def decoding_violations(
     corpus: Corpus, *, read_sites: Iterable[str], decode_sites: Iterable[str]
 ) -> list[str]:
     """Capture bytes are read only by declared readers and decoded only by extract.
 
     Every body-store read addressed by a commitment digest must be at a declared
-    reader site. Within a function -- and one call deep, into a core function
-    with an unambiguous name -- the bytes it read may reach a decoder only at a
-    declared decoding site.
+    reader site. Capture bytes are a read's result, a call to a function that
+    returns one (a reader's callers hold Capture bytes too), or a name bound to
+    either. Within a function -- and one call deep, into a core function with an
+    unambiguous name, whether the bytes are passed by name or inline -- they may
+    reach a decoder only at a declared decoding site.
     """
 
     read_sites, decode_sites = tuple(read_sites), tuple(decode_sites)
+    returning = _returning(corpus)
     found: list[str] = []
     for function in corpus.functions:
         reads = _material_reads(function)
-        if not reads:
-            continue
-        if not _allowed(function.site, read_sites):
+        if reads and not _allowed(function.site, read_sites):
             found += [
                 f"{function.site}:{node.lineno}: reads Capture material outside the readers"
                 for node in reads
             ]
-        names = _tainted(function, set(), reads)
+        material = _material_calls(function, corpus, returning)
+        if not material:
+            continue
+        names = _tainted(function, set(), material)
         if not _allowed(function.site, decode_sites):
             found += [
                 f"{function.site}:{line}: decodes Capture material"
-                for line in _decoded(function, names, reads)
+                for line in _decoded(function, names, material)
             ]
         for node in _own_nodes(function):
-            if not isinstance(node, ast.Call):
+            if not isinstance(node, ast.Call) or id(node) in material:
                 continue
-            callee = _name_of(node.func)
-            targets = corpus.by_name.get(callee or "", [])
-            if len(targets) != 1 or _allowed(targets[0].site, decode_sites):
+            target = _callee(corpus, node)
+            if target is None or _allowed(target.site, decode_sites):
                 continue
-            (target,) = targets
             params = list(target.params)
             if params and params[0] in {"self", "cls"}:
                 params = params[1:]
             carried = {
                 params[index]
                 for index, argument in enumerate(node.args)
-                if index < len(params)
-                and any(
-                    isinstance(item, ast.Name) and item.id in names for item in ast.walk(argument)
-                )
+                if index < len(params) and _carries(argument, names, material)
             } | {
                 keyword.arg
                 for keyword in node.keywords
-                if keyword.arg in target.params
-                and any(
-                    isinstance(item, ast.Name) and item.id in names
-                    for item in ast.walk(keyword.value)
-                )
+                if keyword.arg is not None
+                and keyword.arg in target.params
+                and _carries(keyword.value, names, material)
             }
-            carried.discard(None)  # type: ignore[arg-type]
             if carried:
-                inner = _tainted(target, carried, [])  # type: ignore[arg-type]
+                inner = _tainted(target, carried, set())
                 found += [
                     f"{target.site}:{line}: decodes Capture material passed by {function.site}"
-                    for line in _decoded(target, inner, [])
+                    for line in _decoded(target, inner, set())
                 ]
     return found
