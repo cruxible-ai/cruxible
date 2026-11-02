@@ -809,6 +809,28 @@ def test_changed_record_source_cannot_reuse_or_poison_the_previous_sources_pool(
         seeded.retained_record_reader().member(generation, location.member_ordinal)
 
 
+def test_projection_opens_record_reader_only_for_historical_facts(seeded, monkeypatch):
+    path = seeded._recovered.head.record.members[0].path
+    original = seeded.retained_record_reader
+    readers = []
+
+    def open_records():
+        reader = original()
+        readers.append(reader)
+        return reader
+
+    monkeypatch.setattr(seeded, "retained_record_reader", open_records)
+    with seeded.bind_accepted_projection(seeded.accepted_coordinate()) as projection:
+        assert readers == []
+        projection.typed.envelopes()
+        assert projection.typed.member_bytes(path)
+        assert readers == []
+        expected = projection.typed._compile_paths((path,))
+        assert len(readers) == 1
+        assert projection.typed._compile_paths((path,)) == expected
+        assert len(readers) == 1
+
+
 def test_record_source_binding_does_not_keep_its_owner_alive():
     import weakref
 

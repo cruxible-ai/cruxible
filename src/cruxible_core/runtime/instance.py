@@ -2593,7 +2593,7 @@ class PlaybillInstance:
             self._ledger,
             bodies=self.body_store(),
             history=lambda: self.accepted_history_reader(at=at),
-            records=self.retained_record_reader(),
+            records=self.retained_record_reader,
             fact_memo=self._owner_facts,
         )
 

@@ -1164,6 +1164,9 @@ class TypedStateReader:
 
         if records is None and history is not None:
             records = RetainedRecordReader(repository.blob_at)
+        # A bound projection can serve indexed members without any retained
+        # change-set records. Instance sources supply a factory, opened only
+        # when selected historical facts actually need those records.
         self.records = records
         self._member_bytes: dict[str, bytes] = {}
         self.work = {"members_read": 0, "source_bytes": 0, "owners_selected": 0}
@@ -1478,21 +1481,25 @@ class TypedStateReader:
         coordinates = {}
         self.prefetch_members(paths)
         if self.history is not None:
-            assert self.records is not None
+            record_reader = self.records
+            if callable(record_reader):
+                record_reader = record_reader()
+                self.records = record_reader
+            assert record_reader is not None
             selected = frozenset(paths)
             with self.history() as history:
                 for path in paths:
                     for location in history.member_history(path):
                         if location.sequence in records:
                             # Already selected; still verify this path's own member.
-                            history.read_member(location, self.records)
+                            history.read_member(location, record_reader)
                             continue
                         generation = history.generation(location.sequence)
                         # Only the selected paths' members bear on their facts,
                         # so the record is copied for those members alone.
                         records[location.sequence] = (
                             generation.source_record_path,
-                            history.read_member_selection(location, self.records, selected),
+                            history.read_member_selection(location, record_reader, selected),
                         )
                         coordinates[location.sequence] = AcceptedCoordinate(
                             git_oid=generation.git_oid,
