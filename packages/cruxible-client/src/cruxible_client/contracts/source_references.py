@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import base64
 import re
-from urllib.parse import parse_qsl, urlsplit
 from typing import Annotated, Literal
+from urllib.parse import parse_qsl, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
