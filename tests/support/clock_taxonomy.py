@@ -611,6 +611,7 @@ NON_CLOCK_DECLARED_FIELDS: frozenset[tuple[str, str]] = frozenset(
         # A JSON Pointer to the count an extract's records must match; it holds no time.
         ("CompleteWhen", "count_at"),
         ("CompleteWhenResult", "count_at"),
+        ("ExtractCompleteWhen", "count_at"),
     }
 )
 

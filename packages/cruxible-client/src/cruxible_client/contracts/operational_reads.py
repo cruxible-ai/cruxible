@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from cruxible_client.contracts.claim_evidence import RunCompleteness
 from cruxible_client.contracts.line_dispatch import LineTriggerVersion
 from cruxible_client.contracts.mandate_scope import MandateChanges, MandateValueCondition
+from cruxible_client.contracts.procedures.node_summary import NodeRunSummary
 from cruxible_client.contracts.procedures.results import (
     ProcedureTerminal,
     ProcedureTerminalEgress,
@@ -313,7 +314,10 @@ class GetRunNode(_StrictOperationalModel):
 
     ``duration_us`` is absent: the journal records every event of a run at the
     run's evaluation instant (the deterministic clock), so per-node durations
-    are not derivable from it.
+    are not derivable from it. ``summary`` is what flowed through a node that
+    succeeded (its records, rows, Captures, branch or Claim counts), by kind;
+    it is absent for a node that refused or failed, and for a kind that keeps
+    none (``project``, ``select``, ``invoke``).
     """
 
     node: str
@@ -321,6 +325,7 @@ class GetRunNode(_StrictOperationalModel):
     verdict: str | None = Field(default=None, exclude_if=_omit_none)
     sequence: int = Field(ge=1)
     duration_us: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
+    summary: NodeRunSummary | None = Field(default=None, exclude_if=_omit_none)
 
 
 class GetRunCurrentNode(_StrictOperationalModel):

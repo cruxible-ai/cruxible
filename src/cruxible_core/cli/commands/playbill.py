@@ -5916,6 +5916,11 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
                     )
         else:
             for key, value in card.items():
+                if key == "nodes" and result.kind == "procedure_run" and value:
+                    click.echo("nodes:")
+                    for node in value:
+                        click.echo("  " + _run_node_line(node))
+                    continue
                 if key == "authored" and result.kind == "procedure" and value is not None:
                     from cruxible_client.contracts.refs import concise
 
@@ -7191,7 +7196,105 @@ def _echo_source_observations(result: contracts.ProcedureRunState) -> None:
             )
         if observation.capture_digest is not None:
             click.echo(f"Capture {where}: {observation.capture_digest}")
+    for node in result.nodes:
+        click.echo("Node " + _run_node_line(node.model_dump(mode="json")))
     _echo_terminal_egress(result)
+
+
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _node_summary_text(summary: Mapping[str, Any]) -> str:
+    """One node's run summary as a compact phrase: counts only, never values."""
+
+    kind = summary.get("kind")
+    if kind == "extract":
+        parts = [_plural(summary["records"], "record")]
+        for name, noun in (
+            ("invalid_records", "invalid record"),
+            ("duplicates", "duplicate"),
+            ("invalid_fields", "invalid field"),
+        ):
+            if summary.get(name):
+                parts.append(_plural(summary[name], noun))
+        check = summary.get("complete_when")
+        if isinstance(check, Mapping):
+            parts.append(
+                f"complete_when {check.get('observed')}/{check.get('expected')}"
+                + ("" if check.get("held") else " not held")
+            )
+        if not summary.get("complete"):
+            parts.append("incomplete")
+        return ", ".join(parts)
+    if kind == "transform":
+        rows_in, rows_out = summary.get("rows_in"), summary.get("rows_out")
+        return (
+            f"{summary.get('transform_kind')} "
+            f"{'-' if rows_in is None else rows_in} -> "
+            f"{'1 value' if rows_out is None else _plural(rows_out, 'row')}"
+        )
+    if kind == "read":
+        return _plural(summary["rows"], "row")
+    if kind == "call":
+        digests = summary.get("capture_digests", ())
+        shown = " ".join(capture_handle(digest) for digest in digests)
+        return _plural(summary["captures"], "capture") + (f" {shown}" if shown else "")
+    if kind == "guard":
+        operands = []
+        for operand in summary.get("operands", ()):
+            # A side that is not a number or a boolean is never carried: "?".
+            left, right = (
+                json.dumps(operand[side]) if side in operand else "?" for side in ("left", "right")
+            )
+            operator = operand["operator"]
+            operands.append(
+                f"{operator}={left}"
+                if operator in {"present", "absent"}
+                else (f"{left} {operator} {right}")
+            )
+        more = summary.get("operands_truncated", 0)
+        shown = "; ".join(operands) + (f"; +{more} more" if more else "")
+        return f"took {summary['branch']}" + (f" ({shown})" if shown else "")
+    if kind == "claims":
+        parts = [
+            f"{summary[name]} {label}"
+            for name, label in (
+                ("written", "written"),
+                ("revised", "revised"),
+                ("inverse_written", "inverse"),
+                ("subjects_created", "subjects created"),
+                ("re_observed", "re-observed"),
+                ("no_op", "no-op"),
+                ("retired", "retired"),
+                ("surfaced", "surfaced"),
+                ("downgraded", "downgraded"),
+            )
+            if summary.get(name)
+        ]
+        skipped = summary.get("skipped") or {}
+        if skipped:
+            parts.append(
+                "skipped "
+                + ", ".join(f"{reason}={count}" for reason, count in sorted(skipped.items()))
+            )
+        return (", ".join(parts) or "nothing") + f"; {summary.get('delivery')}"
+    if kind in {"emit_capture", "post_inbox"}:
+        unposted = summary.get("unposted", 0)
+        return f"{summary['emitted']} emitted" + (f", {unposted} unposted" if unposted else "")
+    if kind == "halt":
+        return f"halted ({summary['reason']})" if summary.get("reason") else "halted"
+    if kind == "repeat":
+        return _plural(summary["attempts"], "attempt")
+    return str(kind)
+
+
+def _run_node_line(node: Mapping[str, Any]) -> str:
+    """``<node> <kind> <verdict>: <summary>`` for one finished node."""
+
+    head = f"{node.get('node')} {node.get('kind') or '?'} {node.get('verdict') or '?'}"
+    summary = node.get("summary")
+    return head + (f": {_node_summary_text(summary)}" if isinstance(summary, Mapping) else "")
 
 
 #: A delivered proposal's changed item paths printed before the rest are counted.

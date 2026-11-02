@@ -38,6 +38,7 @@ from cruxible_client.contracts.errors import (
     ProjectionIntegrityError,
     ProposalNotFoundError,
 )
+from cruxible_client.contracts.operational_reads import GetRunNode
 from cruxible_client.contracts.procedure_mandates import (
     PROCEDURE_MANDATE_CLOCK_SKEW,
     ProcedureMandate,
@@ -89,6 +90,7 @@ from cruxible_client.contracts.procedures.models import (
     caps_budget,
     required_authority,
 )
+from cruxible_client.contracts.procedures.node_summary import NODE_RUN_SUMMARY_ADAPTER
 from cruxible_client.contracts.procedures.reads import effective_read_rows
 from cruxible_client.contracts.procedures.results import (
     InboxPostTruncation,
@@ -752,10 +754,30 @@ class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
     completeness: RunCompleteness | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    #: Every node that finished, in journal order, with its run summary.
+    nodes: tuple[GetRunNode, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     @property
     def coordinate(self) -> AcceptedCoordinate:
         return self.bound_coordinate
+
+
+def run_node(payload: object, *, sequence: int) -> GetRunNode:
+    """One ``node_fired`` record as a served node: its id, kind, verdict and summary.
+
+    The one reading of a ``node_fired`` payload, for the run card and the run
+    state alike. A record written before summaries were journaled has none.
+    """
+
+    values = payload if isinstance(payload, Mapping) else {}
+    summary = values.get("summary")
+    return GetRunNode(
+        node=str(values.get("node_id", "?")),
+        kind=None if values.get("kind") is None else str(values["kind"]),
+        verdict=None if values.get("verdict") is None else str(values["verdict"]),
+        sequence=sequence,
+        summary=None if summary is None else NODE_RUN_SUMMARY_ADAPTER.validate_python(summary),
+    )
 
 
 def _resolve_coordinate(
@@ -2227,6 +2249,7 @@ def _state_from_records(
     children: list[ProcedureChildInvocation] = []
     findings: list[ClaimsDiagnostic] = []
     findings_count = 0
+    nodes: list[GetRunNode] = []
     for stored in records:
         payload = read_payload(bodies, stored.record.payload_digest, access=access)
         if isinstance(payload, UnavailablePayload):
@@ -2248,6 +2271,7 @@ def _state_from_records(
                 )
             )
         if stored.record.event_kind == "node_fired" and isinstance(payload, dict):
+            nodes.append(run_node(payload, sequence=stored.record.sequence))
             findings_count += int(cast(int, payload.get("claims_diagnostics_count", 0)))
             for finding in cast(list[Any], payload.get("claims_diagnostics", [])):
                 if len(findings) < 1000:
@@ -2763,6 +2787,7 @@ def _state_from_records(
         children=tuple(children),
         findings=tuple(findings),
         findings_count=findings_count,
+        nodes=tuple(nodes),
         completeness=(
             RunCompleteness.model_validate(final["completeness"])
             if isinstance(final, dict) and final.get("completeness") is not None
