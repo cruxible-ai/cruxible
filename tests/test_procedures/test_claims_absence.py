@@ -129,7 +129,7 @@ def test_inverse_requires_a_declared_inverse_at_authoring(tmp_path: Path):
         install(instance, absence_spec("inverse"), line_name="inverse-missing")
 
 
-def inverse_world(tmp_path, *, incomplete=False):
+def inverse_world(tmp_path, *, incomplete=False, authority="propose"):
     from tests.test_pilot.support import FIXTURES, KEV_ROW, _watched
     from tests.test_procedures.test_claims_terminal import claims_world
 
@@ -154,9 +154,44 @@ def inverse_world(tmp_path, *, incomplete=False):
     install(
         instance,
         absence_spec("inverse"),
+        authority=authority,
         parameters={"logical_source": "cisa.kev.catalog", "relative_path": "data/kev.json"},
     )
     return instance, root, original
+
+
+@pytest.mark.parametrize("listed", (True, False), ids=("absence-listed", "absence-unlisted"))
+def test_inverse_writes_settle_only_when_the_scope_lists_basis_absence(tmp_path: Path, listed):
+    """B4c replaces B4b's interim rail: an inverse write is basis absence, settled by scope."""
+
+    from tests.test_pilot.support import KEV_SETTLE_SCOPE, grant_kev_settle
+
+    instance, root, _original = inverse_world(tmp_path, authority="settle")
+    scope = dict(KEV_SETTLE_SCOPE)
+    scope["listed"] = {
+        "create": {"basis": ["extracted", "absence"] if listed else ["extracted"]},
+        "retire": {"basis": ["absence"]},
+    }
+    grant_kev_settle(instance, scope=scope)
+    before = instance.accepted_coordinate()
+    state = run(instance, root)
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    inverses = candidate_claims(instance, state)
+    assert len(inverses) == 2 and all(c.statement.object.kind == "none" for c in inverses)
+    if listed:
+        assert egress.settle_outcome == "settled" and egress.outside_scope == ()
+        assert instance.accepted_coordinate() != before
+        return
+    assert egress.settle_outcome == "proposed"
+    (gap,) = egress.outside_scope
+    assert (gap.claim_type, gap.change, gap.basis, gap.term) == (
+        f"ClaimType:{KEV}listed",
+        "create",
+        "absence",
+        "basis",
+    )
+    assert instance.accepted_coordinate() == before
 
 
 @pytest.mark.parametrize("protection", ("precedence", "other_source"))
@@ -337,8 +372,9 @@ def test_absence_tracks_each_qualifier_and_each_many_valued_unit(tmp_path: Path,
 
     second = settle.run_settle(instance, root, line, now=sources.NOW + timedelta(hours=1))
     assert second.status == "succeeded", second.terminal
-    assert second.terminal_egress[0].settle_outcome == "proposed"
-    assert second.terminal_egress[0].outside_scope_claim_types == (delivery.PREDICATE,)
+    # The grant lists retire on basis absence, so the mirror retirement settles.
+    assert second.terminal_egress[0].settle_outcome == "settled"
+    assert second.terminal_egress[0].outside_scope == ()
     changes = proposed_claims(instance, second)
     retired = [c for c in changes if c.lifecycle.state == "retired"]
     assert len(retired) == 1 and retired[0].statement.object.value == "low"

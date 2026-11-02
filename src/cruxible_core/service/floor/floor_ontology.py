@@ -585,11 +585,21 @@ def _settlers(state: OntologyState, path: str, predicate: str) -> list[str]:
             lines.append(
                 f"mandate {mandate.identity.name}  "
                 f"Line:{mandate.line.target.name}  "
-                f"settle {'|'.join(item.change_kinds)}{condition}  "
+                f"settle {_changes_text(item)}{condition}  "
                 f"valid {_time(mandate.valid_from)}..{_time(mandate.expires_at)}"
                 + ("  suspended" if mandate.suspended else "")
             )
     return lines or ["review"]
+
+
+def _changes_text(item: Any) -> str:
+    """``create[extracted]|retire[absence]``: each change kind with the bases it settles on."""
+
+    return "|".join(
+        f"{kind}[{'|'.join(change.basis)}]"
+        for kind in item.change_kinds
+        if (change := item.changes.of(kind)) is not None
+    )
 
 
 def _text_entry(key: str, text: str, indent: str) -> list[str]:

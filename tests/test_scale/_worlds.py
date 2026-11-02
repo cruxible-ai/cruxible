@@ -111,6 +111,7 @@ from tests.core_support._knowledge_loop_support import work_item_query
 from tests.core_support._write_support import CLAIM_TYPES, KIND, SELF_SOURCE, report_evidence
 from tests.core_support._write_support import seed_write_vocabulary as _seed_vocabulary
 from tests.support.lines import line_trigger, successor, trigger_members
+from tests.support.mandates import scope_changes
 from tests.support.procedures import named
 
 OPERATOR = "operator"
@@ -602,7 +603,7 @@ def definitions(world: World) -> dict[str, bytes]:
         expires_at=_FAR_FUTURE,
         scope=(
             MandateClaimScope(
-                claim_type=_claim_type_pin("priority", world), change_kinds=("create",)
+                claim_type=_claim_type_pin("priority", world), changes=scope_changes("create")
             ),
         ),
         condition=MandateCondition(

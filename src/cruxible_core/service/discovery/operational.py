@@ -1001,7 +1001,8 @@ def _scope(mandate: ProcedureMandate) -> tuple[MandateScope, ...]:
     return tuple(
         MandateScope(
             claim_type=item.claim_type.target.qualified,
-            change_kinds=item.change_kinds,
+            changes=item.changes,
+            value=item.value,
             binds=item.binding_subject_role,
         )
         for item in mandate.scope
@@ -1015,6 +1016,8 @@ def _condition(mandate: ProcedureMandate) -> MandateConditionView | None:
     return MandateConditionView(
         query=condition.query.target.qualified,
         binding_parameter=condition.binding_parameter,
+        value_parameter=condition.value_parameter,
+        before_parameter=condition.before_parameter,
         fixed_parameters=cast(dict[str, Any], condition.fixed_parameters),
         required_fields=condition.required_fields,
         fallback=condition.fallback,
@@ -1047,6 +1050,7 @@ def mandate_card(
             if isinstance(mandate, ProcedureMandate) and mandate.subject_scope is not None
             else None
         ),
+        subjects=mandate.subjects if isinstance(mandate, ProcedureMandate) else None,
         condition=_condition(mandate),
         subject_creation=(
             mandate.subject_creation if isinstance(mandate, ProcedureMandate) else ()

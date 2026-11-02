@@ -18,6 +18,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic
 from cruxible_client.contracts.codes import normalize_code
+from cruxible_client.contracts.mandate_scope import SettleScopeGap
 from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionInputDecision
 from cruxible_client.contracts.procedures.models import (
     AuthorityVerb,
@@ -1131,9 +1132,9 @@ class ProcedureTerminalEgress(_StrictResultModel):
     settle_outcome: Literal["settled", "proposed"] | None = None
     accepted_git_oid: str | None = None
     fallback_reason: str | None = None
-    # A fallback for cruxible.settle.outside_mandate_scope: the ClaimTypes the
-    # settle grant's scope left out, so the change proposed instead.
-    outside_scope_claim_types: tuple[str, ...] = ()
+    # A fallback for cruxible.settle.outside_mandate_scope: why the settle
+    # grant's scope left the change out, so the whole change proposed instead.
+    outside_scope: tuple[SettleScopeGap, ...] = ()
     # A settle terminal the run's authority capped at propose: the term that
     # capped it. Its request asked for propose authority only.
     capped_by: ServedAuthorityTerm | None = None

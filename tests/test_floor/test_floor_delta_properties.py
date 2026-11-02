@@ -61,7 +61,7 @@ from tests.core_support._write_support import (
     report_evidence,
     seed_write_surface,
 )
-from tests.support.mandates import procedure_mandate
+from tests.support.mandates import procedure_mandate, scope_changes
 from tests.support.procedures import procedure_members
 from tests.test_floor.test_floor_index import _set, _write, accept_edit, add_lead_field
 from tests.test_floor.test_floor_notes_and_retention import _revise_rationale
@@ -191,7 +191,7 @@ def _mandate(
                         claim_type=_worlds._claim_type_pin(
                             field, type("World", (), {"instance": instance})()
                         ),
-                        change_kinds=("create",),
+                        changes=scope_changes("create"),
                     )
                     for field in fields
                 ),

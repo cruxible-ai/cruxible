@@ -2125,7 +2125,8 @@ costs the ontology's size: it never reads the Claims, Subjects or Captures.
 - `query ProcedureMandate` lists `name`, `procedure`, `grant` (`propose` or
   `settle`), `state` at the evaluation time (`active`, `expiring`, `expired`,
   `not_yet_valid`, `suspended`, `retired`), `scope` (the ClaimTypes a settle
-  grant covers), `change_kinds`, `condition` (its condition QueryDefinition),
+  grant covers), `change_kinds` (the change kinds its scope names, whatever their
+  bases), `condition` (its condition QueryDefinition),
   `suspended`, `lifecycle` and `expires_at`:
   `cruxible query ProcedureMandate --where 'expires_at<2027-01-01T00:00:00Z'`.
 - `query QueryDefinition` lists `name`, `parameters` (`name: type`, `?` after
@@ -2857,28 +2858,38 @@ the failed law. None of these creates a proposal ref.
 A Line whose Procedure ends in a `claims` terminal under a settle Mandate lands the change
 without candidate approvals when, and only when, exactly one live settle
 ProcedureMandate for that Procedure covers every Claim the change touches: its
-namespace, its ClaimType scope and change kinds (`create`, `revise`,
-`retire`), and its Subject scope. More than one covering mandate refuses
-`settle_mandate_ambiguous`. When none covers the change but a live settle
-grant for the Procedure covers all of it except Claims of ClaimTypes its scope
-does not name -- or retirements of ClaimTypes whose scope does not list
-`retire` --, the terminal proposes under that grant instead (per-rule trust:
-a grant over the ClaimTypes you trust to settle, and every other ClaimType the
-Procedure emits goes to review; a Procedure's retirement settles only under a
-grant whose scope explicitly lists `retire` for its ClaimType):
-`settle_outcome: proposed`, `fallback_reason`
-`cruxible.settle.outside_mandate_scope`, and the typed
-`outside_scope_claim_types` naming them, on the run result and on the
-proposal's settle submission. The grant with the fewest such ClaimTypes is
-bound, then the lowest digest; its condition is not consulted. A change no
-grant covers in any other way (namespace, change kind, Subject scope, or no
-live grant) refuses `settle_mandate_missing`. Settle authority reaches accepted
+namespace and its scope: per ClaimType and change kind (`create`, `revise`,
+`retire`), the evidence bases that settle (`extracted`; `measured` and
+`derived` only when listed; `absence` for mirror retirements and inverse
+writes, the only basis a `retire` may name), an enum or bool ClaimType's
+`value: {from, to}`, and its Subject scope. `subjects: expected` is checked
+structurally when the grant is accepted: every claims node writing a scoped
+ClaimType must fence its Subjects with `within` (absence acts only on `expect`
+Subjects inside it), else `cruxible.procedure_mandate.subjects_unfenced`. A
+grant is paused only by a governed successor setting `suspended: true`; core
+never pauses one. More than one covering mandate
+refuses `settle_mandate_ambiguous`. All or nothing: when none covers the change
+but a live settle grant for the Line has every changed Claim as a target, any
+admissible change outside its scope proposes the whole change under that grant
+(inadmissible values are excluded first): `settle_outcome: proposed`,
+`fallback_reason` `cruxible.settle.outside_mandate_scope`, and the typed
+`outside_scope` listing each gap (`{claim_type, change, basis, term}`, the term
+being `claim_type`, `change_kind`, `basis`, `value` or `subject`), on the run
+result and on the proposal's settle submission. The grant with the fewest gaps
+is bound, then the lowest digest; its condition is not consulted. A change no
+grant covers in any other way (namespace, or no live grant) refuses
+`settle_mandate_missing`. Settle authority reaches accepted
 Claims only, and new Subjects only of the kinds a settle grant's
 `subject_creation` names: such a Subject, and the key Claims its creation
 writes, settle with the change and are not condition targets. An existing
 Subject, or a new one of another kind, is outside every settle grant.
-The mandate's pinned condition query is then evaluated at the accepted parent
-for each changed Claim's target Subject; it must return exactly that Subject,
+The mandate's optional pinned condition query is then evaluated at the
+accepted parent for each changed Claim's target Subject (a grant without one
+settles on its scope alone). Besides the target Subject, the condition may
+bind the changed Claim's typed new value (`value_parameter`, `$target.value`)
+and the value it replaces (`before_parameter`, `$target.before`); each must be
+a declared parameter of the type every scoped ClaimType's value binds as. The
+query must return exactly that Subject,
 with every required field present, unconflicted and untruncated. A false or
 incomplete condition follows the mandate's declared fallback: `propose`
 produces an ordinary proposal, reported with `settle_outcome: proposed` and a
@@ -3951,7 +3962,9 @@ each as its `CAP-` handle), `capture_contracts` (version, grade, how many
 ClaimTypes admit each), `predictions` (each live ResolutionContract with its
 bound windows by status and the next close) and `mandates` (grant, state,
 expiry, and for a settle grant its typed `scope` -- each `{claim_type,
-change_kinds, binds}` -- its `condition_query`, the Subject kinds it may create
+changes, value, binds}`, where `changes` names per change kind the evidence
+bases that settle (`extracted`, `measured`, `derived`, `absence`) -- its
+`condition_query`, the Subject kinds it may create
 and `suspended` when its kill switch is on; the `get Mandate:` card adds the
 `subject_scope` and the whole `condition`: query, binding parameter, fixed
 parameters, required fields and fallback). The default map counts each family under `Artifacts` and never

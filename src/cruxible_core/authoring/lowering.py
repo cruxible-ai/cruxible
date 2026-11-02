@@ -152,7 +152,6 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.errors import CruxibleError, FormatError
 from cruxible_client.contracts.procedure_mandates import (
-    MANDATE_CHANGE_KIND_ORDER,
     MandateClaimScope,
     MandateCondition,
     ProcedureMandate,
@@ -3505,6 +3504,7 @@ def _render_procedure_mandate_member(
                 ("scope", bool(payload.scope)),
                 ("condition", payload.condition is not None),
                 ("subject_scope", payload.subject_scope is not None),
+                ("subjects", payload.subjects is not None),
                 ("subject_creation", bool(payload.subject_creation)),
             )
             if present
@@ -3559,10 +3559,9 @@ def _render_procedure_mandate_member(
                     target=claim_type.identity,
                     artifact_digest=claim_type_digest(claim_type).tagged,
                 ),
-                change_kinds=tuple(
-                    kind for kind in MANDATE_CHANGE_KIND_ORDER if kind in item.change_kinds
-                ),
+                changes=item.changes,
                 binding_subject_role=item.binding_subject_role,
+                value=item.value,
             )
         )
     condition = None
@@ -3594,6 +3593,8 @@ def _render_procedure_mandate_member(
                 artifact_digest=query_definition_digest(query).tagged,
             ),
             binding_parameter=payload.condition.binding_parameter,
+            value_parameter=payload.condition.value_parameter,
+            before_parameter=payload.condition.before_parameter,
             fixed_parameters=fixed,
             required_fields=tuple(sorted(set(payload.condition.required_fields))),
             fallback=payload.condition.fallback,
@@ -3628,6 +3629,7 @@ def _render_procedure_mandate_member(
                     )
                 )
             ),
+            subjects=payload.subjects,
             condition=condition,
             subject_creation=tuple(
                 sorted(set(payload.subject_creation), key=lambda item: item.encode("utf-8"))

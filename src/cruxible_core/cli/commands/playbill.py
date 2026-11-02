@@ -7259,8 +7259,14 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
             )
         elif egress.verdict == "delivered" and egress.proposal_id is not None:
             outside = (
-                f"; outside the mandate's scope: {', '.join(egress.outside_scope_claim_types)}"
-                if egress.outside_scope_claim_types
+                "; outside the mandate's scope: "
+                + ", ".join(
+                    f"{gap.claim_type} {gap.change}"
+                    + (f" [{gap.basis}]" if gap.basis else "")
+                    + f" ({gap.term})"
+                    for gap in egress.outside_scope
+                )
+                if egress.outside_scope
                 else ""
             )
             fallback = (
@@ -9092,10 +9098,11 @@ def _render_orient(result: Mapping[str, Any]) -> str:
                 f"expires {row['expires_at']}" + ("  suspended" if row.get("suspended") else "")
             )
             for scope in row.get("scope", ()):
-                lines.append(
-                    f"  settles {scope['claim_type']}  {','.join(scope['change_kinds'])}  "
-                    f"binds {scope['binds']}"
+                changes = ",".join(
+                    f"{kind}[{'|'.join(change['basis'])}]"
+                    for kind, change in scope["changes"].items()
                 )
+                lines.append(f"  settles {scope['claim_type']}  {changes}  binds {scope['binds']}")
             if row.get("condition_query"):
                 lines.append(f"  condition {row['condition_query']}")
             if row.get("subject_creation"):

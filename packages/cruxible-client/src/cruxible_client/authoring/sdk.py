@@ -5686,9 +5686,9 @@ class ProcedureRun:
         A settle terminal reports `settle_outcome`: `settled` with the
         `accepted_git_oid`, or `proposed` with its `proposal_id` and
         `fallback_reason`; `capped_by` names the term when the run's authority
-        capped it at propose, and `outside_scope_claim_types` names the
-        ClaimTypes its settle grant's scope left out
-        (`cruxible.settle.outside_mandate_scope`).
+        capped it at propose, and `outside_scope` lists why its settle grant's
+        scope left the change out (`cruxible.settle.outside_mandate_scope`):
+        each ClaimType, change kind, basis and the scope term that excluded it.
 
         Next: ``cx.proposal(egress.proposal_id).review()`` for a proposed settle.
         """

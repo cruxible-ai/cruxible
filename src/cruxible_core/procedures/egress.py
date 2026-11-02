@@ -60,6 +60,7 @@ from cruxible_client.contracts.claim_evidence import (
     FindingKind,
 )
 from cruxible_client.contracts.errors import FormatError, ProjectionIntegrityError
+from cruxible_client.contracts.mandate_scope import SettleScopeGap
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandate,
     ProcedureMandateAny,
@@ -1245,9 +1246,9 @@ class TerminalEgressReceiptV4(TerminalEgressReceiptV3):
     capped_by: ServedAuthorityTerm | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    #: The ClaimTypes the settle grant's scope left out, for an
+    #: Why the settle grant's scope left the change out, for an
     #: outside-mandate-scope fallback (its proposal's settle submission).
-    outside_scope_claim_types: tuple[str, ...] = Field(
+    outside_scope: tuple[SettleScopeGap, ...] = Field(
         default=(), exclude_if=lambda value: not value
     )
 
@@ -1267,10 +1268,8 @@ class TerminalEgressReceiptV4(TerminalEgressReceiptV3):
             raise ValueError("only a fallback proposal carries the reason it did not settle")
         if settled and self.capped_by is not None:
             raise ValueError("a capped settle never settles")
-        if (self.fallback_reason == SETTLE_OUTSIDE_MANDATE_SCOPE) != bool(
-            self.outside_scope_claim_types
-        ):
-            raise ValueError("exactly an outside-scope fallback names the ClaimTypes outside it")
+        if (self.fallback_reason == SETTLE_OUTSIDE_MANDATE_SCOPE) != bool(self.outside_scope):
+            raise ValueError("exactly an outside-scope fallback names why it fell outside")
         return self
 
 

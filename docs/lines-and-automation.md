@@ -295,7 +295,10 @@ category:
       "scope": [
         {
           "claim_type": "catalog.part.discontinued",
-          "change_kinds": ["create", "revise"]
+          "changes": {
+            "create": {"basis": ["extracted"]},
+            "revise": {"basis": ["extracted"]}
+          }
         }
       ],
       "condition": {

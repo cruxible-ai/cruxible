@@ -61,7 +61,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_line,
 )
 from tests.core_support._light_capture_support import record_contract as capture_contract
-from tests.support.mandates import procedure_mandate
+from tests.support.mandates import procedure_mandate, scope_changes
 from tests.support.procedures import procedure_members
 from tests.test_procedures import test_procedure_source_runs as fixtures
 from tests.test_procedures.test_procedure_proposal_delivery import (
@@ -232,6 +232,11 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
     subject_creation: tuple[str, ...] = (),
     candidate_templates: Any = None,
     change_kinds: tuple[str, ...] = ("create", "revise"),
+    scope_basis: tuple[str, ...] = ("extracted",),
+    scope_value: Any = None,
+    with_condition: bool = True,
+    mandate_subjects: str | None = None,
+    condition_value: str | None = None,
     level_rules: bool = True,
     claims_terminal: bool = False,
     claims_within: tuple[str, ...] = (),
@@ -338,6 +343,22 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
             for name, ct in claim_types.items()
         }
     query = _condition(only_subject=only_subject, require_claim=require_claim)
+    if condition_value is not None:
+        # The condition compares the changed Claim's typed new value ($target.value).
+        query = query.model_copy(
+            update={
+                "parameters": (
+                    *query.parameters,
+                    QueryParameterDeclaration(name="new_severity", value_type="string"),
+                ),
+                "where": QueryComparisonFilter(
+                    left=QueryParameterRef(parameter="new_severity"),
+                    operator="eq",
+                    right=QueryLiteralRef(value=condition_value),
+                    value_type="string",
+                ),
+            }
+        )
     members: dict[str, bytes] = {
         **trigger_members,
         **procedure_members(with_terminal),
@@ -375,7 +396,8 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
                         target=claim_types[predicate].identity,
                         artifact_digest=claim_type_digest(claim_types[predicate]).tagged,
                     ),
-                    change_kinds=change_kinds,  # type: ignore[arg-type]
+                    changes=scope_changes(*change_kinds, basis=scope_basis),
+                    value=scope_value,
                 )
                 for predicate in sorted(scope_predicates)
             ),
@@ -386,9 +408,13 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
                     artifact_digest=query_definition_digest(query).tagged,
                 ),
                 binding_parameter="advisory_id",
+                value_parameter="new_severity" if condition_value is not None else None,
                 required_fields=("id", "severity") if require_claim else ("id",),
                 fallback=fallback,  # type: ignore[arg-type]
-            ),
+            )
+            if with_condition
+            else None,
+            subjects=mandate_subjects,
             subject_creation=subject_creation,
         )
         members[procedure_mandate_path(mandate.identity.name)] = render_procedure_mandate(mandate)
@@ -1437,6 +1463,19 @@ SCOPED_B = "security.advisory.exploitability"
 UNSCOPED_C = "security.advisory.summary"
 
 
+def _gap(
+    predicate: str, change: str = "create", basis: str | None = "extracted", term="claim_type"
+):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.mandate_scope import SettleScopeGap
+
+    return SettleScopeGap(
+        claim_type=f"ClaimType:{predicate}",
+        change=change,  # type: ignore[arg-type]
+        basis=basis,  # type: ignore[arg-type]
+        term=term,
+    )
+
+
 def test_a_claim_type_outside_the_settle_scope_proposes_naming_it(tmp_path: Path) -> None:
     """A grant over A and B; a change with A and C proposes under it, naming C."""
 
@@ -1453,7 +1492,7 @@ def test_a_claim_type_outside_the_settle_scope_proposes_naming_it(tmp_path: Path
     egress = _egress(state)
     assert (egress.verdict, egress.settle_outcome) == ("delivered", "proposed")
     assert egress.fallback_reason == "cruxible.settle.outside_mandate_scope"
-    assert egress.outside_scope_claim_types == (f"ClaimType:{UNSCOPED_C}",)
+    assert egress.outside_scope == (_gap(UNSCOPED_C),)
     assert egress.capped_by is None and egress.accepted_git_oid is None
     assert egress.proposal_id is not None and len(egress.target_paths) == 2
     assert instance.accepted_coordinate() == base
@@ -1463,12 +1502,12 @@ def test_a_claim_type_outside_the_settle_scope_proposes_naming_it(tmp_path: Path
         "fallback",
         "cruxible.settle.outside_mandate_scope",
     )
-    assert submission.outside_scope_claim_types == (f"ClaimType:{UNSCOPED_C}",)
+    assert submission.outside_scope == (_gap(UNSCOPED_C),)
     # The settle grant itself is bound, as for a failing condition.
     assert submission.mandate_digest == egress.procedure_mandate_digest
     (delivered,) = [item for item in _egress_records(instance, state) if "receipt" in item]
     receipt = TerminalEgressReceiptV4.model_validate(delivered["receipt"])
-    assert receipt.outside_scope_claim_types == (f"ClaimType:{UNSCOPED_C}",)
+    assert receipt.outside_scope == (_gap(UNSCOPED_C),)
 
 
 def test_a_change_inside_the_settle_scope_still_settles(tmp_path: Path) -> None:
@@ -1486,10 +1525,10 @@ def test_a_change_inside_the_settle_scope_still_settles(tmp_path: Path) -> None:
     assert state.status == "succeeded", state.terminal
     egress = _egress(state)
     assert egress.settle_outcome == "settled" and egress.fallback_reason is None
-    assert egress.outside_scope_claim_types == ()
+    assert egress.outside_scope == ()
     assert egress.accepted_git_oid == instance.accepted_coordinate().git_oid != base.git_oid
     (delivered,) = [item for item in _egress_records(instance, state) if "receipt" in item]
-    assert "outside_scope_claim_types" not in delivered["receipt"]
+    assert "outside_scope" not in delivered["receipt"]
 
 
 def test_a_change_with_no_claim_type_in_scope_still_proposes_naming_it(tmp_path: Path) -> None:
@@ -1504,7 +1543,84 @@ def test_a_change_with_no_claim_type_in_scope_still_proposes_naming_it(tmp_path:
     assert state.status == "succeeded", state.terminal
     egress = _egress(state)
     assert egress.fallback_reason == "cruxible.settle.outside_mandate_scope"
-    assert egress.outside_scope_claim_types == (f"ClaimType:{UNSCOPED_C}",)
+    assert egress.outside_scope == (_gap(UNSCOPED_C),)
+
+
+# --- B4c: basis scope, typed target values, optional condition --------------
+
+
+@pytest.mark.parametrize(("expected", "outcome"), (("high", "settled"), ("low", "proposed")))
+def test_a_condition_binds_the_changed_claims_typed_value(
+    tmp_path: Path, expected: str, outcome: str
+) -> None:
+    """``$target.value``: the condition sees the value the change writes ("high")."""
+
+    instance, root, line = settle_world(tmp_path, condition_value=expected)
+    state = run_settle(instance, root, line)
+    assert state.status == "succeeded", state.terminal
+    egress = _egress(state)
+    assert egress.settle_outcome == outcome
+    if outcome == "proposed":
+        assert egress.fallback_reason == "cruxible.settle.condition_false"
+        assert egress.outside_scope == ()
+
+
+def test_a_settle_grant_without_a_condition_settles_on_scope_alone(tmp_path: Path) -> None:
+    instance, root, line = settle_world(tmp_path, with_condition=False)
+    base = instance.accepted_coordinate()
+    state = run_settle(instance, root, line)
+    assert state.status == "succeeded", state.terminal
+    egress = _egress(state)
+    assert egress.settle_outcome == "settled"
+    assert egress.accepted_git_oid == instance.accepted_coordinate().git_oid != base.git_oid
+
+
+def test_an_extracted_change_on_a_basis_the_scope_omits_proposes(tmp_path: Path) -> None:
+    instance, root, line = settle_world(tmp_path, scope_basis=("measured",))
+    base = instance.accepted_coordinate()
+    state = run_settle(instance, root, line)
+    assert state.status == "succeeded", state.terminal
+    egress = _egress(state)
+    assert egress.settle_outcome == "proposed"
+    assert egress.outside_scope == (_gap(PREDICATE, term="basis"),)
+    assert instance.accepted_coordinate() == base
+
+
+def test_the_replayed_verifier_refuses_a_basis_outside_scope(tmp_path: Path) -> None:
+    """Delegated acceptance re-reads the basis from the candidate Claim itself."""
+
+    from cruxible_client.contracts.claims import parse_claim as parse
+    from cruxible_client.contracts.procedure_mandates import parse_procedure_mandate_any
+    from cruxible_core.proposals.delegated_authority import mandate_coverage
+
+    instance, root, line = settle_world(tmp_path)
+    state = run_settle(instance, root, line)
+    egress = _egress(state)
+    assert egress.settle_outcome == "settled"
+    head = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = procedure_mandate_path("settle-0")
+    mandate = parse_procedure_mandate_any(head[path], path=path)
+    (claim_path_,) = egress.target_paths
+    assert parse(head[claim_path_], path=claim_path_).backing.procedure_evidence is not None
+    narrowed = mandate.model_copy(
+        update={
+            "scope": (
+                mandate.scope[0].model_copy(
+                    update={"changes": scope_changes("create", basis=("measured",))}
+                ),
+            )
+        }
+    )
+    base_tree = instance.tree_at(state.bound_coordinate.git_oid)
+    _targets, issues = mandate_coverage(
+        narrowed,
+        scope=egress.target_paths,
+        current_tree=base_tree,
+        candidate_tree=head,
+        evaluated_at=fixtures.NOW,
+    )
+    assert [code for code, _message in issues] == ["cruxible.settle.scope_uncovered"]
+    assert "basis extracted" in issues[0][1]
 
 
 # --- settled items that match earlier refusals surface per Line in `next` -----
