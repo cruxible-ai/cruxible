@@ -17,6 +17,7 @@ from cruxible_client.authoring.procedures import (
     lower_procedure_spec,
 )
 from cruxible_client.authoring.sdk import Cruxible
+from cruxible_client.contracts.procedures.authored import ProcedureSpecError
 from cruxible_client.contracts.provider_operations import ProcedureSlot
 from cruxible_client.contracts.refs import Ref, step_ref
 from cruxible_client.contracts.shapes import Contract
@@ -376,7 +377,13 @@ def test_claims_step_is_terminal_and_derives_maximum_authority():
     assert preview.terminals == ("settle",)
     assert preview.nodes[-1]["kind"] == "claims"
     assert lower_procedure_spec(plan.build().spec).definition["terminal_capability"] == 3
-    assert not hasattr(plan, "propose") and not hasattr(plan, "settle")
+    for retired in (plan.propose, plan.settle):
+        with pytest.raises(
+            ProcedureSpecError, match=r"Use the claims node via \.claims\(\)\."
+        ) as refused:
+            retired()
+        assert refused.value.code == "cruxible.authoring.retired_node"
+        assert refused.value.field_path == retired.__name__
 
 
 def test_a_post_inbox_step_reading_an_unproduced_output_is_refused():
