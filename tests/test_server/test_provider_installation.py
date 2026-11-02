@@ -1117,3 +1117,54 @@ def test_local_install_does_not_report_container_only_operation_ready(
     assert len(result.operations) == 1
     assert not result.operations[0].installed
     assert result.operations[0].missing_requirements == ("compatible local Python implementation",)
+
+
+def test_install_over_a_stale_operator_config_is_a_typed_refusal_naming_the_repair(
+    installer_http, tmp_path, provider_checkout, monkeypatch
+):
+    """Kit-pilot F4: a config entry this install cannot overwrite refuses typed, never 500."""
+
+    from cruxible_client.errors import CoreError
+    from tests.support.provider_installation import build_local_call
+
+    http, instance_id, _ = installer_http
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = http
+    wheel, lock = build_local_call(tmp_path, provider_checkout.repository)
+    arguments = dict(
+        wheel=wheel,
+        lock=lock,
+        dependency_wheels=(next(provider_checkout.wheels.glob("cruxible_provider_runtime-*.whl")),),
+    )
+    first = install_provider_wheel(client, instance_id, **arguments)
+    assert first.status == "ready", first
+    # A config copied from another root: the same deployment digest, other custody.
+    operator = get_playbill_manager().provider_runtime_operator()
+    path = operator.state_root / PROVIDER_RUNTIME_CONFIG_PATH
+    config = json.loads(path.read_text())
+    (entry,) = config["deployments"]
+    entry["provider_runtime_version"] = "0.0.0-foreign"
+    path.write_text(json.dumps(config))
+    get_playbill_manager().clear()
+    statuses: list[int] = []
+    check = CruxibleClient._check_error
+
+    def recording(response):
+        statuses.append(response.status_code)
+        check(response)
+
+    monkeypatch.setattr(CruxibleClient, "_check_error", staticmethod(recording))
+    with pytest.raises(CoreError) as refused:
+        install_provider_wheel(client, instance_id, **arguments)
+    assert statuses[-1] == 400
+    error = refused.value
+    assert error.error_code == "cruxible.provider.deployment_config_conflict"
+    assert entry["deployment_digest"] in str(error)
+    assert error.repair.hand_edit.target == "daemon/provider-runtime.json"
+    assert entry["deployment_digest"] in error.repair.hand_edit.required_change
+    # Doing what the repair says installs.
+    config["deployments"] = []
+    path.write_text(json.dumps(config))
+    get_playbill_manager().clear()
+    again = install_provider_wheel(client, instance_id, **arguments)
+    assert again.status == "ready", again
