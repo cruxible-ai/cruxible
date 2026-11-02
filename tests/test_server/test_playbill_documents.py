@@ -62,9 +62,17 @@ def test_http_document_lifecycle_and_explanation(
     assert proposed.status_code == 200, proposed.text
     proposal_id = proposed.json()["proposal"]["admission"]["proposal_id"]
 
+    summary = client.post(
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/review",
+        json={},
+    )
+    assert summary.status_code == 200, summary.text
+    assert summary.json()["tag"] == "playbill-proposal-review-summary-v1"
+    assert summary.json()["counts"] == {"created": 1, "revised": 0, "retired": 0}
+    assert "candidate" not in summary.json()
     review = client.post(
         f"/api/v1/{instance_id}/proposals/{proposal_id}/review",
-        json={"include_body": True},
+        json={"include_body": True, "detail": True},
     )
     assert review.status_code == 200, review.text
     assert "Governed through HTTP" in review.json()["documents"][0]["readable_diff"]

@@ -18,8 +18,10 @@ COORDINATE = contracts.AcceptedCoordinate(
 )
 
 
+@pytest.mark.parametrize("detail", [False, True])
 def test_cli_review_sends_bounded_coordinate_bound_projection_observation(
     monkeypatch: pytest.MonkeyPatch,
+    detail: bool,
 ) -> None:
     projection = {
         "tag": "playbill-projection-coverage-observation-v1",
@@ -47,7 +49,7 @@ def test_cli_review_sends_bounded_coordinate_bound_projection_observation(
             instance_id: str,
             proposal_id: str,
             **values: object,
-        ) -> contracts.ProposalReview:
+        ) -> contracts.ProposalReview | contracts.ProposalReviewSummary:
             assert instance_id == "inst_review"
             assert proposal_id == "sha256:" + "a" * 64
             observation = values["workspace_observation"]
@@ -55,6 +57,21 @@ def test_cli_review_sends_bounded_coordinate_bound_projection_observation(
             assert "source_observations" not in observation
             assert observation["tag"] == "playbill-review-workspace-observation-v1"
             assert observation["projection_coverage"] == projection
+            assert values["detail"] == detail
+            if not detail:
+                return contracts.ProposalReviewSummary.model_validate(
+                    {
+                        "proposal_id": proposal_id,
+                        "candidate_digest": "sha256:" + "b" * 64,
+                        "settlement_base": COORDINATE,
+                        "counts": {"created": 1000, "revised": 0, "retired": 0},
+                        "subject_kinds": {},
+                        "findings": [],
+                        "finding_count": 0,
+                        "groups": [],
+                        "group_count": 0,
+                    }
+                )
             return contracts.ProposalReview(
                 proposal_id=proposal_id,
                 candidate={},
@@ -103,9 +120,30 @@ def test_cli_review_sends_bounded_coordinate_bound_projection_observation(
             "review",
             "sha256:" + "a" * 64,
             "--json",
+            *(["--detail"] if detail else []),
         ],
     )
 
     assert result.exit_code == 0, result.output
-    assert '"unprojected_count": 1' in result.output
-    assert "reviewers will see raw JSON only" in result.output
+    if detail:
+        assert '"unprojected_count": 1' in result.output
+        assert "reviewers will see raw JSON only" in result.output
+    else:
+        assert '"tag": "playbill-proposal-review-summary-v1"' in result.output
+        assert '"created": 1000' in result.output
+
+        text = CliRunner().invoke(
+            cli,
+            [
+                "--server-url",
+                "https://review.example.test",
+                "--instance-id",
+                "inst_review",
+                "proposal",
+                "review",
+                "sha256:" + "a" * 64,
+            ],
+        )
+        assert text.exit_code == 0, text.output
+        assert "Changes: 1000 created / 0 revised / 0 retired" in text.output
+        assert "Full review: --detail" in text.output

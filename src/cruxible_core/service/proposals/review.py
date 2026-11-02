@@ -34,7 +34,12 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import ApprovalIntegrityError, ProposalIntegrityError
-from cruxible_client.contracts.proposal_models import ProposalItemReason, ProposalResult
+from cruxible_client.contracts.proposal_models import (
+    OriginatingLine,
+    ProposalItemReason,
+    ProposalResult,
+)
+from cruxible_client.contracts.proposal_summary import ProposalReviewSummary
 from cruxible_client.contracts.refusal_receipts import (
     PriorRefusalCoverage,
     PriorRefusalReceipt,
@@ -156,6 +161,7 @@ class ProposalReview(_StrictReviewModel):
     provenance: dict[str, object]
     # The author's own prose for the change set, as admitted: for a Procedure's
     # proposal, the run that proposed it and how many items it carries.
+    originating_line: OriginatingLine | None = None
     rationale: str | None = None
     # A Procedure proposal's items' own reasons, one page at a time: each keyed
     # by the Claim or Subject path it explains (`item_reasons_after` pages on).
@@ -478,14 +484,34 @@ def service_review_playbill_proposal(
     workspace_observation: ReviewWorkspaceObservation | Mapping[str, object] | None = None,
     item_reasons_after: str | None = None,
     item_reasons_limit: int = PROPOSAL_REVIEW_REASONS_DEFAULT_LIMIT,
-) -> ProposalReview:
-    """Render one immutable candidate from its recorded base and proposal tree.
+    detail: bool = False,
+    summary_after: str | None = None,
+    summary_group: str | None = None,
+    rows_after: str | None = None,
+    rows_limit: int = 5,
+    groups_limit: int = 5,
+    findings_after: str | None = None,
+) -> ProposalReview | ProposalReviewSummary:
+    """Return bounded summary pages, or the full immutable review with detail=True.
 
-    A Procedure proposal's item reasons are paged: ``item_reasons_limit`` of
+    A detailed Procedure review's item reasons are paged: ``item_reasons_limit`` of
     them after ``item_reasons_after`` (the previous page's
     ``item_reasons_next_cursor``).
     """
 
+    if not detail:
+        from cruxible_core.service.proposals.summary import service_review_summary
+
+        return service_review_summary(
+            instance,
+            proposal_id=proposal_id,
+            after=summary_after,
+            group=summary_group,
+            rows_after=rows_after,
+            limit=rows_limit,
+            groups_limit=groups_limit,
+            findings_after=findings_after,
+        )
     inspection = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
     proposal = inspection.proposal
     # An inspection of an admitted proposal always carries the admitted record.
@@ -576,6 +602,7 @@ def service_review_playbill_proposal(
             "actor_id": proposal.admission.actor_id,
             "source_compilation_digest": proposal.admission.source_compilation_digest,
         },
+        originating_line=proposal.admission.originating_line,
         rationale=proposal.admission.rationale,
         item_reasons=item_reasons,
         item_reason_count=item_reason_count,
@@ -625,7 +652,10 @@ def service_prepare_playbill_approval(
 ) -> ApprovalChallenge:
     """Return the exact public statement a client signer may choose to approve."""
 
-    review = service_review_playbill_proposal(instance, proposal_id=proposal_id, access=access)
+    review = service_review_playbill_proposal(
+        instance, proposal_id=proposal_id, access=access, detail=True
+    )
+    assert isinstance(review, ProposalReview)
     generation = instance.generation_for_semantic_root(review.parent_semantic_root)
     principal = generation.principals.require_active(signer_id)
     if principal.kind == "daemon":
@@ -828,6 +858,15 @@ def _compiler_upgrade_lines(review: ProposalReview) -> list[str]:
     ]
 
 
+def _originating_line_lines(review: ProposalReview) -> list[str]:
+    origin = review.originating_line
+    return (
+        []
+        if origin is None
+        else [f"Originating Line: {origin.identity.qualified} {origin.artifact_digest}"]
+    )
+
+
 def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
     """Point a reviewer at the ledger instead of re-rendering the ledger.
 
@@ -850,6 +889,7 @@ def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
                 f"Proposal: {review.proposal_id}",
                 f"Candidate: {review.candidate_digest}",
                 f"Settlement base OID: {review.base_oid}",
+                *_originating_line_lines(review),
                 "",
                 *proposal_change_lines(review),
                 *_compiler_upgrade_lines(review),
@@ -920,13 +960,14 @@ def render_playbill_proposal_review(review: ProposalReview) -> str:
     This is the full approval confirmation, not the review surface: `proposal
     approve --full` shows it immediately before asking for a signature, a full
     rendering of what the signature will cover (by default `approve` shows
-    `render_playbill_approval_summary`). `proposal review` points at the ledger
-    instead.
+    `render_playbill_approval_summary`). `proposal review --detail` points at
+    the ledger; the default review is a factored summary.
     """
 
     lines = [
         f"Proposal: {review.proposal_id}",
         f"Candidate: {review.candidate_digest}",
+        *_originating_line_lines(review),
         f"Parent semantic root: {review.parent_semantic_root}",
         f"Settlement base OID: {review.base_oid}",
         f"Proposal admission tier: {review.candidate.required_tier}",

@@ -383,6 +383,7 @@ def test_atomic_review_cannot_hide_invalidation_members(tmp_path: Path) -> None:
         instance,
         proposal_id=invalidation.admission.proposal_id,
         access=BodyAccessContext(principal_id="owner", can_read_body=False),
+        detail=True,
     )
 
     # The Subject's key Claim is retired with it, in the same change (core derives it).

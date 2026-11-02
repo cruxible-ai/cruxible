@@ -96,7 +96,7 @@ def _checked_review(review: api.ProposalReview, proposal_id: str) -> None:
 
 
 def review_proposal(cx: Cruxible, proposal_id: str) -> ReviewedProposal:
-    raw = cx._client.review_proposal(cx._instance_id, proposal_id, include_body=True)
+    raw = cx._client.review_proposal(cx._instance_id, proposal_id, include_body=True, detail=True)
     review = api.ProposalReview.model_validate(raw.model_dump(mode="json"))
     try:
         _checked_review(review, proposal_id)

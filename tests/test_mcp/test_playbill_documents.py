@@ -137,3 +137,42 @@ def test_playbill_handlers_decode_bytes_and_submit_only_public_attestation(monke
     approve_payload = calls[-1][1][2]
     assert approve_payload == {"attestation": attestation, "hold": False}
     assert "private" not in str(approve_payload)
+
+
+def test_review_summary_options_are_forwarded_by_the_mcp_handler(monkeypatch):
+    calls = []
+    result = object()
+
+    class Client:
+        def review_proposal(self, instance_id, proposal_id, **options):
+            calls.append((instance_id, proposal_id, options))
+            return result
+
+    monkeypatch.setattr(handlers, "_get_client", lambda: Client())
+    assert handlers.handle_playbill_review("inst_1", "proposal", include_body=False) is result
+    assert calls[-1][2]["detail"] is False
+    assert (
+        handlers.handle_playbill_review(
+            "inst_1",
+            "proposal",
+            include_body=False,
+            summary_group="group",
+            rows_after="cursor",
+            rows_limit=3,
+            groups_limit=2,
+            findings_after="findings",
+        )
+        is result
+    )
+    assert calls[-1][2] == {
+        "include_body": False,
+        "detail": False,
+        "summary_after": None,
+        "summary_group": "group",
+        "rows_after": "cursor",
+        "rows_limit": 3,
+        "groups_limit": 2,
+        "findings_after": "findings",
+        "item_reasons_after": None,
+        "item_reasons_limit": None,
+    }

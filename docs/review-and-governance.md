@@ -223,7 +223,13 @@ graduation.
 ## Reviewing with Git
 
 The ledger is a Git repository, so review can use the tools you already have.
-`proposal review` prints the exact commands to diff a proposal against
+`proposal review` shows a bounded, factored summary: findings first, then
+revisions and retirements, with counts by Subject kind and exact template groups.
+Shared values appear once; rows show varying before/after fields. Page groups
+with `--summary-after`, or a group's rows with `--summary-group` and `--rows-after`.
+The originating Line and its exact digest appear when a Line produced the proposal.
+
+`proposal review --detail` prints the exact commands to diff a proposal against
 accepted state in your workspace, and where the daemon's evaluation and
 approval records are kept:
 

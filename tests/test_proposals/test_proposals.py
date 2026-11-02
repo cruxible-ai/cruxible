@@ -749,6 +749,30 @@ def test_an_admission_written_before_the_record_ceiling_reads_and_rewrites(
     raw = records["proposal_admission"]
     assert isinstance(proposal_id, str)
     assert isinstance(raw, str)
+    # The fixture exercises receive bounds versus advertised record ceilings.
+    # Its retired admission-id domain is deliberately not a current reader;
+    # rebind that dev-only identity, preserving every receive-bound byte/key.
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_client.contracts.proposal_models import ProposalAdmissionRecord
+    from cruxible_core.proposals.proposal_notes import proposal_admission_id
+
+    fixture = ProposalAdmissionRecord.model_validate_json(raw)
+    proposal_id = proposal_admission_id(
+        actor_id=fixture.actor_id,
+        request=ProposalAdmissionRequest(
+            target_ref=fixture.target_ref,
+            proposed_base_oid=fixture.proposed_base_oid,
+            source_compilation_digest=fixture.source_compilation_digest,
+            claim_type_expansions=fixture.claim_type_expansions,
+        ),
+        candidate_commit_oid=fixture.candidate_commit_oid,
+        candidate_tree_oid=fixture.candidate_tree_oid,
+        admitted_at=fixture.admitted_at,
+        limits=fixture.limits,
+    )
+    payload = json.loads(raw)
+    payload["proposal_id"] = proposal_id
+    raw = (canonical_bytes(payload) + b"\n").decode("utf-8")
     assert set(json.loads(raw)["limits"]) == set(PROPOSAL_RECEIVE_BOUND_KEYS)
     root = tmp_path / "exhaust"
     root.mkdir()

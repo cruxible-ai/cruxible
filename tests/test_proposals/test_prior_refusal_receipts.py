@@ -153,7 +153,7 @@ def _proposal_id(proposed: Any) -> str:
 
 def _receipts(instance: PlaybillInstance, proposed: Any) -> tuple[Any, ...]:
     review = service_review_playbill_proposal(
-        instance, proposal_id=_proposal_id(proposed), access=ACCESS
+        instance, proposal_id=_proposal_id(proposed), access=ACCESS, detail=True
     )
     (member,) = [item for item in review.members if item.path == proposed.claim_path]
     return member.prior_refusals
@@ -223,7 +223,7 @@ def test_a_rejected_statement_on_the_same_evidence_resurfaces_neutrally(tmp_path
     # The new proposal is ordinary -- nothing refused it -- and its review names
     # the receipt as recorded, without interpreting it.
     review = service_review_playbill_proposal(
-        instance, proposal_id=_proposal_id(again), access=ACCESS
+        instance, proposal_id=_proposal_id(again), access=ACCESS, detail=True
     )
     rendered = render_playbill_proposal_review_pointer(review)
     assert "Earlier refusals of the same statement on the same evidence:" in rendered
@@ -564,7 +564,7 @@ def test_a_damaged_index_file_is_rebuilt_and_review_still_works(tmp_path: Path) 
     (receipt,) = _receipts(instance, again)
     assert receipt.rationale == "the feed was stale that day"
     review = service_review_playbill_proposal(
-        instance, proposal_id=_proposal_id(again), access=ACCESS
+        instance, proposal_id=_proposal_id(again), access=ACCESS, detail=True
     )
     assert "the feed was stale that day" in render_playbill_proposal_review(review)
 
@@ -828,7 +828,7 @@ def test_a_read_indexes_one_bounded_page_and_says_how_far(
     assert coverage is not None and coverage.accepted_generation >= head
     assert coverage.indexed_through_generation < coverage.accepted_generation
     review = service_review_playbill_proposal(
-        instance, proposal_id=_proposal_id(again), access=ACCESS
+        instance, proposal_id=_proposal_id(again), access=ACCESS, detail=True
     )
     assert "Earlier refusals are being indexed" in render_playbill_proposal_review_pointer(review)
     # While retirements lag, a counting step spends itself on a page and counts nothing.
@@ -846,7 +846,7 @@ def test_a_read_indexes_one_bounded_page_and_says_how_far(
     ((receipt,),) = receipts.values()
     assert (receipt.kind, receipt.reason_code) == ("claim_retired", "was-wrong")
     review = service_review_playbill_proposal(
-        instance, proposal_id=_proposal_id(again), access=ACCESS
+        instance, proposal_id=_proposal_id(again), access=ACCESS, detail=True
     )
     assert review.prior_refusal_coverage is None
 

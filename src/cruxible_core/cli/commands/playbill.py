@@ -2586,6 +2586,13 @@ def reject_proposal(
     type=click.IntRange(1, 500),
     help="Item reasons per page (default 50).",
 )
+@click.option("--detail", is_flag=True, help="Return the full candidate review.")
+@click.option("--summary-after", default=None, help="Next group page cursor.")
+@click.option("--summary-group", default=None, help="Page rows of this exact group.")
+@click.option("--rows-after", default=None, help="Next row page cursor.")
+@click.option("--rows-limit", default=5, type=click.IntRange(1, 10))
+@click.option("--groups-limit", default=5, type=click.IntRange(1, 10))
+@click.option("--findings-after", default=None, help="Next findings page cursor.")
 @json_option
 @handle_errors
 def review_proposal(
@@ -2595,12 +2602,19 @@ def review_proposal(
     item_reasons_after: str | None,
     item_reasons_limit: int | None,
     output_json: bool,
+    detail: bool,
+    summary_after: str | None,
+    summary_group: str | None,
+    rows_after: str | None,
+    rows_limit: int,
+    groups_limit: int,
+    findings_after: str | None,
 ) -> None:
     workspace = Path(workspace_root)
 
     def _review_at_observed_coordinate(
         client: CruxibleClient, instance_id: str
-    ) -> contracts.ProposalReview:
+    ) -> contracts.ProposalReview | contracts.ProposalReviewSummary:
         head = client.head(instance_id)
         next_observation = observe_next_workspace(workspace)
         observation: dict[str, object] = {
@@ -2622,6 +2636,13 @@ def review_proposal(
             instance_id,
             resolved_id,
             include_body=include_body,
+            detail=detail,
+            summary_after=summary_after,
+            summary_group=summary_group,
+            rows_after=rows_after,
+            rows_limit=rows_limit,
+            groups_limit=groups_limit,
+            findings_after=findings_after,
             workspace_observation=observation,
             item_reasons_after=item_reasons_after,
             item_reasons_limit=item_reasons_limit,
@@ -2633,6 +2654,10 @@ def review_proposal(
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
+    elif isinstance(result, contracts.ProposalReviewSummary):
+        from cruxible_core.service.proposals.summary import render_review_summary
+
+        click.echo(render_review_summary(result), nl=False)
     else:
         review = ProposalReview.model_validate(result.model_dump(mode="json"))
         click.echo(render_playbill_proposal_review_pointer(review), nl=False)

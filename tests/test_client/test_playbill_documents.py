@@ -192,3 +192,41 @@ def test_client_encodes_body_bytes_and_exact_coordinate_params() -> None:
         "compiler_digest": COORDINATE["compiler_digest"],
     }
     assert head.coordinate.git_oid == COORDINATE["git_oid"] and head.generation == 3
+
+
+def test_client_review_defaults_to_summary_and_explicit_detail_keeps_full_review():
+    from cruxible_client.contracts import ProposalReview, ProposalReviewSummary
+
+    requests = []
+
+    def handler(request):
+        options = json.loads(request.content)
+        requests.append(options)
+        if options["detail"]:
+            return httpx.Response(200, json=_review())
+        return httpx.Response(
+            200,
+            json={
+                "proposal_id": "sha256:" + "9" * 64,
+                "candidate_digest": "sha256:" + "7" * 64,
+                "settlement_base": COORDINATE,
+                "counts": {"created": 1000, "revised": 0, "retired": 0},
+                "subject_kinds": {},
+                "findings": [],
+                "finding_count": 0,
+                "groups": [],
+                "group_count": 0,
+                "tag": "playbill-proposal-review-summary-v1",
+            },
+        )
+
+    client = _client(handler)
+    assert isinstance(client.review_proposal("inst_test", "proposal"), ProposalReviewSummary)
+    assert requests[-1]["detail"] is False
+    assert isinstance(client.review_proposal("inst_test", "proposal", detail=True), ProposalReview)
+    client.review_proposal(
+        "inst_test", "proposal", summary_group="group", rows_after="row", rows_limit=3
+    )
+    assert requests[-1]["summary_group"] == "group"
+    assert requests[-1]["rows_after"] == "row"
+    assert requests[-1]["rows_limit"] == 3

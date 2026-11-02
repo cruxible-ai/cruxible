@@ -1303,6 +1303,7 @@ def _readmit_exact_bytes(
             candidate_tree=candidate_tree,
             timestamp=generation.record.candidate.timestamp,
             readmits=link,
+            originating_line=source.admission.originating_line,
             confirm_head=mode.confirm_head,
         )
     return PlaybillProposalReadmitResultV1(
