@@ -310,15 +310,6 @@ def validate_claims_templates(
                     "the enumeration records directly or through filter/dedupe only",
                     code="cruxible.procedure.claims_enumeration_invalid",
                 )
-            if (
-                any(m.when_absent in {"mirror", "inverse"} for m in node.claims)
-                and extracting.complete_when is None
-            ):
-                raise ClaimsTypingRefused(
-                    "claims_complete_when_required: mirror and inverse "
-                    "require a declared complete_when",
-                    code="cruxible.procedure.claims_complete_when_required",
-                )
         kind = source("SubjectKind", node.subject.kind)
         parts = [key_predicate(kind, name) for name in node.subject.key]
         if None in parts or set(parts) != set(kind.keys) or len(parts) != len(kind.keys):

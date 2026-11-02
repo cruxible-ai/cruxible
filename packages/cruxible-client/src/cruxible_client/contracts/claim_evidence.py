@@ -94,7 +94,11 @@ class AbsenceWitness(_Receipt):
     extract_spec: str
     extractor: str
     logical_source: str
-    complete_when: CompleteWhenResult
+    #: Present only when the extract declares ``complete_when``: optional extra
+    #: proof. Completeness itself is the absence of observed incompleteness.
+    complete_when: CompleteWhenResult | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     enumerated_key_digest: str
     covers_coordinate: AcceptedCoordinate
 
@@ -104,7 +108,7 @@ class AbsenceWitness(_Receipt):
 
     @model_validator(mode="after")
     def _complete(self) -> AbsenceWitness:
-        if not self.complete_when.held:
+        if self.complete_when is not None and not self.complete_when.held:
             raise ValueError("absence witness requires a complete enumeration")
         return self
 

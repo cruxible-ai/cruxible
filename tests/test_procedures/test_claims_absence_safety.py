@@ -186,7 +186,7 @@ def test_unusable_present_values_never_authorize_absence(tmp_path: Path, monkeyp
     assert not any(f.kind == "claim_not_in_source" for f in second.findings)
 
 
-@pytest.mark.parametrize("invalid", ("transformed", "no_count", "item_inverse"))
+@pytest.mark.parametrize("invalid", ("transformed", "item_inverse"))
 def test_absence_authoring_rails_fail_with_typed_codes(tmp_path: Path, invalid):
     from cruxible_core.authoring.lowering import AuthoringLoweringError
 
@@ -206,9 +206,6 @@ def test_absence_authoring_rails_fail_with_typed_codes(tmp_path: Path, invalid):
             },
         )
         raw["steps"][-1]["enumeration"] = "$steps.filtered"
-    elif invalid == "no_count":
-        raw["steps"][2].pop("complete_when")
-        expected = "claims_complete_when_required"
     else:
         raw["steps"][-1]["claims"][0]["when_absent"] = "inverse"
         expected = "claims_inverse_item_value"
@@ -348,6 +345,28 @@ def test_unresolved_held_unit_is_a_typed_run_refusal(tmp_path: Path, monkeypatch
     result = run(instance, root, minute=1)
     assert result.status == "node_refused"
     assert result.terminal.code == "claims_inverse_unit_unresolved"
+
+
+@pytest.mark.parametrize("policy", ("mirror", "inverse"))
+def test_mirror_and_inverse_need_no_count_declaration(tmp_path: Path, policy):
+    """D-R19: declaring mirror/inverse is the completeness statement; no count required."""
+    instance, root, raw = safety_world(tmp_path, policy)
+    raw["steps"][2].pop("complete_when")
+    reinstall(instance, raw)
+    (root / "data/doc.json").write_text(json.dumps({"entries": []}))
+    result = run(instance, root, minute=1, line="safety-followup")
+    assert result.status == "succeeded", result.terminal
+    assert result.completeness is None
+    changed = proposed_claims(instance, result)
+    if policy == "mirror":
+        retired = [c for c in changed if c.lifecycle.state == "retired"]
+        assert len(retired) == 2
+        witnesses = [c.retirement.absence for c in retired]
+    else:
+        assert len(changed) == 2 and all(c.statement.object.kind == "none" for c in changed)
+        witnesses = [c.backing.procedure_evidence.absence for c in changed]
+    assert all(w is not None and w.complete_when is None for w in witnesses)
+    assert not any(f.kind == "claim_not_in_source" for f in result.findings)
 
 
 def test_surface_without_a_count_declaration_keeps_existing_completeness(tmp_path: Path):

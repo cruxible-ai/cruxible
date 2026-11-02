@@ -175,10 +175,6 @@ def append_absence(
                 allowed.add(subject.artifact_path)
         if not covers.keys() <= allowed:
             refuse("claims_covers_outside_only_keys: covers must be a subset of only_keys")
-    if check is None and any(
-        mapping.when_absent in {"mirror", "inverse"} for mapping in node.claims
-    ):
-        refuse("claims_absence_invalid: the declared complete_when result is unavailable")
     complete = (
         (check is None or check.held)
         and not invalid_enumeration
@@ -191,7 +187,7 @@ def append_absence(
         )
     )
     witness = None
-    if complete and check is not None:
+    if complete:
         witness = AbsenceWitness(
             run_id=admission.run_id,
             procedure_digest=admission.procedure_artifact_digest,

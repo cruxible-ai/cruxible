@@ -584,7 +584,12 @@ transforms. With `covers`, `for_each` must use that extract's records directly
 or through a chain of `filter` and `dedupe` transforms. Shapes, casts, joins and
 other transforms are refused at authoring and execution because presence templates
 must see the same record fields and values as the enumeration.
-Mirror and inverse require that extract to declare `complete_when`.
+Declaring `mirror` or `inverse` is the author's completeness statement; no
+count declaration is required. A run is complete unless it observes
+incompleteness: a declared `complete_when.count_at` mismatch, a `may_truncate`
+slot, or an invalid or duplicate record. A declared count is extra proof,
+checked and recorded in the witness. Paged sources must assemble every page
+in the Procedure or declare `may_truncate`.
 If the extractor selects `only_keys`, coverage must be a subset.
 A missing record or an explicitly absent mapped field can establish absence.
 An invalid field, invalid record, duplicate key or false `when` cannot. For a
@@ -597,7 +602,8 @@ surfaced under inverse as well as mirror.
 Both coverage and enumeration must be complete. Otherwise destructive absence
 becomes `surface`, with `source_incomplete: true`. A mirror retirement retains
 an absence witness: Capture, logical source, extract specification and extractor,
-evaluated count path, expected/observed counts and result, enumerated-key digest,
+the evaluated count path, expected/observed counts and result when a count is
+declared, enumerated-key digest,
 producing run/Procedure/node binding, and the accepted coordinate used
 for coverage. The executing Claims terminal produces that proof; public authoring
 cannot attach it. Preparation and delivery verify its run, Capture and extract

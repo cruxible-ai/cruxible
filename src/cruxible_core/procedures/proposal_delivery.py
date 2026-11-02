@@ -258,9 +258,13 @@ def _validate_absence_bindings(
         )
         if (
             extracting is None
-            or extracting.complete_when is None
             or witness.extract_spec != _receipt_extract_digest(extracting)
-            or witness.complete_when.count_at != extracting.complete_when.count_at
+            or (witness.complete_when is None) != (extracting.complete_when is None)
+            or (
+                witness.complete_when is not None
+                and extracting.complete_when is not None
+                and witness.complete_when.count_at != extracting.complete_when.count_at
+            )
         ):
             refuse()
         mapping = node.claims[receipt.template]
