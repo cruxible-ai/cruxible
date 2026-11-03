@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 import cruxible_core.runtime.playbill_manager as playbill_manager_module
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
@@ -692,9 +693,9 @@ def test_overlong_state_root_degrades_provider_at_operator_construction(
     assert operator.unavailable_reason is None
 
 
-def test_a_deployment_config_written_with_classifier_installations_still_reads() -> None:
-    """Deployments once recorded the bucket classifiers they hosted; core runs none
-    now, so the legacy field is dropped on read and never written again."""
+def test_a_deployment_config_carrying_classifier_installations_is_refused() -> None:
+    """Core runs no bucket classifier and keeps no legacy reader for the field
+    deployments once recorded: a config carrying it is refused, not repaired."""
 
     from cruxible_core.runtime.provider_runtime import ProviderDeploymentConfigV1
 
@@ -708,22 +709,9 @@ def test_a_deployment_config_written_with_classifier_installations_still_reads()
         "interpreter_path": "materializations/demo/python",
         "provider_runtime_version": "0.2.0",
     }
-    legacy = {
-        **current,
-        "classifier_installations": [
-            {
-                "tag": "playbill-provider-bucket-classifier-installation-v1",
-                "classifier_identity": "demo.size",
-                "classifier_version": 1,
-                "classifier_digest": _digest("classifier"),
-                "conformance_fixture_set_digest": _digest("fixtures"),
-                "results": [],
-            }
-        ],
-    }
-    read = ProviderDeploymentConfigV1.model_validate(legacy)
-    assert read == ProviderDeploymentConfigV1.model_validate(current)
-    assert "classifier_installations" not in read.model_dump(mode="json")
+    ProviderDeploymentConfigV1.model_validate(current)
+    with pytest.raises(ValidationError, match="classifier_installations"):
+        ProviderDeploymentConfigV1.model_validate({**current, "classifier_installations": []})
 
 
 def test_unmatched_recovered_start_degrades_provider_and_continues_instances(

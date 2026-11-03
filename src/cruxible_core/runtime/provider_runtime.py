@@ -18,7 +18,6 @@ from pydantic import (
     Field,
     ValidationError,
     field_validator,
-    model_validator,
 )
 
 from cruxible_client.contracts import ProviderLaneUnavailableCode
@@ -108,19 +107,6 @@ class ProviderDeploymentConfigV1(_StrictOperationalModel):
     interpreter_path: str
     provider_runtime_version: str
     installation_verification: ProviderInstallationVerification | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _legacy_classifier_installations(cls, value: Any) -> Any:
-        """Read a config written while deployments hosted bucket classifiers.
-
-        Those installation proofs mean nothing now: core runs no classifier.
-        The field is dropped on read and never written again.
-        """
-
-        if isinstance(value, dict) and "classifier_installations" in value:
-            return {key: item for key, item in value.items() if key != "classifier_installations"}
-        return value
 
     @field_validator(
         "distribution_path",
