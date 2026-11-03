@@ -137,6 +137,7 @@ from cruxible_client.contracts.authoring.models import (
     authoring_member_identity,
     authoring_program_digest,
 )
+from cruxible_client.contracts.backlinks import BacklinksRequest, BacklinksResult
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     normalize_canonical,
@@ -247,6 +248,7 @@ from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_client.contracts.triggers import InternalActionName
 from cruxible_client.contracts.write import (
+    AboutChange,
     AddChange,
     AppendSection,
     Change,
@@ -1885,6 +1887,8 @@ class WriteBatch:
             if isinstance(item, RetireChange | RebindChange)
             else f"create {item.subject_kind} as {item.label}"
             if isinstance(item, CreateChange)
+            else f"about {item.ref or item.file + '#' + '/'.join(item.section)}"
+            if isinstance(item, AboutChange)
             else f"{item.op} {item.subject or self.subject or ''} {item.field}".replace("  ", " ")
             for item in self.changes
         )
@@ -3299,6 +3303,82 @@ class Cruxible:
             else AppendSection(file=file, under=under, text=text)
         )
         return AuthoredSection(operation, SectionEvidence(file=file, section=heading_path))
+
+    def note(
+        self,
+        file: str,
+        *,
+        text: str,
+        about: Sequence[str | SubjectRef],
+        because: str,
+        under: tuple[str, ...] = (),
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        at: WriteAt | _Unset = _UNSET,
+    ) -> WriteOutcome:
+        """Append a section to ``file`` and link it ``about`` Subjects: a note, not a Claim.
+
+        One write: the append plus an about change on the new section, under
+        the same governance as any write; the file is written once admitted.
+        ``text`` starts with the section's heading. Backlinks on each Subject
+        list the note, and say when the section changes after it.
+        Next: ``cx.backlinks(subject)``.
+        """
+
+        subjects = tuple(_write_subject(item) for item in about)
+        return self._write(
+            WriteRequest(
+                because=because,
+                docs=(AppendSection(id="note", file=file, under=under, text=text),),
+                changes=(AboutChange(ref="note", subjects=subjects),),
+                dry_run=dry_run,
+                accept=accept,
+                at=self._write_at(at),
+                surface="sdk",
+                full_coordinate=True,
+            )
+        )
+
+    def backlinks(
+        self,
+        ref: str | SubjectRef | ClaimTypeRef | None = None,
+        *,
+        file: str | None = None,
+        section: tuple[str, ...] | None = None,
+        limit: int = 25,
+        cursor: str | None = None,
+    ) -> BacklinksResult:
+        """What points into one target, one page at this context's coordinate.
+
+        ``ref`` a Subject: the notes about it, Documents linked about it, and the
+        workspace sections its live Claims cite. ``ref`` a ClaimType or
+        Procedure: the Documents that guide it. ``file`` and ``section``: the
+        live Claims resting on that section. Section rows carry ``drift``
+        against the workspace file as it is now.
+        Next: ``cx.get(link.source)``; ``next_cursor`` continues a cut page.
+        """
+
+        from cruxible_client.authoring.backlink_sections import observe_drift, section_source
+
+        text: str | None
+        if ref is None or isinstance(ref, str):
+            text = ref
+        elif isinstance(ref, SubjectRef):
+            text = ref.address
+        else:
+            text = f"ClaimType:{ref.address}"
+        request = BacklinksRequest(
+            ref=text,
+            file=None if file is None else section_source(self._workspace_root, file),
+            section=section,
+            limit=limit,
+            cursor=cursor,
+            at=None if self._coordinate is None else _api_coordinate(self.coordinate),
+            surface="sdk",
+        )
+        return observe_drift(
+            self._client.backlinks(self._instance_id, request=request), self._workspace_root
+        )
 
     def set(
         self,

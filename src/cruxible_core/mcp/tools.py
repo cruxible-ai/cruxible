@@ -19,6 +19,7 @@ from cruxible_client.contracts.authoring.models import (
     WorkingSelectionObservation,
 )
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
+from cruxible_client.contracts.backlinks import BacklinksResult
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
 from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
 from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
@@ -67,6 +68,7 @@ from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.write import (
+    AboutChange,
     AddChange,
     CaptureEvidence,
     ContractEvidence,
@@ -199,8 +201,14 @@ class McpRebindChange(RebindChange):
     evidence: McpFileEvidence | McpSectionEvidence
 
 
+class McpAboutChange(AboutChange):
+    __doc__ = AboutChange.__doc__
+
+    observation: SkipJsonSchema[WorkingSelectionObservation | None] = None
+
+
 McpChange = Annotated[
-    CreateChange | McpSetChange | McpAddChange | RetireChange | McpRebindChange,
+    CreateChange | McpSetChange | McpAddChange | RetireChange | McpRebindChange | McpAboutChange,
     Field(discriminator="op"),
 ]
 
@@ -1079,6 +1087,43 @@ def register_tools(
         """Release the publication registration that demands one page block."""
         return handlers.handle_playbill_block_depublish(
             require_instance_id(instance_id), file_id, block_id, dry_run=dry_run, at=at
+        )
+
+    @_tool
+    def cruxible_backlinks(
+        instance_id: InstanceId = None,
+        *,
+        ref: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "A Subject (kind/id): its notes and the sections its Claims cite; a "
+                    "ClaimType or Procedure: the Documents that guide it."
+                )
+            ),
+        ] = None,
+        file: Annotated[
+            str | None,
+            Field(description="With section: a workspace file; its Claims resting on it."),
+        ] = None,
+        section: Annotated[
+            list[str] | None, Field(description="The heading path, as a list.")
+        ] = None,
+        limit: Annotated[int, Field(ge=1, le=100)] = 25,
+        cursor: Annotated[
+            str | None, Field(description="next_cursor of the previous page.")
+        ] = None,
+        at: ReadAt = None,
+    ) -> BacklinksResult:
+        """Read every pointer into one target: notes, section citations, guidance."""
+        return handlers.handle_playbill_backlinks(
+            require_instance_id(instance_id),
+            ref=ref,
+            file=file,
+            section=section,
+            limit=limit,
+            cursor=cursor,
+            at=_read_at(at),
         )
 
     @_tool

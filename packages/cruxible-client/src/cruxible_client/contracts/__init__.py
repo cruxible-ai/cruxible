@@ -288,6 +288,9 @@ from cruxible_client.contracts.proposal_models import ProposalItemReason as Prop
 from cruxible_client.contracts.proposal_summary import (
     ProposalReviewSummary as ProposalReviewSummary,
 )
+from cruxible_client.contracts.proposal_summary import (
+    ReviewGuidance as ReviewGuidance,
+)
 from cruxible_client.contracts.provider_installation import (
     InstalledProvider as InstalledProvider,
 )
@@ -1047,6 +1050,8 @@ class ProposalReview(BaseModel):
     item_reasons_next_cursor: str | None = None
     attestation_coverage: dict[str, Any]
     documents: list[dict[str, Any]]
+    #: Documents linked `guides` the ClaimTypes and Procedure the proposal touches.
+    guidance: list[ReviewGuidance] = Field(default_factory=list, exclude_if=lambda value: not value)
     redactions: list[str]
     projection_advisory: ProjectionAdvisory | None = None
     projection_evidence: ProjectionEvidence | None = None

@@ -877,6 +877,30 @@ def _resolve_claim(projection: Any, name: str, *, ref: str, surface: ReadSurface
     return ResolvedRef("claim", matches[0], _name(matches[0]), row.path if row else None)
 
 
+#: The live predicates a name is the dotted tail of: one prefix range of the
+#: reversed-name index (``claim_type_names_by_reversed``) -- the reversed tail
+#: ``.work.status`` is a prefix of exactly the reversed names ending in it -- so
+#: resolving a short name reads its matches (bounded), never the other names
+#: sharing its leaf, nor every ClaimType.
+_PREDICATE_TAIL_SQL = (
+    "SELECT name FROM claim_type_names INDEXED BY claim_type_names_by_reversed "
+    "WHERE kind='predicate' AND reversed_name>=? AND reversed_name<? "
+    "ORDER BY reversed_name LIMIT ?"
+)
+
+
+def _predicates_ending_in(projection: Any, name: str) -> list[str]:
+    low = ("." + name)[::-1]
+    # The exact upper bound of the prefix: its last character ('.') plus one.
+    high = low[:-1] + chr(ord(low[-1]) + 1)
+    return sorted(
+        str(row[0])
+        for row in projection.typed.connection.execute(
+            _PREDICATE_TAIL_SQL, (low, high, _MAX_CANDIDATES + 1)
+        )
+    )
+
+
 def _resolve_claim_type(
     projection: Any, name: str, *, ref: str, surface: ReadSurface
 ) -> ResolvedRef:
@@ -885,8 +909,7 @@ def _resolve_claim_type(
         return ResolvedRef(
             "claim_type", row.identity, _display("claim_type", row.identity), row.path
         )
-    predicates = _names_of(projection, "claim_type")
-    leaf = [item for item in predicates if item.endswith(f".{name}")]
+    leaf = _predicates_ending_in(projection, name)
     if len(leaf) == 1:
         identity = f"ClaimType:{leaf[0]}"
         found = _envelope(projection, identity)
@@ -895,6 +918,8 @@ def _resolve_claim_type(
         )
     if len(leaf) > 1:
         raise _ambiguous(ref, [f"ClaimType:{item}" for item in sorted(leaf)])
+    # Only a refusal reads every name, for its nearest-name repair.
+    predicates = _names_of(projection, "claim_type")
     raise _not_found(
         "ClaimType",
         ref,
@@ -907,17 +932,15 @@ def _resolve_bare(projection: Any, value: str, *, surface: ReadSurface) -> Resol
     """A bare name: a predicate (full or unique leaf), or another artifact's name."""
 
     matches: list[ResolvedRef] = []
-    predicates = _names_of(projection, "claim_type")
-    if value in predicates:
+    # An exact predicate, else the live predicates it is the dotted tail of:
+    # indexed lookups, so a hit costs its matches, never every ClaimType.
+    if _envelope(projection, f"ClaimType:{value}") is not None:
         identity = f"ClaimType:{value}"
         matches.append(ResolvedRef("claim_type", identity, _display("claim_type", identity)))
     else:
-        for predicate in predicates:
-            if predicate.endswith(f".{value}"):
-                identity = f"ClaimType:{predicate}"
-                matches.append(
-                    ResolvedRef("claim_type", identity, _display("claim_type", identity))
-                )
+        for predicate in _predicates_ending_in(projection, value):
+            identity = f"ClaimType:{predicate}"
+            matches.append(ResolvedRef("claim_type", identity, _display("claim_type", identity)))
     for typed_kind in _NAMED_KINDS:
         identity = f"{_QUALIFIER[typed_kind]}:{value}"
         if _envelope(projection, identity) is not None:
@@ -928,7 +951,8 @@ def _resolve_bare(projection: Any, value: str, *, surface: ReadSurface) -> Resol
         return ResolvedRef(found.kind, found.identity, found.display, row.path if row else None)
     if matches:
         raise _ambiguous(value, [item.display for item in matches])
-    names = [f"ClaimType:{item}" for item in predicates]
+    # Only a refusal reads every name, for its nearest-name repair.
+    names = [f"ClaimType:{item}" for item in _names_of(projection, "claim_type")]
     for typed_kind in _NAMED_KINDS:
         names.extend(
             f"{_DISPLAY_PREFIX[typed_kind]}:{item}" for item in _names_of(projection, typed_kind)

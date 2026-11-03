@@ -48,6 +48,7 @@ from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
 from cruxible_client.contracts.authoring.models import BlockDetachResult
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
+from cruxible_client.contracts.backlinks import BacklinksResult
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
 from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
 from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
@@ -96,6 +97,7 @@ from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.validation_messages import validation_lines
 from cruxible_client.contracts.write import (
+    AboutChange,
     FileEvidence,
     RetireRequest,
     SectionEvidence,
@@ -1232,6 +1234,48 @@ def handle_playbill_block_depublish(
     )
 
 
+def handle_playbill_backlinks(
+    instance_id: str,
+    *,
+    ref: str | None,
+    file: str | None,
+    section: Sequence[str] | None,
+    limit: int,
+    cursor: str | None,
+    at: contracts.AcceptedCoordinate | str | None,
+) -> BacklinksResult:
+    """Backlinks of one target; section rows are checked against the MCP workspace."""
+
+    from cruxible_client.authoring.backlink_sections import observe_drift, section_source
+    from cruxible_client.contracts.backlinks import BacklinksRequest
+
+    workspace = optional_mcp_git_workspace_root()
+    try:
+        request = BacklinksRequest(
+            ref=ref,
+            file=None if file is None else section_source(workspace, file),
+            section=None if section is None else tuple(section),
+            limit=limit,
+            cursor=cursor,
+            at=at,
+            surface="mcp",
+        )
+    except ValidationError as exc:
+        raise DataValidationError(
+            'Invalid backlinks request; example: {"ref": "kind/id"} or '
+            '{"file": "notes.md", "section": ["Triage"]}',
+            errors=[
+                f"$.{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                for error in exc.errors(include_url=False)
+            ],
+        ) from exc
+    result = _daemon_call(
+        lambda client: client.backlinks(instance_id, request=request),
+        operation_name="cruxible_backlinks",
+    )
+    return observe_drift(result, workspace)
+
+
 def handle_playbill_get(
     instance_id: str,
     *,
@@ -1373,7 +1417,8 @@ def handle_playbill_write(instance_id: str, **fields: Any) -> WriteOutcome:
 
     request = _write_request(WriteRequest, "cruxible_write", fields)
     if not request.docs and not any(
-        isinstance(getattr(c, "evidence", None), FileEvidence | SectionEvidence)
+        isinstance(c, AboutChange)
+        or isinstance(getattr(c, "evidence", None), FileEvidence | SectionEvidence)
         for c in request.changes
     ):
         return _daemon_call(

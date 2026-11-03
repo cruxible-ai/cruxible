@@ -38,6 +38,9 @@
   "/api/v1/{instance_id}/authoring/submit": {
     "POST": "AuthoringSubmitResultRecord | AuthoringPreflightResult"
   },
+  "/api/v1/{instance_id}/backlinks": {
+    "POST": "BacklinksResult"
+  },
   "/api/v1/{instance_id}/blocks/declare": {
     "POST": "BlockDeclareResult"
   },

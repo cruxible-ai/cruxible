@@ -44,7 +44,11 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel
 
 from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.artifacts import (
+    ArtifactIdentity,
+    ArtifactLifecycle,
+    parse_artifact_identity,
+)
 from cruxible_client.contracts.authoring.models import (
     AuthoringChangeSetMember,
     AuthoringClaimStatement,
@@ -58,6 +62,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimDependencyDrafts,
     ClaimRetirementMember,
     ExistingCaptureCitationSource,
+    NoteAuthoringPayload,
     PreflightResult,
     SelfSourceBody,
     SubjectAuthoringPayload,
@@ -109,6 +114,7 @@ from cruxible_client.contracts.errors import (
     WriteRefusalError,
 )
 from cruxible_client.contracts.get_reads import ReadSurface
+from cruxible_client.contracts.notes import note_id, note_path, parse_note
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.public_names import public_name, stored_contract_name
 from cruxible_client.contracts.read_values import (
@@ -144,6 +150,7 @@ from cruxible_client.contracts.write import (
     CLAIM_ID_PATTERN,
     DOCS_ONLY_HINT,
     MAX_REBIND_FROM_CAPTURE,
+    AboutChange,
     AddChange,
     ApprovalNeeded,
     ApprovalReason,
@@ -361,10 +368,14 @@ def _with_default_subject(request: WriteRequest) -> WriteRequest:
     refuses ``cruxible.write.subject_required`` before anything is planned.
     """
 
-    changes: list[CreateChange | SetChange | AddChange | RetireChange | RebindChange] = []
+    changes: list[Change] = []
     for index, change in enumerate(request.changes):
         if isinstance(change, CreateChange | RebindChange):
             pass
+        elif isinstance(change, AboutChange):
+            if not change.subjects and not change.unlink:
+                owner = _default_subject(request, index=index, path=f"changes[{index}]")
+                change = change.model_copy(update={"subjects": (owner,)})
         elif isinstance(change, RetireChange):
             target = change.target
             if isinstance(target, SlotRef) and target.subject is None:
@@ -523,7 +534,7 @@ class _Planned:
     """One change resolved against accepted state, before its member is built."""
 
     index: int
-    op: Literal["create", "set", "add", "retire", "rebind"]
+    op: Literal["create", "set", "add", "retire", "rebind", "about"]
     outcome: dict[str, Any]
     member: AuthoringChangeSetMember | None = None
     slot: tuple[str, str] | None = None
@@ -2780,6 +2791,91 @@ class _Planner:
             pin=self.slot_pin(subject_path_value, statement.predicate, statement.qualifier),
         )
 
+    def about_change(self, index: int, change: AboutChange) -> _Planned:
+        """Link (or unlink) one workspace section about Subjects: its note's next version.
+
+        O(the change's Subjects): each resolves like any Subject reference, and
+        the section's note is one path read at the head.
+        """
+
+        path = f"changes[{index}]"
+        observation = change.observation
+        if observation is None and change.subjects:
+            raise _refuse(
+                "cruxible.write.section_evidence_unobserved",
+                "An about link's section must be read by the writer's adapter.",
+                change=index,
+                field_path=path,
+                repair="Use write through the CLI, MCP or SDK beside the workspace",
+            )
+        source_id = observation.source_id if observation is not None else change.file
+        section = change.section
+        try:
+            name = note_id(source_id, section)
+        except ValueError as exc:
+            raise _refuse(
+                "cruxible.write.section_invalid",
+                f"about names no addressable section: {exc}",
+                change=index,
+                field_path=path,
+                repair="Name a catalogued file and a nonempty heading path",
+            ) from exc
+        note_file = note_path(name)
+        content = self.instance.blob_at(self.head.git_oid, note_file)
+        previous = None if content is None else parse_note(content, path=note_file)
+        held = (
+            set()
+            if previous is None or previous.lifecycle.state != "live"
+            else {item.qualified for item in previous.about}
+        )
+
+        def identity_of(ref: str, position: int, field: str) -> str:
+            element = f"{path}.{field}[{position}]"
+            _kind, _id, subject_file = self.resolve_subject(ref, index=index, path=element)
+            created = any(bound.path == subject_file for bound in self.plan.labels.values())
+            # An unlink names a Subject the note holds, live or since retired.
+            if subject_file.startswith("pending:") or not (
+                field == "unlink" or created or self.subject_exists(subject_file)
+            ):
+                raise _refuse(
+                    "cruxible.write.subject_not_found",
+                    f"{ref} names no live Subject a note can link",
+                    change=index,
+                    field_path=element,
+                    repair="Link an existing Subject; create it in an earlier write first",
+                )
+            return "Subject:" + subject_file.removeprefix("subjects/").removesuffix(".json")
+
+        added = {identity_of(ref, i, "subjects") for i, ref in enumerate(change.subjects)}
+        removed = {identity_of(ref, i, "unlink") for i, ref in enumerate(change.unlink)}
+        after = sorted((held | added) - removed, key=lambda item: item.encode("utf-8"))
+        if not after and not held:
+            raise _refuse(
+                "cruxible.write.note_not_found",
+                f"section {section!r} of {source_id!r} has no note to unlink",
+                change=index,
+                field_path=path,
+                repair="Leave the unlink out; nothing links this section",
+            )
+        # Without an observation (a pure unlink of a section that may be gone)
+        # the remaining links stay on the bytes the note already retains.
+        member = NoteAuthoringPayload(
+            source=observation if after else None,
+            note=name if previous is not None else None,
+            about=tuple(parse_artifact_identity(item) for item in after),
+        )
+        return _Planned(
+            index=index,
+            op="about",
+            outcome={
+                "note": name,
+                "file": source_id,
+                "section": section,
+                "about": tuple(item.removeprefix("Subject:") for item in after),
+            },
+            member=member,
+        )
+
     def subject_retire_change(self, index: int, change: RetireChange) -> _Planned:
         """Retire one Subject: its shell, its key Claims (core), and its own Claims if asked.
 
@@ -3221,6 +3317,8 @@ class _Planner:
                 planned = self.retire_change(index, change)
             elif isinstance(change, RebindChange):
                 planned = self.rebind_change(index, change)
+            elif isinstance(change, AboutChange):
+                planned = self.about_change(index, change)
             else:
                 planned = self.claim_change(index, change)
             for claim in (planned.retires, planned.revises, *planned.retires_also):
@@ -3493,7 +3591,7 @@ def _change_outcomes(
             outcomes.append(ChangeOutcome(op=item.op, **item.unchanged_outcome))
             continue
         values = dict(item.outcome)
-        if item.op != "retire" and item.member is not None:
+        if item.op not in ("retire", "about") and item.member is not None:
             identity = lowered.identity_by_change[item.index]
             values["claim"] = item.revises or minted.get(identity)
         outcomes.append(ChangeOutcome(op=item.op, **values))

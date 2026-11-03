@@ -27,6 +27,7 @@ from cruxible_client.contracts.authoring.models import (
     PreflightResult,
 )
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
+from cruxible_client.contracts.backlinks import BacklinksRequest, BacklinksResult
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
@@ -2186,6 +2187,15 @@ def playbill_read_claim_batch(
         paths=tuple(str(view.envelope["path"]) for view in result.claims),
     )
     return result
+
+
+def playbill_backlinks(instance_id: str, *, request: BacklinksRequest) -> BacklinksResult:
+    """Every pointer into one target: notes, section citations, guiding Documents."""
+
+    from cruxible_core.service.discovery.backlinks import service_playbill_backlinks
+
+    check_permission("cruxible_backlinks", instance_id=instance_id)
+    return service_playbill_backlinks(get_playbill_manager().get(instance_id), request=request)
 
 
 def playbill_read_claim_backings(

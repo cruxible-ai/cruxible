@@ -88,9 +88,13 @@ def decode_list_cursor(
     cursor: str,
     *,
     list_name: str,
-    selection: Mapping[str, Any],
+    selection: Mapping[str, Any] | None,
 ) -> ListContinuation:
-    """Decode a cursor, refusing one minted for another list or selection."""
+    """Decode a cursor, refusing one minted for another list or selection.
+
+    ``selection=None`` reads only what the cursor pins (its coordinate), for a
+    listing that must resolve its selection at that coordinate before checking it.
+    """
 
     try:
         payload = json.loads(base64.urlsafe_b64decode(cursor.encode("ascii")))
@@ -117,7 +121,9 @@ def decode_list_cursor(
         raise _mismatch(list_name, "the cursor is malformed")
     if payload["list"] != list_name:
         raise _mismatch(list_name, f"the cursor continues the {payload['list']} list")
-    if payload["selection"] != json.loads(canonical_json(dict(selection))):
+    if selection is not None and payload["selection"] != json.loads(
+        canonical_json(dict(selection))
+    ):
         raise _mismatch(list_name, "the cursor was minted for a different selection")
     return ListContinuation(
         coordinate=payload["coordinate"],

@@ -223,6 +223,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "(heading lists; [] preamble); cite it as kind=section evidence or by doc id. Docs "
         "are written after admission."
     ),
+    "cruxible_backlinks": (
+        "Use to find what points into one thing: ref a Subject (kind/id) for the notes "
+        "about it and the workspace sections its Claims cite; a ClaimType or Procedure for "
+        "the Documents that guide it; file and section for the Claims resting on that "
+        "section. Section rows say drift: changed_since_cited, unchanged or unknown."
+    ),
     "cruxible_get": (
         "Use when you have a reference to one thing -- a Claim id or prefix, kind/id, a "
         "predicate, ClaimType:/Document:/Procedure:/query:/Trigger:/Principal:/"

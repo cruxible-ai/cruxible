@@ -27,13 +27,14 @@ PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER = "playbill.principal-lifecycle.v1"
 SUBJECT_LAW_IDENTIFIER = "playbill.subject.v1"
 
 
-def _document_law_coordinate() -> AcceptanceLawCoordinate:
+def _document_law_coordinate(semantic_revision: int = 4) -> AcceptanceLawCoordinate:
     """Return the reviewed semantic coordinate for the v1 Document law.
 
     The revision is deliberately explicit rather than derived from Python source
-    bytes. C1's unreleased lineage uses the authorized in-place revision-3 re-pin;
-    after the first public release, semantic changes must register a successor
-    coordinate and retain the deployed implementation for historical replay.
+    bytes. Revision 4 (doc-backlinks) closes the indexed link vocabulary: an
+    ``about``/``guides`` link must name the right kind of artifact, live in the
+    candidate. Revision 3 is retained for exact replay of receipts recorded
+    under it, judged without those link rules.
     """
 
     digest = typed_digest(
@@ -42,7 +43,7 @@ def _document_law_coordinate() -> AcceptanceLawCoordinate:
         {
             "identifier": DOCUMENT_LAW_IDENTIFIER,
             "artifact_tag": "playbill-document-v1",
-            "semantic_revision": 3,
+            "semantic_revision": semantic_revision,
         },
     )
     return AcceptanceLawCoordinate(
@@ -52,6 +53,8 @@ def _document_law_coordinate() -> AcceptanceLawCoordinate:
 
 
 DOCUMENT_LAW = _document_law_coordinate()
+#: The Document law before the closed link vocabulary: replay only.
+DOCUMENT_LAW_V3 = _document_law_coordinate(3)
 
 
 def _principal_lifecycle_law_coordinate() -> AcceptanceLawCoordinate:
@@ -207,9 +210,22 @@ class InstalledAcceptanceLaw:
 class AcceptanceLawRegistry:
     """Closed registry; callers cannot substitute a law by label."""
 
-    def __init__(self, laws: tuple[InstalledAcceptanceLaw, ...]) -> None:
+    def __init__(
+        self,
+        laws: tuple[InstalledAcceptanceLaw, ...],
+        *,
+        historical: tuple[InstalledAcceptanceLaw, ...] = (),
+    ) -> None:
         self._by_coordinate: dict[tuple[str, str], InstalledAcceptanceLaw] = {}
         self._current_by_tag: dict[str, InstalledAcceptanceLaw] = {}
+        #: Superseded coordinates kept for exact replay of the receipts they
+        #: recorded; never resolved for a new member.
+        self._historical: dict[tuple[str, str], InstalledAcceptanceLaw] = {}
+        for law in historical:
+            key = (law.coordinate.identifier, law.coordinate.digest)
+            if key in self._historical:
+                raise ValueError("duplicate historical acceptance-law coordinate")
+            self._historical[key] = law
         for law in laws:
             key = (law.coordinate.identifier, law.coordinate.digest)
             if key in self._by_coordinate:
@@ -238,7 +254,8 @@ class AcceptanceLawRegistry:
         """Require the exact recorded evaluator during settlement or recovery."""
 
         try:
-            return self._by_coordinate[(identifier, digest)]
+            key = (identifier, digest)
+            return self._by_coordinate[key] if key in self._by_coordinate else self._historical[key]
         except KeyError as exc:
             raise ProposalIntegrityError(
                 f"acceptance law cannot be reproduced at its recorded digest: {identifier}@{digest}"
@@ -247,6 +264,11 @@ class AcceptanceLawRegistry:
 
 DOCUMENT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=DOCUMENT_LAW,
+    artifact_kind="document",
+    artifact_tag="playbill-document-v1",
+)
+DOCUMENT_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=DOCUMENT_LAW_V3,
     artifact_kind="document",
     artifact_tag="playbill-document-v1",
 )
@@ -355,6 +377,16 @@ ATTESTATION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-claim-attestation-envelope-v2",
 )
 
+#: A workspace section linked ``about`` Subjects (contracts/notes.py): a link,
+#: never a Claim; its Capture is the section's observed body.
+NOTE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.note.v1", "playbill-note-v1", semantic_revision=1
+    ),
+    artifact_kind="note",
+    artifact_tag="playbill-note-v1",
+)
+
 
 # A Line with no embedded trigger. Retiring it, or changing the event it
 # accepts, cannot strand live Triggers aimed at it: they move in the same set.
@@ -455,6 +487,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
         CAPTURE_CONTRACT_ACCEPTANCE_LAW,
         ATTESTATION_ACCEPTANCE_LAW,
+        NOTE_ACCEPTANCE_LAW,
         RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
         CLAIM_ACCEPTANCE_LAW,
         CLAIM_TYPE_ACCEPTANCE_LAW,
@@ -471,7 +504,8 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         PROCEDURE_MANDATE_V3_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_V4_ACCEPTANCE_LAW,
         SUBJECT_ACCEPTANCE_LAW,
-    )
+    ),
+    historical=(DOCUMENT_V3_ACCEPTANCE_LAW,),
 )
 
 

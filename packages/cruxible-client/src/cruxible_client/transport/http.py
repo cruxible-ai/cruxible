@@ -15,6 +15,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCompileRequest,
 )
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
+from cruxible_client.contracts.backlinks import BacklinksRequest, BacklinksResult
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
 from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
@@ -1489,6 +1490,14 @@ class CruxibleClient:
             json=request.model_dump(mode="json"),
         )
         return self._parse_model(response, ClaimReadBatchResult)
+
+    def backlinks(self, instance_id: str, *, request: BacklinksRequest) -> BacklinksResult:
+        """Every pointer into one Subject, ClaimType, Procedure or workspace section."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/backlinks",
+            json=request.model_dump(mode="json", exclude_none=True),
+        )
+        return self._parse_model(response, BacklinksResult)
 
     def get(
         self,

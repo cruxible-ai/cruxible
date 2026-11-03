@@ -14,6 +14,8 @@ from typing import Any
 from cruxible_client.contracts.canonical import file_digest, is_candidate_card_path
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_core.compiler.projection_artifacts import ParsedProjectionTree
+from cruxible_core.indexes.evidence.backlinks import SCHEMA_SQL as BACKLINKS_SCHEMA_SQL
+from cruxible_core.indexes.evidence.backlinks import refresh_backlinks
 from cruxible_core.indexes.evidence.citation_sql import (
     SCHEMA_SQL,
     populate_citations,
@@ -295,7 +297,7 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
 
 
 def complete_schema_sql() -> str:
-    return "\n".join((schema_sql(), SCHEMA_SQL, _METADATA_SQL))
+    return "\n".join((schema_sql(), SCHEMA_SQL, BACKLINKS_SCHEMA_SQL, _METADATA_SQL))
 
 
 def schema_objects(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
@@ -586,6 +588,8 @@ def replace_rows(
             bodies=bodies,
             owner_exists=lambda kind, identity: identity in published[kind],
         )
+    # After the citation index: a Claim's section citations are read from it.
+    refresh_backlinks(connection, parsed=parsed, sources=sources, replaced=replaced, bodies=bodies)
     for fact in parsed.semantic_facts:
         if fact.schema_id not in ("cruxible.procedure.track_record", "cruxible.line.track_record"):
             continue

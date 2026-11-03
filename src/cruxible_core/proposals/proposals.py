@@ -104,6 +104,7 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.documents import (
     AcceptedDocument,
     BodyVerifierProtocol,
+    DocumentShell,
     document_digest,
     evaluate_document_law,
     parse_document,
@@ -127,6 +128,7 @@ from cruxible_client.contracts.governance import (
 from cruxible_client.contracts.laws import (
     ACCEPTANCE_LAWS,
     APPROVAL_POLICY_ACCEPTANCE_LAW,
+    DOCUMENT_LAW_V3,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
     AcceptanceLawRegistry,
@@ -404,6 +406,7 @@ _PROCEDURE_MANDATE_PATH_RE = re.compile(r"^procedure-mandates/[a-z][a-z0-9_.-]{0
 _PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.json$")
 _LINE_PATH_RE = re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.json$")
 _TRIGGER_PATH_RE = re.compile(r"^triggers/[a-z][a-z0-9_.-]{0,255}\.json$")
+_NOTE_PATH_RE = re.compile(r"^notes/NOTE-[0-9a-f]{32}\.json$")
 _SUBJECT_KIND_PATH_RE = re.compile(
     r"^subject-kinds/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*\.json$"
 )
@@ -422,6 +425,7 @@ _DEPENDENCY_CLOSED_PATTERNS: Final = (
     _PROCEDURE_PATH_RE,
     _LINE_PATH_RE,
     _TRIGGER_PATH_RE,
+    _NOTE_PATH_RE,
     _SUBJECT_KIND_PATH_RE,
     _QUERY_DEFINITION_PATH_RE,
     _EXHAUST_PROMOTION_PATH_RE,
@@ -2331,6 +2335,80 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _note_member(context: _MemberContext) -> _MemberVerdict:
+    """Judge one note: its succession, its live Subjects, and its section Capture.
+
+    O(the note's Subjects): each is one path lookup in the candidate, and the
+    cited Capture is one envelope read.
+    """
+
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_client.contracts.cas_contracts import BodyAccessContext
+    from cruxible_client.contracts.notes import (
+        AcceptedNote,
+        capture_section,
+        evaluate_note_law,
+        note_digest,
+        parse_note,
+    )
+    from cruxible_client.contracts.subjects import subject_path as subject_shell_path
+
+    note = parse_note(context.content, path=context.path)
+    predecessor: AcceptedNote | None = None
+    if context.parent_content is not None:
+        previous = parse_note(context.parent_content, path=context.path)
+        predecessor = AcceptedNote(
+            path=context.path, note=previous, artifact_digest=note_digest(previous).tagged
+        )
+    live: set[str] = set()
+    section = None
+    if note.lifecycle.state == "live":
+        for target in note.about:
+            kind, _, subject_id = target.name.partition("/")
+            try:
+                shell_path = subject_shell_path(kind, subject_id)
+            except ValueError:
+                continue
+            accepted = context.resolved.subjects.get(shell_path)
+            if accepted is not None and accepted.shell.lifecycle.state == "live":
+                live.add(target.qualified)
+        if isinstance(context.bodies, CaptureObjectStoreProtocol):
+            try:
+                envelope = parse_capture_envelope(
+                    context.bodies.read(
+                        note.capture_digest,
+                        access=BodyAccessContext(
+                            principal_id="playbill-note-law", can_read_body=True
+                        ),
+                    )
+                )
+            except (CruxibleError, ValueError):
+                envelope = None
+            section = None if envelope is None else capture_section(envelope)
+    law = evaluate_note_law(
+        note,
+        path=context.path,
+        predecessor=predecessor,
+        live_subjects=frozenset(live),
+        capture_section=section,
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted note law result is incomplete")
+    return _accepted(
+        context,
+        _installed(context, note.artifact_format),
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
+        retired=note.lifecycle.state == "retired",
+    )
+
+
 def _subject_kind_member(context: _MemberContext) -> _MemberVerdict:
     """Judge one SubjectKind: its succession, and the key ClaimTypes it names.
 
@@ -3620,6 +3698,49 @@ def _subject_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _unavailable_link_targets(context: _MemberContext, shell: DocumentShell) -> list[str]:
+    """The indexed links (about, guides) whose target is not live in the candidate.
+
+    O(the Document's indexed links): each is one keyed lookup. Labels (any
+    other relation) are carried as written.
+    """
+
+    from cruxible_client.contracts.subjects import subject_path as subject_shell_path
+
+    missing: list[str] = []
+    for link in shell.links:
+        if not link.indexed:
+            continue
+        kind, _, name = link.target_identity.partition(":")
+        live = False
+        try:
+            if kind == "Subject":
+                subject_kind, _, subject_id = name.partition("/")
+                accepted_subject = context.resolved.subjects.get(
+                    subject_shell_path(subject_kind, subject_id)
+                )
+                live = (
+                    accepted_subject is not None
+                    and accepted_subject.shell.lifecycle.state == "live"
+                )
+            elif kind == "ClaimType":
+                accepted_type = context.resolved.claim_types.get(link.target_identity)
+                live = (
+                    accepted_type is not None and accepted_type.claim_type.lifecycle.state == "live"
+                )
+            elif kind == "Procedure":
+                accepted_procedure = context.resolved.procedures.get(link.target_identity)
+                live = (
+                    accepted_procedure is not None
+                    and accepted_procedure.procedure.lifecycle.state == "live"
+                )
+        except ValueError:
+            live = False
+        if not live:
+            missing.append(link.target_identity)
+    return missing
+
+
 def _document_member(context: _MemberContext) -> _MemberVerdict:
     shell = parse_document(context.content, path=context.path)
     predecessor: AcceptedDocument | None = None
@@ -3633,21 +3754,39 @@ def _document_member(context: _MemberContext) -> _MemberVerdict:
             shell=previous,
             envelope_digest=document_digest(previous).tagged,
         )
+    installed = _installed(context, shell.tag)
+    # Revision 4 closes the indexed link vocabulary; a receipt recorded under
+    # revision 3 replays without those rules.
+    link_rules = installed.coordinate != DOCUMENT_LAW_V3
     law = evaluate_document_law(
         shell,
         path=context.path,
         bodies=context.bodies,
         predecessor=predecessor,
+        link_rules=link_rules,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    unavailable = _unavailable_link_targets(context, shell) if link_rules else []
+    if unavailable:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.document.link_target_unavailable",
+                    "A Document's about/guides links name live artifacts; not live here: "
+                    + ", ".join(unavailable[:5])
+                    + ".",
+                    context.path,
+                ),
+            )
+        )
     if (
         law.envelope_digest is None or law.required_tier is None or law.activation_policy is None
     ):  # pragma: no cover - guarded by DocumentLawResult
         raise ProposalIntegrityError("accepted Document law result is incomplete")
     return _accepted(
         context,
-        _installed(context, shell.tag),
+        installed,
         predecessor_artifact_digest=None if predecessor is None else predecessor.envelope_digest,
         candidate_artifact_digest=law.envelope_digest,
         required_tier=law.required_tier,
@@ -3920,6 +4059,14 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
         evaluate=_trigger_member,
     ),
     _MemberKind(
+        name="note",
+        pattern=_NOTE_PATH_RE,
+        removal_code="cruxible.note.removal_unsupported",
+        removal_message="Notes are retired by successor, never removed.",
+        evaluate=_note_member,
+        format_code="cruxible.note.format_invalid",
+    ),
+    _MemberKind(
         name="subject-kind",
         pattern=_SUBJECT_KIND_PATH_RE,
         removal_code="cruxible.subject_kind.removal_unsupported",
@@ -4012,6 +4159,7 @@ ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
     "exhaust-promotion",
     "line",
     "trigger",
+    "note",
     "subject-kind",
     "contract",
     "query-definition",

@@ -14,6 +14,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringCompileSubmitRequest,
     AuthoringIntentCompileRequest,
 )
+from cruxible_client.contracts.backlinks import BacklinksRequest, BacklinksResult
 from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.change_control import ChangeControlRequest
@@ -988,6 +989,12 @@ def read_claim_batch(instance_id: str, req: ClaimReadBatchRequest) -> ClaimReadB
 def get_by_ref(instance_id: str, req: GetRequest) -> GetResult:
     """One governed thing by reference, values first; ``detail`` chooses the depth."""
     return playbill_api.playbill_get(resolve_server_instance_id(instance_id), request=req)
+
+
+@router.post("/{instance_id}/backlinks", response_model=BacklinksResult)
+def backlinks(instance_id: str, req: BacklinksRequest) -> BacklinksResult:
+    """Every pointer into one Subject, ClaimType, Procedure or workspace section."""
+    return playbill_api.playbill_backlinks(resolve_server_instance_id(instance_id), request=req)
 
 
 @router.post("/{instance_id}/get-batch", response_model=GetBatchResult)
