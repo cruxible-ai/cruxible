@@ -42,7 +42,10 @@ from cruxible_core.service.claims.claims import (
     _resolve_coordinate,
     materialize_playbill_claim_view,
 )
-from cruxible_core.service.evidence.body_access import withhold_evidence_payload
+from cruxible_core.service.evidence.body_access import (
+    capture_access_resolver,
+    withhold_evidence_payload,
+)
 from cruxible_core.service.evidence.evidence import (
     _claim_read_history_index,
     _IndexedClaimLawEvidence,
@@ -196,6 +199,8 @@ def service_read_claim_batch(
             _accepted_generation_time(instance, coordinate) if public_views else None
         )
         bodies = instance.body_store() if public_views else None
+        # One access memo for every view, reading through this bound projection.
+        resolver = capture_access_resolver(instance, coordinate, projection=projection)
         for public in public_views:
             assert evaluation_time is not None
             view = materialize_playbill_claim_view(
@@ -208,7 +213,7 @@ def service_read_claim_batch(
                 bodies=bodies,
             )
             payload, notice = withhold_evidence_payload(
-                instance, coordinate, view.model_dump(mode="json"), access
+                instance, coordinate, view.model_dump(mode="json"), access, resolver=resolver
             )
             if notice is not None:
                 withheld_digests.update(notice.capture_digests)
