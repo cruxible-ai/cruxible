@@ -286,6 +286,12 @@ class JournalProducerReceiptResolver:
         #: The journal payload bodies each run's answers were derived from: an
         #: answer stands only while every one of them is still held and intact.
         self._run_bodies: dict[str, set[str]] = {}
+        #: The receipt and Capture digests each run's records answered.
+        self._run_digests: dict[str, set[str]] = {}
+        self._run_captures: dict[str, set[str]] = {}
+        #: Runs whose last derivation left proof records the index could not
+        #: project yet: their answers are never served from what is kept.
+        self._held_runs: set[str] = set()
         self._current_run = ""
         self._verified = _VerifiedCaptures()
         self._notes: list[ProducerReceiptJournalNote] = []
@@ -337,6 +343,7 @@ class JournalProducerReceiptResolver:
             message=message,
         )
         if candidate_digest is not None:
+            self._run_digests.setdefault(self._current_run, set()).add(candidate_digest)
             self._errors.setdefault(
                 candidate_digest,
                 CaptureFormatError(
@@ -389,6 +396,7 @@ class JournalProducerReceiptResolver:
                 exc=exc,
             )
             return
+        self._run_captures.setdefault(record.run_id, set()).add(capture)
         self._productions.setdefault(capture, set()).add(
             CaptureProductionRecord(
                 capture_digest=capture,
@@ -399,6 +407,7 @@ class JournalProducerReceiptResolver:
         )
 
     def _store(self, digest: str, resolution: ProducerReceiptResolution) -> None:
+        self._run_digests.setdefault(self._current_run, set()).add(digest)
         existing = self._resolutions.get(digest)
         if existing is not None and existing != resolution:
             self._resolutions.pop(digest, None)
@@ -706,6 +715,7 @@ class JournalProducerReceiptResolver:
                 self._store(candidate_digest, procedure_receipt)
                 assert record.run_id is not None  # checked with its admission above
                 for produced in terminal.children:
+                    self._run_captures.setdefault(record.run_id, set()).add(produced.egress_digest)
                     self._productions.setdefault(produced.egress_digest, set()).add(
                         CaptureProductionRecord(
                             capture_digest=produced.egress_digest,
@@ -737,12 +747,21 @@ class JournalProducerReceiptResolver:
         (``full_journal``).
         """
 
-        try:
-            if found() is not None:
-                return
-        except CaptureFormatError:
-            self._forget()
-        held = self._index_cited(run_id, locators)
+        if run_id in self._held_runs:
+            # What is kept of this run was derived without records the index
+            # could not project: never served. Re-derive it, trying them again.
+            held = self._derive(run_id, locators, retry=True)
+        else:
+            try:
+                if found() is not None:
+                    return
+            except CaptureFormatError:
+                self._forget()
+            held = self._derive(run_id, locators)
+            if held:
+                # Records deferred under this landing head were skipped; one may
+                # be readable now (a transient failure) and change the answer.
+                held = self._derive(run_id, locators, retry=True)
         try:
             if found() is not None:
                 return
@@ -750,9 +769,47 @@ class JournalProducerReceiptResolver:
             if not held:
                 raise
         self._catch_up()
+        self._derive(run_id, locators, retry=True, forget=held)
+
+    def _derive(
+        self,
+        run_id: str,
+        locators: tuple[str, ...],
+        *,
+        retry: bool = False,
+        forget: bool | None = None,
+    ) -> bool:
+        """Index the cited records of one run; whether it still holds unprojected records.
+
+        A retry first forgets this run's derived answers (``forget``, by
+        default whenever retrying), so none survives from records read before.
+        """
+
+        if retry if forget is None else forget:
+            self._forget_run(run_id)
+        held = self._index_cited(run_id, locators, retry=retry)
         if held:
-            self._forget()
-        self._index_cited(run_id, locators, retry=True)
+            self._held_runs.add(run_id)
+        else:
+            self._held_runs.discard(run_id)
+        return held
+
+    def _forget_run(self, run_id: str) -> None:
+        """Drop what one run's records derived; other runs' answers stay."""
+
+        for digest in self._run_digests.pop(run_id, ()):
+            self._resolutions.pop(digest, None)
+            self._errors.pop(digest, None)
+        for capture in self._run_captures.pop(run_id, ()):
+            kept = {
+                record for record in self._productions.get(capture, ()) if record.run_id != run_id
+            }
+            if kept:
+                self._productions[capture] = kept
+            else:
+                self._productions.pop(capture, None)
+        self._run_bodies.pop(run_id, None)
+        self._proof_heads.pop(run_id, None)
 
     def _catch_up(self) -> None:
         """Index every journal record appended since the index's last sync."""
@@ -797,6 +854,9 @@ class JournalProducerReceiptResolver:
         self._errors.clear()
         self._productions.clear()
         self._run_bodies.clear()
+        self._run_digests.clear()
+        self._run_captures.clear()
+        self._held_runs.clear()
         self._proof_heads.clear()
         self._full = False
 

@@ -444,21 +444,28 @@ def test_records_indexed_without_their_locators_are_projected_for_the_cited_run_
     assert pending == {f"pad-run-{index}": 1 for index in range(5)}
 
 
-def _outcome(world: ProducedCaptures, digest: str, *, full_journal: bool = False) -> str:
-    """A fresh context's verdict on one Capture: indexed, or by one whole-journal pass."""
+def _outcome(
+    world: ProducedCaptures,
+    digest: str,
+    *,
+    full_journal: bool = False,
+    context: producer_receipts.LocalProducerReceiptResolver | None = None,
+) -> str:
+    """A verdict on one Capture: fresh indexed, one whole-journal pass, or ``context``."""
 
     instance = world.instance
     envelope = _envelope(instance, digest)
-    context = (
-        producer_receipts.local_producer_receipt_resolver(
-            exhaust_root=instance.root / instance.descriptor.storage.exhaust,
-            instance_id=instance.descriptor.instance_id,
-            bodies=instance.body_store(),
-            full_journal=True,
+    if context is None:
+        context = (
+            producer_receipts.local_producer_receipt_resolver(
+                exhaust_root=instance.root / instance.descriptor.storage.exhaust,
+                instance_id=instance.descriptor.instance_id,
+                bodies=instance.body_store(),
+                full_journal=True,
+            )
+            if full_journal
+            else instance.capture_verification_context()
         )
-        if full_journal
-        else instance.capture_verification_context()
-    )
     try:
         verified = verify_capture(
             digest,
@@ -618,6 +625,103 @@ def test_a_malformed_proof_record_refuses_only_its_own_candidate(
     )
     with pytest.raises(CaptureFormatError, match="journal is invalid"):
         context.producer_receipt(forged_receipt, run_id=world.run_id)
+
+
+def _append_unnoted(world: ProducedCaptures, kind: str, body: bytes) -> str:
+    """Append one record of the cited run with this payload, as another writer would."""
+
+    instance = world.instance
+    journal = LocalJournalBackend(
+        instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
+    )
+    template = next(
+        stored.record for stored in world.records if stored.record.event_kind == "produced_capture"
+    )
+    fields = set(ProcedureJournalRecordDraftV1.model_fields) - {"tag", "event_kind"}
+    stored_body = instance.body_store().store(body, journal_payload=True)
+    journal.append(
+        ProcedureJournalRecordDraftV1.model_validate(
+            {
+                **template.model_dump(mode="python", include=fields),
+                "event_kind": kind,
+                "payload_digest": stored_body.digest,
+            }
+        ),
+        expected_head=journal.read_head(template.stream, template.partition_id),
+        fencing_token="writer",
+    )
+    return stored_body.digest
+
+
+@pytest.mark.parametrize("bound", ["standalone", "request_bound"])
+def test_a_kept_positive_never_outlives_a_restored_conflicting_record(
+    world: ProducedCaptures, bound: str
+) -> None:
+    """A deferred completion naming the cited receipt, restored: warm refuses as cold does."""
+
+    from contextlib import nullcontext
+
+    from cruxible_core.exhaust.records import journal_payload_bytes
+
+    instance = world.instance
+    store = instance.body_store()
+    source_capture, _terminal = _genuine(world)
+    receipt = _envelope(instance, source_capture).producer_receipt_digest
+    conflicting = journal_payload_bytes(
+        {"receipt_digest": receipt, "receipt": {"occurrence_path": "conflicting"}}
+    )
+    body = _append_unnoted(world, "provider_invocation_completed", conflicting)
+    assert store.erase(body)
+
+    request = instance.capture_verification_request() if bound == "request_bound" else nullcontext()
+    with request:
+        warm = instance.capture_verification_context()
+        # Unreadable, the conflict is no evidence on any path.
+        assert _outcome(world, source_capture, context=warm) == "verified"
+        assert _outcome(world, source_capture) == "verified"
+        assert _outcome(world, source_capture, full_journal=True) == "verified"
+        assert store.store(conflicting).digest == body
+        # Restored, it makes the receipt ambiguous: warm agrees with fresh and cold.
+        refused = _outcome(world, source_capture, full_journal=True)
+        assert refused != "verified"
+        assert _outcome(world, source_capture) == refused
+        assert _outcome(world, source_capture, context=warm) == refused
+
+
+def test_a_transient_deferred_read_is_retried_at_an_unchanged_landing_head(
+    world: ProducedCaptures, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pending payload unreadable once, then readable with no landing recorded in between."""
+
+    from cruxible_core.exhaust import journal_index
+    from cruxible_core.exhaust.payloads import UnavailablePayload
+
+    instance = world.instance
+    source_capture, _terminal = _genuine(world)
+    produced = next(
+        stored.record for stored in world.records if stored.record.event_kind == "produced_capture"
+    )
+    _requeue_run(world)
+    failing = {"on": True}
+    read = journal_index.read_payload
+
+    def transient(bodies, digest, *, access):  # type: ignore[no-untyped-def]
+        if failing["on"] and digest == produced.payload_digest:
+            return UnavailablePayload(digest)
+        return read(bodies, digest, access=access)
+
+    monkeypatch.setattr(journal_index, "read_payload", transient)
+    warm = instance.capture_verification_context()
+    assert _outcome(world, source_capture, context=warm) != "verified"
+    head = instance.body_store().landings.head()
+
+    failing["on"] = False
+    assert instance.body_store().landings.head() == head
+    assert _outcome(world, source_capture, context=warm) == "verified"
+    assert _outcome(world, source_capture) == "verified"
+    assert _outcome(world, source_capture, full_journal=True) == "verified"
+    with sqlite3.connect(_journal_index(world)) as connection:
+        assert connection.execute("SELECT count(*) FROM proof_pending").fetchone()[0] == 0
 
 
 def _grow_cited_run(world: ProducedCaptures, count: int, *, start: int) -> None:
