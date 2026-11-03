@@ -854,7 +854,8 @@ class DocOutcome(_StrictWriteModel):
 
 DOCS_ONLY_HINT = (
     "No Claim cites this text. If it records a belief or decision, add a Claim citing "
-    "the section; if it is a draft or a note, prose is right."
+    "the section; to keep it as a note about Subjects, link it with an about change "
+    "(cruxible note); a draft stays prose."
 )
 
 
