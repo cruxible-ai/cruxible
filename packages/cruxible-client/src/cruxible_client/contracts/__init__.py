@@ -1057,6 +1057,9 @@ class ProposalReview(BaseModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    #: C14: candidate values and evidence drawn from Captures withheld from this
+    #: reader are left out; the candidate digest and every commitment stay.
+    withheld: BodyRestricted | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 ProposalReviewResponse: TypeAlias = Annotated[

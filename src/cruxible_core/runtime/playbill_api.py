@@ -1361,10 +1361,18 @@ def playbill_review_proposal(
     findings_after: str | None = None,
 ) -> contracts.ProposalReviewResponse:
     check_permission("cruxible_proposal_review", instance_id=instance_id)
+    access = _access(instance_id, include_body=bool(include_body))
     result = service_review_playbill_proposal(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
-        access=_access(instance_id, include_body=bool(include_body)),
+        # C14: restricted-derived values follow the caller's key, not include_body.
+        access=access.model_copy(
+            update={
+                "can_read_restricted": _permits(
+                    "cruxible_body_read_restricted", instance_id=instance_id
+                )
+            }
+        ),
         include_body=include_body,
         workspace_observation=workspace_observation,
         detail=detail,
@@ -1379,7 +1387,15 @@ def playbill_review_proposal(
     )
     if isinstance(result, contracts.ProposalReviewSummary):
         return result
-    return contracts.ProposalReview.model_validate(result.model_dump(mode="json"))
+    from cruxible_core.service.proposals.review import withhold_review_values
+
+    return contracts.ProposalReview.model_validate(
+        withhold_review_values(
+            get_playbill_manager().get(instance_id),
+            result.model_dump(mode="json"),
+            _access(instance_id, include_body=True),
+        )
+    )
 
 
 def playbill_prepare_approval(
@@ -1396,7 +1412,17 @@ def playbill_prepare_approval(
         signer_id=signer_id,
         access=_access(instance_id, include_body=include_body),
     )
-    return contracts.ApprovalChallenge.model_validate(result.model_dump(mode="json"))
+    from cruxible_core.service.proposals.review import withhold_review_values
+
+    # C14: the challenge's review follows the caller's key; the statement the
+    # signer signs (payload and root digests) is untouched.
+    challenge = result.model_dump(mode="json")
+    challenge["review"] = withhold_review_values(
+        get_playbill_manager().get(instance_id),
+        challenge["review"],
+        _access(instance_id, include_body=True),
+    )
+    return contracts.ApprovalChallenge.model_validate(challenge)
 
 
 def playbill_submit_approval(
@@ -2407,8 +2433,9 @@ def _withhold_run_values(
         state,
         run_values_withheld(
             get_playbill_manager().get(instance_id),
-            state.source_observations,
+            state.run_id,
             _access(instance_id, include_body=True),
+            source_observations=state.source_observations,
         ),
     )
 

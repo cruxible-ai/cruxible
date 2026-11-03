@@ -314,7 +314,7 @@ def test_claim_type_name_overlay_and_delta_match_cold_reconstruction(tmp_path):
 #: The one current physical schema pin. A schema change must deliberately
 #: move its version and this expected digest; no historical reader matrix.
 STORAGE_SCHEMA_DIGESTS = {
-    30: "85e5e13c1e2a93cb2b2e8a3a91a8db5806bd8566769c9c1a5e8d7e9a89caf1a3",
+    30: "7b4fb4dad0e4fa6ab43f3a33c2e55220a663e94b2fde8c398502cf12b3f004ae",
 }
 
 

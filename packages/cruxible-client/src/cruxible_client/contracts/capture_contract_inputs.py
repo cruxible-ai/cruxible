@@ -216,7 +216,7 @@ def _lower_capture_contract_input(
     )
     contract = CaptureContract.model_validate({**predecessor.model_dump(mode="python"), **updates})
     broken = capture_contract_successor_break(predecessor, contract)
-    if broken and contract.lifecycle.state != "retired":
+    if broken and (contract.lifecycle.state != "retired" or broken == "body_access"):
         raise CaptureFormatError(
             f"cruxible.capture_contract.incompatible_successor: {broken} changed; use a new name"
         )

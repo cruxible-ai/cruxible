@@ -92,11 +92,6 @@ def test_g13_capture_proof_and_citation_row_carry_the_kinds_access(tmp_path: Pat
         instance, request=GetRequest(ref=ref, detail="proof"), access=KEY_HOLDER
     ).model_dump(mode="json")["proof"]
     assert opened["envelope"]["source"] is not None
-    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        (access,) = projection.typed.connection.execute(
-            "SELECT access_class FROM captures WHERE capture_digest=?", (digest,)
-        ).fetchone()
-    assert access == "restricted"
     card = service_playbill_get(instance, request=GetRequest(ref=ref), access=READER).model_dump(
         mode="json"
     )

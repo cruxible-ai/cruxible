@@ -207,8 +207,11 @@ class GetCaptureCard(_StrictOperationalModel):
     contract: str
     version: int | None = Field(default=None, exclude_if=_omit_none)
     source: str | None = Field(default=None, exclude_if=_omit_none)
-    observed_at: datetime
+    #: Absent only for an uncited Capture withheld from this reader (C14): its
+    #: envelope is not read for it.
+    observed_at: datetime | None = Field(default=None, exclude_if=_omit_none)
     size: int | None = Field(default=None, exclude_if=_omit_none)
+    #: ``restricted`` or ``instance``: its exact kind version's access (C14).
     access: str | None = Field(default=None, exclude_if=_omit_none)
     status: Literal["available", "unavailable"]
     status_detail: str | None = Field(default=None, exclude_if=_omit_none)
@@ -216,6 +219,7 @@ class GetCaptureCard(_StrictOperationalModel):
     subjects: tuple[str, ...] = ()
     citing: tuple[str, ...] = ()
     citing_total: int = Field(default=0, ge=0)
+    withheld: BodyRestricted | None = Field(default=None, exclude_if=_omit_none)
     next: tuple[str, ...] = ()
 
 

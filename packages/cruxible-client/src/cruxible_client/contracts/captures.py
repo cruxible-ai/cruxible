@@ -1081,6 +1081,12 @@ _SELF_ASSERTED_PROVENANCE_RULE_DIGESTS: frozenset[str] = frozenset(
 )
 
 
+def provenance_rule_is_self_asserted(provenance_rule_digest: str) -> bool:
+    """Whether a registered provenance rule digest is a proposer-supplied one."""
+
+    return provenance_rule_digest in _SELF_ASSERTED_PROVENANCE_RULE_DIGESTS
+
+
 def capture_contract_is_self_asserted(contract: CaptureContractAny) -> bool:
     """Whether a contract's declared provenance rule is proposer-supplied.
 
@@ -1354,6 +1360,19 @@ def evaluate_capture_contract_law(
                     _diagnostic(
                         "cruxible.capture_contract.predecessor_mismatch",
                         "A CaptureContract successor must pin the exact predecessor digest.",
+                        path=path,
+                    ),
+                ),
+            )
+        if capture_body_access(predecessor.contract) != capture_body_access(contract):
+            # C14: who may read a kind's bytes is fixed with its name, retired or not.
+            return CaptureContractLawResult(
+                verdict="refused",
+                diagnostics=(
+                    _diagnostic(
+                        "cruxible.capture_contract.incompatible_successor",
+                        "A CaptureContract successor changes 'body_access'. Who may read a "
+                        "kind's bytes is fixed with its name; propose a new identity.",
                         path=path,
                     ),
                 ),

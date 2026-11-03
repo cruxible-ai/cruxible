@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import difflib
 import json
+import re
 from collections.abc import Mapping
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -526,6 +527,7 @@ def service_review_playbill_proposal(
             limit=rows_limit,
             groups_limit=groups_limit,
             findings_after=findings_after,
+            access=access,
         )
     inspection = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
     proposal = inspection.proposal
@@ -1072,3 +1074,89 @@ __all__ = [
     "service_prepare_playbill_approval",
     "service_review_playbill_proposal",
 ]
+
+
+def withhold_review_values(
+    instance: PlaybillInstance,
+    payload: dict[str, Any],
+    access: BodyAccessContext | None,
+) -> dict[str, Any]:
+    """A served detailed review without what restricted Captures say (C14).
+
+    Before acceptance a candidate Claim's value is a run output: when it cites
+    a Capture withheld from the reader, its proposed value and semantic delta
+    go, and every span and evidence locator into the withheld Capture goes
+    from the whole response (members, law evidence, the candidate record),
+    together with the item reasons. Accepted base values, digests, closure,
+    governance and the candidate digest a signer signs stay intact.
+    """
+
+    from cruxible_core.service.evidence.body_access import (
+        NO_RESTRICTED_ACCESS,
+        WITHHELD_MARK,
+        capture_access_resolver,
+        redact_claim_evidence,
+        withheld_commitments,
+    )
+
+    reader = access or NO_RESTRICTED_ACCESS
+    if reader.can_read_restricted:
+        return payload
+    coordinate = instance.accepted_coordinate()
+    withheld, notice = capture_access_resolver(instance, coordinate).withheld(
+        _named_captures(payload), reader
+    )
+    if notice is None:
+        return payload
+    names = set(withheld)
+    members = []
+    for member in payload.get("members", []):
+        candidate = member.get("candidate_semantic_artifact")
+        if isinstance(candidate, dict) and names & set(_named_captures(candidate)):
+            statement = candidate.get("statement")
+            if isinstance(statement, dict) and "object" in statement:
+                candidate = {
+                    **candidate,
+                    "statement": {**statement, "object": {"withheld": WITHHELD_MARK}},
+                }
+            member = {**member, "candidate_semantic_artifact": candidate, "semantic_delta": []}
+        members.append(member)
+    commitments, complete = withheld_commitments(instance, coordinate, names)
+    redacted = redact_claim_evidence(
+        {**payload, "members": members, "item_reasons": []},
+        captures=names,
+        commitments=commitments,
+        every_span=not complete,
+    )
+    assert isinstance(redacted, dict)
+    redacted["withheld"] = notice.model_dump(mode="json")
+    return redacted
+
+
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def _is_digest(value: object) -> bool:
+    return isinstance(value, str) and _DIGEST.fullmatch(value) is not None
+
+
+def _named_captures(value: object) -> tuple[str, ...]:
+    """Every Capture digest a served payload names under a Capture field."""
+
+    found: set[str] = set()
+
+    def walk(item: object) -> None:
+        if isinstance(item, Mapping):
+            for key, child in item.items():
+                if key in ("capture_digest", "capture") and _is_digest(child):
+                    found.add(str(child))
+                elif key == "capture_digests" and isinstance(child, list):
+                    found.update(str(digest) for digest in child if _is_digest(digest))
+                else:
+                    walk(child)
+        elif isinstance(item, list):
+            for child in item:
+                walk(child)
+
+    walk(value)
+    return tuple(sorted(found))

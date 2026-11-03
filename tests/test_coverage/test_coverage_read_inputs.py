@@ -145,7 +145,7 @@ def test_service_reuses_captures_and_matches_projection_route(
         actual = coverage.service_resolve_playbill_coverage(instance, **arguments)
     assert parsed == capture_count
 
-    def projected_inputs(instance, *, at):  # type: ignore[no-untyped-def]
+    def projected_inputs(instance, *, at, access=None):  # type: ignore[no-untyped-def]
         index = _projected_index(instance, at=at)
         return index, coverage._capture_envelopes(instance, index=index)
 

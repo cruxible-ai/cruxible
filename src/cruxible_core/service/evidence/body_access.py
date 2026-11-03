@@ -1,60 +1,85 @@
-"""Who may read a Capture's bytes: its CaptureKind's ``body_access`` (C14).
+"""Who may read a Capture's bytes: its exact CaptureKind version's ``body_access`` (C14).
 
-A Capture's kind is resolved from the contract digest its envelope opens with
-(the leading bytes every canonical envelope begins with, the same bytes the
-envelope index classifies by), never from the envelope's body-derived source or
-selector metadata. Every body-reading surface asks here, per Capture, before it
-reads an envelope or a body: a restricted kind's Capture is withheld from a
-caller without ``cruxible_body_read_restricted`` and named in a typed
-``body_restricted`` notice. A Capture whose kind no accepted version resolves is
-withheld as restricted; one whose bytes do not open as an envelope has no kind
-and nothing to withhold.
+Authorization reads maintained metadata only, never an envelope or a body:
 
-Cost: one bounded head read per Capture and one contract resolution per
-distinct contract digest per resolver (a resolver lives for one request).
+1. Capture digest -> the exact kind version it was taken under: the envelope
+   index beside the body store, recorded from the object's own leading bytes
+   when it was stored (one batched query per request);
+2. kind version -> access: the accepted ``capture_contracts`` row of a current
+   version (one batched query), else the exact superseded version from the
+   accepted history index (once per version per process: a version's access
+   never changes).
+
+Every surface asks here, per Capture, before it reads an envelope or a body for
+its caller. A Capture with no indexed kind (absent, unreadable, not an
+envelope) or whose kind no accepted version resolves is **restricted**: the
+check fails closed. A caller holding ``cruxible_body_read_restricted``
+(``BodyAccessContext.can_read_restricted``) reads every kind.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import threading
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Literal, cast
 
 from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.captures import (
     CaptureBodyAccess,
-    CaptureContractAny,
     capture_body_access,
+    capture_contract_is_self_asserted,
+    provenance_rule_is_self_asserted,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_core.indexes.evidence.citation_coverage import CitationAccess
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
+from cruxible_core.indexes.sql_batch import select_in
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.storage.capture_envelope_index import ENVELOPE_HEAD_LENGTH, envelope_contract
+
+
+@dataclass(frozen=True)
+class CaptureKindVersion:
+    """One accepted CaptureKind version, by its exact digest."""
+
+    identity: str
+    path: str
+    access: CaptureBodyAccess
+    epistemic_grade: Literal["observed", "derived", "predicted"]
+    #: Whether its provenance rule is proposer-supplied (coverage's trust grade).
+    self_asserted: bool
 
 
 @dataclass(frozen=True)
 class CaptureKindAccess:
-    """One Capture's kind and access, as resolved without reading its envelope.
+    """One Capture's kind version and access, resolved without reading it.
 
-    ``contract_digest`` is None when the bytes are absent or are not an
-    envelope; ``kind`` is None when no accepted version resolves the digest.
+    ``contract_digest`` is None when the envelope index names no kind for the
+    digest; ``kind`` is None when no accepted version resolves that digest.
+    Either way the Capture is restricted.
     """
 
     capture_digest: str
     contract_digest: str | None
-    kind: str | None
-    contract_path: str | None
-    contract: CaptureContractAny | None
-    access: CaptureBodyAccess | None
+    kind: CaptureKindVersion | None
 
     @property
     def restricted(self) -> bool:
-        """Restricted by its kind, or a Capture whose kind does not resolve."""
+        return self.kind is None or self.kind.access != "open"
 
-        return self.contract_digest is not None and self.access != "open"
+    @property
+    def kind_identity(self) -> str | None:
+        return None if self.kind is None else self.kind.identity
 
     def withheld_from(self, access: BodyAccessContext) -> bool:
         return self.restricted and not access.can_read_restricted
+
+
+#: Superseded kind versions resolved from accepted history, by (store, digest).
+_HISTORICAL: dict[tuple[str, str], CaptureKindVersion] = {}
+_HISTORICAL_LOCK = threading.Lock()
+_HISTORICAL_MAX = 4096
 
 
 @dataclass
@@ -63,75 +88,90 @@ class CaptureAccessResolver:
 
     instance: PlaybillInstance
     coordinate: AcceptedProjectionCoordinate
-    _contracts: dict[str, tuple[str | None, str | None, CaptureContractAny | None]] = field(
-        default_factory=dict
-    )
+    _versions: dict[str, CaptureKindVersion | None] = field(default_factory=dict)
     _captures: dict[str, CaptureKindAccess] = field(default_factory=dict)
 
     def capture(self, digest: str) -> CaptureKindAccess:
         known = self._captures.get(digest)
-        if known is None:
-            known = self.captures((digest,))[digest]
-        return known
+        return known if known is not None else self.captures((digest,))[digest]
 
     def captures(self, digests: Iterable[str]) -> dict[str, CaptureKindAccess]:
         wanted = tuple(dict.fromkeys(digests))
-        store = self.instance.body_store()
-        heads = {
-            digest: envelope_contract(store.peek(digest, ENVELOPE_HEAD_LENGTH))
-            for digest in wanted
-            if digest not in self._captures
-        }
-        self._resolve_contracts({named for named in heads.values() if named is not None})
-        for digest, named in heads.items():
-            kind, path, contract = (None, None, None) if named is None else self._contracts[named]
-            self._captures[digest] = CaptureKindAccess(
-                capture_digest=digest,
-                contract_digest=named,
-                kind=kind,
-                contract_path=path,
-                contract=contract,
-                access=None if contract is None else capture_body_access(contract),
-            )
+        missing = [digest for digest in wanted if digest not in self._captures]
+        if missing:
+            named = self.instance.body_store().capture_envelopes.contracts_of(missing)
+            self.versions(set(named.values()))
+            for digest in missing:
+                contract = named.get(digest)
+                self._captures[digest] = CaptureKindAccess(
+                    capture_digest=digest,
+                    contract_digest=contract,
+                    kind=None if contract is None else self._versions[contract],
+                )
         return {digest: self._captures[digest] for digest in wanted}
 
-    def _resolve_contracts(self, digests: set[str]) -> None:
-        missing = sorted(digests - set(self._contracts))
-        if not missing:
-            return
-        unresolved: list[str] = []
-        with self.instance.bind_accepted_projection(self.coordinate) as projection:
-            connection = projection.typed.connection
+    def versions(self, contract_digests: Iterable[str]) -> Mapping[str, CaptureKindVersion | None]:
+        """Each exact kind version's access: current rows batched, then accepted history."""
+
+        wanted = set(contract_digests)
+        missing = sorted(wanted - set(self._versions))
+        if missing:
+            with self.instance.bind_accepted_projection(self.coordinate) as projection:
+                rows = select_in(
+                    projection.typed.connection,
+                    "SELECT artifact_digest,identity,path,body_access,epistemic_grade,"
+                    "provenance_rule_digest FROM capture_contracts WHERE artifact_digest IN ({})",
+                    missing,
+                )
+            for digest, identity, path, access, grade, provenance in rows:
+                self._versions[str(digest)] = CaptureKindVersion(
+                    identity=str(identity),
+                    path=str(path),
+                    access="restricted" if access == "restricted" else "open",
+                    epistemic_grade=cast(Literal["observed", "derived", "predicted"], str(grade)),
+                    self_asserted=provenance_rule_is_self_asserted(str(provenance)),
+                )
             for digest in missing:
-                row = connection.execute(
-                    "SELECT identity, path FROM capture_contracts WHERE artifact_digest=?",
-                    (digest,),
-                ).fetchone()
-                contract = None if row is None else projection.typed.source(str(row[0]))
-                if contract is None:
-                    unresolved.append(digest)
-                    continue
-                self._contracts[digest] = (str(row[0]), str(row[1]), contract)
-        public = AcceptedCoordinate.from_internal(self.coordinate)
-        for digest in unresolved:
-            # A superseded version: accepted history holds every version.
-            found = self.instance.accepted_capture_contract_version(public, digest)
-            self._contracts[digest] = (
-                (None, None, None)
-                if found is None
-                else (found.contract.identity.qualified, found.path, found.contract)
-            )
+                if digest not in self._versions:
+                    self._versions[digest] = self._historical(digest)
+        return {digest: self._versions[digest] for digest in wanted}
+
+    def _historical(self, digest: str) -> CaptureKindVersion | None:
+        key = (str(self.instance.root), digest)
+        with _HISTORICAL_LOCK:
+            known = _HISTORICAL.get(key)
+        if known is not None:
+            return known
+        found = self.instance.accepted_capture_contract_version(
+            AcceptedCoordinate.from_internal(self.coordinate), digest
+        )
+        if found is None:
+            # Unknown here may be accepted later: never memoized.
+            return None
+        version = CaptureKindVersion(
+            identity=found.contract.identity.qualified,
+            path=found.path,
+            access=capture_body_access(found.contract),
+            epistemic_grade=found.contract.epistemic_grade,
+            self_asserted=capture_contract_is_self_asserted(found.contract),
+        )
+        with _HISTORICAL_LOCK:
+            if len(_HISTORICAL) >= _HISTORICAL_MAX:
+                _HISTORICAL.clear()
+            _HISTORICAL[key] = version
+        return version
 
     def withheld(
         self, digests: Iterable[str], access: BodyAccessContext
     ) -> tuple[dict[str, CaptureKindAccess], BodyRestricted | None]:
         """The Captures among ``digests`` withheld from ``access``, and their notice."""
 
-        if access.can_read_restricted:
+        listed = tuple(digests)
+        if access.can_read_restricted or not listed:
             return {}, None
         withheld = {
             digest: item
-            for digest, item in self.captures(digests).items()
+            for digest, item in self.captures(listed).items()
             if item.withheld_from(access)
         }
         return withheld, body_restricted_notice(withheld.values())
@@ -145,7 +185,9 @@ def body_restricted_notice(items: Iterable[CaptureKindAccess]) -> BodyRestricted
         return None
     return BodyRestricted(
         capture_digests=tuple(sorted({item.capture_digest for item in listed})),
-        capture_kinds=tuple(sorted({item.kind for item in listed if item.kind is not None})),
+        capture_kinds=tuple(
+            sorted({item.kind_identity for item in listed if item.kind_identity is not None})
+        ),
     )
 
 
@@ -157,9 +199,115 @@ def capture_access_resolver(
     )
 
 
+def citation_access(resolver: CaptureAccessResolver, access: BodyAccessContext) -> CitationAccess:
+    """The citation index's per-read classification for this reader (C14)."""
+
+    def restricted(digests: Sequence[str]) -> set[str]:
+        return {d for d, item in resolver.captures(digests).items() if item.restricted}
+
+    def self_asserted(contract_digest: str) -> bool | None:
+        version = resolver.versions((contract_digest,))[contract_digest]
+        return None if version is None else version.self_asserted
+
+    return CitationAccess(
+        restricted=restricted,
+        self_asserted=self_asserted,
+        withhold=not access.can_read_restricted,
+    )
+
+
+#: How an in-process caller that passes no access reads: bodies, no restricted key.
+NO_RESTRICTED_ACCESS = BodyAccessContext(principal_id="playbill-service", can_read_body=True)
+
+
+#: The marker a withheld piece of evidence carries in a served Claim view.
+WITHHELD_MARK = "body_restricted"
+
+
+def withheld_commitments(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    captures: Iterable[str],
+) -> tuple[set[str], bool]:
+    """The evidence commitments of withheld Captures, from the citation index.
+
+    The second value is False when some Capture has no index row: its spans
+    cannot be told apart, so every span is withheld (fail closed).
+    """
+
+    wanted = sorted(set(captures))
+    if not wanted:
+        return set(), True
+    with instance.bind_accepted_projection(coordinate) as projection:
+        rows = select_in(
+            projection.typed.connection,
+            "SELECT capture_digest,evidence_commitment_digest FROM captures "
+            "WHERE capture_digest IN ({})",
+            wanted,
+        )
+    found = {str(capture): str(commitment) for capture, commitment in rows}
+    return set(found.values()), len(found) == len(wanted)
+
+
+def redact_claim_evidence(
+    value: object,
+    *,
+    captures: set[str],
+    commitments: set[str],
+    every_span: bool = False,
+) -> object:
+    """A served Claim view without what is read from withheld Captures (C14).
+
+    Accepted statement values stay. Removed: exact spans over a withheld
+    Capture's commitment (``every_span`` removes all of them), and every
+    evidence basis naming a withheld Capture keeps only its basis, its Capture
+    digest and the ``withheld`` mark -- record locators, field paths, record
+    keys, extract and transform lineage go. A walk over the whole response, so
+    every nested copy (law evidence, facts, history) is covered.
+    """
+
+    if isinstance(value, list):
+        return [
+            redact_claim_evidence(
+                item, captures=captures, commitments=commitments, every_span=every_span
+            )
+            for item in value
+        ]
+    if not isinstance(value, dict):
+        return value
+    capture = value.get("capture_digest")
+    if "basis" in value and isinstance(capture, str) and capture in captures:
+        return {"basis": value["basis"], "capture_digest": capture, "withheld": WITHHELD_MARK}
+    result: dict[str, object] = {}
+    for key, item in value.items():
+        if key == "spans" and isinstance(item, list):
+            kept = [
+                span
+                for span in item
+                if not (
+                    isinstance(span, dict)
+                    and (every_span or span.get("content_digest") in commitments)
+                )
+            ]
+            result[key] = kept
+            if len(kept) != len(item):
+                result["withheld"] = WITHHELD_MARK
+            continue
+        result[key] = redact_claim_evidence(
+            item, captures=captures, commitments=commitments, every_span=every_span
+        )
+    return result
+
+
 __all__ = [
+    "NO_RESTRICTED_ACCESS",
     "CaptureAccessResolver",
     "CaptureKindAccess",
+    "CaptureKindVersion",
+    "WITHHELD_MARK",
     "body_restricted_notice",
     "capture_access_resolver",
+    "citation_access",
+    "redact_claim_evidence",
+    "withheld_commitments",
 ]

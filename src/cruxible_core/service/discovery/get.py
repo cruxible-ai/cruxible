@@ -416,8 +416,13 @@ def resolve_get_ref(
     *,
     surface: ReadSurface = "mcp",
     subject_suggestions: bool = True,
+    access: BodyAccessContext | None = None,
 ) -> ResolvedRef:
-    """Resolve every reference form an agent sees to exactly one thing, or refuse."""
+    """Resolve every reference form an agent sees to exactly one thing, or refuse.
+
+    ``access`` is the reader's: a Capture prefix candidate withheld from it is
+    named without being verified (C14).
+    """
 
     value = ref.strip()
     if not value:
@@ -440,7 +445,9 @@ def resolve_get_ref(
     if value.startswith("refs/"):
         return _resolve_proposal(instance, value)
     if value.startswith("CAP-"):
-        return _resolve_capture(instance, coordinate, value, ref=value, surface=surface)
+        return _resolve_capture(
+            instance, coordinate, value, ref=value, surface=surface, access=access
+        )
     if value.startswith("RUN-"):
         return _resolve_run(instance, value, ref=value, surface=surface)
     head, separator, rest = value.partition(":")
@@ -449,7 +456,9 @@ def resolve_get_ref(
         if kind == "proposal":
             return _resolve_proposal(instance, rest)
         if kind == "capture":
-            return _resolve_capture(instance, coordinate, rest, ref=value, surface=surface)
+            return _resolve_capture(
+                instance, coordinate, rest, ref=value, surface=surface, access=access
+            )
         if kind == "procedure_run":
             return _resolve_run(instance, rest, ref=value, surface=surface)
         if kind == "principal":
@@ -611,6 +620,7 @@ def _resolve_capture(
     *,
     ref: str,
     surface: ReadSurface,
+    access: BodyAccessContext | None = None,
 ) -> ResolvedRef:
     """``CAP-<12+ hex>``, ``Capture:<digest>`` or a unique digest prefix, to one Capture.
 
@@ -647,7 +657,7 @@ def _resolve_capture(
         resolve_capture_handle,
     )
 
-    resolution = resolve_capture_handle(instance, coordinate, hex_digits)
+    resolution = resolve_capture_handle(instance, coordinate, hex_digits, access=access)
     if isinstance(resolution, CaptureHandleResolved):
         return ResolvedRef("capture", resolution.digest, _display("capture", resolution.digest))
     if isinstance(resolution, CaptureHandleAmbiguous):
@@ -1946,26 +1956,63 @@ def _claim_evidence(
     resolved: ResolvedRef,
     *,
     evaluation_time: datetime,
+    access: BodyAccessContext | None = None,
 ) -> GetEvidence:
+    from cruxible_core.indexes.sql_batch import select_in
     from cruxible_core.service.claims.claims import service_explain_playbill_claim
+    from cruxible_core.service.discovery.operational import _from_microseconds
+    from cruxible_core.service.evidence.body_access import (
+        NO_RESTRICTED_ACCESS,
+        capture_access_resolver,
+    )
 
+    reader = access or NO_RESTRICTED_ACCESS
     explanation = service_explain_playbill_claim(
         instance,
         identity=resolved.identity,
         at=AcceptedCoordinate.from_internal(coordinate),
         evaluation_time=evaluation_time,
+        access=reader,
     )
     names = CaptureContractNames(instance, coordinate)
     bodies = instance.body_store()
+    withheld, _notice = capture_access_resolver(instance, coordinate).withheld(
+        [account.capture_digest for account in explanation.admission_accounts], reader
+    )
+    indexed: dict[str, tuple[object, ...]] = {}
+    if withheld:
+        # C14: a withheld Capture is described from the accepted citation index.
+        with instance.bind_accepted_projection(coordinate) as projection:
+            indexed = {
+                str(row[0]): tuple(row[1:])
+                for row in select_in(
+                    projection.typed.connection,
+                    "SELECT p.capture_digest,s.kind,s.source_identity,p.producer_identity,"
+                    "p.observed_at_us FROM captures p "
+                    "JOIN source_references s USING(source_ref_key) "
+                    "WHERE p.capture_digest IN ({})",
+                    sorted(withheld),
+                )
+            }
     captures: list[GetCaptureEvidence] = []
     for account in explanation.admission_accounts:
-        envelope = capture_envelope(bodies, account.capture_digest, access=_SERVICE_ACCESS)
-        # One stat when nothing was ever erased; a lookup only for an absent body.
-        erasure = erased_body(instance, envelope)
         version = names.version_of(account.capture_contract_digest)
-        source = getattr(envelope.source, "source_identity", None)
-        if source is None and version is not None:
-            source = envelope.producer.qualified
+        erasure = None
+        if account.capture_digest in withheld:
+            row = indexed.get(account.capture_digest)
+            if row is None:
+                continue
+            kind, identity, producer, observed_us = row
+            source = identity if kind == "external" else (producer if version else None)
+            observed_at = _from_microseconds(int(str(observed_us)))
+        else:
+            envelope = capture_envelope(bodies, account.capture_digest, access=_SERVICE_ACCESS)
+            # One stat when nothing was ever erased; a lookup only for an absent body.
+            erasure = erased_body(instance, envelope)
+            source = getattr(envelope.source, "source_identity", None)
+            if source is None and version is not None:
+                source = envelope.producer.qualified
+            observed_at = envelope.observed_at
         captures.append(
             GetCaptureEvidence(
                 capture=capture_handle(account.capture_digest),
@@ -1974,7 +2021,7 @@ def _claim_evidence(
                     account.capture_contract_identity, account.capture_contract_digest
                 ),
                 source=str(source or "unknown"),
-                observed_at=envelope.observed_at,
+                observed_at=observed_at,
                 role=account.citation_role,
                 origin=account.citation_origin,
                 status=account.status,
@@ -2874,9 +2921,17 @@ def _proof(
     if resolved.kind == "claim":
         from cruxible_core.service.claims.claims import service_get_playbill_claim
 
-        return service_get_playbill_claim(
+        view = service_get_playbill_claim(
             instance, identity=resolved.identity, at=at, evaluation_time=evaluation_time
-        ).model_dump(mode="json")
+        )
+        payload = view.model_dump(mode="json")
+        return _withhold_claim_evidence(
+            instance,
+            coordinate,
+            payload,
+            captures=_claim_view_captures(payload),
+            access=access,
+        )
     if resolved.kind == "subject":
         from cruxible_core.service.claims.subjects import service_get_playbill_subject
 
@@ -2948,6 +3003,65 @@ def _proof(
     }
 
 
+def _is_capture_digest(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", value) is not None
+
+
+def _claim_view_captures(value: object) -> tuple[str, ...]:
+    """Every Capture a served Claim view names, wherever it names one."""
+
+    found: set[str] = set()
+
+    def walk(item: object) -> None:
+        if isinstance(item, Mapping):
+            for key, child in item.items():
+                if key in ("capture_digest", "capture") and _is_capture_digest(child):
+                    found.add(str(child))
+                elif key == "capture_digests" and isinstance(child, list):
+                    found.update(str(digest) for digest in child if _is_capture_digest(digest))
+                else:
+                    walk(child)
+        elif isinstance(item, list):
+            for child in item:
+                walk(child)
+
+    walk(value)
+    return tuple(sorted(found))
+
+
+def _withhold_claim_evidence(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    payload: dict[str, Any],
+    *,
+    captures: tuple[str, ...],
+    access: BodyAccessContext,
+) -> dict[str, Any]:
+    """A served Claim view without what its withheld Captures say (C14).
+
+    The accepted value stays; spans over, and evidence locators into, a
+    restricted Capture go, with a ``withheld`` notice naming them. Decided
+    from maintained metadata before anything of theirs is read.
+    """
+
+    from cruxible_core.service.evidence.body_access import (
+        capture_access_resolver,
+        redact_claim_evidence,
+        withheld_commitments,
+    )
+
+    withheld, notice = capture_access_resolver(instance, coordinate).withheld(captures, access)
+    if notice is None:
+        return payload
+    commitments, complete = withheld_commitments(instance, coordinate, withheld)
+    redacted = redact_claim_evidence(
+        payload, captures=set(withheld), commitments=commitments, every_span=not complete
+    )
+    assert isinstance(redacted, dict)
+    redacted["withheld"] = notice.model_dump(mode="json")
+    return redacted
+
+
 def _why(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -2960,13 +3074,21 @@ def _why(
     if resolved.kind == "claim":
         from cruxible_core.service.claims.claims import service_explain_playbill_claim
 
-        return service_explain_playbill_claim(
+        explanation = service_explain_playbill_claim(
             instance,
             identity=resolved.identity,
             at=at,
             evaluation_time=evaluation_time,
             access=access,
-        ).model_dump(mode="json")
+        )
+        payload = explanation.model_dump(mode="json")
+        return _withhold_claim_evidence(
+            instance,
+            coordinate,
+            payload,
+            captures=_claim_view_captures(payload),
+            access=access,
+        )
     from cruxible_core.service.discovery.explain import service_explain_playbill_subject
 
     return service_explain_playbill_subject(
@@ -3012,6 +3134,7 @@ def service_playbill_get(
         request.ref,
         surface=request.surface,
         subject_suggestions=subject_suggestions,
+        access=access,
     )
     if resolved.kind == "proposal":
         # Proposals are operational state, read only as of the current head;
@@ -3100,6 +3223,7 @@ def service_playbill_get(
                 resolved.identity,
                 render=render,
                 read_capture=functools.partial(_render_read_capture, surface),
+                access=access,
             )
         elif resolved.kind == "resolution_contract":
             card = resolution_contract_card(
@@ -3144,7 +3268,7 @@ def service_playbill_get(
             fields["live"] = live_view(instance, ("measurement_reviews",))
     elif request.detail == "evidence":
         fields["evidence"] = _claim_evidence(
-            instance, coordinate, resolved, evaluation_time=evaluation_time
+            instance, coordinate, resolved, evaluation_time=evaluation_time, access=access
         )
     elif request.detail == "why":
         fields["why"] = _why(

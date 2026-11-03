@@ -67,7 +67,7 @@ CREATE TABLE captures (
  logical_source_id TEXT,
  source_ref_key TEXT NOT NULL REFERENCES source_references(source_ref_key),
  producer_identity TEXT NOT NULL, observed_at_us INTEGER NOT NULL,
- access_class TEXT NOT NULL CHECK(access_class IN ('public','instance','restricted')),
+ commitment_digest_kind TEXT NOT NULL,
  observed_content_digest TEXT NOT NULL
 ) STRICT;
 CREATE INDEX captures_by_commitment ON captures(evidence_commitment_digest,capture_digest);
@@ -148,15 +148,6 @@ def _insert_capture(
             external.replayability if external else None,
         ),
     )
-    # C14: a row's access is its Capture's kind's, from the accepted contract
-    # row. A version no current row names (a built-in, a superseded version)
-    # indexes as instance; the per-Capture read surfaces resolve its kind
-    # through accepted history and withhold it there.
-    kind = connection.execute(
-        "SELECT body_access FROM capture_contracts WHERE artifact_digest=?",
-        (envelope.capture_contract_digest,),
-    ).fetchone()
-    access_class = "restricted" if kind is not None and kind[0] == "restricted" else "instance"
     elapsed = envelope.observed_at.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
     observed_us = (elapsed.days * 86400 + elapsed.seconds) * 1000000 + elapsed.microseconds
     connection.execute(
@@ -174,7 +165,10 @@ def _insert_capture(
             key,
             envelope.producer.qualified,
             observed_us,
-            access_class,
+            # Access is never stored: it is the Capture's exact kind version's,
+            # resolved per read (service/evidence/body_access.py, C14). The
+            # commitment kind lets a withheld row be described without its envelope.
+            envelope.commitment.digest_kind,
             observed_content(envelope).digest,
         ),
     )

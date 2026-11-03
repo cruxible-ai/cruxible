@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.capture_erasure import CaptureErasureRecord, validate_capture_ref
 from cruxible_client.contracts.captures import CaptureEnvelope, CaptureEnvelopeV1
@@ -46,10 +46,14 @@ class BodyRestricted(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     tag: Literal["cruxible-body-restricted-v1"] = "cruxible-body-restricted-v1"
     kind: Literal["body_restricted"] = "body_restricted"
-    capture_digests: tuple[str, ...] = Field(min_length=1)
+    #: The withheld Captures; empty only with ``provenance_unavailable``.
+    capture_digests: tuple[str, ...] = ()
     #: The restricted CaptureKinds, by qualified identity, sorted; a kind that
     #: no accepted version resolves is withheld as restricted and not named.
     capture_kinds: tuple[str, ...] = ()
+    #: A run whose record of the Captures it consumed is unreadable is withheld
+    #: whole (fail closed) and says so here.
+    provenance_unavailable: bool = Field(default=False, exclude_if=lambda value: not value)
     required_permission: Literal["cruxible_body_read_restricted"] = "cruxible_body_read_restricted"
     required_tier: Literal["governed_write"] = "governed_write"
 
@@ -59,6 +63,12 @@ class BodyRestricted(BaseModel):
         if value != tuple(sorted(set(value))):
             raise ValueError("withheld Captures and kinds are sorted and unique")
         return value
+
+    @model_validator(mode="after")
+    def _names_what(self) -> BodyRestricted:
+        if not self.capture_digests and not self.provenance_unavailable:
+            raise ValueError("a body_restricted notice names a Capture or unavailable provenance")
+        return self
 
 
 class CaptureRead(BaseModel):

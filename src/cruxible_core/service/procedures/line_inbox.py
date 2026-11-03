@@ -90,35 +90,40 @@ def _withheld(
 ) -> dict[str, BodyRestricted]:
     """Each item standing on a restricted kind's Captures, and its notice (C14).
 
-    An item's payload carries values extracted from the Captures its sightings
-    stood on; it inherits their restriction. One kind resolution per distinct
-    Capture on the page.
+    An item's payload carries values its runs derived from the Captures they
+    consumed; it inherits their restriction. The Captures are the sightings'
+    own and each sighting run's journaled consumed set (one provenance read per
+    distinct run on the page); an unreadable record withholds the item.
     """
 
+    from cruxible_core.service.discovery.runs import run_consumed_captures
+
     reader = access or BodyAccessContext(principal_id="playbill-inbox")
-    if reader.can_read_restricted:
+    if reader.can_read_restricted or not envelopes:
         return {}
-    digests = {
-        envelope.item_id: tuple(
-            sorted(
-                {
-                    digest
-                    for sighting in (envelope.first_sighting, *envelope.recent_sightings)
-                    for digest in sighting.source_capture_digests
-                }
-            )
-        )
-        for envelope in envelopes
-    }
-    if not any(digests.values()):
-        return {}
+    runs: dict[str, tuple[tuple[str, ...], bool]] = {}
+    digests: dict[str, set[str]] = {}
+    unknown: set[str] = set()
+    for envelope in envelopes:
+        found: set[str] = set()
+        for sighting in (envelope.first_sighting, *envelope.recent_sightings):
+            found.update(sighting.source_capture_digests)
+            if sighting.run_id not in runs:
+                runs[sighting.run_id] = run_consumed_captures(instance, sighting.run_id)
+            consumed, known = runs[sighting.run_id]
+            found.update(consumed)
+            if not known:
+                unknown.add(envelope.item_id)
+        digests[envelope.item_id] = found
     resolver = capture_access_resolver(instance)
-    found: dict[str, BodyRestricted] = {}
+    result: dict[str, BodyRestricted] = {}
     for item_id, item_digests in digests.items():
-        _items, notice = resolver.withheld(item_digests, reader)
+        _items, notice = resolver.withheld(sorted(item_digests), reader)
+        if notice is None and item_id in unknown:
+            notice = BodyRestricted(provenance_unavailable=True)
         if notice is not None:
-            found[item_id] = notice
-    return found
+            result[item_id] = notice
+    return result
 
 
 def service_list_inbox(

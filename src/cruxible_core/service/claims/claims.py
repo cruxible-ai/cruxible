@@ -985,7 +985,11 @@ def service_explain_playbill_claim(
     named in ``withheld`` instead. ``None`` reads as no restricted access.
     """
 
-    from cruxible_core.service.evidence.body_access import capture_access_resolver
+    from cruxible_core.indexes.sql_batch import select_in
+    from cruxible_core.service.evidence.body_access import (
+        NO_RESTRICTED_ACCESS,
+        capture_access_resolver,
+    )
     from cruxible_core.service.evidence.evidence import (
         ClaimVerdictReadContext,
         accepted_claim_attestations,
@@ -1030,9 +1034,41 @@ def service_explain_playbill_claim(
     resolver = capture_access_resolver(instance, coordinate)
     withheld, withheld_notice = resolver.withheld(
         claim.backing.capture_digests,
-        access or BodyAccessContext(principal_id="playbill-service"),
+        access or NO_RESTRICTED_ACCESS,
     )
+    citations_of = {
+        digest: tuple(
+            sorted(citations_by_capture.get(digest, ()), key=lambda item: item.encode("ascii"))
+        )
+        for digest in claim.backing.capture_digests
+    }
+    if withheld:
+        # C14: a withheld Capture's kind and logical source come from the
+        # accepted citation index; its envelope is never read for this reader.
+        with instance.bind_accepted_projection(coordinate) as projection:
+            indexed = {
+                str(row[0]): (str(row[1]), row[2], str(row[3]))
+                for row in select_in(
+                    projection.typed.connection,
+                    "SELECT p.capture_digest,s.kind,s.source_identity,p.producer_identity "
+                    "FROM captures p JOIN source_references s USING(source_ref_key) "
+                    "WHERE p.capture_digest IN ({})",
+                    sorted(withheld),
+                )
+            }
+        for digest, item in withheld.items():
+            row = indexed.get(digest)
+            if row is None or item.kind_identity is None:
+                continue
+            kind, source_identity, producer = row
+            capture_context[digest] = (
+                citations_of[digest],
+                item.kind_identity,
+                str(source_identity) if kind == "external" else producer,
+            )
     for digest in claim.backing.capture_digests:
+        if digest in withheld:
+            continue
         try:
             envelope = capture_envelope(
                 instance.body_store(),
@@ -1041,32 +1077,25 @@ def service_explain_playbill_claim(
             )
         except CasError:
             continue
-        # A withheld Capture keeps its kind and logical source on the freshness
-        # line; its selectors and cited spans do not leave the service.
-        if digest not in withheld:
-            spans = tuple(
-                span
-                for mapping in claim.backing.source_mappings
-                for span in mapping.spans
-                if span.content_digest == envelope.commitment.digest
+        spans = tuple(
+            span
+            for mapping in claim.backing.source_mappings
+            for span in mapping.spans
+            if span.content_digest == envelope.commitment.digest
+        )
+        handles.append(
+            SourceHandle(
+                subject=claim_statement_address(claim_path(claim.identity.name)),
+                at=AcceptedCoordinate.from_internal(coordinate),
+                source=envelope.source,
+                commitment=envelope.commitment,
+                media_type=(
+                    "application/json" if envelope.commitment.digest_kind != "exact_bytes" else None
+                ),
+                exact_spans=spans,
+                access_class="restricted" if resolver.capture(digest).restricted else "instance",
             )
-            handles.append(
-                SourceHandle(
-                    subject=claim_statement_address(claim_path(claim.identity.name)),
-                    at=AcceptedCoordinate.from_internal(coordinate),
-                    source=envelope.source,
-                    commitment=envelope.commitment,
-                    media_type=(
-                        "application/json"
-                        if envelope.commitment.digest_kind != "exact_bytes"
-                        else None
-                    ),
-                    exact_spans=spans,
-                    access_class=(
-                        "restricted" if resolver.capture(digest).restricted else "instance"
-                    ),
-                )
-            )
+        )
         contract = contracts.get(envelope.capture_contract_digest) or _superseded_contract(
             instance, coordinate, envelope.capture_contract_digest
         )
@@ -1076,12 +1105,7 @@ def service_explain_playbill_claim(
         if logical_source is None:
             logical_source = envelope.producer.qualified
         capture_context[digest] = (
-            tuple(
-                sorted(
-                    citations_by_capture.get(digest, ()),
-                    key=lambda item: item.encode("ascii"),
-                )
-            ),
+            citations_of[digest],
             contract.contract.identity.qualified,
             logical_source,
         )

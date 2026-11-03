@@ -204,15 +204,18 @@ def captures_with_prefix(
 
 
 def uncited_capture_present(instance: PlaybillInstance, digest: str) -> bool:
-    """Whether a full Capture digest no accepted Claim cites is retained as a Capture."""
+    """Whether a full Capture digest no accepted Claim cites is retained as a Capture.
 
+    Landing metadata and the envelope index answer it; no envelope is read (C14).
+    """
+
+    store = instance.body_store()
     try:
-        if not PositionedBodies(instance.body_store()).verify(digest):
+        if not PositionedBodies(store).verify(digest):
             return False
-        capture_envelope(instance.body_store(), digest, access=_SERVICE_ACCESS)
+        return digest in store.capture_envelopes.contracts_of((digest,))
     except (CruxibleError, ValueError):
         return False
-    return True
 
 
 # -- Lines -----------------------------------------------------------------------------
@@ -690,15 +693,29 @@ def capture_card(
     *,
     render: RenderGet,
     read_capture: Callable[[str], str],
+    access: BodyAccessContext | None = None,
 ) -> GetCaptureCard:
-    """One Capture: cited ones from the accepted index, an uncited one from its envelope."""
+    """One Capture: cited ones from the accepted index, an uncited one from its envelope.
 
+    Its access is its exact kind version's, resolved before anything is read
+    (C14); an uncited Capture withheld from ``access`` is described from the
+    envelope index and landing metadata alone, with a ``withheld`` notice.
+    """
+
+    from cruxible_core.service.evidence.body_access import (
+        NO_RESTRICTED_ACCESS,
+        body_restricted_notice,
+        capture_access_resolver,
+    )
+
+    kind = capture_access_resolver(instance, coordinate).capture(digest)
+    withheld = kind.withheld_from(access or NO_RESTRICTED_ACCESS)
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection
         names = CaptureContractNames(instance, coordinate, connection=connection)
         row = connection.execute(
             "SELECT contract_digest, commitment_byte_length_decimal, logical_source_id, "
-            "observed_at_us, access_class FROM captures WHERE capture_digest=?",
+            "observed_at_us FROM captures WHERE capture_digest=?",
             (digest,),
         ).fetchone()
         citing_total = int(
@@ -729,29 +746,36 @@ def capture_card(
                 (digest, OPERATIONAL_CARD_LIST_LIMIT),
             )
         )
+        observed_at: datetime | None
         if row is not None:
-            contract_digest, length, source, observed_us, access = row
+            contract_digest, length, source, observed_us = row
             observed_at = _from_microseconds(int(observed_us))
             size = None if length is None else int(length)
+        elif withheld:
+            contract_digest, source, observed_at, size = kind.contract_digest, None, None, None
         else:
             envelope = capture_envelope(instance.body_store(), digest, access=_SERVICE_ACCESS)
             contract_digest = envelope.capture_contract_digest
             source = getattr(envelope.source, "source_identity", None)
             observed_at = envelope.observed_at
-            size, access = None, None
-        contract = names.name(contract_digest, qualified=True)
-        version = (
-            None
-            if contract.startswith("unresolved:")
-            else names.version_number(contract, contract_digest)
-        )
-    if row is None:
-        from cruxible_core.service.evidence.body_access import capture_access_resolver
-
-        # C14: an uncited Capture of a restricted kind says so, as a cited one's row does.
-        if capture_access_resolver(instance, coordinate).capture(digest).restricted:
-            access = "restricted"
-    status, status_detail, erasure = capture_availability(instance, digest)
+            size = None
+        if contract_digest is None:
+            contract, version = "unresolved:unknown", None
+        else:
+            contract = names.name(contract_digest, qualified=True)
+            version = (
+                None
+                if contract.startswith("unresolved:")
+                else names.version_number(contract, contract_digest)
+            )
+    access_class = "restricted" if kind.restricted else "instance"
+    if withheld:
+        # Presence from landing metadata only: no envelope is read for this reader.
+        present = PositionedBodies(instance.body_store()).verify(digest)
+        status: Literal["available", "unavailable"] = "available" if present else "unavailable"
+        status_detail, erasure = None, None
+    else:
+        status, status_detail, erasure = capture_availability(instance, digest)
     next_steps = [render(claim, None) for claim in citing[:1]]
     next_steps.append(read_capture(digest))
     return GetCaptureCard(
@@ -762,7 +786,7 @@ def capture_card(
         source=None if source is None else str(source),
         observed_at=observed_at,
         size=size,
-        access=None if access is None else str(access),
+        access=access_class,
         status=status,
         status_detail=status_detail,
         erased=None
@@ -771,6 +795,7 @@ def capture_card(
         subjects=subjects,
         citing=citing,
         citing_total=citing_total,
+        withheld=body_restricted_notice((kind,)) if withheld else None,
         next=tuple(next_steps),
     )
 

@@ -128,9 +128,10 @@ def build_accepted_evidence_index_v2(
     instance: PlaybillInstance,
     *,
     at: AcceptedCoordinate,
+    access: BodyAccessContext | None = None,
 ) -> EvidenceCitationIndexV2:
     """Export association-native coverage rows and verifier-owned trust."""
-    index, _envelopes = _accepted_evidence_inputs_v2(instance, at=at)
+    index, _envelopes = _accepted_evidence_inputs_v2(instance, at=at, access=access)
     return index
 
 
@@ -138,6 +139,7 @@ def _accepted_evidence_inputs_v2(
     instance: PlaybillInstance,
     *,
     at: AcceptedCoordinate,
+    access: BodyAccessContext | None = None,
 ) -> tuple[EvidenceCitationIndexV2, dict[str, CaptureEnvelopeAny]]:
     """Retain only this request's exact envelopes and full digest export.
 
@@ -152,8 +154,21 @@ def _accepted_evidence_inputs_v2(
         generation_root=at.generation_root,
         compiler_digest=at.compiler_digest,
     )
+    from cruxible_core.service.evidence.body_access import (
+        NO_RESTRICTED_ACCESS,
+        capture_access_resolver,
+        citation_access,
+    )
+
+    # C14: each row's access is its Captures' exact kinds'; a reader without
+    # the key never has a restricted Capture's envelope or body read for it.
+    classify = citation_access(
+        capture_access_resolver(instance, internal), access or NO_RESTRICTED_ACCESS
+    )
     with instance.bind_accepted_projection(internal) as projection:
-        return coverage_rows(projection.citations, bodies=instance.body_store(), at=at)
+        return coverage_rows(
+            projection.citations, bodies=instance.body_store(), at=at, access=classify
+        )
 
 
 def accepted_evidence_sources(
@@ -195,7 +210,10 @@ def _materialized_wanted_selections(
             {capture for citation in citations for capture in citation.capture_digests}
         )
         for capture_digest in capture_digests:
-            envelope = resolved_envelopes[capture_digest]
+            envelope = resolved_envelopes.get(capture_digest)
+            if envelope is None:
+                # C14: withheld from this reader; its bytes are never read for it.
+                continue
             if (
                 envelope.commitment.digest != digest
                 or envelope.commitment.byte_length != byte_length
@@ -273,8 +291,8 @@ def _citation_window_observations(
 
     for accepted_source, citation_id, capture_digest, commitment_digest in associations:
         observed = by_source.get(accepted_source.sort_key)
-        envelope = envelopes[capture_digest]
-        if not isinstance(envelope.source, ExternalSourceReference):
+        envelope = envelopes.get(capture_digest)
+        if envelope is None or not isinstance(envelope.source, ExternalSourceReference):
             continue
         selector = envelope.source.selector
         if not isinstance(selector, Mapping):
@@ -430,7 +448,7 @@ def service_resolve_playbill_coverage(
         raise ProposalIntegrityError("a coverage request must name at least one working source")
 
     coordinate = _resolve_coordinate(instance, at)
-    index, envelopes = _accepted_evidence_inputs_v2(instance, at=coordinate)
+    index, envelopes = _accepted_evidence_inputs_v2(instance, at=coordinate, access=access)
     retired_associations = _retired_citation_window_inputs(
         instance,
         coordinate=coordinate,
