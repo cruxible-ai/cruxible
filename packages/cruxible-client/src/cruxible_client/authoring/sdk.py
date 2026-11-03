@@ -137,6 +137,7 @@ from cruxible_client.contracts.authoring.models import (
     authoring_member_identity,
     authoring_program_digest,
 )
+from cruxible_client.contracts.backlinks import BacklinksRequest, BacklinksResult
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     normalize_canonical,
@@ -3299,6 +3300,47 @@ class Cruxible:
             else AppendSection(file=file, under=under, text=text)
         )
         return AuthoredSection(operation, SectionEvidence(file=file, section=heading_path))
+
+    def backlinks(
+        self,
+        ref: str | SubjectRef | ClaimTypeRef | None = None,
+        *,
+        file: str | None = None,
+        section: tuple[str, ...] | None = None,
+        limit: int = 25,
+        cursor: str | None = None,
+    ) -> BacklinksResult:
+        """What points into one target, one page at this context's coordinate.
+
+        ``ref`` a Subject: the notes about it, Documents linked about it, and the
+        workspace sections its live Claims cite. ``ref`` a ClaimType or
+        Procedure: the Documents that guide it. ``file`` and ``section``: the
+        live Claims resting on that section. Section rows carry ``drift``
+        against the workspace file as it is now.
+        Next: ``cx.get(link.source)``; ``next_cursor`` continues a cut page.
+        """
+
+        from cruxible_client.authoring.backlink_sections import observe_drift, section_source
+
+        text: str | None
+        if ref is None or isinstance(ref, str):
+            text = ref
+        elif isinstance(ref, SubjectRef):
+            text = ref.address
+        else:
+            text = f"ClaimType:{ref.address}"
+        request = BacklinksRequest(
+            ref=text,
+            file=None if file is None else section_source(self._workspace_root, file),
+            section=section,
+            limit=limit,
+            cursor=cursor,
+            at=None if self._coordinate is None else _api_coordinate(self.coordinate),
+            surface="sdk",
+        )
+        return observe_drift(
+            self._client.backlinks(self._instance_id, request=request), self._workspace_root
+        )
 
     def set(
         self,

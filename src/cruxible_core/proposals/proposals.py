@@ -104,6 +104,7 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.documents import (
     AcceptedDocument,
     BodyVerifierProtocol,
+    DocumentShell,
     document_digest,
     evaluate_document_law,
     parse_document,
@@ -3696,6 +3697,49 @@ def _subject_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _unavailable_link_targets(context: _MemberContext, shell: DocumentShell) -> list[str]:
+    """The indexed links (about, guides) whose target is not live in the candidate.
+
+    O(the Document's indexed links): each is one keyed lookup. Labels (any
+    other relation) are carried as written.
+    """
+
+    from cruxible_client.contracts.subjects import subject_path as subject_shell_path
+
+    missing: list[str] = []
+    for link in shell.links:
+        if not link.indexed:
+            continue
+        kind, _, name = link.target_identity.partition(":")
+        live = False
+        try:
+            if kind == "Subject":
+                subject_kind, _, subject_id = name.partition("/")
+                accepted_subject = context.resolved.subjects.get(
+                    subject_shell_path(subject_kind, subject_id)
+                )
+                live = (
+                    accepted_subject is not None
+                    and accepted_subject.shell.lifecycle.state == "live"
+                )
+            elif kind == "ClaimType":
+                accepted_type = context.resolved.claim_types.get(link.target_identity)
+                live = (
+                    accepted_type is not None and accepted_type.claim_type.lifecycle.state == "live"
+                )
+            elif kind == "Procedure":
+                accepted_procedure = context.resolved.procedures.get(link.target_identity)
+                live = (
+                    accepted_procedure is not None
+                    and accepted_procedure.procedure.lifecycle.state == "live"
+                )
+        except ValueError:
+            live = False
+        if not live:
+            missing.append(link.target_identity)
+    return missing
+
+
 def _document_member(context: _MemberContext) -> _MemberVerdict:
     shell = parse_document(context.content, path=context.path)
     predecessor: AcceptedDocument | None = None
@@ -3717,6 +3761,19 @@ def _document_member(context: _MemberContext) -> _MemberVerdict:
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    unavailable = _unavailable_link_targets(context, shell)
+    if unavailable:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.document.link_target_unavailable",
+                    "A Document's about/guides links name live artifacts; not live here: "
+                    + ", ".join(unavailable[:5])
+                    + ".",
+                    context.path,
+                ),
+            )
+        )
     if (
         law.envelope_digest is None or law.required_tier is None or law.activation_policy is None
     ):  # pragma: no cover - guarded by DocumentLawResult
