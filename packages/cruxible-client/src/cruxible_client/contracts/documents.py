@@ -383,8 +383,13 @@ def evaluate_document_law(
     path: str,
     bodies: BodyVerifierProtocol,
     predecessor: AcceptedDocument | None,
+    link_rules: bool = True,
 ) -> DocumentLawResult:
-    """Evaluate the complete dependency-free Family-1 Document acceptance law."""
+    """Evaluate the complete dependency-free Family-1 Document acceptance law.
+
+    ``link_rules`` is the law's revision-4 rule (closed indexed link kinds);
+    replay of a receipt recorded under revision 3 passes False.
+    """
 
     try:
         validate_document_path(shell, path)
@@ -396,7 +401,7 @@ def evaluate_document_law(
             ),
         )
 
-    for link in shell.links:
+    for link in shell.links if link_rules else ():
         kinds = DOCUMENT_LINK_RELATIONS.get(link.relation)
         if kinds is not None and link.target_identity.partition(":")[0] not in kinds:
             return DocumentLawResult(

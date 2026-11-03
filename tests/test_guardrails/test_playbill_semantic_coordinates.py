@@ -136,8 +136,8 @@ LAW_COORDINATES: tuple[
         DOCUMENT_ACCEPTANCE_LAW,
         "playbill.document.v1",
         "playbill-document-v1",
-        3,
-        "sha256:1723c5d87c29634c6732091104bc93416fbfb2248165ec05b710d4aa20587ea8",
+        4,
+        "sha256:90c2549db6b3eb98722a2adab2d5dd5f0eecf87bc90b539fc70407f982dd32ab",
     ),
     (
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
@@ -316,6 +316,13 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
     assert len(seen_coordinates) == len(seen_tags) == len(LAW_COORDINATES)
     assert set(ACCEPTANCE_LAWS._by_coordinate) == seen_coordinates
     assert set(ACCEPTANCE_LAWS._current_by_tag) == seen_tags
+    # Superseded coordinates retained for exact replay of their receipts only.
+    assert set(ACCEPTANCE_LAWS._historical) == {
+        (
+            "playbill.document.v1",
+            "sha256:1723c5d87c29634c6732091104bc93416fbfb2248165ec05b710d4aa20587ea8",
+        )
+    }
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:

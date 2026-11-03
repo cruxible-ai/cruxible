@@ -128,6 +128,7 @@ from cruxible_client.contracts.governance import (
 from cruxible_client.contracts.laws import (
     ACCEPTANCE_LAWS,
     APPROVAL_POLICY_ACCEPTANCE_LAW,
+    DOCUMENT_LAW_V3,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
     AcceptanceLawRegistry,
@@ -3753,15 +3754,20 @@ def _document_member(context: _MemberContext) -> _MemberVerdict:
             shell=previous,
             envelope_digest=document_digest(previous).tagged,
         )
+    installed = _installed(context, shell.tag)
+    # Revision 4 closes the indexed link vocabulary; a receipt recorded under
+    # revision 3 replays without those rules.
+    link_rules = installed.coordinate != DOCUMENT_LAW_V3
     law = evaluate_document_law(
         shell,
         path=context.path,
         bodies=context.bodies,
         predecessor=predecessor,
+        link_rules=link_rules,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
-    unavailable = _unavailable_link_targets(context, shell)
+    unavailable = _unavailable_link_targets(context, shell) if link_rules else []
     if unavailable:
         return _MemberVerdict(
             diagnostics=(
@@ -3780,7 +3786,7 @@ def _document_member(context: _MemberContext) -> _MemberVerdict:
         raise ProposalIntegrityError("accepted Document law result is incomplete")
     return _accepted(
         context,
-        _installed(context, shell.tag),
+        installed,
         predecessor_artifact_digest=None if predecessor is None else predecessor.envelope_digest,
         candidate_artifact_digest=law.envelope_digest,
         required_tier=law.required_tier,
