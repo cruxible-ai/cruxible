@@ -200,3 +200,111 @@ def test_document_links_refuse_wrong_kinds_and_dead_targets(tmp_path: Path) -> N
     assert "cruxible.document.link_target_invalid" in codes(wrong), wrong
     dead = propose(DocumentLink(relation="guides", target_identity="ClaimType:none.such"))
     assert "cruxible.document.link_target_unavailable" in codes(dead), dead
+
+
+def test_a_continuation_resolves_its_target_where_its_first_page_read(tmp_path: Path) -> None:
+    """A key that moved, or a bare name made ambiguous, does not strand a valid cursor."""
+
+    instance, _ = seed_write_surface(tmp_path)
+    write(instance, SetChange(subject=f"{KIND}/wi-1", field="slug", value="alpha"))
+    write(instance, about(f"{KIND}/wi-1"), cite("wi-1", "ready"))
+    first = links(instance, ref=f"{KIND}/alpha", limit=1)
+    assert first.target == f"{KIND}/wi-1" and first.next_cursor is not None
+    # The key moves: at the head `alpha` now names wi-2.
+    write(
+        instance,
+        SetChange(subject=f"{KIND}/wi-1", field="slug", value="beta"),
+        SetChange(subject=f"{KIND}/wi-2", field="slug", value="alpha"),
+    )
+    assert links(instance, ref=f"{KIND}/alpha").target == f"{KIND}/wi-2"
+    second = links(instance, ref=f"{KIND}/alpha", limit=1, cursor=first.next_cursor)
+    assert second.target == f"{KIND}/wi-1"
+    assert [link.relation for link in (*first.links, *second.links)] == ["about", "cites"]
+    # An explicit at must still agree with the cursor.
+    with pytest.raises(ListCursorMismatch):
+        links(
+            instance,
+            ref=f"{KIND}/alpha",
+            limit=1,
+            cursor=first.next_cursor,
+            at=instance.accepted_coordinate().git_oid,
+        )
+
+
+def test_a_bare_name_made_ambiguous_after_the_first_page_still_continues(
+    tmp_path: Path,
+) -> None:
+    instance, _ = seed_write_surface(tmp_path)
+    for name in ("guide-a", "guide-b"):
+        propose_document(
+            instance, name, DocumentLink(relation="guides", target_identity=f"ClaimType:{STATUS}")
+        )
+    first = links(instance, ref="status", limit=1)
+    assert first.target == f"ClaimType:{STATUS}" and first.next_cursor is not None
+    propose_document(instance, "status")  # Document:status: `status` is now ambiguous
+    with pytest.raises(ReadRefusalError) as ambiguous:
+        links(instance, ref="status")
+    assert ambiguous.value.error_code == "cruxible.get.ref_ambiguous"
+    second = links(instance, ref="status", limit=1, cursor=first.next_cursor)
+    assert [link.source for link in (*first.links, *second.links)] == [
+        "document:guide-a",
+        "document:guide-b",
+    ]
+
+
+def _vm_steps(instance, request: BacklinksRequest) -> int:
+    """SQLite virtual-machine steps one public backlinks read runs (every bound projection)."""
+
+    from contextlib import contextmanager
+
+    steps = [0]
+    bind = instance.bind_accepted_projection
+
+    @contextmanager
+    def counted(coordinate):  # type: ignore[no-untyped-def]
+        with bind(coordinate) as projection:
+            connection = projection.typed.connection
+
+            def step() -> int:
+                steps[0] += 1
+                return 0
+
+            connection.set_progress_handler(step, 10)
+            try:
+                yield projection
+            finally:
+                connection.set_progress_handler(None, 0)
+
+    instance.bind_accepted_projection = counted
+    try:
+        service_playbill_backlinks(instance, request=request)
+    finally:
+        del instance.bind_accepted_projection
+    return steps[0]
+
+
+@pytest.mark.parametrize("ref", ["status", f"{KIND}.status", f"ClaimType:{STATUS}", f"{KIND}/wi-1"])
+def test_backlinks_work_does_not_grow_with_the_number_of_claim_types(
+    tmp_path: Path, ref: str
+) -> None:
+    """Resolving the target (bare, full, typed or a Subject) is indexed and bounded."""
+
+    from tests.core_support._support import initialize_local
+    from tests.core_support._write_support import CLAIM_TYPES, _claim_type, seed_write_vocabulary
+
+    steps = {}
+    for size in (4, 64):
+        root = tmp_path / str(size)
+        root.mkdir()
+        instance, _ = initialize_local(root)
+        extras = tuple(_claim_type(f"extra_{i}") for i in range(size))
+        seed_write_vocabulary(instance, claim_types=(*CLAIM_TYPES, *extras))
+        propose_document(
+            instance,
+            "guide",
+            DocumentLink(relation="guides", target_identity=f"ClaimType:{STATUS}"),
+        )
+        request = BacklinksRequest(ref=ref, limit=1)
+        _vm_steps(instance, request)  # warm caches and indexes
+        steps[size] = _vm_steps(instance, request)
+    assert steps[64] <= steps[4] * 1.25 + 50, steps

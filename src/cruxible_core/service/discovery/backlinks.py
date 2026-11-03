@@ -49,19 +49,19 @@ _COLUMNS = (
 )
 
 
-def _continuation(
-    instance: PlaybillInstance, request: BacklinksRequest, selection: dict[str, Any]
-) -> tuple[tuple[str, ...], AcceptedProjectionCoordinate]:
-    """The key after which this page starts, and the coordinate the listing is read at."""
+def _read_coordinate(
+    instance: PlaybillInstance, request: BacklinksRequest
+) -> AcceptedProjectionCoordinate:
+    """The coordinate this page reads: the cursor's pinned one, else ``at`` (default head).
+
+    A continuation resolves its target here, at the coordinate its first page
+    read, so a key, alias or name that moved since then still continues the
+    same listing. An explicit ``at`` must agree with the cursor.
+    """
 
     if request.cursor is None:
-        return (), resolve_read_coordinate(instance, request.at)
-    continuation = decode_list_cursor(request.cursor, list_name=_LIST, selection=selection)
-    if continuation.snapshot != _KEYSET or len(continuation.last_key) != 3:
-        raise ListCursorMismatch(
-            f"{ListCursorMismatch.error_code}: the cursor does not continue this listing; "
-            "read backlinks again without a cursor"
-        )
+        return resolve_read_coordinate(instance, request.at)
+    continuation = decode_list_cursor(request.cursor, list_name=_LIST, selection=None)
     pinned = AcceptedCoordinate.model_validate(continuation.coordinate)
     coordinate = resolve_read_coordinate(instance, pinned)
     if request.at is not None and AcceptedCoordinate.from_internal(
@@ -70,6 +70,23 @@ def _continuation(
         raise ListCursorMismatch(
             f"{ListCursorMismatch.error_code}: the cursor continues a different coordinate; "
             "omit at to continue it"
+        )
+    return coordinate
+
+
+def _continuation(
+    instance: PlaybillInstance, request: BacklinksRequest, selection: dict[str, Any]
+) -> tuple[tuple[str, ...], AcceptedProjectionCoordinate]:
+    """The key after which this page starts, and the coordinate the listing is read at."""
+
+    coordinate = _read_coordinate(instance, request)
+    if request.cursor is None:
+        return (), coordinate
+    continuation = decode_list_cursor(request.cursor, list_name=_LIST, selection=selection)
+    if continuation.snapshot != _KEYSET or len(continuation.last_key) != 3:
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor does not continue this listing; "
+            "read backlinks again without a cursor"
         )
     return continuation.last_key, coordinate
 
@@ -360,7 +377,7 @@ def service_playbill_backlinks(
     from cruxible_core.service.discovery.get import resolve_get_ref
 
     assert request.ref is not None
-    coordinate = resolve_read_coordinate(instance, request.at)
+    coordinate = _read_coordinate(instance, request)
     resolved = resolve_get_ref(instance, coordinate, request.ref, surface=request.surface)
     if resolved.kind == "subject":
         return service_subject_backlinks(
