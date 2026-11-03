@@ -74772,6 +74772,22 @@
             "type": "array"
           }
         },
+        "guidance": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "guidance",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ReviewGuidance"
+            },
+            "title": "Guidance",
+            "type": "array"
+          }
+        },
         "item_reason_count": {
           "default": 0,
           "default_json_serializable": true,
@@ -75121,6 +75137,39 @@
             "title": "PriorRefusalCoverage",
             "type": "object"
           },
+          "ReviewGuidance": {
+            "additionalProperties": false,
+            "description": "A governed Document that ``guides`` a ClaimType or Procedure this proposal touches.",
+            "properties": {
+              "definition": {
+                "description": "ClaimType:<predicate> or Procedure:<name>.",
+                "title": "Definition",
+                "type": "string"
+              },
+              "document": {
+                "title": "Document",
+                "type": "string"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Title"
+              }
+            },
+            "required": [
+              "definition",
+              "document"
+            ],
+            "title": "ReviewGuidance",
+            "type": "object"
+          },
           "ReviewSummaryCounts": {
             "additionalProperties": false,
             "properties": {
@@ -75417,6 +75466,14 @@
               "$ref": "#/$defs/ReviewSummaryGroup"
             },
             "title": "Groups",
+            "type": "array"
+          },
+          "guidance": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ReviewGuidance"
+            },
+            "title": "Guidance",
             "type": "array"
           },
           "item_reason_count": {
