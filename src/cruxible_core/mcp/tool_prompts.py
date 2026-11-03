@@ -113,7 +113,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_capture_read": (
         "Use when you need verified retained Capture evidence for inspection or Claim authoring. "
-        "Requires body-read permission; max_bytes bounds returned material. "
+        "A restricted CaptureKind answers status=restricted (a body_restricted notice) unless "
+        "the caller is governed_write or higher; max_bytes bounds returned material. "
         "Never refetches sources."
     ),
     "cruxible_capture_erase": (

@@ -27,6 +27,7 @@ from cruxible_client.contracts.backlinks import (
     BacklinksRequest,
     BacklinksResult,
 )
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import ReadRefusalError
 from cruxible_client.contracts.get_reads import GetCoordinate
 from cruxible_client.contracts.proposal_summary import ReviewGuidance
@@ -45,7 +46,7 @@ _LIST = "backlinks"
 _KEYSET = "keyset"
 _COLUMNS = (
     "relation,source_kind,source_identity,link_key,source_id,section,cited_digest,role,"
-    "claim_subject"
+    "claim_subject,capture_digest"
 )
 
 
@@ -104,9 +105,26 @@ def _page(
     rows: Sequence[sqlite3.Row | tuple[Any, ...]],
     limit: int,
     connection: sqlite3.Connection,
+    access: BodyAccessContext | None = None,
 ) -> BacklinksResult:
+    """One page; a row whose Capture is withheld from ``access`` loses its section (C14).
+
+    Access is decided per row from the cited Capture's exact kind version
+    (maintained metadata, one batched resolution per page) before anything of
+    the Capture is read; the row keeps its relation, source and Subject.
+    """
+
+    from cruxible_core.service.evidence.body_access import (
+        NO_RESTRICTED_ACCESS,
+        capture_access_resolver,
+    )
+
     truncated = len(rows) > limit
     page = list(rows[:limit])
+    withheld, notice = capture_access_resolver(instance, coordinate).withheld(
+        sorted({str(row[9]) for row in page if row[9] is not None}),
+        access or NO_RESTRICTED_ACCESS,
+    )
     claims = [str(row[2]) for row in page if row[1] == "Claim"]
     documents = [str(row[2]) for row in page if row[1] == "Document"]
     predicates = dict(
@@ -140,7 +158,9 @@ def _page(
             ).fetchone()
             latest[(row[4], row[5])] = None if found is None else str(found[0])
     links = []
-    for relation, kind, identity, _key, source_id, section, digest, role, subject in page:
+    for relation, kind, identity, _key, source_id, section, digest, role, subject, capture in page:
+        if capture is not None and capture in withheld:
+            source_id, section, digest = None, None, None
         newest = None if source_id is None else latest.get((source_id, section))
         links.append(
             Backlink(
@@ -181,11 +201,16 @@ def _page(
         links=tuple(links),
         truncated=truncated,
         next_cursor=next_cursor,
+        withheld=notice,
     )
 
 
 def service_subject_backlinks(
-    instance: PlaybillInstance, *, subject: str, request: BacklinksRequest
+    instance: PlaybillInstance,
+    *,
+    subject: str,
+    request: BacklinksRequest,
+    access: BodyAccessContext | None = None,
 ) -> BacklinksResult:
     """Notes and Documents about a Subject, then the sections its live Claims cite.
 
@@ -227,11 +252,16 @@ def service_subject_backlinks(
             rows=rows,
             limit=limit,
             connection=connection,
+            access=access,
         )
 
 
 def service_definition_guidance(
-    instance: PlaybillInstance, *, definition: str, request: BacklinksRequest
+    instance: PlaybillInstance,
+    *,
+    definition: str,
+    request: BacklinksRequest,
+    access: BodyAccessContext | None = None,
 ) -> BacklinksResult:
     """The governed Documents that ``guides`` one ClaimType or Procedure."""
 
@@ -252,6 +282,7 @@ def service_definition_guidance(
             rows=rows,
             limit=request.limit,
             connection=connection,
+            access=access,
         )
 
 
@@ -261,6 +292,7 @@ def service_section_backlinks(
     source_id: str,
     section: tuple[str, ...],
     request: BacklinksRequest,
+    access: BodyAccessContext | None = None,
 ) -> BacklinksResult:
     """The live Claims resting on one workspace section (its catalogued source + path)."""
 
@@ -285,6 +317,7 @@ def service_section_backlinks(
             rows=rows,
             limit=request.limit,
             connection=connection,
+            access=access,
         )
 
 
@@ -365,26 +398,50 @@ def _not_backlinkable(ref: str, kind: str) -> ReadRefusalError:
 
 
 def service_playbill_backlinks(
-    instance: PlaybillInstance, *, request: BacklinksRequest
+    instance: PlaybillInstance,
+    *,
+    request: BacklinksRequest,
+    access: BodyAccessContext | None = None,
 ) -> BacklinksResult:
     """Resolve the target the way ``get`` resolves a reference, then read its backlinks."""
 
     if request.file is not None:
         assert request.section is not None
         return service_section_backlinks(
-            instance, source_id=request.file, section=request.section, request=request
+            instance,
+            source_id=request.file,
+            section=request.section,
+            request=request,
+            access=access,
         )
     from cruxible_core.service.discovery.get import resolve_get_ref
+    from cruxible_core.service.evidence.body_access import NO_RESTRICTED_ACCESS
 
     assert request.ref is not None
+    reference = request.ref.strip()
+    if reference.startswith(("CAP-", "Capture:", "sha256:")):
+        # Capture references are never backlink targets: refused before any
+        # resolution, so no Capture is verified (or read) for this reader (C14).
+        raise _not_backlinkable(request.ref, "capture")
     coordinate = _read_coordinate(instance, request)
-    resolved = resolve_get_ref(instance, coordinate, request.ref, surface=request.surface)
+    resolved = resolve_get_ref(
+        instance,
+        coordinate,
+        request.ref,
+        surface=request.surface,
+        access=access or NO_RESTRICTED_ACCESS,
+    )
     if resolved.kind == "subject":
         return service_subject_backlinks(
-            instance, subject=resolved.identity.removeprefix("Subject:"), request=request
+            instance,
+            subject=resolved.identity.removeprefix("Subject:"),
+            request=request,
+            access=access,
         )
     if resolved.kind in ("claim_type", "procedure"):
-        return service_definition_guidance(instance, definition=resolved.identity, request=request)
+        return service_definition_guidance(
+            instance, definition=resolved.identity, request=request, access=access
+        )
     raise _not_backlinkable(request.ref, resolved.kind)
 
 

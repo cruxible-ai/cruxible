@@ -33,6 +33,11 @@ from cruxible_core.evidence.capture_erasures import erased_body
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.claims.claims import service_open_playbill_source
+from cruxible_core.service.evidence.body_access import (
+    CaptureAccessResolver,
+    body_restricted_notice,
+    capture_access_resolver,
+)
 from cruxible_core.storage.capture_metadata import capture_envelope
 from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.read_positions import PositionedBodies, positioned_read, read_body
@@ -95,13 +100,20 @@ _MAX_PREFIX_CANDIDATES = 10
 
 
 def _full_capture_digest(
-    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, value: str
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    value: str,
+    *,
+    access: BodyAccessContext | None = None,
+    resolver: CaptureAccessResolver | None = None,
 ) -> str:
     """A full Capture digest; a ``CAP-`` handle or digest prefix resolves as every verb does.
 
     ``resolve_capture_handle`` names the Capture: cited at the read coordinate,
     or retained and verifying there. An ambiguous, unknown or unboundedly
-    crowded prefix refuses with the candidates and the repair.
+    crowded prefix refuses with the candidates and the repair. With ``access``,
+    a candidate withheld from it (C14) is named without being verified: its
+    envelope is not read for this caller.
     """
 
     from cruxible_core.service.discovery.operational import capture_hex
@@ -109,7 +121,9 @@ def _full_capture_digest(
     hex_digits = capture_hex(value)
     if hex_digits is None or len(hex_digits) == 64:
         return value if hex_digits is None else "sha256:" + hex_digits
-    resolution = resolve_capture_handle(instance, coordinate, hex_digits)
+    resolution = resolve_capture_handle(
+        instance, coordinate, hex_digits, access=access, resolver=resolver
+    )
     if isinstance(resolution, CaptureHandleResolved):
         return resolution.digest
     if isinstance(resolution, CaptureHandleAmbiguous):
@@ -417,6 +431,8 @@ def resolve_capture_handle(
     *,
     verified: Callable[[str], bool] | None = None,
     nearest: int = 0,
+    access: BodyAccessContext | None = None,
+    resolver: CaptureAccessResolver | None = None,
 ) -> CaptureHandleResolution:
     """Resolve a ``CAP-`` handle (a digest prefix) to one Capture, for every verb alike.
 
@@ -441,23 +457,33 @@ def resolve_capture_handle(
                 projection.typed.connection, hex_prefix, limit=CAPTURE_HANDLE_MAX_VERIFIED + 1
             )
         )
-    inventory = retained_captures(
-        instance, budget=CAPTURE_HANDLE_SCAN_BUDGET, hex_prefix=hex_prefix, nearest=nearest
+    # Candidates by the envelope index alone: no envelope is read to list them.
+    digests, complete = instance.body_store().capture_envelopes.prefix(
+        hex_prefix, limit=CAPTURE_HANDLE_SCAN_BUDGET
     )
-    if not inventory.complete:
+    if not complete:
         return CaptureHandleExhausted("scan_budget")
-    if len(inventory.captures) > CAPTURE_HANDLE_MAX_VERIFIED:
+    if len(digests) > CAPTURE_HANDLE_MAX_VERIFIED:
         return CaptureHandleExhausted("verify_limit")
-    uncited = [item.digest for item in inventory.captures if item.digest not in cited]
+    uncited = [digest for digest in digests if digest not in cited]
+    withheld: set[str] = set()
+    if access is not None and not access.can_read_restricted and uncited:
+        # C14: a candidate withheld from this caller is named, never verified.
+        kinds = (resolver or capture_access_resolver(instance, coordinate)).captures(uncited)
+        withheld = {digest for digest, item in kinds.items() if item.withheld_from(access)}
     if verified is None:
         captures = instance.capture_verification_context()
     check = verified or (lambda digest: _verifies(instance, coordinate, digest, captures))
-    found = sorted(cited | {digest for digest in uncited if check(digest)})
+    found = sorted(
+        cited
+        | withheld
+        | {digest for digest in uncited if digest not in withheld and check(digest)}
+    )
     if len(found) == 1:
         return CaptureHandleResolved(found[0])
     if found:
         return CaptureHandleAmbiguous(tuple(found))
-    return CaptureHandleNotFound(inventory.nearest)
+    return CaptureHandleNotFound(digests[:nearest])
 
 
 def _verifies(
@@ -496,11 +522,42 @@ def service_read_playbill_capture(
         )
     )
     public = AcceptedCoordinate.from_internal(coordinate)
+    resolver = capture_access_resolver(instance, coordinate)
     request = request.model_copy(
         update={
-            "capture_digest": _full_capture_digest(instance, coordinate, request.capture_digest)
+            "capture_digest": _full_capture_digest(
+                instance, coordinate, request.capture_digest, access=access, resolver=resolver
+            )
         }
     )
+    # C14: authorize from the maintained kind of the exact Capture before any
+    # envelope or body byte is read for this caller. A restricted kind, or a
+    # Capture whose kind does not resolve, is the inventory view without the key.
+    kind = resolver.capture(request.capture_digest)
+    if kind.withheld_from(access) and kind.contract_digest is not None:
+        # A restricted kind, or a kind no accepted version resolves: withheld.
+        return CaptureRead(
+            capture_digest=request.capture_digest,
+            coordinate=public,
+            status="restricted",
+            reason="body_restricted",
+            contract_address=None if kind.kind is None else kind.kind.path,
+            epistemic_grade=None if kind.kind is None else kind.kind.epistemic_grade,
+            notice=body_restricted_notice((kind,)),
+        )
+    if kind.withheld_from(access):
+        # No indexed kind: the object is absent, or its bytes do not open as an
+        # envelope (the index records every one that does). There is no
+        # Capture to withhold and none of its bytes are read here.
+        store = instance.body_store()
+        if not PositionedBodies(store).verify(request.capture_digest):
+            return CaptureRead(
+                capture_digest=request.capture_digest,
+                coordinate=public,
+                status="unavailable",
+                reason="capture_unavailable",
+            )
+        raise _not_a_capture(instance, coordinate, request.capture_digest)
     verified = verify_accepted_capture(instance, coordinate, request.capture_digest, access=access)
     if isinstance(verified, str):
         erasure = None
@@ -535,7 +592,7 @@ def service_read_playbill_capture(
                     at=material_at,
                     source=source,
                     commitment=envelope.commitment,
-                    access_class="instance",
+                    access_class="restricted" if kind.restricted else "instance",
                 ),
                 resource_budget_bytes=min(request.max_bytes, contract.selection_budget.max_bytes),
             ),

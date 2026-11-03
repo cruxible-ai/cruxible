@@ -85,7 +85,11 @@ def bind_trigger_capture(
             at=record.accepted_coordinate,
             max_bytes=max_bytes,
         ),
-        access=BodyAccessContext(principal_id="line-trigger-input", can_read_body=True),
+        # The daemon decodes a restricted kind's bytes for its own run; what the
+        # run derives from them is withheld when it is read (C14).
+        access=BodyAccessContext(
+            principal_id="line-trigger-input", can_read_body=True, can_read_restricted=True
+        ),
     )
     material = read.material
     envelope = read.envelope

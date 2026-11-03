@@ -11,13 +11,16 @@ first, in an order a run's status never changes; a filter keeps running runs.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, get_args
 
+from pydantic import TypeAdapter
+
 from cruxible_client.contracts import ProcedureRunState
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.operational_reads import (
     OPERATIONAL_CARD_LIST_LIMIT,
     GetProcedureRunCard,
@@ -33,6 +36,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunAttribution,
     ProcedureRunAttributionWithheld,
     ProcedureRunReceiptWithheld,
+    ProcedureSourceObservation,
     ProcedureTerminal,
     ProcedureTerminalEgress,
 )
@@ -336,6 +340,7 @@ def procedure_run_card(
     evaluation_time: datetime,
     render: Callable[[str, str | None], str],
     viewer: OperationalViewer | None = None,
+    access: BodyAccessContext | None = None,
 ) -> GetProcedureRunCard:
     """One run with its live progress, read from the journal index and a few payloads.
 
@@ -407,6 +412,7 @@ def procedure_run_card(
     elapsed: int | None = None
     basis: Literal["read_time", "measured_wall_clock"] | None = None
     completeness = None
+    withheld: BodyRestricted | None = None
     if locator.final_payload_digest is None:
         target = _current_node(instance, journal, stream, run_id, nodes, edges, first)
         if target is not None and target in kinds:
@@ -430,9 +436,24 @@ def procedure_run_card(
             GetRunOutcome.model_validate(item.model_dump(mode="json")) for item in state.outcomes
         )
         egress = state.terminal_egress
+        withheld = run_values_withheld(
+            instance, run_id, access, source_observations=state.source_observations
+        )
         wall = final_elapsed_us(run_payload(instance, locator.final_payload_digest))
         if wall is not None:
             elapsed, basis = wall, "measured_wall_clock"
+    if locator.final_payload_digest is None:
+        # A running run: what its fired nodes derive from, as journaled so far.
+        withheld = run_values_withheld(instance, run_id, access)
+    if withheld is not None:
+        # C14: values extracted from restricted Captures stay withheld, while
+        # it runs and after: node summaries, the result, refusal details.
+        result = None
+        nodes = [node.model_copy(update={"summary": None}) for node in nodes]
+        if terminal is not None:
+            terminal = _TERMINAL.validate_python(
+                withheld_terminal(terminal.model_dump(mode="json"))
+            )
     line = getattr(bound, "line_identity", None)
     trigger = _run_trigger(instance, run_id, bound, viewer)
     # An armed run acts as its arming credential's label; that label is the
@@ -466,6 +487,7 @@ def procedure_run_card(
         terminal=terminal,
         terminal_egress=egress,
         completeness=completeness,
+        withheld=withheld,
         next=tuple(next_steps),
     )
 
@@ -488,8 +510,170 @@ def run_arming_withheld(
     return trigger is not None and bool(trigger.enabled_by_withheld)
 
 
+def run_consumed_captures(
+    instance: PlaybillInstance, run_id: str | None
+) -> tuple[tuple[str, ...], bool]:
+    """The Captures a run (with its children) consumed, as its journal records them.
+
+    Read from the run's latest ``node_fired`` and its final record, which
+    carry the cumulative, versioned set (O(1) records). The second value is
+    False -- the caller fails closed -- when the run is not in the journal,
+    or a record is unreadable or carries no versioned consumption (written
+    before C14: no legacy reader reconstructs it, D-R25 R4). A run admitted
+    with no node fired yet has consumed nothing.
+    """
+
+    from cruxible_core.procedures.execution import CONSUMPTION_VERSION
+
+    if run_id is None:
+        return (), True
+    journal = procedure_run_journal(instance)
+    if journal is None:
+        return (), False
+    stream = procedure_run_stream(instance)
+    locators = journal.index.run_locators(stream, limit=1, run_id=run_id)[0]
+    if not locators:
+        return (), False
+    digests: list[str] = [
+        stored.record.payload_digest
+        for stored in journal.index.select(
+            stream, run_id=run_id, event_kind="node_fired", descending=True, limit=1
+        )
+    ]
+    if locators[0].final_payload_digest is not None:
+        digests.append(locators[0].final_payload_digest)
+    found: set[str] = set()
+    known = True
+    for digest in digests:
+        payload = run_payload(instance, digest)
+        consumption = payload.get("consumption") if isinstance(payload, Mapping) else None
+        captures = consumption.get("captures") if isinstance(consumption, Mapping) else None
+        if (
+            not isinstance(consumption, Mapping)
+            or consumption.get("v") != CONSUMPTION_VERSION
+            or not isinstance(captures, list)
+        ):
+            known = False
+            continue
+        found.update(str(item) for item in captures)
+    return tuple(sorted(found)), known
+
+
+def run_values_withheld(
+    instance: PlaybillInstance,
+    run_id: str | None,
+    access: BodyAccessContext | None,
+    *,
+    source_observations: Iterable[ProcedureSourceObservation] = (),
+    consumed: tuple[tuple[str, ...], bool] | None = None,
+) -> BodyRestricted | None:
+    """Whether a run's values are withheld: it consumed Captures of a restricted kind (C14).
+
+    A run's output, findings, node summaries and refusal details carry values
+    extracted from the Captures it consumed -- a provider's, a trigger-bound
+    or parameter Capture, a child run's -- so they inherit their restriction.
+    The consumed set is the run's journaled provenance; an unreadable record
+    or an unresolvable kind withholds (fail closed).
+    """
+
+    reader = access or BodyAccessContext(principal_id="playbill-run-read")
+    if reader.can_read_restricted:
+        return None
+    captures, known = consumed if consumed is not None else run_consumed_captures(instance, run_id)
+    digests = tuple(
+        sorted(
+            {
+                *captures,
+                *(item.capture_digest for item in source_observations if item.capture_digest),
+            }
+        )
+    )
+    if not known:
+        from cruxible_core.service.evidence.body_access import capture_access_resolver
+
+        notice = capture_access_resolver(instance).withheld(digests, reader)[1]
+        return notice or BodyRestricted(provenance_unavailable=True)
+    if not digests:
+        return None
+    from cruxible_core.service.evidence.body_access import capture_access_resolver
+
+    return capture_access_resolver(instance).withheld(digests, reader)[1]
+
+
+_TERMINAL: TypeAdapter[ProcedureTerminal] = TypeAdapter(ProcedureTerminal)
+#: The marker that replaces a withheld refusal's details.
+_WITHHELD_DETAILS = {"withheld": "body_restricted"}
+#: Terminal kinds whose message or details may quote what a run read.
+_DETAILED_TERMINALS = frozenset(
+    {
+        "playbill-procedure-node-refusal-v1",
+        "playbill-procedure-admission-refusal-v1",
+        "playbill-procedure-operational-failure-v1",
+        "playbill-procedure-internal-failure-v1",
+    }
+)
+
+
+def withheld_terminal(terminal: object) -> object:
+    """A served terminal without what it quotes: classification, code and node stay.
+
+    A refusal's ``message`` and ``details`` (an extract header's lexeme, a
+    guard's operands, a provider's message) are replaced by the withheld marker.
+    """
+
+    if not isinstance(terminal, Mapping) or terminal.get("tag") not in _DETAILED_TERMINALS:
+        return terminal
+    result = dict(terminal)
+    if "message" in result:
+        result["message"] = f"{terminal.get('code', 'refused')}: details withheld (body_restricted)"
+    if "details" in result:
+        result["details"] = dict(_WITHHELD_DETAILS)
+    cause = result.get("cause")
+    if isinstance(cause, Mapping):
+        result["cause"] = {**cause, "message": ""}
+    return result
+
+
+def _withheld_dump(dump: dict[str, object], notice: BodyRestricted) -> dict[str, object]:
+    receipt = dump.get("receipt")
+    if isinstance(receipt, Mapping) and "terminal" in receipt:
+        dump["receipt"] = {**receipt, "terminal": withheld_terminal(receipt["terminal"])}
+    nodes = dump.get("nodes")
+    dump.update(
+        result=None,
+        findings=[],
+        terminal=withheld_terminal(dump.get("terminal")),
+        nodes=[
+            {key: value for key, value in node.items() if key != "summary"}
+            for node in (nodes if isinstance(nodes, list) else [])
+            if isinstance(node, Mapping)
+        ],
+        withheld=notice.model_dump(mode="json"),
+    )
+    return dump
+
+
+def withhold_run_values(
+    state: ProcedureRunState, notice: BodyRestricted | None
+) -> ProcedureRunState:
+    """The run's state without its restricted-derived values (C14).
+
+    Output, findings, node summaries and the refusal details of the terminal
+    (and of the receipt's terminal) go; statuses, classifications, codes,
+    counts, digests and journal locators stay.
+    """
+
+    if notice is None:
+        return state
+    return ProcedureRunState.model_validate(_withheld_dump(state.model_dump(mode="json"), notice))
+
+
 def procedure_run_status(
-    instance: PlaybillInstance, run_id: str, *, viewer: OperationalViewer | None
+    instance: PlaybillInstance,
+    run_id: str,
+    *,
+    viewer: OperationalViewer | None,
+    access: BodyAccessContext | None = None,
 ) -> ProcedureRunState:
     """A run's served state, with its arming credential withheld as on the card.
 
@@ -505,6 +689,12 @@ def procedure_run_status(
 
     state = ProcedureRunState.model_validate(
         service_get_playbill_procedure_run(instance, run_id=run_id).model_dump(mode="json")
+    )
+    state = withhold_run_values(
+        state,
+        run_values_withheld(
+            instance, run_id, access, source_observations=state.source_observations
+        ),
     )
     if not run_arming_withheld(instance, run_id, viewer=viewer):
         return state
@@ -522,7 +712,11 @@ def procedure_run_status(
 
 
 def procedure_run_proof(
-    instance: PlaybillInstance, run_id: str, *, viewer: OperationalViewer | None
+    instance: PlaybillInstance,
+    run_id: str,
+    *,
+    viewer: OperationalViewer | None,
+    access: BodyAccessContext | None = None,
 ) -> dict[str, object]:
     """A run's full served state, under ``procedure_run_status``'s withholding."""
 
@@ -532,6 +726,11 @@ def procedure_run_proof(
 
     state = service_get_playbill_procedure_run(instance, run_id=run_id)
     proof: dict[str, object] = state.model_dump(mode="json")
+    notice = run_values_withheld(
+        instance, run_id, access, source_observations=state.source_observations
+    )
+    if notice is not None:
+        proof = _withheld_dump(proof, notice)
     if run_arming_withheld(instance, run_id, viewer=viewer):
         if state.attribution is not None:
             proof["attribution"] = ProcedureRunAttributionWithheld.of(state.attribution).model_dump(

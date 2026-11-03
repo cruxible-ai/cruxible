@@ -87,13 +87,13 @@ def test_coverage_groups_two_captures_of_the_same_content_as_one_row(tmp_path: P
         "CREATE TABLE claims(identity TEXT PRIMARY KEY,path TEXT,"
         "artifact_digest TEXT,lifecycle TEXT) STRICT;"
         "CREATE TABLE capture_contracts(identity TEXT PRIMARY KEY,path TEXT,"
-        "artifact_digest TEXT) STRICT;" + SCHEMA_SQL
+        "artifact_digest TEXT,body_access TEXT NOT NULL DEFAULT 'open') STRICT;" + SCHEMA_SQL
     )
     world = World(connection, fixture.store)
     path = capture_contract_path(fixture.contract.identity.name)
     world.sources[path] = render_contract(fixture.contract)
     connection.execute(
-        "INSERT INTO capture_contracts VALUES (?,?,?)",
+        "INSERT INTO capture_contracts(identity,path,artifact_digest) VALUES (?,?,?)",
         (
             fixture.contract.identity.qualified,
             path,

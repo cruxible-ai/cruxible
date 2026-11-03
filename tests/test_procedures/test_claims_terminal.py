@@ -100,6 +100,7 @@ def claims_world(
     *,
     types: tuple[ClaimType, ...] = (),
     rows: Contract = ROW,
+    capture_body_access: str = "open",
 ) -> tuple[Any, Path]:
     import json
 
@@ -114,7 +115,9 @@ def claims_world(
         evidence_requirement="none",
         evidence_admission_policy=ClaimEvidenceAdmissionPolicy(rules=()),
     )
-    capture = record_contract()
+    capture = record_contract(
+        **({} if capture_body_access == "open" else {"body_access": capture_body_access})
+    )
     all_types = types or (claim_type(),)
     accept_tree(
         instance,

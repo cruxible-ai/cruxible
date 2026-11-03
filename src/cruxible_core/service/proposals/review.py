@@ -5,7 +5,7 @@ from __future__ import annotations
 import difflib
 import json
 from collections.abc import Mapping
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -534,6 +534,7 @@ def service_review_playbill_proposal(
             limit=rows_limit,
             groups_limit=groups_limit,
             findings_after=findings_after,
+            access=access,
         )
     inspection = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
     proposal = inspection.proposal
@@ -1106,3 +1107,70 @@ __all__ = [
     "service_prepare_playbill_approval",
     "service_review_playbill_proposal",
 ]
+
+
+def withhold_review_values(
+    instance: PlaybillInstance,
+    payload: dict[str, Any],
+    access: BodyAccessContext | None,
+) -> dict[str, Any]:
+    """A served detailed review without what restricted Captures say (C14).
+
+    Before acceptance a candidate Claim's value is a run output: when it cites
+    a Capture withheld from the reader, its proposed value and semantic delta
+    go, and every span and evidence locator into the withheld Capture goes
+    from the whole response (members, law evidence, the candidate record),
+    together with the item reasons. Accepted base values, digests, closure,
+    governance and the candidate digest a signer signs stay intact.
+    """
+
+    from cruxible_core.service.evidence.body_access import (
+        NO_RESTRICTED_ACCESS,
+        WITHHELD_MARK,
+        capture_access_resolver,
+        named_captures,
+        redact_claim_evidence,
+        withheld_commitments,
+    )
+
+    reader = access or NO_RESTRICTED_ACCESS
+    if reader.can_read_restricted:
+        return payload
+    coordinate = instance.accepted_coordinate()
+    withheld, notice = capture_access_resolver(instance, coordinate).withheld(
+        named_captures(payload), reader
+    )
+    if notice is None:
+        return payload
+    names = set(withheld)
+    members = []
+    for member in payload.get("members", []):
+        base = member.get("base_semantic_artifact")
+        candidate = member.get("candidate_semantic_artifact")
+        base_restricted = isinstance(base, dict) and bool(names & set(named_captures(base)))
+        candidate_restricted = isinstance(candidate, dict) and bool(
+            names & set(named_captures(candidate))
+        )
+        if candidate_restricted and isinstance(candidate, dict):
+            # Before acceptance its value is a run output drawn from the Capture.
+            statement = candidate.get("statement")
+            if isinstance(statement, dict) and "object" in statement:
+                candidate = {
+                    **candidate,
+                    "statement": {**statement, "object": {"withheld": WITHHELD_MARK}},
+                }
+        if base_restricted or candidate_restricted:
+            # A delta's leaves copy either side's evidence without naming its
+            # Capture: withheld whole when either side rests on a withheld one.
+            member = {**member, "candidate_semantic_artifact": candidate, "semantic_delta": []}
+        members.append(member)
+    commitments, complete = withheld_commitments(instance, coordinate, names)
+    redacted = redact_claim_evidence(
+        {**payload, "members": members, "item_reasons": []},
+        captures=names,
+        commitments=commitments,
+        every_span=not complete,
+    )
+    assert isinstance(redacted, dict)
+    redacted["withheld"] = notice.model_dump(mode="json")
+    return redacted

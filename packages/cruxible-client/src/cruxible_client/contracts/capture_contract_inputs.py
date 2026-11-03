@@ -17,6 +17,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecy
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     CanonicalDuration,
+    CaptureBodyAccess,
     CaptureContract,
     CaptureContractAny,
     CaptureContractV1,
@@ -54,6 +55,12 @@ class CaptureContractInputRecord(BaseModel):
         description="How the bytes decode for an extract: {format: json|csv|text|bytes, "
         "encoding: identity|gzip, csv?: {comment_prefix, header}, limits: {decoded_bytes, "
         "depth, records}}. Required for any CaptureContract an extract reads.",
+    )
+    body_access: CaptureBodyAccess | None = Field(
+        default=None,
+        description="Who may read this kind's bytes and body-derived metadata: open (default; "
+        "any reader) or restricted (only a caller holding cruxible_body_read_restricted; "
+        "others get the inventory view and a body_restricted notice). Fixed with the name.",
     )
     lifecycle: Literal["live", "retired"] | None = None
 
@@ -111,6 +118,7 @@ def _lower_capture_contract_input(
             components=capture_shape_components(record.shape, replay),
             epistemic_grade=record.grade or "observed",
             decoding=record.decoding,
+            body_access=record.body_access or "open",
             selection_budget=CaptureSelectionBudget(
                 max_bytes=record.max_bytes or 16 * 1024 * 1024, max_rows=1, max_items=1
             ),
@@ -174,6 +182,8 @@ def _lower_capture_contract_input(
         updates["epistemic_grade"] = record.grade
     if "decoding" in record.model_fields_set:
         updates["decoding"] = record.decoding
+    if "body_access" in record.model_fields_set:
+        updates["body_access"] = record.body_access
     if "max_bytes" in record.model_fields_set:
         updates["selection_budget"] = predecessor.selection_budget.model_copy(
             update={"max_bytes": record.max_bytes}
@@ -206,7 +216,7 @@ def _lower_capture_contract_input(
     )
     contract = CaptureContract.model_validate({**predecessor.model_dump(mode="python"), **updates})
     broken = capture_contract_successor_break(predecessor, contract)
-    if broken and contract.lifecycle.state != "retired":
+    if broken and (contract.lifecycle.state != "retired" or broken == "body_access"):
         raise CaptureFormatError(
             f"cruxible.capture_contract.incompatible_successor: {broken} changed; use a new name"
         )

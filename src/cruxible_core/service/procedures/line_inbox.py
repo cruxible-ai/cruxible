@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from cruxible_client.contracts.capture_reads import BodyRestricted
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import ReadRefusalError, SubjectNotFoundError
 from cruxible_client.contracts.line_inbox import (
     INBOX_ITEM_SELECTOR_PATTERN,
@@ -19,6 +21,7 @@ from cruxible_client.contracts.line_inbox import (
     InboxDisposition,
     InboxDispositionResult,
     InboxItem,
+    InboxItemEnvelope,
     InboxItemStatus,
     InboxLinked,
     InboxLinkProposal,
@@ -33,6 +36,7 @@ from cruxible_core.exhaust.line_inbox import InboxItemNotFound, LineInboxStore
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.subject_aliases import resolve_subject_ref
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.evidence.body_access import capture_access_resolver
 from cruxible_core.service.procedures.procedure_runs import ProcedureSurfaceError
 
 _INBOX_LIST_REPAIR = RepairOperation(operation="cruxible.inbox.list")
@@ -79,6 +83,49 @@ def _resolve(store: LineInboxStore, selector: str) -> str:
         ) from exc
 
 
+def _withheld(
+    instance: PlaybillInstance,
+    envelopes: tuple[InboxItemEnvelope, ...],
+    access: BodyAccessContext | None,
+) -> dict[str, BodyRestricted]:
+    """Each item standing on a restricted kind's Captures, and its notice (C14).
+
+    An item's payload carries values its runs derived from the Captures they
+    consumed; it inherits their restriction. The Captures are the sightings'
+    own and each sighting run's journaled consumed set (one provenance read per
+    distinct run on the page); an unreadable record withholds the item.
+    """
+
+    from cruxible_core.service.discovery.runs import run_consumed_captures
+
+    reader = access or BodyAccessContext(principal_id="playbill-inbox")
+    if reader.can_read_restricted or not envelopes:
+        return {}
+    runs: dict[str, tuple[tuple[str, ...], bool]] = {}
+    digests: dict[str, set[str]] = {}
+    unknown: set[str] = set()
+    for envelope in envelopes:
+        found: set[str] = set()
+        for sighting in (envelope.first_sighting, *envelope.recent_sightings):
+            found.update(sighting.source_capture_digests)
+            if sighting.run_id not in runs:
+                runs[sighting.run_id] = run_consumed_captures(instance, sighting.run_id)
+            consumed, known = runs[sighting.run_id]
+            found.update(consumed)
+            if not known:
+                unknown.add(envelope.item_id)
+        digests[envelope.item_id] = found
+    resolver = capture_access_resolver(instance)
+    result: dict[str, BodyRestricted] = {}
+    for item_id, item_digests in digests.items():
+        _items, notice = resolver.withheld(sorted(item_digests), reader)
+        if notice is None and item_id in unknown:
+            notice = BodyRestricted(provenance_unavailable=True)
+        if notice is not None:
+            result[item_id] = notice
+    return result
+
+
 def service_list_inbox(
     instance: PlaybillInstance,
     *,
@@ -86,7 +133,10 @@ def service_list_inbox(
     status: InboxItemStatus | None = None,
     limit: int,
     cursor: str | None = None,
+    access: BodyAccessContext | None = None,
 ) -> InboxList:
+    """One page; ``access`` decides whether restricted-derived previews show (C14)."""
+
     if not 1 <= limit <= INBOX_LIST_MAX_LIMIT:
         raise InboxRequestInvalid(
             f"{InboxRequestInvalid.code}: limit must be between 1 and {INBOX_LIST_MAX_LIMIT}"
@@ -98,23 +148,35 @@ def service_list_inbox(
         )
     except ValueError as exc:
         raise InboxRequestInvalid(f"{InboxRequestInvalid.code}: {exc}") from exc
+    withheld = _withheld(instance, tuple(item.envelope for item in items), access)
     return InboxList(
         line_filter=line_filter,
         status_filter=status,
         entries=tuple(
-            InboxListEntry(item=item.envelope, payload_preview=item.preview) for item in items
+            InboxListEntry(
+                item=item.envelope,
+                payload_preview=None if item.envelope.item_id in withheld else item.preview,
+                withheld=withheld.get(item.envelope.item_id),
+            )
+            for item in items
         ),
         truncated=next_cursor is not None,
         next_cursor=next_cursor,
     )
 
 
-def service_get_inbox_item(instance: PlaybillInstance, *, item: str) -> InboxItem:
+def service_get_inbox_item(
+    instance: PlaybillInstance, *, item: str, access: BodyAccessContext | None = None
+) -> InboxItem:
+    """One item whole; its payload is withheld when it stood on restricted Captures (C14)."""
+
     store = LineInboxStore(instance)
     stored = store.get(_resolve(store, item))
+    notice = _withheld(instance, (stored.envelope,), access).get(stored.envelope.item_id)
     return InboxItem(
         item=stored.envelope,
-        payload=stored.payload,
+        payload=None if notice is not None else stored.payload,
+        withheld=notice,
         recent_dispositions=stored.recent_dispositions,
     )
 

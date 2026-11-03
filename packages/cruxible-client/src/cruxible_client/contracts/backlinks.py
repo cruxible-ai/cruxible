@@ -24,6 +24,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from cruxible_client.contracts import AcceptedCoordinate
+from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.doc_sections import SectionPath
 from cruxible_client.contracts.get_reads import GetCoordinate, ReadSurface
 
@@ -91,6 +92,9 @@ class BacklinksResult(_StrictBacklinkModel):
     links: tuple[Backlink, ...]
     truncated: bool = False
     next_cursor: str | None = None
+    #: C14: links citing a Capture withheld from this reader keep their relation
+    #: and source, without the section (file, heading path, cited digest).
+    withheld: BodyRestricted | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 __all__ = [

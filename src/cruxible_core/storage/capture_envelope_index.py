@@ -170,6 +170,59 @@ class CaptureEnvelopeIndex:
         digests = tuple(str(row[0]) for row in rows)
         return digests[:limit], len(digests) <= limit
 
+    def contracts_of(self, capture_digests: Collection[str]) -> dict[str, str]:
+        """The contract each stored Capture envelope names, by Capture digest, batched.
+
+        The C14 authorization read: the pair was recorded from the object's
+        own leading bytes when it was stored, so no envelope is read here. A
+        digest with no row is absent or no envelope; callers treat it as
+        unresolved. A preview reads the index as it stands, plus held bodies
+        and shards it has not added yet.
+        """
+
+        from cruxible_core.indexes.sql_batch import select_in
+        from cruxible_core.storage.cas import dry_run_held_bodies
+
+        wanted = sorted(set(capture_digests))
+        if not wanted:
+            return {}
+        query = "SELECT capture_digest,contract_digest FROM envelopes WHERE capture_digest IN ({})"
+        held = dry_run_held_bodies()
+        if held is None:
+            with self._connection() as connection:
+                self._backfill(connection)
+                return {str(c): str(k) for c, k in select_in(connection, query, wanted)}
+        found: dict[str, str] = {}
+        complete = False
+        if self.path.is_file() and not self.path.is_symlink():
+            with _LOCK:
+                connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=30)
+                try:
+                    found.update((str(c), str(k)) for c, k in select_in(connection, query, wanted))
+                    done = {row[0] for row in connection.execute("SELECT shard FROM backfilled")}
+                    complete = bool(
+                        connection.execute("SELECT 1 FROM backfill_complete").fetchone()
+                    )
+                except sqlite3.DatabaseError:
+                    done = set()
+                finally:
+                    connection.close()
+        else:
+            done = set()
+        for digest in wanted:
+            if digest in found:
+                continue
+            content = held.get(digest)
+            if content is not None:
+                named = envelope_contract(content[:ENVELOPE_HEAD_LENGTH])
+                if named is not None:
+                    found[digest] = named
+            elif not complete and digest.removeprefix("sha256:")[:2] not in done:
+                named = envelope_contract(self._store.peek(digest, ENVELOPE_HEAD_LENGTH))
+                if named is not None:
+                    found[digest] = named
+        return found
+
     def prefix(self, hex_prefix: str, *, limit: int) -> tuple[tuple[str, ...], bool]:
         """Bounded Capture candidates by digest prefix; no body directory scan.
 

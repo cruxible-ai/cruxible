@@ -74,7 +74,10 @@ PERMISSION_MODE_NAMES: tuple[str, ...] = tuple(_MODE_NAMES)
 # ---------------------------------------------------------------------------
 
 TOOL_PERMISSIONS: dict[str, PermissionMode] = {
-    "cruxible_capture_read": PermissionMode.GOVERNED_WRITE,
+    # Capture and Document bodies are read at the instance's read tier (C14); a
+    # restricted CaptureKind's bytes additionally need cruxible_body_read_restricted,
+    # re-checked per Capture in the service once its kind resolves.
+    "cruxible_capture_read": PermissionMode.READ_ONLY,
     # Erasing a retained body cannot be undone: the reviewing tier, never a
     # propose-only agent (the contract's own erasure rule is the authority).
     "cruxible_capture_erase": PermissionMode.GRAPH_WRITE,
@@ -166,6 +169,9 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
 
 # HTTP/CLI operations that share the same runtime boundary without being MCP tools.
 RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
+    # Reading a restricted CaptureKind's bytes and body-derived metadata (C14).
+    # Not a tool: every body-reading surface consults it per Capture.
+    "cruxible_body_read_restricted": PermissionMode.GOVERNED_WRITE,
     "cruxible_action_run": PermissionMode.GOVERNED_WRITE,
     "cruxible_init": PermissionMode.ADMIN,
     "cruxible_host_create": PermissionMode.ADMIN,
@@ -181,7 +187,7 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_host_show": PermissionMode.READ_ONLY,
     "cruxible_read": PermissionMode.READ_ONLY,
     "cruxible_propose": PermissionMode.GOVERNED_WRITE,
-    "cruxible_body_read": PermissionMode.GOVERNED_WRITE,
+    "cruxible_body_read": PermissionMode.READ_ONLY,
     "cruxible_ledger_set_mirror": PermissionMode.ADMIN,
     "cruxible_ledger_publish": PermissionMode.GOVERNED_WRITE,
     "cruxible_principal_change": PermissionMode.ADMIN,

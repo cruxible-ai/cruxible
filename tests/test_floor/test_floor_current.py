@@ -248,10 +248,12 @@ def test_bytes_that_are_not_text_show_a_typed_marker_with_their_size(world: dict
     )
 
 
-@pytest.mark.parametrize(("mode", "bodies"), [("READ_ONLY", False), ("GOVERNED_WRITE", True)])
-def test_the_export_carries_bodies_only_for_a_caller_who_may_read_them(
-    monkeypatch: pytest.MonkeyPatch, mode: str, bodies: bool
+@pytest.mark.parametrize(("mode", "restricted"), [("READ_ONLY", False), ("GOVERNED_WRITE", True)])
+def test_the_export_always_carries_document_bodies(
+    monkeypatch: pytest.MonkeyPatch, mode: str, restricted: bool
 ) -> None:
+    """Document bodies are read at the read tier (C14); only restricted bytes need the key."""
+
     from types import SimpleNamespace
 
     from cruxible_core.runtime import playbill_api
@@ -269,7 +271,7 @@ def test_the_export_carries_bodies_only_for_a_caller_who_may_read_them(
     )
     with request_permission_scope(PermissionMode[mode]), pytest.raises(LookupError):
         playbill_api.playbill_export_floor("inst_floor")
-    assert [item.can_read_body for item in seen] == [bodies]
+    assert [(item.can_read_body, item.can_read_restricted) for item in seen] == [(True, restricted)]
 
 
 def _export_envelope(files: dict[str, bytes]) -> Any:

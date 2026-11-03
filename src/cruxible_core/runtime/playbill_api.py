@@ -455,11 +455,23 @@ def _require_writer(instance_id: str) -> None:
 
 
 def _access(instance_id: str, *, include_body: bool) -> BodyAccessContext:
+    """The caller's body access: bodies at the read tier, restricted kinds by key (C14).
+
+    ``can_read_restricted`` is decided here, from the caller's tier and scope,
+    and re-checked by every service per Capture once that Capture's kind
+    resolves: a restricted kind's bytes need ``cruxible_body_read_restricted``.
+    """
+
     actor = _actor_context()
     principal_id = "anonymous" if actor is None else actor.actor_id
     if include_body:
         check_permission("cruxible_body_read", instance_id=instance_id)
-    return BodyAccessContext(principal_id=principal_id, can_read_body=include_body)
+    return BodyAccessContext(
+        principal_id=principal_id,
+        can_read_body=include_body,
+        can_read_restricted=include_body
+        and _permits("cruxible_body_read_restricted", instance_id=instance_id),
+    )
 
 
 def _consumption_context() -> ConsumptionContextV1 | None:
@@ -1350,10 +1362,18 @@ def playbill_review_proposal(
     findings_after: str | None = None,
 ) -> contracts.ProposalReviewResponse:
     check_permission("cruxible_proposal_review", instance_id=instance_id)
+    access = _access(instance_id, include_body=bool(include_body))
     result = service_review_playbill_proposal(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
-        access=_access(instance_id, include_body=bool(include_body)),
+        # C14: restricted-derived values follow the caller's key, not include_body.
+        access=access.model_copy(
+            update={
+                "can_read_restricted": _permits(
+                    "cruxible_body_read_restricted", instance_id=instance_id
+                )
+            }
+        ),
         include_body=include_body,
         workspace_observation=workspace_observation,
         detail=detail,
@@ -1368,7 +1388,15 @@ def playbill_review_proposal(
     )
     if isinstance(result, contracts.ProposalReviewSummary):
         return result
-    return contracts.ProposalReview.model_validate(result.model_dump(mode="json"))
+    from cruxible_core.service.proposals.review import withhold_review_values
+
+    return contracts.ProposalReview.model_validate(
+        withhold_review_values(
+            get_playbill_manager().get(instance_id),
+            result.model_dump(mode="json"),
+            _access(instance_id, include_body=True),
+        )
+    )
 
 
 def playbill_prepare_approval(
@@ -1385,7 +1413,17 @@ def playbill_prepare_approval(
         signer_id=signer_id,
         access=_access(instance_id, include_body=include_body),
     )
-    return contracts.ApprovalChallenge.model_validate(result.model_dump(mode="json"))
+    from cruxible_core.service.proposals.review import withhold_review_values
+
+    # C14: the challenge's review follows the caller's key; the statement the
+    # signer signs (payload and root digests) is untouched.
+    challenge = result.model_dump(mode="json")
+    challenge["review"] = withhold_review_values(
+        get_playbill_manager().get(instance_id),
+        challenge["review"],
+        _access(instance_id, include_body=True),
+    )
+    return contracts.ApprovalChallenge.model_validate(challenge)
 
 
 def playbill_submit_approval(
@@ -2179,7 +2217,11 @@ def playbill_read_claim_batch(
     instance_id: str, *, request: ClaimReadBatchRequest
 ) -> ClaimReadBatchResult:
     check_permission("cruxible_read", instance_id=instance_id)
-    result = service_read_claim_batch(get_playbill_manager().get(instance_id), request=request)
+    result = service_read_claim_batch(
+        get_playbill_manager().get(instance_id),
+        request=request,
+        access=_access(instance_id, include_body=True),
+    )
     _record_consumed_paths(
         instance_id,
         operation="playbill.claim.get",
@@ -2195,7 +2237,11 @@ def playbill_backlinks(instance_id: str, *, request: BacklinksRequest) -> Backli
     from cruxible_core.service.discovery.backlinks import service_playbill_backlinks
 
     check_permission("cruxible_backlinks", instance_id=instance_id)
-    return service_playbill_backlinks(get_playbill_manager().get(instance_id), request=request)
+    return service_playbill_backlinks(
+        get_playbill_manager().get(instance_id),
+        request=request,
+        access=_access(instance_id, include_body=True),
+    )
 
 
 def playbill_read_claim_backings(
@@ -2389,7 +2435,27 @@ def _run_procedure(
         note_consumption_unobserved(
             instance, context=consumption_context, coordinate=result.coordinate
         )
-    return contracts.ProcedureRunState.model_validate(result.model_dump(mode="json"))
+    return _withhold_run_values(
+        instance_id, contracts.ProcedureRunState.model_validate(result.model_dump(mode="json"))
+    )
+
+
+def _withhold_run_values(
+    instance_id: str, state: contracts.ProcedureRunState
+) -> contracts.ProcedureRunState:
+    """C14: a run that read restricted Captures answers without their derived values."""
+
+    from cruxible_core.service.discovery.runs import run_values_withheld, withhold_run_values
+
+    return withhold_run_values(
+        state,
+        run_values_withheld(
+            get_playbill_manager().get(instance_id),
+            state.run_id,
+            _access(instance_id, include_body=True),
+            source_observations=state.source_observations,
+        ),
+    )
 
 
 def playbill_procedure_run_status(
@@ -2405,6 +2471,7 @@ def playbill_procedure_run_status(
         get_playbill_manager().get(instance_id),
         run_id,
         viewer=_operational_viewer(instance_id),
+        access=_access(instance_id, include_body=True),
     )
 
 
@@ -2568,6 +2635,7 @@ def playbill_inbox_list(
         status=status,
         limit=limit,
         cursor=cursor,
+        access=_access(instance_id, include_body=True),
     )
 
 
@@ -2575,7 +2643,11 @@ def playbill_inbox_get(instance_id: str, item_id: str) -> contracts.InboxItem:
     check_permission("cruxible_inbox_get", instance_id=instance_id)
     from cruxible_core.service.procedures.line_inbox import service_get_inbox_item
 
-    return service_get_inbox_item(get_playbill_manager().get(instance_id), item=item_id)
+    return service_get_inbox_item(
+        get_playbill_manager().get(instance_id),
+        item=item_id,
+        access=_access(instance_id, include_body=True),
+    )
 
 
 def _inbox_actor(instance_id: str) -> GovernedActorContext:
@@ -2699,7 +2771,9 @@ def playbill_line_run(
         workspace_file_reader=workspace_file_reader,
         evaluation_instant_skew=manager.procedure_run_config().evaluation_instant_skew,
     )
-    return contracts.ProcedureRunState.model_validate(result.model_dump(mode="json"))
+    return _withhold_run_values(
+        instance_id, contracts.ProcedureRunState.model_validate(result.model_dump(mode="json"))
+    )
 
 
 def _caller_authoring_refusal(instance_id: str) -> AuthoringRefusal | None:
@@ -2951,6 +3025,7 @@ def playbill_resolve_coverage(
         at=at,
         budget=budget,
         scan_budget=scan_budget,
+        access=_access(instance_id, include_body=True),
     )
     claim_paths = tuple(
         address.artifact_path
@@ -2984,14 +3059,12 @@ def playbill_export_floor(
     """
 
     check_permission("cruxible_read", instance_id=instance_id)
-    # Document bodies keep their own read boundary: the floor carries them only
-    # for a caller who may read bodies, and says how to read them otherwise.
-    may_read_bodies = get_current_mode() >= PERMISSION_REQUIREMENTS["cruxible_body_read"]
+    # Document bodies are read at the read tier (C14): the floor always carries them.
     files = service_export_playbill_floor(
         get_playbill_manager().get(instance_id),
         at=at,
         include=include,
-        access=_access(instance_id, include_body=may_read_bodies),
+        access=_access(instance_id, include_body=True),
     )
     manifest = json.loads(files[MANIFEST_PATH])
     return contracts.FloorExport(
@@ -3093,15 +3166,9 @@ def _playbill_get(
     result = service_playbill_get(
         get_playbill_manager().get(instance_id),
         request=request.model_copy(update={"full_coordinate": True}),
-        # A Document's why maps its source to its body when the caller may read
-        # bodies; it never refuses for want of that permission.
-        access=_access(
-            instance_id,
-            include_body=request.detail == "body"
-            or (
-                request.detail == "why" and _permits("cruxible_body_read", instance_id=instance_id)
-            ),
-        ),
+        # Document bodies are read at the read tier (C14); a restricted
+        # CaptureKind's bytes are withheld per Capture without the key.
+        access=_access(instance_id, include_body=True),
         viewer=_operational_viewer(instance_id),
         subject_suggestions=subject_suggestions,
     )

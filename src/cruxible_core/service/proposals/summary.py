@@ -18,6 +18,8 @@ from contextlib import closing
 from typing import Any
 
 from cruxible_client.contracts.candidates import CandidateRecord
+from cruxible_client.contracts.capture_reads import BodyRestricted
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claims import ClaimArtifact, parse_claim
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.primitives import canonical_json
@@ -159,6 +161,9 @@ def _build(
     counts = dict(created=0, revised=0, retired=0)
     finding_count = 0
     prior_refusal_member_count = 0
+    # C14: every Capture a candidate Claim cites, so a page can withhold what
+    # was extracted from a restricted kind without rereading any member.
+    cited: set[str] = set()
     definitions: set[str] = set()
     evidence = {item.path: item for item in candidate.law_evidence}
     # Only immutable changed paths drive this explicit cold rebuild. No population scan.
@@ -173,6 +178,8 @@ def _build(
             artifact = new or old
             if artifact is None:
                 raise ProposalIntegrityError("Review member is missing from both exact trees")
+            if member.artifact_kind == "claim" and new is not None:
+                cited.update(new.get("backing", {}).get("capture_digests", ()))
             kind = _subject_kind(artifact, member.artifact_kind)
             definition = claim_type_identity(artifact, member.artifact_kind)
             if definition is not None and len(definitions) < REVIEW_GUIDANCE_MAX_DEFINITIONS:
@@ -323,6 +330,7 @@ def _build(
                     **(metadata or {}),
                     "subject_kind_count": len(kinds),
                     "prior_refusal_member_count": prior_refusal_member_count,
+                    "cited_captures": sorted(cited),
                     "guided_definitions": sorted(definitions),
                 }
             ),
@@ -377,8 +385,11 @@ def service_review_summary(
     limit: int = 5,
     groups_limit: int = 5,
     findings_after: str | None = None,
+    access: BodyAccessContext | None = None,
 ) -> ProposalReviewSummary:
-    """Read bounded groups/rows. Cold reconstruction is atomic and candidate-local."""
+    """Read bounded groups/rows; ``access`` decides restricted-derived values (C14).
+
+    Cold reconstruction is atomic and candidate-local."""
     evidence = instance.proposal_evidence()
     admission = evidence.read_admission(proposal_id)
     evaluation = evidence.read_evaluation(admission.proposal_id)
@@ -387,6 +398,8 @@ def service_review_summary(
         raise ProposalIntegrityError("Refused proposal has no reviewable candidate")
     # Receipt cutoffs and item reasons belong to an admission, even when two
     # admissions carry the same candidate. Their caches and cursors must differ.
+    # A build from before C14 records no cited Captures: its candidate values
+    # are withheld from a reader without the key (fail closed).
     cache_key = f"{digest};{admission.proposal_id}"
     limit = max(1, min(limit, MAX_ROWS))
     groups_limit = max(1, min(groups_limit, MAX_GROUPS))
@@ -495,6 +508,7 @@ def service_review_summary(
             )
         }
         metadata = json.loads(built[3])
+        cited_captures = metadata.pop("cited_captures", None)
         guidance = review_guidance(
             instance,
             metadata.pop("guided_definitions", ()),
@@ -510,7 +524,7 @@ def service_review_summary(
             "AND position>? ORDER BY position LIMIT ?",
             (cache_key, findings_key, MAX_FINDINGS + 1),
         ).fetchall()
-        return ProposalReviewSummary(
+        summary = ProposalReviewSummary(
             proposal_id=admission.proposal_id,
             candidate_digest=digest,
             settlement_base=AcceptedCoordinate.from_internal(
@@ -540,6 +554,61 @@ def service_review_summary(
                 else None
             ),
         )
+    return withhold_summary_values(instance, summary, cited_captures, access)
+
+
+def withhold_summary_values(
+    instance: PlaybillInstance,
+    summary: ProposalReviewSummary,
+    cited_captures: object,
+    access: BodyAccessContext | None,
+) -> ProposalReviewSummary:
+    """A summary without candidate values extracted from restricted Captures (C14).
+
+    When a candidate Claim cites a Capture withheld from the reader, every
+    proposed (``after``) value, shared candidate field, finding and item
+    reason goes; accepted (``before``) values, counts, groups, digests and the
+    candidate digest a signer signs stay. A build without its cited Captures
+    withholds (fail closed).
+    """
+
+    from cruxible_core.service.evidence.body_access import (
+        NO_RESTRICTED_ACCESS,
+        capture_access_resolver,
+    )
+
+    reader = access or NO_RESTRICTED_ACCESS
+    if reader.can_read_restricted:
+        return summary
+    if isinstance(cited_captures, list):
+        _items, notice = capture_access_resolver(instance).withheld(
+            [str(item) for item in cited_captures], reader
+        )
+    else:
+        notice = BodyRestricted(provenance_unavailable=True)
+    if notice is None:
+        return summary
+    groups = tuple(
+        group.model_copy(
+            update={
+                "shared_fields": {
+                    key: value
+                    for key, value in group.shared_fields.items()
+                    if not key.startswith("after.")
+                },
+                "rows": tuple(
+                    row.model_copy(
+                        update={"after": None if row.after is None else {}, "findings": ()}
+                    )
+                    for row in group.rows
+                ),
+            }
+        )
+        for group in summary.groups
+    )
+    return summary.model_copy(
+        update={"groups": groups, "findings": (), "item_reasons": (), "withheld": notice}
+    )
 
 
 def render_review_summary(review: ProposalReviewSummary) -> str:

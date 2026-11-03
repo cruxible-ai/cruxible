@@ -81,17 +81,26 @@ COVERAGE_PRINCIPAL = "playbill-coverage"
 COVERAGE_EVIDENCE_ACCESS_CLASS: SourceAccessClass = "instance"
 
 
-def coverage_access_profile() -> CoverageAccessProfile:
+COVERAGE_RESTRICTED_ACCESS_PROFILE_ID = "cruxible.coverage.read-restricted"
+
+
+def coverage_access_profile(*, restricted: bool = False) -> CoverageAccessProfile:
     """The access profile the served coverage surface reads under.
 
-    Accepted evidence is indexed at the `instance` access class, exactly as the
-    Claim-explanation surface labels the source handles it returns, so a caller
-    holding this instance's read authority sees it and nothing wider.
+    Accepted evidence is indexed at the `instance` access class, or at
+    `restricted` when its Capture's kind is restricted (C14). A caller holding
+    this instance's read authority sees `instance` evidence; only one holding
+    ``cruxible_body_read_restricted`` (``restricted``) also sees restricted
+    evidence, and everyone else is told it exists and was withheld.
     """
 
     return CoverageAccessProfile(
-        profile_id=COVERAGE_ACCESS_PROFILE_ID,
-        permitted_access_classes=("instance", "public"),
+        profile_id=COVERAGE_RESTRICTED_ACCESS_PROFILE_ID
+        if restricted
+        else COVERAGE_ACCESS_PROFILE_ID,
+        permitted_access_classes=(
+            ("instance", "public", "restricted") if restricted else ("instance", "public")
+        ),
         disclose_restricted_existence=True,
     )
 
@@ -119,9 +128,10 @@ def build_accepted_evidence_index_v2(
     instance: PlaybillInstance,
     *,
     at: AcceptedCoordinate,
+    access: BodyAccessContext | None = None,
 ) -> EvidenceCitationIndexV2:
     """Export association-native coverage rows and verifier-owned trust."""
-    index, _envelopes = _accepted_evidence_inputs_v2(instance, at=at)
+    index, _envelopes = _accepted_evidence_inputs_v2(instance, at=at, access=access)
     return index
 
 
@@ -129,6 +139,7 @@ def _accepted_evidence_inputs_v2(
     instance: PlaybillInstance,
     *,
     at: AcceptedCoordinate,
+    access: BodyAccessContext | None = None,
 ) -> tuple[EvidenceCitationIndexV2, dict[str, CaptureEnvelopeAny]]:
     """Retain only this request's exact envelopes and full digest export.
 
@@ -143,8 +154,21 @@ def _accepted_evidence_inputs_v2(
         generation_root=at.generation_root,
         compiler_digest=at.compiler_digest,
     )
+    from cruxible_core.service.evidence.body_access import (
+        NO_RESTRICTED_ACCESS,
+        capture_access_resolver,
+        citation_access,
+    )
+
+    # C14: each row's access is its Captures' exact kinds'; a reader without
+    # the key never has a restricted Capture's envelope or body read for it.
+    classify = citation_access(
+        capture_access_resolver(instance, internal), access or NO_RESTRICTED_ACCESS
+    )
     with instance.bind_accepted_projection(internal) as projection:
-        return coverage_rows(projection.citations, bodies=instance.body_store(), at=at)
+        return coverage_rows(
+            projection.citations, bodies=instance.body_store(), at=at, access=classify
+        )
 
 
 def accepted_evidence_sources(
@@ -186,7 +210,10 @@ def _materialized_wanted_selections(
             {capture for citation in citations for capture in citation.capture_digests}
         )
         for capture_digest in capture_digests:
-            envelope = resolved_envelopes[capture_digest]
+            envelope = resolved_envelopes.get(capture_digest)
+            if envelope is None:
+                # C14: withheld from this reader; its bytes are never read for it.
+                continue
             if (
                 envelope.commitment.digest != digest
                 or envelope.commitment.byte_length != byte_length
@@ -264,8 +291,8 @@ def _citation_window_observations(
 
     for accepted_source, citation_id, capture_digest, commitment_digest in associations:
         observed = by_source.get(accepted_source.sort_key)
-        envelope = envelopes[capture_digest]
-        if not isinstance(envelope.source, ExternalSourceReference):
+        envelope = envelopes.get(capture_digest)
+        if envelope is None or not isinstance(envelope.source, ExternalSourceReference):
             continue
         selector = envelope.source.selector
         if not isinstance(selector, Mapping):
@@ -403,8 +430,12 @@ def service_resolve_playbill_coverage(
     at: AcceptedCoordinate | None = None,
     budget: CoverageCardBudget | None = None,
     scan_budget: CoverageScanBudget | None = None,
+    access: BodyAccessContext | None = None,
 ) -> CoverageResultV3:
     """Resolve one batch of working-set observations against accepted state.
+
+    ``access`` decides whether restricted evidence is shown (C14): only with
+    ``can_read_restricted``; ``None`` is the instance read profile.
 
     The whole operation is: rebuild the index, hash the observed snapshot into
     the overlay, publish the freshness manifest, resolve. Every step is a pure
@@ -417,7 +448,7 @@ def service_resolve_playbill_coverage(
         raise ProposalIntegrityError("a coverage request must name at least one working source")
 
     coordinate = _resolve_coordinate(instance, at)
-    index, envelopes = _accepted_evidence_inputs_v2(instance, at=coordinate)
+    index, envelopes = _accepted_evidence_inputs_v2(instance, at=coordinate, access=access)
     retired_associations = _retired_citation_window_inputs(
         instance,
         coordinate=coordinate,
@@ -428,7 +459,13 @@ def service_resolve_playbill_coverage(
         wanted=_materialized_wanted_selections(instance, index=index, envelopes=envelopes),
         budget=scan_budget,
     )
-    access_profile = coverage_access_profile()
+    # The key holder's profile only when restricted evidence is indexed: with
+    # none, both profiles answer alike and the instance profile names it.
+    access_profile = coverage_access_profile(
+        restricted=access is not None
+        and access.can_read_restricted
+        and any(item.access_class == "restricted" for item in index.citations)
+    )
     manifest = _publish_manifest_v2(
         instance,
         instance_id=instance_id,
@@ -488,6 +525,7 @@ def coverage_claim_lines(
 
 __all__ = [
     "COVERAGE_ACCESS_PROFILE_ID",
+    "COVERAGE_RESTRICTED_ACCESS_PROFILE_ID",
     "coverage_claim_lines",
     "accepted_evidence_sources",
     "build_accepted_evidence_index_v2",

@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.governance import (
     ActivationPolicy,
     ApprovalRequirement,
@@ -97,3 +98,7 @@ class ProposalReviewSummary(_SummaryModel):
     groups: tuple[ReviewSummaryGroup, ...]
     group_count: int = Field(ge=0)
     next_cursor: str | None = None
+    #: C14: a candidate Claim cites a Capture withheld from this reader, so the
+    #: proposed values, findings and item reasons are left out (accepted
+    #: ``before`` values and the candidate digest stay).
+    withheld: BodyRestricted | None = Field(default=None, exclude_if=lambda value: value is None)

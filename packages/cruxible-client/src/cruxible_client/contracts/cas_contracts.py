@@ -20,6 +20,9 @@ class BodyAccessContext(_StrictCasModel):
     tag: Literal["playbill-body-access-v1"] = "playbill-body-access-v1"
     principal_id: str
     can_read_body: bool = False
+    #: Whether the caller holds ``cruxible_body_read_restricted``: a restricted
+    #: CaptureKind's bytes and body-derived metadata are read only with it (C14).
+    can_read_restricted: bool = False
 
 
 class CasObjectMetadata(_StrictCasModel):

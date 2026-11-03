@@ -53,8 +53,13 @@ class InboxTerminalEgressSink:
         node_id: str,
         diagnostics: tuple[ClaimsDiagnostic, ...],
         at: datetime,
+        captures: tuple[str, ...] = (),
     ) -> None:
-        """Post typed extraction refusals once per finding, after terminal delivery."""
+        """Post typed extraction refusals once per finding, after terminal delivery.
+
+        Each item stands on the Captures the run decoded (``captures``); a
+        ``claim_not_in_source`` finding on the one Capture it names.
+        """
         from cruxible_core.exhaust.line_inbox import InboxPosting
 
         self.store.post(
@@ -69,7 +74,7 @@ class InboxTerminalEgressSink:
                     payload=d.model_dump(mode="json"),
                     source_capture_digests=(d.capture,)
                     if d.kind == "claim_not_in_source" and d.capture is not None
-                    else (),
+                    else tuple(sorted(set(captures))),
                     dedupe_payload={"kind": d.kind, "claim": d.claim}
                     if d.kind == "claim_not_in_source" and d.claim is not None
                     else None,

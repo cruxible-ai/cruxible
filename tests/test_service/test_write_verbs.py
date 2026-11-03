@@ -1197,18 +1197,11 @@ def test_an_ambiguous_capture_handle_refuses_with_the_longer_handles(
 ) -> None:
     prefix = "sha256:" + "a" * 12
     found = [prefix + "0" * 52, prefix + "1" * 52]
-    from cruxible_core.service.evidence import capture_reads
+    from cruxible_core.storage.capture_envelope_index import CaptureEnvelopeIndex
 
+    # Handle candidates come from the envelope index alone (no envelope read).
     monkeypatch.setattr(
-        capture_reads,
-        "retained_captures",
-        lambda _instance, **_kw: capture_reads.RetainedCaptureInventory(
-            captures=tuple(
-                capture_reads.RetainedCapture(digest=item, envelope=None)  # type: ignore[arg-type]
-                for item in found
-            ),
-            complete=True,
-        ),
+        CaptureEnvelopeIndex, "prefix", lambda _self, _prefix, *, limit: (tuple(found), True)
     )
     monkeypatch.setattr(write_verbs._Planner, "_verified_capture", lambda _self, _digest: True)
     refusal = _refusal(

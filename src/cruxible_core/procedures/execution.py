@@ -2199,6 +2199,17 @@ class _TransformInputInvalid(ExecutionError):
         self.slot = slot
 
 
+#: The journaled consumption record's version. A node or final record without
+#: it was written before C14 provenance and is read as unknown (fail closed).
+CONSUMPTION_VERSION = 1
+
+
+def _consumed(state: _RunState) -> dict[str, object]:
+    """The run's consumed Captures so far, versioned: an empty set is proven empty."""
+
+    return {"consumption": {"v": CONSUMPTION_VERSION, "captures": sorted(state.consumed_captures)}}
+
+
 @dataclass
 class _RunState:
     outputs: dict[str, CanonicalValue]
@@ -2236,6 +2247,11 @@ class _RunState:
     capture_bodies: dict[str, bytes] = dataclass_field(default_factory=dict)
     #: The CaptureContract digest each such Capture was committed under.
     capture_contracts: dict[str, str] = dataclass_field(default_factory=dict)
+    #: Every Capture whose bytes this run, or a child it invoked, consumed: a
+    #: provider's output, a trigger-bound or parameter Capture an extract read,
+    #: a child's. Journaled on every node_fired and on finalization, so a
+    #: reader of a running or finished run knows what its values derive from (C14).
+    consumed_captures: set[str] = dataclass_field(default_factory=set)
     #: Which aliases hold incomplete values, and the control lineage's state.
     completeness: Completeness = dataclass_field(default_factory=Completeness)
     #: Whether the value this run returns is complete, data and control lineage
@@ -2700,6 +2716,9 @@ class ProcedureExecutor:
             ),
             "halt": halt,
             "semantic_result_digest": semantic_result_digest,
+            # What the run consumed, versioned, so a reader tells proven-empty from
+            # a record written before C14 provenance (fail closed; D-R25 R4).
+            **_consumed(state),
             "provider_calls": state.provider_calls,
             "capture_bytes": state.capture_bytes,
             "invocation_receipt_digests": state.invocation_receipt_digests,
@@ -3287,6 +3306,7 @@ class ProcedureExecutor:
                         "kind": node.kind,
                         "verdict": "succeeded",
                         **self._diagnostic_report(node.node_id, state),
+                        **_consumed(state),
                         **({} if summary is None else {"summary": summary.model_dump(mode="json")}),
                     },
                 )
@@ -3302,6 +3322,7 @@ class ProcedureExecutor:
                         "kind": node.kind,
                         "verdict": "refused",
                         **self._diagnostic_report(node.node_id, state),
+                        **_consumed(state),
                     },
                 )
                 raise
@@ -3317,6 +3338,7 @@ class ProcedureExecutor:
                         "kind": node.kind,
                         "verdict": "failed",
                         **self._diagnostic_report(node.node_id, state),
+                        **_consumed(state),
                     },
                 )
                 raise
@@ -4104,6 +4126,7 @@ class ProcedureExecutor:
         body = self.bodies.read(envelope.commitment.digest, access=access)
         state.capture_bodies[capture_digest] = body
         state.capture_contracts[capture_digest] = envelope.capture_contract_digest
+        state.consumed_captures.add(capture_digest)
         return body
 
     def _run_extract(self, node: ExtractNode, *, state: _RunState) -> None:
@@ -4508,6 +4531,7 @@ class ProcedureExecutor:
         state.capture_bytes += len(body)
         state.capture_bodies[digest] = body
         state.capture_contracts[digest] = contract_digest
+        state.consumed_captures.add(digest)
         state.facts[digest] = DependencyEvidenceFactsV1(
             epistemic_grade=acquisition.epistemic_grade,
             provenance_grade=acquisition.provenance_grade,
@@ -4689,6 +4713,15 @@ class ProcedureExecutor:
         # The child's completion records an incomplete return (data or control
         # lineage); the invoke's output is that AND the inputs it passed.
         child_complete = final.get("return_complete", True) is not False
+        consumption = final.get("consumption")
+        consumed = consumption.get("captures") if isinstance(consumption, dict) else None
+        if (
+            not isinstance(consumption, dict)
+            or consumption.get("v") != CONSUMPTION_VERSION
+            or not isinstance(consumed, list)
+        ):
+            raise ExecutionError("nested completion records no Capture consumption")
+        state.consumed_captures.update(str(digest) for digest in consumed)
         budget = ProcedureRunBudget.model_validate(final["budget"]).observed
         state.provider_calls += budget.provider_calls
         state.capture_bytes += budget.capture_bytes
@@ -4862,8 +4895,14 @@ class ProcedureExecutor:
             :remaining
         ]
         if items and isinstance(self.egress_sink, FindingsSinkProtocol):
+            # A finding's values come from the Captures this run decoded; the
+            # items record them, so a restricted kind's values stay withheld (C14).
             self.egress_sink.route_findings(
-                admission=admission, node_id=node_id, diagnostics=items, at=self.clock.now()
+                admission=admission,
+                node_id=node_id,
+                diagnostics=items,
+                at=self.clock.now(),
+                captures=tuple(sorted(state.consumed_captures)),
             )
             state.inbox_items += len(items)
 
@@ -6219,6 +6258,8 @@ class ProcedureExecutor:
             control=state.control,
             provider_calls=state.provider_calls,
             capture_bytes=state.capture_bytes,
+            # One set: a repeat body's consumption is the run's.
+            consumed_captures=state.consumed_captures,
         )
         if body.operation == "transform":
             if body.transform_kind is None or not isinstance(body.spec, BaseModel):

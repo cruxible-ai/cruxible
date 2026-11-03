@@ -10,6 +10,8 @@ from typing import Any
 from cruxible_client.contracts import AcceptedCoordinate as ClientAcceptedCoordinate
 from cruxible_client.contracts import ClaimViewRecord
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.capture_reads import BodyRestricted
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_reads import (
     ClaimBackingsRequest,
     ClaimBackingsResult,
@@ -40,6 +42,7 @@ from cruxible_core.service.claims.claims import (
     _resolve_coordinate,
     materialize_playbill_claim_view,
 )
+from cruxible_core.service.evidence.body_access import withhold_evidence_payload
 from cruxible_core.service.evidence.evidence import (
     _claim_read_history_index,
     _IndexedClaimLawEvidence,
@@ -74,7 +77,14 @@ def service_read_claim_batch(
     instance: PlaybillInstance,
     *,
     request: ClaimReadBatchRequest,
+    access: BodyAccessContext | None = None,
 ) -> ClaimReadBatchResult:
+    """Claim views at one coordinate; ``access`` decides restricted evidence (C14).
+
+    Each view keeps its accepted value; spans, evidence locators and absence
+    witnesses of Captures withheld from ``access`` go from every copy, and the
+    result names them in ``withheld``. ``None`` reads without the restricted key.
+    """
     if request.cursor is not None and request.at is None:
         raise FormatError("Claim batch cursor requires an explicit accepted coordinate")
     coordinate = (
@@ -140,6 +150,8 @@ def service_read_claim_batch(
             truncated = len(identities) > request.limit
             identities = identities[: request.limit]
         views: list[ClaimViewRecord] = []
+        withheld_digests: set[str] = set()
+        withheld_kinds: set[str] = set()
         public_views = []
         projected_views = {view.envelope.identity: view for view in projection.claims(identities)}
         for identity in identities:
@@ -195,7 +207,13 @@ def service_read_claim_batch(
                 law=claim_history.law_evidence.get(str(public.envelope["path"])),
                 bodies=bodies,
             )
-            views.append(ClaimViewRecord.model_validate(view.model_dump(mode="json")))
+            payload, notice = withhold_evidence_payload(
+                instance, coordinate, view.model_dump(mode="json"), access
+            )
+            if notice is not None:
+                withheld_digests.update(notice.capture_digests)
+                withheld_kinds.update(notice.capture_kinds)
+            views.append(ClaimViewRecord.model_validate(payload))
     cursor = None
     if truncated:
         cursor = base64.urlsafe_b64encode(
@@ -206,6 +224,12 @@ def service_read_claim_batch(
         claims=tuple(views),
         truncated=truncated,
         cursor=cursor,
+        withheld=BodyRestricted(
+            capture_digests=tuple(sorted(withheld_digests)),
+            capture_kinds=tuple(sorted(withheld_kinds)),
+        )
+        if withheld_digests
+        else None,
     )
 
 

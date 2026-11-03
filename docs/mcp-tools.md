@@ -215,7 +215,7 @@ names the whole body's `body_digest`.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_capture_read` | Verify retained Capture evidence and read bounded material (`request.max_bytes` bounds it); `request.capture_digest` may be the full digest, a `CAP-<12 hex>` handle or a 12+ hex prefix unique among the Captures the write verbs resolve (cited, or retained and verifying) | `GOVERNED_WRITE` |
+| `cruxible_capture_read` | Verify retained Capture evidence and read bounded material (`request.max_bytes` bounds it); `request.capture_digest` may be the full digest, a `CAP-<12 hex>` handle or a 12+ hex prefix unique among the Captures the write verbs resolve (cited, or retained and verifying). A restricted CaptureKind's Capture answers its inventory view and a `body_restricted` notice unless the caller holds the non-MCP `cruxible_body_read_restricted` (`GOVERNED_WRITE`) | `READ_ONLY` |
 | `cruxible_capture_erase` | Erase one Capture's retained body (the bytes go; the envelope and an erasure record of who, when and `because` stay) when its CaptureContract authorizes erasure; irreversible, so it previews unless `dry_run=false` with `at` = the preview's `coordinate.digest` | `GRAPH_WRITE` |
 
 ## Sources
@@ -248,7 +248,7 @@ The principal registry is `orient(section="principals")`; one record is
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_claim_type_propose` | Propose a governed predicate interface, or adopt a builtin (`builtin: semantic.alias` or `semantic.distinct_from`) | `GOVERNED_WRITE` |
-| `cruxible_capture_contract_propose` | Propose authored evidence: `input: {name, shape}` with optional grade, replay, retention, erasable, max_bytes and selector_privacy; omitted edit fields keep accepted values; lands when allowed (`accept: never` keeps the proposal) | `GOVERNED_WRITE` |
+| `cruxible_capture_contract_propose` | Propose authored evidence: `input: {name, shape}` with optional grade, replay, retention, erasable, max_bytes, selector_privacy and body_access (`open` or `restricted`, fixed with the name); omitted edit fields keep accepted values; lands when allowed (`accept: never` keeps the proposal) | `GOVERNED_WRITE` |
 | `cruxible_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
 | `cruxible_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; pass `capture_digests` (and optionally `referent_coordinate`) to attest on new Captures you examined instead of the Claim's own citations | `GOVERNED_WRITE` |
 | `cruxible_set` | Put one value in one field of one Subject (`kind/id`), replacing the live value without its Claim ID; a missing Subject of a known kind is added; `evidence` defaults to `because` as self evidence (an exact-content value is its own evidence); accepts in the same call when policy and tier allow it, else answers `awaiting_approval` with the eligible approvers and the approve call; `dry_run` writes nothing; `at` refuses `cruxible.write.slot_changed` if the field moved since; each change carries its `verdict`, and a verdict other than `supported` comes with a warning and its repair | `GOVERNED_WRITE` |

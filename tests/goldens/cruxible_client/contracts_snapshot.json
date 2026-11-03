@@ -1105,6 +1105,59 @@
             "title": "ArtifactPin",
             "type": "object"
           },
+          "BodyRestricted": {
+            "additionalProperties": false,
+            "description": "Bytes of restricted CaptureKinds were withheld from this caller (C14).\n\nA restricted kind's bytes, its envelopes' source and selector metadata, the\nspans cited from them, and values extracted from them into run outputs and\ninbox items are read only with ``cruxible_body_read_restricted``. The\nwithheld Captures are named by digest, each with its kind; accepted Claim\nvalues are never withheld.",
+            "properties": {
+              "capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Digests",
+                "type": "array"
+              },
+              "capture_kinds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Kinds",
+                "type": "array"
+              },
+              "kind": {
+                "const": "body_restricted",
+                "default": "body_restricted",
+                "title": "Kind",
+                "type": "string"
+              },
+              "provenance_unavailable": {
+                "default": false,
+                "title": "Provenance Unavailable",
+                "type": "boolean"
+              },
+              "required_permission": {
+                "const": "cruxible_body_read_restricted",
+                "default": "cruxible_body_read_restricted",
+                "title": "Required Permission",
+                "type": "string"
+              },
+              "required_tier": {
+                "const": "governed_write",
+                "default": "governed_write",
+                "title": "Required Tier",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-body-restricted-v1",
+                "default": "cruxible-body-restricted-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "BodyRestricted",
+            "type": "object"
+          },
           "CompilerUpgradeNotice": {
             "additionalProperties": false,
             "description": "What sets a compiler upgrade apart from every other proposal: it is one-way.\n\nCarried by the upgrade's preview, its proposal and its review, where the\ndecision to activate is made. Once activated, the accepted head names\n``target_compiler_digest``, and a release whose daemon does not install\nthat compiler can no longer serve the instance; there is no downgrade.",
@@ -1637,6 +1690,17 @@
                 "default": "playbill-proposal-review-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "withheld": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BodyRestricted"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -19411,6 +19475,165 @@
         "identity"
       ]
     },
+    "BodyRestricted": {
+      "fields": {
+        "capture_digests": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "capture_digests",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Capture Digests",
+            "type": "array"
+          }
+        },
+        "capture_kinds": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "capture_kinds",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Capture Kinds",
+            "type": "array"
+          }
+        },
+        "kind": {
+          "default": "body_restricted",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": false,
+          "schema": {
+            "const": "body_restricted",
+            "default": "body_restricted",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "provenance_unavailable": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "provenance_unavailable",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Provenance Unavailable",
+            "type": "boolean"
+          }
+        },
+        "required_permission": {
+          "default": "cruxible_body_read_restricted",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "required_permission",
+          "required": false,
+          "schema": {
+            "const": "cruxible_body_read_restricted",
+            "default": "cruxible_body_read_restricted",
+            "title": "Required Permission",
+            "type": "string"
+          }
+        },
+        "required_tier": {
+          "default": "governed_write",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "required_tier",
+          "required": false,
+          "schema": {
+            "const": "governed_write",
+            "default": "governed_write",
+            "title": "Required Tier",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "cruxible-body-restricted-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-body-restricted-v1",
+            "default": "cruxible-body-restricted-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Bytes of restricted CaptureKinds were withheld from this caller (C14).\n\nA restricted kind's bytes, its envelopes' source and selector metadata, the\nspans cited from them, and values extracted from them into run outputs and\ninbox items are read only with ``cruxible_body_read_restricted``. The\nwithheld Captures are named by digest, each with its kind; accepted Claim\nvalues are never withheld.",
+        "properties": {
+          "capture_digests": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Capture Digests",
+            "type": "array"
+          },
+          "capture_kinds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Capture Kinds",
+            "type": "array"
+          },
+          "kind": {
+            "const": "body_restricted",
+            "default": "body_restricted",
+            "title": "Kind",
+            "type": "string"
+          },
+          "provenance_unavailable": {
+            "default": false,
+            "title": "Provenance Unavailable",
+            "type": "boolean"
+          },
+          "required_permission": {
+            "const": "cruxible_body_read_restricted",
+            "default": "cruxible_body_read_restricted",
+            "title": "Required Permission",
+            "type": "string"
+          },
+          "required_tier": {
+            "const": "governed_write",
+            "default": "governed_write",
+            "title": "Required Tier",
+            "type": "string"
+          },
+          "tag": {
+            "const": "cruxible-body-restricted-v1",
+            "default": "cruxible-body-restricted-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "title": "BodyRestricted",
+        "type": "object"
+      },
+      "required_fields": []
+    },
     "CadenceSchedule": {
       "fields": {
         "interval_seconds": {
@@ -19994,6 +20217,31 @@
     },
     "CaptureContractInputRecord": {
       "fields": {
+        "body_access": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "body_access",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "open",
+                  "restricted"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Who may read this kind's bytes and body-derived metadata: open (default; any reader) or restricted (only a caller holding cruxible_body_read_restricted; others get the inventory view and a body_restricted notice). Fixed with the name.",
+            "title": "Body Access"
+          }
+        },
         "decoding": {
           "default": null,
           "default_json_serializable": true,
@@ -20318,6 +20566,23 @@
         "additionalProperties": false,
         "description": "A new name and shape, or a merge patch of an accepted contract.",
         "properties": {
+          "body_access": {
+            "anyOf": [
+              {
+                "enum": [
+                  "open",
+                  "restricted"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Who may read this kind's bytes and body-derived metadata: open (default; any reader) or restricted (only a caller holding cruxible_body_read_restricted; others get the inventory view and a body_restricted notice). Fixed with the name.",
+            "title": "Body Access"
+          },
           "decoding": {
             "anyOf": [
               {
@@ -30736,10 +31001,82 @@
             "title": "Tag",
             "type": "string"
           }
+        },
+        "withheld": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "withheld",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BodyRestricted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
         }
       },
       "json_schema": {
         "$defs": {
+          "BodyRestricted": {
+            "additionalProperties": false,
+            "description": "Bytes of restricted CaptureKinds were withheld from this caller (C14).\n\nA restricted kind's bytes, its envelopes' source and selector metadata, the\nspans cited from them, and values extracted from them into run outputs and\ninbox items are read only with ``cruxible_body_read_restricted``. The\nwithheld Captures are named by digest, each with its kind; accepted Claim\nvalues are never withheld.",
+            "properties": {
+              "capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Digests",
+                "type": "array"
+              },
+              "capture_kinds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Kinds",
+                "type": "array"
+              },
+              "kind": {
+                "const": "body_restricted",
+                "default": "body_restricted",
+                "title": "Kind",
+                "type": "string"
+              },
+              "provenance_unavailable": {
+                "default": false,
+                "title": "Provenance Unavailable",
+                "type": "boolean"
+              },
+              "required_permission": {
+                "const": "cruxible_body_read_restricted",
+                "default": "cruxible_body_read_restricted",
+                "title": "Required Permission",
+                "type": "string"
+              },
+              "required_tier": {
+                "const": "governed_write",
+                "default": "governed_write",
+                "title": "Required Tier",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-body-restricted-v1",
+                "default": "cruxible-body-restricted-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "BodyRestricted",
+            "type": "object"
+          },
           "InboxAcknowledged": {
             "additionalProperties": false,
             "description": "An agent saw the item and owes it nothing further.",
@@ -31118,6 +31455,17 @@
             "default": "cruxible-inbox-item-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "withheld": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BodyRestricted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
@@ -32229,6 +32577,59 @@
       },
       "json_schema": {
         "$defs": {
+          "BodyRestricted": {
+            "additionalProperties": false,
+            "description": "Bytes of restricted CaptureKinds were withheld from this caller (C14).\n\nA restricted kind's bytes, its envelopes' source and selector metadata, the\nspans cited from them, and values extracted from them into run outputs and\ninbox items are read only with ``cruxible_body_read_restricted``. The\nwithheld Captures are named by digest, each with its kind; accepted Claim\nvalues are never withheld.",
+            "properties": {
+              "capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Digests",
+                "type": "array"
+              },
+              "capture_kinds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Kinds",
+                "type": "array"
+              },
+              "kind": {
+                "const": "body_restricted",
+                "default": "body_restricted",
+                "title": "Kind",
+                "type": "string"
+              },
+              "provenance_unavailable": {
+                "default": false,
+                "title": "Provenance Unavailable",
+                "type": "boolean"
+              },
+              "required_permission": {
+                "const": "cruxible_body_read_restricted",
+                "default": "cruxible_body_read_restricted",
+                "title": "Required Permission",
+                "type": "string"
+              },
+              "required_tier": {
+                "const": "governed_write",
+                "default": "governed_write",
+                "title": "Required Tier",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-body-restricted-v1",
+                "default": "cruxible-body-restricted-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "BodyRestricted",
+            "type": "object"
+          },
           "InboxAcknowledged": {
             "additionalProperties": false,
             "description": "An agent saw the item and owes it nothing further.",
@@ -32545,6 +32946,17 @@
                 "default": "cruxible-inbox-list-entry-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "withheld": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BodyRestricted"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -32809,10 +33221,82 @@
             "title": "Tag",
             "type": "string"
           }
+        },
+        "withheld": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "withheld",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BodyRestricted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
         }
       },
       "json_schema": {
         "$defs": {
+          "BodyRestricted": {
+            "additionalProperties": false,
+            "description": "Bytes of restricted CaptureKinds were withheld from this caller (C14).\n\nA restricted kind's bytes, its envelopes' source and selector metadata, the\nspans cited from them, and values extracted from them into run outputs and\ninbox items are read only with ``cruxible_body_read_restricted``. The\nwithheld Captures are named by digest, each with its kind; accepted Claim\nvalues are never withheld.",
+            "properties": {
+              "capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Digests",
+                "type": "array"
+              },
+              "capture_kinds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Kinds",
+                "type": "array"
+              },
+              "kind": {
+                "const": "body_restricted",
+                "default": "body_restricted",
+                "title": "Kind",
+                "type": "string"
+              },
+              "provenance_unavailable": {
+                "default": false,
+                "title": "Provenance Unavailable",
+                "type": "boolean"
+              },
+              "required_permission": {
+                "const": "cruxible_body_read_restricted",
+                "default": "cruxible_body_read_restricted",
+                "title": "Required Permission",
+                "type": "string"
+              },
+              "required_tier": {
+                "const": "governed_write",
+                "default": "governed_write",
+                "title": "Required Tier",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-body-restricted-v1",
+                "default": "cruxible-body-restricted-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "BodyRestricted",
+            "type": "object"
+          },
           "InboxAcknowledged": {
             "additionalProperties": false,
             "description": "An agent saw the item and owes it nothing further.",
@@ -33276,6 +33760,17 @@
             "default": "cruxible-inbox-list-entry-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "withheld": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BodyRestricted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
@@ -63223,6 +63718,25 @@
             ],
             "default": null
           }
+        },
+        "withheld": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "withheld",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BodyRestricted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
         }
       },
       "json_schema": {
@@ -63371,6 +63885,59 @@
               "artifact_digest"
             ],
             "title": "ArtifactPin",
+            "type": "object"
+          },
+          "BodyRestricted": {
+            "additionalProperties": false,
+            "description": "Bytes of restricted CaptureKinds were withheld from this caller (C14).\n\nA restricted kind's bytes, its envelopes' source and selector metadata, the\nspans cited from them, and values extracted from them into run outputs and\ninbox items are read only with ``cruxible_body_read_restricted``. The\nwithheld Captures are named by digest, each with its kind; accepted Claim\nvalues are never withheld.",
+            "properties": {
+              "capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Digests",
+                "type": "array"
+              },
+              "capture_kinds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Kinds",
+                "type": "array"
+              },
+              "kind": {
+                "const": "body_restricted",
+                "default": "body_restricted",
+                "title": "Kind",
+                "type": "string"
+              },
+              "provenance_unavailable": {
+                "default": false,
+                "title": "Provenance Unavailable",
+                "type": "boolean"
+              },
+              "required_permission": {
+                "const": "cruxible_body_read_restricted",
+                "default": "cruxible_body_read_restricted",
+                "title": "Required Permission",
+                "type": "string"
+              },
+              "required_tier": {
+                "const": "governed_write",
+                "default": "governed_write",
+                "title": "Required Tier",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-body-restricted-v1",
+                "default": "cruxible-body-restricted-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "BodyRestricted",
             "type": "object"
           },
           "BoundObservationWindow": {
@@ -67690,6 +68257,17 @@
             "anyOf": [
               {
                 "$ref": "#/$defs/LineTriggerBinding"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "withheld": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BodyRestricted"
               },
               {
                 "type": "null"
@@ -73889,6 +74467,25 @@
             "title": "Tag",
             "type": "string"
           }
+        },
+        "withheld": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "withheld",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BodyRestricted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
         }
       },
       "json_schema": {
@@ -73970,6 +74567,59 @@
               "artifact_digest"
             ],
             "title": "ArtifactPin",
+            "type": "object"
+          },
+          "BodyRestricted": {
+            "additionalProperties": false,
+            "description": "Bytes of restricted CaptureKinds were withheld from this caller (C14).\n\nA restricted kind's bytes, its envelopes' source and selector metadata, the\nspans cited from them, and values extracted from them into run outputs and\ninbox items are read only with ``cruxible_body_read_restricted``. The\nwithheld Captures are named by digest, each with its kind; accepted Claim\nvalues are never withheld.",
+            "properties": {
+              "capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Digests",
+                "type": "array"
+              },
+              "capture_kinds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Kinds",
+                "type": "array"
+              },
+              "kind": {
+                "const": "body_restricted",
+                "default": "body_restricted",
+                "title": "Kind",
+                "type": "string"
+              },
+              "provenance_unavailable": {
+                "default": false,
+                "title": "Provenance Unavailable",
+                "type": "boolean"
+              },
+              "required_permission": {
+                "const": "cruxible_body_read_restricted",
+                "default": "cruxible_body_read_restricted",
+                "title": "Required Permission",
+                "type": "string"
+              },
+              "required_tier": {
+                "const": "governed_write",
+                "default": "governed_write",
+                "title": "Required Tier",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-body-restricted-v1",
+                "default": "cruxible-body-restricted-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "BodyRestricted",
             "type": "object"
           },
           "CompilerUpgradeNotice": {
@@ -74711,6 +75361,17 @@
             "default": "playbill-proposal-review-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "withheld": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BodyRestricted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
@@ -75100,6 +75761,25 @@
             "title": "Tag",
             "type": "string"
           }
+        },
+        "withheld": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "withheld",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BodyRestricted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
         }
       },
       "json_schema": {
@@ -75180,6 +75860,59 @@
               "name"
             ],
             "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "BodyRestricted": {
+            "additionalProperties": false,
+            "description": "Bytes of restricted CaptureKinds were withheld from this caller (C14).\n\nA restricted kind's bytes, its envelopes' source and selector metadata, the\nspans cited from them, and values extracted from them into run outputs and\ninbox items are read only with ``cruxible_body_read_restricted``. The\nwithheld Captures are named by digest, each with its kind; accepted Claim\nvalues are never withheld.",
+            "properties": {
+              "capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Digests",
+                "type": "array"
+              },
+              "capture_kinds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Kinds",
+                "type": "array"
+              },
+              "kind": {
+                "const": "body_restricted",
+                "default": "body_restricted",
+                "title": "Kind",
+                "type": "string"
+              },
+              "provenance_unavailable": {
+                "default": false,
+                "title": "Provenance Unavailable",
+                "type": "boolean"
+              },
+              "required_permission": {
+                "const": "cruxible_body_read_restricted",
+                "default": "cruxible_body_read_restricted",
+                "title": "Required Permission",
+                "type": "string"
+              },
+              "required_tier": {
+                "const": "governed_write",
+                "default": "governed_write",
+                "title": "Required Tier",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-body-restricted-v1",
+                "default": "cruxible-body-restricted-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "BodyRestricted",
             "type": "object"
           },
           "JsonValue": {},
@@ -75678,6 +76411,17 @@
             "default": "playbill-proposal-review-summary-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "withheld": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BodyRestricted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
