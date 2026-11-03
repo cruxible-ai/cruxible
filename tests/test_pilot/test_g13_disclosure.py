@@ -125,8 +125,8 @@ def test_every_capture_surface_authorizes_before_it_reads(
         evidence = _get(instance, claim, READER, "evidence")
         why = _get(instance, claim, READER, "why")
         claim_proof = _get(instance, claim, READER, "proof")
-        from cruxible_core.service.discovery.coverage import build_accepted_evidence_index_v2
         from cruxible_core.service.authoring.documents import AcceptedCoordinate
+        from cruxible_core.service.discovery.coverage import build_accepted_evidence_index_v2
 
         coverage = build_accepted_evidence_index_v2(
             instance,
