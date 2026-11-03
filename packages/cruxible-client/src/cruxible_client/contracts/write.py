@@ -127,7 +127,7 @@ WriteStatus = Literal[
     "would_await_approval",
     "would_refuse",
 ]
-WriteOp = Literal["create", "set", "add", "retire", "rebind"]
+WriteOp = Literal["create", "set", "add", "retire", "rebind", "about"]
 ApprovalReason = Literal[
     "independent_approval_required", "activation_not_permitted", "accept_never"
 ]
@@ -518,8 +518,59 @@ class RebindChange(_StrictWriteModel):
         return self
 
 
+class AboutChange(_StrictWriteModel):
+    """Link a workspace section ``about`` Subjects: a note, never a Claim (D-R12).
+
+    The section is named as section evidence names it: ``ref`` (a doc op of
+    this write, by id) or ``file`` and ``section``. ``subjects`` are added to
+    the section's note and ``unlink`` ones removed; a note left with none
+    retires. Linking again moves the note to the section's current bytes. The
+    writer's adapter observes the section; the daemon never reads the file.
+    """
+
+    op: Literal["about"] = "about"
+    file: str = ""
+    section: SectionPath = ()
+    ref: str | None = Field(default=None, min_length=1, exclude_if=_omit_none)
+    subjects: tuple[SubjectRef, ...] = Field(
+        default=(),
+        max_length=64,
+        exclude_if=_omit_empty,
+        description="Subjects the section is about (kind/id); default: the write's subject.",
+    )
+    unlink: tuple[SubjectRef, ...] = Field(default=(), max_length=64, exclude_if=_omit_empty)
+    observation: WorkingSelectionObservation | None = Field(
+        default=None,
+        exclude_if=_omit_none,
+        description="Filled by the client that read the section; leave it out.",
+    )
+
+    @model_serializer(mode="wrap")
+    def _reference_shape(self, handler: Any) -> dict[str, Any]:
+        result: dict[str, Any] = handler(self)
+        if self.ref is not None:
+            result.pop("file", None)
+            result.pop("section", None)
+        return result
+
+    @model_validator(mode="after")
+    def _section_named(self) -> AboutChange:
+        if self.ref is not None:
+            if {"file", "section"} & self.model_fields_set or self.observation is not None:
+                raise ValueError("about ref cannot be combined with file, section or observation")
+        elif not self.file or not self.section:
+            raise ValueError("about names a section: ref, or file and a nonempty section")
+        if set(self.subjects) & set(self.unlink):
+            raise ValueError("about cannot both link and unlink one Subject")
+        if self.observation is not None:
+            label = self.observation.selector.section
+            if label is None or label.path != self.section:
+                raise ValueError("about observation must label the named heading path")
+        return self
+
+
 Change = Annotated[
-    CreateChange | SetChange | AddChange | RetireChange | RebindChange,
+    CreateChange | SetChange | AddChange | RetireChange | RebindChange | AboutChange,
     Field(discriminator="op"),
 ]
 
@@ -689,6 +740,18 @@ class ChangeOutcome(_StrictWriteModel):
         exclude_if=_omit_none,
         description="The Capture cited as evidence, as its handle CAP-<12 hex>.",
     )
+    note: str | None = Field(
+        default=None,
+        exclude_if=_omit_none,
+        description="An about change: the section's note (NOTE-…).",
+    )
+    file: str | None = Field(default=None, exclude_if=_omit_none)
+    section: SectionPath | None = Field(default=None, exclude_if=_omit_none)
+    about: tuple[str, ...] | None = Field(
+        default=None,
+        exclude_if=_omit_none,
+        description="An about change: the Subjects the note links after it ([] = retired).",
+    )
 
 
 class WriteProposalRef(_StrictWriteModel):
@@ -791,7 +854,8 @@ class DocOutcome(_StrictWriteModel):
 
 DOCS_ONLY_HINT = (
     "No Claim cites this text. If it records a belief or decision, add a Claim citing "
-    "the section; if it is a draft or a note, prose is right."
+    "the section; to keep it as a note about Subjects, link it with an about change "
+    "(cruxible note); a draft stays prose."
 )
 
 
@@ -840,6 +904,7 @@ class WriteOutcome(_StrictWriteModel):
 
 
 __all__ = [
+    "AboutChange",
     "AppendSection",
     "DocEditObservation",
     "DocOp",

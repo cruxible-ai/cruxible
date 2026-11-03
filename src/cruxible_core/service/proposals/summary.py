@@ -34,6 +34,11 @@ from cruxible_client.contracts.refusal_receipts import PriorRefusalReceipt
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.indexes.proposal_review import initialize_review_projection
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.backlinks import (
+    REVIEW_GUIDANCE_MAX_DEFINITIONS,
+    claim_type_identity,
+    review_guidance,
+)
 
 BATCH_SIZE = 32
 MAX_GROUPS = 10
@@ -159,6 +164,7 @@ def _build(
     # C14: every Capture a candidate Claim cites, so a page can withhold what
     # was extracted from a restricted kind without rereading any member.
     cited: set[str] = set()
+    definitions: set[str] = set()
     evidence = {item.path: item for item in candidate.law_evidence}
     # Only immutable changed paths drive this explicit cold rebuild. No population scan.
     for start in range(0, len(candidate.members), BATCH_SIZE):
@@ -175,6 +181,9 @@ def _build(
             if member.artifact_kind == "claim" and new is not None:
                 cited.update(new.get("backing", {}).get("capture_digests", ()))
             kind = _subject_kind(artifact, member.artifact_kind)
+            definition = claim_type_identity(artifact, member.artifact_kind)
+            if definition is not None and len(definitions) < REVIEW_GUIDANCE_MAX_DEFINITIONS:
+                definitions.add(definition)
             receipt = artifact.get("backing", {}).get("procedure_evidence", {})
             template = (
                 receipt.get("procedure_digest"),
@@ -322,6 +331,7 @@ def _build(
                     "subject_kind_count": len(kinds),
                     "prior_refusal_member_count": prior_refusal_member_count,
                     "cited_captures": sorted(cited),
+                    "guided_definitions": sorted(definitions),
                 }
             ),
         ),
@@ -498,6 +508,13 @@ def service_review_summary(
         }
         metadata = json.loads(built[3])
         cited_captures = metadata.pop("cited_captures", None)
+        guidance = review_guidance(
+            instance,
+            metadata.pop("guided_definitions", ()),
+            line=None
+            if admission.originating_line is None
+            else admission.originating_line.identity.qualified,
+        )
         findings_key = _after(findings_after, cache_key, "findings", -1)
         if not isinstance(findings_key, int):
             raise ProposalIntegrityError("Invalid findings cursor; use findings_next_cursor")
@@ -527,6 +544,7 @@ def service_review_summary(
                 if len(findings) > MAX_FINDINGS
                 else None
             ),
+            guidance=guidance,
             groups=tuple(result),
             group_count=built[1],
             next_cursor=(
@@ -625,6 +643,9 @@ def render_review_summary(review: ProposalReviewSummary) -> str:
             f"Earlier refusal coverage: generation {coverage.indexed_through_generation} "
             f"of {coverage.accepted_generation} at summary build; --detail to refresh"
         )
+    for item in review.guidance:
+        title = "" if item.title is None else f" ({item.title})"
+        lines.append(f"Guidance for {item.definition}: {item.document}{title}")
     for finding in review.findings:
         lines.append(f"Finding: {_json(finding.value)}")
     lines.append(

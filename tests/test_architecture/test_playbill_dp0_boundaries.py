@@ -453,6 +453,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "suppress_curation",
         "unsuppress_curation",
         "since",
+        "backlinks",
     }
 
 

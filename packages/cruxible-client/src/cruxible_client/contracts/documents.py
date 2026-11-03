@@ -56,9 +56,20 @@ def _kind_qualified(value: str, *, label: str) -> str:
     return value
 
 
+#: The relations core indexes as backlinks, and the target kinds each takes
+#: (D-R17): ``about`` a Subject, ``guides`` a ClaimType or Procedure (review
+#: guidance). Every other relation is a label: carried, never indexed.
+DOCUMENT_LINK_RELATIONS: dict[str, tuple[str, ...]] = {
+    "about": ("Subject",),
+    "guides": ("ClaimType", "Procedure"),
+}
+
+
 class DocumentLink(_StrictDocumentModel):
     relation: str
-    target_identity: str
+    target_identity: str = Field(
+        description="A kind-qualified identity: Subject:kind/id, ClaimType:p, Procedure:n, …"
+    )
 
     @field_validator("relation")
     @classmethod
@@ -68,7 +79,19 @@ class DocumentLink(_StrictDocumentModel):
     @field_validator("target_identity")
     @classmethod
     def _target_identity(cls, value: str) -> str:
-        return _kind_qualified(value, label="document link target")
+        if _KIND_QUALIFIED_RE.fullmatch(value):
+            return _kind_qualified(value, label="document link target")
+        try:
+            parse_artifact_identity(value)
+        except ValueError as exc:
+            raise ValueError("document link target must be a kind-qualified identity") from exc
+        return value
+
+    @property
+    def indexed(self) -> bool:
+        """Whether core indexes this link as a backlink (its relation is core vocabulary)."""
+
+        return self.relation in DOCUMENT_LINK_RELATIONS
 
 
 class DocumentPin(_StrictDocumentModel):
@@ -360,8 +383,13 @@ def evaluate_document_law(
     path: str,
     bodies: BodyVerifierProtocol,
     predecessor: AcceptedDocument | None,
+    link_rules: bool = True,
 ) -> DocumentLawResult:
-    """Evaluate the complete dependency-free Family-1 Document acceptance law."""
+    """Evaluate the complete dependency-free Family-1 Document acceptance law.
+
+    ``link_rules`` is the law's revision-4 rule (closed indexed link kinds);
+    replay of a receipt recorded under revision 3 passes False.
+    """
 
     try:
         validate_document_path(shell, path)
@@ -372,6 +400,21 @@ def evaluate_document_law(
                 _diagnostic("cruxible.document.identity_path_mismatch", str(exc), path=path),
             ),
         )
+
+    for link in shell.links if link_rules else ():
+        kinds = DOCUMENT_LINK_RELATIONS.get(link.relation)
+        if kinds is not None and link.target_identity.partition(":")[0] not in kinds:
+            return DocumentLawResult(
+                verdict="refused",
+                diagnostics=(
+                    _diagnostic(
+                        "cruxible.document.link_target_invalid",
+                        f"A Document {link.relation!r} link names a {' or '.join(kinds)}; "
+                        f"{link.target_identity!r} is not one.",
+                        path=path,
+                    ),
+                ),
+            )
 
     try:
         body_present = bodies.verify(shell.body_digest)
@@ -460,6 +503,7 @@ __all__ = [
     "AcceptedDocument",
     "BodyVerifierProtocol",
     "DOCUMENT_DIGEST_FUNCTIONS",
+    "DOCUMENT_LINK_RELATIONS",
     "DocumentActivationPolicy",
     "DocumentAuthority",
     "DocumentArtifactAdapter",

@@ -59,6 +59,14 @@ class ReviewSummaryGroup(_SummaryModel):
     next_cursor: str | None = None
 
 
+class ReviewGuidance(_SummaryModel):
+    """A governed Document that ``guides`` a ClaimType or Procedure this proposal touches."""
+
+    definition: str = Field(description="ClaimType:<predicate> or Procedure:<name>.")
+    document: str
+    title: str | None = None
+
+
 class ProposalReviewSummary(_SummaryModel):
     tag: Literal["playbill-proposal-review-summary-v1"] = "playbill-proposal-review-summary-v1"
     proposal_id: str
@@ -84,6 +92,9 @@ class ProposalReviewSummary(_SummaryModel):
     findings: tuple[ReviewSummaryValue, ...]
     finding_count: int = Field(ge=0)
     findings_next_cursor: str | None = None
+    # Review guidance for the ClaimTypes and Procedure this proposal touches,
+    # read from the backlink index at the current head (bounded).
+    guidance: tuple[ReviewGuidance, ...] = Field(default=(), exclude_if=lambda value: not value)
     groups: tuple[ReviewSummaryGroup, ...]
     group_count: int = Field(ge=0)
     next_cursor: str | None = None

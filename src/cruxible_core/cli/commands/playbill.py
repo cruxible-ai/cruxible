@@ -4951,6 +4951,10 @@ def _write_text(outcome: WriteOutcome) -> None:
             line = f"  add {target}: {_get_value_text(change.after)}"
         elif change.op == "rebind":
             line = f"  rebind {target}: {_get_value_text(change.after)} (value unchanged)"
+        elif change.op == "about":
+            where = f"{change.file}#{'/'.join(change.section or ())}"
+            about = ", ".join(change.about or ()) or "(unlinked: retired)"
+            line = f"  note {where} about {about}  [{change.note}]"
         elif change.before is None:
             line = f"  set {target}: {_get_value_text(change.after)}"
         else:
@@ -5567,6 +5571,176 @@ def write_changes(
         )
         raise SystemExit(1) from None
     _finish_write(outcome, output_json=output_json)
+
+
+@playbill_group.command("note")
+@click.argument("file")
+@click.option("--text", required=True, help="The section to append; it starts with its heading.")
+@click.option(
+    "--under",
+    default=None,
+    help="Heading/Path to append under (default: the end of FILE, at TEXT's level).",
+)
+@click.option(
+    "--about",
+    "subjects",
+    multiple=True,
+    required=True,
+    help="A Subject (kind/id) the note is about; repeat for more.",
+)
+@click.option("--because", required=True, help="Why this note is recorded.")
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace whose file catalog FILE is read through.",
+)
+@_write_options
+@handle_errors
+def note(
+    file: str,
+    text: str,
+    under: str | None,
+    subjects: tuple[str, ...],
+    because: str,
+    workspace_root: str,
+    dry_run: bool,
+    no_accept: bool,
+    at_oid: str | None,
+    output_json: bool,
+) -> None:
+    """Append a section to FILE and link it about Subjects: a note, never a Claim.
+
+    Shorthand for one write: an append of TEXT plus an about change on the new
+    section. Same governance as write; the file is written once admitted. A
+    note retains the section's bytes; backlinks on each Subject list it.
+    """
+
+    request = _write_request(
+        WriteRequest,
+        {
+            "docs": [
+                {
+                    "op": "append",
+                    "id": "note",
+                    "file": file,
+                    "under": [] if under is None else [p for p in under.split("/") if p],
+                    "text": text,
+                }
+            ],
+            "changes": [{"op": "about", "ref": "note", "subjects": list(subjects)}],
+            "because": because,
+            "dry_run": dry_run,
+            "accept": "never" if no_accept else "if_allowed",
+            "at": at_oid,
+        },
+        example=(
+            'cruxible note notes/triage.md --text "## wi-1\nBlocked on review." '
+            '--about project.work_item/wi-1 --because "Triage context"'
+        ),
+    )
+
+    def submit(observed: WriteRequest) -> WriteOutcome:
+        return _server_call(
+            lambda client, instance_id: client.write(instance_id, request=observed),
+            command_name="cruxible note",
+        )
+
+    _finish_write(
+        write_workspace(request, workspace=Path(workspace_root), submit=submit),
+        output_json=output_json,
+    )
+
+
+@playbill_group.command("backlinks")
+@click.argument("ref", required=False)
+@click.option(
+    "--section",
+    "section_ref",
+    default=None,
+    help="FILE#Heading/Path: the Claims resting on that workspace section (instead of REF).",
+)
+@click.option("--limit", type=click.IntRange(1, 100), default=25, show_default=True)
+@click.option("--cursor", default=None, help="next_cursor of the previous page.")
+@click.option("--at", "at_oid", default=None, help="Accepted git oid or generation; default head.")
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace whose files section rows are checked against for drift.",
+)
+@json_option
+@handle_errors
+def backlinks(
+    ref: str | None,
+    section_ref: str | None,
+    limit: int,
+    cursor: str | None,
+    at_oid: str | None,
+    workspace_root: str,
+    output_json: bool,
+) -> None:
+    """What points into REF: notes and cited sections of a Subject, guidance of a ClaimType.
+
+    REF is a Subject (kind/id) -- the notes about it, Documents linked about
+    it, and the workspace sections its live Claims cite -- or a ClaimType or
+    Procedure: the Documents that guide it. --section FILE#Heading/Path lists
+    the live Claims resting on that section. Each section row says whether it
+    changed since it was cited, against the file in the workspace now.
+    """
+
+    from cruxible_client.authoring.backlink_sections import observe_drift, section_source
+    from cruxible_client.contracts.backlinks import BacklinksRequest
+
+    if (ref is None) == (section_ref is None):
+        raise click.UsageError("pass REF, or --section FILE#Heading/Path")
+    workspace = Path(workspace_root)
+    fields: dict[str, Any] = {"ref": ref}
+    if section_ref is not None:
+        path, mark, rest = section_ref.partition("#")
+        heading = tuple(item for item in rest.split("/") if item)
+        if not path or not mark or not heading:
+            raise click.UsageError("--section takes FILE#Heading/Path")
+        fields = {"file": section_source(workspace, path), "section": heading}
+    try:
+        request = BacklinksRequest(**fields, limit=limit, cursor=cursor, at=at_oid, surface="cli")
+    except ValidationError as exc:
+        raise click.UsageError(str(exc)) from None
+    result = observe_drift(
+        _server_call(
+            lambda client, instance_id: client.backlinks(instance_id, request=request),
+            command_name="cruxible backlinks",
+        ),
+        workspace,
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json", exclude_none=True))
+        return
+    click.echo(
+        f"backlinks of {result.target} (generation {result.coordinate.generation}, "
+        f"{result.coordinate.git_oid}): {len(result.links)}"
+    )
+    for link in result.links:
+        where = "" if link.file is None else f" {link.file}#{'/'.join(link.section or ())}"
+        extra = [
+            item
+            for item in (
+                link.title,
+                link.subject and f"on {link.subject}",
+                link.field,
+                link.role,
+                link.drift,
+            )
+            if item
+        ]
+        click.echo(
+            f"  {link.relation} {link.source_kind} {link.source}{where}"
+            + (f"  [{'; '.join(extra)}]" if extra else "")
+        )
+    if result.next_cursor is not None:
+        click.echo(f"next: cruxible backlinks ... --cursor {result.next_cursor}")
 
 
 @playbill_group.command("get")

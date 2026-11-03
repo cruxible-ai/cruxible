@@ -30,7 +30,7 @@ CURRENT_COMPILER = CompilerCoordinate(
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 57,
+            "semantic_revision": 59,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
             "revision_name": "body-access-v1",
         },

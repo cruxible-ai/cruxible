@@ -48,7 +48,8 @@ def _publication(tmp_path):
     "mutation",
     [
         "DELETE FROM pins",
-        "INSERT INTO claim_type_names VALUES ('ClaimType:forged','subject_kind','forged','forged')",
+        "INSERT INTO claim_type_names VALUES "
+        "('ClaimType:forged','subject_kind','forged','forged','degrof')",
         "UPDATE subjects SET revision=100",
         "DELETE FROM subjects WHERE identity='Subject:test/dependent'",
         "UPDATE members SET byte_length=byte_length+1",

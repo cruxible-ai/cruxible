@@ -38,8 +38,10 @@ from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.file_catalog import FileCatalogEntry
 from cruxible_client.contracts.workspace_layout import workspace_path
 from cruxible_client.contracts.write import (
+    AboutChange,
     AddChange,
     AppendSection,
+    Change,
     DocEditObservation,
     DocOp,
     DocOutcome,
@@ -130,6 +132,48 @@ class _File:
     citations: dict[tuple[str, ...], bytes] = field(default_factory=dict)
 
 
+def _observe_about(
+    change: AboutChange,
+    *,
+    sections: dict[str, tuple[str, tuple[str, ...]]],
+    load: Callable[[str], _File],
+) -> AboutChange:
+    """Observe an about link's section exactly as section evidence observes it.
+
+    A pure unlink of a section that is gone (or a file no longer on disk)
+    goes without an observation: the note is named by its source and heading
+    path, and unlinking needs no bytes.
+    """
+
+    file, section = change.file, change.section
+    if change.ref is not None:
+        target = sections.get(change.ref)
+        if target is None:
+            raise DocSectionError("section_ref_unknown", f"No doc operation has id {change.ref!r}.")
+        file, section = target
+    state = load(file)
+    observation = None
+    try:
+        if state.current is None:
+            raise DocSectionError(
+                "file_missing", "Read or create the Markdown file before linking it."
+            )
+        selection = FileSelector(state.path, state.source_id, state.current).section(*section)
+        observation = selection.observation()
+        state.citations[section] = observation.selected_content
+    except ValueError:
+        # DocSectionError and the selector's refusals are both ValueErrors.
+        if change.subjects:
+            raise
+    return AboutChange(
+        file=state.source_id,
+        section=section,
+        subjects=change.subjects,
+        unlink=change.unlink,
+        observation=observation,
+    )
+
+
 def write_workspace(
     request: WriteRequest,
     *,
@@ -143,7 +187,8 @@ def write_workspace(
     Claims retain their basis and the outcome names the repair.
     """
     if not request.docs and not any(
-        isinstance(getattr(c, "evidence", None), FileEvidence | SectionEvidence)
+        isinstance(c, AboutChange)
+        or isinstance(getattr(c, "evidence", None), FileEvidence | SectionEvidence)
         for c in request.changes
     ):
         return submit(request)
@@ -231,8 +276,11 @@ def write_workspace(
             state.edits.append(result)
             observations.append(observation)
             records.append((op.file, state, observation))
-        changes = []
+        changes: list[Change] = []
         for change in request.changes:
+            if isinstance(change, AboutChange):
+                changes.append(_observe_about(change, sections=sections, load=load))
+                continue
             evidence = getattr(change, "evidence", None)
             if isinstance(evidence, SectionEvidence) and evidence.ref is not None:
                 target = sections.get(evidence.ref)

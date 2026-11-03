@@ -129,7 +129,7 @@ prose.append_section("docs/fitment.md", under=("Fitment notes",), text=(
 ))
 written = prose.write()
 written.hint
-# 'No Claim cites this text. If it records a belief or decision, add a Claim citing the section; if it is a draft or a note, prose is right.'
+# 'No Claim cites this text. If it records a belief or decision, add a Claim citing the section; to keep it as a note about Subjects, link it with an about change (cruxible note); a draft stays prose.'
 ~~~
 
 Document changes are applied only once the write is accepted (or is waiting

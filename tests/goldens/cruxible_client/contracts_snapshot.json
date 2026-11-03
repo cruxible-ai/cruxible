@@ -1105,6 +1105,59 @@
             "title": "ArtifactPin",
             "type": "object"
           },
+          "BodyRestricted": {
+            "additionalProperties": false,
+            "description": "Bytes of restricted CaptureKinds were withheld from this caller (C14).\n\nA restricted kind's bytes, its envelopes' source and selector metadata, the\nspans cited from them, and values extracted from them into run outputs and\ninbox items are read only with ``cruxible_body_read_restricted``. The\nwithheld Captures are named by digest, each with its kind; accepted Claim\nvalues are never withheld.",
+            "properties": {
+              "capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Digests",
+                "type": "array"
+              },
+              "capture_kinds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Kinds",
+                "type": "array"
+              },
+              "kind": {
+                "const": "body_restricted",
+                "default": "body_restricted",
+                "title": "Kind",
+                "type": "string"
+              },
+              "provenance_unavailable": {
+                "default": false,
+                "title": "Provenance Unavailable",
+                "type": "boolean"
+              },
+              "required_permission": {
+                "const": "cruxible_body_read_restricted",
+                "default": "cruxible_body_read_restricted",
+                "title": "Required Permission",
+                "type": "string"
+              },
+              "required_tier": {
+                "const": "governed_write",
+                "default": "governed_write",
+                "title": "Required Tier",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-body-restricted-v1",
+                "default": "cruxible-body-restricted-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "BodyRestricted",
+            "type": "object"
+          },
           "CompilerUpgradeNotice": {
             "additionalProperties": false,
             "description": "What sets a compiler upgrade apart from every other proposal: it is one-way.\n\nCarried by the upgrade's preview, its proposal and its review, where the\ndecision to activate is made. Once activated, the accepted head names\n``target_compiler_digest``, and a release whose daemon does not install\nthat compiler can no longer serve the instance; there is no downgrade.",
@@ -1515,6 +1568,13 @@
                 "title": "Governance",
                 "type": "object"
               },
+              "guidance": {
+                "items": {
+                  "$ref": "#/$defs/ReviewGuidance"
+                },
+                "title": "Guidance",
+                "type": "array"
+              },
               "item_reason_count": {
                 "default": 0,
                 "title": "Item Reason Count",
@@ -1630,6 +1690,17 @@
                 "default": "playbill-proposal-review-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "withheld": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BodyRestricted"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -1648,6 +1719,39 @@
               "redactions"
             ],
             "title": "ProposalReview",
+            "type": "object"
+          },
+          "ReviewGuidance": {
+            "additionalProperties": false,
+            "description": "A governed Document that ``guides`` a ClaimType or Procedure this proposal touches.",
+            "properties": {
+              "definition": {
+                "description": "ClaimType:<predicate> or Procedure:<name>.",
+                "title": "Definition",
+                "type": "string"
+              },
+              "document": {
+                "title": "Document",
+                "type": "string"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Title"
+              }
+            },
+            "required": [
+              "definition",
+              "document"
+            ],
+            "title": "ReviewGuidance",
             "type": "object"
           },
           "ReviewedMember": {
@@ -19374,15 +19478,17 @@
     "BodyRestricted": {
       "fields": {
         "capture_digests": {
-          "has_default": false,
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
           "has_default_factory": false,
           "json_name": "capture_digests",
-          "required": true,
+          "required": false,
           "schema": {
+            "default": [],
             "items": {
               "type": "string"
             },
-            "minItems": 1,
             "title": "Capture Digests",
             "type": "array"
           }
@@ -19415,6 +19521,19 @@
             "default": "body_restricted",
             "title": "Kind",
             "type": "string"
+          }
+        },
+        "provenance_unavailable": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "provenance_unavailable",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Provenance Unavailable",
+            "type": "boolean"
           }
         },
         "required_permission": {
@@ -19465,10 +19584,10 @@
         "description": "Bytes of restricted CaptureKinds were withheld from this caller (C14).\n\nA restricted kind's bytes, its envelopes' source and selector metadata, the\nspans cited from them, and values extracted from them into run outputs and\ninbox items are read only with ``cruxible_body_read_restricted``. The\nwithheld Captures are named by digest, each with its kind; accepted Claim\nvalues are never withheld.",
         "properties": {
           "capture_digests": {
+            "default": [],
             "items": {
               "type": "string"
             },
-            "minItems": 1,
             "title": "Capture Digests",
             "type": "array"
           },
@@ -19485,6 +19604,11 @@
             "default": "body_restricted",
             "title": "Kind",
             "type": "string"
+          },
+          "provenance_unavailable": {
+            "default": false,
+            "title": "Provenance Unavailable",
+            "type": "boolean"
           },
           "required_permission": {
             "const": "cruxible_body_read_restricted",
@@ -19505,15 +19629,10 @@
             "type": "string"
           }
         },
-        "required": [
-          "capture_digests"
-        ],
         "title": "BodyRestricted",
         "type": "object"
       },
-      "required_fields": [
-        "capture_digests"
-      ]
+      "required_fields": []
     },
     "CadenceSchedule": {
       "fields": {
@@ -30910,10 +31029,10 @@
             "description": "Bytes of restricted CaptureKinds were withheld from this caller (C14).\n\nA restricted kind's bytes, its envelopes' source and selector metadata, the\nspans cited from them, and values extracted from them into run outputs and\ninbox items are read only with ``cruxible_body_read_restricted``. The\nwithheld Captures are named by digest, each with its kind; accepted Claim\nvalues are never withheld.",
             "properties": {
               "capture_digests": {
+                "default": [],
                 "items": {
                   "type": "string"
                 },
-                "minItems": 1,
                 "title": "Capture Digests",
                 "type": "array"
               },
@@ -30930,6 +31049,11 @@
                 "default": "body_restricted",
                 "title": "Kind",
                 "type": "string"
+              },
+              "provenance_unavailable": {
+                "default": false,
+                "title": "Provenance Unavailable",
+                "type": "boolean"
               },
               "required_permission": {
                 "const": "cruxible_body_read_restricted",
@@ -30950,9 +31074,6 @@
                 "type": "string"
               }
             },
-            "required": [
-              "capture_digests"
-            ],
             "title": "BodyRestricted",
             "type": "object"
           },
@@ -32461,10 +32582,10 @@
             "description": "Bytes of restricted CaptureKinds were withheld from this caller (C14).\n\nA restricted kind's bytes, its envelopes' source and selector metadata, the\nspans cited from them, and values extracted from them into run outputs and\ninbox items are read only with ``cruxible_body_read_restricted``. The\nwithheld Captures are named by digest, each with its kind; accepted Claim\nvalues are never withheld.",
             "properties": {
               "capture_digests": {
+                "default": [],
                 "items": {
                   "type": "string"
                 },
-                "minItems": 1,
                 "title": "Capture Digests",
                 "type": "array"
               },
@@ -32481,6 +32602,11 @@
                 "default": "body_restricted",
                 "title": "Kind",
                 "type": "string"
+              },
+              "provenance_unavailable": {
+                "default": false,
+                "title": "Provenance Unavailable",
+                "type": "boolean"
               },
               "required_permission": {
                 "const": "cruxible_body_read_restricted",
@@ -32501,9 +32627,6 @@
                 "type": "string"
               }
             },
-            "required": [
-              "capture_digests"
-            ],
             "title": "BodyRestricted",
             "type": "object"
           },
@@ -33126,10 +33249,10 @@
             "description": "Bytes of restricted CaptureKinds were withheld from this caller (C14).\n\nA restricted kind's bytes, its envelopes' source and selector metadata, the\nspans cited from them, and values extracted from them into run outputs and\ninbox items are read only with ``cruxible_body_read_restricted``. The\nwithheld Captures are named by digest, each with its kind; accepted Claim\nvalues are never withheld.",
             "properties": {
               "capture_digests": {
+                "default": [],
                 "items": {
                   "type": "string"
                 },
-                "minItems": 1,
                 "title": "Capture Digests",
                 "type": "array"
               },
@@ -33146,6 +33269,11 @@
                 "default": "body_restricted",
                 "title": "Kind",
                 "type": "string"
+              },
+              "provenance_unavailable": {
+                "default": false,
+                "title": "Provenance Unavailable",
+                "type": "boolean"
               },
               "required_permission": {
                 "const": "cruxible_body_read_restricted",
@@ -33166,9 +33294,6 @@
                 "type": "string"
               }
             },
-            "required": [
-              "capture_digests"
-            ],
             "title": "BodyRestricted",
             "type": "object"
           },
@@ -63767,10 +63892,10 @@
             "description": "Bytes of restricted CaptureKinds were withheld from this caller (C14).\n\nA restricted kind's bytes, its envelopes' source and selector metadata, the\nspans cited from them, and values extracted from them into run outputs and\ninbox items are read only with ``cruxible_body_read_restricted``. The\nwithheld Captures are named by digest, each with its kind; accepted Claim\nvalues are never withheld.",
             "properties": {
               "capture_digests": {
+                "default": [],
                 "items": {
                   "type": "string"
                 },
-                "minItems": 1,
                 "title": "Capture Digests",
                 "type": "array"
               },
@@ -63787,6 +63912,11 @@
                 "default": "body_restricted",
                 "title": "Kind",
                 "type": "string"
+              },
+              "provenance_unavailable": {
+                "default": false,
+                "title": "Provenance Unavailable",
+                "type": "boolean"
               },
               "required_permission": {
                 "const": "cruxible_body_read_restricted",
@@ -63807,9 +63937,6 @@
                 "type": "string"
               }
             },
-            "required": [
-              "capture_digests"
-            ],
             "title": "BodyRestricted",
             "type": "object"
           },
@@ -74106,6 +74233,19 @@
             "type": "object"
           }
         },
+        "guidance": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "guidance",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ReviewGuidance"
+            },
+            "title": "Guidance",
+            "type": "array"
+          }
+        },
         "item_reason_count": {
           "default": 0,
           "default_json_serializable": true,
@@ -74327,6 +74467,25 @@
             "title": "Tag",
             "type": "string"
           }
+        },
+        "withheld": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "withheld",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BodyRestricted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
         }
       },
       "json_schema": {
@@ -74408,6 +74567,59 @@
               "artifact_digest"
             ],
             "title": "ArtifactPin",
+            "type": "object"
+          },
+          "BodyRestricted": {
+            "additionalProperties": false,
+            "description": "Bytes of restricted CaptureKinds were withheld from this caller (C14).\n\nA restricted kind's bytes, its envelopes' source and selector metadata, the\nspans cited from them, and values extracted from them into run outputs and\ninbox items are read only with ``cruxible_body_read_restricted``. The\nwithheld Captures are named by digest, each with its kind; accepted Claim\nvalues are never withheld.",
+            "properties": {
+              "capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Digests",
+                "type": "array"
+              },
+              "capture_kinds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Kinds",
+                "type": "array"
+              },
+              "kind": {
+                "const": "body_restricted",
+                "default": "body_restricted",
+                "title": "Kind",
+                "type": "string"
+              },
+              "provenance_unavailable": {
+                "default": false,
+                "title": "Provenance Unavailable",
+                "type": "boolean"
+              },
+              "required_permission": {
+                "const": "cruxible_body_read_restricted",
+                "default": "cruxible_body_read_restricted",
+                "title": "Required Permission",
+                "type": "string"
+              },
+              "required_tier": {
+                "const": "governed_write",
+                "default": "governed_write",
+                "title": "Required Tier",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-body-restricted-v1",
+                "default": "cruxible-body-restricted-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "BodyRestricted",
             "type": "object"
           },
           "CompilerUpgradeNotice": {
@@ -74761,6 +74973,39 @@
             "title": "ProposalItemReason",
             "type": "object"
           },
+          "ReviewGuidance": {
+            "additionalProperties": false,
+            "description": "A governed Document that ``guides`` a ClaimType or Procedure this proposal touches.",
+            "properties": {
+              "definition": {
+                "description": "ClaimType:<predicate> or Procedure:<name>.",
+                "title": "Definition",
+                "type": "string"
+              },
+              "document": {
+                "title": "Document",
+                "type": "string"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Title"
+              }
+            },
+            "required": [
+              "definition",
+              "document"
+            ],
+            "title": "ReviewGuidance",
+            "type": "object"
+          },
           "ReviewedMember": {
             "additionalProperties": false,
             "properties": {
@@ -74994,6 +75239,13 @@
             "title": "Governance",
             "type": "object"
           },
+          "guidance": {
+            "items": {
+              "$ref": "#/$defs/ReviewGuidance"
+            },
+            "title": "Guidance",
+            "type": "array"
+          },
           "item_reason_count": {
             "default": 0,
             "title": "Item Reason Count",
@@ -75109,6 +75361,17 @@
             "default": "playbill-proposal-review-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "withheld": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BodyRestricted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
@@ -75260,6 +75523,22 @@
               "$ref": "#/$defs/ReviewSummaryGroup"
             },
             "title": "Groups",
+            "type": "array"
+          }
+        },
+        "guidance": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "guidance",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ReviewGuidance"
+            },
+            "title": "Guidance",
             "type": "array"
           }
         },
@@ -75482,6 +75761,25 @@
             "title": "Tag",
             "type": "string"
           }
+        },
+        "withheld": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "withheld",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BodyRestricted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
         }
       },
       "json_schema": {
@@ -75564,6 +75862,59 @@
             "title": "ArtifactIdentity",
             "type": "object"
           },
+          "BodyRestricted": {
+            "additionalProperties": false,
+            "description": "Bytes of restricted CaptureKinds were withheld from this caller (C14).\n\nA restricted kind's bytes, its envelopes' source and selector metadata, the\nspans cited from them, and values extracted from them into run outputs and\ninbox items are read only with ``cruxible_body_read_restricted``. The\nwithheld Captures are named by digest, each with its kind; accepted Claim\nvalues are never withheld.",
+            "properties": {
+              "capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Digests",
+                "type": "array"
+              },
+              "capture_kinds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Kinds",
+                "type": "array"
+              },
+              "kind": {
+                "const": "body_restricted",
+                "default": "body_restricted",
+                "title": "Kind",
+                "type": "string"
+              },
+              "provenance_unavailable": {
+                "default": false,
+                "title": "Provenance Unavailable",
+                "type": "boolean"
+              },
+              "required_permission": {
+                "const": "cruxible_body_read_restricted",
+                "default": "cruxible_body_read_restricted",
+                "title": "Required Permission",
+                "type": "string"
+              },
+              "required_tier": {
+                "const": "governed_write",
+                "default": "governed_write",
+                "title": "Required Tier",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-body-restricted-v1",
+                "default": "cruxible-body-restricted-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "BodyRestricted",
+            "type": "object"
+          },
           "JsonValue": {},
           "OriginatingLine": {
             "additionalProperties": false,
@@ -75610,6 +75961,39 @@
               "accepted_generation"
             ],
             "title": "PriorRefusalCoverage",
+            "type": "object"
+          },
+          "ReviewGuidance": {
+            "additionalProperties": false,
+            "description": "A governed Document that ``guides`` a ClaimType or Procedure this proposal touches.",
+            "properties": {
+              "definition": {
+                "description": "ClaimType:<predicate> or Procedure:<name>.",
+                "title": "Definition",
+                "type": "string"
+              },
+              "document": {
+                "title": "Document",
+                "type": "string"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Title"
+              }
+            },
+            "required": [
+              "definition",
+              "document"
+            ],
+            "title": "ReviewGuidance",
             "type": "object"
           },
           "ReviewSummaryCounts": {
@@ -75910,6 +76294,14 @@
             "title": "Groups",
             "type": "array"
           },
+          "guidance": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ReviewGuidance"
+            },
+            "title": "Guidance",
+            "type": "array"
+          },
           "item_reason_count": {
             "default": 0,
             "minimum": 0,
@@ -76019,6 +76411,17 @@
             "default": "playbill-proposal-review-summary-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "withheld": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BodyRestricted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
@@ -97945,6 +98348,88 @@
       "required_fields": [
         "event",
         "trigger_name"
+      ]
+    },
+    "ReviewGuidance": {
+      "fields": {
+        "definition": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "definition",
+          "required": true,
+          "schema": {
+            "description": "ClaimType:<predicate> or Procedure:<name>.",
+            "title": "Definition",
+            "type": "string"
+          }
+        },
+        "document": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "document",
+          "required": true,
+          "schema": {
+            "title": "Document",
+            "type": "string"
+          }
+        },
+        "title": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "title",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "A governed Document that ``guides`` a ClaimType or Procedure this proposal touches.",
+        "properties": {
+          "definition": {
+            "description": "ClaimType:<predicate> or Procedure:<name>.",
+            "title": "Definition",
+            "type": "string"
+          },
+          "document": {
+            "title": "Document",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          }
+        },
+        "required": [
+          "definition",
+          "document"
+        ],
+        "title": "ReviewGuidance",
+        "type": "object"
+      },
+      "required_fields": [
+        "definition",
+        "document"
       ]
     },
     "ReviewedMember": {

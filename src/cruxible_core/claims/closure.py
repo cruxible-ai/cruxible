@@ -131,6 +131,7 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
         "procedure-mandate",
         "line",
         "trigger",
+        "note",
         "subject-kind",
         "query-definition",
         "exhaust-promotion",
@@ -225,6 +226,21 @@ def _parse_dependency_artifact(
                     if ref.digest is not None
                 ),
                 lifecycle=shape.lifecycle,
+            )
+        if path.startswith("notes/"):
+            from cruxible_client.contracts.notes import note_digest, parse_note
+
+            note = parse_note(content, path=path)
+            # A note pins nothing: its Subjects are links, judged live by its
+            # own law at acceptance, not dependencies a Subject's change moves.
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="note",
+                artifact_tag=note.artifact_format,
+                identity=note.identity,
+                artifact_digest=note_digest(note).tagged,
+                pins=(),
+                lifecycle=note.lifecycle,
             )
         if path.startswith("triggers/"):
             from cruxible_client.contracts.triggers import parse_trigger, trigger_digest
