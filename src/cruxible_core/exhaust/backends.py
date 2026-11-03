@@ -436,10 +436,11 @@ class LocalJournalBackend:
         locators: tuple[str, ...],
         bodies: Any,
         access: Any,
-    ) -> tuple[StoredProcedureJournalRecordV1, ...]:
-        """Read only the run's records a citation of these locators reads."""
+        retry: bool = False,
+    ) -> tuple[tuple[StoredProcedureJournalRecordV1, ...], bool]:
+        """Read only the run's records a citation of these locators reads (and whether any wait)."""
         return self.index.located_records(
-            stream, run_id=run_id, locators=locators, bodies=bodies, access=access
+            stream, run_id=run_id, locators=locators, bodies=bodies, access=access, retry=retry
         )
 
     def _records(

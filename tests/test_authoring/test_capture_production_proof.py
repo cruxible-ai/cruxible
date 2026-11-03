@@ -27,6 +27,7 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.captures import (
     CaptureEnvelope,
     CaptureEnvelopeV1,
+    CaptureFormatError,
     CaptureProductionRecord,
     CaptureProductionUnproven,
     CaptureRunCoordinateV1,
@@ -320,9 +321,9 @@ def _count_run_lookups(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     original_all = producer_receipts.JournalProducerReceiptResolver.index_all
     original_parse = producer_receipts.read_payload
 
-    def run(self, run_id, locators):  # type: ignore[no-untyped-def]
+    def run(self, run_id, locators, **kwargs):  # type: ignore[no-untyped-def]
         calls["runs"] += 1
-        return original_run(self, run_id, locators)
+        return original_run(self, run_id, locators, **kwargs)
 
     def full(self):  # type: ignore[no-untyped-def]
         if not self._full:
@@ -422,7 +423,7 @@ def test_records_indexed_without_their_locators_are_projected_for_the_cited_run_
             (world.run_id,),
         )
         connection.execute(
-            "INSERT INTO proof_pending SELECT id, stream, run_id FROM records "
+            "INSERT INTO proof_pending SELECT id, stream, run_id, NULL FROM records "
             "WHERE run_id=? AND event_kind IN ('provider_invocation_completed',"
             "'terminal_egress','produced_capture','source_request_derived','source_read')",
             (world.run_id,),
@@ -441,6 +442,182 @@ def test_records_indexed_without_their_locators_are_projected_for_the_cited_run_
         )
     # The cited run was projected; the other runs' records were never visited.
     assert pending == {f"pad-run-{index}": 1 for index in range(5)}
+
+
+def _outcome(world: ProducedCaptures, digest: str, *, full_journal: bool = False) -> str:
+    """A fresh context's verdict on one Capture: indexed, or by one whole-journal pass."""
+
+    instance = world.instance
+    envelope = _envelope(instance, digest)
+    context = (
+        producer_receipts.local_producer_receipt_resolver(
+            exhaust_root=instance.root / instance.descriptor.storage.exhaust,
+            instance_id=instance.descriptor.instance_id,
+            bodies=instance.body_store(),
+            full_journal=True,
+        )
+        if full_journal
+        else instance.capture_verification_context()
+    )
+    try:
+        verified = verify_capture(
+            digest,
+            store=instance.body_store(),
+            contract=world.contract_for(envelope),
+            producer_artifact_digests={
+                envelope.producer.qualified: envelope.run_coordinate.executable_digest
+            },
+            producer_receipt_resolver=context,
+        )
+    except Exception as exc:  # noqa: BLE001 -- the verdict is the refusal's type
+        return type(exc).__name__
+    return "verified" if isinstance(verified, CaptureEnvelope) else "unverified"
+
+
+_PROOF_KINDS_SQL = (
+    "('provider_invocation_completed','terminal_egress','produced_capture',"
+    "'source_request_derived','source_read')"
+)
+
+
+def _requeue_run(world: ProducedCaptures) -> None:
+    """The cited run as a migrated or rebuilt index holds it: every proof record pending."""
+
+    with sqlite3.connect(_journal_index(world)) as connection:
+        connection.execute(
+            "DELETE FROM proof_locators WHERE stream IN (SELECT stream FROM records "
+            "WHERE run_id=?) AND run_id=?",
+            (world.run_id, world.run_id),
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO proof_pending SELECT id, stream, run_id, NULL FROM records "
+            f"WHERE run_id=? AND event_kind IN {_PROOF_KINDS_SQL}",
+            (world.run_id,),
+        )
+
+
+def _unsync_run(world: ProducedCaptures) -> None:
+    """The cited run as appended after the index last synced: no record of it indexed or noted."""
+
+    with sqlite3.connect(_journal_index(world)) as connection:
+        stream, partition, sequence, offset, previous = connection.execute(
+            "SELECT stream, partition_id, sequence, offset, previous FROM records "
+            "WHERE run_id=? ORDER BY sequence LIMIT 1",
+            (world.run_id,),
+        ).fetchone()
+        connection.execute(
+            "DELETE FROM records WHERE stream=? AND partition_id=? AND sequence>=?",
+            (stream, partition, sequence),
+        )
+        signature = connection.execute(
+            "SELECT signature FROM partitions WHERE stream=? AND partition_id=?",
+            (stream, partition),
+        ).fetchone()[0]
+        device, inode = signature.split(":")[:2]
+        connection.execute(
+            "UPDATE partitions SET end_offset=?, sequence=?, digest=?, signature=? "
+            "WHERE stream=? AND partition_id=?",
+            (offset, sequence - 1, previous, f"{device}:{inode}:0:0:0", stream, partition),
+        )
+
+
+@pytest.mark.parametrize("index_state", ["migrated", "unnoted"])
+def test_a_proof_payload_missing_while_unprojected_is_found_once_restored(
+    world: ProducedCaptures, index_state: str
+) -> None:
+    """An unreadable pending payload stays pending: once restored, indexed agrees with cold."""
+
+    instance = world.instance
+    store = instance.body_store()
+    source_capture, _terminal = _genuine(world)
+    produced = next(
+        stored.record for stored in world.records if stored.record.event_kind == "produced_capture"
+    )
+    original = store.read(produced.payload_digest, access=_READ)
+    (_requeue_run if index_state == "migrated" else _unsync_run)(world)
+    assert store.erase(produced.payload_digest)
+
+    refused = _outcome(world, source_capture)
+    assert refused != "verified"
+    assert _outcome(world, source_capture, full_journal=True) == refused
+    with sqlite3.connect(_journal_index(world)) as connection:
+        held = connection.execute(
+            "SELECT count(*) FROM proof_pending p JOIN records r ON r.id=p.record_id "
+            "WHERE r.payload_digest=?",
+            (produced.payload_digest,),
+        ).fetchone()[0]
+    assert held == 1, "the unreadable record is kept for retry, not dropped"
+
+    assert store.store(original).digest == produced.payload_digest
+    assert _outcome(world, source_capture) == "verified"
+    assert _outcome(world, source_capture, full_journal=True) == "verified"
+
+
+@pytest.mark.parametrize("path", ["pending", "noted", "full_journal"])
+def test_a_malformed_proof_record_refuses_only_its_own_candidate(
+    world: ProducedCaptures, path: str
+) -> None:
+    """A same-run record whose payload is not a journal payload, and a malformed completion.
+
+    Neither poisons the run's genuine citation, on any path; the malformed
+    completion still refuses the receipt it names.
+    """
+
+    from cruxible_core.exhaust.records import journal_payload_bytes
+    from cruxible_core.exhaust.writer import note_proof_record
+
+    instance = world.instance
+    journal = LocalJournalBackend(
+        instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
+    )
+    template = next(
+        stored.record for stored in world.records if stored.record.event_kind == "produced_capture"
+    )
+    fields = set(ProcedureJournalRecordDraftV1.model_fields) - {"tag", "event_kind"}
+    forged_receipt = "sha256:" + "e" * 64
+    malformed: tuple[tuple[str, object, bytes], ...] = (
+        ("produced_capture", None, b"not a journal payload"),
+        (
+            "provider_invocation_completed",
+            payload := {"receipt_digest": forged_receipt, "receipt": {"occurrence_path": "x"}},
+            journal_payload_bytes(payload),
+        ),
+    )
+    if path == "pending":
+        _requeue_run(world)
+    for kind, value, body in malformed:
+        stored_body = instance.body_store().store(body, journal_payload=True)
+        draft = ProcedureJournalRecordDraftV1.model_validate(
+            {
+                **template.model_dump(mode="python", include=fields),
+                "event_kind": kind,
+                "payload_digest": stored_body.digest,
+            }
+        )
+        stored = journal.append(
+            draft,
+            expected_head=journal.read_head(template.stream, template.partition_id),
+            fencing_token="writer",
+        )
+        if path == "noted":
+            note_proof_record(journal, stored, value)
+
+    full = path == "full_journal"
+    source_capture, terminal_capture = _genuine(world)
+    assert _outcome(world, source_capture, full_journal=full) == "verified"
+    assert _outcome(world, terminal_capture, full_journal=full) == "verified"
+    context = (
+        producer_receipts.local_producer_receipt_resolver(
+            exhaust_root=instance.root / instance.descriptor.storage.exhaust,
+            instance_id=instance.descriptor.instance_id,
+            bodies=instance.body_store(),
+            full_journal=True,
+        )
+        if full
+        else instance.capture_verification_context()
+    )
+    with pytest.raises(CaptureFormatError, match="journal is invalid"):
+        context.producer_receipt(forged_receipt, run_id=world.run_id)
 
 
 def _grow_cited_run(world: ProducedCaptures, count: int, *, start: int) -> None:
@@ -818,9 +995,9 @@ def test_one_submit_verifies_a_shared_capture_once(
         counts["contexts"] += 1
         opened(self, **kwargs)
 
-    def count_run(self, run_id, locators):  # type: ignore[no-untyped-def]
+    def count_run(self, run_id, locators, **kwargs):  # type: ignore[no-untyped-def]
         counts["runs"] += 1
-        return indexed(self, run_id, locators)
+        return indexed(self, run_id, locators, **kwargs)
 
     def count_verification(*args, **kwargs):  # type: ignore[no-untyped-def]
         counts["verifications"] += 1

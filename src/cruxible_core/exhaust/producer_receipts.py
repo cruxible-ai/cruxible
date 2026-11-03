@@ -428,17 +428,22 @@ class JournalProducerReceiptResolver:
             self._index_records(records)
         self._full = True
 
-    def _index_cited(self, run_id: str, locators: tuple[str, ...]) -> None:
-        """Index only the records of one run a citation of these locators reads."""
+    def _index_cited(self, run_id: str, locators: tuple[str, ...], *, retry: bool = False) -> bool:
+        """Index only the records of one run a citation of these locators reads.
+
+        Returns whether the run holds proof records the index could not yet
+        project (``retry`` tries every one of them again).
+        """
 
         self.lookups += 1
         try:
-            records = self._journal.located_records(
+            records, held = self._journal.located_records(
                 self._stream,
                 run_id=run_id,
                 locators=locators,
                 bodies=self._bodies,
                 access=self._access,
+                retry=retry,
             )
         except (OSError, CruxibleError, ValueError) as exc:
             raise CaptureFormatError("Capture producer receipt journal is unavailable") from exc
@@ -447,6 +452,7 @@ class JournalProducerReceiptResolver:
             partitions.setdefault(stored.record.partition_id, []).append(stored)
         for partition in partitions.values():
             self._index_records(partition)
+        return held
 
     def _index_records(self, records: Iterable[StoredProcedureJournalRecordV1]) -> None:
         """Re-check the receipt links within one partition's records, in order."""
@@ -724,8 +730,11 @@ class JournalProducerReceiptResolver:
         answers. On a miss it brings the journal index up to the records
         appended since its last sync -- never the whole journal -- and reads
         the cited records once more, so a record appended since is seen; still
-        missing, the caller refuses. The full-journal pass stays for recovery
-        and audit (``full_journal``).
+        missing, the caller refuses. A miss, or a refusal, while the run holds
+        proof records the index could not project yet (an unreadable payload
+        since restored) tries those again, after forgetting what was derived
+        without them. The full-journal pass stays for recovery and audit
+        (``full_journal``).
         """
 
         try:
@@ -733,10 +742,17 @@ class JournalProducerReceiptResolver:
                 return
         except CaptureFormatError:
             self._forget()
-        self._index_cited(run_id, locators)
-        if found() is None:
-            self._catch_up()
-            self._index_cited(run_id, locators)
+        held = self._index_cited(run_id, locators)
+        try:
+            if found() is not None:
+                return
+        except CaptureFormatError:
+            if not held:
+                raise
+        self._catch_up()
+        if held:
+            self._forget()
+        self._index_cited(run_id, locators, retry=True)
 
     def _catch_up(self) -> None:
         """Index every journal record appended since the index's last sync."""

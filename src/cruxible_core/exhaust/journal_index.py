@@ -23,7 +23,7 @@ from uuid import uuid4
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.content_memo import ValueMemo
-from cruxible_client.contracts.errors import JournalIntegrityError
+from cruxible_client.contracts.errors import CruxibleError, JournalIntegrityError
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.exhaust.capture_selectors import landing_logical_source
 from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
@@ -85,19 +85,26 @@ PROOF_LOCATOR_KINDS = frozenset(
 )
 _PROOF_SCHEMA = """
 -- The receipt, Capture and Source occurrence each proof record of a run names
--- (proof_locator), so a citation reads the records it cites, never its whole
--- run. The writer that appends a proof record notes its locators
--- (note_proof_locators); a record indexed without a note (a rebuilt index, a
--- crash between append and note, an append by another writer) waits in
--- proof_pending until a lookup of its run projects it from its payload.
+-- (proof_locator), keyed under its stream and run so one citation's lookup is
+-- a range of its own run whatever other runs name the same locator. The
+-- writer that appends a proof record notes its locators (note_proof_locators);
+-- a record indexed without a note (a rebuilt index, a crash between append and
+-- note, an append by another writer) waits in proof_pending until a lookup of
+-- its run projects it from its payload. One that cannot be projected (its
+-- frame or payload unreadable) stays pending, deferred at the body landing
+-- head it was tried under, and is tried again once that head moves or a
+-- lookup of its run misses.
 CREATE TABLE IF NOT EXISTS proof_locators (
  record_id INTEGER NOT NULL REFERENCES records(id) ON DELETE CASCADE,
- locator TEXT NOT NULL, PRIMARY KEY(record_id, locator));
-CREATE INDEX IF NOT EXISTS proof_by_locator ON proof_locators(locator, record_id);
+ stream TEXT NOT NULL, run_id TEXT NOT NULL, locator TEXT NOT NULL,
+ PRIMARY KEY(record_id, locator));
+CREATE INDEX IF NOT EXISTS proof_by_locator
+ ON proof_locators(stream, run_id, locator, record_id);
 CREATE TABLE IF NOT EXISTS proof_pending (
  record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
- stream TEXT NOT NULL, run_id TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS proof_pending_run ON proof_pending(stream, run_id, record_id);
+ stream TEXT NOT NULL, run_id TEXT NOT NULL, deferred_at TEXT);
+CREATE INDEX IF NOT EXISTS proof_pending_run
+ ON proof_pending(stream, run_id, deferred_at, record_id);
 """
 
 
@@ -304,7 +311,7 @@ CREATE TRIGGER IF NOT EXISTS records_inserted AFTER INSERT ON records
  BEGIN
  INSERT INTO invocation_pending SELECT new.id, new.stream
   WHERE new.event_kind='provider_invocation_started';
- INSERT INTO proof_pending SELECT new.id, new.stream, new.run_id
+ INSERT INTO proof_pending SELECT new.id, new.stream, new.run_id, NULL
   WHERE new.run_id IS NOT NULL AND new.event_kind IN ('provider_invocation_completed',
   'terminal_egress','produced_capture','source_request_derived','source_read');
  INSERT INTO run_tallies SELECT new.stream,new.partition_id,1
@@ -412,6 +419,79 @@ def _add_landing_tallies(conn: sqlite3.Connection) -> None:
 _PROOF_KINDS_SQL = ",".join(f"'{kind}'" for kind in sorted(PROOF_LOCATOR_KINDS))
 
 
+def _cited_rows(
+    conn: sqlite3.Connection, key: str, run_id: str, locators: tuple[str, ...]
+) -> list[sqlite3.Row]:
+    """The run's records a citation of these locators reads, in journal order.
+
+    Every range is under the run's own ``(stream, run_id)`` prefix: the cited
+    records, the Source occurrences they name (by record), the run's records
+    naming those occurrences, and the run's admissions. Other runs naming the
+    same receipt, Capture or occurrence are never visited.
+    """
+
+    marks = ",".join("?" for _ in locators)
+    return conn.execute(
+        "WITH cited(record_id) AS (SELECT record_id FROM proof_locators "
+        "INDEXED BY proof_by_locator "
+        f"WHERE stream=? AND run_id=? AND locator IN ({marks})), "
+        "occurrences(locator) AS (SELECT l.locator FROM cited c "
+        "JOIN proof_locators l ON l.record_id=c.record_id "
+        "AND l.locator >= 'occurrence:' AND l.locator < 'occurrence;') "
+        "SELECT r.* FROM records r WHERE r.id IN ("
+        "SELECT record_id FROM cited "
+        "UNION SELECT o.record_id FROM proof_locators o INDEXED BY proof_by_locator "
+        "WHERE o.stream=? AND o.run_id=? AND o.locator IN (SELECT locator FROM occurrences) "
+        "UNION SELECT a.id FROM records a INDEXED BY records_run_kind "
+        "WHERE a.stream=? AND a.run_id=? AND a.event_kind='admission_bound') "
+        "ORDER BY r.partition_id, r.sequence",
+        (key, run_id, *locators, key, run_id, key, run_id),
+    ).fetchall()
+
+
+def _pending_rows(
+    conn: sqlite3.Connection, key: str, run_id: str, *, head: str | None
+) -> list[sqlite3.Row]:
+    """The run's pending proof records to project now.
+
+    With a landing ``head``: those never tried, and those deferred under
+    another head (each a range of the index, so records deferred under the
+    current head are not visited). Without one (a retry): every pending record.
+    """
+
+    if head is None:
+        return conn.execute(
+            "SELECT r.* FROM proof_pending p INDEXED BY proof_pending_run "
+            "JOIN records r ON r.id=p.record_id WHERE p.stream=? AND p.run_id=? "
+            "ORDER BY p.record_id",
+            (key, run_id),
+        ).fetchall()
+    due = (
+        "SELECT record_id FROM proof_pending INDEXED BY proof_pending_run "
+        "WHERE stream=? AND run_id=? AND deferred_at "
+    )
+    return conn.execute(
+        "SELECT r.* FROM records r WHERE r.id IN ("
+        + due
+        + "IS NULL UNION ALL "
+        + due
+        + "< ? UNION ALL "
+        + due
+        + "> ?) ORDER BY r.id",
+        (key, run_id, key, run_id, head, key, run_id, head),
+    ).fetchall()
+
+
+def _landing_head(bodies: Any) -> str | None:
+    """The body store's landing head as one token, or None when it cannot be read."""
+
+    try:
+        head = bodies.landings.head()
+        return f"{head.identity}:{head.sequence}"
+    except Exception:  # noqa: BLE001 -- no head: every deferred record is retried
+        return None
+
+
 def _add_proof_locators(conn: sqlite3.Connection) -> None:
     """Version 9 to 10: proof-record locators, every retained proof record pending.
 
@@ -426,7 +506,7 @@ def _add_proof_locators(conn: sqlite3.Connection) -> None:
     _statements(conn, _PROOF_SCHEMA)
     _statements(conn, _SCHEMA[_SCHEMA.index("CREATE TRIGGER IF NOT EXISTS records_inserted") :])
     conn.execute(
-        "INSERT INTO proof_pending SELECT id, stream, run_id FROM records "
+        "INSERT INTO proof_pending SELECT id, stream, run_id, NULL FROM records "
         f"WHERE run_id IS NOT NULL AND event_kind IN ({_PROOF_KINDS_SQL})"
     )
 
@@ -1352,20 +1432,24 @@ class JournalIndex:
         with self.connection() as conn:
             self._sync(conn, stream, partition_id)
             row = conn.execute(
-                "SELECT id,event_kind FROM records WHERE stream=? AND partition_id=? "
-                "AND sequence=?",
+                "SELECT id,event_kind,stream,run_id FROM records WHERE stream=? "
+                "AND partition_id=? AND sequence=?",
                 (_key(stream), partition_id, sequence),
             ).fetchone()
             if row is None or row["event_kind"] not in PROOF_LOCATOR_KINDS:
                 raise JournalIntegrityError("noted proof record is not indexed")
-            if locators:
-                insert_rows(
-                    conn,
-                    "proof_locators(record_id,locator)",
-                    [(row["id"], locator) for locator in locators],
-                    verb="INSERT OR IGNORE",
-                )
-            conn.execute("DELETE FROM proof_pending WHERE record_id=?", (row["id"],))
+            self._locate(conn, row, locators)
+
+    @staticmethod
+    def _locate(conn: sqlite3.Connection, row: sqlite3.Row, locators: tuple[str, ...]) -> None:
+        if locators and row["run_id"] is not None:
+            insert_rows(
+                conn,
+                "proof_locators(record_id,stream,run_id,locator)",
+                [(row["id"], row["stream"], row["run_id"], locator) for locator in locators],
+                verb="INSERT OR IGNORE",
+            )
+        conn.execute("DELETE FROM proof_pending WHERE record_id=?", (row["id"],))
 
     def located_records(
         self,
@@ -1375,59 +1459,49 @@ class JournalIndex:
         locators: tuple[str, ...],
         bodies: Any,
         access: Any,
-    ) -> tuple[StoredProcedureJournalRecordV1, ...]:
-        """The records of one run a citation of these locators reads, in journal order.
+        retry: bool = False,
+    ) -> tuple[tuple[StoredProcedureJournalRecordV1, ...], bool]:
+        """The records of one run a citation of these locators reads, and whether any are held back.
 
-        That is every record naming one of the locators, the records sharing a
-        Source occurrence with them (its derived request and Source read), and
-        the run's admissions: never another record of the run. The run's proof
-        records indexed without a note are projected first, once each, from
-        their payloads; when none are pending nothing else is visited.
+        The records are every record naming one of the locators, the records
+        sharing a Source occurrence with them (its derived request and Source
+        read), and the run's admissions: never another record of the run, nor
+        of another run. The run's proof records indexed without a note are
+        projected first, once each, from their payloads. A record that cannot be
+        projected -- its frame or payload unreadable, or not a journal payload
+        -- is left pending, deferred under the current body landing head, and
+        never fails the lookup: it is tried again once that head moves, or with
+        ``retry`` (a lookup that missed). The second value says whether the run
+        still holds such a record, so the caller knows a miss may rest on it.
         """
 
         key = _key(stream)
+        head = _landing_head(bodies)
         with self.connection() as conn:
-            pending = conn.execute(
-                "SELECT r.* FROM proof_pending p INDEXED BY proof_pending_run "
-                "JOIN records r ON r.id=p.record_id WHERE p.stream=? AND p.run_id=? "
-                "ORDER BY p.record_id",
-                (key, run_id),
-            ).fetchall()
-            for row in pending:
-                stored = self.read_row(row)
-                payload = read_payload(bodies, stored.record.payload_digest, access=access)
-                found = (
-                    ()
-                    if isinstance(payload, UnavailablePayload)
-                    else proof_locators(row["event_kind"], payload)
-                )
-                if found:
-                    insert_rows(
-                        conn,
-                        "proof_locators(record_id,locator)",
-                        [(row["id"], locator) for locator in found],
-                        verb="INSERT OR IGNORE",
+            for row in _pending_rows(conn, key, run_id, head=None if retry else head):
+                try:
+                    stored = self.read_row(row)
+                    payload = read_payload(bodies, stored.record.payload_digest, access=access)
+                    if isinstance(payload, UnavailablePayload):
+                        raise LookupError("proof payload unavailable")
+                    found = proof_locators(row["event_kind"], payload)
+                except (LookupError, OSError, TypeError, CruxibleError, ValueError):
+                    conn.execute(
+                        "UPDATE proof_pending SET deferred_at=? WHERE record_id=?",
+                        (head or "", row["id"]),
                     )
-                conn.execute("DELETE FROM proof_pending WHERE record_id=?", (row["id"],))
-            marks = ",".join("?" for _ in locators)
-            rows = conn.execute(
-                "WITH cited(record_id) AS (SELECT l.record_id FROM proof_locators l "
-                "INDEXED BY proof_by_locator JOIN records r ON r.id=l.record_id "
-                f"WHERE l.locator IN ({marks}) AND r.stream=? AND r.run_id=?), "
-                "occurrences(locator) AS (SELECT l.locator FROM proof_locators l "
-                "JOIN cited c ON c.record_id=l.record_id "
-                "WHERE l.locator >= 'occurrence:' AND l.locator < 'occurrence;') "
-                "SELECT r.* FROM records r WHERE r.id IN ("
-                "SELECT record_id FROM cited UNION SELECT l.record_id FROM proof_locators l "
-                "INDEXED BY proof_by_locator JOIN records o ON o.id=l.record_id "
-                "WHERE l.locator IN (SELECT locator FROM occurrences) "
-                "AND o.stream=? AND o.run_id=? "
-                "UNION SELECT a.id FROM records a INDEXED BY records_run_kind "
-                "WHERE a.stream=? AND a.run_id=? AND a.event_kind='admission_bound') "
-                "ORDER BY r.partition_id, r.sequence",
-                (*locators, key, run_id, key, run_id, key, run_id),
-            ).fetchall()
-            return tuple(self.read_row(row) for row in rows)
+                    continue
+                self._locate(conn, row, found)
+            held = (
+                conn.execute(
+                    "SELECT 1 FROM proof_pending INDEXED BY proof_pending_run "
+                    "WHERE stream=? AND run_id=? LIMIT 1",
+                    (key, run_id),
+                ).fetchone()
+                is not None
+            )
+            rows = _cited_rows(conn, key, run_id, locators)
+            return tuple(self.read_row(row) for row in rows), held
 
     def invocation_runs(
         self,
