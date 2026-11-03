@@ -9,7 +9,8 @@ from typing import Annotated, Any, Callable, Literal
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, RootModel
-from pydantic.json_schema import SkipJsonSchema
+from pydantic.json_schema import SkipJsonSchema, WithJsonSchema
+from typing_extensions import TypeAliasType
 
 from cruxible_client import contracts
 from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
@@ -68,25 +69,32 @@ from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.write import (
+    _EXPECT_DESCRIPTION,
     AboutChange,
     AddChange,
     CaptureEvidence,
+    ClaimValue,
     ContractEvidence,
     CreateChange,
+    CreatedSubject,
     DocOp,
     ExpectedValue,
     FileEvidence,
+    NoneValue,
     RebindChange,
     RetireChange,
     SectionEvidence,
     SelfEvidence,
     SetChange,
     SlotRef,
+    SubjectRef,
+    SubjectTarget,
     WriteAccept,
     WriteOutcome,
     WriteRetireReason,
     WriteRole,
     WriteValue,
+    _omit_empty,
 )
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
@@ -168,7 +176,7 @@ class McpFileEvidence(FileEvidence):
     observation: SkipJsonSchema[WorkingSelectionObservation | None] = None
 
 
-McpEvidence = Annotated[
+_EvidenceUnion = Annotated[
     SelfEvidence | CaptureEvidence | McpFileEvidence | ContractEvidence | McpSectionEvidence,
     Field(discriminator="kind"),
 ]
@@ -177,17 +185,51 @@ _HOLD_DESCRIPTION = (
     "Sign only: leave activating a candidate this approval completes to someone else."
 )
 
+# The write tool's changes repeat these field shapes; each is one named schema
+# definition (``$defs``) the changes reference, so the model reads it once.
+# Validation and the values are those of the client contract's fields.
+McpEvidence = TypeAliasType(
+    "McpEvidence", Annotated[_EvidenceUnion | None, Field(description=_EVIDENCE_DEFAULT)]
+)
+McpChangeSubject = TypeAliasType(
+    "McpChangeSubject",
+    Annotated[SubjectTarget | None, Field(description="Default: the write's subject.")],
+)
+McpChangeValue = TypeAliasType("McpChangeValue", ClaimValue | CreatedSubject | NoneValue)
+McpRole = TypeAliasType(
+    "McpRole",
+    Annotated[
+        WriteRole | None, Field(description="Only when the field permits more than one role.")
+    ],
+)
+McpExpect = TypeAliasType(
+    "McpExpect", Annotated[ExpectedValue | None, Field(description=_EXPECT_DESCRIPTION)]
+)
+
 
 class McpSetChange(SetChange):
     __doc__ = SetChange.__doc__
 
-    evidence: McpEvidence | None = Field(default=None, description=_EVIDENCE_DEFAULT)
+    subject: McpChangeSubject = None
+    value: McpChangeValue
+    role: McpRole = None
+    evidence: McpEvidence = None
+    expect: McpExpect = None
 
 
 class McpAddChange(AddChange):
     __doc__ = AddChange.__doc__
 
-    evidence: McpEvidence | None = Field(default=None, description=_EVIDENCE_DEFAULT)
+    subject: McpChangeSubject = None
+    value: McpChangeValue
+    role: McpRole = None
+    evidence: McpEvidence = None
+
+
+class McpRetireChange(RetireChange):
+    __doc__ = RetireChange.__doc__
+
+    expect: McpExpect = None
 
 
 class McpRebindChange(RebindChange):
@@ -201,14 +243,30 @@ class McpRebindChange(RebindChange):
     evidence: McpFileEvidence | McpSectionEvidence
 
 
-class McpAboutChange(AboutChange):
-    __doc__ = AboutChange.__doc__
+#: A Subject reference whose shape the field description already gives.
+_McpSubjectRef = Annotated[SubjectRef, WithJsonSchema({"type": "string"})]
 
+
+class McpAboutChange(AboutChange):
+    """A note: link a section (ref: a docs op id; or file + section) about Subjects."""
+
+    subjects: tuple[_McpSubjectRef, ...] = Field(
+        default=(),
+        max_length=64,
+        exclude_if=_omit_empty,
+        description="kind/id; default: the write's subject.",
+    )
+    unlink: tuple[_McpSubjectRef, ...] = Field(
+        default=(),
+        max_length=64,
+        exclude_if=_omit_empty,
+        description="kind/id; a note left with none retires.",
+    )
     observation: SkipJsonSchema[WorkingSelectionObservation | None] = None
 
 
 McpChange = Annotated[
-    CreateChange | McpSetChange | McpAddChange | RetireChange | McpRebindChange | McpAboutChange,
+    CreateChange | McpSetChange | McpAddChange | McpRetireChange | McpRebindChange | McpAboutChange,
     Field(discriminator="op"),
 ]
 
@@ -1206,7 +1264,7 @@ def register_tools(
         ],
         because: Annotated[str, Field(description="Why; also the default evidence.")],
         evidence: Annotated[
-            McpEvidence | None,
+            _EvidenceUnion | None,
             Field(
                 description=(
                     "Default: self evidence from because; otherwise cite a Capture, "
