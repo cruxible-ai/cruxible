@@ -4951,6 +4951,10 @@ def _write_text(outcome: WriteOutcome) -> None:
             line = f"  add {target}: {_get_value_text(change.after)}"
         elif change.op == "rebind":
             line = f"  rebind {target}: {_get_value_text(change.after)} (value unchanged)"
+        elif change.op == "about":
+            where = f"{change.file}#{'/'.join(change.section or ())}"
+            about = ", ".join(change.about or ()) or "(unlinked: retired)"
+            line = f"  note {where} about {about}  [{change.note}]"
         elif change.before is None:
             line = f"  set {target}: {_get_value_text(change.after)}"
         else:

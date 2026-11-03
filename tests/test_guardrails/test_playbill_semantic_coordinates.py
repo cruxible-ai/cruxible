@@ -29,6 +29,7 @@ from cruxible_client.contracts.laws import (
     DOCUMENT_ACCEPTANCE_LAW,
     EXHAUST_PROMOTION_ACCEPTANCE_LAW,
     LIGHT_CAPTURE_CONTRACT_LAW,
+    NOTE_ACCEPTANCE_LAW,
     LINE_V6_ACCEPTANCE_LAW,
     NAMED_PROVIDER_IDENTITY_LAW,
     NAMED_REFERENCE_LAWS,
@@ -109,6 +110,13 @@ LAW_COORDINATES: tuple[
         "playbill-claim-attestation-envelope-v2",
         1,
         "sha256:9dd4ea044be49926f2d5d82e5d265b83e10dafbd7868631ef4d95fc607effd2b",
+    ),
+    (
+        NOTE_ACCEPTANCE_LAW,
+        "cruxible.note.v1",
+        "playbill-note-v1",
+        1,
+        "sha256:e16424467bd4abb90aaa76ea25803ab5dc3d393e31c190eba38791536b0b22ac",
     ),
     (
         APPROVAL_POLICY_ACCEPTANCE_LAW,
@@ -311,16 +319,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:a0d23030f719c5467d73ee01b6c0cf9efe1b9da5ea0d2383eced21e370eb5d07"
+    expected = "sha256:1c690af33bd01df7f7d384705cf86e67ea8b8b4f14f99cd3dbf204bd9ce7b024"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 56,
+            "semantic_revision": 58,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "capture-payload-v1",
+            "revision_name": "doc-backlinks-v1",
         },
     )
     assert computed == expected
@@ -365,9 +373,11 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "capture-payload-v1"
-    assert compiler_revision_label(CURRENT_COMPILER) == "capture-payload-v1"
+    assert CURRENT_COMPILER_REVISION == "doc-backlinks-v1"
+    assert compiler_revision_label(CURRENT_COMPILER) == "doc-backlinks-v1"
     for earlier_digest in (
+        # Revision 56: before the note artifact kind (workspace section about links).
+        "sha256:a0d23030f719c5467d73ee01b6c0cf9efe1b9da5ea0d2383eced21e370eb5d07",
         # Revision 54 (settle-scope-basis-v1): Captures still wrapped, before capture = payload.
         "sha256:ae9bfa79ced58d272e46a8b752554951905c85956697a75c2f7a0133a30ce816",
         # Revision 53: Mandate scope by change kind only, before basis-scoped grants.

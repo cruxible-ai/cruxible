@@ -287,3 +287,52 @@ def test_cli_prints_a_local_doc_refusal_as_not_submitted(
         "cruxible.doc.protected_path: Choose a workspace Markdown path outside .cruxible and .git",
     ]
     assert "WriteRefusalError" not in result.output
+
+
+def test_about_link_is_observed_like_section_evidence_and_unlink_needs_no_section(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.write import AboutChange
+
+    request = WriteRequest(
+        because="Note",
+        docs=(AppendSection(id="n", file="notes.md", text="# Triage\nLooks benign\n"),),
+        changes=(AboutChange(ref="n", subjects=("project.work_item/wi-1",)),),
+    )
+    seen = []
+
+    def submit(observed):
+        seen.append(observed)
+        return _answer()
+
+    write_workspace(request, workspace=tmp_path, submit=submit)
+    (change,) = seen[0].changes
+    assert isinstance(change, AboutChange) and change.ref is None
+    assert change.file == "doc-notes.md" and change.section == ("Triage",)
+    assert change.observation is not None
+    assert change.observation.selected_content == b"# Triage\nLooks benign\n"
+    assert "notes.md" not in change.observation.model_dump_json().replace("doc-notes.md", "")
+    # The section is gone: an unlink still names the note by source and path.
+    (tmp_path / "notes.md").write_bytes(b"# Other\n")
+    unlink = WriteRequest(
+        because="Unlink",
+        changes=(
+            AboutChange(file="notes.md", section=("Triage",), unlink=("project.work_item/wi-1",)),
+        ),
+    )
+    write_workspace(unlink, workspace=tmp_path, submit=submit)
+    (gone,) = seen[1].changes
+    assert gone.observation is None and gone.file == "doc-notes.md"
+    with pytest.raises(WriteRefusalError):
+        write_workspace(
+            WriteRequest(
+                because="Link",
+                changes=(
+                    AboutChange(
+                        file="notes.md", section=("Triage",), subjects=("project.work_item/wi-1",)
+                    ),
+                ),
+            ),
+            workspace=tmp_path,
+            submit=submit,
+        )

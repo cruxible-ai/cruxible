@@ -1491,6 +1491,48 @@ class ClaimRetirementMember(_StrictAuthoringModel):
         return self.retires
 
 
+class NoteAuthoringPayload(_StrictAuthoringModel):
+    """Link one workspace section ``about`` Subjects, or unlink it (contracts/notes.py).
+
+    ``about`` is the note's complete Subject set after this change, sorted and
+    unique; empty retires the note. ``source`` is the section the writer's
+    adapter observed now (heading-path label required); a retirement may omit
+    it and name the ``note`` instead, so a deleted section can still be unlinked.
+    """
+
+    tag: Literal["playbill-note-authoring-payload-v1"] = "playbill-note-authoring-payload-v1"
+    source: WorkingSelectionObservation | None = None
+    note: str | None = Field(default=None, pattern=r"^NOTE-[0-9a-f]{32}$")
+    about: tuple[ArtifactIdentity, ...] = Field(default=(), max_length=64)
+
+    @model_validator(mode="after")
+    def _shape(self) -> NoteAuthoringPayload:
+        from cruxible_client.contracts.notes import note_id
+
+        keys = [item.qualified.encode("utf-8") for item in self.about]
+        if keys != sorted(set(keys)) or any(item.kind != "Subject" for item in self.about):
+            raise ValueError("note about must be sorted, unique Subject identities")
+        if self.source is not None:
+            label = self.source.selector.section
+            if label is None or not label.path:
+                raise ValueError("a note's source must label the section's heading path")
+            derived = note_id(self.source.source_id, label.path)
+            if self.note is not None and self.note != derived:
+                raise ValueError("note names a different section than its source")
+        elif self.about or self.note is None:
+            raise ValueError("a note link needs its observed section; a retirement names the note")
+        return self
+
+    @property
+    def note_name(self) -> str:
+        from cruxible_client.contracts.notes import note_id
+
+        if self.note is not None:
+            return self.note
+        assert self.source is not None and self.source.selector.section is not None
+        return note_id(self.source.source_id, self.source.selector.section.path)
+
+
 AuthoringChangeSetMember: TypeAlias = Annotated[
     ClaimAuthoringPayload
     | ClaimTypeAuthoringPayload
@@ -1498,6 +1540,7 @@ AuthoringChangeSetMember: TypeAlias = Annotated[
     | ClaimRetirementMember
     | ResolutionContractAuthoringPayload
     | AttestationAuthoringPayload
+    | NoteAuthoringPayload
     | SubjectAuthoringPayload
     | SubjectCreationAuthoringPayload
     | QueryDefinitionAuthoringPayload
@@ -1546,6 +1589,8 @@ def authoring_member_identity(payload: AuthoringChangeSetMember) -> str:
         return payload.resolution_contract.identity.qualified
     if isinstance(payload, AttestationAuthoringPayload):
         return attestation_identity(payload.attestation).qualified
+    if isinstance(payload, NoteAuthoringPayload):
+        return f"Note:{payload.note_name}"
     if isinstance(payload, ClaimAuthoringPayload):
         return authoring_claim_member_identity(payload)
     if isinstance(payload, ClaimTypeAuthoringPayload):
@@ -2620,6 +2665,7 @@ __all__ = [
     "SubjectCreationAuthoringPayload",
     "QueryDefinitionAuthoringPayload",
     "AttestationAuthoringPayload",
+    "NoteAuthoringPayload",
     "ResolutionContractAuthoringPayload",
     "SubjectAuthoringPayload",
     "RepairAlternative",

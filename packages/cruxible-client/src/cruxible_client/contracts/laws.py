@@ -355,6 +355,16 @@ ATTESTATION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-claim-attestation-envelope-v2",
 )
 
+#: A workspace section linked ``about`` Subjects (contracts/notes.py): a link,
+#: never a Claim; its Capture is the section's observed body.
+NOTE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.note.v1", "playbill-note-v1", semantic_revision=1
+    ),
+    artifact_kind="note",
+    artifact_tag="playbill-note-v1",
+)
+
 
 # A Line with no embedded trigger. Retiring it, or changing the event it
 # accepts, cannot strand live Triggers aimed at it: they move in the same set.
@@ -455,6 +465,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
         CAPTURE_CONTRACT_ACCEPTANCE_LAW,
         ATTESTATION_ACCEPTANCE_LAW,
+        NOTE_ACCEPTANCE_LAW,
         RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
         CLAIM_ACCEPTANCE_LAW,
         CLAIM_TYPE_ACCEPTANCE_LAW,

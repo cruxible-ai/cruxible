@@ -67,6 +67,7 @@ from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.write import (
+    AboutChange,
     AddChange,
     CaptureEvidence,
     ContractEvidence,
@@ -199,8 +200,14 @@ class McpRebindChange(RebindChange):
     evidence: McpFileEvidence | McpSectionEvidence
 
 
+class McpAboutChange(AboutChange):
+    __doc__ = AboutChange.__doc__
+
+    observation: SkipJsonSchema[WorkingSelectionObservation | None] = None
+
+
 McpChange = Annotated[
-    CreateChange | McpSetChange | McpAddChange | RetireChange | McpRebindChange,
+    CreateChange | McpSetChange | McpAddChange | RetireChange | McpRebindChange | McpAboutChange,
     Field(discriminator="op"),
 ]
 

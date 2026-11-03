@@ -48,6 +48,7 @@ from cruxible_client.contracts.authoring.models import (
     ContractAuthoringPayload,
     ExistingCaptureCitationSource,
     LineAuthoringPayload,
+    NoteAuthoringPayload,
     ProcedureAuthoringPayload,
     ProcedureMandateAuthoringPayload,
     ProcedureRuntimePolicyAuthoringPayload,
@@ -151,6 +152,14 @@ from cruxible_client.contracts.declared_blocks import (
     stamped_projection_windows,
 )
 from cruxible_client.contracts.errors import CruxibleError, FormatError
+from cruxible_client.contracts.notes import (
+    Note,
+    note_digest,
+    note_identity,
+    note_path,
+    parse_note,
+    render_note,
+)
 from cruxible_client.contracts.procedure_mandates import (
     MandateClaimScope,
     MandateCondition,
@@ -1314,7 +1323,7 @@ def _install_claim_dependencies(
 def _refuse_citation_into_projection_window(
     instance: PlaybillInstance,
     *,
-    payload: ClaimAuthoringPayload,
+    payload: ClaimAuthoringPayload | NoteAuthoringPayload,
     envelope: CaptureEnvelopeAny,
     memo: VerifiedCaptureMemo | None = None,
 ) -> None:
@@ -4745,6 +4754,7 @@ MEMBER_STAGING_ORDER = (
     "query",
     "subject_creation",
     "claim",
+    "note",
     "procedure",
     "line",
     "procedure_mandate",
@@ -4777,6 +4787,8 @@ def _member_stage(member: AuthoringChangeSetMember) -> str:
         return "subject_creation"
     if isinstance(member, ClaimAuthoringPayload):
         return "claim"
+    if isinstance(member, NoteAuthoringPayload):
+        return "note"
     if isinstance(member, ClaimTypeSuccessionMember):
         return "claim_type_succession"
     if isinstance(member, ClaimRetirementMember):
@@ -4900,6 +4912,8 @@ def _member_primary_path(
         return contract_path(member.name, member.version)
     if isinstance(member, QueryDefinitionAuthoringPayload):
         return query_definition_path(member.query_definition.identity.name)
+    if isinstance(member, NoteAuthoringPayload):
+        return note_path(member.note_name)
     path, _content, _digest = _render_non_procedure_member(member)
     return path
 
@@ -5244,6 +5258,16 @@ def _stage_change_set_member(
         member_resolved["claim_id"] = claim_id
         extra = {member_path for member_path, _content in lowered.changed_members}
         return fork_tree(lowered.proposed_tree), member_resolved, extra, {}
+    if isinstance(member, NoteAuthoringPayload):
+        return _stage_note(
+            instance,
+            member=member,
+            intent=intent,
+            actor_id=actor_id,
+            base=base,
+            staged_tree=staged_tree,
+            path=path,
+        )
     if isinstance(member, ClaimTypeSuccessionMember):
         return _stage_claim_type_succession(
             instance,
@@ -5342,6 +5366,107 @@ def _stage_change_set_member(
 
         builtin_paths = install_builtin_capture_dependencies(member.claim_type, candidate_tree)
     return candidate_tree, {"artifact_digest": digest}, builtin_paths, {}
+
+
+def _stage_note(
+    instance: PlaybillInstance,
+    *,
+    member: NoteAuthoringPayload,
+    intent: AuthoringIntent,
+    actor_id: str,
+    base: AcceptedProjectionCoordinate,
+    staged_tree: Mapping[str, bytes],
+    path: str,
+) -> StagedMember:
+    """Write one note: the section's workspace Capture and the link, or its retirement.
+
+    The section is captured exactly as a section citation captures it (the
+    source's foreign-source CaptureContract, installed on first use), so a
+    note's prose is retained under the same contract and projection-window
+    gate as a Claim's cited section. O(the section's bytes + its Subjects).
+    """
+
+    previous_bytes = staged_tree.get(path)
+    previous = None if previous_bytes is None else parse_note(previous_bytes, path=path)
+    predecessor = None if previous is None else note_digest(previous).tagged
+    candidate_tree = fork_tree(staged_tree)
+    extra: set[str] = set()
+    if not member.about:
+        if previous is None or previous.lifecycle.state != "live":
+            _refuse(
+                "cruxible.note.not_live",
+                "note",
+                f"Note {member.note_name} is not live here, so there is nothing to unlink.",
+                repair_kind="omit_member",
+                repair_description="Leave the unlink out, or link the section first.",
+            )
+        note = previous.model_copy(
+            update={"lifecycle": ArtifactLifecycle(state="retired", predecessor_digest=predecessor)}
+        )
+    else:
+        source = member.source
+        assert source is not None and source.selector.section is not None
+        about = member.about
+        head_path = capture_contract_path(
+            foreign_source_capture_contract(source.source_id).identity.name
+        )
+        head_bytes = staged_tree.get(head_path)
+        head = None if head_bytes is None else parse_capture_contract(head_bytes, path=head_path)
+        install = True
+        if head is not None and head.lifecycle.state == "live":
+            successor = builtin_contract_for_write(
+                foreign_source_capture_contract(source.source_id), head
+            )
+            install = successor != head
+            head = successor
+        try:
+            built = build_working_selection_capture(
+                accepted_contract=None if head is None or head.lifecycle.state != "live" else head,
+                store=instance.body_store(),
+                actor_id=actor_id,
+                claim_id=member.note_name,
+                rationale=intent.payload.rationale
+                if isinstance(intent.payload, ChangeSetAuthoringPayload)
+                else "",
+                observed_at=_observed_at(intent.canonical_timestamp),
+                accepted_coordinate=AcceptedCoordinate.from_internal(base),
+                source_id=source.source_id,
+                coordinate=source.coordinate.model_dump(mode="json"),
+                selector=source.selector.model_dump(mode="json"),
+                selected_content=source.selected_content,
+            )
+        except (CruxibleError, ValueError) as exc:
+            _refuse(
+                "cruxible.authoring.working_selection_refused",
+                "source.selector",
+                f"The note's section cannot be captured: {exc}",
+                repair_kind="revise_selection",
+                repair_description="Link a section of admitted prose outside projection blocks.",
+            )
+        _refuse_citation_into_projection_window(instance, payload=member, envelope=built.envelope)
+        note = Note(
+            identity=note_identity(source.source_id, source.selector.section.path),
+            source_id=source.source_id,
+            section=source.selector.section.path,
+            capture_digest=built.capture_digest,
+            section_digest=source.selected_bytes_digest,
+            about=about,
+            lifecycle=ArtifactLifecycle(predecessor_digest=predecessor),
+        )
+        if (
+            previous is not None
+            and previous.lifecycle.state == "live"
+            and (previous.section_digest, previous.about) == (note.section_digest, note.about)
+        ):
+            # The same section bytes linked to the same Subjects: the live note
+            # already says this (a new Capture differs only by observation time).
+            note = previous
+        elif install:
+            contract_path = capture_contract_path(built.contract.identity.name)
+            candidate_tree[contract_path] = render_capture_contract(built.contract)
+            extra.add(contract_path)
+    candidate_tree[path] = render_note(note)
+    return candidate_tree, {"artifact_digest": note_digest(note).tagged}, extra, {}
 
 
 def _resolve_re_author_siblings(

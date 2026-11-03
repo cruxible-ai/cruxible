@@ -39,6 +39,7 @@ from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.content_memo import sealed_derive
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import PrincipalIntegrityError, ProjectionIntegrityError
+from cruxible_client.contracts.notes import parse_note
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.procedure_mandates import (
     mandate_rung,
@@ -269,6 +270,19 @@ OWNER_CODECS = (
             ("media_type", "TEXT NOT NULL"),
             ("title", "TEXT NOT NULL"),
             ("body_digest", "TEXT NOT NULL"),
+        ),
+    ),
+    OwnerCodec(
+        "note",
+        "Note",
+        "notes",
+        parse_note,
+        (
+            ("source_id", "TEXT NOT NULL"),
+            # The heading path as a canonical JSON array of heading texts.
+            ("section", "TEXT NOT NULL"),
+            ("capture_digest", "TEXT NOT NULL"),
+            ("section_digest", "TEXT NOT NULL"),
         ),
     ),
     OwnerCodec(
@@ -685,6 +699,13 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
             "target": source.line.qualified if source.line is not None else source.action,
             "schedule_kind": source.schedule.kind,
             "interval_seconds": getattr(source.schedule, "interval_seconds", None),
+        }
+    if owner.kind == "note":
+        return {
+            "source_id": source.source_id,
+            "section": canonical_bytes(list(source.section)).decode("utf-8"),
+            "capture_digest": source.capture_digest,
+            "section_digest": source.section_digest,
         }
     result = {name: getattr(source, name) for name, _ in owner.fields if hasattr(source, name)}
     if owner.kind == "claim-type":

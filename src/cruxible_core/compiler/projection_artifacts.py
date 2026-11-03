@@ -98,6 +98,7 @@ ARTIFACT_KINDS = ArtifactKindRegistry(
             ("document", rf"^documents/{_NAME}\.json$"),
             ("exhaust-promotion", rf"^exhaust-promotions/{_NAME}\.json$"),
             ("line", rf"^lines/{_NAME}\.json$"),
+            ("note", r"^notes/NOTE-[0-9a-f]{32}\.json$"),
             ("principal", r"^principals/[a-z][a-z0-9_.-]{0,127}\.json$"),
             ("procedure", rf"^procedures/{_NAME}\.json$"),
             ("procedure-mandate", rf"^procedure-mandates/{_NAME}\.json$"),
@@ -133,6 +134,7 @@ RegisteredPathKind = Literal[
     "document",
     "exhaust-promotion",
     "line",
+    "note",
     "principal",
     "procedure",
     "procedure-mandate",
@@ -795,6 +797,33 @@ def parse_projection_tree(
                     )
                     for pin in dependency_pins(trigger, by_name=by_name)
                 )
+                continue
+            if kind == "note":
+                from cruxible_client.contracts.notes import note_digest, parse_note
+
+                note = parse_note(content, path=path)
+                identity = note.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                digest = note_digest(note).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity,
+                        kind,
+                        note.artifact_format,
+                        path,
+                        digest,
+                        note.lifecycle.predecessor_digest,
+                        projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            artifact_digest=digest,
+                        ),
+                    )
+                )
+                if note.lifecycle.state == "retired":
+                    retired_identities.append(identity)
                 continue
             if kind == "resolution-contract":
                 from cruxible_client.contracts.resolution_contracts import (

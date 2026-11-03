@@ -53,6 +53,7 @@ _LOCAL_KINDS = frozenset(
         "resolution-contract",
         "subject-kind",
         "trigger",
+        "note",
         "document",
         "capture-contract",
         "claim",

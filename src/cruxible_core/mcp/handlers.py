@@ -96,6 +96,7 @@ from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.validation_messages import validation_lines
 from cruxible_client.contracts.write import (
+    AboutChange,
     FileEvidence,
     RetireRequest,
     SectionEvidence,
@@ -1373,7 +1374,8 @@ def handle_playbill_write(instance_id: str, **fields: Any) -> WriteOutcome:
 
     request = _write_request(WriteRequest, "cruxible_write", fields)
     if not request.docs and not any(
-        isinstance(getattr(c, "evidence", None), FileEvidence | SectionEvidence)
+        isinstance(c, AboutChange)
+        or isinstance(getattr(c, "evidence", None), FileEvidence | SectionEvidence)
         for c in request.changes
     ):
         return _daemon_call(
