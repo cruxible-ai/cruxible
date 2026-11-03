@@ -7,7 +7,9 @@ its bytes written once, one journal record, one entry in the change set), so a
 re-encode or re-hash of one item's payloads cannot creep back unnoticed.
 
 Each case includes subject.within. One creates Claims in empty slots; the other
-pre-seeds live Claims and measures eligible revisions. Each runs four batches:
+pre-seeds live Claims and measures eligible revisions. Each runs on a one-valued
+slot and on a dated many-valued one, whose revise moves the held unit's
+effective period (D-R30). Every case runs four batches:
 
 1. a warm-up of ``N`` items (first parses of the accepted artifacts);
 2. ``N`` items;
@@ -421,8 +423,14 @@ def _create_subjects(instance: Any, owner: Any, count: int) -> None:
     )
 
 
-def _item(index: int, *, revise: bool = False) -> dict[str, object]:
-    """Recorded source rows carry facts; the core Claims template owns writes."""
+def _item(index: int, *, revise: bool = False, many: bool = False) -> dict[str, object]:
+    """Recorded source rows carry facts; the core Claims template owns writes.
+
+    A many-valued row keeps its value (its unit) on a revise; the document's
+    ``listed_from`` moves instead (D-R30: the held unit's Claim is revised).
+    """
+    if many:
+        return {"id": _subject_id(index), "severity": ("high", "low", "medium")[index % 3]}
     return {
         "id": _subject_id(index),
         "severity": ("high", "low", "medium")[(index + int(revise)) % 3],
@@ -437,12 +445,17 @@ def _settle(
     *,
     revise: bool = False,
     complete_count: bool = False,
+    many: bool = False,
 ) -> Counter[str]:
     instance, root, line = world
-    proposals = [_item(index, revise=revise) for index in range(first, first + count)]
+    proposals = [_item(index, revise=revise, many=many) for index in range(first, first + count)]
     (root / fixtures.RELATIVE_PATH).write_bytes(
         canonical.canonical_bytes(
-            {"proposals": proposals, **({"count": len(proposals)} if complete_count else {})}
+            {
+                "proposals": proposals,
+                **({"count": len(proposals)} if complete_count else {}),
+                **({"listed_from": f"2026-10-0{1 + int(revise)}T00:00:00Z"} if many else {}),
+            }
         )
     )
     with _counted() as counts, _journal_counted(), _objects_counted():
@@ -453,6 +466,9 @@ def _settle(
     (egress,) = state.terminal_egress
     assert egress.settle_outcome == "settled", egress
     assert len(egress.target_paths) == count, egress
+    # A revise batch revises every held unit; a create batch only writes.
+    (summary,) = [n.summary for n in state.nodes if n.summary and n.summary.kind == "claims"]
+    assert (summary.written, summary.revised) == ((0, count) if revise else (count, 0)), summary
     return Counter(counts)
 
 
@@ -513,7 +529,12 @@ def _roomy_selection_budget(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _measure_work_per_item(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, revise: bool, count: int
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    revise: bool,
+    count: int,
+    many: bool = False,
 ) -> tuple[Counter[str], Counter[str], Counter[str]]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     _roomy_selection_budget(monkeypatch)
@@ -524,28 +545,36 @@ def _measure_work_per_item(
             claims_within=tuple(
                 subject_path(SUBJECT_KIND, _subject_id(i)) for i in range(5 * count)
             ),
+            claims_many=many,
+            claims_dated=many,
         )
         _create_subjects(instance, settle_support.OWNERS[instance.root], 5 * count)
         world = (instance, root, line)
-        _settle(world, 0, count, 0)
+        _settle(world, 0, count, 0, many=many)
         if revise:
-            _settle(world, count, 4 * count, 5)
+            _settle(world, count, 4 * count, 5, many=many)
         _forget_parsed_receipts()
-        small = _settle(world, count, count, 1, revise=revise)
+        small = _settle(world, count, count, 1, revise=revise, many=many)
         _forget_parsed_receipts()
-        large = _settle(world, 2 * count, 2 * count, 2, revise=revise)
+        large = _settle(world, 2 * count, 2 * count, 2, revise=revise, many=many)
         _forget_parsed_receipts()
-        after_large = _settle(world, 4 * count, count, 3, revise=revise)
+        after_large = _settle(world, 4 * count, count, 3, revise=revise, many=many)
 
     return small, large, after_large
 
 
-@pytest.mark.parametrize("revise", [False, True], ids=["create-within", "revise-within"])
+@pytest.mark.parametrize(
+    ("revise", "many"),
+    [(False, False), (True, False), (False, True), (True, True)],
+    ids=["create-within", "revise-within", "many-create-within", "many-revise-within"],
+)
 def test_a_settles_work_per_item_stays_at_its_floor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, revise: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, revise: bool, many: bool
 ) -> None:
+    """The many cases: a dated many-valued slot, revised by a moved period (D-R30)."""
+
     small, large, after_large = _measure_work_per_item(
-        tmp_path, monkeypatch, revise=revise, count=N
+        tmp_path, monkeypatch, revise=revise, count=N, many=many
     )
 
     assert small["journal_records"] == N
@@ -571,7 +600,7 @@ def test_a_settles_work_per_item_stays_at_its_floor(
     )
     destination = os.environ.get("CRUXIBLE_PER_ITEM_REPORT")
     if destination:
-        suffix = ".revise" if revise else ".create"
+        suffix = (".many" if many else "") + (".revise" if revise else ".create")
         Path(destination + suffix).write_text(report + "\n")
     violations = [
         f"{name} grew to {slope[name]:.1f} per item (ceiling {ceiling})"

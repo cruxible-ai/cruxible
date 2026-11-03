@@ -22,8 +22,11 @@ def delivery_definition(
     absence=None,
     many=False,
     only_keys=None,
+    dated=False,
 ):
     source = procedure.definition.nodes[0]
+    # ``dated``: each Claim is effective from the document's ``listed_from``, a
+    # header read once per Capture (a row field would add extract work per row).
     row = boundary_contract("security.delivery-row", {"severity": "string{max_len: 256}"})
     out = boundary_contract("security.delivery-output", {})
     mappings = [
@@ -31,6 +34,7 @@ def delivery_definition(
             "type": ArtifactNameRef(target=ArtifactIdentity(kind="ClaimType", name=predicate)),
             "value": "$item.fields.severity",
             "role": "observation",
+            **({"effective_from": "$steps.entries.header.listed_from"} if dated else {}),
         }
         for predicate in predicates
     ]
@@ -130,6 +134,9 @@ def delivery_definition(
                 only_keys=only_keys,
                 complete_when={"count_at": "/count"} if absence else None,
                 fields={"severity": {"at": "severity"}},
+                header={"listed_from": {"at": "/listed_from", "parse": "datetime"}}
+                if dated
+                else {},
                 as_="entries",
                 next=node_id,
             ),

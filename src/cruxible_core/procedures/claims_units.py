@@ -83,10 +83,15 @@ def unit_holders(
     ``ClaimUnitUnresolved`` when an inverse's object key cannot be read.
     """
 
-    if claim_type.cardinality != "many" and claim_type.inverse is None:
-        return tuple(held)
+    if claim_type.inverse is None:
+        if claim_type.cardinality != "many":
+            return tuple(held)
+        # Without an inverse a unit is the object itself (claim_unit_key's object
+        # unit), so canonical objects are compared directly and no unit is built.
+        return tuple(c for c in held if same_value(c.statement, obj))
     # Under an inverse every unit must resolve, a one-valued slot's included,
-    # so a later absence can judge what this write holds.
+    # so a later absence can judge what this write holds. Each unit is derived
+    # once per call: the incoming one and one per holder.
     unit = unit_key(dict(obj), claim_type, context)
     units = [unit_key(c.statement.object, claim_type, context) for c in held]
     if claim_type.cardinality != "many":
@@ -111,7 +116,7 @@ def same_content(
     role: str,
     period: tuple[datetime | None, datetime | None],
 ) -> bool:
-    """Same value, role and typed effective period (``claim_period``), never wire text."""
+    """Same value, role and typed effective period (``claim_time``), never wire text."""
 
     return (
         held.role == role

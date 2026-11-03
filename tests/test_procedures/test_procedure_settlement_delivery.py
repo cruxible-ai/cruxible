@@ -247,6 +247,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
     claims_many: bool = False,
     claims_declares_inverse: bool = False,
     claims_only_keys: Any = None,
+    claims_dated: bool = False,
 ):
     instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
     source, shape = procedure.definition.nodes
@@ -266,6 +267,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
         absence=claims_absence,
         many=claims_many,
         only_keys=claims_only_keys,
+        dated=claims_dated,
     )
     if not claims_terminal:
         (root / fixtures.RELATIVE_PATH).write_bytes(fixtures.canonical_bytes({"severity": "high"}))
