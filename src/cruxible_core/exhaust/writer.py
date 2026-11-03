@@ -15,6 +15,7 @@ import structlog
 
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_core.exhaust.backends import LocalJournalBackend
+from cruxible_core.exhaust.journal_index import PROOF_LOCATOR_KINDS, proof_locators
 from cruxible_core.exhaust.records import (
     JournalEventKindV1,
     JournalPartitionHeadV1,
@@ -131,6 +132,8 @@ class ProcedureExhaustWriter:
             self.material_reservations.release_locked(reservation.reservation_id)
         if event_kind == "provider_invocation_started":
             note_invocation_start(self.journal, stored, payload)
+        elif event_kind in PROOF_LOCATOR_KINDS:
+            note_proof_record(self.journal, stored, payload)
         return stored
 
 
@@ -170,4 +173,32 @@ def note_invocation_start(
         )
 
 
-__all__ = ["ProcedureExhaustWriter", "note_invocation_start"]
+def note_proof_record(
+    journal: Any, stored: StoredProcedureJournalRecordV1, payload: object
+) -> None:
+    """Give a just-appended proof record its locators, when the journal keeps an index.
+
+    Best effort, as for an invocation start: a failure leaves the record
+    pending, and the first lookup of its run projects it from its payload.
+    """
+
+    index = getattr(journal, "index", None)
+    if index is None:
+        return
+    try:
+        index.note_proof_locators(
+            stored.record.stream,
+            partition_id=stored.record.partition_id,
+            sequence=stored.record.sequence,
+            locators=proof_locators(stored.record.event_kind, payload),
+        )
+    except Exception as exc:  # noqa: BLE001 -- the append already succeeded
+        _log.warning(
+            "proof_locator_note_failed",
+            partition_id=stored.record.partition_id,
+            sequence=stored.record.sequence,
+            reason=f"{type(exc).__name__}: {exc}",
+        )
+
+
+__all__ = ["ProcedureExhaustWriter", "note_invocation_start", "note_proof_record"]

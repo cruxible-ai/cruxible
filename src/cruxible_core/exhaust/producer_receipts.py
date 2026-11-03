@@ -2,10 +2,13 @@
 
 Only the daemon appends to the Procedure journal, under its fencing token, and
 it checked every link below when it appended. A write that cites a Capture
-therefore reads only the cited run's records (located by run id through the
-journal index) and re-runs the link checks over that one run. A miss falls back
-to one pass over the whole journal -- the index may lag an append made by
-another process -- which is also what recovery uses (``full_journal``).
+therefore reads only the records its citation names -- the receipt or Capture
+record, the Source occurrence records it rests on and the run's admission,
+located through the journal index's proof locators -- and re-runs the link
+checks over those. However large the cited run, a citation reads the same
+records. A miss catches the index up to the records appended since its last
+sync and looks once more; one pass over the whole journal is what recovery
+and audit use (``full_journal``).
 """
 
 from __future__ import annotations
@@ -251,8 +254,8 @@ class JournalProducerReceiptResolver:
 
     One instance is one verification context: what it read and resolved is kept
     for its life, keyed by receipt digest and by Capture digest, so N citations
-    of one Capture read its run once. A lookup reads only the run it names;
-    ``index_all`` makes one pass over every partition.
+    of one Capture read its records once. A lookup reads only the records its
+    citation names; ``index_all`` makes one pass over every partition.
     """
 
     def __init__(
@@ -283,6 +286,12 @@ class JournalProducerReceiptResolver:
         #: The journal payload bodies each run's answers were derived from: an
         #: answer stands only while every one of them is still held and intact.
         self._run_bodies: dict[str, set[str]] = {}
+        #: The receipt and Capture digests each run's records answered.
+        self._run_digests: dict[str, set[str]] = {}
+        self._run_captures: dict[str, set[str]] = {}
+        #: Runs whose last derivation left proof records the index could not
+        #: project yet: their answers are never served from what is kept.
+        self._held_runs: set[str] = set()
         self._current_run = ""
         self._verified = _VerifiedCaptures()
         self._notes: list[ProducerReceiptJournalNote] = []
@@ -334,6 +343,7 @@ class JournalProducerReceiptResolver:
             message=message,
         )
         if candidate_digest is not None:
+            self._run_digests.setdefault(self._current_run, set()).add(candidate_digest)
             self._errors.setdefault(
                 candidate_digest,
                 CaptureFormatError(
@@ -386,6 +396,7 @@ class JournalProducerReceiptResolver:
                 exc=exc,
             )
             return
+        self._run_captures.setdefault(record.run_id, set()).add(capture)
         self._productions.setdefault(capture, set()).add(
             CaptureProductionRecord(
                 capture_digest=capture,
@@ -396,6 +407,7 @@ class JournalProducerReceiptResolver:
         )
 
     def _store(self, digest: str, resolution: ProducerReceiptResolution) -> None:
+        self._run_digests.setdefault(self._current_run, set()).add(digest)
         existing = self._resolutions.get(digest)
         if existing is not None and existing != resolution:
             self._resolutions.pop(digest, None)
@@ -425,12 +437,23 @@ class JournalProducerReceiptResolver:
             self._index_records(records)
         self._full = True
 
-    def _index_run(self, run_id: str) -> None:
-        """Index only one run's records, located through the journal index."""
+    def _index_cited(self, run_id: str, locators: tuple[str, ...], *, retry: bool = False) -> bool:
+        """Index only the records of one run a citation of these locators reads.
+
+        Returns whether the run holds proof records the index could not yet
+        project (``retry`` tries every one of them again).
+        """
 
         self.lookups += 1
         try:
-            records = self._journal.select_records(self._stream, run_id=run_id)
+            records, held = self._journal.located_records(
+                self._stream,
+                run_id=run_id,
+                locators=locators,
+                bodies=self._bodies,
+                access=self._access,
+                retry=retry,
+            )
         except (OSError, CruxibleError, ValueError) as exc:
             raise CaptureFormatError("Capture producer receipt journal is unavailable") from exc
         partitions: dict[str, list[StoredProcedureJournalRecordV1]] = {}
@@ -438,6 +461,7 @@ class JournalProducerReceiptResolver:
             partitions.setdefault(stored.record.partition_id, []).append(stored)
         for partition in partitions.values():
             self._index_records(partition)
+        return held
 
     def _index_records(self, records: Iterable[StoredProcedureJournalRecordV1]) -> None:
         """Re-check the receipt links within one partition's records, in order."""
@@ -691,6 +715,7 @@ class JournalProducerReceiptResolver:
                 self._store(candidate_digest, procedure_receipt)
                 assert record.run_id is not None  # checked with its admission above
                 for produced in terminal.children:
+                    self._run_captures.setdefault(record.run_id, set()).add(produced.egress_digest)
                     self._productions.setdefault(produced.egress_digest, set()).add(
                         CaptureProductionRecord(
                             capture_digest=produced.egress_digest,
@@ -705,29 +730,86 @@ class JournalProducerReceiptResolver:
         found: Callable[[], object],
         *,
         run_id: str,
+        locators: tuple[str, ...],
     ) -> None:
         """Answer from a kept positive result, or derive the answer as a fresh context would.
 
         Only positive answers are kept, each only while the journal payloads it
         was derived from are held (``_still_proven``). A refusal is re-derived;
-        a miss reads the cited run without evicting other runs' proven answers.
-        Revisions alternate predecessor and current runs, so evicting on a miss
-        would make each sibling Claim pay to read the whole predecessor run.
-        On a miss it brings the journal index up to the records appended since
-        its last sync -- never the whole journal -- and reads the run once more,
-        so a record appended since is seen; still missing, the caller refuses.
-        The full-journal pass stays for recovery and audit (``full_journal``).
+        a miss reads the cited records without evicting other runs' proven
+        answers. On a miss it brings the journal index up to the records
+        appended since its last sync -- never the whole journal -- and reads
+        the cited records once more, so a record appended since is seen; still
+        missing, the caller refuses. A miss, or a refusal, while the run holds
+        proof records the index could not project yet (an unreadable payload
+        since restored) tries those again, after forgetting what was derived
+        without them. The full-journal pass stays for recovery and audit
+        (``full_journal``).
         """
 
+        if run_id in self._held_runs:
+            # What is kept of this run was derived without records the index
+            # could not project: never served. Re-derive it, trying them again.
+            held = self._derive(run_id, locators, retry=True)
+        else:
+            try:
+                if found() is not None:
+                    return
+            except CaptureFormatError:
+                self._forget()
+            held = self._derive(run_id, locators)
+            if held:
+                # Records deferred under this landing head were skipped; one may
+                # be readable now (a transient failure) and change the answer.
+                held = self._derive(run_id, locators, retry=True)
         try:
             if found() is not None:
                 return
         except CaptureFormatError:
-            self._forget()
-        self._index_run(run_id)
-        if found() is None:
-            self._catch_up()
-            self._index_run(run_id)
+            if not held:
+                raise
+        self._catch_up()
+        self._derive(run_id, locators, retry=True, forget=held)
+
+    def _derive(
+        self,
+        run_id: str,
+        locators: tuple[str, ...],
+        *,
+        retry: bool = False,
+        forget: bool | None = None,
+    ) -> bool:
+        """Index the cited records of one run; whether it still holds unprojected records.
+
+        A retry first forgets this run's derived answers (``forget``, by
+        default whenever retrying), so none survives from records read before.
+        """
+
+        if retry if forget is None else forget:
+            self._forget_run(run_id)
+        held = self._index_cited(run_id, locators, retry=retry)
+        if held:
+            self._held_runs.add(run_id)
+        else:
+            self._held_runs.discard(run_id)
+        return held
+
+    def _forget_run(self, run_id: str) -> None:
+        """Drop what one run's records derived; other runs' answers stay."""
+
+        for digest in self._run_digests.pop(run_id, ()):
+            self._resolutions.pop(digest, None)
+            self._errors.pop(digest, None)
+        for capture in self._run_captures.pop(run_id, ()):
+            kept = {
+                record for record in self._productions.get(capture, ()) if record.run_id != run_id
+            }
+            if kept:
+                self._productions[capture] = kept
+            else:
+                self._productions.pop(capture, None)
+        self._run_bodies.pop(run_id, None)
+        self._proof_heads.pop(run_id, None)
 
     def _catch_up(self) -> None:
         """Index every journal record appended since the index's last sync."""
@@ -772,6 +854,9 @@ class JournalProducerReceiptResolver:
         self._errors.clear()
         self._productions.clear()
         self._run_bodies.clear()
+        self._run_digests.clear()
+        self._run_captures.clear()
+        self._held_runs.clear()
         self._proof_heads.clear()
         self._full = False
 
@@ -799,7 +884,9 @@ class JournalProducerReceiptResolver:
             self._forget()
         if self._full_journal:
             self.index_all()
-        self._lookup(lambda: self._resolution(digest), run_id=run_id)
+        self._lookup(
+            lambda: self._resolution(digest), run_id=run_id, locators=("receipt:" + digest,)
+        )
         return self._resolution(digest)
 
     def produced_capture(
@@ -814,7 +901,11 @@ class JournalProducerReceiptResolver:
             self._forget()
         if self._full_journal:
             self.index_all()
-        self._lookup(lambda: self._productions.get(capture_digest), run_id=run_id)
+        self._lookup(
+            lambda: self._productions.get(capture_digest),
+            run_id=run_id,
+            locators=("capture:" + capture_digest,),
+        )
         return tuple(self._productions.get(capture_digest, ()))
 
     def recall_verified(self, capture_digest: str) -> VerifiedCaptureMemo | None:

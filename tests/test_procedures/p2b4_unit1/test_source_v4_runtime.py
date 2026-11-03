@@ -1161,9 +1161,12 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
                 # No run produced the forgery; this pins each receipt edge.
                 require_production_proof=False,
             )
-    # Every lookup read only the cited run's records, once: no journal scan.
+    # Every lookup read only the records its citation names, once: the terminal
+    # Capture's terminal record (naming its receipt too), the Provider Capture's
+    # production record and its receipt. The forgeries reuse that receipt. No
+    # journal scan.
     assert scan_calls == {"partitions": 0, "records": 0}
-    assert resolver.lookups == 1
+    assert resolver.lookups == 3
 
     unrelated = next(
         stored

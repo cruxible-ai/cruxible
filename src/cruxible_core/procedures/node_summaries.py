@@ -221,14 +221,6 @@ _RECEIPT_DELIVERIES: dict[str, ClaimsDelivery] = {
 }
 
 
-#: A receipt that names only its disposition (a v1 receipt): settled, or a
-#: settle that fell back to a proposal (``received``).
-_DISPOSITION_DELIVERIES: dict[str, ClaimsDelivery] = {
-    "settled": "settled",
-    "received": "proposed",
-}
-
-
 def claims_delivery(receipt: object) -> ClaimsDelivery:
     """How a claims terminal's delivered receipt landed its change.
 
@@ -242,9 +234,6 @@ def claims_delivery(receipt: object) -> ClaimsDelivery:
         return "settled" if outcome == "settled" else "proposed"
     if isinstance(tag, str) and tag in _RECEIPT_DELIVERIES:
         return _RECEIPT_DELIVERIES[tag]
-    disposition = getattr(receipt, "disposition", None)
-    if tag == "playbill-terminal-egress-receipt-v1" and isinstance(disposition, str):
-        return _DISPOSITION_DELIVERIES.get(disposition, "delivered")
     return "delivered"
 
 
