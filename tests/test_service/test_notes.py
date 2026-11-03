@@ -182,3 +182,45 @@ def test_note_law_refuses_a_capture_of_another_section() -> None:
         capture_section=(SOURCE, ("Reason",), section_digest(b"x")),
     )
     assert ok.verdict == "accepted" and ok.required_tier == "governed_write"
+
+
+def test_unlink_without_an_observation_keeps_the_retained_bytes_then_retires(
+    tmp_path: Path,
+) -> None:
+    """A section (or file) that is gone: unlinking one Subject edits links only."""
+
+    instance, _ = seed_write_surface(tmp_path)
+    name = note_id(SOURCE, ("Reason",))
+    linked = service_playbill_write(
+        instance,
+        request=WriteRequest(because="Note", changes=(about(f"{KIND}/wi-1", f"{KIND}/wi-2"),)),
+        caller=caller(),
+    )
+    assert linked.status == "accepted", linked
+    before = note_at(instance, name)
+
+    def unlink(*subjects: str):
+        return service_playbill_write(
+            instance,
+            request=WriteRequest(
+                because="Unlink",
+                changes=(AboutChange(file=SOURCE, section=("Reason",), unlink=subjects),),
+            ),
+            caller=caller(),
+        )
+
+    partial = unlink(f"{KIND}/wi-1")
+    assert partial.status == "accepted", partial
+    assert partial.changes[0].about == (f"{KIND}/wi-2",)
+    after = note_at(instance, name)
+    assert [item.qualified for item in after.about] == [f"Subject:{KIND}/wi-2"]
+    assert (after.capture_digest, after.section_digest) == (
+        before.capture_digest,
+        before.section_digest,
+    )
+    assert after.lifecycle.state == "live" and after.lifecycle.predecessor_digest is not None
+    full = unlink(f"{KIND}/wi-2")
+    assert full.status == "accepted", full
+    assert note_at(instance, name).lifecycle.state == "retired"
+    gone = unlink(f"{KIND}/wi-2")
+    assert gone.refusal is not None and gone.refusal.code == "cruxible.write.note_not_found"

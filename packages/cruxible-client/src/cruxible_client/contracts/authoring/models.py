@@ -1496,8 +1496,9 @@ class NoteAuthoringPayload(_StrictAuthoringModel):
 
     ``about`` is the note's complete Subject set after this change, sorted and
     unique; empty retires the note. ``source`` is the section the writer's
-    adapter observed now (heading-path label required); a retirement may omit
-    it and name the ``note`` instead, so a deleted section can still be unlinked.
+    adapter observed now (heading-path label required). Without one the change
+    names the ``note`` and only edits its links: they stay on the section bytes
+    the note already retains, so a deleted section can still be unlinked.
     """
 
     tag: Literal["playbill-note-authoring-payload-v1"] = "playbill-note-authoring-payload-v1"
@@ -1519,8 +1520,8 @@ class NoteAuthoringPayload(_StrictAuthoringModel):
             derived = note_id(self.source.source_id, label.path)
             if self.note is not None and self.note != derived:
                 raise ValueError("note names a different section than its source")
-        elif self.about or self.note is None:
-            raise ValueError("a note link needs its observed section; a retirement names the note")
+        elif self.note is None:
+            raise ValueError("a note change without an observed section names the note")
         return self
 
     @property

@@ -5403,6 +5403,25 @@ def _stage_note(
         note = previous.model_copy(
             update={"lifecycle": ArtifactLifecycle(state="retired", predecessor_digest=predecessor)}
         )
+    elif member.source is None:
+        # Links only: the note keeps the section bytes it already retains.
+        if previous is None or previous.lifecycle.state != "live":
+            _refuse(
+                "cruxible.note.not_live",
+                "note",
+                f"Note {member.note_name} is not live here; link its section with an "
+                "observation first.",
+                repair_kind="observe_section",
+                repair_description="Link the section through the writer's adapter.",
+            )
+        note = previous
+        if previous.about != member.about:
+            note = previous.model_copy(
+                update={
+                    "about": member.about,
+                    "lifecycle": ArtifactLifecycle(predecessor_digest=predecessor),
+                }
+            )
     else:
         source = member.source
         assert source is not None and source.selector.section is not None

@@ -323,6 +323,11 @@ def test_about_link_is_observed_like_section_evidence_and_unlink_needs_no_sectio
     write_workspace(unlink, workspace=tmp_path, submit=submit)
     (gone,) = seen[1].changes
     assert gone.observation is None and gone.file == "doc-notes.md"
+    # The file itself is gone (still catalogued): the unlink still names the note.
+    (tmp_path / "notes.md").unlink()
+    write_workspace(unlink, workspace=tmp_path, submit=submit)
+    (missing,) = seen[2].changes
+    assert missing.observation is None and missing.file == "doc-notes.md"
     with pytest.raises(WriteRefusalError):
         write_workspace(
             WriteRequest(

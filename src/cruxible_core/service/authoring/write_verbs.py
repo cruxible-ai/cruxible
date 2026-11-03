@@ -2833,8 +2833,9 @@ class _Planner:
             element = f"{path}.{field}[{position}]"
             _kind, _id, subject_file = self.resolve_subject(ref, index=index, path=element)
             created = any(bound.path == subject_file for bound in self.plan.labels.values())
+            # An unlink names a Subject the note holds, live or since retired.
             if subject_file.startswith("pending:") or not (
-                created or self.subject_exists(subject_file)
+                field == "unlink" or created or self.subject_exists(subject_file)
             ):
                 raise _refuse(
                     "cruxible.write.subject_not_found",
@@ -2848,7 +2849,7 @@ class _Planner:
         added = {identity_of(ref, i, "subjects") for i, ref in enumerate(change.subjects)}
         removed = {identity_of(ref, i, "unlink") for i, ref in enumerate(change.unlink)}
         after = sorted((held | added) - removed, key=lambda item: item.encode("utf-8"))
-        if not after and previous is None:
+        if not after and not held:
             raise _refuse(
                 "cruxible.write.note_not_found",
                 f"section {section!r} of {source_id!r} has no note to unlink",
@@ -2856,6 +2857,8 @@ class _Planner:
                 field_path=path,
                 repair="Leave the unlink out; nothing links this section",
             )
+        # Without an observation (a pure unlink of a section that may be gone)
+        # the remaining links stay on the bytes the note already retains.
         member = NoteAuthoringPayload(
             source=observation if after else None,
             note=name if previous is not None else None,
