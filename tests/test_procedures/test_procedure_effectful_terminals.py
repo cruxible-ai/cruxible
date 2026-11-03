@@ -26,6 +26,7 @@ from cruxible_core.procedures.egress import (
     TerminalEgressChildReceiptV1,
     TerminalEgressError,
     TerminalEgressItemV1,
+    TerminalEgressReceiptV1,
     TerminalEgressReceiptV2,
     TerminalEgressRequestV1,
     TerminalEgressRequestV2,
@@ -645,6 +646,33 @@ def test_procedure_mandate_refusal_reports_every_failed_law_and_repair(tmp_path)
     assert caught.value.repair_kind == "author_successor"
     assert caught.value.repair.operation == "cruxible.authoring.example"
     assert caught.value.repair.arguments == {"example": "procedure-mandate"}
+
+
+def test_a_v1_claims_receipt_that_changes_state_is_refused(tmp_path) -> None:
+    """Only a prepared no-op answers a v1 claims request; a plain v1 receipt never does."""
+
+    admission = _admission(tmp_path)
+    request = _base_request(
+        "claims",
+        rung=2,
+        admission=admission,
+        item=_item("subjects/project.work_item/wi-1.json"),
+    )
+    receipt = TerminalEgressReceiptV1(
+        kind="claims",
+        run_id=request.run_id,
+        node_id=request.node_id,
+        disposition="received",
+        children=(
+            TerminalEgressChildReceiptV1(
+                child_index=0,
+                item_key=request.items[0].item_key,
+                egress_digest=_digest("candidate-member"),
+            ),
+        ),
+    )
+    with pytest.raises(TerminalEgressError, match="requires its v2 request"):
+        verify_terminal_egress_receipt(request, receipt)
 
 
 def test_v2_receipt_checks_apply_even_when_request_is_v1(tmp_path) -> None:

@@ -114,9 +114,6 @@ def test_claims_delivery_reads_the_receipt_kind() -> None:
     assert claims_delivery(receipt("receipt-v3")) == "proposed"
     assert claims_delivery(receipt("unchanged-receipt-v1")) == "unchanged"
     assert claims_delivery(receipt("still-current-receipt-v1")) == "still_current"
-    # A v1 receipt names only its disposition: settled, or a fallback proposal.
-    assert claims_delivery(receipt("receipt-v1", disposition="settled")) == "settled"
-    assert claims_delivery(receipt("receipt-v1", disposition="received")) == "proposed"
     # Anything else is still a delivery, never a failure.
     assert claims_delivery(receipt("receipt-v2", disposition="received")) == "delivered"
     assert claims_delivery(object()) == "delivered"
@@ -412,46 +409,24 @@ def test_transform_rows_are_counted_from_the_inputs_the_transform_resolved(
 
 
 class _V1ClaimsSink:
-    """A sink that is no preparer: the claims terminal keeps its v1 request and receipt."""
+    """A sink that is no preparer: it could only receive an unprepared v1 claims request."""
 
     def __init__(self) -> None:
-        self.receipts: list[Any] = []
+        self.requests: list[Any] = []
 
     def deliver_terminal_egress(self, *, request: Any) -> Any:
-        from cruxible_core.procedures.egress import (
-            TerminalEgressChildReceiptV1,
-            TerminalEgressReceiptV1,
-        )
-
-        receipt = TerminalEgressReceiptV1(
-            kind=request.kind,
-            run_id=request.run_id,
-            node_id=request.node_id,
-            disposition="received",
-            children=tuple(
-                TerminalEgressChildReceiptV1(
-                    child_index=item.child_index,
-                    item_key=item.item_key,
-                    egress_digest="sha256:" + f"{item.child_index:064x}",
-                )
-                for item in request.items
-            ),
-        )
-        self.receipts.append(receipt)
-        return receipt
+        self.requests.append(request)
+        raise AssertionError("an unprepared claims request is never delivered")
 
 
-def test_a_v1_claims_delivery_is_summarised_not_failed(tmp_path: Any, monkeypatch: Any) -> None:
-    """A sink that is no preparer gets a v1 claims request; its verified v1 receipt is a delivery.
+def test_an_unprepared_claims_terminal_is_refused_before_delivery(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """A claims terminal is delivered prepared (v2, or its prepared no-op) or not at all.
 
-    The executor's own account is checked: the served run state does not fold
-    a delivered claims egress that names no proposal, which is not this path's
-    concern.
+    A sink that cannot prepare is never handed a v1 claims request: the terminal
+    is refused before delivery, and the served run state reads that refusal back.
     """
-
-    from contextlib import suppress
-
-    from pydantic import ValidationError
 
     from cruxible_core.exhaust.payloads import read_payload
     from cruxible_core.service.procedures import procedure_runs
@@ -469,21 +444,20 @@ def test_a_v1_claims_delivery_is_summarised_not_failed(tmp_path: Any, monkeypatc
 
     monkeypatch.setattr(procedure_runs, "service_execute_direct_procedure", execute)
     instance, root = pilot_world(tmp_path, "kev.json")
-    with suppress(ValidationError):
-        run(instance, root)
-    (receipt,) = sink.receipts
-    assert receipt.tag == "playbill-terminal-egress-receipt-v1"
+    state = run(instance, root)
+    assert sink.requests == []
     (result,) = results
-    assert result.status == "succeeded", result
+    assert result.status == "refused", result
+    assert result.refusal is not None and result.refusal.code == "proposal_item_invalid"
+    assert state.status == "node_refused", state
     access = BodyAccessContext(principal_id="test", can_read_body=True)
-    fired = [
+    egress = [
         read_payload(instance.body_store(), stored.record.payload_digest, access=access)
         for stored in procedure_runs._records_for_run(instance, result.run_id)
-        if stored.record.event_kind == "node_fired"
+        if stored.record.event_kind == "terminal_egress"
     ]
-    (claims,) = (payload for payload in fired if payload["kind"] == "claims")
-    assert claims["verdict"] == "succeeded"
-    assert claims["summary"]["delivery"] == "proposed" and claims["summary"]["written"] == 8
+    assert [payload["verdict"] for payload in egress] == ["refused"]
+    assert egress[0]["refusal_code"] == "proposal_item_invalid"
 
 
 def test_a_negative_source_expectation_keeps_the_extract_summary() -> None:

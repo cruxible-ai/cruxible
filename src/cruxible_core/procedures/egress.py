@@ -1671,6 +1671,12 @@ def verify_terminal_egress_receipt(
             raise TerminalEgressError("settle egress must report under its exact mandate")
     elif isinstance(request, TerminalEgressRequestV2):
         raise TerminalEgressError("v2 terminal egress requires a v2 receipt")
+    elif request.kind == "claims" and not isinstance(
+        receipt, (TerminalEgressUnchangedReceiptV1, TerminalEgressStillCurrentReceiptV1)
+    ):
+        # A v1 claims request is only ever the prepared no-op of a terminal
+        # that changed nothing; any change is proposed or settled under v2.
+        raise TerminalEgressError("claims egress that changes state requires its v2 request")
 
 
 class CaptureTerminalEgressSink:
