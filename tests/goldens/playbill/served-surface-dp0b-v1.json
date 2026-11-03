@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-02:b5-security",
-    "surface_digest": "sha256:770d2090fdf9dc1a556545c2e5f024297e2b1e1555c0e09a38cabf6e94060823"
+    "surface_digest": "sha256:fed50b75ff2d8f446f04dea5e1af2ccd6f8d79841045e74e4b47fd6710c4586e"
   },
   "surface": {
     "cli_leaves": [
@@ -1162,7 +1162,7 @@
         "request_model": "cruxible_client.contracts.claim_reads.ClaimReadBatchRequest",
         "request_schema_digest": "sha256:753a3f67b39fe322537a3d7314168bcd774db0546bbfbea868479b85647ef1ab",
         "response_model": "cruxible_client.contracts.claim_reads.ClaimReadBatchResult",
-        "response_schema_digest": "sha256:65845cab53a1a3031d0c4c8003823e39e528a72862babad0fa6bad1d47231fc1"
+        "response_schema_digest": "sha256:a97cf8b1c7f9eb93f67facb48cc5113810ebc46648c3152d4bf03733c24f4834"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.propose_compiler_upgrade",
