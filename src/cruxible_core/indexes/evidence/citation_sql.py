@@ -148,6 +148,15 @@ def _insert_capture(
             external.replayability if external else None,
         ),
     )
+    # C14: a row's access is its Capture's kind's, from the accepted contract
+    # row. A version no current row names (a built-in, a superseded version)
+    # indexes as instance; the per-Capture read surfaces resolve its kind
+    # through accepted history and withhold it there.
+    kind = connection.execute(
+        "SELECT body_access FROM capture_contracts WHERE artifact_digest=?",
+        (envelope.capture_contract_digest,),
+    ).fetchone()
+    access_class = "restricted" if kind is not None and kind[0] == "restricted" else "instance"
     elapsed = envelope.observed_at.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
     observed_us = (elapsed.days * 86400 + elapsed.seconds) * 1000000 + elapsed.microseconds
     connection.execute(
@@ -165,7 +174,7 @@ def _insert_capture(
             key,
             envelope.producer.qualified,
             observed_us,
-            "instance",
+            access_class,
             observed_content(envelope).digest,
         ),
     )

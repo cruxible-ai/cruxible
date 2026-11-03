@@ -340,6 +340,8 @@ OWNER_CODECS = (
             ("epistemic_grade", "TEXT NOT NULL"),
             ("replay_policy_digest", "TEXT NOT NULL"),
             ("provenance_rule_digest", "TEXT NOT NULL"),
+            # C14: the citation index computes each Capture row's access from it.
+            ("body_access", "TEXT NOT NULL CHECK(body_access IN ('open','restricted'))"),
         ),
     ),
     OwnerCodec(
@@ -705,12 +707,13 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
         result["distribution_version"] = None if runtime is None else runtime.distribution.version
         result["registration_sequence"] = 0
     if owner.kind == "capture-contract":
-        from cruxible_client.contracts.captures import capture_components
+        from cruxible_client.contracts.captures import capture_body_access, capture_components
 
         components = capture_components(source)
         result.update(
             replay_policy_digest=components.replay_policy_digest,
             provenance_rule_digest=components.provenance_rule_digest,
+            body_access=capture_body_access(source),
         )
     if owner.kind == "line":
         result.update(

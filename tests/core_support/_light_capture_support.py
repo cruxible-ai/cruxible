@@ -24,6 +24,7 @@ def record_contract(
     self_asserted=False,
     replay=None,
     decoding: CaptureDecoding | None = JSON_DECODING,
+    body_access: str = "open",
 ) -> CaptureContractAny:
     return lower_capture_contract_input(
         CaptureContractInputRecord(
@@ -33,6 +34,7 @@ def record_contract(
             max_bytes=4096,
             erasable=erasure,
             **({} if decoding is None else {"decoding": decoding}),
+            **({} if body_access == "open" else {"body_access": body_access}),
         ),
         named=True,
     )

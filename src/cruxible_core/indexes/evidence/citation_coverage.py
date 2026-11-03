@@ -83,7 +83,7 @@ def coverage_rows(
     citations: list[EvidenceCitationV1] = []
     for group in groups:
         captures = reader._rows(
-            "SELECT p.capture_digest FROM captures p "
+            "SELECT p.capture_digest,p.access_class FROM captures p "
             "JOIN source_references s USING(source_ref_key) "
             f"WHERE p.{group_column}=? AND s.kind=? AND p.logical_source_id IS ? "
             "AND EXISTS (SELECT 1 FROM citation_uses u WHERE u.capture_digest=p.capture_digest "
@@ -153,7 +153,17 @@ def coverage_rows(
             digest_kind=first.commitment.digest_kind,
             byte_length=first.commitment.byte_length,
             accepted_source=accepted_logical_source(first.source),
-            access_class="instance",
+            # C14: per row from each Capture's kind; one restricted Capture of
+            # the same content withholds the whole group.
+            access_class=(
+                "restricted"
+                if any(
+                    capture["access_class"] == "restricted"
+                    for capture in captures
+                    if str(capture["capture_digest"]) in envelopes
+                )
+                else "instance"
+            ),
             capture_digests=tuple(
                 str(capture["capture_digest"])
                 for capture in captures

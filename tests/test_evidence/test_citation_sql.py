@@ -222,7 +222,7 @@ def world(tmp_path: Path):
         "artifact_digest TEXT,lifecycle TEXT) STRICT;"
         "CREATE INDEX claims_by_lifecycle ON claims(lifecycle,identity);"
         "CREATE TABLE capture_contracts(identity TEXT PRIMARY KEY,path TEXT,"
-        "artifact_digest TEXT) STRICT;" + SCHEMA_SQL
+        "artifact_digest TEXT,body_access TEXT NOT NULL DEFAULT 'open') STRICT;" + SCHEMA_SQL
     )
     root = tmp_path / "cas"
     root.mkdir()
@@ -231,7 +231,7 @@ def world(tmp_path: Path):
     path = capture_contract_path(contract.identity.name)
     value.sources[path] = render_capture_contract(contract)
     connection.execute(
-        "INSERT INTO capture_contracts VALUES (?,?,?)",
+        "INSERT INTO capture_contracts(identity,path,artifact_digest) VALUES (?,?,?)",
         (
             contract.identity.qualified,
             path,

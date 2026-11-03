@@ -331,6 +331,10 @@ class CaptureContractV1(_StrictCaptureModel):
 
 CaptureShape = Literal["http_response", "procedure_output", "foreign_span", "database_snapshot"]
 CaptureReplay = Literal["exact", "attested"]
+#: Who may read a Capture's bytes and body-derived metadata (C14). ``open``: any
+#: reader of the instance. ``restricted``: only a caller holding
+#: ``cruxible_body_read_restricted``; everyone else gets the inventory view.
+CaptureBodyAccess = Literal["open", "restricted"]
 
 
 class CaptureContractComponents(_StrictCaptureModel):
@@ -367,6 +371,7 @@ class CaptureContract(_StrictCaptureModel):
     retention_erasure_policy: CaptureRetentionErasurePolicy
     epistemic_grade: Literal["observed", "derived", "predicted"] = "observed"
     decoding: CaptureDecoding | None = Field(default=None, exclude_if=lambda value: value is None)
+    body_access: CaptureBodyAccess = Field(default="open", exclude_if=lambda value: value == "open")
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
     @model_validator(mode="after")
@@ -453,6 +458,7 @@ class NamedCaptureContract(_StrictCaptureModel):
     retention_erasure_policy: NamedCaptureRetentionPolicy
     epistemic_grade: Literal["observed", "derived", "predicted"] = "observed"
     decoding: CaptureDecoding | None = Field(default=None, exclude_if=lambda value: value is None)
+    body_access: CaptureBodyAccess = Field(default="open", exclude_if=lambda value: value == "open")
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
     @model_validator(mode="after")
@@ -474,6 +480,12 @@ class NamedCaptureContract(_StrictCaptureModel):
 
 
 CaptureContractAny = CaptureContractV1 | CaptureContract | NamedCaptureContract
+
+
+def capture_body_access(contract: CaptureContractAny) -> CaptureBodyAccess:
+    """A CaptureKind's body access; a historical v1 contract is open."""
+
+    return "open" if isinstance(contract, CaptureContractV1) else contract.body_access
 
 
 @sealed_memo
@@ -1257,6 +1269,10 @@ def capture_contract_successor_break(
             return "shape/replay"
         if previous.decoding != successor.decoding:
             return "decoding"
+    # Who may read a kind's bytes is fixed with its name: a Capture keeps the
+    # access its kind declared when it was taken (no historical reclassification).
+    if capture_body_access(previous) != capture_body_access(successor):
+        return "body_access"
     if isinstance(previous, CaptureContractV1) and isinstance(successor, CaptureContractV1):
         for name in _WIDEN_ON_SUCCESSION:
             if not set(getattr(previous, name)).issubset(getattr(successor, name)):
@@ -3777,6 +3793,8 @@ def _verify_capture_once(
 
 
 __all__ = [
+    "CaptureBodyAccess",
+    "capture_body_access",
     "CAPTURE_FIELD",
     "CaptureCsvDecoding",
     "CaptureDecoding",
