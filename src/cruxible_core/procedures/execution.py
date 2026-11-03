@@ -5367,6 +5367,18 @@ class ProcedureExecutor:
                 ),
                 prepared,
             )
+        if isinstance(node, ClaimsNode):
+            # A claims terminal is delivered only prepared: as its v2 request,
+            # or, when it changes nothing, as its prepared no-op. No sink is
+            # handed an unprepared v1 claims request, whose delivery names no
+            # proposal and so could never be read back as run state.
+            from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
+
+            raise ProposalDeliveryRefused(
+                "proposal_item_invalid",
+                "The proposal sink delivers prepared v2 proposal and settle egress only.",
+                details={"kind": node.kind},
+            )
         return request, None
 
     def _record_terminal_items(
