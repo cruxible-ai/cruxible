@@ -23,7 +23,7 @@ import re
 import threading
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.captures import (
@@ -38,6 +38,9 @@ from cruxible_core.indexes.evidence.citation_coverage import CitationAccess
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.sql_batch import select_in
 from cruxible_core.runtime.instance import PlaybillInstance
+
+if TYPE_CHECKING:
+    from cruxible_core.indexes.sqlite import ProjectionHandle
 
 
 @dataclass(frozen=True)
@@ -85,10 +88,15 @@ _HISTORICAL_MAX = 4096
 
 @dataclass
 class CaptureAccessResolver:
-    """Per-request memo of Capture kinds at one accepted coordinate."""
+    """Per-request memo of Capture kinds at one accepted coordinate.
+
+    ``projection`` is a handle the caller already holds bound at ``coordinate``;
+    lookups then read through it instead of binding their own.
+    """
 
     instance: PlaybillInstance
     coordinate: AcceptedProjectionCoordinate
+    projection: ProjectionHandle | None = None
     _versions: dict[str, CaptureKindVersion | None] = field(default_factory=dict)
     _captures: dict[str, CaptureKindAccess] = field(default_factory=dict)
 
@@ -117,13 +125,15 @@ class CaptureAccessResolver:
         wanted = set(contract_digests)
         missing = sorted(wanted - set(self._versions))
         if missing:
-            with self.instance.bind_accepted_projection(self.coordinate) as projection:
-                rows = select_in(
-                    projection.typed.connection,
-                    "SELECT artifact_digest,identity,path,body_access,epistemic_grade,"
-                    "provenance_rule_digest FROM capture_contracts WHERE artifact_digest IN ({})",
-                    missing,
-                )
+            sql = (
+                "SELECT artifact_digest,identity,path,body_access,epistemic_grade,"
+                "provenance_rule_digest FROM capture_contracts WHERE artifact_digest IN ({})"
+            )
+            if self.projection is not None:
+                rows = select_in(self.projection.typed.connection, sql, missing)
+            else:
+                with self.instance.bind_accepted_projection(self.coordinate) as projection:
+                    rows = select_in(projection.typed.connection, sql, missing)
             for digest, identity, path, access, grade, provenance in rows:
                 self._versions[str(digest)] = CaptureKindVersion(
                     identity=str(identity),
@@ -193,10 +203,15 @@ def body_restricted_notice(items: Iterable[CaptureKindAccess]) -> BodyRestricted
 
 
 def capture_access_resolver(
-    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate | None = None
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate | None = None,
+    *,
+    projection: ProjectionHandle | None = None,
 ) -> CaptureAccessResolver:
     return CaptureAccessResolver(
-        instance, instance.accepted_coordinate() if coordinate is None else coordinate
+        instance,
+        instance.accepted_coordinate() if coordinate is None else coordinate,
+        projection,
     )
 
 
@@ -229,6 +244,8 @@ def withheld_commitments(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     captures: Iterable[str],
+    *,
+    projection: ProjectionHandle | None = None,
 ) -> tuple[set[str], bool]:
     """The evidence commitments of withheld Captures, from the citation index.
 
@@ -239,13 +256,15 @@ def withheld_commitments(
     wanted = sorted(set(captures))
     if not wanted:
         return set(), True
-    with instance.bind_accepted_projection(coordinate) as projection:
-        rows = select_in(
-            projection.typed.connection,
-            "SELECT capture_digest,evidence_commitment_digest FROM captures "
-            "WHERE capture_digest IN ({})",
-            wanted,
-        )
+    sql = (
+        "SELECT capture_digest,evidence_commitment_digest FROM captures "
+        "WHERE capture_digest IN ({})"
+    )
+    if projection is not None:
+        rows = select_in(projection.typed.connection, sql, wanted)
+    else:
+        with instance.bind_accepted_projection(coordinate) as bound:
+            rows = select_in(bound.typed.connection, sql, wanted)
     found = {str(capture): str(commitment) for capture, commitment in rows}
     return set(found.values()), len(found) == len(wanted)
 
@@ -361,21 +380,25 @@ def withhold_evidence_payload(
     coordinate: AcceptedProjectionCoordinate,
     payload: dict[str, object],
     access: BodyAccessContext | None,
+    *,
+    resolver: CaptureAccessResolver | None = None,
 ) -> tuple[dict[str, object], BodyRestricted | None]:
     """A served payload with every Capture it names checked, and the notice (C14).
 
     The Captures are found in the payload itself; access is decided from
     maintained metadata before any of them is read; a withheld one's spans,
     locators and witness values go from every copy (``redact_claim_evidence``).
-    Values, digests and commitments stay.
+    Values, digests and commitments stay. A caller reading many payloads at
+    ``coordinate`` passes one ``resolver`` for all of them.
     """
 
-    withheld, notice = capture_access_resolver(instance, coordinate).withheld(
-        named_captures(payload), access or NO_RESTRICTED_ACCESS
-    )
+    resolver = resolver or capture_access_resolver(instance, coordinate)
+    withheld, notice = resolver.withheld(named_captures(payload), access or NO_RESTRICTED_ACCESS)
     if notice is None:
         return payload, None
-    commitments, complete = withheld_commitments(instance, coordinate, withheld)
+    commitments, complete = withheld_commitments(
+        instance, coordinate, withheld, projection=resolver.projection
+    )
     redacted = redact_claim_evidence(
         payload, captures=set(withheld), commitments=commitments, every_span=not complete
     )

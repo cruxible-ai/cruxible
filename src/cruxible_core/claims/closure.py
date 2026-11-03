@@ -228,8 +228,12 @@ def _parse_dependency_artifact(
                 lifecycle=shape.lifecycle,
             )
         if path.startswith("notes/"):
-            from cruxible_client.contracts.notes import note_digest, parse_note
+            from cruxible_client.contracts.notes import NOTE_PATH_RE, note_digest, parse_note
 
+            if not NOTE_PATH_RE.fullmatch(path):
+                # The note member kind claims only its own paths; another path
+                # here is refused as unregistered, never parsed as a note.
+                return None
             note = parse_note(content, path=path)
             # A note pins nothing: its Subjects are links, judged live by its
             # own law at acceptance, not dependencies a Subject's change moves.

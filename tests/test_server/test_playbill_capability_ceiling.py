@@ -369,6 +369,10 @@ def test_a_read_only_daemon_refuses_every_run_before_reading_its_target(
 #: Non-GET routes a read-only daemon serves, each with why it changes no state.
 #: Every other non-GET route must refuse under a read-only ceiling.
 _READ_ONLY_POSTS: dict[str, str] = {
+    "/api/v1/{instance_id}/backlinks": "reads what cites, is about or guides a target",
+    "/api/v1/{instance_id}/captures/read": (
+        "reads a Capture (C14: read tier; a restricted kind needs its key per Capture)"
+    ),
     "/api/v1/{instance_id}/claims/backings": "reads the Claims backing a projection",
     "/api/v1/{instance_id}/claims/read-batch": "reads a batch of Claims",
     "/api/v1/{instance_id}/coverage/resolve": "resolves observations against accepted coverage",

@@ -251,7 +251,8 @@ def test_a_read_only_caller_reads_native_text_on_every_surface(
 ) -> None:
     """Ruling exact-content-read-only: HTTP, SDK, MCP and CLI read the text at READ_ONLY.
 
-    Capture reads and Document bodies keep their body-read boundary.
+    C14: Capture reads and Document bodies are read-tier reads too; a restricted
+    CaptureKind is decided per Capture in the service.
     """
 
     from click.testing import CliRunner
@@ -336,26 +337,20 @@ def test_a_read_only_caller_reads_native_text_on_every_surface(
         assert table.exit_code == 0, table.output
         assert "The ruling, exactly as written." in table.output
 
-        # The body-read boundary still holds for Capture reads and Document bodies.
+        # C14: no tier refusal for a Capture read or a Document body. The value's
+        # stored bytes are no Capture, so the service (not the tier) refuses it.
         capture = client.post(capture_url, json={"capture_digest": ruling.digest})
-        assert capture.status_code == 403, capture.text
+        assert capture.status_code == 404, capture.text
+        assert capture.json()["error_code"] == "cruxible.capture.not_a_capture"
         body = client.post(
             get_url,
             json={"ref": "Document:design", "detail": "body", "range": {"start": 0, "end": 8}},
         )
-        assert body.status_code == 403, body.text
+        assert body.status_code == 200, body.text
         assert client.post(get_url, json={"ref": "Document:design"}).status_code == 200
     finally:
         monkeypatch.delenv("CRUXIBLE_MODE")
         reset_permissions()
-
-    # The same reads pass at the body-read tier, so the refusals above are the tier's.
-    assert client.post(capture_url, json={"capture_digest": ruling.digest}).status_code == 404
-    opened = client.post(
-        get_url,
-        json={"ref": "Document:design", "detail": "body", "range": {"start": 0, "end": 8}},
-    )
-    assert opened.status_code == 200, opened.text
 
 
 def test_the_compact_coordinate_passes_back_as_at_on_every_surface(

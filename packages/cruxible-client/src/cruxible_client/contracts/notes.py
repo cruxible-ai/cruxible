@@ -42,6 +42,8 @@ NOTE_RELATION = "about"
 #: Subjects one note may be about: a bound on the link set, not on prose.
 MAX_NOTE_SUBJECTS = 64
 _NOTE_NAME_RE = re.compile(r"^NOTE-[0-9a-f]{32}$")
+#: The one path a note artifact lives at; any other path under ``notes/`` is no note.
+NOTE_PATH_RE = re.compile(r"^notes/NOTE-[0-9a-f]{32}\.json$")
 _SOURCE_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 
 
@@ -263,6 +265,7 @@ def evaluate_note_law(
 __all__ = [
     "MAX_NOTE_SUBJECTS",
     "NOTE_ARTIFACT_FORMAT",
+    "NOTE_PATH_RE",
     "NOTE_RELATION",
     "AcceptedNote",
     "Note",
