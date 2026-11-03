@@ -43,7 +43,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalItemReason,
     ProposalResult,
 )
-from cruxible_client.contracts.proposal_summary import ProposalReviewSummary
+from cruxible_client.contracts.proposal_summary import ProposalReviewSummary, ReviewGuidance
 from cruxible_client.contracts.refusal_receipts import (
     PriorRefusalCoverage,
     PriorRefusalReceipt,
@@ -57,6 +57,11 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.ledger.git import NOTE_REFS
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
+from cruxible_core.service.discovery.backlinks import (
+    REVIEW_GUIDANCE_MAX_DEFINITIONS,
+    claim_type_identity,
+    review_guidance,
+)
 from cruxible_core.storage.cas import BodyAccessContext
 
 
@@ -174,6 +179,9 @@ class ProposalReview(_StrictReviewModel):
     item_reasons_next_cursor: str | None = None
     attestation_coverage: dict[str, object]
     documents: tuple[PlaybillReviewedDocument, ...]
+    # Review guidance for the ClaimTypes and Procedure this proposal touches:
+    # Documents linked `guides` them, read at the current head (bounded).
+    guidance: tuple[ReviewGuidance, ...] = Field(default=(), exclude_if=lambda value: not value)
     redactions: tuple[str, ...]
     projection_advisory: ProjectionAdvisory | None = None
     projection_evidence: ProjectionEvidence | None = None
@@ -639,6 +647,23 @@ def service_review_playbill_proposal(
             },
         },
         documents=documents,
+        guidance=review_guidance(
+            instance,
+            (
+                definition
+                for member in reviewed_members[: 4 * REVIEW_GUIDANCE_MAX_DEFINITIONS]
+                for definition in (
+                    claim_type_identity(
+                        member.candidate_semantic_artifact or member.base_semantic_artifact,
+                        member.artifact_kind,
+                    ),
+                )
+                if definition is not None
+            ),
+            line=None
+            if proposal.admission.originating_line is None
+            else proposal.admission.originating_line.identity.qualified,
+        ),
         redactions=redactions,
         projection_advisory=_projection_advisory(
             members=reviewed_members,
@@ -890,6 +915,14 @@ def _originating_line_lines(review: ProposalReview) -> list[str]:
     )
 
 
+def _guidance_lines(review: ProposalReview) -> list[str]:
+    return [
+        f"Guidance for {item.definition}: {item.document}"
+        + ("" if item.title is None else f" ({item.title})")
+        for item in review.guidance
+    ]
+
+
 def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
     """Point a reviewer at the ledger instead of re-rendering the ledger.
 
@@ -915,6 +948,7 @@ def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
                 *_originating_line_lines(review),
                 "",
                 *proposal_change_lines(review),
+                *_guidance_lines(review),
                 *_compiler_upgrade_lines(review),
                 *_item_reason_lines(review),
                 *_prior_refusal_lines(review),

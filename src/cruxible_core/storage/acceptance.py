@@ -14,6 +14,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claims import parse_claim
 from cruxible_client.contracts.documents import parse_document
+from cruxible_client.contracts.notes import parse_note
 from cruxible_core.exhaust.promotions import (
     ExhaustReceiptSetManifestV1,
     parse_exhaust_promotion,
@@ -52,6 +53,8 @@ def cited_bodies(
             captures.extend(parse_claim(tree[path], path=path).backing.capture_digests)
         elif path.startswith("documents/"):
             found.add(parse_document(tree[path], path=path).body_digest)
+        elif path.startswith("notes/"):
+            captures.append(parse_note(tree[path], path=path).capture_digest)
         elif path.startswith("attestations/"):
             captures.extend(
                 parse_accepted_attestation(tree[path], path=path).statement.cited_capture_digests

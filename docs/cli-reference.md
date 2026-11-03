@@ -3824,6 +3824,32 @@ up front, a proposal, then review and activation. ClaimTypes keep their own
 `claim-type` group, because changing vocabulary disposes the Claims that
 depend on it.
 
+## note and backlinks
+
+~~~text
+cruxible note FILE --text TEXT [--under Heading/Path] --about KIND/ID [--about ...] --because WHY
+cruxible backlinks [REF | --section FILE#Heading/Path] [--limit N] [--cursor C] [--at OID] [--json]
+~~~
+
+`cruxible note` appends TEXT (which starts with its heading) to a workspace
+Markdown file and links the new section `about` the named Subjects, in one
+`write`: a note is a link, never a Claim. The section's bytes are retained as a
+workspace Capture, the link lands as one governed note under the same approval
+policy as any write, and the file is written once admitted. In a `write` FILE
+the same link is an about change: `{"op": "about", "file", "section",
+"subjects", "unlink"}` (or `"ref"`, a doc op's `id`); linking a section again
+moves its note to the section's current bytes, and unlinking every Subject
+retires it.
+
+`cruxible backlinks REF` lists what points into a Subject (the notes and
+Documents `about` it, then the workspace sections its live Claims cite) or into
+a ClaimType or Procedure (the governed Documents linked `guides` it: review
+guidance, also shown by `proposal review`). `--section FILE#Heading/Path` lists
+the live Claims resting on that section. Each section row says whether the
+section changed since it was cited, checked against the file in the workspace
+(`changed_since_cited`, `unchanged`, or `unknown` when the file is not
+catalogued here). Pages are bounded by `--limit`; `--cursor` continues one.
+
 ## get
 
 ~~~text
@@ -3834,7 +3860,8 @@ cruxible get REF [--detail summary|evidence|why|history|incoming|runs|proof|body
 
 Reads one thing by any reference form you have seen: `CLM-...` (or a unique
 prefix of at least four hex digits), `kind/id` or `Subject:kind/id`, a
-predicate (full, or a leaf unique across kinds) or `ClaimType:<predicate>`,
+predicate (full, or a dotted tail such as `status` or `work_item.status` that
+names exactly one live predicate) or `ClaimType:<predicate>` (the same tails),
 `Document:<name>`, `Procedure:<name>`, `Blueprint:<name>` (each open slot
 with its interface and the installed providers that fit it), `query:<name>`,
 `CaptureContract:<name>`, `Trigger:<name>`, `Principal:<id>`,
@@ -3903,7 +3930,12 @@ events `claim attest` recorded, each with whether it counts toward the
 verdict and why (`--detail why` carries the same as `attestation_accounts`).
 A wrong or ambiguous REF
 refuses with a code and the nearest names. `--json` prints the whole structured
-result.
+result. A dotted tail is
+shorthand for the live vocabulary: it matches live predicates only, so a tail
+only a retired ClaimType ends in refuses `cruxible.get.ref_not_found`, and when
+a live and a retired predicate share a tail it names the live one. The exact
+predicate, bare or `ClaimType:<predicate>`, reads the definition whatever its
+lifecycle.
 
 ## orient
 

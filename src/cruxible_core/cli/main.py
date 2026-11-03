@@ -844,6 +844,14 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     "get": _command(
         "playbill", "get_by_ref", "Read one governed thing by reference, values first."
     ),
+    "backlinks": _command(
+        "playbill",
+        "backlinks",
+        "What points into a Subject, ClaimType, Procedure or workspace section.",
+    ),
+    "note": _command(
+        "playbill", "note", "Append a workspace section linked about Subjects (no Claim)."
+    ),
     "set": _command("playbill", "set_value", "Set one field of one Subject, replacing its value."),
     "add": _command(
         "playbill", "add_value", "Add one value to a many-valued field of one Subject."
