@@ -110,6 +110,8 @@ def test_inbox_operations_do_not_grow_with_the_inbox_history(
         ]
         item = store.resolve(keys[0])
         LineInboxStore(instance).unread_by_line()  # the projection is caught up
+        # The Capture envelope index's one-time open and migration (C14 kind lookups).
+        instance.body_store().capture_envelopes.contracts_of(("sha256:" + "0" * 64,))
         rounds.append(
             _measure(
                 monkeypatch,
@@ -193,6 +195,8 @@ def test_a_get_and_a_decision_do_not_grow_with_the_items_decision_history(
     }
     (key,) = store.post([_posting(1)], **write)  # type: ignore[arg-type]
     item = store.resolve(key)
+    # The Capture envelope index's one-time open and migration (C14 kind lookups).
+    instance.body_store().capture_envelopes.contracts_of(("sha256:" + "0" * 64,))
     decided = 0
     rounds = []
     for size in (10, 100):

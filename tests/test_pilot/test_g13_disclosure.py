@@ -494,3 +494,29 @@ def test_restricted_kinds_compile_under_the_body_access_coordinate(tmp_path: Pat
         with pytest.raises(AssertionError):
             accept_tree(instance, {path: render_capture_contract(opened)}, name=f"open-{lifecycle}")
     assert instance.accepted_coordinate() == coordinate
+
+
+def test_backlinks_withhold_sections_of_withheld_captures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.backlinks import BacklinksRequest
+    from cruxible_core.service.discovery.backlinks import service_playbill_backlinks
+    from cruxible_core.service.evidence import body_access
+    from tests.core_support._write_support import KIND, seed_write_surface
+    from tests.test_service.test_backlinks import cite, write
+    from tests.test_service.test_notes import SOURCE, about
+
+    instance, _ = seed_write_surface(tmp_path)
+    write(instance, about(f"{KIND}/wi-1"), cite("wi-1", "ready"))
+    request = BacklinksRequest(ref=f"{KIND}/wi-1")
+    opened = service_playbill_backlinks(instance, request=request, access=READER)
+    assert opened.withheld is None and {link.file for link in opened.links} == {SOURCE}
+    # Were the cited section Capture's kind restricted, a READ_ONLY reader keeps
+    # each link's relation and source but not its section.
+    monkeypatch.setattr(body_access.CaptureKindAccess, "restricted", property(lambda self: True))
+    withheld = service_playbill_backlinks(instance, request=request, access=READER)
+    assert withheld.withheld is not None
+    assert [link.relation for link in withheld.links] == [link.relation for link in opened.links]
+    assert all(link.file is None and link.cited_digest is None for link in withheld.links)
+    holder = service_playbill_backlinks(instance, request=request, access=KEY)
+    assert holder.withheld is None and {link.file for link in holder.links} == {SOURCE}
