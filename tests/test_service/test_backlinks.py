@@ -269,7 +269,7 @@ def _vm_steps(instance, request: BacklinksRequest) -> int:
                 steps[0] += 1
                 return 0
 
-            connection.set_progress_handler(step, 10)
+            connection.set_progress_handler(step, 1)
             try:
                 yield projection
             finally:
@@ -283,28 +283,58 @@ def _vm_steps(instance, request: BacklinksRequest) -> int:
     return steps[0]
 
 
-@pytest.mark.parametrize("ref", ["status", f"{KIND}.status", f"ClaimType:{STATUS}", f"{KIND}/wi-1"])
+#: Two worlds: extra ClaimTypes with their own leaves, and distractors sharing the
+#: target's leaf (``otherN.status``), which a leaf scan would read.
+_WORK_REFS = {
+    "distinct": ("status", f"{KIND}.status", f"ClaimType:{STATUS}", f"{KIND}/wi-1"),
+    "shared": (
+        "work_item.status",
+        "ClaimType:work_item.status",
+        f"{KIND}.status",
+        f"ClaimType:{STATUS}",
+        f"{KIND}/wi-1",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("world", "ref"), [(world, ref) for world, refs in _WORK_REFS.items() for ref in refs]
+)
 def test_backlinks_work_does_not_grow_with_the_number_of_claim_types(
-    tmp_path: Path, ref: str
+    tmp_path: Path, world: str, ref: str
 ) -> None:
-    """Resolving the target (bare, full, typed or a Subject) is indexed and bounded."""
+    """Resolving the target (bare, dotted tail, typed, full or a Subject) is indexed, bounded.
+
+    The work of one public read is the same with 4 or 64 other ClaimTypes, also
+    when they all share the target's leaf (a dotted tail is one prefix range of
+    the reversed-name index, not a scan of the leaf).
+    """
 
     from tests.core_support._support import initialize_local
     from tests.core_support._write_support import CLAIM_TYPES, _claim_type, seed_write_vocabulary
+    from tests.test_service.test_get_claim_type_tails import named_claim_type
 
     steps = {}
     for size in (4, 64):
         root = tmp_path / str(size)
         root.mkdir()
         instance, _ = initialize_local(root)
-        extras = tuple(_claim_type(f"extra_{i}") for i in range(size))
+        extras = tuple(
+            _claim_type(f"extra_{i}")
+            if world == "distinct"
+            else named_claim_type(f"other{i}.status")
+            for i in range(size)
+        )
         seed_write_vocabulary(instance, claim_types=(*CLAIM_TYPES, *extras))
         propose_document(
             instance,
             "guide",
+            DocumentLink(relation="about", target_identity=f"Subject:{KIND}/wi-1"),
             DocumentLink(relation="guides", target_identity=f"ClaimType:{STATUS}"),
         )
         request = BacklinksRequest(ref=ref, limit=1)
+        assert service_playbill_backlinks(instance, request=request).links  # it resolves
         _vm_steps(instance, request)  # warm caches and indexes
         steps[size] = _vm_steps(instance, request)
-    assert steps[64] <= steps[4] * 1.25 + 50, steps
+    # Flat, not merely sublinear: 60 more ClaimTypes may add no work at all.
+    assert steps[64] <= steps[4] * 1.05 + 10, steps

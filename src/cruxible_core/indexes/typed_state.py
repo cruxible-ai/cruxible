@@ -517,6 +517,9 @@ def schema_sql() -> str:
             source_identity TEXT NOT NULL REFERENCES claim_types(identity),
             kind TEXT NOT NULL CHECK(kind IN ('predicate','subject_kind')),
             name TEXT NOT NULL, leaf TEXT NOT NULL,
+            -- The name reversed: a dotted tail (".work.status") is then one
+            -- indexed prefix range, never a scan of every name sharing a leaf.
+            reversed_name TEXT NOT NULL,
             PRIMARY KEY(source_identity,kind,name)
         ) STRICT""",
             """CREATE TABLE vocabulary_terms (
@@ -530,6 +533,7 @@ def schema_sql() -> str:
             "CREATE INDEX vocabulary_terms_by_target ON vocabulary_terms(target_path,basis,value)",
             "CREATE INDEX claim_type_names_by_name ON claim_type_names(name,kind,source_identity)",
             "CREATE INDEX claim_type_names_by_leaf ON claim_type_names(leaf,kind,name,source_identity)",
+            "CREATE INDEX claim_type_names_by_reversed ON claim_type_names(kind,reversed_name,name)",
             "CREATE INDEX claims_by_subject_predicate ON claims(subject_path,predicate,subject_selector_scheme,subject_selector_value,identity)",
             "CREATE INDEX resolution_contracts_by_hypothesis_version ON resolution_contracts(hypothesis_identity,hypothesis_artifact_digest,identity)",
             "CREATE INDEX attestations_by_claim_version ON attestations(claim_identity,claim_artifact_digest,attested_at_us,envelope_digest)",
@@ -753,7 +757,7 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
     return result
 
 
-def claim_type_names(source: ClaimType) -> tuple[tuple[str, str, str, str], ...]:
+def claim_type_names(source: ClaimType) -> tuple[tuple[str, str, str, str, str], ...]:
     """Only live ontology names are discoverable; their definitions stay in Git."""
     if source.lifecycle.state != "live":
         return ()
@@ -762,7 +766,7 @@ def claim_type_names(source: ClaimType) -> tuple[tuple[str, str, str, str], ...]
         for name in (*source.allowed_subject_kinds, *subject_value_kinds(source.value))
     }
     return tuple(
-        (source.identity.qualified, kind, name, name.rsplit(".", 1)[-1])
+        (source.identity.qualified, kind, name, name.rsplit(".", 1)[-1], name[::-1])
         for kind, name in sorted(names)
     )
 

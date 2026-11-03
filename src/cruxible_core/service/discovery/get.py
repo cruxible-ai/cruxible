@@ -877,24 +877,28 @@ def _resolve_claim(projection: Any, name: str, *, ref: str, surface: ReadSurface
     return ResolvedRef("claim", matches[0], _name(matches[0]), row.path if row else None)
 
 
-#: The live predicates a name is the dotted tail of: one range of the leaf index
-#: (``claim_type_names_by_leaf``), bounded, so resolving a short name never reads
-#: every ClaimType.
+#: The live predicates a name is the dotted tail of: one prefix range of the
+#: reversed-name index (``claim_type_names_by_reversed``) -- the reversed tail
+#: ``.work.status`` is a prefix of exactly the reversed names ending in it -- so
+#: resolving a short name reads its matches (bounded), never the other names
+#: sharing its leaf, nor every ClaimType.
 _PREDICATE_TAIL_SQL = (
-    "SELECT name FROM claim_type_names INDEXED BY claim_type_names_by_leaf "
-    "WHERE leaf=? AND kind='predicate' AND substr(name,-?)=? ORDER BY name LIMIT ?"
+    "SELECT name FROM claim_type_names INDEXED BY claim_type_names_by_reversed "
+    "WHERE kind='predicate' AND reversed_name>=? AND reversed_name<? "
+    "ORDER BY reversed_name LIMIT ?"
 )
 
 
 def _predicates_ending_in(projection: Any, name: str) -> list[str]:
-    tail = "." + name
-    return [
+    low = ("." + name)[::-1]
+    # The exact upper bound of the prefix: its last character ('.') plus one.
+    high = low[:-1] + chr(ord(low[-1]) + 1)
+    return sorted(
         str(row[0])
         for row in projection.typed.connection.execute(
-            _PREDICATE_TAIL_SQL,
-            (name.rsplit(".", 1)[-1], len(tail), tail, _MAX_CANDIDATES + 1),
+            _PREDICATE_TAIL_SQL, (low, high, _MAX_CANDIDATES + 1)
         )
-    ]
+    )
 
 
 def _resolve_claim_type(
