@@ -248,6 +248,7 @@ from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_client.contracts.triggers import InternalActionName
 from cruxible_client.contracts.write import (
+    AboutChange,
     AddChange,
     AppendSection,
     Change,
@@ -3300,6 +3301,41 @@ class Cruxible:
             else AppendSection(file=file, under=under, text=text)
         )
         return AuthoredSection(operation, SectionEvidence(file=file, section=heading_path))
+
+    def note(
+        self,
+        file: str,
+        *,
+        text: str,
+        about: Sequence[str | SubjectRef],
+        because: str,
+        under: tuple[str, ...] = (),
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        at: WriteAt | _Unset = _UNSET,
+    ) -> WriteOutcome:
+        """Append a section to ``file`` and link it ``about`` Subjects: a note, not a Claim.
+
+        One write: the append plus an about change on the new section, under
+        the same governance as any write; the file is written once admitted.
+        ``text`` starts with the section's heading. Backlinks on each Subject
+        list the note, and say when the section changes after it.
+        Next: ``cx.backlinks(subject)``.
+        """
+
+        subjects = tuple(_write_subject(item) for item in about)
+        return self._write(
+            WriteRequest(
+                because=because,
+                docs=(AppendSection(id="note", file=file, under=under, text=text),),
+                changes=(AboutChange(ref="note", subjects=subjects),),
+                dry_run=dry_run,
+                accept=accept,
+                at=self._write_at(at),
+                surface="sdk",
+                full_coordinate=True,
+            )
+        )
 
     def backlinks(
         self,

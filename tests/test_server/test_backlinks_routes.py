@@ -22,3 +22,22 @@ def test_sdk_backlinks_read_the_index_and_check_drift_in_the_workspace(playbill_
     client, instance_id, _ = playbill_http
     raw = client.backlinks(instance_id, request=BacklinksRequest(ref=f"{KIND}/wi-1"))
     assert raw.links[0].drift == "unknown"
+
+
+def test_sdk_note_appends_the_section_and_links_it_in_one_write(playbill_http, tmp_path):
+    cx, instance, workspace = _context(playbill_http, tmp_path)
+    before = instance.accepted_coordinate()
+    outcome = cx.note(
+        "notes.md",
+        text="# Triage\nNot reachable from the entry point.\n",
+        about=(f"{KIND}/wi-2",),
+        because="Triage context",
+    )
+    assert outcome.status == "accepted" and outcome.docs[0].written, outcome
+    assert instance.accepted_coordinate() != before
+    (change,) = outcome.changes
+    assert change.op == "about" and change.about == (f"{KIND}/wi-2",) and change.claim is None
+    assert "# Triage" in (workspace / "notes.md").read_text()
+    (link,) = cx.backlinks(f"{KIND}/wi-2").links
+    assert (link.relation, link.source_kind, link.source) == ("about", "Note", change.note)
+    assert link.drift == "unchanged"

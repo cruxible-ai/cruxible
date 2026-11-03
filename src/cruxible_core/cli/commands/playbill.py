@@ -5573,6 +5573,86 @@ def write_changes(
     _finish_write(outcome, output_json=output_json)
 
 
+@playbill_group.command("note")
+@click.argument("file")
+@click.option("--text", required=True, help="The section to append; it starts with its heading.")
+@click.option(
+    "--under",
+    default=None,
+    help="Heading/Path to append under (default: the end of FILE, at TEXT's level).",
+)
+@click.option(
+    "--about",
+    "subjects",
+    multiple=True,
+    required=True,
+    help="A Subject (kind/id) the note is about; repeat for more.",
+)
+@click.option("--because", required=True, help="Why this note is recorded.")
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace whose file catalog FILE is read through.",
+)
+@_write_options
+@handle_errors
+def note(
+    file: str,
+    text: str,
+    under: str | None,
+    subjects: tuple[str, ...],
+    because: str,
+    workspace_root: str,
+    dry_run: bool,
+    no_accept: bool,
+    at_oid: str | None,
+    output_json: bool,
+) -> None:
+    """Append a section to FILE and link it about Subjects: a note, never a Claim.
+
+    Shorthand for one write: an append of TEXT plus an about change on the new
+    section. Same governance as write; the file is written once admitted. A
+    note retains the section's bytes; backlinks on each Subject list it.
+    """
+
+    request = _write_request(
+        WriteRequest,
+        {
+            "docs": [
+                {
+                    "op": "append",
+                    "id": "note",
+                    "file": file,
+                    "under": [] if under is None else [p for p in under.split("/") if p],
+                    "text": text,
+                }
+            ],
+            "changes": [{"op": "about", "ref": "note", "subjects": list(subjects)}],
+            "because": because,
+            "dry_run": dry_run,
+            "accept": "never" if no_accept else "if_allowed",
+            "at": at_oid,
+        },
+        example=(
+            'cruxible note notes/triage.md --text "## CVE-2021-44228\nNot reachable." '
+            '--about security.vulnerability/CVE-2021-44228 --because "Triage context"'
+        ),
+    )
+
+    def submit(observed: WriteRequest) -> WriteOutcome:
+        return _server_call(
+            lambda client, instance_id: client.write(instance_id, request=observed),
+            command_name="cruxible note",
+        )
+
+    _finish_write(
+        write_workspace(request, workspace=Path(workspace_root), submit=submit),
+        output_json=output_json,
+    )
+
+
 @playbill_group.command("backlinks")
 @click.argument("ref", required=False)
 @click.option(
