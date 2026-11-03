@@ -325,8 +325,9 @@ def reselect_retained_claims(
                 )
             continue
         # The terminal's unit law (D-R30), re-read at the delivery head.
+        incoming = statement.object.model_dump(mode="json")
         try:
-            holders = unit_holders(held, statement, ct, context)
+            holders = unit_holders(held, incoming, ct, context)
         except ClaimUnitUnresolved as exc:
             raise ProposalDeliveryRefused("claims_inverse_unit_unresolved", str(exc)) from exc
         if any(c.statement.role not in replaces for c in holders):
@@ -340,7 +341,13 @@ def reselect_retained_claims(
         predecessor = holders[0] if holders else None
         refresh = (
             [predecessor]
-            if predecessor is not None and same_content(predecessor.statement, statement)
+            if predecessor is not None
+            and same_content(
+                predecessor.statement,
+                obj=incoming,
+                role=statement.role,
+                period=(statement.effective_from, statement.effective_until),
+            )
             else []
         )
         matched = [

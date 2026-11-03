@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from datetime import datetime
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from pydantic import TypeAdapter
 
@@ -24,12 +25,12 @@ from cruxible_client.contracts.shapes import (
     check_value,
     claim_has_line_break,
 )
+from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.errors import CoreError
 
-if TYPE_CHECKING:
-    from cruxible_client.contracts.authoring.models import AuthoringClaimStatement
-
 _OBJECT: TypeAdapter[ClaimObject] = TypeAdapter(ClaimObject)
+# The statement's own field type: the same lax datetime parse, then UTC.
+_PERIOD: TypeAdapter[datetime | None] = TypeAdapter(datetime | None)
 
 
 class ClaimUnitUnresolved(CoreError):
@@ -58,13 +59,23 @@ def unit_key(obj: Any, claim_type: Any, context: Any) -> bytes:
     return canonical_bytes(key.model_dump(mode="json"))
 
 
+def claim_time(value: object) -> datetime | None:
+    """One resolved effective time, typed as a Claim statement types it (UTC).
+
+    Raises ``pydantic.ValidationError`` for a value that is not a datetime.
+    """
+
+    parsed = _PERIOD.validate_python(value)
+    return None if parsed is None else ensure_utc(parsed)
+
+
 def unit_holders(
     held: Sequence[ClaimArtifact],
-    incoming: AuthoringClaimStatement,
+    obj: Mapping[str, Any],
     claim_type: Any,
     context: Any,
 ) -> tuple[ClaimArtifact, ...]:
-    """The held Claims of a slot that speak about ``incoming``'s unit (D-R30).
+    """The held Claims of a slot that speak about ``obj``'s unit (D-R30).
 
     A one-valued slot is one unit: every held Claim competes. A many-valued
     slot's unit is the object (its unit key), so only the held Claims of the
@@ -76,27 +87,36 @@ def unit_holders(
         return tuple(held)
     # Under an inverse every unit must resolve, a one-valued slot's included,
     # so a later absence can judge what this write holds.
-    unit = unit_key(incoming.object.model_dump(mode="json"), claim_type, context)
+    unit = unit_key(dict(obj), claim_type, context)
     units = [unit_key(c.statement.object, claim_type, context) for c in held]
     if claim_type.cardinality != "many":
         return tuple(held)
     return tuple(c for c, u in zip(held, units, strict=True) if u == unit)
 
 
-def same_value(held: ClaimStatement, incoming: AuthoringClaimStatement) -> bool:
-    """The held object equals the incoming one, compared as typed Claim objects."""
+def same_value(held: ClaimStatement, obj: Mapping[str, Any]) -> bool:
+    """The held object equals the incoming one in canonical object form.
 
-    return held.object == _OBJECT.validate_python(incoming.object.model_dump(mode="json"))
+    Both sides come from the one canonicalizer (a literal's canonical value, a
+    Subject's address), so this compares values, not their source spelling.
+    """
+
+    return held.object.model_dump(mode="json") == obj
 
 
-def same_content(held: ClaimStatement, incoming: AuthoringClaimStatement) -> bool:
-    """Same value, role and effective period, compared typed (never as wire text)."""
+def same_content(
+    held: ClaimStatement,
+    *,
+    obj: Mapping[str, Any],
+    role: str,
+    period: tuple[datetime | None, datetime | None],
+) -> bool:
+    """Same value, role and typed effective period (``claim_period``), never wire text."""
 
     return (
-        held.role == incoming.role
-        and held.effective_from == incoming.effective_from
-        and held.effective_until == incoming.effective_until
-        and same_value(held, incoming)
+        held.role == role
+        and (held.effective_from, held.effective_until) == period
+        and same_value(held, obj)
     )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
@@ -40,7 +41,6 @@ from cruxible_client.contracts.shapes import (
 from cruxible_core.procedures.claims_changes import (
     CoreClaimChange,
     CoreClaimsChange,
-    CoreClaimStatement,
     CoreReobservationChange,
     CoreSubjectChange,
 )
@@ -48,6 +48,7 @@ from cruxible_core.procedures.claims_context import ClaimsContext
 from cruxible_core.procedures.claims_diagnostics import ClaimsDiagnostics
 from cruxible_core.procedures.claims_units import (
     ClaimUnitUnresolved,
+    claim_time,
     resolve_object,
     same_content,
     same_value,
@@ -411,32 +412,21 @@ def expand_claims(
                 obj = {"kind": "literal", "value": value}
             if obj["kind"] == "literal":
                 obj["value"] = canonicalize_literal(obj["value"], effective_canonical_form(ct))
-            try:
-                # One typed statement: every held-vs-incoming comparison reads it,
-                # and it is the statement written (F6: never wire text).
-                incoming = CoreClaimStatement.model_validate(
-                    {
-                        "subject": subject_wire,
-                        "predicate": ct.predicate,
-                        "object": obj,
-                        "role": role,
-                        "qualifier": qualifier,
-                        "effective_from": metadata["effective_from"],
-                        "effective_until": metadata["effective_until"],
-                    }
-                )
-            except ValidationError as exc:
-                locations = [e["loc"] for e in exc.errors() if e["loc"]]
-                report(
-                    "extract_refused",
-                    target,
-                    field=str(locations[0][0]) if locations else "effective_until",
-                    problem="value_invalid",
-                )
+            # Typed once: every held-vs-incoming comparison and the write read
+            # this period (F6: never its wire text).
+            times: list[datetime | None] = []
+            for name in ("effective_from", "effective_until"):
+                try:
+                    times.append(claim_time(metadata[name]))
+                except ValidationError:
+                    report("extract_refused", target, field=name, problem="value_invalid")
+                    break
+            if len(times) != 2:
                 continue
+            period = (times[0], times[1])
             try:
                 # D-R30: a many-valued slot's unit is the object; one-valued, the slot.
-                holders = unit_holders(held, incoming, ct, context)
+                holders = unit_holders(held, obj, ct, context)
             except ClaimUnitUnresolved:
                 report(
                     "extract_refused",
@@ -447,7 +437,7 @@ def expand_claims(
                 continue
             blocked = [c for c in holders if c.statement.role not in replaces]
             if blocked:
-                if any(same_value(c.statement, incoming) for c in blocked):
+                if any(same_value(c.statement, obj) for c in blocked):
                     diagnostics.same += 1
                 else:
                     for claim in blocked:
@@ -468,7 +458,8 @@ def expand_claims(
             predecessor = holders[0] if holders else None
             refresh = (
                 [predecessor]
-                if predecessor is not None and same_content(predecessor.statement, incoming)
+                if predecessor is not None
+                and same_content(predecessor.statement, obj=obj, role=role, period=period)
                 else []
             )
             revises = None if predecessor is None else predecessor.identity.name
@@ -724,7 +715,15 @@ def expand_claims(
             changes.append(
                 CoreClaimChange.model_validate(
                     {
-                        "statement": incoming,
+                        "statement": {
+                            "subject": subject_wire,
+                            "predicate": ct.predicate,
+                            "object": obj,
+                            "role": role,
+                            "qualifier": qualifier,
+                            "effective_from": period[0],
+                            "effective_until": period[1],
+                        },
                         "rationale": rationale,
                         "predecessor": revises,
                         "derivation": None
