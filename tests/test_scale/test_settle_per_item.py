@@ -45,8 +45,12 @@ Counted on the measuring thread only:
   acceptance batch and ledger Git-object flushes (reported separately);
 - ``journal_fsyncs``, ``journal_file_opens``, ``journal_appends``: the complete
   terminal item group, including its reservations and CAS publication. The
-  group has no fsyncs, at most two opens per new body (one file and its shard),
-  and one journal append regardless of the number of items.
+  group has no fsyncs, one file open per new body, and one journal append
+  regardless of the number of items. A CAS shard directory is counted once per
+  distinct shard the group touches (``journal_shard_opens`` reports them): how
+  many distinct shards a group's bodies land in is chance (content-addressed
+  names collide), so a first shard open is not per-item work, while a second
+  open of a shard the group already holds is counted in ``journal_file_opens``.
 """
 
 from __future__ import annotations
@@ -113,9 +117,8 @@ PER_ITEM = {
     "sql_statements": 35,
     "non_acceptance_fsyncs": 0.1,
     "journal_fsyncs": 0,
-    # One payload file plus one shard handle per body; the small-N slope also
-    # includes the difference in shard collisions between the two batches.
-    "journal_file_opens": 2.5,
+    # One payload file per body; a shard handle counts only when reopened.
+    "journal_file_opens": 1.5,
     "journal_appends": 0.1,
 }
 #: A small settle after a large one: at most this times one after a small one...
@@ -145,6 +148,8 @@ class _Counts:
         self.thread: int | None = None
         self.in_item_group = False
         self.in_acceptance_flush = False
+        #: The CAS shard directories the current item group has opened.
+        self.group_shards: set[str] = set()
 
     def measuring(self) -> bool:
         return self.thread is not None and threading.get_ident() == self.thread
@@ -201,10 +206,27 @@ def _objects_counted() -> Iterator[None]:
         sys.setprofile(previous)
 
 
+_SHARD_NAME = re.compile(r"[0-9a-f]{2}")
+
+
 def _open_event(event: str, args: tuple[object, ...]) -> None:
     if event == "open" and _COUNTS.measuring():
         _COUNTS.counts["file_opens"] += 1
         if _COUNTS.in_item_group:
+            path, _mode, flags = args
+            name = os.fsdecode(path) if isinstance(path, (str, bytes)) else None
+            if (
+                name is not None
+                and isinstance(flags, int)
+                and flags & os.O_DIRECTORY
+                and _SHARD_NAME.fullmatch(name)
+            ):
+                # A shard directory opened relative to its held algorithm
+                # directory: its first open in this group is per distinct shard.
+                _COUNTS.counts["journal_shard_opens"] += 1
+                if name not in _COUNTS.group_shards:
+                    _COUNTS.group_shards.add(name)
+                    return
             _COUNTS.counts["journal_file_opens"] += 1
 
 
@@ -255,6 +277,7 @@ def _journal_counted() -> Iterator[None]:
         if not _COUNTS.measuring():
             return original(self, *args, **kwargs)
         _COUNTS.in_item_group = True
+        _COUNTS.group_shards = set()
         try:
             return original(self, *args, **kwargs)
         finally:
