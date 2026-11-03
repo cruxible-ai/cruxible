@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-11-02:pilot-fixes",
-    "surface_digest": "sha256:edec7df3375a56ab27d9e50b2fcc2a818c6c8a55ad77f309058ed13be0678da1"
+    "register_entry": "2026-11-02:pilot-fixes-2",
+    "surface_digest": "sha256:188f334484f5e1ca2bd10c0d834e198364e829bc4e3f59fa28bf3ef140f90abd"
   },
   "surface": {
     "cli_leaves": [
@@ -1315,7 +1315,7 @@
         "request_model": "cruxible_client.contracts.get_reads.GetRequest",
         "request_schema_digest": "sha256:79f18a458263464f35584dea7eb650f1812064a7959b240578b9dc498e7eb30f",
         "response_model": "cruxible_client.contracts.get_reads.GetResult",
-        "response_schema_digest": "sha256:3aee76ebb89059c3c6576de1c4a7143bc25dc72ee0dad6a2ffe3337dbe7decfe"
+        "response_schema_digest": "sha256:e3d5f223e276195b38921409995c45567f7eb0631964ab7d3698dee5ce07b873"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.get_batch",
@@ -1327,7 +1327,7 @@
         "request_model": "cruxible_client.contracts.get_reads.GetBatchRequest",
         "request_schema_digest": "sha256:69a1ae48ed31c6179f0291b15f74e053f4413a1e2442674e02e75c9ccfd35f09",
         "response_model": "cruxible_client.contracts.get_reads.GetBatchResult",
-        "response_schema_digest": "sha256:605f75c749cebc9f35dc848f9a4b856b5077cee253b3de5f4677c05e6172fcea"
+        "response_schema_digest": "sha256:496b677c1f10f6fd2602261b5503037abff88843b8d94c329176fb537fceec90"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.head",
@@ -2391,7 +2391,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_get",
         "input_schema_digest": "sha256:522107842dca6df7359cffcc7ab003974eac73fe91c86cb92f31f67163ab0fb5",
         "name": "cruxible_get",
-        "output_schema_digest": "sha256:98e40317e27ffacab8f54ca0ff6ca24af6c66baae805cea2e4f68bd466d17355",
+        "output_schema_digest": "sha256:f6513ebdd579344728580ce18b3ca2688ad88e38a25c55bb45bc1bb84b5fa83e",
         "permission": "READ_ONLY"
       },
       {

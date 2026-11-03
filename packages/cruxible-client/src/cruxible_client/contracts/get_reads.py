@@ -219,6 +219,9 @@ class GetClaimCard(_StrictGetModel):
     qualifier: str | None = Field(default=None, exclude_if=_omit_none)
     # The value as a summary shows it: a long string is a TruncatedText preview.
     value: ShownValue
+    # The Claim's effective period, when its statement declares one.
+    effective_from: datetime | None = Field(default=None, exclude_if=_omit_none)
+    effective_until: datetime | None = Field(default=None, exclude_if=_omit_none)
     verdict: str
     status: str
     revision: int
@@ -725,6 +728,9 @@ class GetRevision(_StrictGetModel):
     approved_by: tuple[str, ...] = ()
     lifecycle: str | None = Field(default=None, exclude_if=_omit_none)
     value: ShownValue = Field(default=None, exclude_if=_omit_none)
+    # A Claim revision's effective period, when its statement declares one.
+    effective_from: datetime | None = Field(default=None, exclude_if=_omit_none)
+    effective_until: datetime | None = Field(default=None, exclude_if=_omit_none)
     digest: str = Field(description="Artifact digest prefix of this revision.")
     change: RevisionChange | None = Field(default=None, exclude_if=_omit_none)
     reason: GetRevisionReason | None = Field(default=None, exclude_if=_omit_none)

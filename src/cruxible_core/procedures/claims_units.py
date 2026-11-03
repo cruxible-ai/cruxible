@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -10,7 +12,12 @@ from pydantic import TypeAdapter
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.canonical_forms import canonicalize_literal
 from cruxible_client.contracts.claim_types import effective_canonical_form
-from cruxible_client.contracts.claims import ClaimObject, ClaimStatement, claim_unit_key
+from cruxible_client.contracts.claims import (
+    ClaimArtifact,
+    ClaimObject,
+    ClaimStatement,
+    claim_unit_key,
+)
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
     FieldInvalid,
@@ -18,9 +25,12 @@ from cruxible_client.contracts.shapes import (
     check_value,
     claim_has_line_break,
 )
+from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.errors import CoreError
 
 _OBJECT: TypeAdapter[ClaimObject] = TypeAdapter(ClaimObject)
+# The statement's own field type: the same lax datetime parse, then UTC.
+_PERIOD: TypeAdapter[datetime | None] = TypeAdapter(datetime | None)
 
 
 class ClaimUnitUnresolved(CoreError):
@@ -47,6 +57,72 @@ def unit_key(obj: Any, claim_type: Any, context: Any) -> bytes:
             "The inverse object key is unresolved; repair the object's key Claim."
         )
     return canonical_bytes(key.model_dump(mode="json"))
+
+
+def claim_time(value: object) -> datetime | None:
+    """One resolved effective time, typed as a Claim statement types it (UTC).
+
+    Raises ``pydantic.ValidationError`` for a value that is not a datetime.
+    """
+
+    parsed = _PERIOD.validate_python(value)
+    return None if parsed is None else ensure_utc(parsed)
+
+
+def unit_holders(
+    held: Sequence[ClaimArtifact],
+    obj: Mapping[str, Any],
+    claim_type: Any,
+    context: Any,
+) -> tuple[ClaimArtifact, ...]:
+    """The held Claims of a slot that speak about ``obj``'s unit (D-R30).
+
+    A one-valued slot is one unit: every held Claim competes. A many-valued
+    slot's unit is the object (its unit key), so only the held Claims of the
+    same unit compete; another unit is a separate value. Raises
+    ``ClaimUnitUnresolved`` when an inverse's object key cannot be read.
+    """
+
+    if claim_type.inverse is None:
+        if claim_type.cardinality != "many":
+            return tuple(held)
+        # Without an inverse a unit is the object itself (claim_unit_key's object
+        # unit), so canonical objects are compared directly and no unit is built.
+        return tuple(c for c in held if same_value(c.statement, obj))
+    # Under an inverse every unit must resolve, a one-valued slot's included,
+    # so a later absence can judge what this write holds. Each unit is derived
+    # once per call: the incoming one and one per holder.
+    unit = unit_key(dict(obj), claim_type, context)
+    units = [unit_key(c.statement.object, claim_type, context) for c in held]
+    if claim_type.cardinality != "many":
+        return tuple(held)
+    return tuple(c for c, u in zip(held, units, strict=True) if u == unit)
+
+
+def same_value(held: ClaimStatement, obj: Mapping[str, Any]) -> bool:
+    """The held object equals the incoming one in canonical object form.
+
+    Both sides come from the one canonicalizer (a literal's canonical value, a
+    Subject's address), so this compares values, not their source spelling.
+    """
+
+    return held.object.model_dump(mode="json") == obj
+
+
+def same_content(
+    held: ClaimStatement,
+    *,
+    obj: Mapping[str, Any],
+    role: str,
+    period: tuple[datetime | None, datetime | None],
+) -> bool:
+    """Same value, role and typed effective period (``claim_time``), never wire text."""
+
+    return (
+        held.role == role
+        and (held.effective_from, held.effective_until) == period
+        and same_value(held, obj)
+    )
 
 
 def resolve_object(
