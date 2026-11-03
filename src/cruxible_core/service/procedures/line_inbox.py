@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from cruxible_client.contracts.capture_reads import BodyRestricted
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import ReadRefusalError, SubjectNotFoundError
 from cruxible_client.contracts.line_inbox import (
     INBOX_ITEM_SELECTOR_PATTERN,
@@ -19,6 +21,7 @@ from cruxible_client.contracts.line_inbox import (
     InboxDisposition,
     InboxDispositionResult,
     InboxItem,
+    InboxItemEnvelope,
     InboxItemStatus,
     InboxLinked,
     InboxLinkProposal,
@@ -33,6 +36,7 @@ from cruxible_core.exhaust.line_inbox import InboxItemNotFound, LineInboxStore
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.subject_aliases import resolve_subject_ref
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.evidence.body_access import capture_access_resolver
 from cruxible_core.service.procedures.procedure_runs import ProcedureSurfaceError
 
 _INBOX_LIST_REPAIR = RepairOperation(operation="cruxible.inbox.list")
@@ -79,6 +83,44 @@ def _resolve(store: LineInboxStore, selector: str) -> str:
         ) from exc
 
 
+def _withheld(
+    instance: PlaybillInstance,
+    envelopes: tuple[InboxItemEnvelope, ...],
+    access: BodyAccessContext | None,
+) -> dict[str, BodyRestricted]:
+    """Each item standing on a restricted kind's Captures, and its notice (C14).
+
+    An item's payload carries values extracted from the Captures its sightings
+    stood on; it inherits their restriction. One kind resolution per distinct
+    Capture on the page.
+    """
+
+    reader = access or BodyAccessContext(principal_id="playbill-inbox")
+    if reader.can_read_restricted:
+        return {}
+    digests = {
+        envelope.item_id: tuple(
+            sorted(
+                {
+                    digest
+                    for sighting in (envelope.first_sighting, *envelope.recent_sightings)
+                    for digest in sighting.source_capture_digests
+                }
+            )
+        )
+        for envelope in envelopes
+    }
+    if not any(digests.values()):
+        return {}
+    resolver = capture_access_resolver(instance)
+    found: dict[str, BodyRestricted] = {}
+    for item_id, item_digests in digests.items():
+        _items, notice = resolver.withheld(item_digests, reader)
+        if notice is not None:
+            found[item_id] = notice
+    return found
+
+
 def service_list_inbox(
     instance: PlaybillInstance,
     *,
@@ -86,7 +128,10 @@ def service_list_inbox(
     status: InboxItemStatus | None = None,
     limit: int,
     cursor: str | None = None,
+    access: BodyAccessContext | None = None,
 ) -> InboxList:
+    """One page; ``access`` decides whether restricted-derived previews show (C14)."""
+
     if not 1 <= limit <= INBOX_LIST_MAX_LIMIT:
         raise InboxRequestInvalid(
             f"{InboxRequestInvalid.code}: limit must be between 1 and {INBOX_LIST_MAX_LIMIT}"
@@ -98,23 +143,35 @@ def service_list_inbox(
         )
     except ValueError as exc:
         raise InboxRequestInvalid(f"{InboxRequestInvalid.code}: {exc}") from exc
+    withheld = _withheld(instance, tuple(item.envelope for item in items), access)
     return InboxList(
         line_filter=line_filter,
         status_filter=status,
         entries=tuple(
-            InboxListEntry(item=item.envelope, payload_preview=item.preview) for item in items
+            InboxListEntry(
+                item=item.envelope,
+                payload_preview=None if item.envelope.item_id in withheld else item.preview,
+                withheld=withheld.get(item.envelope.item_id),
+            )
+            for item in items
         ),
         truncated=next_cursor is not None,
         next_cursor=next_cursor,
     )
 
 
-def service_get_inbox_item(instance: PlaybillInstance, *, item: str) -> InboxItem:
+def service_get_inbox_item(
+    instance: PlaybillInstance, *, item: str, access: BodyAccessContext | None = None
+) -> InboxItem:
+    """One item whole; its payload is withheld when it stood on restricted Captures (C14)."""
+
     store = LineInboxStore(instance)
     stored = store.get(_resolve(store, item))
+    notice = _withheld(instance, (stored.envelope,), access).get(stored.envelope.item_id)
     return InboxItem(
         item=stored.envelope,
-        payload=stored.payload,
+        payload=None if notice is not None else stored.payload,
+        withheld=notice,
         recent_dispositions=stored.recent_dispositions,
     )
 

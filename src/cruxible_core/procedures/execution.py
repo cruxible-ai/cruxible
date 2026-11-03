@@ -4861,8 +4861,14 @@ class ProcedureExecutor:
             :remaining
         ]
         if items and isinstance(self.egress_sink, FindingsSinkProtocol):
+            # A finding's values come from the Captures this run decoded; the
+            # items record them, so a restricted kind's values stay withheld (C14).
             self.egress_sink.route_findings(
-                admission=admission, node_id=node_id, diagnostics=items, at=self.clock.now()
+                admission=admission,
+                node_id=node_id,
+                diagnostics=items,
+                at=self.clock.now(),
+                captures=tuple(sorted(state.capture_contracts)),
             )
             state.inbox_items += len(items)
 

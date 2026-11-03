@@ -1596,6 +1596,7 @@ class FindingsSinkProtocol(Protocol):
         node_id: str,
         diagnostics: tuple[ClaimsDiagnostic, ...],
         at: datetime,
+        captures: tuple[str, ...] = (),
     ) -> None: ...
 
 

@@ -3622,10 +3622,15 @@ class _LineTerminalEgressSink:
         node_id: str,
         diagnostics: tuple[ClaimsDiagnostic, ...],
         at: datetime,
+        captures: tuple[str, ...] = (),
     ) -> None:
         if self.inbox is not None:
             self.inbox.route_findings(
-                admission=admission, node_id=node_id, diagnostics=diagnostics, at=at
+                admission=admission,
+                node_id=node_id,
+                diagnostics=diagnostics,
+                at=at,
+                captures=captures,
             )
 
     def grants_settle(self) -> bool:

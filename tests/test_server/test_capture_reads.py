@@ -28,12 +28,14 @@ def test_capture_read_permission_and_request_validation(
     refused = http.post(route, json={"capture_digest": stored.json()["digest"]})
     assert refused.status_code == 404, refused.text
     assert refused.json()["error_code"] == "cruxible.capture.not_a_capture"
+    # C14: Capture reads are at the read tier; a restricted kind is decided
+    # per Capture in the service, after its kind resolves.
     monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
     reset_permissions()
     try:
-        denied = http.post(route, json=request)
-        assert denied.status_code == 403, denied.text
-        assert "envelope" not in denied.json()
+        read = http.post(route, json=request)
+        assert read.status_code == 200, read.text
+        assert read.json()["status"] == "unavailable"
     finally:
         monkeypatch.delenv("CRUXIBLE_MODE")
         reset_permissions()

@@ -38,6 +38,7 @@ from cruxible_client.contracts.canonical import (
     canonical_bytes,
     normalize_canonical,
 )
+from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.read_values import (
     GET_SUMMARY_TEXT_MAX_CHARS,
     ShownValue,
@@ -247,6 +248,10 @@ class InboxListEntry(_StrictInboxModel):
     tag: Literal["cruxible-inbox-list-entry-v1"] = "cruxible-inbox-list-entry-v1"
     item: InboxItemEnvelope
     payload_preview: ShownValue
+    #: C14: the item stood on Captures of a restricted kind; its payload holds
+    #: values extracted from them, so the preview is withheld (None) from a
+    #: reader without ``cruxible_body_read_restricted``.
+    withheld: BodyRestricted | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class InboxList(_StrictInboxModel):
@@ -270,7 +275,9 @@ class InboxItem(_StrictInboxModel):
 
     tag: Literal["cruxible-inbox-item-v1"] = "cruxible-inbox-item-v1"
     item: InboxItemEnvelope
+    #: None when ``withheld``: values extracted from restricted Captures (C14).
     payload: object
+    withheld: BodyRestricted | None = Field(default=None, exclude_if=lambda value: value is None)
     recent_dispositions: tuple[InboxDisposition, ...] = Field(
         default=(), max_length=INBOX_RECENT_DISPOSITIONS
     )

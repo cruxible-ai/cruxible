@@ -14,6 +14,7 @@ from cruxible_client.contracts.accepted_attestations import (
     AcceptedClaimAttestationEvidence,
     ClaimAttestationEvidence,
 )
+from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
 )
@@ -233,6 +234,10 @@ class PlaybillClaimExplanation(_StrictClaimServiceModel):
     exact_attestations: tuple[ClaimAttestationEvidence, ...]
     approval_coverage: Literal["containing_change_set"] = "containing_change_set"
     source_handles: tuple[SourceHandle, ...]
+    #: C14: the cited Captures of restricted kinds whose source handles (source
+    #: selectors and cited spans) were withheld from this reader. The Claim's
+    #: own accepted value is never withheld.
+    withheld: BodyRestricted | None = Field(default=None, exclude_if=lambda value: value is None)
     coverage: CoverageDescriptor
     admission_evaluation_time: datetime
     admission_accounts: tuple[CaptureAdmissionAccountV1, ...]
@@ -971,7 +976,16 @@ def service_explain_playbill_claim(
     identity: str,
     at: AcceptedCoordinate | None = None,
     evaluation_time: datetime | None = None,
+    access: BodyAccessContext | None = None,
 ) -> PlaybillClaimExplanation:
+    """Why one Claim holds; ``access`` decides whether restricted sources are shown (C14).
+
+    A cited Capture of a restricted kind contributes no source handle (its
+    selectors and spans) to a reader without ``can_read_restricted``; it is
+    named in ``withheld`` instead. ``None`` reads as no restricted access.
+    """
+
+    from cruxible_core.service.evidence.body_access import capture_access_resolver
     from cruxible_core.service.evidence.evidence import (
         ClaimVerdictReadContext,
         accepted_claim_attestations,
@@ -1013,6 +1027,11 @@ def service_explain_playbill_claim(
     contracts = _capture_contracts(
         _claim_admission_tree(instance, claim=claim, coordinate=coordinate)
     )
+    resolver = capture_access_resolver(instance, coordinate)
+    withheld, withheld_notice = resolver.withheld(
+        claim.backing.capture_digests,
+        access or BodyAccessContext(principal_id="playbill-service"),
+    )
     for digest in claim.backing.capture_digests:
         try:
             envelope = capture_envelope(
@@ -1022,25 +1041,32 @@ def service_explain_playbill_claim(
             )
         except CasError:
             continue
-        spans = tuple(
-            span
-            for mapping in claim.backing.source_mappings
-            for span in mapping.spans
-            if span.content_digest == envelope.commitment.digest
-        )
-        handles.append(
-            SourceHandle(
-                subject=claim_statement_address(claim_path(claim.identity.name)),
-                at=AcceptedCoordinate.from_internal(coordinate),
-                source=envelope.source,
-                commitment=envelope.commitment,
-                media_type=(
-                    "application/json" if envelope.commitment.digest_kind != "exact_bytes" else None
-                ),
-                exact_spans=spans,
-                access_class="instance",
+        # A withheld Capture keeps its kind and logical source on the freshness
+        # line; its selectors and cited spans do not leave the service.
+        if digest not in withheld:
+            spans = tuple(
+                span
+                for mapping in claim.backing.source_mappings
+                for span in mapping.spans
+                if span.content_digest == envelope.commitment.digest
             )
-        )
+            handles.append(
+                SourceHandle(
+                    subject=claim_statement_address(claim_path(claim.identity.name)),
+                    at=AcceptedCoordinate.from_internal(coordinate),
+                    source=envelope.source,
+                    commitment=envelope.commitment,
+                    media_type=(
+                        "application/json"
+                        if envelope.commitment.digest_kind != "exact_bytes"
+                        else None
+                    ),
+                    exact_spans=spans,
+                    access_class=(
+                        "restricted" if resolver.capture(digest).restricted else "instance"
+                    ),
+                )
+            )
         contract = contracts.get(envelope.capture_contract_digest) or _superseded_contract(
             instance, coordinate, envelope.capture_contract_digest
         )
@@ -1117,6 +1143,7 @@ def service_explain_playbill_claim(
         verdict=verdict.verdict,
         exact_attestations=exact_attestations,
         source_handles=tuple(handles),
+        withheld=withheld_notice,
         coverage=coverage,
         admission_evaluation_time=evaluated_at,
         admission_accounts=read.admission_accounts,

@@ -81,17 +81,26 @@ COVERAGE_PRINCIPAL = "playbill-coverage"
 COVERAGE_EVIDENCE_ACCESS_CLASS: SourceAccessClass = "instance"
 
 
-def coverage_access_profile() -> CoverageAccessProfile:
+COVERAGE_RESTRICTED_ACCESS_PROFILE_ID = "cruxible.coverage.read-restricted"
+
+
+def coverage_access_profile(*, restricted: bool = False) -> CoverageAccessProfile:
     """The access profile the served coverage surface reads under.
 
-    Accepted evidence is indexed at the `instance` access class, exactly as the
-    Claim-explanation surface labels the source handles it returns, so a caller
-    holding this instance's read authority sees it and nothing wider.
+    Accepted evidence is indexed at the `instance` access class, or at
+    `restricted` when its Capture's kind is restricted (C14). A caller holding
+    this instance's read authority sees `instance` evidence; only one holding
+    ``cruxible_body_read_restricted`` (``restricted``) also sees restricted
+    evidence, and everyone else is told it exists and was withheld.
     """
 
     return CoverageAccessProfile(
-        profile_id=COVERAGE_ACCESS_PROFILE_ID,
-        permitted_access_classes=("instance", "public"),
+        profile_id=COVERAGE_RESTRICTED_ACCESS_PROFILE_ID
+        if restricted
+        else COVERAGE_ACCESS_PROFILE_ID,
+        permitted_access_classes=(
+            ("instance", "public", "restricted") if restricted else ("instance", "public")
+        ),
         disclose_restricted_existence=True,
     )
 
@@ -403,8 +412,12 @@ def service_resolve_playbill_coverage(
     at: AcceptedCoordinate | None = None,
     budget: CoverageCardBudget | None = None,
     scan_budget: CoverageScanBudget | None = None,
+    access: BodyAccessContext | None = None,
 ) -> CoverageResultV3:
     """Resolve one batch of working-set observations against accepted state.
+
+    ``access`` decides whether restricted evidence is shown (C14): only with
+    ``can_read_restricted``; ``None`` is the instance read profile.
 
     The whole operation is: rebuild the index, hash the observed snapshot into
     the overlay, publish the freshness manifest, resolve. Every step is a pure
@@ -428,7 +441,13 @@ def service_resolve_playbill_coverage(
         wanted=_materialized_wanted_selections(instance, index=index, envelopes=envelopes),
         budget=scan_budget,
     )
-    access_profile = coverage_access_profile()
+    # The key holder's profile only when restricted evidence is indexed: with
+    # none, both profiles answer alike and the instance profile names it.
+    access_profile = coverage_access_profile(
+        restricted=access is not None
+        and access.can_read_restricted
+        and any(item.access_class == "restricted" for item in index.citations)
+    )
     manifest = _publish_manifest_v2(
         instance,
         instance_id=instance_id,
@@ -488,6 +507,7 @@ def coverage_claim_lines(
 
 __all__ = [
     "COVERAGE_ACCESS_PROFILE_ID",
+    "COVERAGE_RESTRICTED_ACCESS_PROFILE_ID",
     "coverage_claim_lines",
     "accepted_evidence_sources",
     "build_accepted_evidence_index_v2",

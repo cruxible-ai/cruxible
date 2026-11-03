@@ -109,7 +109,9 @@ def dereference_source_handle(
     """Dereference one exact source handle without mutating or refreshing anything."""
 
     handle = request.source_handle
-    if handle.access_class == "restricted" and not access.can_read_body:
+    if handle.access_class == "restricted" and not (
+        access.can_read_body and access.can_read_restricted
+    ):
         return _metadata_only(
             handle,
             status="denied",

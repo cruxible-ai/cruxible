@@ -22,6 +22,7 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.claim_evidence import RunCompleteness
 from cruxible_client.contracts.line_dispatch import LineTriggerVersion
 from cruxible_client.contracts.mandate_scope import MandateChanges, MandateValueCondition
@@ -390,6 +391,9 @@ class GetProcedureRunCard(_StrictOperationalModel):
     terminal: ProcedureTerminal | None = Field(default=None, exclude_if=_omit_none)
     #: What each terminal node did (the proposal it opened, the Capture it emitted).
     terminal_egress: tuple[ProcedureTerminalEgress, ...] = ()
+    #: C14: a finished run that read restricted Captures shows no result or
+    #: node summaries to a reader without the key; this says which kinds.
+    withheld: BodyRestricted | None = Field(default=None, exclude_if=_omit_none)
     next: tuple[str, ...] = ()
 
 

@@ -501,6 +501,26 @@ def service_read_playbill_capture(
             "capture_digest": _full_capture_digest(instance, coordinate, request.capture_digest)
         }
     )
+    # C14: the Capture's kind resolves from the contract digest its envelope
+    # opens with; a restricted kind's envelope and body are not read at all for
+    # a caller without cruxible_body_read_restricted -- the inventory view.
+    from cruxible_core.service.evidence.body_access import (
+        body_restricted_notice,
+        capture_access_resolver,
+    )
+
+    kind = capture_access_resolver(instance, coordinate).capture(request.capture_digest)
+    if kind.withheld_from(access) and kind.kind is not None:
+        assert kind.contract is not None
+        return CaptureRead(
+            capture_digest=request.capture_digest,
+            coordinate=public,
+            status="restricted",
+            reason="body_restricted",
+            contract_address=kind.contract_path,
+            epistemic_grade=kind.contract.epistemic_grade,
+            notice=body_restricted_notice((kind,)),
+        )
     verified = verify_accepted_capture(instance, coordinate, request.capture_digest, access=access)
     if isinstance(verified, str):
         erasure = None
@@ -535,7 +555,7 @@ def service_read_playbill_capture(
                     at=material_at,
                     source=source,
                     commitment=envelope.commitment,
-                    access_class="instance",
+                    access_class="restricted" if kind.restricted else "instance",
                 ),
                 resource_budget_bytes=min(request.max_bytes, contract.selection_budget.max_bytes),
             ),

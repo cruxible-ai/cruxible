@@ -11,13 +11,14 @@ first, in an order a run's status never changes; a filter keeps running runs.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, get_args
 
 from cruxible_client.contracts import ProcedureRunState
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.operational_reads import (
     OPERATIONAL_CARD_LIST_LIMIT,
     GetProcedureRunCard,
@@ -33,6 +34,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunAttribution,
     ProcedureRunAttributionWithheld,
     ProcedureRunReceiptWithheld,
+    ProcedureSourceObservation,
     ProcedureTerminal,
     ProcedureTerminalEgress,
 )
@@ -336,6 +338,7 @@ def procedure_run_card(
     evaluation_time: datetime,
     render: Callable[[str, str | None], str],
     viewer: OperationalViewer | None = None,
+    access: BodyAccessContext | None = None,
 ) -> GetProcedureRunCard:
     """One run with its live progress, read from the journal index and a few payloads.
 
@@ -407,6 +410,7 @@ def procedure_run_card(
     elapsed: int | None = None
     basis: Literal["read_time", "measured_wall_clock"] | None = None
     completeness = None
+    withheld: BodyRestricted | None = None
     if locator.final_payload_digest is None:
         target = _current_node(instance, journal, stream, run_id, nodes, edges, first)
         if target is not None and target in kinds:
@@ -430,6 +434,11 @@ def procedure_run_card(
             GetRunOutcome.model_validate(item.model_dump(mode="json")) for item in state.outcomes
         )
         egress = state.terminal_egress
+        withheld = run_values_withheld(instance, state.source_observations, access)
+        if withheld is not None:
+            # C14: values extracted from restricted Captures stay withheld.
+            result = None
+            nodes = [node.model_copy(update={"summary": None}) for node in nodes]
         wall = final_elapsed_us(run_payload(instance, locator.final_payload_digest))
         if wall is not None:
             elapsed, basis = wall, "measured_wall_clock"
@@ -466,6 +475,7 @@ def procedure_run_card(
         terminal=terminal,
         terminal_egress=egress,
         completeness=completeness,
+        withheld=withheld,
         next=tuple(next_steps),
     )
 
@@ -488,8 +498,54 @@ def run_arming_withheld(
     return trigger is not None and bool(trigger.enabled_by_withheld)
 
 
+def run_values_withheld(
+    instance: PlaybillInstance,
+    source_observations: Iterable[ProcedureSourceObservation],
+    access: BodyAccessContext | None,
+) -> BodyRestricted | None:
+    """Whether a run's values are withheld: it read Captures of a restricted kind (C14).
+
+    A run's output, findings and node summaries carry values extracted from
+    the Captures it observed; they inherit those Captures' restriction. One
+    kind resolution per observed Capture.
+    """
+
+    reader = access or BodyAccessContext(principal_id="playbill-run-read")
+    if reader.can_read_restricted:
+        return None
+    digests = tuple(
+        sorted({item.capture_digest for item in source_observations if item.capture_digest})
+    )
+    if not digests:
+        return None
+    from cruxible_core.service.evidence.body_access import capture_access_resolver
+
+    return capture_access_resolver(instance).withheld(digests, reader)[1]
+
+
+def withhold_run_values(
+    state: ProcedureRunState, notice: BodyRestricted | None
+) -> ProcedureRunState:
+    """The run's state without its restricted-derived values: output, findings, summaries."""
+
+    if notice is None:
+        return state
+    return state.model_copy(
+        update={
+            "result": None,
+            "findings": [],
+            "nodes": [node.model_copy(update={"summary": None}) for node in state.nodes],
+            "withheld": notice,
+        }
+    )
+
+
 def procedure_run_status(
-    instance: PlaybillInstance, run_id: str, *, viewer: OperationalViewer | None
+    instance: PlaybillInstance,
+    run_id: str,
+    *,
+    viewer: OperationalViewer | None,
+    access: BodyAccessContext | None = None,
 ) -> ProcedureRunState:
     """A run's served state, with its arming credential withheld as on the card.
 
@@ -505,6 +561,9 @@ def procedure_run_status(
 
     state = ProcedureRunState.model_validate(
         service_get_playbill_procedure_run(instance, run_id=run_id).model_dump(mode="json")
+    )
+    state = withhold_run_values(
+        state, run_values_withheld(instance, state.source_observations, access)
     )
     if not run_arming_withheld(instance, run_id, viewer=viewer):
         return state
@@ -522,7 +581,11 @@ def procedure_run_status(
 
 
 def procedure_run_proof(
-    instance: PlaybillInstance, run_id: str, *, viewer: OperationalViewer | None
+    instance: PlaybillInstance,
+    run_id: str,
+    *,
+    viewer: OperationalViewer | None,
+    access: BodyAccessContext | None = None,
 ) -> dict[str, object]:
     """A run's full served state, under ``procedure_run_status``'s withholding."""
 
@@ -532,6 +595,14 @@ def procedure_run_proof(
 
     state = service_get_playbill_procedure_run(instance, run_id=run_id)
     proof: dict[str, object] = state.model_dump(mode="json")
+    notice = run_values_withheld(instance, state.source_observations, access)
+    if notice is not None:
+        proof.update(
+            result=None,
+            findings=[],
+            nodes=[{**node, "summary": None} for node in proof.get("nodes") or []],  # type: ignore[attr-defined]
+            withheld=notice.model_dump(mode="json"),
+        )
     if run_arming_withheld(instance, run_id, viewer=viewer):
         if state.attribution is not None:
             proof["attribution"] = ProcedureRunAttributionWithheld.of(state.attribution).model_dump(

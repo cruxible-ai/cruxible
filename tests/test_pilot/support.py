@@ -202,6 +202,7 @@ def pilot_world(
     spec: Any = None,
     authority: str = "propose",
     rows: Any = None,
+    capture_body_access: str = "open",
 ) -> tuple[Any, Path]:
     data = json.loads((FIXTURES / fixture).read_bytes())
     kev = fixture.startswith("kev")
@@ -225,6 +226,7 @@ def pilot_world(
         {"entries": [{"id": k} for k in keys]},
         types=types,
         rows=rows or (KEV_ROW if kev else EPSS_ROW),
+        capture_body_access=capture_body_access,
     )
     (root / "data" / fixture).write_bytes((FIXTURES / fixture).read_bytes())
     _watched(instance)

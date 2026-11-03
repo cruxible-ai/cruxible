@@ -745,6 +745,12 @@ def capture_card(
             if contract.startswith("unresolved:")
             else names.version_number(contract, contract_digest)
         )
+    if row is None:
+        from cruxible_core.service.evidence.body_access import capture_access_resolver
+
+        # C14: an uncited Capture of a restricted kind says so, as a cited one's row does.
+        if capture_access_resolver(instance, coordinate).capture(digest).restricted:
+            access = "restricted"
     status, status_detail, erasure = capture_availability(instance, digest)
     next_steps = [render(claim, None) for claim in citing[:1]]
     next_steps.append(read_capture(digest))

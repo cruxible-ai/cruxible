@@ -2845,8 +2845,23 @@ def _proof(
     at = AcceptedCoordinate.from_internal(coordinate)
     # A run id and a Capture digest are bare identities, not `Kind:name`.
     if resolved.kind == "procedure_run":
-        return procedure_run_proof(instance, resolved.identity, viewer=viewer)
+        return procedure_run_proof(instance, resolved.identity, viewer=viewer, access=access)
     if resolved.kind == "capture":
+        from cruxible_core.service.evidence.body_access import capture_access_resolver
+
+        # C14: a restricted kind's envelope is not read for a reader without
+        # the key; the proof says which kind withheld it.
+        withheld, notice = capture_access_resolver(instance, coordinate).withheld(
+            (resolved.identity,), access
+        )
+        if withheld:
+            assert notice is not None
+            return {
+                "coordinate": at.model_dump(mode="json"),
+                "capture_digest": resolved.identity,
+                "envelope": None,
+                "notice": notice.model_dump(mode="json"),
+            }
         envelope = capture_envelope(
             instance.body_store(), resolved.identity, access=_SERVICE_ACCESS
         )
@@ -2946,7 +2961,11 @@ def _why(
         from cruxible_core.service.claims.claims import service_explain_playbill_claim
 
         return service_explain_playbill_claim(
-            instance, identity=resolved.identity, at=at, evaluation_time=evaluation_time
+            instance,
+            identity=resolved.identity,
+            at=at,
+            evaluation_time=evaluation_time,
+            access=access,
         ).model_dump(mode="json")
     from cruxible_core.service.discovery.explain import service_explain_playbill_subject
 
@@ -2975,8 +2994,9 @@ def service_playbill_get(
 ) -> GetResult:
     """Resolve one reference and answer it at one ``detail`` level.
 
-    ``access`` gates Document bodies. Exact-content Claim values are Claim
-    values, so every caller reads them as text. ``viewer`` is the
+    ``access`` is the reader's body access: Document bodies at the read tier,
+    a restricted CaptureKind's envelope and cited spans only with
+    ``can_read_restricted`` (C14). Claim values are never withheld. ``viewer`` is the
     authenticated reader: a Line or run card names a runtime arming
     credential only to that credential or an admin (``None`` sees none).
     Only the SDK-internal batch reader may disable ``subject_suggestions``;
@@ -3096,6 +3116,7 @@ def service_playbill_get(
                 evaluation_time=evaluation_time,
                 render=render,
                 viewer=viewer,
+                access=access,
             )
         elif resolved.kind == "principal":
             card = _principal_card(instance, coordinate, resolved, surface=surface)
