@@ -139,6 +139,7 @@ from cruxible_client.contracts.merkle import (
     build_merkle_manifest,
     update_merkle_manifest,
 )
+from cruxible_client.contracts.notes import NOTE_PATH_RE
 from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_client.contracts.policies import (
     ClaimAdmissionCandidateContext,
@@ -406,7 +407,7 @@ _PROCEDURE_MANDATE_PATH_RE = re.compile(r"^procedure-mandates/[a-z][a-z0-9_.-]{0
 _PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.json$")
 _LINE_PATH_RE = re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.json$")
 _TRIGGER_PATH_RE = re.compile(r"^triggers/[a-z][a-z0-9_.-]{0,255}\.json$")
-_NOTE_PATH_RE = re.compile(r"^notes/NOTE-[0-9a-f]{32}\.json$")
+_NOTE_PATH_RE = NOTE_PATH_RE
 _SUBJECT_KIND_PATH_RE = re.compile(
     r"^subject-kinds/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*\.json$"
 )
