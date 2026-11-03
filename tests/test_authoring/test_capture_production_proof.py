@@ -316,13 +316,13 @@ def test_raw_proposal_citing_a_forgery_is_refused_by_the_claim_law(
 
 def _count_run_lookups(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     calls = {"runs": 0, "journal": 0, "payloads": 0}
-    original_run = producer_receipts.JournalProducerReceiptResolver._index_run
+    original_run = producer_receipts.JournalProducerReceiptResolver._index_cited
     original_all = producer_receipts.JournalProducerReceiptResolver.index_all
     original_parse = producer_receipts.read_payload
 
-    def run(self, run_id):  # type: ignore[no-untyped-def]
+    def run(self, run_id, locators):  # type: ignore[no-untyped-def]
         calls["runs"] += 1
-        return original_run(self, run_id)
+        return original_run(self, run_id, locators)
 
     def full(self):  # type: ignore[no-untyped-def]
         if not self._full:
@@ -333,7 +333,7 @@ def _count_run_lookups(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
         calls["payloads"] += 1
         return original_parse(*args, **kwargs)
 
-    monkeypatch.setattr(producer_receipts.JournalProducerReceiptResolver, "_index_run", run)
+    monkeypatch.setattr(producer_receipts.JournalProducerReceiptResolver, "_index_cited", run)
     monkeypatch.setattr(producer_receipts.JournalProducerReceiptResolver, "index_all", full)
     monkeypatch.setattr(producer_receipts, "read_payload", parse)
     return calls
@@ -401,11 +401,119 @@ def test_a_capture_citation_reads_only_its_run_as_the_journal_grows(
         calls = _count_run_lookups(monkeypatch)
         assert _verifies_with_proof(world, source_capture)
         reads.append(calls["payloads"])
-        assert (calls["runs"], calls["journal"]) == (1, 0)
+        # One lookup for the production record, one for the producer receipt.
+        assert (calls["runs"], calls["journal"]) == (2, 0)
         monkeypatch.undo()
-    # 50 prior runs or 500: the lookup reads exactly the cited run's records.
-    assert reads == [run_payloads, run_payloads]
+    # 50 prior runs or 500: the lookups read only records of the cited run.
+    assert reads[0] == reads[1] <= run_payloads
     assert instance.accepted_coordinate() is not None
+
+
+def test_records_indexed_without_their_locators_are_projected_for_the_cited_run_only(
+    world: ProducedCaptures, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rebuilt index has no writer's notes: a lookup projects the cited run's records once."""
+
+    source_capture, _terminal = _genuine(world)
+    _pad_journal(world, 5, start=0)  # appended without notes: pending
+    with sqlite3.connect(_journal_index(world)) as connection:
+        connection.execute(
+            "DELETE FROM proof_locators WHERE record_id IN (SELECT id FROM records WHERE run_id=?)",
+            (world.run_id,),
+        )
+        connection.execute(
+            "INSERT INTO proof_pending SELECT id, stream, run_id FROM records "
+            "WHERE run_id=? AND event_kind IN ('provider_invocation_completed',"
+            "'terminal_egress','produced_capture','source_request_derived','source_read')",
+            (world.run_id,),
+        )
+    calls = _count_run_lookups(monkeypatch)
+
+    assert _verifies_with_proof(world, source_capture)
+    assert _verifies_with_proof(world, source_capture)
+
+    assert calls["journal"] == 0
+    with sqlite3.connect(_journal_index(world)) as connection:
+        pending = dict(
+            connection.execute(
+                "SELECT run_id, count(*) FROM proof_pending GROUP BY run_id"
+            ).fetchall()
+        )
+    # The cited run was projected; the other runs' records were never visited.
+    assert pending == {f"pad-run-{index}": 1 for index in range(5)}
+
+
+def _grow_cited_run(world: ProducedCaptures, count: int, *, start: int) -> None:
+    """Append ``count`` more Captures the cited run produced, noted as its writer notes them."""
+
+    from cruxible_core.exhaust.records import journal_payload_bytes
+    from cruxible_core.exhaust.writer import note_proof_record
+
+    journal_root = world.instance.root / world.instance.descriptor.storage.exhaust
+    journal = LocalJournalBackend(journal_root / "procedure-runs")
+    template = next(
+        stored.record for stored in world.records if stored.record.event_kind == "produced_capture"
+    )
+    produced = world.payload("produced_capture")
+    fields = set(ProcedureJournalRecordDraftV1.model_fields) - {"tag", "payload_digest"}
+    for index in range(start, start + count):
+        payload = {**produced, "capture_digest": "sha256:" + f"{index + 1:064x}"}
+        body = world.instance.body_store().store(
+            journal_payload_bytes(payload), journal_payload=True
+        )
+        draft = ProcedureJournalRecordDraftV1.model_validate(
+            {**template.model_dump(mode="python", include=fields), "payload_digest": body.digest}
+        )
+        stored = journal.append(
+            draft,
+            expected_head=journal.read_head(template.stream, template.partition_id),
+            fencing_token="writer",
+        )
+        note_proof_record(journal, stored, payload)
+
+
+def test_revising_one_claim_from_a_ten_times_larger_cited_run_costs_the_same(
+    world: ProducedCaptures, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A revision reads the records its citations name, never the rest of their run."""
+
+    from cruxible_core.exhaust.journal_index import JournalIndex
+
+    instance = world.instance
+    source_capture, _terminal = _genuine(world)
+    coordinator = _coordinator(instance)
+    first = coordinator.create(
+        actor=_ACTOR,
+        payload=_citing(source_capture, qualifier="revised"),
+        canonical_timestamp="2026-09-02T16:00:00.000000Z",
+    ).intent
+    _activate(instance, coordinator.submit(first.intent_id, actor=_ACTOR))
+    instance.refresh()
+    measured: list[tuple[int, int, int]] = []
+    for minute, (grown, start) in enumerate(((50, 0), (450, 50)), start=1):
+        _grow_cited_run(world, grown, start=start)
+        calls = _count_run_lookups(monkeypatch)
+        rows = {"count": 0}
+        read_row = JournalIndex.read_row
+
+        def counted(self, row):  # type: ignore[no-untyped-def]
+            rows["count"] += 1
+            return read_row(self, row)
+
+        monkeypatch.setattr(JournalIndex, "read_row", counted)
+        revision = coordinator.create(
+            actor=_ACTOR,
+            payload=_citing(source_capture, qualifier="revised", revises=first.semantic_identity),
+            canonical_timestamp=f"2026-09-02T16:0{minute}:00.000000Z",
+        ).intent
+        result = coordinator.preflight(revision.intent_id, actor=_ACTOR)
+        assert result.verdict == "passed", result.frontier.diagnostics
+        measured.append((calls["runs"], calls["payloads"], rows["count"]))
+        assert calls["journal"] == 0
+        monkeypatch.undo()
+    # The cited run grew from 51 produced Captures to 501: lookups, proof
+    # payloads and journal records read are the same.
+    assert measured[0] == measured[1], measured
 
 
 def _verifies_with_proof(world: ProducedCaptures, digest: str) -> bool:
@@ -470,9 +578,11 @@ def test_a_run_appended_since_the_index_synced_is_found_by_catching_up(
 
     assert _verifies_with_proof(world, source_capture)
     assert _verifies_with_proof(world, terminal_capture)
-    # The first context misses, catches the index up and finds the run on its
-    # second lookup; the second context finds it on its first. Never the journal.
-    assert (catch_ups["count"], calls["runs"], calls["journal"]) == (1, 3, 0)
+    # The first context misses its production record, catches the index up and
+    # finds it on its second lookup, then looks up its producer receipt; the
+    # second context finds the terminal record naming both on its first lookup.
+    # Never the journal.
+    assert (catch_ups["count"], calls["runs"], calls["journal"]) == (1, 4, 0)
 
 
 def test_a_run_the_caught_up_index_still_lacks_refuses_without_reading_the_journal(
@@ -700,7 +810,7 @@ def test_one_submit_verifies_a_shared_capture_once(
 
     counts = {"contexts": 0, "runs": 0, "verifications": 0, "envelope": 0, "material": 0}
     opened = producer_receipts.LocalProducerReceiptResolver.__init__
-    indexed = producer_receipts.JournalProducerReceiptResolver._index_run
+    indexed = producer_receipts.JournalProducerReceiptResolver._index_cited
     verify_once = capture_contracts._verify_capture_once
     read = ContentAddressedBodyStore.read
 
@@ -708,9 +818,9 @@ def test_one_submit_verifies_a_shared_capture_once(
         counts["contexts"] += 1
         opened(self, **kwargs)
 
-    def count_run(self, run_id):  # type: ignore[no-untyped-def]
+    def count_run(self, run_id, locators):  # type: ignore[no-untyped-def]
         counts["runs"] += 1
-        return indexed(self, run_id)
+        return indexed(self, run_id, locators)
 
     def count_verification(*args, **kwargs):  # type: ignore[no-untyped-def]
         counts["verifications"] += 1
@@ -724,7 +834,7 @@ def test_one_submit_verifies_a_shared_capture_once(
         return read(self, digest, access=access)
 
     monkeypatch.setattr(producer_receipts.LocalProducerReceiptResolver, "__init__", count_context)
-    monkeypatch.setattr(producer_receipts.JournalProducerReceiptResolver, "_index_run", count_run)
+    monkeypatch.setattr(producer_receipts.JournalProducerReceiptResolver, "_index_cited", count_run)
     monkeypatch.setattr(capture_contracts, "_verify_capture_once", count_verification)
     monkeypatch.setattr(ContentAddressedBodyStore, "read", count_read)
 

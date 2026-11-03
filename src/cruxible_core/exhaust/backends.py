@@ -428,6 +428,20 @@ class LocalJournalBackend:
         """Read only matching retained records; SQL is a rebuildable locator."""
         return self.index.select(stream, **filters)
 
+    def located_records(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        run_id: str,
+        locators: tuple[str, ...],
+        bodies: Any,
+        access: Any,
+    ) -> tuple[StoredProcedureJournalRecordV1, ...]:
+        """Read only the run's records a citation of these locators reads."""
+        return self.index.located_records(
+            stream, run_id=run_id, locators=locators, bodies=bodies, access=access
+        )
+
     def _records(
         self,
         stream: JournalStreamIdentityV1,

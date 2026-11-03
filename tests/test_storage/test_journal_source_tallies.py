@@ -20,6 +20,7 @@ import pytest
 
 from cruxible_core.exhaust.journal_index import (
     _SCHEMA,
+    _SCHEMA_VERSION,
     _TABLES,
     _rebuild_schema,
     _statements,
@@ -33,7 +34,7 @@ def _index() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:", isolation_level=None)
     conn.execute("PRAGMA foreign_keys=ON")
     _statements(conn, _SCHEMA)
-    conn.execute("PRAGMA user_version=9")
+    conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
     return conn
 
 
@@ -198,7 +199,7 @@ def _version_8_rows(conn: sqlite3.Connection) -> None:
 
 
 def _assert_migrated(conn: sqlite3.Connection) -> None:
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 9
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == _SCHEMA_VERSION
     assert (
         _tallies(conn)
         == _recount(conn)
@@ -462,3 +463,31 @@ def test_concurrent_opens_of_an_old_index_all_install_its_guards(
             }
         finally:
             check.close()
+
+
+def test_schema_9_queues_every_retained_proof_record_and_its_new_ones() -> None:
+    """Version 9 to 10: proof records already indexed are pending, without a body read.
+
+    Each is projected the first time a lookup reads its run; the recreated
+    insert trigger queues every proof record indexed after.
+    """
+
+    conn = _index()
+    _record(conn, 1, at="2026-10-01T00:00:00Z")
+    _record(conn, 2, at="2026-10-02T00:00:00Z")
+    # The version 9 shape: no proof objects, and the insert trigger before them.
+    conn.execute("DROP TABLE proof_pending")
+    conn.execute("DROP TABLE proof_locators")
+    conn.execute("DROP TRIGGER records_inserted")
+    conn.execute("PRAGMA user_version=9")
+
+    _rebuild_schema(conn)
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == _SCHEMA_VERSION
+    pending = "SELECT record_id, stream, run_id FROM proof_pending ORDER BY record_id"
+    assert [tuple(row) for row in conn.execute(pending)] == [
+        (1, STREAM, "RUN-1"),
+        (2, STREAM, "RUN-2"),
+    ]
+    _record(conn, 3, at="2026-10-03T00:00:00Z")
+    assert [tuple(row) for row in conn.execute(pending)][-1] == (3, STREAM, "RUN-3")

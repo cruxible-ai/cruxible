@@ -203,8 +203,9 @@ from cruxible_core.exhaust import (
     StoredProcedureJournalRecordV1,
     journal_payload_bytes,
 )
+from cruxible_core.exhaust.journal_index import PROOF_LOCATOR_KINDS
 from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
-from cruxible_core.exhaust.writer import note_invocation_start
+from cruxible_core.exhaust.writer import note_invocation_start, note_proof_record
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.acquisition import (
@@ -6442,6 +6443,8 @@ class ProcedureExecutor:
         self.run_index.apply_record(stored, payload=normalize_canonical(payload))
         if event_kind == "provider_invocation_started":
             note_invocation_start(self.journal, stored, payload)
+        elif event_kind in PROOF_LOCATOR_KINDS:
+            note_proof_record(self.journal, stored, payload)
         return stored
 
     def _replay_completed(
