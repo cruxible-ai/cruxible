@@ -5425,9 +5425,12 @@ def _stage_note(
                 store=instance.body_store(),
                 actor_id=actor_id,
                 claim_id=member.note_name,
-                rationale=intent.payload.rationale
-                if isinstance(intent.payload, ChangeSetAuthoringPayload)
-                else "",
+                rationale=(
+                    intent.payload.rationale
+                    if isinstance(intent.payload, ChangeSetAuthoringPayload)
+                    else None
+                )
+                or "",
                 observed_at=_observed_at(intent.canonical_timestamp),
                 accepted_coordinate=AcceptedCoordinate.from_internal(base),
                 source_id=source.source_id,

@@ -1887,6 +1887,8 @@ class WriteBatch:
             if isinstance(item, RetireChange | RebindChange)
             else f"create {item.subject_kind} as {item.label}"
             if isinstance(item, CreateChange)
+            else f"about {item.ref or item.file + '#' + '/'.join(item.section)}"
+            if isinstance(item, AboutChange)
             else f"{item.op} {item.subject or self.subject or ''} {item.field}".replace("  ", " ")
             for item in self.changes
         )

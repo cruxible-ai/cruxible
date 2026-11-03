@@ -41,6 +41,7 @@ from cruxible_client.contracts.write import (
     AboutChange,
     AddChange,
     AppendSection,
+    Change,
     DocEditObservation,
     DocOp,
     DocOutcome,
@@ -275,7 +276,7 @@ def write_workspace(
             state.edits.append(result)
             observations.append(observation)
             records.append((op.file, state, observation))
-        changes = []
+        changes: list[Change] = []
         for change in request.changes:
             if isinstance(change, AboutChange):
                 changes.append(_observe_about(change, sections=sections, load=load))

@@ -77,7 +77,7 @@ def _subject_identity(value: ArtifactIdentity) -> ArtifactIdentity:
 class Note(_StrictNoteModel):
     """One workspace section linked about Subjects; the section's bytes are a Capture."""
 
-    artifact_format: Literal["playbill-note-v1"] = NOTE_ARTIFACT_FORMAT
+    artifact_format: Literal["playbill-note-v1"] = "playbill-note-v1"
     identity: ArtifactIdentity
     source_id: str = Field(description="The catalogued workspace source (files.yaml name).")
     section: SectionPath = Field(min_length=1, description="The heading path of the section.")
