@@ -202,3 +202,49 @@ def test_a_readmitted_period_change_revises_the_unit_that_landed_first(tmp_path:
     assert live.identity == landed.identity
     assert live.lifecycle.predecessor_digest is not None
     assert live.statement.effective_from.isoformat() == "2026-10-05T00:00:00+00:00"
+
+
+def test_get_shows_a_claims_effective_period_on_its_card_and_history(
+    tmp_path: Path, capsys: Any
+) -> None:
+    """F8: the one ``get`` read model (CLI, MCP and HTTP) carries the period."""
+
+    from datetime import datetime
+
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.cli.commands.playbill import _emit_get_text
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+    from tests.support.operation_world import NOW
+
+    instance, root = _world(tmp_path, _document((CVE, "cisa-kev", "2026-10-01")))
+    first = run(instance, root)
+    (claim,) = candidate_claims(instance, first)
+    activate(instance, first)
+    _rewrite(root, _document((CVE, "cisa-kev", "2026-10-05")))
+    second = run(instance, root, minute=1)
+    activate(instance, second)
+
+    def get(detail: str) -> Any:
+        return service_playbill_get(
+            instance,
+            request=GetRequest(ref=claim.identity.name, detail=detail, evaluation_time=NOW),
+            access=BodyAccessContext(principal_id="reader", can_read_body=True),
+        )
+
+    summary = get("summary")
+    assert summary.card.effective_from == datetime.fromisoformat("2026-10-05T00:00:00+00:00")
+    assert summary.card.effective_until is None
+    wire = summary.model_dump(mode="json")["card"]
+    assert wire["effective_from"] == "2026-10-05T00:00:00Z" and "effective_until" not in wire
+    history = get("history").history
+    assert [r.effective_from.isoformat() for r in history.revisions] == [
+        "2026-10-05T00:00:00+00:00",
+        "2026-10-01T00:00:00+00:00",
+    ]
+    _emit_get_text(summary)
+    assert "effective 2026-10-05T00:00:00+00:00.." in capsys.readouterr().out
+    _emit_get_text(get("history"))
+    shown = capsys.readouterr().out
+    assert "effective 2026-10-05T00:00:00+00:00.." in shown
+    assert "effective 2026-10-01T00:00:00+00:00.." in shown

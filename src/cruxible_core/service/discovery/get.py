@@ -1194,6 +1194,8 @@ def _claim_card(
         predicate_full=statement.predicate,
         qualifier=statement.qualifier,
         value=summary_value(value, read_whole=whole_value_read(name, coordinate.git_oid)),
+        effective_from=statement.effective_from,
+        effective_until=statement.effective_until,
         verdict=verdict,
         status=status,
         revision=int(row.revision) if row is not None else 1,
@@ -2037,6 +2039,8 @@ class _Shown:
     lifecycle: str | None = None
     change: RevisionChange | None = None
     retirement: ClaimRetirementReason | None = None
+    effective_from: datetime | None = None
+    effective_until: datetime | None = None
 
 
 def _nothing_shown() -> _Shown:
@@ -2152,6 +2156,8 @@ class _ClaimVersions:
             lifecycle=claim.lifecycle.state,
             change=change,
             retirement=retirement,
+            effective_from=claim.statement.effective_from,
+            effective_until=claim.statement.effective_until,
         )
 
 
@@ -2205,6 +2211,8 @@ def _revision(
         approved_by=approved_by,
         lifecycle=shown.lifecycle,
         value=cut_value,
+        effective_from=shown.effective_from,
+        effective_until=shown.effective_until,
         next=(_render_get(surface, ref, "evidence", at=_generation_coordinate(generation)),)
         if _value_was_cut(cut_value, surface=surface, width=GET_CLI_HISTORY_VALUE_WIDTH)
         else (),

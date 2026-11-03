@@ -5885,6 +5885,9 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
                 f"revision={card['revision']}"
                 + (f" accepted={card['accepted']}" if card.get("accepted") else "")
             )
+            period = _effective_text(result.card.effective_from, result.card.effective_until)
+            if period:
+                click.echo(period)
             for contender in card.get("contenders", []):
                 click.echo(
                     f"  contender {contender['claim']} = "
@@ -6033,6 +6036,14 @@ def _reason_text(reason: Any) -> str:
     return text + ("  (truncated)" if reason.truncated else "")
 
 
+def _effective_text(start: datetime | None, end: datetime | None) -> str:
+    """A Claim's effective period as ``effective <from>..<until>``; empty when it has none."""
+
+    if start is None and end is None:
+        return ""
+    return "effective " + "..".join("" if at is None else at.isoformat() for at in (start, end))
+
+
 def _echo_history(history: Any) -> None:
     """Revisions newest first; a Subject's field events grouped by field, each its timeline."""
 
@@ -6041,9 +6052,11 @@ def _echo_history(history: Any) -> None:
         change = "" if revision.change is None else f"  {revision.change}"
         if revision.retirement is not None:
             change += f" ({revision.retirement})"
+        period = _effective_text(revision.effective_from, revision.effective_until)
         click.echo(
             f"rev {revision.revision}  seq {revision.sequence} at {revision.git_oid}  "
             f"{revision.accepted}  by {revision.actor or '-'}{change}{value}"
+            + (f"  {period}" if period else "")
         )
         if revision.reason is not None:
             click.echo(f"    reason: {_reason_text(revision.reason)}")
