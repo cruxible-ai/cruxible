@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
+from pydantic import ValidationError
+
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.authoring.models import ClaimDerivationBinding
 from cruxible_client.contracts.canonical import (
@@ -38,12 +40,19 @@ from cruxible_client.contracts.shapes import (
 from cruxible_core.procedures.claims_changes import (
     CoreClaimChange,
     CoreClaimsChange,
+    CoreClaimStatement,
     CoreReobservationChange,
     CoreSubjectChange,
 )
 from cruxible_core.procedures.claims_context import ClaimsContext
 from cruxible_core.procedures.claims_diagnostics import ClaimsDiagnostics
-from cruxible_core.procedures.claims_units import ClaimUnitUnresolved, resolve_object, unit_key
+from cruxible_core.procedures.claims_units import (
+    ClaimUnitUnresolved,
+    resolve_object,
+    same_content,
+    same_value,
+    unit_holders,
+)
 from cruxible_core.procedures.terminal_dependencies import DependencyToken
 
 if TYPE_CHECKING:
@@ -402,34 +411,43 @@ def expand_claims(
                 obj = {"kind": "literal", "value": value}
             if obj["kind"] == "literal":
                 obj["value"] = canonicalize_literal(obj["value"], effective_canonical_form(ct))
-            blocked = [c for c in held if c.statement.role not in replaces]
-            same_blocked = [c for c in blocked if c.statement.object.model_dump(mode="json") == obj]
-            if ct.inverse is not None:
-                try:
-                    incoming_unit = unit_key(obj, ct, context)
-                    held_units = {
-                        c.identity.name: unit_key(c.statement.object, ct, context) for c in held
+            try:
+                # One typed statement: every held-vs-incoming comparison reads it,
+                # and it is the statement written (F6: never wire text).
+                incoming = CoreClaimStatement.model_validate(
+                    {
+                        "subject": subject_wire,
+                        "predicate": ct.predicate,
+                        "object": obj,
+                        "role": role,
+                        "qualifier": qualifier,
+                        "effective_from": metadata["effective_from"],
+                        "effective_until": metadata["effective_until"],
                     }
-                except ClaimUnitUnresolved:
-                    report(
-                        "extract_refused",
-                        target,
-                        field=str(mapping.value),
-                        problem="inverse_unit_unresolved",
-                    )
-                    continue
-            if ct.inverse is not None and ct.cardinality == "many":
-                incoming_unit = unit_key(obj, ct, context)
-                inverse_blocked = [
-                    c
-                    for c in blocked
-                    if c.statement.object.kind == "none"
-                    and held_units[c.identity.name] == incoming_unit
-                ]
-            else:
-                inverse_blocked = []
-            if blocked and (ct.cardinality == "one" or same_blocked or inverse_blocked):
-                if same_blocked:
+                )
+            except ValidationError as exc:
+                locations = [e["loc"] for e in exc.errors() if e["loc"]]
+                report(
+                    "extract_refused",
+                    target,
+                    field=str(locations[0][0]) if locations else "effective_until",
+                    problem="value_invalid",
+                )
+                continue
+            try:
+                # D-R30: a many-valued slot's unit is the object; one-valued, the slot.
+                holders = unit_holders(held, incoming, ct, context)
+            except ClaimUnitUnresolved:
+                report(
+                    "extract_refused",
+                    target,
+                    field=str(mapping.value),
+                    problem="inverse_unit_unresolved",
+                )
+                continue
+            blocked = [c for c in holders if c.statement.role not in replaces]
+            if blocked:
+                if any(same_value(c.statement, incoming) for c in blocked):
                     diagnostics.same += 1
                 else:
                     for claim in blocked:
@@ -442,39 +460,18 @@ def expand_claims(
                             incoming_value=obj,
                         )
                 continue
-            eligible = [c for c in held if c.statement.role in replaces]
-            if ct.cardinality == "one" and len(eligible) > 1:
+            if len(holders) > 1:
                 report("slot_contested", target)
                 continue
-            refresh = [
-                c
-                for c in eligible
-                if c.statement.object.model_dump(mode="json") == obj
-                and c.statement.role == role
-                and c.statement.effective_from == metadata["effective_from"]
-                and c.statement.effective_until == metadata["effective_until"]
-            ]
-            revises = (
-                eligible[0].identity.name
-                if ct.cardinality == "one" and eligible
-                else refresh[0].identity.name
-                if len(refresh) == 1
-                else None
+            # The unit's one eligible holder is revised (a changed value, period or
+            # role) or, with the same content, re-observed; never a second live Claim.
+            predecessor = holders[0] if holders else None
+            refresh = (
+                [predecessor]
+                if predecessor is not None and same_content(predecessor.statement, incoming)
+                else []
             )
-            if revises is None and ct.inverse is not None:
-                from cruxible_client.contracts.claims import NoneClaimObject
-
-                inverse_holders = [
-                    c
-                    for c in eligible
-                    if isinstance(c.statement.object, NoneClaimObject)
-                    and (
-                        ct.inverse.key.kind == "slot"
-                        or (held_units[c.identity.name] == incoming_unit)
-                    )
-                ]
-                if len(inverse_holders) == 1:
-                    revises = inverse_holders[0].identity.name
+            revises = None if predecessor is None else predecessor.identity.name
             item_templates = [
                 mapping.value,
                 mapping.qualifier,
@@ -727,15 +724,7 @@ def expand_claims(
             changes.append(
                 CoreClaimChange.model_validate(
                     {
-                        "statement": {
-                            "subject": subject_wire,
-                            "predicate": ct.predicate,
-                            "object": obj,
-                            "role": role,
-                            "qualifier": qualifier,
-                            "effective_from": metadata["effective_from"],
-                            "effective_until": metadata["effective_until"],
-                        },
+                        "statement": incoming,
                         "rationale": rationale,
                         "predecessor": revises,
                         "derivation": None

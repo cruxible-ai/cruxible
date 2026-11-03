@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import TypeAdapter
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.canonical_forms import canonicalize_literal
 from cruxible_client.contracts.claim_types import effective_canonical_form
-from cruxible_client.contracts.claims import ClaimObject, ClaimStatement, claim_unit_key
+from cruxible_client.contracts.claims import (
+    ClaimArtifact,
+    ClaimObject,
+    ClaimStatement,
+    claim_unit_key,
+)
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
     FieldInvalid,
@@ -19,6 +25,9 @@ from cruxible_client.contracts.shapes import (
     claim_has_line_break,
 )
 from cruxible_core.errors import CoreError
+
+if TYPE_CHECKING:
+    from cruxible_client.contracts.authoring.models import AuthoringClaimStatement
 
 _OBJECT: TypeAdapter[ClaimObject] = TypeAdapter(ClaimObject)
 
@@ -47,6 +56,48 @@ def unit_key(obj: Any, claim_type: Any, context: Any) -> bytes:
             "The inverse object key is unresolved; repair the object's key Claim."
         )
     return canonical_bytes(key.model_dump(mode="json"))
+
+
+def unit_holders(
+    held: Sequence[ClaimArtifact],
+    incoming: AuthoringClaimStatement,
+    claim_type: Any,
+    context: Any,
+) -> tuple[ClaimArtifact, ...]:
+    """The held Claims of a slot that speak about ``incoming``'s unit (D-R30).
+
+    A one-valued slot is one unit: every held Claim competes. A many-valued
+    slot's unit is the object (its unit key), so only the held Claims of the
+    same unit compete; another unit is a separate value. Raises
+    ``ClaimUnitUnresolved`` when an inverse's object key cannot be read.
+    """
+
+    if claim_type.cardinality != "many" and claim_type.inverse is None:
+        return tuple(held)
+    # Under an inverse every unit must resolve, a one-valued slot's included,
+    # so a later absence can judge what this write holds.
+    unit = unit_key(incoming.object.model_dump(mode="json"), claim_type, context)
+    units = [unit_key(c.statement.object, claim_type, context) for c in held]
+    if claim_type.cardinality != "many":
+        return tuple(held)
+    return tuple(c for c, u in zip(held, units, strict=True) if u == unit)
+
+
+def same_value(held: ClaimStatement, incoming: AuthoringClaimStatement) -> bool:
+    """The held object equals the incoming one, compared as typed Claim objects."""
+
+    return held.object == _OBJECT.validate_python(incoming.object.model_dump(mode="json"))
+
+
+def same_content(held: ClaimStatement, incoming: AuthoringClaimStatement) -> bool:
+    """Same value, role and effective period, compared typed (never as wire text)."""
+
+    return (
+        held.role == incoming.role
+        and held.effective_from == incoming.effective_from
+        and held.effective_until == incoming.effective_until
+        and same_value(held, incoming)
+    )
 
 
 def resolve_object(

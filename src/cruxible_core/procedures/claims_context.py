@@ -152,7 +152,11 @@ def reselect_retained_claims(
         CoreReobservationChange,
         CoreRetirementChange,
     )
-    from cruxible_core.procedures.claims_units import ClaimUnitUnresolved
+    from cruxible_core.procedures.claims_units import (
+        ClaimUnitUnresolved,
+        same_content,
+        unit_holders,
+    )
     from cruxible_core.procedures.claims_units import unit_key as contract_unit
     from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
 
@@ -320,23 +324,25 @@ def reselect_retained_claims(
                     "A Claim now holds the unit selected for mirror absence; run the Line again",
                 )
             continue
-        eligible = [c for c in held if c.statement.role in replaces]
-        if any(c.statement.role not in replaces for c in held) and ct.cardinality == "one":
+        # The terminal's unit law (D-R30), re-read at the delivery head.
+        try:
+            holders = unit_holders(held, statement, ct, context)
+        except ClaimUnitUnresolved as exc:
+            raise ProposalDeliveryRefused("claims_inverse_unit_unresolved", str(exc)) from exc
+        if any(c.statement.role not in replaces for c in holders):
             raise ProposalDeliveryRefused(
                 "proposal_item_invalid", "A higher-precedence Claim now holds this retained slot"
             )
-        if ct.cardinality == "one" and len(eligible) > 1:
+        if len(holders) > 1:
             raise ProposalDeliveryRefused(
                 "proposal_item_invalid", "The retained item's slot is now contested"
             )
-        refresh = [
-            c
-            for c in eligible
-            if c.statement.object == statement.object
-            and c.statement.role == statement.role
-            and c.statement.effective_from == statement.effective_from
-            and c.statement.effective_until == statement.effective_until
-        ]
+        predecessor = holders[0] if holders else None
+        refresh = (
+            [predecessor]
+            if predecessor is not None and same_content(predecessor.statement, statement)
+            else []
+        )
         matched = [
             c
             for c in refresh
@@ -354,13 +360,6 @@ def reselect_retained_claims(
                 value=statement.object.model_dump(mode="json"),
             )
         else:
-            predecessor = (
-                eligible[0]
-                if ct.cardinality == "one" and eligible
-                else refresh[0]
-                if len(refresh) == 1
-                else None
-            )
             changes[key] = change.model_copy(
                 update={"predecessor": None if predecessor is None else predecessor.identity.name}
             )
