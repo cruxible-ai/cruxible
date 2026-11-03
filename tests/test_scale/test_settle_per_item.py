@@ -46,11 +46,13 @@ Counted on the measuring thread only:
 - ``journal_fsyncs``, ``journal_file_opens``, ``journal_appends``: the complete
   terminal item group, including its reservations and CAS publication. The
   group has no fsyncs, one file open per new body, and one journal append
-  regardless of the number of items. A CAS shard directory is counted once per
-  distinct shard the group touches (``journal_shard_opens`` reports them): how
-  many distinct shards a group's bodies land in is chance (content-addressed
-  names collide), so a first shard open is not per-item work, while a second
-  open of a shard the group already holds is counted in ``journal_file_opens``.
+  regardless of the number of items. How many distinct CAS shards a group's
+  bodies land in is chance (content-addressed names collide), so the shards
+  the group's own payloads require are derived from their digests
+  (``journal_required_shards``): the first open of each is counted in
+  ``journal_shard_opens``, which must equal that number, and every other open
+  -- a shard opened again, or one no payload of the group needs -- is counted
+  in ``journal_file_opens`` with the payload files.
 """
 
 from __future__ import annotations
@@ -79,6 +81,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.exhaust.backends import LocalJournalBackend
 from cruxible_core.exhaust.journal_index import JournalIndex
+from cruxible_core.exhaust.records import journal_payload_bytes
 from cruxible_core.ledger import activation, recovery
 from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.proposals import settlement
@@ -148,7 +151,9 @@ class _Counts:
         self.thread: int | None = None
         self.in_item_group = False
         self.in_acceptance_flush = False
-        #: The CAS shard directories the current item group has opened.
+        #: The CAS shards the current item group's payloads require, and those
+        #: of them it has opened.
+        self.required_shards: set[str] = set()
         self.group_shards: set[str] = set()
 
     def measuring(self) -> bool:
@@ -222,10 +227,11 @@ def _open_event(event: str, args: tuple[object, ...]) -> None:
                 and _SHARD_NAME.fullmatch(name)
             ):
                 # A shard directory opened relative to its held algorithm
-                # directory: its first open in this group is per distinct shard.
-                _COUNTS.counts["journal_shard_opens"] += 1
-                if name not in _COUNTS.group_shards:
+                # directory: the first open of a shard the group's payloads
+                # require is per distinct shard; any other is counted below.
+                if name in _COUNTS.required_shards and name not in _COUNTS.group_shards:
                     _COUNTS.group_shards.add(name)
+                    _COUNTS.counts["journal_shard_opens"] += 1
                     return
             _COUNTS.counts["journal_file_opens"] += 1
 
@@ -276,7 +282,19 @@ def _journal_counted() -> Iterator[None]:
     def group(self: Any, *args: Any, **kwargs: Any) -> Any:
         if not _COUNTS.measuring():
             return original(self, *args, **kwargs)
+        payloads = kwargs["payloads"] if "payloads" in kwargs else args[3]
+        # Derived outside the measured window: the digests the store will name.
+        thread, _COUNTS.thread = _COUNTS.thread, None
+        try:
+            required = {
+                self.bodies.digest_bytes(journal_payload_bytes(payload)).value[:2]
+                for payload in payloads
+            }
+        finally:
+            _COUNTS.thread = thread
+        _COUNTS.counts["journal_required_shards"] += len(required)
         _COUNTS.in_item_group = True
+        _COUNTS.required_shards = required
         _COUNTS.group_shards = set()
         try:
             return original(self, *args, **kwargs)
@@ -603,6 +621,7 @@ def test_a_settles_work_per_item_stays_at_its_floor(
     assert small["journal_records"] == N
     assert large["journal_records"] == 2 * N
     assert small["journal_appends"] == large["journal_appends"] == 1
+    _assert_shards_as_required(small, large, after_large)
     slope = {name: (large[name] - small[name]) / N for name in PER_ITEM}
     observed = {
         name: (large[name] - small[name]) / N
@@ -654,6 +673,7 @@ def test_settle_cost_per_claim_is_flat_at_12_and_48(
             assert small["journal_records"] == count
             assert large["journal_records"] == 2 * count
             assert small["journal_appends"] == large["journal_appends"] == 1
+            _assert_shards_as_required(small, large, after)
             for name, ceiling in PER_ITEM.items():
                 assert slopes[case][count][name] <= ceiling, (case, count, name, slopes)
             for name, slack in FLAT_SLACK.items():
@@ -845,6 +865,41 @@ def _measure_absence_work(tmp_path, monkeypatch, *, policy, count):
     return Counter(counts)
 
 
+def _assert_shards_as_required(*windows: Counter[str]) -> None:
+    """Each window opened exactly the shards its groups' payloads require, once each."""
+
+    for counts in windows:
+        assert counts["journal_shard_opens"] == counts["journal_required_shards"] > 0, dict(
+            (name, counts[name]) for name in ("journal_shard_opens", "journal_required_shards")
+        )
+
+
+@pytest.mark.parametrize("extra", ("own_shard_again", "unrequired_shard"))
+def test_added_per_item_shard_work_exceeds_the_journal_open_ceiling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extra: str
+) -> None:
+    """The guard's own check: one more shard open per stored body fails the ceiling."""
+
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+    store_many = ContentAddressedBodyStore.store_many
+
+    def opening_more(self: Any, contents: Any, *, journal_payload: bool = False) -> Any:
+        stored = store_many(self, contents, journal_payload=journal_payload)
+        if journal_payload:
+            for item in stored:
+                value = item.digest.removeprefix("sha256:")
+                shard = value[:2] if extra == "own_shard_again" else f"{int(value[:2], 16) ^ 1:02x}"
+                os.close(self._shard(shard, create=True))
+        return stored
+
+    monkeypatch.setattr(ContentAddressedBodyStore, "store_many", opening_more)
+    small = _measure_absence_work(tmp_path / "small", monkeypatch, policy="mirror", count=N)
+    large = _measure_absence_work(tmp_path / "large", monkeypatch, policy="mirror", count=2 * N)
+    slope = (large["journal_file_opens"] - small["journal_file_opens"]) / N
+    assert slope > PER_ITEM["journal_file_opens"], (slope, dict(small), dict(large))
+
+
 @pytest.mark.parametrize("policy", ("mirror", "inverse"))
 def test_absence_per_item_work_stays_at_its_floor(tmp_path, monkeypatch, policy):
     slopes = {}
@@ -861,6 +916,7 @@ def test_absence_per_item_work_stays_at_its_floor(tmp_path, monkeypatch, policy)
             for name in (*PER_ITEM, "file_opens", "journal_record_reads")
         }
         measured[n] = {"small": dict(small), "large": dict(large), "slopes": slopes[n]}
+        _assert_shards_as_required(small, large)
         destination = os.environ.get("CRUXIBLE_PER_ITEM_REPORT")
         if destination:
             Path(destination + f".absence-{policy}").write_text(json.dumps(measured, indent=2))
