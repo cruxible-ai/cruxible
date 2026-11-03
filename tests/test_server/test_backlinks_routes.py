@@ -19,8 +19,8 @@ def test_sdk_backlinks_read_the_index_and_check_drift_in_the_workspace(playbill_
     (drifted,) = cx.backlinks(file="notes.md", section=("Decision",)).links
     assert drifted.drift == "changed_since_cited"
     # The raw route answers without a workspace: the daemon cannot see the file.
-    client, instance_id, _ = playbill_http
-    raw = client.backlinks(instance_id, request=BacklinksRequest(ref=f"{KIND}/wi-1"))
+    _client, instance_id, _ = playbill_http
+    raw = cx._client.backlinks(instance_id, request=BacklinksRequest(ref=f"{KIND}/wi-1"))
     assert raw.links[0].drift == "unknown"
 
 

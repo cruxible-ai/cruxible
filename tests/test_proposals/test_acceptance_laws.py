@@ -133,6 +133,7 @@ def test_role_demotion_inventory_covers_every_candidate_member_family() -> None:
         "exhaust-promotion",
         "line",
         "trigger",
+        "note",
         "subject-kind",
         "contract",
         "query-definition",

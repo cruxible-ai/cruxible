@@ -93,7 +93,7 @@ class ProposalReviewSummary(_SummaryModel):
     findings_next_cursor: str | None = None
     # Review guidance for the ClaimTypes and Procedure this proposal touches,
     # read from the backlink index at the current head (bounded).
-    guidance: tuple[ReviewGuidance, ...] = ()
+    guidance: tuple[ReviewGuidance, ...] = Field(default=(), exclude_if=lambda value: not value)
     groups: tuple[ReviewSummaryGroup, ...]
     group_count: int = Field(ge=0)
     next_cursor: str | None = None

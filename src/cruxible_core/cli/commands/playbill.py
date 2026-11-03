@@ -5636,8 +5636,8 @@ def note(
             "at": at_oid,
         },
         example=(
-            'cruxible note notes/triage.md --text "## CVE-2021-44228\nNot reachable." '
-            '--about security.vulnerability/CVE-2021-44228 --because "Triage context"'
+            'cruxible note notes/triage.md --text "## wi-1\nBlocked on review." '
+            '--about project.work_item/wi-1 --because "Triage context"'
         ),
     )
 

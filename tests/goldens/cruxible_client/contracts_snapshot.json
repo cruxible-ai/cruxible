@@ -1515,6 +1515,13 @@
                 "title": "Governance",
                 "type": "object"
               },
+              "guidance": {
+                "items": {
+                  "$ref": "#/$defs/ReviewGuidance"
+                },
+                "title": "Guidance",
+                "type": "array"
+              },
               "item_reason_count": {
                 "default": 0,
                 "title": "Item Reason Count",
@@ -1648,6 +1655,39 @@
               "redactions"
             ],
             "title": "ProposalReview",
+            "type": "object"
+          },
+          "ReviewGuidance": {
+            "additionalProperties": false,
+            "description": "A governed Document that ``guides`` a ClaimType or Procedure this proposal touches.",
+            "properties": {
+              "definition": {
+                "description": "ClaimType:<predicate> or Procedure:<name>.",
+                "title": "Definition",
+                "type": "string"
+              },
+              "document": {
+                "title": "Document",
+                "type": "string"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Title"
+              }
+            },
+            "required": [
+              "definition",
+              "document"
+            ],
+            "title": "ReviewGuidance",
             "type": "object"
           },
           "ReviewedMember": {
@@ -73615,6 +73655,19 @@
             "type": "object"
           }
         },
+        "guidance": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "guidance",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ReviewGuidance"
+            },
+            "title": "Guidance",
+            "type": "array"
+          }
+        },
         "item_reason_count": {
           "default": 0,
           "default_json_serializable": true,
@@ -74270,6 +74323,39 @@
             "title": "ProposalItemReason",
             "type": "object"
           },
+          "ReviewGuidance": {
+            "additionalProperties": false,
+            "description": "A governed Document that ``guides`` a ClaimType or Procedure this proposal touches.",
+            "properties": {
+              "definition": {
+                "description": "ClaimType:<predicate> or Procedure:<name>.",
+                "title": "Definition",
+                "type": "string"
+              },
+              "document": {
+                "title": "Document",
+                "type": "string"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Title"
+              }
+            },
+            "required": [
+              "definition",
+              "document"
+            ],
+            "title": "ReviewGuidance",
+            "type": "object"
+          },
           "ReviewedMember": {
             "additionalProperties": false,
             "properties": {
@@ -74502,6 +74588,13 @@
             "additionalProperties": true,
             "title": "Governance",
             "type": "object"
+          },
+          "guidance": {
+            "items": {
+              "$ref": "#/$defs/ReviewGuidance"
+            },
+            "title": "Guidance",
+            "type": "array"
           },
           "item_reason_count": {
             "default": 0,
@@ -97511,6 +97604,88 @@
       "required_fields": [
         "event",
         "trigger_name"
+      ]
+    },
+    "ReviewGuidance": {
+      "fields": {
+        "definition": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "definition",
+          "required": true,
+          "schema": {
+            "description": "ClaimType:<predicate> or Procedure:<name>.",
+            "title": "Definition",
+            "type": "string"
+          }
+        },
+        "document": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "document",
+          "required": true,
+          "schema": {
+            "title": "Document",
+            "type": "string"
+          }
+        },
+        "title": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "title",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "A governed Document that ``guides`` a ClaimType or Procedure this proposal touches.",
+        "properties": {
+          "definition": {
+            "description": "ClaimType:<predicate> or Procedure:<name>.",
+            "title": "Definition",
+            "type": "string"
+          },
+          "document": {
+            "title": "Document",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          }
+        },
+        "required": [
+          "definition",
+          "document"
+        ],
+        "title": "ReviewGuidance",
+        "type": "object"
+      },
+      "required_fields": [
+        "definition",
+        "document"
       ]
     },
     "ReviewedMember": {

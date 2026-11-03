@@ -93,6 +93,7 @@ def test_typed_reverse_and_full_address_indexes_are_present():
         "procedures",
         "lines",
         "triggers",
+        "notes",
         "subjects",
         "subject_kinds",
         "documents",
@@ -314,7 +315,7 @@ def test_claim_type_name_overlay_and_delta_match_cold_reconstruction(tmp_path):
 #: The one current physical schema pin. A schema change must deliberately
 #: move its version and this expected digest; no historical reader matrix.
 STORAGE_SCHEMA_DIGESTS = {
-    29: "bdb8055bf91155712953bbdf0150c2dc56366139c652122953f4a2f785d3ec84",
+    30: "35999e84ff5b7bfb770e399af42631844c833f9b7ff0309b6c185f3fa415f6dd",
 }
 
 

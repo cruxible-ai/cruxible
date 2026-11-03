@@ -291,6 +291,8 @@ def review_guidance(
     """
 
     wanted = sorted(set(definitions), key=lambda item: item.encode("utf-8"))
+    if not wanted and line is None:
+        return ()
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
         connection = projection.typed.connection
         if line is not None:

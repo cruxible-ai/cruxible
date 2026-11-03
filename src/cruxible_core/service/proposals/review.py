@@ -181,7 +181,7 @@ class ProposalReview(_StrictReviewModel):
     documents: tuple[PlaybillReviewedDocument, ...]
     # Review guidance for the ClaimTypes and Procedure this proposal touches:
     # Documents linked `guides` them, read at the current head (bounded).
-    guidance: tuple[ReviewGuidance, ...] = ()
+    guidance: tuple[ReviewGuidance, ...] = Field(default=(), exclude_if=lambda value: not value)
     redactions: tuple[str, ...]
     projection_advisory: ProjectionAdvisory | None = None
     projection_evidence: ProjectionEvidence | None = None
