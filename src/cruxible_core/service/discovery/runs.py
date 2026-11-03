@@ -516,33 +516,46 @@ def run_consumed_captures(
     """The Captures a run (with its children) consumed, as its journal records them.
 
     Read from the run's latest ``node_fired`` and its final record, which
-    carry the cumulative set (O(1) records). The second value is False when a
-    record that should say is unreadable: the caller fails closed.
+    carry the cumulative, versioned set (O(1) records). The second value is
+    False -- the caller fails closed -- when the run is not in the journal,
+    or a record is unreadable or carries no versioned consumption (written
+    before C14: no legacy reader reconstructs it, D-R25 R4). A run admitted
+    with no node fired yet has consumed nothing.
     """
 
-    journal = procedure_run_journal(instance)
-    if journal is None or run_id is None:
+    from cruxible_core.procedures.execution import CONSUMPTION_VERSION
+
+    if run_id is None:
         return (), True
+    journal = procedure_run_journal(instance)
+    if journal is None:
+        return (), False
     stream = procedure_run_stream(instance)
-    found: set[str] = set()
-    known = True
+    locators = journal.index.run_locators(stream, limit=1, run_id=run_id)[0]
+    if not locators:
+        return (), False
     digests: list[str] = [
         stored.record.payload_digest
         for stored in journal.index.select(
             stream, run_id=run_id, event_kind="node_fired", descending=True, limit=1
         )
     ]
-    locators = journal.index.run_locators(stream, limit=1, run_id=run_id)[0]
-    if locators and locators[0].final_payload_digest is not None:
+    if locators[0].final_payload_digest is not None:
         digests.append(locators[0].final_payload_digest)
+    found: set[str] = set()
+    known = True
     for digest in digests:
         payload = run_payload(instance, digest)
-        if isinstance(payload, UnavailablePayload) or not isinstance(payload, Mapping):
+        consumption = payload.get("consumption") if isinstance(payload, Mapping) else None
+        captures = consumption.get("captures") if isinstance(consumption, Mapping) else None
+        if (
+            not isinstance(consumption, Mapping)
+            or consumption.get("v") != CONSUMPTION_VERSION
+            or not isinstance(captures, list)
+        ):
             known = False
             continue
-        consumed = payload.get("consumed_captures", [])
-        if isinstance(consumed, list):
-            found.update(str(item) for item in consumed)
+        found.update(str(item) for item in captures)
     return tuple(sorted(found)), known
 
 

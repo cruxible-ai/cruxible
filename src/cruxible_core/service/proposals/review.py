@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import difflib
 import json
-import re
 from collections.abc import Mapping
 from typing import Any, Literal
 
@@ -1129,6 +1128,7 @@ def withhold_review_values(
         NO_RESTRICTED_ACCESS,
         WITHHELD_MARK,
         capture_access_resolver,
+        named_captures,
         redact_claim_evidence,
         withheld_commitments,
     )
@@ -1138,21 +1138,30 @@ def withhold_review_values(
         return payload
     coordinate = instance.accepted_coordinate()
     withheld, notice = capture_access_resolver(instance, coordinate).withheld(
-        _named_captures(payload), reader
+        named_captures(payload), reader
     )
     if notice is None:
         return payload
     names = set(withheld)
     members = []
     for member in payload.get("members", []):
+        base = member.get("base_semantic_artifact")
         candidate = member.get("candidate_semantic_artifact")
-        if isinstance(candidate, dict) and names & set(_named_captures(candidate)):
+        base_restricted = isinstance(base, dict) and bool(names & set(named_captures(base)))
+        candidate_restricted = isinstance(candidate, dict) and bool(
+            names & set(named_captures(candidate))
+        )
+        if candidate_restricted and isinstance(candidate, dict):
+            # Before acceptance its value is a run output drawn from the Capture.
             statement = candidate.get("statement")
             if isinstance(statement, dict) and "object" in statement:
                 candidate = {
                     **candidate,
                     "statement": {**statement, "object": {"withheld": WITHHELD_MARK}},
                 }
+        if base_restricted or candidate_restricted:
+            # A delta's leaves copy either side's evidence without naming its
+            # Capture: withheld whole when either side rests on a withheld one.
             member = {**member, "candidate_semantic_artifact": candidate, "semantic_delta": []}
         members.append(member)
     commitments, complete = withheld_commitments(instance, coordinate, names)
@@ -1165,32 +1174,3 @@ def withhold_review_values(
     assert isinstance(redacted, dict)
     redacted["withheld"] = notice.model_dump(mode="json")
     return redacted
-
-
-_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
-
-
-def _is_digest(value: object) -> bool:
-    return isinstance(value, str) and _DIGEST.fullmatch(value) is not None
-
-
-def _named_captures(value: object) -> tuple[str, ...]:
-    """Every Capture digest a served payload names under a Capture field."""
-
-    found: set[str] = set()
-
-    def walk(item: object) -> None:
-        if isinstance(item, Mapping):
-            for key, child in item.items():
-                if key in ("capture_digest", "capture") and _is_digest(child):
-                    found.add(str(child))
-                elif key == "capture_digests" and isinstance(child, list):
-                    found.update(str(digest) for digest in child if _is_digest(digest))
-                else:
-                    walk(child)
-        elif isinstance(item, list):
-            for child in item:
-                walk(child)
-
-    walk(value)
-    return tuple(sorted(found))

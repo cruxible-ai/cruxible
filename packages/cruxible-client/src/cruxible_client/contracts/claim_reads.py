@@ -9,6 +9,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from cruxible_client.contracts import AcceptedCoordinate, ClaimViewRecord
+from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.claims import ClaimObject
 from cruxible_client.contracts.declared_blocks import ProjectionClaimBacking
 
@@ -59,6 +60,9 @@ class ClaimReadBatchResult(BaseModel):
     claims: tuple[ClaimViewRecord, ...]
     truncated: bool = False
     cursor: str | None = None
+    #: C14: Captures withheld from this reader: their spans, evidence locators
+    #: and absence witnesses are left out of every view (values stay).
+    withheld: BodyRestricted | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ClaimBackingsRequest(BaseModel):

@@ -2948,13 +2948,8 @@ def _proof(
         view = service_get_playbill_claim(
             instance, identity=resolved.identity, at=at, evaluation_time=evaluation_time
         )
-        payload = view.model_dump(mode="json")
         return _withhold_claim_evidence(
-            instance,
-            coordinate,
-            payload,
-            captures=_claim_view_captures(payload),
-            access=access,
+            instance, coordinate, view.model_dump(mode="json"), access=access
         )
     if resolved.kind == "subject":
         from cruxible_core.service.claims.subjects import service_get_playbill_subject
@@ -3021,36 +3016,17 @@ def _proof(
             "envelope": None if source is None else source.model_dump(mode="json"),
         }
     # Proposals are operational: the status entry and the retained records.
-    return {
-        name: None if value is None else value.model_dump(mode="json")
-        for name, value in _proposal_records(instance, resolved.identity).items()
-    }
-
-
-def _is_capture_digest(value: object) -> bool:
-    return isinstance(value, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", value) is not None
-
-
-def _claim_view_captures(value: object) -> tuple[str, ...]:
-    """Every Capture a served Claim view names, wherever it names one."""
-
-    found: set[str] = set()
-
-    def walk(item: object) -> None:
-        if isinstance(item, Mapping):
-            for key, child in item.items():
-                if key in ("capture_digest", "capture") and _is_capture_digest(child):
-                    found.add(str(child))
-                elif key == "capture_digests" and isinstance(child, list):
-                    found.update(str(digest) for digest in child if _is_capture_digest(digest))
-                else:
-                    walk(child)
-        elif isinstance(item, list):
-            for child in item:
-                walk(child)
-
-    walk(value)
-    return tuple(sorted(found))
+    # C14: their candidate law evidence quotes Captures; withheld ones are
+    # filtered, every digest and commitment kept.
+    return _withhold_claim_evidence(
+        instance,
+        coordinate,
+        {
+            name: None if value is None else value.model_dump(mode="json")
+            for name, value in _proposal_records(instance, resolved.identity).items()
+        },
+        access=access,
+    )
 
 
 def _withhold_claim_evidence(
@@ -3058,30 +3034,20 @@ def _withhold_claim_evidence(
     coordinate: AcceptedProjectionCoordinate,
     payload: dict[str, Any],
     *,
-    captures: tuple[str, ...],
     access: BodyAccessContext,
 ) -> dict[str, Any]:
-    """A served Claim view without what its withheld Captures say (C14).
+    """A served view without what its withheld Captures say, with a notice (C14).
 
-    The accepted value stays; spans over, and evidence locators into, a
-    restricted Capture go, with a ``withheld`` notice naming them. Decided
-    from maintained metadata before anything of theirs is read.
+    Values stay; spans over, evidence locators into and absence witnesses of a
+    restricted Capture go, wherever the payload copies them. Decided from
+    maintained metadata before anything of theirs is read.
     """
 
-    from cruxible_core.service.evidence.body_access import (
-        capture_access_resolver,
-        redact_claim_evidence,
-        withheld_commitments,
-    )
+    from cruxible_core.service.evidence.body_access import withhold_evidence_payload
 
-    withheld, notice = capture_access_resolver(instance, coordinate).withheld(captures, access)
+    redacted, notice = withhold_evidence_payload(instance, coordinate, payload, access)
     if notice is None:
         return payload
-    commitments, complete = withheld_commitments(instance, coordinate, withheld)
-    redacted = redact_claim_evidence(
-        payload, captures=set(withheld), commitments=commitments, every_span=not complete
-    )
-    assert isinstance(redacted, dict)
     redacted["withheld"] = notice.model_dump(mode="json")
     return redacted
 
@@ -3105,13 +3071,8 @@ def _why(
             evaluation_time=evaluation_time,
             access=access,
         )
-        payload = explanation.model_dump(mode="json")
         return _withhold_claim_evidence(
-            instance,
-            coordinate,
-            payload,
-            captures=_claim_view_captures(payload),
-            access=access,
+            instance, coordinate, explanation.model_dump(mode="json"), access=access
         )
     from cruxible_core.service.discovery.explain import service_explain_playbill_subject
 

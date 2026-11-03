@@ -415,10 +415,22 @@ def service_playbill_backlinks(
             access=access,
         )
     from cruxible_core.service.discovery.get import resolve_get_ref
+    from cruxible_core.service.evidence.body_access import NO_RESTRICTED_ACCESS
 
     assert request.ref is not None
+    reference = request.ref.strip()
+    if reference.startswith(("CAP-", "Capture:", "sha256:")):
+        # Capture references are never backlink targets: refused before any
+        # resolution, so no Capture is verified (or read) for this reader (C14).
+        raise _not_backlinkable(request.ref, "capture")
     coordinate = _read_coordinate(instance, request)
-    resolved = resolve_get_ref(instance, coordinate, request.ref, surface=request.surface)
+    resolved = resolve_get_ref(
+        instance,
+        coordinate,
+        request.ref,
+        surface=request.surface,
+        access=access or NO_RESTRICTED_ACCESS,
+    )
     if resolved.kind == "subject":
         return service_subject_backlinks(
             instance,

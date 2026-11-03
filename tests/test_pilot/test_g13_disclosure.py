@@ -40,7 +40,6 @@ LAW_FRAMES = frozenset(
     {
         "_claim_admission_accounts",
         "service_evaluate_playbill_claim_verdict",
-        "_verifies",
         "_backfill",
     }
 )
@@ -496,27 +495,374 @@ def test_restricted_kinds_compile_under_the_body_access_coordinate(tmp_path: Pat
     assert instance.accepted_coordinate() == coordinate
 
 
-def test_backlinks_withhold_sections_of_withheld_captures(
+# --- second review round (R1-R6) ------------------------------------------------------
+
+
+@contextmanager
+def served(instance: Any, monkeypatch: pytest.MonkeyPatch, mode: str) -> Iterator[Any]:
+    """The real served facade over this instance, at one permission tier."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.runtime import playbill_api
+    from cruxible_core.runtime.permissions import PermissionMode, request_permission_scope
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            playbill_api, "get_playbill_manager", lambda: SimpleNamespace(get=lambda _id: instance)
+        )
+        with request_permission_scope(PermissionMode[mode]):
+            yield playbill_api
+
+
+def test_r1_the_public_batch_read_filters_restricted_evidence_for_both_readers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.claim_reads import ClaimReadBatchRequest
+
+    instance, _root, state, digest = _restricted(tmp_path)
+    claims = candidate_claims(instance, state)
+    activate(instance, state)
+    ids = tuple(c.identity.qualified for c in claims[:3])
+    for mode, visible in (("READ_ONLY", False), ("GOVERNED_WRITE", True)):
+        with served(instance, monkeypatch, mode) as api:
+            result = api.playbill_read_claim_batch(
+                instance.descriptor.instance_id, request=ClaimReadBatchRequest(claim_ids=ids)
+            )
+        text = json.dumps(result.model_dump(mode="json"))
+        assert len(result.claims) == len(ids)
+        assert ("record_locator" in text) is visible and ("/vulnerabilities/" in text) is visible
+        assert (result.withheld is None) is visible
+        if not visible:
+            assert result.withheld is not None and result.withheld.capture_digests == (digest,)
+        # Accepted values stay for both readers.
+        assert all(
+            '"proposition"' in json.dumps(view.model_dump(mode="json")) for view in result.claims
+        )
+
+
+def test_r2_absence_witnesses_lose_their_selector_and_counts_in_every_copy(
+    tmp_path: Path,
+) -> None:
+    from cruxible_core.service.proposals.review import (
+        service_review_playbill_proposal,
+        withhold_review_values,
+    )
+    from tests.test_pilot.test_gate import _delist, kev_mirror_spec
+
+    instance, root = pilot_world(
+        tmp_path, "kev.json", capture_body_access="restricted", spec=kev_mirror_spec()
+    )
+    first = run(instance, root)
+    activate(instance, first)
+    _delist(root)
+    second = run(instance, root, minute=1)
+    retired = candidate_claims(instance, second)
+    assert retired and all(c.retirement.absence is not None for c in retired)
+    proposal = second.terminal_egress[0].proposal_id
+    for access, visible in ((READER, False), (KEY, True)):
+        detail = service_review_playbill_proposal(
+            instance, proposal_id=proposal, access=access, detail=True
+        )
+        text = json.dumps(withhold_review_values(instance, detail.model_dump(mode="json"), access))
+        for leak in ('"count_at"', '"enumerated_key_digest"', '"extract_spec"', '"/count"'):
+            assert (leak in text) is visible, leak
+    activate(instance, second)
+    claim = retired[0].identity.qualified
+    for access, visible in ((READER, False), (KEY, True)):
+        for detail in ("proof", "why"):
+            text = _get(instance, claim, access, detail)
+            assert ('"count_at"' in text) is visible and ('"extract_spec"' in text) is visible
+
+
+def _two_kind_world(tmp_path: Path) -> Any:
+    """KEV claims admissible under a restricted and an open kind, one Line each."""
+
+    from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
+    )
+    from tests.core_support._light_capture_support import record_contract
+    from tests.test_pilot import support
+    from tests.test_procedures import test_claims_terminal as terminal
+
+    policy = ClaimEvidenceAdmissionPolicy(
+        rules=(
+            ClaimEvidenceAdmissionRule(
+                rule_id="fixture",
+                claim_roles=("derivation", "normative", "observation"),
+                capture_contracts=("test.open-v1", "test.orders-v1"),
+                admission="direct",
+                subject_binding="exact_claim_subject",
+            ),
+        )
+    )
+    original = terminal.claim_type
+    accept = terminal.accept_tree
+    open_kind = record_contract(name="test.open-v1")
+
+    def with_open_kind(instance: Any, updates: dict[str, bytes], *, name: str) -> None:
+        if name == "claims-vocabulary":
+            path = capture_contract_path(open_kind.identity.name)
+            updates = {**updates, path: render_capture_contract(open_kind)}
+        accept(instance, updates, name=name)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(terminal, "accept_tree", with_open_kind)
+        patch.setattr(
+            support,
+            "claim_type",
+            lambda name, value="enum[open, closed, unknown]", **kw: original(
+                name, value, evidence_admission_policy=policy, **kw
+            ),
+        )
+        instance, root = pilot_world(tmp_path, "kev.json", capture_body_access="restricted")
+    base = kev_spec().model_dump(mode="python", by_alias=True)
+    base["procedure"] = "security.kev-open"
+    base["steps"][0]["captures"] = {"capture": "test.open-v1"}
+    terminal.install(
+        instance,
+        procedure_spec(base=base),
+        line_name="test.open-line",
+        parameters={"logical_source": "cisa.kev.catalog", "relative_path": "data/kev.json"},
+    )
+    return instance, root
+
+
+def test_r3_a_restricted_to_open_replacement_withholds_the_delta_in_review_and_challenge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.service.proposals.review import (
+        service_review_playbill_proposal,
+        withhold_review_values,
+    )
+
+    instance, root = _two_kind_world(tmp_path)
+    first = run(instance, root)
+    sealed = first.source_observations[0].capture_digest
+    activate(instance, first)
+    data = json.loads((root / "data" / "kev.json").read_bytes())
+    data["vulnerabilities"][0]["dueDate"] = "2026-12-31"
+    (root / "data" / "kev.json").write_text(json.dumps(data))
+    second = run(instance, root, minute=1, line="test.open-line")
+    (revised,) = [
+        c for c in candidate_claims(instance, second) if c.statement.predicate.endswith("due_date")
+    ]
+    assert sealed not in revised.backing.capture_digests  # the candidate rests on the open kind
+    proposal = str(second.terminal_egress[0].proposal_id)
+    payload = service_review_playbill_proposal(
+        instance, proposal_id=proposal, access=READER, detail=True
+    ).model_dump(mode="json")
+    served_review = withhold_review_values(instance, payload, READER)
+    member = next(
+        m for m in served_review["members"] if m["path"].endswith(revised.identity.name + ".json")
+    )
+    assert member["semantic_delta"] == []
+    # The base rests on the restricted Capture: its evidence and spans are gone.
+    assert "record_locator" not in json.dumps(member["base_semantic_artifact"])
+    assert "/vulnerabilities/" not in json.dumps(member["base_semantic_artifact"])
+    assert served_review["candidate_digest"] == payload["candidate_digest"]
+    # The real approval route, both tiers; the signed statement never changes.
+    statements = []
+    for mode, visible in (("READ_ONLY", False), ("GOVERNED_WRITE", True)):
+        with served(instance, monkeypatch, mode) as api:
+            challenge = api.playbill_prepare_approval(
+                instance.descriptor.instance_id, proposal, signer_id="owner"
+            )
+        statements.append(challenge.statement)
+        assert (challenge.review.withheld is None) is visible
+        (served_member,) = [
+            m for m in challenge.review.members if m.path.endswith(revised.identity.name + ".json")
+        ]
+        base_text = json.dumps(served_member.base_semantic_artifact)
+        assert ("record_locator" in base_text) is visible
+        assert bool(served_member.semantic_delta) is visible
+    assert statements[0] == statements[1]
+
+
+def test_r4_proposal_proof_records_are_filtered_with_commitments_kept(
+    tmp_path: Path,
+) -> None:
+    instance, _root, state, digest = _restricted(tmp_path)
+    proposal = "Proposal:" + str(state.terminal_egress[0].proposal_id)
+    reader = json.loads(_get(instance, proposal, READER, "proof"))
+    holder = json.loads(_get(instance, proposal, KEY, "proof"))
+    assert "record_locator" not in json.dumps(reader) and "record_locator" in json.dumps(holder)
+    assert reader["proof"]["withheld"]["capture_digests"] == [digest]
+    holder_digests = {k: v for k, v in holder["proof"].items() if k != "withheld"}
+    assert json.dumps(reader["proof"]).count("candidate_digest") == json.dumps(
+        holder_digests
+    ).count("candidate_digest")
+
+
+def _legacy_shaped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Journal payloads as a pre-C14 run wrote them: no versioned consumption."""
+
+    from cruxible_core.service.discovery import runs
+
+    original = runs.run_payload
+
+    def legacy(instance: Any, digest: str) -> object:
+        payload = original(instance, digest)
+        if isinstance(payload, dict):
+            return {key: value for key, value in payload.items() if key != "consumption"}
+        return payload
+
+    monkeypatch.setattr(runs, "run_payload", legacy)
+
+
+def _assert_legacy_withheld(world: Any, run_id: str | None) -> None:
+    from cruxible_client.contracts.line_inbox import InboxItemEnvelope, InboxSighting
+    from cruxible_core.service.procedures.line_inbox import _withheld
+
+    assert run_id is not None
+    status = procedure_run_status(world, run_id, viewer=None, access=READER)
+    assert status.withheld is not None and status.withheld.provenance_unavailable
+    assert status.result is None
+    assert procedure_run_status(world, run_id, viewer=None, access=KEY).withheld is None
+    sighting = InboxSighting(run_id=run_id, posted_at=datetime(2026, 10, 29, tzinfo=UTC))
+    envelope = InboxItemEnvelope(
+        item_id="INB-" + "b" * 64,
+        status="unread",
+        line="Line:legacy",
+        procedure="Procedure:p",
+        procedure_artifact_digest="sha256:" + "1" * 64,
+        node_id="post",
+        occurrences=1,
+        first_sighting=sighting,
+        recent_sightings=(sighting,),
+        dedupe_key="sha256:" + "2" * 64,
+        payload_digest="sha256:" + "3" * 64,
+        payload_bytes=2,
+    )
+    assert _withheld(world, (envelope,), READER)[envelope.item_id].provenance_unavailable
+    assert _withheld(world, (envelope,), KEY) == {}
+
+
+def test_r5_a_trigger_fed_run_without_versioned_consumption_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import timedelta
+
+    from cruxible_core.service.procedures.procedure_runs import (
+        LineRunRequest,
+        TriggerFire,
+        service_run_playbill_line,
+    )
+    from tests.test_procedures import test_procedure_source_runs as fixtures
+    from tests.test_procedures import test_trigger_fed_proposals as fed
+
+    # Over an OPEN kind: only the provenance record decides.
+    instance, _owner, root, line = fed._trigger_fed_world(tmp_path, pytest.MonkeyPatch())
+    _capture, event = fed._event(instance, root)
+    state = service_run_playbill_line(
+        instance,
+        path_identity_digest=line.identity.name,
+        request=LineRunRequest(line=line.identity.name),
+        actor_context=fixtures._actor(instance),
+        caller_rung=2,
+        daemon_clock=fixtures._TestClock(fixtures.NOW + timedelta(seconds=2)),
+        trigger_fire=TriggerFire(trigger=fed.TRIGGER, event=event),
+    )
+    assert state.run_id is not None
+    assert procedure_run_status(instance, state.run_id, viewer=None, access=READER).withheld is None
+    _legacy_shaped(monkeypatch)
+    _assert_legacy_withheld(instance, state.run_id)
+
+
+def test_r5_a_parent_run_with_children_without_versioned_consumption_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.governance.actor_context import GovernedActorContext
+    from cruxible_core.service.procedures.procedure_runs import (
+        ProcedureRunRequest,
+        service_run_playbill_procedure,
+    )
+    from tests.core_support._support import initialize_local
+    from tests.test_procedures import test_nested_source_runs as nested
+
+    instance, owner = initialize_local(tmp_path)
+    child, parent = nested.blueprints()
+    nested.accept_blueprint(instance, owner, child)
+    nested.accept_blueprint(instance, owner, parent)
+    state = service_run_playbill_procedure(
+        instance,
+        name="parent",
+        request=ProcedureRunRequest(input={}, parameters={"positive": True}),
+        actor_context=GovernedActorContext(
+            actor_id="owner",
+            actor_type="human_user",
+            org_id=instance.descriptor.instance_id,
+            operation_id="test-nested",
+            timestamp=datetime(2026, 8, 21, 12, 3, tzinfo=UTC),
+        ),
+    )
+    assert state.status == "succeeded" and state.run_id is not None
+    # Proven empty (a pure parent and its children): nothing withheld.
+    assert procedure_run_status(instance, state.run_id, viewer=None, access=READER).withheld is None
+    _legacy_shaped(monkeypatch)
+    _assert_legacy_withheld(instance, state.run_id)
+
+
+def test_r6_an_uncited_restricted_prefix_is_never_read_for_a_read_only_reader(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from cruxible_client.contracts.backlinks import BacklinksRequest
+    from cruxible_client.contracts.errors import ReadRefusalError
     from cruxible_core.service.discovery.backlinks import service_playbill_backlinks
-    from cruxible_core.service.evidence import body_access
+
+    instance, _root, _state, digest = _restricted(tmp_path)  # proposed, never accepted: uncited
+    body = None
+    handle = "CAP-" + digest.removeprefix("sha256:")[:16]
+    instance.body_store().capture_envelopes.contracts_of((digest,))  # one-time index migration
+    with read_spy(monkeypatch) as seen:
+        read = service_read_playbill_capture(
+            instance, request=CaptureReadRequest(capture_digest=handle), access=READER
+        )
+        card = _get(instance, handle, READER)
+        with pytest.raises(ReadRefusalError) as refused:
+            service_playbill_backlinks(
+                instance, request=BacklinksRequest(ref=handle), access=READER
+            )
+    assert refused.value.error_code == "cruxible.backlinks.target_unsupported"
+    assert read.status == "restricted" and read.capture_digest == digest
+    assert '"withheld"' in card
+    _assert_unread(seen, digest)
+    assert body is None
+
+
+def test_r6_a_real_restricted_note_keeps_its_section_from_a_read_only_reader(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.backlinks import BacklinksRequest
+    from cruxible_client.contracts.captures import (
+        capture_contract_path,
+        foreign_source_capture_contract,
+        render_capture_contract,
+    )
+    from cruxible_core.service.discovery.backlinks import service_playbill_backlinks
+    from tests.core_support._identity_support import accept_tree
     from tests.core_support._write_support import KIND, seed_write_surface
     from tests.test_service.test_backlinks import cite, write
     from tests.test_service.test_notes import SOURCE, about
 
     instance, _ = seed_write_surface(tmp_path)
+    # The workspace source's kind is authored restricted before any section of it lands.
+    sealed = foreign_source_capture_contract(SOURCE).model_copy(
+        update={"body_access": "restricted"}
+    )
+    accept_tree(
+        instance,
+        {capture_contract_path(sealed.identity.name): render_capture_contract(sealed)},
+        name="sealed-notes",
+    )
     write(instance, about(f"{KIND}/wi-1"), cite("wi-1", "ready"))
     request = BacklinksRequest(ref=f"{KIND}/wi-1")
-    opened = service_playbill_backlinks(instance, request=request, access=READER)
-    assert opened.withheld is None and {link.file for link in opened.links} == {SOURCE}
-    # Were the cited section Capture's kind restricted, a READ_ONLY reader keeps
-    # each link's relation and source but not its section.
-    monkeypatch.setattr(body_access.CaptureKindAccess, "restricted", property(lambda self: True))
-    withheld = service_playbill_backlinks(instance, request=request, access=READER)
-    assert withheld.withheld is not None
-    assert [link.relation for link in withheld.links] == [link.relation for link in opened.links]
-    assert all(link.file is None and link.cited_digest is None for link in withheld.links)
+    reader = service_playbill_backlinks(instance, request=request, access=READER)
     holder = service_playbill_backlinks(instance, request=request, access=KEY)
+    assert [link.relation for link in reader.links] == ["about", "cites"]
+    assert reader.withheld is not None
+    assert reader.withheld.capture_kinds == (sealed.identity.qualified,)
+    assert all(link.file is None and link.section is None for link in reader.links)
     assert holder.withheld is None and {link.file for link in holder.links} == {SOURCE}

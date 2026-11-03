@@ -19,6 +19,7 @@ check fails closed. A caller holding ``cruxible_body_read_restricted``
 
 from __future__ import annotations
 
+import re
 import threading
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -249,6 +250,11 @@ def withheld_commitments(
     return set(found.values()), len(found) == len(wanted)
 
 
+#: What an absence witness keeps when its Capture is withheld: which run judged
+#: which Capture, never the selector or counts it read from the body.
+_WITNESS_KEPT = ("run_id", "node_id", "procedure_digest", "capture", "logical_source")
+
+
 def redact_claim_evidence(
     value: object,
     *,
@@ -256,28 +262,53 @@ def redact_claim_evidence(
     commitments: set[str],
     every_span: bool = False,
 ) -> object:
-    """A served Claim view without what is read from withheld Captures (C14).
+    """A served payload without what is read from withheld Captures (C14).
 
-    Accepted statement values stay. Removed: exact spans over a withheld
-    Capture's commitment (``every_span`` removes all of them), and every
-    evidence basis naming a withheld Capture keeps only its basis, its Capture
-    digest and the ``withheld`` mark -- record locators, field paths, record
-    keys, extract and transform lineage go. A walk over the whole response, so
-    every nested copy (law evidence, facts, history) is covered.
+    Accepted statement values stay. Removed, in every nested copy (facts, law
+    evidence, history, review members, proposal records):
+
+    - exact spans over a withheld Capture's commitment (``every_span``: all);
+    - an evidence basis naming a withheld Capture (extracted, capture,
+      measured) keeps only its basis, Capture digest and the ``withheld`` mark:
+      record locators, field paths, record keys, extract specs, declared fields
+      and transform lineage go;
+    - a derived basis drawing on one keeps its Claim inputs and its redacted
+      extractions, and loses its transform lineage;
+    - an absence witness over one keeps its run, node, Procedure, Capture and
+      logical source; its ``complete_when`` selector and counts, extract spec,
+      extractor, enumerated key digest and expect coordinate go.
     """
 
+    def walk(item: object) -> object:
+        return redact_claim_evidence(
+            item, captures=captures, commitments=commitments, every_span=every_span
+        )
+
     if isinstance(value, list):
-        return [
-            redact_claim_evidence(
-                item, captures=captures, commitments=commitments, every_span=every_span
-            )
-            for item in value
-        ]
+        return [walk(item) for item in value]
     if not isinstance(value, dict):
         return value
     capture = value.get("capture_digest")
     if "basis" in value and isinstance(capture, str) and capture in captures:
         return {"basis": value["basis"], "capture_digest": capture, "withheld": WITHHELD_MARK}
+    witness = value.get("capture")
+    if isinstance(witness, str) and witness in captures and "basis" not in value:
+        return {
+            **{key: value[key] for key in _WITNESS_KEPT if key in value},
+            "withheld": WITHHELD_MARK,
+        }
+    if value.get("basis") == "derived":
+        extractions = value.get("extractions")
+        if isinstance(extractions, list) and any(
+            isinstance(item, dict) and item.get("capture_digest") in captures
+            for item in extractions
+        ):
+            return {
+                "basis": "derived",
+                "inputs": value.get("inputs", []),
+                "extractions": walk(extractions),
+                "withheld": WITHHELD_MARK,
+            }
     result: dict[str, object] = {}
     for key, item in value.items():
         if key == "spans" and isinstance(item, list):
@@ -293,10 +324,63 @@ def redact_claim_evidence(
             if len(kept) != len(item):
                 result["withheld"] = WITHHELD_MARK
             continue
-        result[key] = redact_claim_evidence(
-            item, captures=captures, commitments=commitments, every_span=every_span
-        )
+        result[key] = walk(item)
     return result
+
+
+_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def named_captures(value: object) -> tuple[str, ...]:
+    """Every Capture digest a served payload names under a Capture field."""
+
+    found: set[str] = set()
+
+    def is_digest(item: object) -> bool:
+        return isinstance(item, str) and _DIGEST_RE.fullmatch(item) is not None
+
+    def walk(item: object) -> None:
+        if isinstance(item, Mapping):
+            for key, child in item.items():
+                if key in ("capture_digest", "capture") and is_digest(child):
+                    found.add(str(child))
+                elif key == "capture_digests" and isinstance(child, list):
+                    found.update(str(digest) for digest in child if is_digest(digest))
+                else:
+                    walk(child)
+        elif isinstance(item, list):
+            for child in item:
+                walk(child)
+
+    walk(value)
+    return tuple(sorted(found))
+
+
+def withhold_evidence_payload(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    payload: dict[str, object],
+    access: BodyAccessContext | None,
+) -> tuple[dict[str, object], BodyRestricted | None]:
+    """A served payload with every Capture it names checked, and the notice (C14).
+
+    The Captures are found in the payload itself; access is decided from
+    maintained metadata before any of them is read; a withheld one's spans,
+    locators and witness values go from every copy (``redact_claim_evidence``).
+    Values, digests and commitments stay.
+    """
+
+    withheld, notice = capture_access_resolver(instance, coordinate).withheld(
+        named_captures(payload), access or NO_RESTRICTED_ACCESS
+    )
+    if notice is None:
+        return payload, None
+    commitments, complete = withheld_commitments(instance, coordinate, withheld)
+    redacted = redact_claim_evidence(
+        payload, captures=set(withheld), commitments=commitments, every_span=not complete
+    )
+    assert isinstance(redacted, dict)
+    return redacted, notice
 
 
 __all__ = [
@@ -308,6 +392,8 @@ __all__ = [
     "body_restricted_notice",
     "capture_access_resolver",
     "citation_access",
+    "named_captures",
     "redact_claim_evidence",
+    "withhold_evidence_payload",
     "withheld_commitments",
 ]

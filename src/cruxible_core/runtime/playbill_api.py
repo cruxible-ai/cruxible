@@ -2217,7 +2217,11 @@ def playbill_read_claim_batch(
     instance_id: str, *, request: ClaimReadBatchRequest
 ) -> ClaimReadBatchResult:
     check_permission("cruxible_read", instance_id=instance_id)
-    result = service_read_claim_batch(get_playbill_manager().get(instance_id), request=request)
+    result = service_read_claim_batch(
+        get_playbill_manager().get(instance_id),
+        request=request,
+        access=_access(instance_id, include_body=True),
+    )
     _record_consumed_paths(
         instance_id,
         operation="playbill.claim.get",

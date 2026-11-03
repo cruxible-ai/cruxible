@@ -2199,10 +2199,15 @@ class _TransformInputInvalid(ExecutionError):
         self.slot = slot
 
 
-def _consumed(state: _RunState) -> dict[str, list[str]]:
-    """The run's consumed Captures so far, for a journal payload; none when there are none."""
+#: The journaled consumption record's version. A node or final record without
+#: it was written before C14 provenance and is read as unknown (fail closed).
+CONSUMPTION_VERSION = 1
 
-    return {"consumed_captures": sorted(state.consumed_captures)} if state.consumed_captures else {}
+
+def _consumed(state: _RunState) -> dict[str, object]:
+    """The run's consumed Captures so far, versioned: an empty set is proven empty."""
+
+    return {"consumption": {"v": CONSUMPTION_VERSION, "captures": sorted(state.consumed_captures)}}
 
 
 @dataclass
@@ -2711,7 +2716,8 @@ class ProcedureExecutor:
             ),
             "halt": halt,
             "semantic_result_digest": semantic_result_digest,
-            # Recorded only when the run consumed a Capture, so pure runs keep their bytes.
+            # What the run consumed, versioned, so a reader tells proven-empty from
+            # a record written before C14 provenance (fail closed; D-R25 R4).
             **_consumed(state),
             "provider_calls": state.provider_calls,
             "capture_bytes": state.capture_bytes,
@@ -4707,9 +4713,14 @@ class ProcedureExecutor:
         # The child's completion records an incomplete return (data or control
         # lineage); the invoke's output is that AND the inputs it passed.
         child_complete = final.get("return_complete", True) is not False
-        consumed = final.get("consumed_captures", [])
-        if not isinstance(consumed, list):
-            raise ExecutionError("nested consumed Captures must be a list")
+        consumption = final.get("consumption")
+        consumed = consumption.get("captures") if isinstance(consumption, dict) else None
+        if (
+            not isinstance(consumption, dict)
+            or consumption.get("v") != CONSUMPTION_VERSION
+            or not isinstance(consumed, list)
+        ):
+            raise ExecutionError("nested completion records no Capture consumption")
         state.consumed_captures.update(str(digest) for digest in consumed)
         budget = ProcedureRunBudget.model_validate(final["budget"]).observed
         state.provider_calls += budget.provider_calls
