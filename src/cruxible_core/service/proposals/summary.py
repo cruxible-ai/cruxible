@@ -398,8 +398,9 @@ def service_review_summary(
         raise ProposalIntegrityError("Refused proposal has no reviewable candidate")
     # Receipt cutoffs and item reasons belong to an admission, even when two
     # admissions carry the same candidate. Their caches and cursors must differ.
-    # ``c14``: builds before C14 recorded no cited Captures; they are rebuilt.
-    cache_key = f"{digest};{admission.proposal_id};c14"
+    # A build from before C14 records no cited Captures: its candidate values
+    # are withheld from a reader without the key (fail closed).
+    cache_key = f"{digest};{admission.proposal_id}"
     limit = max(1, min(limit, MAX_ROWS))
     groups_limit = max(1, min(groups_limit, MAX_GROUPS))
     if group is not None and after is not None:
