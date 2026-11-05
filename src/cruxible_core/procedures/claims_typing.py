@@ -318,13 +318,61 @@ def validate_claims_templates(
                 )
             return
         if isinstance(expected, SubjectType) and isinstance(value, dict):
-            if value.get("kind") not in expected.subject_kinds:
-                raise refused("Subject kind does not match")
+            subject_value(value, expected, each, label, element, refused)
             return
         if claim_has_line_break(value):
             raise refused("multiline_string; cite a Document section")
         if isinstance(check_value(value, expected, at=label), FieldInvalid):
             raise refused(f"literal does not fit {slot} ({render_type(expected)})")
+
+    def subject_value(
+        value: dict[str, object],
+        expected: SubjectType,
+        each: object,
+        label: str,
+        element: str,
+        refused: Callable[[str], ClaimsTypingRefused],
+    ) -> None:
+        """A Subject named by kind and key, as ``subject`` names one (V1).
+
+        Only ``kind``, ``key`` and ``create`` are spelled; the key names every
+        key part of the kind exactly once, each typed against its key
+        ClaimType; ``create`` is ``never`` or ``if_absent``. A minted kind has
+        no key, so a value never names or creates one of it by key.
+        """
+
+        unknown = sorted(set(value) - {"kind", "key", "create"})
+        if unknown:
+            raise refused(
+                "a Subject value spells only kind, key and create; drop " + ", ".join(unknown)
+            )
+        if value.get("kind") not in expected.subject_kinds:
+            raise refused("Subject kind does not match")
+        if value.get("create", "never") not in ("never", "if_absent"):
+            raise refused("create must be never or if_absent")
+        kind = source("SubjectKind", str(value["kind"]))
+        if kind.minted:
+            raise refused(
+                f"{kind.subject_kind} is minted: core names its Subjects, so a value "
+                "names one by id, never by key, and cannot create one"
+            )
+        key = value.get("key")
+        if not isinstance(key, dict):
+            raise refused(f"key must map each key part of {kind.subject_kind}")
+        parts = [key_predicate(kind, str(name)) for name in key]
+        if None in parts or len(set(parts)) != len(parts) or set(parts) != set(kind.keys):
+            raise refused("key must name every SubjectKind key part exactly once")
+        for name, part in key.items():
+            predicate = key_predicate(kind, str(name))
+            assert predicate is not None
+            check(
+                part,
+                source("ClaimType", predicate).value,
+                each,
+                f"{label} key {name}",
+                f"key ClaimType {predicate}",
+                f"{element}.key.{name}",
+            )
 
     for node in definition.nodes:
         if not isinstance(node, ClaimsNode):
