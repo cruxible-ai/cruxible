@@ -36,6 +36,10 @@ from tests.core_support._support import initialize_local
 from tests.support.claim_types import claim_type_changes
 from tests.test_authoring.test_authoring_change_set_intents import _predicate_type
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 NOW = datetime(2026, 9, 16, tzinfo=UTC)
 
 
