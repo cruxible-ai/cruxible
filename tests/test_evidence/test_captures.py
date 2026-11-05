@@ -284,3 +284,48 @@ def test_coordinator_self_source_profile_is_cas_only_and_claim_bound(tmp_path: P
     )
     assert refused.verdict == "refused"
     assert refused.diagnostics[0].code == ("cruxible.capture_contract.coordinator_profile_mismatch")
+
+
+def test_a_derive_manifest_records_state_reads_and_keeps_older_bytes() -> None:
+    from cruxible_client.contracts.captures import (
+        input_receipt_set_manifest_digest,
+        render_input_receipt_set_manifest,
+    )
+
+    older = InputReceiptSetManifest(input_capture_digests=(digest("capture", "input"),))
+    assert b"input_accepted_state_digests" not in render_input_receipt_set_manifest(older)
+    reads_only = InputReceiptSetManifest(input_accepted_state_digests=(digest("read", "watched"),))
+    assert reads_only.input_accepted_state_digests == (digest("read", "watched"),)
+    assert input_receipt_set_manifest_digest(reads_only) != input_receipt_set_manifest_digest(older)
+    with pytest.raises(ValueError, match="at least one exact input"):
+        InputReceiptSetManifest()
+
+
+def test_a_derive_reducer_is_content_addressed_and_read_back_exactly(tmp_path: Path) -> None:
+    from cruxible_client.contracts.captures import (
+        CaptureFormatError,
+        DeriveReducer,
+        derive_input_template_digest,
+        derive_reducer_digest,
+        read_derive_reducer,
+        render_derive_reducer,
+    )
+
+    store = body_store(tmp_path)
+    template = {"source": "$steps.catalog.capture", "watched": "$steps.watched.rows"}
+    reducer = DeriveReducer(
+        provider_artifact_digest=digest("provider", "build"),
+        operation_signature_digest=digest("operation", "derive"),
+        implementation_digest=digest("implementation", "derive"),
+        input_template_digest=derive_input_template_digest(template),
+    )
+    stored = store.store(render_derive_reducer(reducer))
+    assert stored.digest == derive_reducer_digest(reducer).tagged
+    assert read_derive_reducer(store, stored.digest) == reducer
+    # The template digest is the node's input alone: another template differs.
+    assert derive_input_template_digest({**template, "watched": []}) != (
+        reducer.input_template_digest
+    )
+    other = store.store(b'{"tag":"something-else"}')
+    with pytest.raises(CaptureFormatError, match="reducer is invalid"):
+        read_derive_reducer(store, other.digest)

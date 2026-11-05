@@ -86,9 +86,15 @@ def append_absence(
         for t in _exact_evidence(reference, state=state, node_id=node.node_id, field="enumeration")
         if t.slot in {"produced_capture", "admitted_capture"}
     }
-    if len(captures) != 1:
-        refuse("claims_absence_invalid: enumeration needs exactly one Capture")
-    capture = next(iter(captures))
+    from cruxible_core.procedures.terminal_dependencies import capture_root
+
+    root = capture_root(captures, state.derivations)
+    if root is None:
+        refuse(
+            "claims_absence_invalid: enumeration needs exactly one root Capture "
+            "(one Capture, or one derived from all the others)"
+        )
+    capture = root
     logical_source = context.logical_source(capture)
     if logical_source is None:
         refuse("claims_absence_invalid: enumeration Capture has no logical source")

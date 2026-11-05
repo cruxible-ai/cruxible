@@ -12,6 +12,7 @@ item inherit evidence it did not consume.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -413,7 +414,33 @@ def citable_captures(manifest: TerminalItemDependencyManifestV1 | None) -> tuple
     return manifest.produced_capture_digests or manifest.admitted_capture_digests
 
 
+def capture_root(captures: Iterable[str], derivations: Mapping[str, Iterable[str]]) -> str | None:
+    """The one Capture a value cites: the one whose recorded inputs cover the rest (D-R37 d1).
+
+    ``derivations`` maps each derived Capture to the input Captures its
+    manifest records. One Capture is its own root. Several have a root only
+    when one of them transitively derives from all the others; two unrelated
+    Captures have none (combine them through a recorded derive, or a Query).
+    """
+
+    listed = set(captures)
+    if len(listed) <= 1:
+        return next(iter(listed), None)
+    for candidate in sorted(listed):
+        reached: set[str] = set()
+        frontier = [candidate]
+        while frontier:
+            for source in derivations.get(frontier.pop(), ()):
+                if source not in reached:
+                    reached.add(source)
+                    frontier.append(source)
+        if listed - {candidate} <= reached:
+            return candidate
+    return None
+
+
 __all__ = [
+    "capture_root",
     "citable_captures",
     "TAINT_ACCEPTED_STATE",
     "TAINT_CONSERVATIVE_DEFAULT",

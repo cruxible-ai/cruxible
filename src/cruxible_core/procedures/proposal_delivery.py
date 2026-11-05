@@ -435,6 +435,13 @@ def evidence_by_item(
                 details={"item_key": item.item_key, "child_index": item.child_index},
             )
         if len(produced) > 1:
+            # A derived root and the sources it records: the claims terminal
+            # chose the one root (``capture_root``) and its receipt cites it.
+            receipt = request.claims_evidence.get(item.item_key)
+            cited = getattr(getattr(receipt, "value", None), "capture_digest", None)
+            if isinstance(cited, str) and cited in produced:
+                evidence[item.item_key] = cited
+                continue
             raise ProposalDeliveryRefused(
                 "proposal_item_evidence_ambiguous",
                 "The item's dependency closure reached more than one Capture it could cite.",

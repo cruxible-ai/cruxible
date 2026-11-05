@@ -101,3 +101,20 @@ def test_unconsumed_evidence_cannot_taint_or_weaken_an_item() -> None:
     assert derived.epistemic_grade == "observed"
     assert derived.provenance_grade == "witnessed"
     assert derived.taint_labels == ()
+
+
+def test_capture_root_is_the_one_capture_deriving_from_all_the_others() -> None:
+    from cruxible_core.procedures.terminal_dependencies import capture_root
+
+    source, view, chained, other = (_digest(byte) for byte in "1234")
+    derivations = {view: (source,), chained: (source, view)}
+    assert capture_root((), derivations) is None
+    assert capture_root((source,), {}) == source
+    assert capture_root((source, view), derivations) == view
+    # A chain roots at the last derive, transitively.
+    assert capture_root((source, view, chained), derivations) == chained
+    assert capture_root((source, chained), {chained: (view,), view: (source,)}) == chained
+    # Two unrelated Captures, or a derive that did not read the other one, have none.
+    assert capture_root((source, other), derivations) is None
+    assert capture_root((view, other), derivations) is None
+    assert capture_root((source, view), {}) is None

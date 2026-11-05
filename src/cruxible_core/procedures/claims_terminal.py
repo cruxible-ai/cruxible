@@ -562,16 +562,20 @@ def expand_claims(
                 from cruxible_core.procedures.terminal_dependencies import admitted_capture_token
 
                 own |= frozenset(admitted_capture_token(c) for c in input_captures)
-            captures = sorted(
-                {t.digest for t in own if t.slot in {"produced_capture", "admitted_capture"}}
+            from cruxible_core.procedures.terminal_dependencies import capture_root
+
+            root = capture_root(
+                (t.digest for t in own if t.slot in {"produced_capture", "admitted_capture"}),
+                state.derivations,
             )
-            if len(captures) != 1:
+            if root is None:
                 raise _RunRefusal(
                     "proposal_item_evidence_missing",
-                    "Claims value requires exactly one Capture in its own closure",
+                    "Claims value requires exactly one root Capture in its own closure: one "
+                    "Capture, or one derived from all the others",
                     node_id=node.node_id,
                 )
-            capture = captures[0]
+            capture = root
             basis: dict[str, Any]
             if inputs:
                 basis = {
@@ -584,6 +588,15 @@ def expand_claims(
                 }
             elif len(extractors) == 1 and len(sources) == 1:
                 extracting = extractors[0]
+                read = state.outputs.get(extracting.capture_alias)
+                if isinstance(read, dict) and read.get(extracting.capture_field) != capture:
+                    # The root is cited for the records the extract read; a root
+                    # other than the Capture they came from would misattribute them.
+                    raise _RunRefusal(
+                        "proposal_item_evidence_missing",
+                        "Claims value's root Capture is not the Capture its extract read",
+                        node_id=node.node_id,
+                    )
                 contract = executor.capture_contracts.get(state.capture_contracts.get(capture, ""))
                 basis = {
                     "basis": "extracted",

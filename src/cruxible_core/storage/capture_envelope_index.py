@@ -28,6 +28,8 @@ ENVELOPE_HEAD = b'{"capture_contract_digest":"'
 _DIGEST = re.compile(rb"sha256:[0-9a-f]{64}")
 #: The bytes that name an envelope's contract: the head, the digest, its quote.
 ENVELOPE_HEAD_LENGTH = len(ENVELOPE_HEAD) + len("sha256:") + 64 + 1
+#: A derived Capture's envelope names its input manifest by this key.
+_DERIVED_MARK = b'"input_receipt_set_manifest_digest":"sha256:'
 _SHARD_NAME = re.compile(r"[0-9a-f]{2}")
 _OBJECT_NAME = re.compile(r"[0-9a-f]{64}")
 _SCHEMA = """
@@ -35,6 +37,10 @@ CREATE TABLE IF NOT EXISTS envelopes (
  contract_digest TEXT NOT NULL, capture_digest TEXT NOT NULL,
  PRIMARY KEY(contract_digest, capture_digest)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS envelopes_by_capture ON envelopes(capture_digest);
+CREATE TABLE IF NOT EXISTS derivations (capture_digest TEXT PRIMARY KEY) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS derivation_inputs (
+ capture_digest TEXT NOT NULL, input_digest TEXT NOT NULL,
+ PRIMARY KEY(capture_digest, input_digest)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS backfilled (shard TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS backfill_complete (singleton INTEGER PRIMARY KEY);
 """
@@ -100,8 +106,78 @@ class CaptureEnvelopeIndex:
         contract = envelope_contract(content[:ENVELOPE_HEAD_LENGTH])
         if contract is None:
             return
+        inputs = self._derivation_inputs(content) if _DERIVED_MARK in content else None
         with self._connection() as connection:
             connection.execute("INSERT OR IGNORE INTO envelopes VALUES (?,?)", (contract, digest))
+            if inputs is not None:
+                connection.executemany(
+                    "INSERT OR IGNORE INTO derivation_inputs VALUES (?,?)",
+                    [(digest, item) for item in inputs],
+                )
+                connection.execute("INSERT OR IGNORE INTO derivations VALUES (?)", (digest,))
+
+    def _derivation_inputs(self, content: bytes) -> tuple[str, ...] | None:
+        """A derived envelope's input Captures, from its manifest (stored before it).
+
+        None when the manifest is not held or not one: the derivation is then
+        unrecorded, and a reader treats the Capture as restricted (C14).
+        """
+
+        import json
+
+        from cruxible_client.contracts.captures import (
+            CaptureFormatError,
+            read_input_receipt_set_manifest,
+        )
+
+        try:
+            named = json.loads(content).get("input_receipt_set_manifest_digest")
+            if not isinstance(named, str):
+                return None
+            return read_input_receipt_set_manifest(self._store, named).input_capture_digests
+        except (CaptureFormatError, CasError, ValueError, AttributeError):
+            return None
+
+    def derivation_inputs(self, capture_digests: Collection[str]) -> dict[str, tuple[str, ...]]:
+        """Each recorded derived Capture's input Captures, batched; unrecorded ones are absent.
+
+        Maintained metadata, recorded from the envelope and its manifest when
+        the envelope was stored: no envelope or manifest is read here. A
+        preview reads the index as it stands (what it holds is unrecorded).
+        """
+
+        from cruxible_core.indexes.sql_batch import select_in
+        from cruxible_core.storage.cas import dry_run_held_bodies
+
+        wanted = sorted(set(capture_digests))
+        if not wanted:
+            return {}
+        marked = "SELECT capture_digest FROM derivations WHERE capture_digest IN ({})"
+        edges = (
+            "SELECT capture_digest,input_digest FROM derivation_inputs WHERE capture_digest IN ({})"
+        )
+
+        def read(connection: sqlite3.Connection) -> dict[str, tuple[str, ...]]:
+            found: dict[str, list[str]] = {
+                str(row[0]): [] for row in select_in(connection, marked, wanted)
+            }
+            for capture, item in select_in(connection, edges, sorted(found)):
+                found[str(capture)].append(str(item))
+            return {capture: tuple(sorted(items)) for capture, items in found.items()}
+
+        if dry_run_held_bodies() is None:
+            with self._connection() as connection:
+                return read(connection)
+        if not self.path.is_file() or self.path.is_symlink():
+            return {}
+        with _LOCK:
+            connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=30)
+            try:
+                return read(connection)
+            except sqlite3.DatabaseError:
+                return {}
+            finally:
+                connection.close()
 
     def _shards(self) -> list[str]:
         return sorted(

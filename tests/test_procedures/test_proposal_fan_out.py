@@ -116,6 +116,7 @@ def _two_capture_state(items):  # type: ignore[no-untyped-def]
         outputs={"joined": {"items": [_element(None), _element("vendor")]}},
         provenance={"joined": provenance},
         completeness=Completeness(),
+        derivations={},
         alias_tokens=lambda aliases: provenance.whole if "joined" in aliases else frozenset(),
     )
 
@@ -169,6 +170,7 @@ class _State:
         self.outputs = outputs
         self.provenance = provenance
         self.completeness = Completeness()
+        self.derivations = {}
 
     def alias_tokens(self, aliases):  # type: ignore[no-untyped-def]
         tokens = frozenset()

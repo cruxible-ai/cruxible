@@ -10,6 +10,11 @@ Authorization reads maintained metadata only, never an envelope or a body:
    accepted history index (once per version per process: a version's access
    never changes).
 
+A derived Capture (D-R37 d6) inherits the most restrictive access of the
+Captures it was computed from, transitively: the envelope index records each
+derived envelope's inputs when it is stored, so this too is maintained metadata.
+An open derived kind whose derivation is unrecorded is restricted (fail closed).
+
 Every surface asks here, per Capture, before it reads an envelope or a body for
 its caller. A Capture with no indexed kind (absent, unreadable, not an
 envelope) or whose kind no accepted version resolves is **restricted**: the
@@ -19,6 +24,7 @@ check fails closed. A caller holding ``cruxible_body_read_restricted``
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import threading
 from collections.abc import Iterable, Mapping, Sequence
@@ -67,10 +73,13 @@ class CaptureKindAccess:
     capture_digest: str
     contract_digest: str | None
     kind: CaptureKindVersion | None
+    #: A derived Capture computed from a restricted one, or whose derivation is
+    #: unrecorded: restricted whatever its own kind declares (D-R37 d6).
+    inherited_restricted: bool = False
 
     @property
     def restricted(self) -> bool:
-        return self.kind is None or self.kind.access != "open"
+        return self.kind is None or self.kind.access != "open" or self.inherited_restricted
 
     @property
     def kind_identity(self) -> str | None:
@@ -117,7 +126,41 @@ class CaptureAccessResolver:
                     contract_digest=contract,
                     kind=None if contract is None else self._versions[contract],
                 )
+            self._inherit(missing)
         return {digest: self._captures[digest] for digest in wanted}
+
+    def _inherit(self, digests: Iterable[str]) -> None:
+        """Restrict each open derived Capture whose inputs, transitively, are restricted.
+
+        One batched index read per derivation depth; inputs resolve through
+        ``captures`` (memoized), so a chain is walked once per request.
+        """
+
+        derived = [
+            digest
+            for digest in digests
+            if (item := self._captures[digest]).kind is not None
+            and item.kind.epistemic_grade == "derived"
+            and not item.restricted
+        ]
+        if not derived:
+            return
+        recorded = self.instance.body_store().capture_envelopes.derivation_inputs(derived)
+        inputs = {item for digest in derived for item in recorded.get(digest, ())}
+        self.captures(inputs - set(derived))
+        # A derived input in this same batch may itself inherit: settle to a fixed point.
+        changed = True
+        while changed:
+            changed = False
+            for digest in derived:
+                if self._captures[digest].inherited_restricted:
+                    continue
+                sources = recorded.get(digest)
+                if sources is None or any(self._captures[item].restricted for item in sources):
+                    self._captures[digest] = dataclasses.replace(
+                        self._captures[digest], inherited_restricted=True
+                    )
+                    changed = True
 
     def versions(self, contract_digests: Iterable[str]) -> Mapping[str, CaptureKindVersion | None]:
         """Each exact kind version's access: current rows batched, then accepted history."""

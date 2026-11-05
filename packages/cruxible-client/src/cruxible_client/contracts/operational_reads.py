@@ -194,6 +194,25 @@ class GetCaptureErasure(_StrictOperationalModel):
     because: str
 
 
+class GetCaptureReducer(_StrictOperationalModel):
+    """What computed a derived Capture: the provider build, operation and its node's input."""
+
+    digest: str
+    provider_build: str
+    operation_signature: str
+    implementation: str
+    input_template: str
+
+
+class GetCaptureDerivation(_StrictOperationalModel):
+    """A derived Capture's recorded inputs (D-R37 d5): the Captures and state reads it
+    was computed from, and its reducer. ``get`` each source to follow the chain."""
+
+    sources: tuple[str, ...] = ()
+    reads: tuple[str, ...] = ()
+    reducer: GetCaptureReducer | None = Field(default=None, exclude_if=_omit_none)
+
+
 class GetCaptureCard(_StrictOperationalModel):
     """A retained Capture: its contract, when it was observed, and who cites it.
 
@@ -216,6 +235,8 @@ class GetCaptureCard(_StrictOperationalModel):
     status: Literal["available", "unavailable"]
     status_detail: str | None = Field(default=None, exclude_if=_omit_none)
     erased: GetCaptureErasure | None = Field(default=None, exclude_if=_omit_none)
+    #: A derived Capture's sources, reads and reducer; absent for an observation.
+    derivation: GetCaptureDerivation | None = Field(default=None, exclude_if=_omit_none)
     subjects: tuple[str, ...] = ()
     citing: tuple[str, ...] = ()
     citing_total: int = Field(default=0, ge=0)
@@ -517,6 +538,8 @@ __all__ = [
     "OPERATIONAL_CARD_LIST_LIMIT",
     "EnablementPrincipalKind",
     "GetCaptureCard",
+    "GetCaptureDerivation",
+    "GetCaptureReducer",
     "GetCaptureErasure",
     "GetLineEnablement",
     "GetLineCard",
