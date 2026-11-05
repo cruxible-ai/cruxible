@@ -800,3 +800,175 @@ def test_an_inverse_whose_x_is_missing_without_create_is_refused_per_item(
     # b's positive and a's inverse each refuse alone.
     assert len(refused) == 2
     assert state.terminal_egress[0].proposal_id is None
+
+
+# -- V3: Mandate scope is kind-based ------------------------------------------------
+
+
+def _install_grants(
+    instance: Any,
+    spec: Any,
+    *,
+    settle: tuple[str, ...] | None = None,
+    propose: tuple[str, ...] | None = None,
+    subject_scope: tuple[str, ...] | None = None,
+    binding: str = "subject",
+) -> None:
+    """The Line with a settle grant creating ``settle`` kinds, and/or a propose grant."""
+
+    from datetime import UTC, datetime
+
+    from cruxible_client.contracts.artifacts import ArtifactPin
+    from cruxible_client.contracts.claim_types import claim_type_digest, parse_claim_type
+    from cruxible_client.contracts.procedure_mandates import (
+        MandateClaimScope,
+        procedure_mandate_path,
+        render_procedure_mandate,
+    )
+    from cruxible_client.contracts.procedures.line_specs import (
+        line_spec_digest,
+        line_spec_path,
+        parse_line_spec,
+    )
+    from cruxible_client.contracts.semantic import SemanticAddress
+    from tests.support.mandates import procedure_mandate, scope_changes
+    from tests.support.operation_world import author_line, author_procedure
+
+    line_name = "test.claims-line"
+    author_procedure(instance, spec)
+    author_line(
+        instance,
+        name=line_name,
+        procedure=spec.procedure,
+        parameters={},
+        max_authority="settle" if settle is not None else "propose",
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = line_spec_path(line_name)
+    line = parse_line_spec(tree[path], path=path)
+    pin = ArtifactPin(
+        role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
+    )
+    grants = []
+    if settle is not None:
+        affected = parse_claim_type(tree[claim_type_path(AFFECTED)], path=claim_type_path(AFFECTED))
+        grants.append(
+            procedure_mandate(
+                "settle-grant",
+                line=pin,
+                grants="settle",
+                valid_from=datetime(2020, 1, 1, tzinfo=UTC),
+                expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+                scope=(
+                    MandateClaimScope(
+                        claim_type=ArtifactPin(
+                            role="claim-type",
+                            target=affected.identity,
+                            artifact_digest=claim_type_digest(affected).tagged,
+                        ),
+                        changes=scope_changes("create"),
+                        binding_subject_role=binding,  # type: ignore[arg-type]
+                    ),
+                ),
+                subject_creation=tuple(sorted(settle)),
+                subject_scope=None
+                if subject_scope is None
+                else tuple(
+                    sorted(
+                        (SemanticAddress.whole_artifact(p) for p in subject_scope),
+                        key=lambda item: item.artifact_path,
+                    )
+                ),
+            )
+        )
+    if propose is not None:
+        grants.append(procedure_mandate("propose-grant", line=pin, namespace=propose))
+    accept_tree(
+        instance,
+        {
+            procedure_mandate_path(grant.identity.name): render_procedure_mandate(grant)
+            for grant in grants
+        },
+        name="grants",
+    )
+
+
+def _accepted_affected(instance: Any) -> set[str]:
+    vulns = {path: cve for cve, path in _paths(instance, KIND).items()}
+    return {vulns[obj] for _, obj in _objects(_live_claims(instance)) if obj in vulns}
+
+
+def test_a_settle_grant_listing_both_kinds_settles_mixed_row_and_value_creation(
+    tmp_path: Path,
+) -> None:
+    entries = [
+        {"purl": "pkg:pypi/a@1", "cve": "CVE-2026-0001"},
+        {"purl": "pkg:pypi/b@1", "cve": "CVE-2026-0002"},
+    ]
+    instance, root = upsert_world(tmp_path, entries, components=())
+    spec = upsert_spec(
+        subject={"kind": COMPONENT, "key": {"purl": "$item.key.purl"}, "create": "if_absent"}
+    )
+    _install_grants(instance, spec, settle=(COMPONENT, KIND))
+    state = run(instance, root)
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    assert (egress.verdict, egress.settle_outcome) == ("delivered", "settled"), egress
+    assert len(_subject_items(state)) == 4  # two components (rows), two CVEs (values)
+    assert _accepted_affected(instance) == {"CVE-2026-0001", "CVE-2026-0002"}
+
+
+def test_a_settle_grant_without_the_value_kind_never_settles_its_creation(
+    tmp_path: Path,
+) -> None:
+    """The row law, unchanged for values: an unlisted kind's creation is no settle target.
+
+    It refuses ``settle_mandate_missing`` exactly as a row Subject of an unlisted
+    kind does (``test_a_settle_grant_naming_no_kind_never_creates_a_subject``);
+    nothing is accepted. The same Line capped at propose proposes it.
+    """
+
+    entries = [{"purl": "pkg:pypi/a@1", "cve": "CVE-2026-0001"}]
+    instance, root = upsert_world(tmp_path, entries)
+    _install_grants(instance, upsert_spec(), settle=(COMPONENT,))
+    base = instance.accepted_coordinate()
+    state = run(instance, root)
+    (egress,) = state.terminal_egress
+    assert (egress.verdict, egress.refusal_code) == ("refused", "settle_mandate_missing"), egress
+    assert egress.settle_outcome is None
+    assert instance.accepted_coordinate() == base
+    assert _accepted_affected(instance) == set()
+
+
+def test_a_propose_grant_reaches_value_created_subjects_through_its_namespace(
+    tmp_path: Path,
+) -> None:
+    entries = [{"purl": "pkg:pypi/a@1", "cve": "CVE-2026-0001"}]
+    instance, root = upsert_world(tmp_path, entries)
+    _install_grants(instance, upsert_spec(), propose=("claims", f"subjects/{KIND}"))
+    state = run(instance, root)
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "delivered" and egress.proposal_id is not None, egress
+    assert any(path.startswith(f"subjects/{KIND}/") for path in egress.target_paths)
+
+
+def test_an_object_bound_subject_scope_covers_a_just_created_target(tmp_path: Path) -> None:
+    """V3 edge: subject_scope names Subjects in advance; a created object is in scope."""
+
+    entries = [{"purl": "pkg:pypi/a@1", "cve": "CVE-2026-0001"}]
+    instance, root = upsert_world(tmp_path, entries, vulnerabilities=("CVE-2026-0009",))
+    listed = _paths(instance, KIND)["CVE-2026-0009"]
+    _install_grants(
+        instance,
+        upsert_spec(),
+        settle=(KIND,),
+        subject_scope=(listed,),
+        binding="object",
+        propose=("claims", f"subjects/{KIND}"),
+    )
+    state = run(instance, root)
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    assert (egress.verdict, egress.settle_outcome) == ("delivered", "settled"), egress
+    assert _accepted_affected(instance) == {"CVE-2026-0001"}
