@@ -30,7 +30,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import sqlite3
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
@@ -424,7 +424,7 @@ def evidence_by_item(
     request: TerminalEgressRequestV1,
     manifests: Mapping[str, TerminalItemDependencyManifestV1],
     *,
-    derivations: Mapping[str, Iterable[str]] | None = None,
+    derivations: Mapping[str, Collection[str]] | None = None,
     cache: CaptureRootCache | None = None,
 ) -> dict[str, str]:
     """Pick the one Capture each item's own closure proves as its root (D-R37 d1).
@@ -1368,7 +1368,7 @@ class ProposalTerminalEgressSink:
         evidence: Mapping[str, str] | None = None,
         journaled: PreparedTerminalEgressV1 | None = None,
         recompiles: str | None = None,
-        derivations: Mapping[str, Iterable[str]] | None = None,
+        derivations: Mapping[str, Collection[str]] | None = None,
         capture_root_cache: CaptureRootCache | None = None,
     ) -> PreparedTerminalEgressV1:
         # One preparation owns all sibling Claims' Capture proofs. Recorded
@@ -1393,7 +1393,7 @@ class ProposalTerminalEgressSink:
         manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
         evidence: Mapping[str, str] | None = None,
         journaled: PreparedTerminalEgressV1 | None = None,
-        derivations: Mapping[str, Iterable[str]] | None = None,
+        derivations: Mapping[str, Collection[str]] | None = None,
         capture_root_cache: CaptureRootCache | None = None,
         recompiles: str | None = None,
     ) -> PreparedTerminalEgressV1:

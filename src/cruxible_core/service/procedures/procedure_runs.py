@@ -6,7 +6,7 @@ import difflib
 import json
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -3643,7 +3643,7 @@ class _LineTerminalEgressSink:
         request: TerminalEgressRequestV1,
         admission: ProcedureRunAdmission,
         manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
-        derivations: Mapping[str, Iterable[str]] | None = None,
+        derivations: Mapping[str, Collection[str]] | None = None,
         capture_root_cache: CaptureRootCache | None = None,
     ) -> PreparedTerminalEgressV1:
         return self.proposal.prepare_terminal_egress(

@@ -257,18 +257,22 @@ def test_a_real_derived_root_the_claims_receipt_names_succeeds() -> None:
 
 @pytest.mark.parametrize("n", [10, 100])
 def test_evidence_by_item_is_free_for_every_item_after_the_first_sharing_a_chain(n: int) -> None:
-    """D-R37 cost: delivery calls ``capture_root`` once per item (proposal_delivery.py:442).
+    """D-R37 cost: delivery proves each item's root (proposal_delivery.py ``evidence_by_item``).
 
-    Many items in one terminal citing the SAME closure share one
-    ``CaptureRootCache``: the chain is walked once for the whole call, not
-    once per item, and the per-item cost stays constant as items are added.
+    Many items in one terminal citing the SAME closure -- the whole cumulative
+    derive chain, as the executor records it -- share one ``CaptureRootCache``:
+    the root is proven once for the whole call with linear edge reads, and the
+    per-item cost stays constant as items are added.
     """
 
     from cruxible_core.procedures.terminal_dependencies import CaptureRootCache
-    from tests.test_procedures.test_terminal_dependencies import _chain, _CountingDerivations
+    from tests.test_procedures.test_terminal_dependencies import (
+        _CountingDerivations,
+        _cumulative_chain,
+    )
 
-    digests, derivations = _chain(n)
-    root, leaf = digests[-1], digests[0]
+    digests, derivations = _cumulative_chain(n)
+    root = digests[-1]
     items = 50
     request = SimpleNamespace(
         items=tuple(
@@ -280,16 +284,18 @@ def test_evidence_by_item_is_free_for_every_item_after_the_first_sharing_a_chain
             for i in range(items)
         },
     )
-    manifests = {f"item-{i}": _manifest(produced=(leaf, root)) for i in range(items)}
+    manifests = {f"item-{i}": _manifest(produced=tuple(digests)) for i in range(items)}
     counted = _CountingDerivations(derivations)
     cache = CaptureRootCache()
 
     evidence = evidence_by_item(request, manifests, derivations=counted, cache=cache)  # type: ignore[arg-type]
 
     assert evidence == {f"item-{i}": root for i in range(items)}
-    # Sub-quadratic in the chain length and independent of the item count:
-    # one walk for the whole call, not one per item.
-    assert counted.edges <= 4 * n
+    # Linear in the chain length and independent of the item count: one
+    # proof for the whole call, not one per item; one retained entry.
+    assert counted.edges <= 3 * n
+    assert counted.lookups <= 2 * n + 1
+    assert len(cache.roots) == 1
 
 
 def test_an_explicitly_selected_capture_must_be_in_the_items_closure_produced_or_admitted() -> None:

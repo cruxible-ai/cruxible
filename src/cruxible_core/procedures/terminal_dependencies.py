@@ -12,7 +12,8 @@ item inherit evidence it did not consume.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Iterator, Mapping
+from collections import deque
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Literal
@@ -417,73 +418,131 @@ def citable_captures(manifest: TerminalItemDependencyManifestV1 | None) -> tuple
 
 @dataclass
 class CaptureRootCache:
-    """Per-run memo for :func:`capture_root`: ancestor sets and resolved roots.
+    """Per-run memo for :func:`capture_root`: the proven root per distinct closure.
 
     A derived Capture's recorded inputs are fixed the moment it is derived
-    (D-R37 c1) and never change afterward, so a memo entry stays valid for the
-    rest of the run. Sharing one cache across every ``capture_root`` call in a
-    run -- across Claims, delivery, and journaling -- means a long derive
-    chain many items share is walked once, not once per item and not once per
-    candidate within an item.
+    (D-R37 c1) and never change afterward, so a closure's root stays valid for
+    the rest of the run. Sharing one cache across every ``capture_root`` call
+    in a run -- across Claims, delivery, and journaling -- means many items
+    citing the same closure prove its root once. Only that per-closure result
+    is retained: no per-vertex ancestor set is ever materialized.
     """
 
-    ancestors: dict[str, frozenset[str]] = dataclass_field(default_factory=dict)
     roots: dict[frozenset[str], str | None] = dataclass_field(default_factory=dict)
 
 
-def _capture_ancestors(
-    digest: str,
-    derivations: Mapping[str, Iterable[str]],
-    memo: dict[str, frozenset[str]],
-) -> frozenset[str]:
-    """``digest``'s full transitive derivation sources, sharing work with ``memo``.
+@dataclass
+class _RootProof:
+    """One :func:`_prove_root` result and the work it did (tests read the counts)."""
 
-    An iterative post-order walk: every node reached on the way to ``digest``
-    -- not only ``digest`` itself -- gets its own ancestor set computed once
-    and memoized, built from its direct sources plus whichever of THEIR
-    ancestor sets are already known. A chain several candidates in the same
-    ``capture_root`` call share, or that many separate calls share, is
-    therefore visited once in total: no candidate walks past a node another
-    candidate already settled.
+    root: str | None
+    #: Recorded input entries read from ``derivations``, across both phases.
+    edges_read: int = 0
+    #: Peak entries held in the traversal's sets and queue (none is kept after).
+    held: int = 0
+
+
+def _prove_root(listed: frozenset[str], derivations: Mapping[str, Collection[str]]) -> _RootProof:
+    """Find and prove the one member of ``listed`` whose recorded inputs reach all the rest.
+
+    Recorded inputs form a DAG (a derived Capture's inputs are digest-fixed
+    before it exists), so the root, when there is one, is the only member no
+    other member reaches.
+
+    1. **Select.** One traversal from the members' recorded inputs, sharing
+       its visited set across members: each node's inputs are read at most
+       once, and a member another member reaches is eliminated. It stops as
+       soon as one member is left. Every member still in the running reads
+       its own inputs before anything deeper is read, widest first, so the
+       executor's cumulative manifests (each derive lists every prior input)
+       settle on the root's own input list alone.
+    2. **Prove.** When the selection's first walk was not the survivor's own,
+       a second traversal from the survivor alone confirms it reaches every
+       other member, stopping once they are all covered.
+
+    Each phase reads every edge at most once, so the work is linear in the
+    edges actually traversed (at worst twice the reachable graph's edges),
+    never a product of candidates and ancestors.
+    A returned root is always proven by a walk from it alone; the DAG property
+    only steers selection, so malformed (cyclic) input can only fail closed.
     """
 
-    cached = memo.get(digest)
-    if cached is not None:
-        return cached
-    # Phase 1: discover a post-order (every direct source before its node)
-    # over exactly the reachable nodes not already memoized.
-    order: list[str] = []
-    visiting = {digest}
-    stack: list[tuple[str, Iterator[str]]] = [(digest, iter(derivations.get(digest, ())))]
-    while stack:
-        node, sources = stack[-1]
-        descended = False
-        for source in sources:
-            if source in memo or source in visiting:
-                continue
-            visiting.add(source)
-            stack.append((source, iter(derivations.get(source, ()))))
-            descended = True
-            break
-        if not descended:
-            order.append(node)
-            stack.pop()
-    # Phase 2: build each node's ancestor set, in that order, so a node's
-    # direct sources are already in ``memo`` by the time it is computed.
-    for node in order:
-        reached: set[str] = set()
+    proof = _RootProof(root=None)
+    needed = len(listed) - 1
+    order = sorted(listed, key=lambda digest: (-len(derivations.get(digest, ())), digest))
+    visited: set[str] = set()  # reached from some member: never the root
+    expanded: set[str] = set()  # inputs already read (at most once each)
+    deeper: list[str] = []  # reached, inputs not yet read
+    eliminated = 0
+
+    def expand(node: str) -> str | None:
+        """Read ``node``'s inputs once; the survivor once only one member is left."""
+
+        nonlocal eliminated
+        expanded.add(node)
         for source in derivations.get(node, ()):
-            reached.add(source)
-            known = memo.get(source)
-            if known is not None:
-                reached.update(known)
-        memo[node] = frozenset(reached)
-    return memo[digest]
+            proof.edges_read += 1
+            if source in visited:
+                continue
+            visited.add(source)
+            if source in listed:
+                eliminated += 1
+                if eliminated == needed:
+                    break
+            if source not in expanded:
+                deeper.append(source)
+        proof.held = max(proof.held, len(visited) + len(expanded) + len(deeper))
+        if eliminated == needed:
+            return next(digest for digest in order if digest not in visited)
+        return None
+
+    # Every member still in the running reads its own inputs first: a member
+    # another member lists directly is eliminated without walking past it.
+    survivor: str | None = None
+    for position, start in enumerate(order):
+        if start in visited:
+            continue
+        survivor = expand(start)
+        if survivor is not None:
+            if position == 0 and survivor == start:
+                # Nothing else was read: ``start``'s own inputs eliminated
+                # every other member, which proves it is the root.
+                proof.root = survivor
+                return proof
+            break
+    # Then deeper, most recently reached first, each node read at most once.
+    while survivor is None and deeper:
+        node = deeper.pop()
+        if node not in expanded:
+            survivor = expand(node)
+    if survivor is None:
+        # Two or more members no other reaches (or a cycle eliminated them all).
+        return proof
+
+    covered: set[str] = set()
+    seen = {survivor}
+    walk: deque[str] = deque((survivor,))
+    while walk:
+        node = walk.popleft()
+        for source in derivations.get(node, ()):
+            proof.edges_read += 1
+            if source in seen:
+                continue
+            seen.add(source)
+            if source in listed:
+                covered.add(source)
+                if len(covered) == needed:
+                    proof.root = survivor
+                    proof.held = max(proof.held, len(seen) + len(walk) + len(covered))
+                    return proof
+            walk.append(source)
+        proof.held = max(proof.held, len(seen) + len(walk) + len(covered))
+    return proof
 
 
 def capture_root(
     captures: Iterable[str],
-    derivations: Mapping[str, Iterable[str]],
+    derivations: Mapping[str, Collection[str]],
     *,
     cache: CaptureRootCache | None = None,
 ) -> str | None:
@@ -494,10 +553,10 @@ def capture_root(
     when one of them transitively derives from all the others; two unrelated
     Captures have none (combine them through a recorded derive, or a Query).
 
-    ``cache``, when given, memoizes both each node's ancestor set and the
-    resolved root per distinct closure (D-R37 cost): a chain shared by many
-    Claims is walked once for the whole run, and repeating this call for the
-    same closure costs one dict lookup.
+    The root is selected and proven by one bounded traversal
+    (:func:`_prove_root`), linear in the edges it reads. ``cache``, when
+    given, retains only the result per distinct closure (D-R37 cost):
+    repeating this call for the same closure costs one dict lookup.
     """
 
     listed = frozenset(captures)
@@ -505,13 +564,7 @@ def capture_root(
         return next(iter(listed), None)
     if cache is not None and listed in cache.roots:
         return cache.roots[listed]
-    memo = cache.ancestors if cache is not None else {}
-    root: str | None = None
-    for candidate in sorted(listed):
-        reached = _capture_ancestors(candidate, derivations, memo)
-        if listed - {candidate} <= reached:
-            root = candidate
-            break
+    root = _prove_root(listed, derivations).root
     if cache is not None:
         cache.roots[listed] = root
     return root
