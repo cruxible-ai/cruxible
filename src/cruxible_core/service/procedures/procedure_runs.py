@@ -261,6 +261,7 @@ from cruxible_core.procedures.reference_binding import (
 )
 from cruxible_core.procedures.terminal_dependencies import (
     AcquisitionInputOutcomeV1,
+    CaptureRootCache,
     TerminalItemDependencyManifestV1,
 )
 from cruxible_core.providers.provider_local_runtime import (
@@ -3642,9 +3643,15 @@ class _LineTerminalEgressSink:
         request: TerminalEgressRequestV1,
         admission: ProcedureRunAdmission,
         manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        derivations: Mapping[str, Iterable[str]] | None = None,
+        capture_root_cache: CaptureRootCache | None = None,
     ) -> PreparedTerminalEgressV1:
         return self.proposal.prepare_terminal_egress(
-            request=request, admission=admission, manifests=manifests
+            request=request,
+            admission=admission,
+            manifests=manifests,
+            derivations=derivations,
+            capture_root_cache=capture_root_cache,
         )
 
     def deliver_terminal_egress(

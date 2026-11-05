@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -5084,6 +5084,8 @@ class ProcedureExecutor:
                 capped_by=capped_by,
                 claims_evidence=state.claims_evidence.get(node.node_id, ()),
                 claims_changes=state.claims_changes.get(node.node_id, ()),
+                derivations=state.derivations,
+                capture_root_cache=state.capture_root_cache,
             )
         except TerminalEgressError as exc:
             refusal = self._terminal_refusal(exc, node_id=node.node_id)
@@ -5342,6 +5344,8 @@ class ProcedureExecutor:
         capped_by: EffectiveRungTermV1 | None = None,
         claims_evidence: tuple[ClaimEvidenceReceipt | None, ...] = (),
         claims_changes: tuple[CoreClaimsChange, ...] = (),
+        derivations: Mapping[str, Iterable[str]] | None = None,
+        capture_root_cache: CaptureRootCache | None = None,
     ) -> tuple[TerminalEgressRequestV1, PreparedTerminalEgressV1 | None]:
         """Hand the sink the exact pins this terminal kind's law traverses.
 
@@ -5430,6 +5434,8 @@ class ProcedureExecutor:
                 request=request,
                 admission=admission,
                 manifests=manifests or {},
+                derivations=derivations or {},
+                capture_root_cache=capture_root_cache,
             )
             if prepared.proposes_nothing:
                 # Every item restated what is already live, or the change is the

@@ -30,7 +30,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import sqlite3
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
@@ -152,7 +152,9 @@ from cruxible_core.procedures.egress import (
 )
 from cruxible_core.procedures.nested import ProcedureDelegation, authority_line
 from cruxible_core.procedures.terminal_dependencies import (
+    CaptureRootCache,
     TerminalItemDependencyManifestV1,
+    capture_root,
     citable_captures,
 )
 from cruxible_core.procedures.terminal_services import (
@@ -421,9 +423,20 @@ def proposal_items(request: TerminalEgressRequestV1) -> tuple[CoreClaimsChange, 
 def evidence_by_item(
     request: TerminalEgressRequestV1,
     manifests: Mapping[str, TerminalItemDependencyManifestV1],
+    *,
+    derivations: Mapping[str, Iterable[str]] | None = None,
+    cache: CaptureRootCache | None = None,
 ) -> dict[str, str]:
-    """Pick the one Capture each item's own closure reached (see ``citable_captures``)."""
+    """Pick the one Capture each item's own closure proves as its root (D-R37 d1).
 
+    A single produced/admitted Capture is its own root. Several must share one
+    recorded derivation root (``capture_root``, over ``derivations``): a
+    receipt names which Capture the claims terminal cited, never that its
+    recorded inputs cover the rest of the closure, so the cited Capture is
+    checked against the closure's actual root, not merely its membership.
+    """
+
+    known_derivations = derivations or {}
     evidence: dict[str, str] = {}
     for item in request.items:
         manifest = manifests.get(item.item_key)
@@ -434,24 +447,28 @@ def evidence_by_item(
                 "The item's dependency closure reached no produced or admitted Capture to cite.",
                 details={"item_key": item.item_key, "child_index": item.child_index},
             )
-        if len(produced) > 1:
-            # A derived root and the sources it records: the claims terminal
-            # chose the one root (``capture_root``) and its receipt cites it.
-            receipt = request.claims_evidence.get(item.item_key)
-            cited = getattr(getattr(receipt, "value", None), "capture_digest", None)
-            if isinstance(cited, str) and cited in produced:
-                evidence[item.item_key] = cited
-                continue
-            raise ProposalDeliveryRefused(
-                "proposal_item_evidence_ambiguous",
-                "The item's dependency closure reached more than one Capture it could cite.",
-                details={
-                    "item_key": item.item_key,
-                    "child_index": item.child_index,
-                    "capture_digests": list(produced),
-                },
-            )
-        evidence[item.item_key] = produced[0]
+        if len(produced) == 1:
+            evidence[item.item_key] = produced[0]
+            continue
+        # A derived root and the sources it records: the claims terminal
+        # chose the one root (``capture_root``) and its receipt cites it. A
+        # receipt alone never proves a root; delivery proves one independently
+        # over the recorded derivation graph and checks the receipt against it.
+        root = capture_root(produced, known_derivations, cache=cache)
+        receipt = request.claims_evidence.get(item.item_key)
+        cited = getattr(getattr(receipt, "value", None), "capture_digest", None)
+        if root is not None and isinstance(cited, str) and cited == root:
+            evidence[item.item_key] = root
+            continue
+        raise ProposalDeliveryRefused(
+            "proposal_item_evidence_ambiguous",
+            "The item's dependency closure reached more than one Capture it could cite.",
+            details={
+                "item_key": item.item_key,
+                "child_index": item.child_index,
+                "capture_digests": list(produced),
+            },
+        )
     return evidence
 
 
@@ -1351,6 +1368,8 @@ class ProposalTerminalEgressSink:
         evidence: Mapping[str, str] | None = None,
         journaled: PreparedTerminalEgressV1 | None = None,
         recompiles: str | None = None,
+        derivations: Mapping[str, Iterable[str]] | None = None,
+        capture_root_cache: CaptureRootCache | None = None,
     ) -> PreparedTerminalEgressV1:
         # One preparation owns all sibling Claims' Capture proofs. Recorded
         # landing/erase/damage events invalidate them through the request epoch.
@@ -1362,6 +1381,8 @@ class ProposalTerminalEgressSink:
                 evidence=evidence,
                 journaled=journaled,
                 recompiles=recompiles,
+                derivations=derivations,
+                capture_root_cache=capture_root_cache,
             )
 
     def _prepare_terminal_egress(
@@ -1372,6 +1393,8 @@ class ProposalTerminalEgressSink:
         manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
         evidence: Mapping[str, str] | None = None,
         journaled: PreparedTerminalEgressV1 | None = None,
+        derivations: Mapping[str, Iterable[str]] | None = None,
+        capture_root_cache: CaptureRootCache | None = None,
         recompiles: str | None = None,
     ) -> PreparedTerminalEgressV1:
         """Lower the terminal's items once; report what delivery will change.
@@ -1390,7 +1413,12 @@ class ProposalTerminalEgressSink:
                 details={"kind": request.kind},
             )
         if evidence is None:
-            evidence = evidence_by_item(request, manifests or {})
+            evidence = evidence_by_item(
+                request,
+                manifests or {},
+                derivations=derivations or {},
+                cache=capture_root_cache,
+            )
         else:
             missing = [item.item_key for item in request.items if item.item_key not in evidence]
             if missing:

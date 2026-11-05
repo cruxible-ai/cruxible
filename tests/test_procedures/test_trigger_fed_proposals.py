@@ -225,15 +225,71 @@ def test_two_admitted_captures_are_ambiguous_and_none_is_missing() -> None:
     assert missing.value.code == "proposal_item_evidence_missing"
 
 
-def test_several_captures_cite_the_root_the_claims_receipt_names() -> None:
-    """D-R37 d1: the claims terminal chose the derived root; delivery cites it."""
+def test_an_unrelated_second_capture_refuses_even_with_a_receipt_citing_one() -> None:
+    """D-R37 d1: a receipt alone never proves a root; the closure must record one.
+
+    Two Captures with no recorded derivation between them have no root
+    (``capture_root((A, B), {})`` is ``None``), so a receipt merely naming one
+    of them is refused -- membership in the closure is not a proof.
+    """
 
     manifests = {"item-0": _manifest(produced=(_A, _B))}
-    assert evidence_by_item(_request(cited=_B), manifests) == {"item-0": _B}
-    # A receipt naming a Capture outside the closure leaves the choice ambiguous.
     with pytest.raises(ProposalDeliveryRefused) as ambiguous:
-        evidence_by_item(_request(cited="sha256:" + "9" * 64), manifests)
+        evidence_by_item(_request(cited=_B), manifests)
     assert ambiguous.value.code == "proposal_item_evidence_ambiguous"
+    # Also refuses a receipt naming a Capture outside the closure entirely.
+    with pytest.raises(ProposalDeliveryRefused) as outside:
+        evidence_by_item(_request(cited="sha256:" + "9" * 64), manifests)
+    assert outside.value.code == "proposal_item_evidence_ambiguous"
+
+
+def test_a_real_derived_root_the_claims_receipt_names_succeeds() -> None:
+    """D-R37 d1: a receipt citing the closure's actual recorded root is proven, not assumed."""
+
+    manifests = {"item-0": _manifest(produced=(_A, _B))}
+    # A's manifest records B as its one input, so A's recorded inputs cover
+    # the rest of the closure: A is the root (D-R37 d1).
+    derivations = {_A: (_B,)}
+    assert evidence_by_item(_request(cited=_A), manifests, derivations=derivations) == {
+        "item-0": _A
+    }
+
+
+@pytest.mark.parametrize("n", [10, 100])
+def test_evidence_by_item_is_free_for_every_item_after_the_first_sharing_a_chain(n: int) -> None:
+    """D-R37 cost: delivery calls ``capture_root`` once per item (proposal_delivery.py:442).
+
+    Many items in one terminal citing the SAME closure share one
+    ``CaptureRootCache``: the chain is walked once for the whole call, not
+    once per item, and the per-item cost stays constant as items are added.
+    """
+
+    from cruxible_core.procedures.terminal_dependencies import CaptureRootCache
+    from tests.test_procedures.test_terminal_dependencies import _chain, _CountingDerivations
+
+    digests, derivations = _chain(n)
+    root, leaf = digests[-1], digests[0]
+    items = 50
+    request = SimpleNamespace(
+        items=tuple(
+            SimpleNamespace(item_key=f"item-{i}", child_index=i, value=item_template())
+            for i in range(items)
+        ),
+        claims_evidence={
+            f"item-{i}": SimpleNamespace(value=SimpleNamespace(capture_digest=root))
+            for i in range(items)
+        },
+    )
+    manifests = {f"item-{i}": _manifest(produced=(leaf, root)) for i in range(items)}
+    counted = _CountingDerivations(derivations)
+    cache = CaptureRootCache()
+
+    evidence = evidence_by_item(request, manifests, derivations=counted, cache=cache)  # type: ignore[arg-type]
+
+    assert evidence == {f"item-{i}": root for i in range(items)}
+    # Sub-quadratic in the chain length and independent of the item count:
+    # one walk for the whole call, not one per item.
+    assert counted.edges <= 4 * n
 
 
 def test_an_explicitly_selected_capture_must_be_in_the_items_closure_produced_or_admitted() -> None:
