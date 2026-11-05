@@ -19,6 +19,10 @@ from tests.support.procedures import procedure_spec, refs
 from tests.test_pilot.support import FIXTURES, kev_spec, pilot_world
 from tests.test_procedures.test_claims_terminal import activate, candidate_claims, run
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 
 def _summaries(state: Any) -> dict[str, Any]:
     return {node.node: node.summary for node in state.nodes}

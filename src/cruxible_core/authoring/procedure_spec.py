@@ -11,6 +11,7 @@ from cruxible_client.contracts.procedures.authored import (
     ProcedureSpec,
     ProcedureSpecError,
     lower_procedure_spec,
+    refuse_closed_steps,
 )
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.provider_operations import (
@@ -31,8 +32,10 @@ def resolve_procedure_spec(
     """Resolve only named artifacts and the slot Contracts a Procedure pins.
 
     A Procedure names no provider: a slot is its signature, pinned here to the
-    exact accepted Contract versions; a Line binds it.
+    exact accepted Contract versions; a Line binds it. A step outside the
+    Procedure template is refused first, for every Procedure (D-R37 h1).
     """
+    refuse_closed_steps(spec)
     with instance.bind_accepted_projection(base) as projection:
         rows = EvaluationRows(projection)
         edits = {path: tree[path] for path in candidate_paths if path in tree}

@@ -31,6 +31,10 @@ from tests.support.mandates import procedure_mandate
 from tests.support.procedures import procedure_limits, procedure_spec_data, ref, spec_input
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 #: The run limits every spec below declares (60 s, no provider calls).
 LIMITS = procedure_limits(
     wall_clock="PT120S", provider_calls=0, capture_bytes=0, items=100, repeat_attempts=3

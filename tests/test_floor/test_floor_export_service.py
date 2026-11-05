@@ -41,6 +41,10 @@ from tests.core_support._support import client_material
 from tests.test_authoring.test_authoring_procedures import _payload, _triage_definition
 from tests.test_ledger.test_activation import _sign
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 
 def service_export_playbill_floor(*args, **kwargs):
     # The discovery cards; the grep floor has its own completeness tests.

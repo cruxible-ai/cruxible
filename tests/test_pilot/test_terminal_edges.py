@@ -27,6 +27,10 @@ from tests.test_procedures.test_claims_terminal import (
     run,
 )
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 
 def test_subject_if_absent_creates_once_and_never_does_not_create(tmp_path: Path) -> None:
     instance, root = claims_world(tmp_path, {"entries": []})

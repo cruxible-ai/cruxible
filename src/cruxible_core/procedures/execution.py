@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import time
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -36,6 +36,11 @@ from cruxible_client.contracts.shapes import (
     requires_complete_input,
 )
 from cruxible_core.procedures.claims_context import ClaimsContext
+from cruxible_core.procedures.claims_units import (
+    CreationIdentity,
+    claims_item_change_digest,
+    finalize_creation_identities,
+)
 
 if TYPE_CHECKING:
     from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
@@ -1082,11 +1087,20 @@ def procedure_semantic_result_digest(
     output: CanonicalValue | None,
     refusal: ProcedureRunRefusalV1 | None,
     halt: CanonicalValue | None = None,
+    fetched_captures: Iterable[str] = (),
 ) -> str:
-    """Commit only replay-stable output or refusal material."""
+    """Commit only replay-stable output or refusal material.
+
+    A run is identified by its inputs and the evidence it fetched (D-R37 f1):
+    the sorted digests of the fetched, non-derived Captures it consumed join
+    the preimage. They are present only when non-empty, so a run that fetched
+    nothing keeps its digest (f2).
+    """
 
     if (status == "refused") != (refusal is not None):
         raise ValueError("semantic Procedure refusal shape is inconsistent")
+    fetched = sorted(set(fetched_captures))
+    evidence: dict[str, CanonicalValue] = {"fetched_captures": [*fetched]} if fetched else {}
     if status == "halted":
         if halt is None or output is not None or refusal is not None:
             raise ValueError("semantic Procedure halt shape is inconsistent")
@@ -1097,6 +1111,7 @@ def procedure_semantic_result_digest(
                 "semantic_replay_key_digest": semantic_replay_key_digest,
                 "status": "halted",
                 "halt": halt,
+                **evidence,
             },
         ).tagged
     if halt is not None:
@@ -1109,6 +1124,7 @@ def procedure_semantic_result_digest(
             "status": status,
             "output": output if status == "succeeded" else None,
             "refusal": None if refusal is None else _semantic_refusal_payload(refusal),
+            **evidence,
         },
     ).tagged
 
@@ -2209,6 +2225,19 @@ class _TransformInputInvalid(ExecutionError):
 CONSUMPTION_VERSION = 1
 
 
+def _fetched_captures(state: _RunState) -> list[str]:
+    """The fetched, non-derived Captures this run built, sorted (D-R37 f1).
+
+    Independent of ``consumed_captures``: a Capture counts here once its builder
+    returns, even when the out-Contract check, its own disposition or any later
+    refusal means it is never bound.
+    """
+
+    return sorted(
+        digest for digest in state.fetched_captures
+    )
+
+
 def _consumed(state: _RunState) -> dict[str, object]:
     """The run's consumed Captures so far, versioned: an empty set is proven empty."""
 
@@ -2263,6 +2292,13 @@ class _RunState:
     #: a child's. Journaled on every node_fired and on finalization, so a
     #: reader of a running or finished run knows what its values derive from (C14).
     consumed_captures: set[str] = dataclass_field(default_factory=set)
+    #: Every Capture an acquiring call built this run, added when its builder
+    #: returns, whether or not it went on to bind (D-R37 f1). Distinct from
+    #: ``consumed_captures``: a Capture behind an out-Contract refusal, or a
+    #: refused or omitted sibling, is still fetched evidence, and a refusal or
+    #: halt must not erase it from the result digest just because it was never
+    #: selected or consumed.
+    fetched_captures: set[str] = dataclass_field(default_factory=set)
     #: Which aliases hold incomplete values, and the control lineage's state.
     completeness: Completeness = dataclass_field(default_factory=Completeness)
     #: Whether the value this run returns is complete, data and control lineage
@@ -2279,6 +2315,12 @@ class _RunState:
     absence_findings: set[str] = dataclass_field(default_factory=set)
     extraction_checks: dict[str, CompleteWhenResult] = dataclass_field(default_factory=dict)
     claims_changes: dict[str, tuple[CoreClaimsChange, ...]] = dataclass_field(default_factory=dict)
+    #: Each claims change's stable item identity (D-R37 g1), aligned with claims_changes.
+    claims_identities: dict[str, tuple[str, ...]] = dataclass_field(default_factory=dict)
+    #: The claims items whose Subject the run creates, finalized from lowering.
+    claims_creations: dict[str, tuple[CreationIdentity, ...]] = dataclass_field(
+        default_factory=dict
+    )
     claims_evidence: dict[str, tuple[ClaimEvidenceReceipt | None, ...]] = dataclass_field(
         default_factory=dict
     )
@@ -2683,6 +2725,7 @@ class ProcedureExecutor:
                 output=output,
                 refusal=refusal,
                 halt=halt,
+                fetched_captures=_fetched_captures(state),
             )
         summary = state.completeness.summary()
         final_payload = {
@@ -4004,6 +4047,12 @@ class ProcedureExecutor:
                     provider_output=None if whole_wire else output,
                     derivation=derivation if field in derived_fields else None,
                 )
+                # D-R37 f1: fetched the moment its builder returns, before
+                # the out-Contract check or any acquisition rule below can
+                # refuse; independent of selection and consumption. A derived
+                # field is a function of fetched evidence, never fetched itself.
+                if field not in derived_fields:
+                    state.fetched_captures.add(built[field].capture_digest)
                 bodies[field] = base64.b64decode(wire.content_base64, validate=True)
             except (CaptureFormatError, CasError, ValidationError, ValueError) as exc:
                 raise _InternalFailure(
@@ -4858,6 +4907,8 @@ class ProcedureExecutor:
         state.claims_diagnostics[node.node_id] = expanded.diagnostics
         state.claims_evidence[node.node_id] = expanded.evidence
         state.claims_changes[node.node_id] = expanded.changes
+        state.claims_identities[node.node_id] = expanded.identities
+        state.claims_creations[node.node_id] = expanded.creations
         self._run_terminal(
             node,
             admission=admission,
@@ -5096,6 +5147,24 @@ class ProcedureExecutor:
                 {**payload, "verdict": "refused", "refusal_code": refusal.refusal.code},
             )
             raise refusal from exc
+        creations = state.claims_creations.get(node.node_id, ())
+        if prepared is not None and creations:
+            # D-R37 g fix 3: an item whose Subject this run creates takes the
+            # address preparation's lowering assigned that Subject -- one source
+            # of truth, the terminal's whole assignment with its own identity
+            # overlay -- before any record names it as prepared or delivered. A
+            # record made before preparation (refused authority, egress pending,
+            # refused preparation) keeps the key reference: no Subject is
+            # created on those paths, so no accepted Subject has that identity.
+            payload = {
+                **payload,
+                "children": _with_creation_identities(
+                    node.node_id,
+                    cast(list[dict[str, object]], payload["children"]),
+                    creations,
+                    dict(prepared.item_paths),
+                ),
+            }
         # Preparation (lowering every item) is where a large terminal spends its
         # time. The run's deadline is enforced here, before the prepared record
         # and before delivery, so a run out of time delivers nothing: its
@@ -5570,7 +5639,13 @@ class ProcedureExecutor:
             payloads,
             recorded_at=recorded_at,
         )
+        # A claims item also records what it changed (D-R37 g): its stable
+        # identity, its change's kind and the digest of that canonical change,
+        # never the change body. Other terminals' items carry none.
+        changes = state.claims_changes.get(node.node_id, ())
+        identities = state.claims_identities.get(node.node_id, ())
         for index, (stored, (item_key, manifest_digest)) in enumerate(zip(group, item_drafts)):
+            change = changes[index] if index < len(changes) else None
             receipts.append(
                 TerminalChildReceiptV1(
                     child_index=index,
@@ -5578,6 +5653,9 @@ class ProcedureExecutor:
                     manifest_digest=manifest_digest,
                     record_digest=stored.record_digest,
                     sequence=stored.record.sequence,
+                    item_identity_digest=None if change is None else identities[index],
+                    change_kind=None if change is None else change.kind,
+                    change_digest=None if change is None else claims_item_change_digest(change),
                 )
             )
         return tuple(receipts), tuple(values), manifests, selected
@@ -6415,6 +6493,8 @@ class ProcedureExecutor:
             capture_bytes=state.capture_bytes,
             # One set: a repeat body's consumption is the run's.
             consumed_captures=state.consumed_captures,
+            # One set: a repeat body's fetched evidence is the run's (D-R37 f1).
+            fetched_captures=state.fetched_captures,
         )
         if body.operation == "transform":
             if body.transform_kind is None or not isinstance(body.spec, BaseModel):
@@ -6955,6 +7035,33 @@ def _projected_provenance(
         whole=base,
         items=tuple(_item_closure(state, template, index) for index in range(len(projected))),
     )
+
+
+def _with_creation_identities(
+    node_id: str,
+    children: list[dict[str, object]],
+    creations: tuple[CreationIdentity, ...],
+    item_paths: Mapping[str, str],
+) -> list[dict[str, object]]:
+    """The journaled children, created Subjects' items identified by their lowered address.
+
+    ``children`` are the terminal's child receipts as its records carry them;
+    ``item_paths`` is the prepared terminal's item -> path map, where a Subject
+    item's entry is the path shared lowering assigned (or reused) for it. Only
+    the identity digest of a finalized child changes: no receipt is rebuilt.
+    """
+
+    finalized = finalize_creation_identities(
+        node_id=node_id,
+        creations=creations,
+        assigned_path=lambda index: item_paths.get(str(children[index]["item_key"])),
+    )
+    if not finalized:
+        return children
+    return [
+        child if index not in finalized else {**child, "item_identity_digest": finalized[index]}
+        for index, child in enumerate(children)
+    ]
 
 
 def _inbox_cap(node: InboxEgressNode) -> tuple[int, Literal["declared", "default"]]:

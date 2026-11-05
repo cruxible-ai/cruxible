@@ -107,6 +107,7 @@ markers = [
     "state_root_fallback: tests default state resolution against an isolated temporary HOME",
     "wheel: builds and installs the distribution wheel into a throwaway venv; requires build tooling",
     "taubench: drives the committed TauBench recipe (benchmarks/playbill_taubench) end to end; runs by default",
+    "executor_only: an executor-only fixture that authors Procedure step kinds the template closes at authoring (D-R37 h1), to cover their executor handlers until post-v1 deletion",
 ]
 
 [tool.ruff]

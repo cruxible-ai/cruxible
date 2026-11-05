@@ -13,12 +13,15 @@ A fixture may still spell a dependency as an exact pin (``role``, ``target``,
 
 from __future__ import annotations
 
+import importlib
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from functools import cache
 from hashlib import sha256
 from typing import Any, Literal
 
+import pytest
 from pydantic import BaseModel
 
 from cruxible_client.contracts.artifacts import (
@@ -67,6 +70,33 @@ def procedure_limits(**overrides: Any) -> ProcedureLimits:
     """Authored caps; a test states only the limits it exercises."""
 
     return ProcedureLimits(**overrides)
+
+
+#: Where authoring applies the Procedure template refusal (D-R37 h1).
+TEMPLATE_REFUSAL_SITES = (
+    "cruxible_client.contracts.authoring.inputs",
+    "cruxible_client.authoring.procedures",
+    "cruxible_core.authoring.procedure_spec",
+)
+
+
+@contextmanager
+def executor_only_steps() -> Iterator[None]:
+    """Author closed step kinds for an executor-only fixture; nothing else changes.
+
+    Authoring refuses guard, halt, select, repeat, invoke, emit, project and the
+    shape/join/aggregate/union/derive transforms for every Procedure (D-R37 h1).
+    Their executor handlers stay until they are deleted post-v1 (h3). A module
+    marked ``executor_only`` gets this for every test (``tests/conftest.py``); a
+    module- or session-scoped fixture that builds such nodes enters it itself.
+    Only the template refusal is suspended; every other authoring check runs.
+    The patch is live, so world templates build such worlds fresh.
+    """
+
+    with pytest.MonkeyPatch.context() as patch:
+        for name in TEMPLATE_REFUSAL_SITES:
+            patch.setattr(importlib.import_module(name), "refuse_closed_steps", lambda spec: None)
+        yield
 
 
 def procedure_spec(

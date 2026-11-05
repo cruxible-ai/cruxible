@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
@@ -21,6 +23,10 @@ from tests.support.lines import line_budgets, line_spec
 from tests.support.mandates import procedure_mandate
 from tests.support.procedures import procedure_members
 from tests.test_procedures.test_nested_source_runs import accept_blueprint, blueprints
+
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
 
 NOTE = {"note": "child ready"}
 

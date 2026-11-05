@@ -59,6 +59,10 @@ from tests.test_authoring.test_authoring_preflight import (
 from tests.test_authoring.test_authoring_procedures import _triage_definition
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 
 def _coordinator(instance) -> AuthoringIntentCoordinator:  # type: ignore[no-untyped-def]
     return AuthoringIntentCoordinator(

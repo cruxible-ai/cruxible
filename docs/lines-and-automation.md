@@ -53,19 +53,25 @@ graduates.
 ### Write the Procedure
 
 A Procedure is written once, in the one typed authoring form (a
-`ProcedureSpec`), and submitted like any definition. The SDK's `Sequence` is a
-thin builder over that spec: each step returns a handle, and `handle["field"]`
-is a typed reference to one of its fields. This one reads the file, extracts
-its records, and ends in a settle step with one item per record
-(`item(...)` is the current record):
+`ProcedureSpec`), and submitted like any definition. Every Procedure has one
+shape: read state, fetch through a provider, derive with a provider, extract
+the records, and end in claims (with filter/dedupe narrowing before claims, and
+inbox posts for an agent to act on). Computation lives in a provider derive,
+never in Procedure syntax: authoring refuses guard, halt, select, repeat,
+invoke, emit, project and the shape/join/aggregate/union/derive transforms with
+`procedure_step_closed`, naming the step.
+
+The SDK's `Sequence` is a thin builder over that spec: each step returns a
+handle, and `handle["field"]` is a typed reference to one of its fields. This
+one reads the file, extracts its records, and ends in a claims step with one
+Claim per record (`item(...)` is the current record):
 
 ~~~python
-from cruxible_client.authoring.procedures import Sequence, gt, halt, item
+from cruxible_client.authoring.procedures import Sequence, item
 
 procedure = Sequence(
     "catalog.acme-discontinued",
     input={"path": "string"},
-    output={"listed": "int"},
     # The slot's signature; a Line binds it to the built-in workspace.file read.
     slots={"read": {"in": "workspace.file.request@1", "out": "workspace.file.result@1",
                     "effect": "external_read"}},
@@ -78,18 +84,11 @@ parts = procedure.extract(
     "parts", capture=listing["capture"], records="/*", row="catalog.part-line@1",
     key={"part": {"at": "part"}}, fields={},
 )
-listed = procedure.transform("listed", kind="aggregate",
-                             spec={"input": parts["records"], "op": "count"})
-procedure.guard(gt(listed["result"], 0), else_=halt("empty"))
-summary = procedure.project("summary", fields={"listed": listed["result"]})
-procedure.settle(
-    ({"tag": "playbill-procedure-claim-proposal-item-v3",
-      "statement": {"tag": "playbill-procedure-claim-statement-v1",
-                    "subject": {"subject_kind": "catalog.part", "key": item("key", "part")},
-                    "predicate": "catalog.part.discontinued",
-                    "object": {"kind": "literal", "value": True}, "role": "observation"},
+procedure.claims(
+    ({"type": "catalog.part.discontinued", "value": True,
       "rationale": "Listed in Acme's discontinued-parts file."},),
-    result=summary.whole,
+    for_each=parts["records"],
+    subject={"kind": "catalog.part", "key": {"part": item("key", "part")}},
 )
 
 cx.changes(rationale="The Acme discontinued-parts check.") \

@@ -119,6 +119,10 @@ from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_integration.test_next_closed_loop import _access
 from tests.test_integration.test_next_holds import _all_claims, _attest
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 SEEDS = tuple(range(20))
 STEPS = int(os.environ.get("CRUXIBLE_NEXT_ORACLE_STEPS", "25"))
 START = datetime(2026, 8, 16, 20, 0, 5, tzinfo=UTC)

@@ -19,7 +19,12 @@ from cruxible_core.procedures.claims_changes import (
     CoreReobservationChange,
     CoreRetirementChange,
 )
-from cruxible_core.procedures.claims_units import ClaimUnitUnresolved, resolve_object, unit_key
+from cruxible_core.procedures.claims_units import (
+    ClaimUnitUnresolved,
+    claims_item_identity_digest,
+    resolve_object,
+    unit_key,
+)
 
 
 def append_absence(
@@ -37,6 +42,7 @@ def append_absence(
     changes: list[Any],
     diagnostics: Any,
     reserve: Callable[[], None],
+    identities: list[str],
     within: set[object] | None = None,
 ) -> None:
     """One pass over the enumeration and ``expect``; every Claim read is an indexed slot read.
@@ -233,9 +239,22 @@ def append_absence(
             )
         )
 
-    def append(change: Any, receipt: Any, value: Any) -> None:
+    def held_identity(subject: Any, ct: Any, claim: Any) -> str:
+        """A held Claim's item identity: the one its positive or inverse write had (g1)."""
+
+        return claims_item_identity_digest(
+            node_id=node.node_id,
+            subject=subject,
+            claim_type=ct,
+            qualifier=claim.statement.qualifier,
+            obj=claim.statement.object,
+            context=context,
+        )
+
+    def append(change: Any, receipt: Any, value: Any, identity: str) -> None:
         reserve()
         changes.append(change)
+        identities.append(identity)
         evidence.append(receipt)
         tokens.append(own)
         values.append(value)
@@ -448,6 +467,7 @@ def append_absence(
                                 ),
                                 receipt,
                                 {"retire": claim.identity.name, "template": index},
+                                held_identity(subject, ct, claim),
                             )
                         continue
                     if ct.inverse is None:
@@ -521,6 +541,7 @@ def append_absence(
                                 ),
                                 receipt,
                                 {"retire": claim.identity.name, "template": index},
+                                held_identity(subject, ct, claim),
                             )
                         continue
                     seen_changes.add(unit)
@@ -536,6 +557,7 @@ def append_absence(
                                 ),
                                 receipt,
                                 {"absence": path, "template": index, "unit": inverse},
+                                held_identity(subject, ct, claim),
                             )
                         continue
                     append(
@@ -556,4 +578,12 @@ def append_absence(
                         ),
                         receipt,
                         {"absence": path, "template": index, "unit": inverse},
+                        claims_item_identity_digest(
+                            node_id=node.node_id,
+                            subject=subject,
+                            claim_type=ct,
+                            qualifier=claim.statement.qualifier if claim is not None else qualifier,
+                            obj=inverse,
+                            context=context,
+                        ),
                     )

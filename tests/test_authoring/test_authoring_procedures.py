@@ -65,6 +65,10 @@ from tests.support.procedures import (
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_ledger.test_activation import _sign
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 TIMESTAMP = "2026-08-21T12:00:00.000000Z"
 
 

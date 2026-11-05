@@ -926,12 +926,81 @@ def invoke_view_fields(child_output: Contract | None) -> dict[str, ContractField
 
 
 class ProcedureSpecError(ValueError):
-    def __init__(self, code: str, path: str, message: str):
+    def __init__(self, code: str, path: str, message: str, *, repair: str | None = None):
         self.code = "cruxible.authoring." + code
         self.field_path = path
         self.message = message
-        self.repair = "Repair the indicated authored step and prepare again."
+        self.repair = repair or "Repair the indicated authored step and prepare again."
         super().__init__(f"{self.code} at {path}: {message}")
+
+
+#: The Procedure template (D-R37): ``read -> fetch -> derive* -> extract -> claims``,
+#: with filter/dedupe narrowing and inbox egress. Computation lives in provider
+#: code, never in Procedure syntax, so authoring refuses every other step kind
+#: for every Procedure (template-slice h1). Each closed kind names where its
+#: work goes instead. The executor keeps its handlers until they are deleted
+#: post-v1 (h3); only authoring is closed.
+CLOSED_STEP_KINDS: dict[str, str] = {
+    "guard": "a branch on run values: decide it in a derive, or narrow records with filter",
+    "halt": "an early end: a derive returns the empty result; a claims step over none "
+    "writes nothing",
+    "select": "a choice between sources: a derive chooses",
+    "repeat": "a bounded loop: the provider decides how many requests a fetch makes",
+    "invoke": "a child Procedure: Procedures compose only through state (D-R35); read "
+    "what the other Procedure's Line wrote",
+    "emit": "a Capture emitted from run values: a derive commits a derived Capture",
+    "project": "an intermediate record: a derive computes it; the run's own value is "
+    "'returns: {fields: ...}'",
+    "transform.shape": "a reshaped record: a derive computes it",
+    "transform.join": "a join: a derive joins this run's Captures and read rows",
+    "transform.aggregate": "an aggregate: a derive computes it",
+    "transform.union": "a union: a derive combines its inputs",
+    "transform.derive": "a computed field: a provider derive (a call to a pure operation) "
+    "computes it",
+}
+#: The transforms the template keeps: narrowing between extract and claims.
+OPEN_TRANSFORM_KINDS = frozenset({"filter", "dedupe"})
+_CLOSED_STEP_TYPES: dict[type[BaseModel], str] = {
+    GuardStep: "guard",
+    HaltStep: "halt",
+    SelectStep: "select",
+    RepeatStep: "repeat",
+    InvokeStep: "invoke",
+    EmitStep: "emit",
+    ProjectStep: "project",
+}
+
+
+def closed_step_kind(step: BaseModel) -> str | None:
+    """The closed kind an authored step states (``transform.<kind>`` for a transform)."""
+
+    if isinstance(step, TransformStep):
+        return None if step.kind in OPEN_TRANSFORM_KINDS else f"transform.{step.kind}"
+    return _CLOSED_STEP_TYPES.get(type(step))
+
+
+def refuse_closed_steps(spec: ProcedureSpec) -> None:
+    """Refuse the first authored step outside the Procedure template, typed (h1).
+
+    Allowed: read, call (fetch and derive), extract, claims, the filter and
+    dedupe transforms, and inbox egress.
+    """
+
+    for index, step in enumerate(spec.steps):
+        kind = closed_step_kind(step)
+        if kind is None:
+            continue
+        raise ProcedureSpecError(
+            "procedure_step_closed",
+            f"$.steps[{index}]",
+            f"The {kind.replace('.', ' ')} step is closed: a Procedure is read, call "
+            "(fetch, then derive), extract and claims, with filter/dedupe narrowing and "
+            "inbox egress. Computation lives in a provider derive, not in Procedure "
+            f"syntax; this step is {CLOSED_STEP_KINDS[kind]}.",
+            repair="Move this step's computation into a derive: a call to a pure provider "
+            "operation over this run's Captures and read rows, whose output is a derived "
+            "Capture that extract reads.",
+        )
 
 
 # A resolver returns only the requested artifact's typed schema/binding details.
@@ -2028,6 +2097,7 @@ __all__ = [
     "JoinSpec",
     "CONTRACT_ROLES",
     "RETIRED_FIELD_SPELLINGS",
+    "refuse_closed_steps",
     "ProcedureLimits",
     "ProcedureSpec",
     "ProcedureSpecError",
@@ -2047,7 +2117,10 @@ __all__ = [
     "TransformSpec",
     "TransformStep",
     "UnionSpec",
+    "CLOSED_STEP_KINDS",
+    "OPEN_TRANSFORM_KINDS",
     "authored_step_path",
+    "closed_step_kind",
     "generated_contract_name",
     "graph_template",
     "lower_procedure_spec",

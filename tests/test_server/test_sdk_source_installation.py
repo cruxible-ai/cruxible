@@ -3,6 +3,8 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import pytest
+
 from cruxible_client import Cruxible
 from cruxible_client.authoring.procedures import Handle, ProcedureLimits, Sequence, eq, halt
 from cruxible_client.contracts.authoring.inputs import ProcedureMandateInput
@@ -36,6 +38,10 @@ from tests.test_server.test_provider_installation import (  # noqa: F401
     installed_web,
     installer_http,
 )
+
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
 
 # web.fetch refuses private and loopback origins, so every run reads the recording the web
 # package ships for the reserved fixture.invalid host; it opens no socket.

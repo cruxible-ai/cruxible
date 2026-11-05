@@ -70,6 +70,7 @@ from cruxible_client.contracts.procedures.authored import (
     UnionSpec,
     extract_view_fields,
     lower_procedure_spec,
+    refuse_closed_steps,
 )
 from cruxible_client.contracts.procedures.extract import CompleteWhen, ExtractField
 from cruxible_client.contracts.procedures.graph import (
@@ -695,6 +696,7 @@ class Sequence:
         returns: str | None = None
         authority: AuthorityVerb | None = None
         try:
+            refuse_closed_steps(spec)
             lowered = lower_procedure_spec(spec)
             definition = dict(lowered.definition)
             nodes = tuple(definition["nodes"])

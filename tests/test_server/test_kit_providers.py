@@ -45,6 +45,10 @@ from cruxible_core.runtime.provider_runtime import PROVIDER_RUNTIME_CONFIG_PATH
 from tests.support.procedures import procedure_limits, procedure_members, procedure_spec
 from tests.support.provider_checkout import ProviderCheckout
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 
 def _installer(
     root: Path, monkeypatch: pytest.MonkeyPatch

@@ -313,11 +313,40 @@ class TerminalChildReceiptV1(_StrictDependencyModel):
     manifest_digest: str
     record_digest: str
     sequence: int = Field(ge=1)
+    #: A claims item's change (D-R37 g): its identity, stable across runs
+    #: ({node, ClaimType, Subject, unit}), and the kind and digest of the one
+    #: canonical change it made. Digests only, never the change body; absent on
+    #: every other terminal's items.
+    item_identity_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    change_kind: Literal["claim", "subject", "reobservation", "retirement"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    change_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("manifest_digest", "record_digest")
     @classmethod
     def _digests(cls, value: str, info: object) -> str:
         return _tagged(value, label=str(getattr(info, "field_name", "child receipt digest")))
+
+    @field_validator("item_identity_digest", "change_digest")
+    @classmethod
+    def _change_digests(cls, value: str | None, info: object) -> str | None:
+        return (
+            None
+            if value is None
+            else _tagged(value, label=str(getattr(info, "field_name", "child change digest")))
+        )
+
+    @model_validator(mode="after")
+    def _change(self) -> "TerminalChildReceiptV1":
+        missing = {
+            self.item_identity_digest is None,
+            self.change_kind is None,
+            self.change_digest is None,
+        }
+        if len(missing) != 1:
+            raise ValueError("a child's change identity, kind and digest come together")
+        return self
 
 
 class AcquisitionInputOutcomeV1(_StrictDependencyModel):

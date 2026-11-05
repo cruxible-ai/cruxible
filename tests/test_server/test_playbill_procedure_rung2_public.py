@@ -71,6 +71,10 @@ from tests.support.procedures import (
 )
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 SUBJECT_KIND = "security.advisory"
 SUBJECT_ID = "osv-2026-0001"
 PREDICATE = "security.advisory.severity"

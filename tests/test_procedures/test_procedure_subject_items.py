@@ -318,9 +318,13 @@ def _identity_world(tmp_path: Path, *slugs: str):
 
 
 def _identity_procedure(
-    instance, *, mappings=None, create="never", kind=KIND, name="identity-probe"
+    instance, *, mappings=None, create="never", kind=KIND, name="identity-probe", expect=()
 ):
-    """One typed claims node over independently keyed source records."""
+    """One typed claims node over independently keyed source records.
+
+    ``expect`` names the Subjects an absence-retiring terminal expects (its
+    mappings then carry their own ``when_absent``); the records carry a count.
+    """
     from cruxible_client.contracts.procedures.artifacts import parse_procedure, procedure_path
     from cruxible_client.contracts.procedures.claims import ClaimsNode
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
@@ -342,6 +346,8 @@ def _identity_procedure(
         predicates=(SEVERITY,),
         records="/proposals/*",
         create=create == "if_absent",
+        within=expect,
+        absence="mirror" if expect else None,
     )
     row = Contract.model_validate(
         {
@@ -389,13 +395,21 @@ def _identity_procedure(
 
 
 def _identity_terminal(
-    instance, owner, root, records, *, mappings=None, create="never", name="identity-probe"
+    instance,
+    owner,
+    root,
+    records,
+    *,
+    mappings=None,
+    create="never",
+    name="identity-probe",
+    expect=(),
 ):
     from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
     from tests.support.procedures import procedure_members
 
     procedure, contracts = _identity_procedure(
-        instance, mappings=mappings, create=create, name=name
+        instance, mappings=mappings, create=create, name=name, expect=expect
     )
     line = fixtures._served_line(instance, procedure, fixtures._policy()).model_copy(
         update={
@@ -420,7 +434,10 @@ def _identity_terminal(
         },
         name=name,
     )
-    (root / fixtures.RELATIVE_PATH).write_bytes(fixtures.canonical_bytes({"proposals": records}))
+    document: dict[str, Any] = {"proposals": records}
+    if expect:
+        document["count"] = len(records)
+    (root / fixtures.RELATIVE_PATH).write_bytes(fixtures.canonical_bytes(document))
     return line
 
 

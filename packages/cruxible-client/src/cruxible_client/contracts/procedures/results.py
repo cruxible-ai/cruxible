@@ -1048,10 +1048,19 @@ class ProcedureTerminalEgressChild(_StrictResultModel):
     # A delivered proposal item whose statement, on the same evidence, was
     # retired or rejected before: each earlier refusal, exactly as recorded.
     prior_refusals: tuple[PriorRefusalReceipt, ...] = ()
+    #: A claims item's change: its identity, stable across runs ({node,
+    #: ClaimType, Subject, unit}), so two runs diff by it; the change's kind; and
+    #: the digest of the canonical change. Digests only, never the change body.
+    #: Omitted on every other terminal's items and on runs recorded before them.
+    item_identity_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    change_kind: Literal["claim", "subject", "reobservation", "retirement"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    change_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     _digests = field_validator("manifest_digest")(_digest)
 
-    @field_validator("egress_digest")
+    @field_validator("egress_digest", "item_identity_digest", "change_digest")
     @classmethod
     def _egress(cls, value: str | None) -> str | None:
         return None if value is None else _digest(value)

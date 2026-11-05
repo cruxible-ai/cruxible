@@ -27,6 +27,10 @@ from cruxible_core.service.discovery.operational_viewer import OperationalViewer
 from cruxible_core.service.discovery.runs import procedure_run_status
 from cruxible_core.storage.cas import BodyAccessContext
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=False)
 _ARMED_BY = LineEnablementPrincipal(
     kind="runtime_credential", credential_id="cred-arm", label="line-operator"
@@ -49,6 +53,7 @@ def nested_world(tmp_path_factory: pytest.TempPathFactory):  # type: ignore[no-u
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore
     from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
     from tests.core_support._support import initialize_local
+    from tests.support.procedures import executor_only_steps
     from tests.test_procedures.test_nested_source_runs import (
         accept_blueprint,
         blueprints,
@@ -62,8 +67,10 @@ def nested_world(tmp_path_factory: pytest.TempPathFactory):  # type: ignore[no-u
     tmp_path = tmp_path_factory.mktemp("nested-arming")
     instance, owner = initialize_local(tmp_path)
     child, parent = blueprints()
-    accept_blueprint(instance, owner, child)
-    accept_blueprint(instance, owner, parent)
+    # Module-scoped: it enters the executor-only fixture itself (D-R37 h1).
+    with executor_only_steps():
+        accept_blueprint(instance, owner, child)
+        accept_blueprint(instance, owner, parent)
     accepted = _accepted_procedure(
         instance, name="parent", coordinate=instance.accepted_coordinate()
     )

@@ -68,6 +68,10 @@ from tests.test_integration.test_next_closed_loop import (
 )
 from tests.test_integration.test_next_holds import _all_claims, _attest, _capture
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 WORKER = facts._PART
 _BYTES_READER = BodyAccessContext(principal_id="test-bytes", can_read_body=True)
 _DERIVED_AT = datetime.fromisoformat("2026-10-02T00:00:00+00:00")

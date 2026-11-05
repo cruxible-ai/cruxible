@@ -32,6 +32,10 @@ from tests.test_procedures.test_claims_terminal import (
     run,
 )
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 
 def test_same_kev_values_in_changed_catalog_reobserve_without_a_proposal(tmp_path: Path) -> None:
     instance, root = pilot_world(tmp_path, "kev.json")

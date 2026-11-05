@@ -22,6 +22,10 @@ from cruxible_client.contracts.provider_operations import ProcedureSlot
 from cruxible_client.contracts.refs import Ref, step_ref
 from cruxible_client.contracts.shapes import Contract
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 LIMITS = ProcedureLimits(wall_clock="PT60S", provider_calls=1, capture_bytes=1024)
 CAPS = ProcedureLimits(
     wall_clock="PT60S", provider_calls=1, capture_bytes=1024, items=100, repeat_attempts=1

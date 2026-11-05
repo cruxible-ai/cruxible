@@ -56,6 +56,10 @@ from tests.support.procedures import (
 from tests.test_server.test_playbill_procedure_rung2_public import _authored
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 NOW = datetime(2026, 10, 22, 12, tzinfo=UTC)
 PROCEDURE = "advisory-acquire"
 SECRET = b"TOPSECRET-BODY-BYTES"

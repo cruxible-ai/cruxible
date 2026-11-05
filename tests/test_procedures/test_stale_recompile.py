@@ -35,6 +35,10 @@ from tests.test_procedures.test_procedure_settlement_delivery import (
     _level_kind_members,
 )
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 
 def _level_severity_members():
     from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type

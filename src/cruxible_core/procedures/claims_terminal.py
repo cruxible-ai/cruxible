@@ -48,7 +48,9 @@ from cruxible_core.procedures.claims_context import ClaimsContext
 from cruxible_core.procedures.claims_diagnostics import ClaimsDiagnostics
 from cruxible_core.procedures.claims_units import (
     ClaimUnitUnresolved,
+    CreationIdentity,
     claim_time,
+    claims_item_identity_digest,
     resolve_object,
     same_content,
     same_value,
@@ -77,6 +79,11 @@ class ExpandedClaims:
     diagnostics: ClaimsDiagnostics
     evidence: tuple[ClaimEvidenceReceipt | None, ...]
     changes: tuple[CoreClaimsChange, ...]
+    #: Each change's stable item identity (D-R37 g1), in the same order.
+    identities: tuple[str, ...] = ()
+    #: The items whose Subject the run creates: identified by key reference
+    #: here, finalized from delivery's lowering (D-R37 g fix 3).
+    creations: tuple[CreationIdentity, ...] = ()
 
 
 def expand_claims(
@@ -147,9 +154,25 @@ def expand_claims(
     diagnostics = state.claims_diagnostics.setdefault(node.node_id, ClaimsDiagnostics())
     evidence: list[ClaimEvidenceReceipt | None] = []
     changes: list[CoreClaimsChange] = []
+    identities: list[str] = []
     values: list[CanonicalValue] = []
     tokens: list[frozenset[DependencyToken]] = []
     created: set[bytes] = set()
+    # D-R37 g fix 3: an item whose Subject this run creates has no Subject
+    # address yet. It is identified here by its key reference (the change's own
+    # ``subject_wire``), and the executor finalizes it with the whole-artifact
+    # address delivery's lowering assigns that Subject's Subject item -- the
+    # address it has once accepted (``finalize_creation_identities``).
+    pending: list[tuple[int, bytes, dict[str, Any]]] = []
+    subject_items: dict[bytes, int] = {}
+
+    def identify(subject_wire: Any, key: bytes | None, **parts: Any) -> None:
+        if key is not None:
+            pending.append((len(identities), key, parts))
+        identities.append(
+            claims_item_identity_digest(node_id=node.node_id, subject=subject_wire, **parts)
+        )
+
     nodes = (
         {}
         if executor.plan is None
@@ -294,6 +317,10 @@ def expand_claims(
                 "key": key,
             }
         )
+        # D-R37 g fix: an existing Subject's identity is its resolved
+        # whole-artifact address (``subject_wire``); a Subject this run creates
+        # is finalized from the address delivery's lowering assigns it.
+        created_key = canonical_bytes(key) if subject is None else None
         for template_index, mapping in enumerate(node.claims):
             reserve()
             target = (
@@ -689,6 +716,14 @@ def expand_claims(
                                 value=obj,
                             )
                         )
+                        identify(
+                            subject_wire,
+                            created_key,
+                            claim_type=ct,
+                            qualifier=qualifier,
+                            obj=obj,
+                            context=context,
+                        )
                         values.append(
                             cast(
                                 CanonicalValue,
@@ -713,9 +748,9 @@ def expand_claims(
             except ValueError:
                 report("extract_refused", target, field="rationale", problem="rationale_invalid")
                 continue
-            creation_key = canonical_bytes(key)
-            if subject is None and creation_key not in created:
-                created.add(creation_key)
+            if created_key is not None and created_key not in created:
+                created.add(created_key)
+                subject_items[created_key] = len(values)
                 changes.append(
                     CoreSubjectChange(
                         subject_kind=node.subject.kind,
@@ -723,6 +758,7 @@ def expand_claims(
                         rationale=rationale,
                     )
                 )
+                identify(subject_wire, created_key)
                 values.append(cast(CanonicalValue, {"key": key}))
                 tokens.append(own)
                 evidence.append(None)
@@ -753,6 +789,14 @@ def expand_claims(
                     }
                 )
             )
+            identify(
+                subject_wire,
+                created_key,
+                claim_type=ct,
+                qualifier=qualifier,
+                obj=obj,
+                context=context,
+            )
             values.append(
                 cast(
                     CanonicalValue,
@@ -781,6 +825,7 @@ def expand_claims(
                 tokens=tokens,
                 evidence=evidence,
                 changes=changes,
+                identities=identities,
                 diagnostics=diagnostics,
                 reserve=reserve,
                 within=within_paths,
@@ -789,7 +834,21 @@ def expand_claims(
             raise _RunRefusal(
                 "claims_inverse_unit_unresolved", str(exc), node_id=node.node_id
             ) from exc
-    return ExpandedClaims(values, tuple(tokens), diagnostics, tuple(evidence), tuple(changes))
+    return ExpandedClaims(
+        values,
+        tuple(tokens),
+        diagnostics,
+        tuple(evidence),
+        tuple(changes),
+        tuple(identities),
+        tuple(
+            CreationIdentity(index=index, subject_item=subject_items[key], parts=parts)
+            for index, key, parts in pending
+            # Every such item follows its Subject's Subject item; one with none
+            # (no Subject item precedes it) keeps its key reference.
+            if key in subject_items
+        ),
+    )
 
 
 def bind_claim_input(

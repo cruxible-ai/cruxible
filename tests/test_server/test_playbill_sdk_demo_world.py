@@ -71,6 +71,10 @@ from tests.support.procedures import (
 )
 from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 
 def _catalog(workspace: Path) -> None:
     (workspace / ".cruxible").mkdir()

@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, cast
 
 from pydantic import TypeAdapter
 
-from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.canonical_forms import canonicalize_literal
 from cruxible_client.contracts.claim_types import effective_canonical_form
 from cruxible_client.contracts.claims import (
@@ -38,6 +39,10 @@ class ClaimUnitUnresolved(CoreError):
 
 
 def unit_key(obj: Any, claim_type: Any, context: Any) -> bytes:
+    return canonical_bytes(_unit_value(obj, claim_type, context))
+
+
+def _unit_value(obj: Any, claim_type: Any, context: Any) -> Any:
     def object_key_value(address: SemanticAddress, predicate: str) -> object:
         held = context.slot(address, predicate, None)
         return (
@@ -56,7 +61,134 @@ def unit_key(obj: Any, claim_type: Any, context: Any) -> bytes:
         raise ClaimUnitUnresolved(
             "The inverse object key is unresolved; repair the object's key Claim."
         )
-    return canonical_bytes(key.model_dump(mode="json"))
+    return key.model_dump(mode="json")
+
+
+#: Domains of the per-item run record (D-R37 g1): a stable item identity and the
+#: digest of the one canonical change the item made.
+CLAIMS_ITEM_IDENTITY_DOMAIN = "playbill-claims-item-identity-v1"
+CLAIMS_ITEM_CHANGE_DOMAIN = "playbill-claims-item-change-v1"
+
+
+def claims_item_identity_digest(
+    *,
+    node_id: str,
+    subject: object,
+    claim_type: Any | None = None,
+    qualifier: object = None,
+    obj: Any = None,
+    context: Any = None,
+) -> str:
+    """One claims-terminal item's identity, stable across runs: {node, ClaimType, Subject, unit}.
+
+    ``child_index`` and the item's value are left out, so the same Subject and
+    unit keep one identity when other items come and go or its value changes.
+    The unit is the slot (``qualifier`` with it) plus the D-R30 unit within it:
+    the whole slot for a one-valued ClaimType, the object's unit key for a
+    many-valued one. Its every read was already made, and cached, by the
+    eligibility law that produced the change. A Subject item has no ClaimType
+    and no unit. ``subject`` is the Subject's resolved whole-artifact address
+    (D-R37 g fix): one canonical identity across the creating run, every later
+    run and an absence retirement, whatever its ``expect`` spelling. For a
+    Subject the run creates, that address is the one delivery's own lowering
+    assigns it (``finalize_creation_identities``).
+    """
+
+    def wire(value: Any) -> Any:
+        return value.model_dump(mode="json") if hasattr(value, "model_dump") else value
+
+    unit: object = None
+    if claim_type is not None:
+        if claim_type.cardinality != "many":
+            unit = {"kind": "slot", "value": None}
+        elif claim_type.inverse is None:
+            # claim_unit_key's object unit, built without a model: the object in
+            # its canonical form, as the eligibility law compares it (same_value).
+            unit = {"kind": "object", "value": wire(obj)}
+        else:
+            raw = wire(obj)
+            try:
+                unit = _unit_value(raw, claim_type, context)
+            except ClaimUnitUnresolved:
+                unit = {"kind": "object", "value": raw}
+    return typed_digest(
+        Sha256Value,
+        CLAIMS_ITEM_IDENTITY_DOMAIN,
+        {
+            "node_id": node_id,
+            "claim_type": None if claim_type is None else claim_type.predicate,
+            "subject": wire(subject),
+            "qualifier": qualifier,
+            "unit": unit,
+        },
+    ).tagged
+
+
+@dataclass(frozen=True)
+class CreationIdentity:
+    """A claims item whose Subject the run creates: its identity waits for lowering.
+
+    Until delivery's preparation lowers the terminal, the Subject has no
+    address, so the item is first identified by its key reference,
+    ``{subject_kind, key}`` (the Subject wire such an item's change carries).
+    ``finalize_creation_identities`` replaces it with the whole-artifact
+    address lowering assigned ``subject_item``, the terminal's Subject item
+    creating that Subject.
+    """
+
+    #: The item's position in the terminal.
+    index: int
+    #: The position of the terminal's Subject item creating its Subject.
+    subject_item: int
+    #: ``claims_item_identity_digest``'s other arguments (ClaimType, unit, ...).
+    parts: Mapping[str, Any]
+
+
+def finalize_creation_identities(
+    *,
+    node_id: str,
+    creations: Sequence[CreationIdentity],
+    assigned_path: Callable[[int], str | None],
+) -> dict[int, str]:
+    """Each created Subject's items identified by the address lowering assigned it.
+
+    One source of truth (D-R37 g fix 3): ``assigned_path`` reads, for a Subject
+    item's position, the path delivery's preparation lowered it to -- shared
+    lowering's whole-terminal assignment, over the admitted base overlaid
+    with the terminal's own members (``members_identity_overlay``: a sibling's
+    alias or key Claim can reserve or take a readable id). It is the path the
+    Subject has once accepted, so the identity equals every later run's. A
+    Subject item with no lowered path keeps its key-reference identity. One
+    address per created Subject, not per item naming it.
+
+    Returns item position -> finalized identity digest.
+    """
+
+    addresses: dict[int, object | None] = {}
+    finalized: dict[int, str] = {}
+    for creation in creations:
+        if creation.subject_item not in addresses:
+            path = assigned_path(creation.subject_item)
+            addresses[creation.subject_item] = (
+                None
+                if path is None
+                else SemanticAddress.whole_artifact(path).model_dump(mode="json")
+            )
+        address = addresses[creation.subject_item]
+        if address is None:
+            continue
+        finalized[creation.index] = claims_item_identity_digest(
+            node_id=node_id, subject=address, **creation.parts
+        )
+    return finalized
+
+
+def claims_item_change_digest(change: Any) -> str:
+    """The digest of one item's canonical change; the change body is never stored (g2)."""
+
+    return typed_digest(
+        Sha256Value, CLAIMS_ITEM_CHANGE_DOMAIN, change.model_dump(mode="json")
+    ).tagged
 
 
 def claim_time(value: object) -> datetime | None:
