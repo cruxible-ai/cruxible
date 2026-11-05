@@ -522,3 +522,13 @@ def test_an_extract_over_a_list_declares_no_header_or_complete_when(
         author_procedure(
             instance, list_spec(absence=False, extract=changes), name="refused-procedure"
         )
+
+
+def test_a_list_extract_narrowed_before_claims_stays_refused(tmp_path: Path) -> None:
+    """a8: list extract -> filter -> claims keeps no per-record lineage; narrow in derive."""
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(narrow=True), line="test.kev-pages-narrow-line")
+    state = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-narrow-line")
+    assert state.status != "succeeded"
+    assert state.terminal.code == "proposal_item_evidence_ambiguous", state.terminal
