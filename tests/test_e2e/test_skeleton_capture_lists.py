@@ -43,6 +43,8 @@ from tests.test_e2e.test_skeleton_kev_epss import (
     _by,
     _contract_digest_in,
     _cve,
+    _envelope,
+    _manifest,
     _summaries,
     activate,
     pinned_extract_digest,
@@ -507,6 +509,16 @@ def test_a_key_in_two_pages_writes_nothing_for_it(tmp_path: Path, absence: bool)
     assert any(item.kind == "duplicate_key" for item in state.findings)
 
 
+def test_a_list_extract_narrowed_before_claims_stays_refused(tmp_path: Path) -> None:
+    """a8: list extract -> filter -> claims keeps no per-record lineage; narrow in derive."""
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(narrow=True), line="test.kev-pages-narrow-line")
+    state = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-narrow-line")
+    assert state.status != "succeeded"
+    assert state.terminal.code == "proposal_item_evidence_ambiguous", state.terminal
+
+
 @pytest.mark.parametrize("declared", ["header", "complete_when"])
 def test_an_extract_over_a_list_declares_no_header_or_complete_when(
     tmp_path: Path, declared: str
@@ -524,11 +536,64 @@ def test_an_extract_over_a_list_declares_no_header_or_complete_when(
         )
 
 
-def test_a_list_extract_narrowed_before_claims_stays_refused(tmp_path: Path) -> None:
-    """a8: list extract -> filter -> claims keeps no per-record lineage; narrow in derive."""
+@pytest.mark.parametrize("failed", [False, True])
+def test_a_derive_over_the_list_follows_its_completeness(tmp_path: Path, failed: bool) -> None:
+    """fetch-list -> derive -> extract -> claims: the view's absence is the list's."""
 
     instance = pages_world(tmp_path)
-    install(instance, list_spec(narrow=True), line="test.kev-pages-narrow-line")
-    state = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-narrow-line")
-    assert state.status != "succeeded"
-    assert state.terminal.code == "proposal_item_evidence_ambiguous", state.terminal
+    install(instance, list_spec(derive=True), line="test.kev-pages-derive-line", origins=True)
+    page_bodies = split(catalog())
+    urls = [f"{ORIGIN}/kev/{index}" for index in range(3)]
+    if failed:
+        urls[1] = "https://elsewhere.test/kev/1"
+    pages = Pages(page_bodies, urls=urls)
+    first = run_pages(instance, pages, line="test.kev-pages-derive-line")
+    assert first.status == "succeeded", first.terminal
+    (call,) = (node for node in first.nodes if node.node == "pages")
+    members = tuple(call.summary.capture_digests)
+    assert len(members) == (2 if failed else 3)
+    # The derive received every kept page as its exact bytes.
+    (derive_input,) = pages.derive_inputs
+    assert [base64.b64decode(item["content_base64"]) for item in derive_input["sources"]] == [
+        body for index, body in enumerate(page_bodies) if not (failed and index == 1)
+    ]
+    claims = _by(proposed(instance, first))
+    where = page_of(page_bodies)
+    kept = [cve for cve in listed_watched() if not (failed and where[cve] == 1)]
+    root = claims[(_cve(kept[0]), DATE_ADDED)].backing.procedure_evidence.value.capture_digest
+    # The view records every page it read; each Claim cites the view, its one root.
+    assert set(_manifest(instance, root).input_capture_digests) == set(members)
+    assert (
+        _envelope(instance, root).capture_contract_digest
+        != _envelope(instance, members[0]).capture_contract_digest
+    )
+    if failed:
+        # The list was incomplete, so the view is: nothing is inferred absent.
+        assert first.completeness is not None and not first.completeness.complete
+        assert set(claims) == {
+            *((_cve(c), LISTED_IN) for c in kept),
+            *((_cve(c), DATE_ADDED) for c in kept),
+        }
+        return
+    assert first.completeness is None
+    unlisted = claims[(_cve(UNLISTED), LISTED_IN)].backing.procedure_evidence
+    assert unlisted.absence is not None and unlisted.absence.captures == (root,)
+    activate(instance, first)
+
+    # Every page complete: the delisting retires, cited to the view over all pages.
+    second = run_pages(
+        instance,
+        Pages(split(catalog("kev-catalog-delisted")), urls=urls),
+        line="test.kev-pages-derive-line",
+        minute=1,
+    )
+    assert second.status == "succeeded", second.terminal
+    changed = _by(proposed(instance, second))
+    retired = changed[(_cve(DELISTED), DATE_ADDED)]
+    assert retired.lifecycle.state == "retired"
+    witness = retired.retirement.absence
+    (second_call,) = (node for node in second.nodes if node.node == "pages")
+    assert set(_manifest(instance, witness.capture).input_capture_digests) == set(
+        second_call.summary.capture_digests
+    )
+    activate(instance, second)
