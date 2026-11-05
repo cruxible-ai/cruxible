@@ -42,7 +42,8 @@
     "packages/cruxible-client/src/cruxible_client/contracts/claims.py::_resolve_cited_source_window": "a Claim citation's byte window over the retained bytes"
   },
   "material_decoders": {
-    "src/cruxible_core/procedures/extract.py::*": "the extract runtime: decodes Capture bytes under the CaptureKind's declared decoding (the one decoding boundary)"
+    "src/cruxible_core/procedures/extract.py::*": "the extract runtime: decodes Capture bytes under the CaptureKind's declared decoding (the one decoding boundary)",
+    "src/cruxible_core/procedures/execution.py::ProcedureExecutor._capture_input_wire": "D-R37 b8: transport, not parsing -- a derive's Capture input as Capture wire (the exact bytes, base64), built only under _dereference_capture_inputs, the one insertion point"
   },
   "wrapper_reads": {
     "src/cruxible_core/service/evidence/file_catalog.py::service_propose_playbill_file_bundle": {

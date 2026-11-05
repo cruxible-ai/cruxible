@@ -892,7 +892,7 @@ def test_the_skeleton_cannot_skip_where_the_providers_checkout_is_required(
 
 DERIVE_REQUEST = boundary_contract(
     "test.derive.request",
-    {"source": "string", "watched": "list<test.watched-row@1>{max_items: 100}"},
+    {"source": "capture<*>", "watched": "list<test.watched-row@1>{max_items: 100}"},
     WATCH_ROW,
 )
 DERIVE_PROVIDER = "test-derive"
@@ -906,7 +906,7 @@ def _contract_digest_in(checkout: Path, name: str) -> str:
     return contract_digest(parse_contract(path.read_bytes(), path=member)).tagged
 
 
-def _derive_build(checkout: Path) -> Any:
+def _derive_build(checkout: Path, *, effect: str = "pure") -> Any:
     """A core test-double provider: one pure ``derive`` returning Capture wire."""
 
     from cruxible_client.contracts.provider_operations import ProviderOperation
@@ -927,7 +927,7 @@ def _derive_build(checkout: Path) -> Any:
                 "name": "derive",
                 "in": "test.derive.request@1",
                 "out": "web.fetch.result@1",
-                "effect": "pure",
+                "effect": effect,
                 "refusals": {},
                 "entrypoint": "demo.runtime:Derive",
             }
@@ -960,20 +960,12 @@ def _derive_build(checkout: Path) -> Any:
     )
 
 
-def derive_world(tmp_path: Path, *, kev_access: str = "open") -> Any:
+def derive_world(tmp_path: Path, *, kev_access: str = "open", effect: str = "pure") -> Any:
     instance = skeleton_world(tmp_path, kev_access=kev_access)
     accept_tree(instance, contract_files(DERIVE_REQUEST), name="derive-contracts")
-    accept_tree(instance, build_files(_derive_build(require_provider_checkout())), name="derive")
+    build = _derive_build(require_provider_checkout(), effect=effect)
+    accept_tree(instance, build_files(build), name="derive")
     return instance
-
-
-def _source_bytes(instance: Any, source: Any) -> bytes:
-    """The input Capture's bytes: the wire core passed, else (a digest) from the store."""
-
-    if isinstance(source, dict):
-        return base64.b64decode(source["content_base64"])
-    envelope = _envelope(instance, source)
-    return instance.body_store().read(envelope.commitment.digest, access=ACCESS)
 
 
 def kev_view(source: bytes, watched: list[Mapping[str, Any]]) -> bytes:
@@ -1004,10 +996,11 @@ class DeriveReplay(Replay):
             if "url" in context.input:
                 return fetch(context)
             self.derive_inputs.append(dict(context.input))
+            # The derive reads the Capture's exact bytes from the wire core passed.
             source = context.input["source"]
-            body = kev_view(_source_bytes(self.instance, source), context.input["watched"])
+            body = kev_view(base64.b64decode(source["content_base64"]), context.input["watched"])
             digest = "sha256:" + hashlib.sha256(body).hexdigest()
-            named = source["bytes_digest"] if isinstance(source, dict) else source
+            named = source["bytes_digest"]
             return {
                 "tag": "playbill-provider-result-to-external-capture-v1",
                 "source_identity": "test.kev-view",
@@ -1042,7 +1035,7 @@ def _derive_step(alias: str, source: str) -> dict[str, Any]:
     }
 
 
-def derive_spec(*, chain: bool = False, mix: bool = False) -> Any:
+def derive_spec(*, chain: bool = False, mix: bool = False, effect: str = "pure") -> Any:
     """fetch -> derive (-> derive) -> extract -> claims, with absence over the watched CVEs.
 
     ``mix`` cites a second, unrelated fetched Capture in each Claim's rationale.
@@ -1109,7 +1102,7 @@ def derive_spec(*, chain: bool = False, mix: bool = False) -> Any:
             "derive": {
                 "in": "test.derive.request@1",
                 "out": "web.fetch.result@1",
-                "effect": "pure",
+                "effect": effect,
             },
         },
         hard_caps=procedure_limits(provider_calls=4, capture_bytes=1_048_576, read_rows=500),
@@ -1145,8 +1138,9 @@ def _accepted_node_input(instance: Any, procedure: str, node_id: str) -> Any:
 
 
 def test_a_derived_capture_records_its_inputs_and_is_each_claims_one_root(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import cruxible_core.procedures.execution as execution
     from cruxible_client.contracts.captures import (
         derive_input_template_digest,
         read_derive_reducer,
@@ -1154,6 +1148,15 @@ def test_a_derived_capture_records_its_inputs_and_is_each_claims_one_root(
     )
     from cruxible_core.service.evidence.body_access import capture_access_resolver
 
+    committed: list[Any] = []
+    digest_of = execution.run_value_digest
+
+    def spy(domain: str, value: object) -> str:
+        if domain == "provider-input" and isinstance(value, dict) and "watched" in value:
+            committed.append(value)
+        return digest_of(domain, value)
+
+    monkeypatch.setattr(execution, "run_value_digest", spy)
     instance = derive_world(tmp_path)
     _install(instance, derive_spec(), line="test.kev-derive-line", parameters=KEV_PARAMS)
     first, replay = _derive_run(instance, line="test.kev-derive-line")
@@ -1171,8 +1174,6 @@ def test_a_derived_capture_records_its_inputs_and_is_each_claims_one_root(
     for cve in listed:
         _extracted(claims[(_cve(cve), DATE_ADDED)], root, spec_digest)
     (derive_input,) = replay.derive_inputs
-    source = derive_input["source"]
-    source_digest = source if isinstance(source, str) else None
     view = _envelope(instance, root)
     assert instance.body_store().read(view.commitment.digest, access=ACCESS) == kev_view(
         replay.body("kev-catalog"), derive_input["watched"]
@@ -1182,9 +1183,16 @@ def test_a_derived_capture_records_its_inputs_and_is_each_claims_one_root(
     assert unlisted.absence is not None and unlisted.absence.capture == root
     manifest = _manifest(instance, root)
     (catalog,) = manifest.input_capture_digests
-    if source_digest is not None:
-        assert catalog == source_digest
     _assert_payload_capture(instance, catalog, replay.body("kev-catalog"), KEV_URL)
+    # The derive received the catalog Capture as its wire: the exact origin bytes
+    # with the envelope's coordinate (b1); the run committed only its digest (b3).
+    source = derive_input["source"]
+    assert base64.b64decode(source["content_base64"]) == replay.body("kev-catalog")
+    catalog_envelope = _envelope(instance, catalog)
+    assert source["bytes_digest"] == catalog_envelope.commitment.digest
+    assert source["coordinate"] == catalog_envelope.source.coordinate
+    (digested,) = committed
+    assert digested == {**derive_input, "source": catalog}
     assert manifest.input_receipt_digests and len(manifest.input_accepted_state_digests) == 1
     # The reducer: provider build, operation signature and implementation, and this
     # node's input template; never the Procedure digest.
@@ -1302,3 +1310,40 @@ def test_an_unrelated_second_capture_in_a_claims_closure_still_refuses(tmp_path:
     assert state.status != "succeeded"
     assert state.terminal.code == "proposal_item_evidence_missing", state.terminal
     assert "root Capture" in state.terminal.message
+
+
+def test_a_derive_must_declare_effect_pure(tmp_path: Path) -> None:
+    """b5: a call producing a derived Capture from Capture bytes is pure computation."""
+
+    instance = derive_world(tmp_path, effect="external_read")
+    spec = derive_spec(effect="external_read")
+    _install(instance, spec, line="test.kev-impure-line", parameters=KEV_PARAMS)
+    state, replay = _derive_run(instance, line="test.kev-impure-line")
+    assert state.status != "succeeded"
+    assert state.terminal.code == "provider_effect_declaration_mismatch", state.terminal
+    assert replay.derive_inputs == []
+
+
+def test_a_derive_input_must_be_a_capture_this_run_fetched_or_admitted() -> None:
+    """b2: another stored Capture is replay, refused before any byte is read."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.procedures.execution import ProcedureExecutor, _RunRefusal
+    from cruxible_core.procedures.terminal_dependencies import DependencyEvidenceFactsV1
+
+    foreign, exhaust = "sha256:" + "1" * 64, "sha256:" + "2" * 64
+    state = SimpleNamespace(
+        facts={exhaust: DependencyEvidenceFactsV1(epistemic_grade="derived")},
+    )
+    for digest in (foreign, exhaust, 7):
+        with pytest.raises(_RunRefusal) as refused:
+            ProcedureExecutor._capture_input_wire(  # noqa: SLF001
+                None,  # type: ignore[arg-type]
+                digest,
+                kind="*",
+                state=state,  # type: ignore[arg-type]
+                node_id="view",
+            )
+        assert refused.value.refusal.code == "contract_input_refused"
+        assert "replay" in str(refused.value)

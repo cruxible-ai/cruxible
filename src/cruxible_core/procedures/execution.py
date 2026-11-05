@@ -180,7 +180,7 @@ from cruxible_client.contracts.provider_operations import (
 )
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.resolution_contracts import InvestigationBinding
-from cruxible_client.contracts.shapes import EnumResolver, KeyCanonicalizer
+from cruxible_client.contracts.shapes import ANY_CAPTURE_KIND, EnumResolver, KeyCanonicalizer
 from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_client.contracts.workspace_file import (
@@ -3736,6 +3736,14 @@ class ProcedureExecutor:
         derived_fields = frozenset(
             field for field, contract in contracts.items() if contract.epistemic_grade == "derived"
         )
+        if derived_fields and occurrence.operation.effect != "pure":
+            # A derive is pure computation: the provider's declared word (D-R37 b5).
+            raise _RunRefusal(
+                "provider_effect_declaration_mismatch",
+                f"call {node.node_id!r} produces a derived Capture, so its operation must "
+                "declare effect: pure.",
+                node_id=node.node_id,
+            )
         derivation = _capture_derivation(node, input_lineage) if derived_fields else None
         if not derived_fields:
             input_lineage = frozenset(
@@ -5684,6 +5692,106 @@ class ProcedureExecutor:
 
         return check
 
+    def _dereference_capture_inputs(
+        self,
+        occurrence: ProviderExternalOccurrencePlan,
+        payload: dict[str, CanonicalValue],
+        *,
+        state: _RunState,
+        node_id: str,
+    ) -> dict[str, CanonicalValue]:
+        """The Provider's input: each ``capture<K>`` field's Capture as its wire (D-R37 b).
+
+        The ONE place Capture bytes enter a provider input (an architecture
+        guard holds it). Top-level fields and list members only. Each Capture
+        must be one this run fetched or was admitted; passing any other stored
+        Capture would be replay. The view is the shape providers already speak,
+        ``ProviderResultToExternalCapture``: the envelope's source and the exact
+        bytes, verbatim. Core transports them; it never parses them.
+        """
+
+        contract = closure_lookup(occurrence.contracts)(occurrence.operation.in_)
+        if contract is None:
+            return payload
+        slots = _capture_input_fields(contract)
+        if not slots:
+            return payload
+        if occurrence.operation.effect != "pure" or not any(
+            _is_derived_contract(self.capture_contracts.get(digest))
+            for digest in occurrence.capture_contracts.values()
+        ):
+            raise _RunRefusal(
+                "provider_effect_declaration_mismatch",
+                "Only a derive receives Capture inputs: an operation declaring effect: pure "
+                "whose call takes a derived CaptureKind.",
+                node_id=node_id,
+            )
+        resolved = dict(payload)
+        for field, (kind, listed) in slots.items():
+            value = payload.get(field)
+            if value is None:
+                continue
+            if listed:
+                if not isinstance(value, list):
+                    continue
+                resolved[field] = [
+                    self._capture_input_wire(item, kind=kind, state=state, node_id=node_id)
+                    for item in value
+                ]
+            else:
+                resolved[field] = self._capture_input_wire(
+                    value, kind=kind, state=state, node_id=node_id
+                )
+        return resolved
+
+    def _capture_input_wire(
+        self, digest: CanonicalValue, *, kind: str, state: _RunState, node_id: str
+    ) -> CanonicalValue:
+        """One Capture this run fetched or admitted, as Capture wire for a derive."""
+
+        fact = state.facts.get(digest) if isinstance(digest, str) else None
+        if not isinstance(digest, str) or fact is None or fact.acquisition_input_name is None:
+            raise _RunRefusal(
+                "contract_input_refused",
+                "A derive's Capture input must be one this run fetched or was admitted; "
+                "another stored Capture is replay.",
+                node_id=node_id,
+                details={"capture_digest": str(digest)},
+            )
+        body = self._capture_body(state, digest)
+        contract = self.capture_contracts.get(state.capture_contracts.get(digest, ""))
+        if kind != ANY_CAPTURE_KIND and (contract is None or contract.identity.name != kind):
+            raise _RunRefusal(
+                "contract_input_refused",
+                f"A derive's capture<{kind}> input names a Capture of another kind.",
+                node_id=node_id,
+                details={"capture_digest": digest},
+            )
+        access = BodyAccessContext(principal_id="procedure-derive", can_read_body=True)
+        envelope = parse_capture_envelope(self.bodies.read(digest, access=access))
+        source = envelope.source
+        if not isinstance(source, ExternalSourceReference):
+            raise _RunRefusal(
+                "contract_input_refused",
+                "A derive's Capture input must be an external observation.",
+                node_id=node_id,
+                details={"capture_digest": digest},
+            )
+        wire = ProviderResultToExternalCapture(
+            source_identity=source.source_identity,
+            coordinate_type=source.coordinate_type,
+            coordinate=source.coordinate,
+            selector_type=source.selector_type,
+            selector=source.selector,
+            replayability=source.replayability,
+            content_base64=base64.b64encode(body).decode("ascii"),
+            byte_length=len(body),
+            bytes_digest=envelope.commitment.digest,
+            observed_at=envelope.observed_at,
+            source_effective_time=envelope.source_effective_time,
+        )
+        return normalize_canonical(wire.model_dump(mode="json", exclude_none=True))
+
     def _invoke_provider_v4(
         self,
         *,
@@ -5753,6 +5861,11 @@ class ProcedureExecutor:
                 node_id=node_id,
             )
         input_digest = run_value_digest("provider-input", payload)
+        # The input digest, and so run identity, commits Capture digests; the
+        # Provider alone receives their bytes (D-R37 b3).
+        provider_input = self._dereference_capture_inputs(
+            occurrence, payload, state=state, node_id=node_id
+        )
         effect_id = typed_digest(
             ArtifactDigest,
             "playbill-procedure-effect-intent-v1",
@@ -5897,7 +6010,7 @@ class ProcedureExecutor:
                     "occurrence_path": occurrence.occurrence_path,
                     "invocation_id": invocation_id,
                 },
-                input=payload,
+                input=provider_input,
                 # The runtime protocol names one CaptureContract: the call's,
                 # when it commits exactly one capture field.
                 capture_contract=(
@@ -6733,6 +6846,24 @@ def _item_closure(state: _RunState, template: object, index: int) -> frozenset[D
     return state.alias_tokens(frozenset({alias}))
 
 
+def _is_derived_contract(contract: CaptureContract | None) -> bool:
+    return contract is not None and contract.epistemic_grade == "derived"
+
+
+def _capture_input_fields(contract: Contract) -> dict[str, tuple[str, bool]]:
+    """Each top-level ``capture<K>`` field, and ``list<capture<K>>`` field (members)."""
+
+    from cruxible_client.contracts.shapes import CaptureType, ListType
+
+    found: dict[str, tuple[str, bool]] = {}
+    for name, item in contract.fields.items():
+        if isinstance(item.type, CaptureType):
+            found[name] = (item.type.capture_kind, False)
+        elif isinstance(item.type, ListType) and isinstance(item.type.item, CaptureType):
+            found[name] = (item.type.item.capture_kind, True)
+    return found
+
+
 def _capture_derivation(node: CallNode, lineage: frozenset[DependencyToken]) -> CaptureDerivation:
     """A derive call's recorded inputs: Captures, their receipts, and state reads (D-R37 c1)."""
 
@@ -6872,7 +7003,7 @@ def _fan_out_list(
             token.digest for token in provenance.whole if token.slot in _CAPTURE_SLOTS
         }
         # One Capture, or one derived root recording the rest (D-R37 d1).
-        if capture_root(whole_captures, state.derivations) is None:
+        if len(whole_captures) > 1 and capture_root(whole_captures, state.derivations) is None:
             raise _RunRefusal(
                 ambiguous_code,
                 "The fan-out's list was built from more than one Capture and keeps no "

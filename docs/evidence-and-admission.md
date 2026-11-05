@@ -167,6 +167,17 @@ The engine supplies the component definitions. An edit keeps omitted fields;
 raise `max_bytes` or retire it with `lifecycle: retired`. A change to what the
 evidence means needs a new name.
 
+A **derive** is a call whose capture output is a `derived` kind. Its operation
+declares `effect: pure`, and a `capture<K>` (or `capture<*>`) input field
+receives a Capture this run fetched or was admitted, as Capture wire: the exact
+bytes with the envelope's coordinate. The run's identity commits only the
+Capture digest. The derived Capture records its inputs (the Captures, their
+receipts and the state reads) and its reducer (provider build, operation and the
+node's input template); `get` on it shows them. A Claim cites one root Capture:
+a derived one covers the Captures it records, while two unrelated Captures are
+still refused. A derived Capture inherits the most restrictive `body_access` of
+its inputs.
+
 A rule can restrict a shared contract to specific logical sources:
 
 ~~~yaml

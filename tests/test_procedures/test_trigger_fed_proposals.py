@@ -178,13 +178,19 @@ def _manifest(*, produced: tuple[str, ...] = (), admitted: tuple[str, ...] = ())
     )
 
 
-def _request(value: object = None):  # type: ignore[no-untyped-def]
+def _request(value: object = None, *, cited: str | None = None):  # type: ignore[no-untyped-def]
+    receipts = (
+        {}
+        if cited is None
+        else {"item-0": SimpleNamespace(value=SimpleNamespace(capture_digest=cited))}
+    )
     return SimpleNamespace(
         items=(
             SimpleNamespace(
                 item_key="item-0", child_index=0, value=item_template() if value is None else value
             ),
-        )
+        ),
+        claims_evidence=receipts,
     )
 
 
@@ -217,6 +223,17 @@ def test_two_admitted_captures_are_ambiguous_and_none_is_missing() -> None:
     with pytest.raises(ProposalDeliveryRefused) as missing:
         evidence_by_item(_request(), {"item-0": _manifest()})
     assert missing.value.code == "proposal_item_evidence_missing"
+
+
+def test_several_captures_cite_the_root_the_claims_receipt_names() -> None:
+    """D-R37 d1: the claims terminal chose the derived root; delivery cites it."""
+
+    manifests = {"item-0": _manifest(produced=(_A, _B))}
+    assert evidence_by_item(_request(cited=_B), manifests) == {"item-0": _B}
+    # A receipt naming a Capture outside the closure leaves the choice ambiguous.
+    with pytest.raises(ProposalDeliveryRefused) as ambiguous:
+        evidence_by_item(_request(cited="sha256:" + "9" * 64), manifests)
+    assert ambiguous.value.code == "proposal_item_evidence_ambiguous"
 
 
 def test_an_explicitly_selected_capture_must_be_in_the_items_closure_produced_or_admitted() -> None:

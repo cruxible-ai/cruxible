@@ -186,22 +186,31 @@ def resolve_procedure_spec(
                 operation_signature_digest(slot)
             )
             from cruxible_client.contracts.procedures.capture_outputs import CAPTURE_FIELD
+            from cruxible_client.contracts.shapes import (
+                ANY_CAPTURE_KIND,
+                CaptureType,
+                ContractField,
+            )
             from cruxible_client.contracts.source_references import HTTP_RESPONSE_COORDINATE_TYPE
 
+            # The whole-wire Capture is typed by the kind it is taken under, so
+            # it flows into a derive's capture<K> or capture<*> input.
+            wire_capture = ContractField(
+                type=CaptureType(
+                    capture_kind=ANY_CAPTURE_KIND if capture is None else capture.identity.name
+                )
+            )
             if acquiring and not workspace_source:
                 from cruxible_client.contracts.provider_operations import capture_fields
-                from cruxible_client.contracts.shapes import ContractField, StringType
 
                 if not capture_fields(contract(slot.out, authored_path)):
                     # The operation returns one Capture as its whole output: the
                     # call's value names only that Capture.
-                    output_fields = {CAPTURE_FIELD: ContractField(type=StringType())}
+                    output_fields = {CAPTURE_FIELD: wire_capture}
                     output_contract = None
             if workspace_source:
-                from cruxible_client.contracts.shapes import ContractField, StringType
-
                 # The read's exact bytes, committed by core beside its result.
-                output_fields = {**output_fields, CAPTURE_FIELD: ContractField(type=StringType())}
+                output_fields = {**output_fields, CAPTURE_FIELD: wire_capture}
                 output_contract = None
             if workspace_source and capture is not None:
                 components = capture_components(capture)
