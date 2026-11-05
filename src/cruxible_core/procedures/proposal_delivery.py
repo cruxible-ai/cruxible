@@ -463,7 +463,7 @@ def evidence_by_item(
             evidence[item.item_key] = root
             continue
         # Absence over a Capture list: its witness cites exactly the closure (D-R37 a6).
-        listed = witnessed_list_capture(produced, receipt)
+        listed = witnessed_list_capture(produced, receipt, cache=cache)
         if listed is not None:
             evidence[item.item_key] = listed
             continue

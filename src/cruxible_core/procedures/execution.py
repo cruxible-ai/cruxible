@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import time
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -4242,6 +4242,8 @@ class ProcedureExecutor:
         if admission.acquisition_policy_digest is not None:
             base = base | {policy_token(admission.acquisition_policy_digest)}
         tokens: set[DependencyToken] = set()
+        #: Each list's bound members, accumulated here and recorded once per list.
+        listed: dict[str, list[str]] = {}
         for field in selected:
             acquisition = results[field].acquisition
             assert acquisition is not None  # a selected result carries its Capture
@@ -4264,15 +4266,26 @@ class ProcedureExecutor:
                 invocation_receipt_digest=invocation_receipt_digest,
                 member_request_digest=member_requests.get(field),
             )
+            if field in members:
+                listed.setdefault(rules[field].input_name, []).append(acquisition.capture_digest)
+        for input_name, captures in listed.items():
+            # One outcome per list naming every bound member: built once, not
+            # rebuilt and re-sorted per member.
+            state.outcomes[input_name] = AcquisitionInputOutcomeV1(
+                input_name=input_name,
+                disposition="acquired",
+                capture_digests=tuple(sorted(set(captures))),
+            )
         # The call's value: its record without the omitted capture fields. Its
         # other fields are the operation's own output, valid whatever was
         # omitted; a call left with no field at all binds nothing.
         assert isinstance(material, dict)
-        omitted = set(fields) - set(selected)
+        chosen = frozenset(selected)
+        omitted = set(fields) - chosen
         kept = {name: value for name, value in material.items() if name not in omitted}
         for field, keys in member_keys.items():
             # A list names its selected members, in the provider's order.
-            kept[field] = [digests[key] for key in keys if key in selected]
+            kept[field] = [digests[key] for key in keys if key in chosen]
             if keys and not kept[field]:
                 # Every member was dropped: the output acquired nothing.
                 input_name = rules[keys[0]].input_name
@@ -4430,15 +4443,9 @@ class ProcedureExecutor:
                 node_id=node.node_id,
                 details=exc.details or None,
             ) from exc
-        call_tokens = state.alias_tokens(frozenset({node.capture_alias}))
-        member_tokens = [
-            frozenset(
-                token
-                for token in call_tokens
-                if token.slot in _CAPTURE_SLOTS and token.digest == member
-            )
-            for member in members
-        ]
+        member_tokens = _member_tokens(
+            state.alias_tokens(frozenset({node.capture_alias})), cast(Sequence[str], members)
+        )
         self._bind_extract(
             node,
             outcome,
@@ -4808,9 +4815,10 @@ class ProcedureExecutor:
     ) -> frozenset[DependencyToken]:
         """Bind one selected capture output: its Capture, budget, evidence and association.
 
-        A list member is one of its field's Captures: its outcome lists every
-        member bound so far, and its record names its identity (D-R37 a2).
-        Returns the tokens the call's value carries for it.
+        A list member is one of its field's Captures: its record names its
+        identity (D-R37 a2), and its list's one outcome is recorded by the
+        caller once every member is bound. Returns the tokens the call's
+        value carries for it.
         """
 
         digest = acquisition.capture_digest
@@ -4823,18 +4831,10 @@ class ProcedureExecutor:
             provenance_grade=acquisition.provenance_grade,
             acquisition_input_name=rule.input_name,
         )
-        held = state.outcomes.get(rule.input_name)
-        state.outcomes[rule.input_name] = AcquisitionInputOutcomeV1(
-            input_name=rule.input_name,
-            disposition="acquired",
-            capture_digests=(
-                tuple(sorted({*held.capture_digests, digest}))
-                if member_request_digest is not None
-                and held is not None
-                and held.disposition == "acquired"
-                else (digest,)
-            ),
-        )
+        if member_request_digest is None:
+            state.outcomes[rule.input_name] = AcquisitionInputOutcomeV1(
+                input_name=rule.input_name, disposition="acquired", capture_digests=(digest,)
+            )
         self._append_event(
             admission,
             records,
@@ -5413,6 +5413,7 @@ class ProcedureExecutor:
                             or witnessed_list_capture(
                                 citable_captures(manifest),
                                 getattr(request, "claims_evidence", {}).get(item_key),
+                                cache=state.capture_root_cache,
                             )
                         )
                         is not None
@@ -7165,6 +7166,22 @@ def _check_capture_list_bound(
             boundary=boundary,
             field_path=field,
         )
+
+
+def _member_tokens(
+    call_tokens: Iterable[DependencyToken], members: Sequence[str]
+) -> list[frozenset[DependencyToken]]:
+    """Each list member's own Capture tokens, in member order (D-R37 a5).
+
+    One pass over the call's tokens indexes them by Capture digest, then each
+    member reads its own: linear in tokens plus members, never their product.
+    """
+
+    by_capture: dict[str, set[DependencyToken]] = {}
+    for token in call_tokens:
+        if token.slot in _CAPTURE_SLOTS:
+            by_capture.setdefault(token.digest, set()).add(token)
+    return [frozenset(by_capture.get(member, ())) for member in members]
 
 
 def _extract_only_keys(node: ExtractNode, *, state: _RunState) -> list[dict[str, object]] | None:

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from collections import deque
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Literal
@@ -411,7 +411,9 @@ def derive_terminal_item_facts(
     )
 
 
-def witnessed_list_capture(closure: Collection[str], receipt: object) -> str | None:
+def witnessed_list_capture(
+    closure: Collection[str], receipt: object, *, cache: CaptureRootCache | None = None
+) -> str | None:
     """The Capture an absence over a Capture list cites, when its witness names the closure.
 
     Absence over a list is the one Claim closure of several unrelated
@@ -419,14 +421,33 @@ def witnessed_list_capture(closure: Collection[str], receipt: object) -> str | N
     the receipt cites the first. It is admitted only when the witness's
     members are exactly the item's closure and the receipt cites the first;
     ``None`` otherwise.
+
+    ``cache`` (the run's) keeps each answer per distinct closure, witness and
+    cited Capture: many absence items on one witness check it once, and each
+    further item costs one lookup, as ``capture_root`` does.
     """
 
     witness = getattr(receipt, "absence", None)
     members = getattr(witness, "members", ())
     cited = getattr(getattr(receipt, "value", None), "capture_digest", None)
-    if not members or set(members) != set(closure) or cited != members[0]:
+    if not members:
         return None
-    return str(members[0])
+    listed = frozenset(closure)
+    key = (listed, tuple(members), cited)
+    if cache is not None and key in cache.witnessed:
+        return cache.witnessed[key]
+    found = (
+        str(members[0]) if cited == members[0] and _witness_member_set(members) == listed else None
+    )
+    if cache is not None:
+        cache.witnessed[key] = found
+    return found
+
+
+def _witness_member_set(members: Sequence[str]) -> frozenset[str]:
+    """A list witness's members as a set: built once per distinct witness (tests count it)."""
+
+    return frozenset(members)
 
 
 def citable_captures(manifest: TerminalItemDependencyManifestV1 | None) -> tuple[str, ...]:
@@ -459,6 +480,10 @@ class CaptureRootCache:
     """
 
     roots: dict[frozenset[str], str | None] = dataclass_field(default_factory=dict)
+    #: ``witnessed_list_capture``'s answer per (closure, witness members, cited).
+    witnessed: dict[tuple[frozenset[str], tuple[str, ...], object], str | None] = dataclass_field(
+        default_factory=dict
+    )
 
 
 @dataclass

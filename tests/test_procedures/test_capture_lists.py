@@ -436,3 +436,249 @@ def test_delivery_admits_a_list_witness_only_for_exactly_its_members() -> None:
     assert witnessed_list_capture((first, second), receipt(second)) is None
     assert witnessed_list_capture((first, second), receipt(first, absence=_witness())) is None
     assert witnessed_list_capture((first, second), None) is None
+
+
+# -- List cost: work counts at two sizes (review-template-b, finding 2) -------------
+#
+# Each count is taken from the production function at 10 members / 10 records (or
+# absence changes) and at 100 / 100; each must grow with members + items, never
+# with their product.
+
+SIZES = [(10, 10), (100, 100)]
+
+
+class _Digest(str):
+    """A Capture digest that counts every equality comparison made against it."""
+
+    compared = 0
+
+    def __eq__(self, other: object) -> bool:
+        type(self).compared += 1
+        return str.__eq__(self, other)
+
+    __hash__ = str.__hash__
+
+
+class _Counted(list):  # type: ignore[type-arg]
+    """A list that counts the elements every iteration over it visits."""
+
+    visits = 0
+
+    def __iter__(self):  # type: ignore[no-untyped-def]
+        for item in super().__iter__():
+            type(self).visits += 1
+            yield item
+
+
+def _digests(count: int, tag: str = "m") -> list[str]:
+    return [
+        "sha256:" + hashlib.sha256(f"{tag}{index}".encode()).hexdigest() for index in range(count)
+    ]
+
+
+@pytest.mark.parametrize(("members", "records"), SIZES)
+def test_many_records_over_one_list_compare_each_root_once(members: int, records: int) -> None:
+    """Membership: the extract's list is indexed once, and each record's root is one lookup."""
+
+    from cruxible_core.procedures.claims_terminal import listed_capture_members
+
+    _Digest.compared = 0
+    _Counted.visits = 0
+    listed = _Counted(_Digest(digest) for digest in _digests(members))
+    index: dict[str, frozenset[str]] = {}
+    # Each record's root is its own (equal, not identical) digest, as a receipt carries it.
+    roots = [_Digest(str(listed[(record * 7) % members])) for record in range(records)]
+    _Counted.visits = 0
+    _Digest.compared = 0
+    for root in roots:
+        assert root in listed_capture_members(index, "entries", listed)
+    # The list is read once for every record, and each record's root is compared once.
+    assert _Counted.visits == members
+    assert _Digest.compared == records
+
+
+@pytest.mark.parametrize(("members", "records"), SIZES)
+def test_many_records_over_one_list_visit_each_call_token_once(members: int, records: int) -> None:
+    """Token visits: the call's tokens are indexed once for every member's lineage."""
+
+    from cruxible_core.procedures.execution import _member_tokens
+    from cruxible_core.procedures.terminal_dependencies import (
+        policy_token,
+        produced_capture_token,
+    )
+
+    digests = _digests(members)
+    tokens = _Counted(
+        [produced_capture_token(digest) for digest in digests]
+        + [policy_token(digest) for digest in _digests(records, "p")]
+    )
+    _Counted.visits = 0
+    lineage = _member_tokens(tokens, digests)
+    assert _Counted.visits == members + records
+    assert lineage == [frozenset({produced_capture_token(digest)}) for digest in digests]
+
+
+@pytest.mark.parametrize(("members", "records"), SIZES)
+def test_a_list_records_its_acquisition_outcome_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, members: int, records: int
+) -> None:
+    """Acquisition outcomes: one outcome per list, built once over every member."""
+
+    from cruxible_core.procedures import execution
+
+    built: list[int] = []
+    outcome = execution.AcquisitionInputOutcomeV1
+
+    def counting(**fields: Any) -> Any:
+        if fields.get("input_name") == "doc.pages":
+            built.append(len(fields.get("capture_digests", ())))
+        return outcome(**fields)
+
+    monkeypatch.setattr(execution, "AcquisitionInputOutcomeV1", counting)
+    instance = pages_world(tmp_path, max_items=members)
+    listed = [page(body, index) for index, body in enumerate(bodies(members))]
+    state, _ = run_line(instance, invoker=Invoker(output=answer(listed)), name=LINE_NAME)
+    assert state.status == "succeeded", state.terminal
+    assert len(state.result["pages"]) == members
+    assert built == [members]
+
+
+@pytest.mark.parametrize(("members", "changes"), SIZES)
+def test_many_absence_changes_on_one_witness_check_its_members_once(
+    members: int, changes: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Witness/closure validation at preparation: the member set is built once per run."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.procedures import terminal_dependencies
+    from cruxible_core.procedures.terminal_dependencies import (
+        CaptureRootCache,
+        witnessed_list_capture,
+    )
+
+    visited: list[int] = []
+    build = terminal_dependencies._witness_member_set
+
+    def counting(listed: Any) -> frozenset[str]:
+        visited.append(len(listed))
+        return build(listed)
+
+    monkeypatch.setattr(terminal_dependencies, "_witness_member_set", counting)
+    digests = _digests(members)
+    cache = CaptureRootCache()
+    for _ in range(changes):
+        # Each item carries its own copy of the witness and its own closure.
+        receipt = SimpleNamespace(
+            value=SimpleNamespace(capture_digest=digests[0]),
+            absence=_witness(capture=digests[0], members=list(digests)),
+        )
+        assert witnessed_list_capture(tuple(digests), receipt, cache=cache) == digests[0]
+    assert visited == [members]
+
+
+class _EpochResolver:
+    """A request verification context with a body-change epoch and no memo of its own."""
+
+    def __init__(self, epoch: object) -> None:
+        self.epoch = epoch
+
+    def _capture_proof_epoch(self) -> object:
+        return self.epoch
+
+    def recall_verified(self, capture_digest: str) -> None:
+        return None
+
+
+@pytest.mark.parametrize(("members", "changes"), SIZES)
+def test_many_absence_changes_on_one_witness_verify_each_member_once(
+    members: int, changes: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Proof verifications at acceptance: N Claims on one witness verify its M members once."""
+
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts import claims
+
+    digests = _digests(members)
+    verified: list[str] = []
+
+    def verify(capture: str, **kwargs: Any) -> Any:
+        assert kwargs["require_production_proof"] is True
+        verified.append(capture)
+        return SimpleNamespace(source=SimpleNamespace(source_identity="test.kev-pages"))
+
+    monkeypatch.setattr(claims, "verify_capture", verify)
+    monkeypatch.setattr(claims, "capture_retained_body_digests", lambda envelope: ("body",))
+    monkeypatch.setattr(claims, "_named_capture_contract", lambda store, digest: "contract")
+    store = SimpleNamespace(verify=lambda digest: True)
+    contracts = {"contract": [SimpleNamespace(contract=None)]}
+
+    def judge(memo: dict[object, None], resolver: Any) -> None:
+        for _ in range(changes):
+            witness = _witness(capture=digests[0], members=list(digests))
+            assert (
+                claims.absence_witness_refusal(
+                    witness,
+                    capture_store=store,  # type: ignore[arg-type]
+                    contracts_by_digest=contracts,  # type: ignore[arg-type]
+                    historical_capture_contract=None,
+                    ledger_resolver=None,
+                    producer_artifact_digests=None,
+                    producer_receipt_resolver=resolver,
+                    verified=memo,
+                )
+                is None
+            )
+
+    memo: dict[object, None] = {}
+    judge(memo, _EpochResolver("epoch-1"))
+    assert verified == digests
+    # Under a new body-change epoch the witness is verified again, once.
+    verified.clear()
+    judge(memo, _EpochResolver("epoch-2"))
+    assert verified == digests
+    # Without an epoch nothing is reused: the warm answer never outlives a body change.
+    verified.clear()
+    judge(memo, None)
+    assert len(verified) == members * changes
+
+
+@pytest.mark.parametrize(("members", "changes"), SIZES)
+def test_many_absence_reobservations_on_one_witness_verify_each_member_once(
+    members: int, changes: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Proof verifications at re-observation delivery: once per later member, per witness."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.service.evidence import capture_reads
+
+    digests = _digests(members)
+    verified: list[str] = []
+
+    def verify(instance: Any, coordinate: Any, digest: str, **kwargs: Any) -> Any:
+        verified.append(digest)
+        return SimpleNamespace(
+            envelope=SimpleNamespace(source=SimpleNamespace(source_identity="test.kev-pages"))
+        )
+
+    monkeypatch.setattr(capture_reads, "verify_accepted_capture", verify)
+    store = ClaimReobservationStore.__new__(ClaimReobservationStore)
+    store.instance = SimpleNamespace(  # type: ignore[assignment]
+        body_store=lambda: SimpleNamespace(landings=SimpleNamespace(head=lambda: "landed")),
+        capture_verification_context=lambda: None,
+    )
+    cited = SimpleNamespace(source=SimpleNamespace(source_identity="test.kev-pages"))
+    memo: dict[object, None] = {}
+    for _ in range(changes):
+        refusal = store._witness_refusal(
+            _witness(capture=digests[0], members=list(digests)),
+            envelope=cited,  # type: ignore[arg-type]
+            coordinate=SimpleNamespace(git_oid="0" * 40),  # type: ignore[arg-type]
+            verified=memo,
+        )
+        assert refusal is None
+    # The cited first member is verified by the caller; every later one once.
+    assert verified == digests[1:]
