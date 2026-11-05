@@ -24,6 +24,10 @@ from cruxible_client.transport.http import CruxibleClient
 from tests.support.procedures import procedure_spec_data, ref
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 
 def _transport(http: TestClient) -> CruxibleClient:
     transport = CruxibleClient(base_url="http://cruxible")

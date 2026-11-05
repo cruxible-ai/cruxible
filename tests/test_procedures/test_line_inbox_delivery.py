@@ -31,6 +31,10 @@ from tests.test_procedures.test_procedure_source_runs import (
     _world,
 )
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 ROWS = [{"cve": "CVE-2026-0001"}, {"cve": "CVE-2026-0002"}, {"cve": "CVE-2026-0003"}]
 #: The extract that reads the feed's rows out of the workspace read's exact bytes.
 ROWS_ALIAS = "feed_rows"

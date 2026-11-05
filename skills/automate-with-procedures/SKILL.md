@@ -32,8 +32,11 @@ A Procedure never reads the clock; time enters only through Triggers.
 ## 2. Author the Procedure
 
 Write it as a typed `ProcedureSpec` (or with the SDK's `Sequence` builder over
-it: typed references, typed predicates, typed guard actions), and submit it
-like any definition. Give a Procedure that may one day settle a settle terminal
+it), and submit it like any definition. Its shape is fixed: read, call (fetch,
+then derive), extract, claims, with filter/dedupe narrowing and inbox posts.
+Any other step (guard, project, select, repeat, invoke, emit, halt, or a shape,
+join, aggregate, union or derive transform) refuses `procedure_step_closed`:
+put that computation in a provider derive. Give a Procedure that may one day settle a settle terminal
 from the start: while its Line is capped at `propose`, it proposes.
 
 ```bash

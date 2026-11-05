@@ -23,6 +23,10 @@ from cruxible_core.service.procedures.procedure_runs import (
 from tests.support.operation_world import NOW, actor, author_line, author_procedure, world
 from tests.support.procedures import procedure_limits, procedure_spec, ref
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 LIMITS = procedure_limits(provider_calls=0)
 
 

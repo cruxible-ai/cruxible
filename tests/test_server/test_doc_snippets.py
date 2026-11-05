@@ -410,7 +410,7 @@ PAGES: dict[str, WorldBuilder] = {
 
 #: (doc, block line) -> why that block is not run.
 NOT_RUN: dict[tuple[str, int], str] = {
-    ("lines-and-automation.md", 62): (
+    ("lines-and-automation.md", 69): (
         "the Procedure's shape: its slot, CaptureContract and row Contract are not accepted "
         "in the page world"
     ),

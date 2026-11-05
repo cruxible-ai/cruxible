@@ -122,6 +122,10 @@ from tests.support.procedures import (
     procedure_members,
 )
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 NOW = datetime(2026, 9, 12, 12, 0, tzinfo=UTC)
 SEED_STAMP = "2026-09-12T11:00:00.000000Z"
 ACCEPT_STAMP = "2026-09-12T11:30:00.000000Z"

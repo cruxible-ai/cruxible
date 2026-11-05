@@ -348,11 +348,11 @@ automation](lines-and-automation.md) guide walks through one. From the SDK:
 - A Procedure is authored in one typed form, the `ProcedureSpec` (JSON over
   MCP/HTTP, YAML on the CLI). In Python, `Sequence`
   (`cruxible_client.authoring.procedures`) is a thin builder over that spec:
-  `read`, `call`, `extract`, `transform`, `project`, `guard`, `repeat`,
-  `invoke`, `select`, `inbox`, `propose`, `settle`, `emit` and `halt` steps,
-  typed references (`handle["field"]`), typed predicates (`eq`, `gt`,
-  `present`, `all_of`, ...) and typed guard actions (`abort`, `halt`,
-  `goto`), with `.preview()` before submitting.
+  `read`, `call` (fetch, then derive), `extract`, `transform` (filter and
+  dedupe), `claims` and `inbox` steps, typed references (`handle["field"]`)
+  and typed predicates (`eq`, `gt`, `present`, `all_of`, ...), with
+  `.preview()` before submitting. Every other step kind refuses
+  `procedure_step_closed`: computation lives in a provider derive.
 - `cx.line(name).run()` runs a Line once; `.enable()` lets its Triggers fire.
 - `cx.accepted_procedure(name)` reads one: `.run(input=...)` for a direct run,
   `.measure(run=...)` and `.readings(...)` for its measurements.

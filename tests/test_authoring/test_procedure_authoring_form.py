@@ -14,6 +14,10 @@ from cruxible_core.proposals.proposals import AuthenticatedActor
 from tests.core_support._support import initialize_local
 from tests.support.procedures import procedure_spec_data, ref, spec_payload
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 TIMESTAMP = "2026-08-21T12:00:00.000000Z"
 
 

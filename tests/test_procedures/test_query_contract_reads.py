@@ -41,6 +41,10 @@ from tests.core_support._knowledge_loop_support import (
 from tests.support.operation_world import actor, author_procedure
 from tests.support.procedures import procedure_spec
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 NOW = datetime.fromisoformat(EVALUATION_TIME)
 ROW = "test.work-row"
 

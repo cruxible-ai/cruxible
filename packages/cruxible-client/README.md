@@ -3489,28 +3489,31 @@ list); a guard's arms are typed actions: `{"abort": {code, message}}`,
 node has a typed step, so `get` renders an accepted Procedure in exactly this
 form.
 
+Every Procedure has one shape (the Procedure template): read, call (fetch,
+then derive), extract and claims, with filter/dedupe narrowing and inbox
+egress. Computation lives in a provider derive (a call to a pure operation),
+never in Procedure syntax, so authoring refuses every other step kind with
+`cruxible.authoring.procedure_step_closed` at that step (`$.steps[i]`); the
+return value is `returns: {from|fields}`, not a `project` step.
+
 | Step | Graph kind | Notes |
 |---|---|---|
 | `read` (`query`) / `read` (`claim_type`) | `read` | Runs to the end under the read ceiling |
 | `call` | `call` | Through a declared slot; `captures` makes it acquire |
 | `extract` | `extract` | One Capture's records, typed by a row Contract |
-| `transform` | `transform` | shape, filter, join, aggregate, dedupe, union, derive |
-| `project` | `project` | `fields` or a `literal` record; `leaf: true` returns this branch's value |
-| `guard` | `guard` | Typed predicate, typed `then`/`else` actions |
-| `repeat` | `repeat` | Bounded body of typed calls and closed transforms |
-| `invoke` | `invoke` | Value `{succeeded, status, receipt, value}` |
-| `select` | `select` | Joins mutually exclusive producers |
+| `transform` | `transform` | filter and dedupe only; shape, join, aggregate, union and derive are closed |
 | `inbox` | `post_inbox` | Line only; observe authority |
 | `claims` | `claims` | Typed records to Claims; its Mandate chooses propose or settle. |
-| `emit` | `emit_capture` | Line only |
-| `halt` | `halt` | Ends a path without a result |
+| `project`, `guard`, `repeat`, `invoke`, `select`, `emit`, `halt` | (closed) | Refused at authoring; move the computation into a derive |
 
 `Sequence` (`cruxible_client.authoring.procedures`) builds that spec directly:
 each value step returns a `Handle`, and `handle["field"]` is the typed `Ref` to
 one of its fields, checked against the fields the step is known to produce
 (its declared output, a query read's view, or a supplied slot Contract).
-`eq`, `gt`, `present`, `all_of`, `count`, ... build typed predicates, and
-`abort`, `halt` and `goto` build guard actions. `spec()` is the spec;
+`eq`, `gt`, `present`, `all_of`, `count`, ... build typed predicates for
+filter and claims `where`/`when`. Its builders for the closed step kinds still
+exist, and a spec that uses one refuses `procedure_step_closed` in `preview()`
+and at authoring. `spec()` is the spec;
 `preview()` lowers it locally through the same shared lowering (structural
 only: it does not verify runtime values, availability or authority); `build()`
 returns `ProcedureInput(kind="procedure", spec=...)` or raises
@@ -3521,8 +3524,8 @@ graph `definition`) refuses `procedure_authoring_form_retired`, naming the spec.
 
 | Run surface | Availability |
 |---|---|
-| Direct run (`Procedure.run`) | read, extract, transform, project, guard, select, halt and call; transform-only repeat; invoke subject to child closure/authority |
-| Accepted Line (`cx.line(name).run()`) | Adds authorized emit_capture, post_inbox and claims paths; a Repeat whose body calls a provider also runs only on a Line |
+| Direct run (`Procedure.run`) | read, call, extract and the filter/dedupe transforms |
+| Accepted Line (`cx.line(name).run()`) | Adds authorized post_inbox and claims paths |
 
 `cx.get(f"Procedure:{name}")` reports which of these applies as `runnable`
 (`direct`, `line` or `unsupported`) with the nodes behind it.

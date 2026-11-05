@@ -69,6 +69,7 @@ from cruxible_client.contracts.procedures.authored import (
     ProcedureSpec,
     ProcedureSpecError,
     lower_procedure_spec,
+    refuse_closed_steps,
 )
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
 from cruxible_client.contracts.procedures.line_specs import LineBudgetsInput, LineFindings
@@ -828,6 +829,7 @@ def _procedure_payload(
     value: ProcedureInput,
 ) -> ProcedureAuthoringPayload:
     try:
+        refuse_closed_steps(value.spec)  # the Procedure template (D-R37 h1)
         lower_procedure_spec(value.spec)  # shared offline syntax/reference checks
     except ProcedureSpecError as exc:
         raise AuthoringInputError(exc.code, exc.field_path, exc.message, exc.repair) from exc

@@ -31,6 +31,10 @@ from tests.support.procedures import procedure_spec, refs
 from tests.test_pilot.support import kev_spec, pilot_world
 from tests.test_procedures.test_claims_terminal import activate, candidate_claims, run
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 READER = BodyAccessContext(principal_id="reader", can_read_body=True)
 KEY = BodyAccessContext(principal_id="reviewer", can_read_body=True, can_read_restricted=True)
 SECRET = "SECRET-LEXEME-7f3a"

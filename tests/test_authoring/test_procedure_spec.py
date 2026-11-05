@@ -25,6 +25,10 @@ from cruxible_client.contracts.procedures.models import ProcedureDefinition
 from cruxible_client.contracts.shapes import ContractField, IntType, validate_contract
 from tests.support.procedures import procedure_members, ref
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 
 def _artifact(definition):
     from tests.support.procedures import procedure_artifact

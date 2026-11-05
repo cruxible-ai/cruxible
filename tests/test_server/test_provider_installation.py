@@ -18,6 +18,10 @@ from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.runtime.provider_runtime import PROVIDER_RUNTIME_CONFIG_PATH
 from tests.support.procedures import procedure_limits, procedure_spec_data
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 
 @pytest.fixture
 def installer_http(tmp_path, monkeypatch, request, provider_checkout):

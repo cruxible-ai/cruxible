@@ -167,6 +167,20 @@ def isolate_daemon_checkpoint_mode() -> Iterator[None]:
         manager.quiet_checkpoint_seconds = saved
 
 
+@pytest.fixture(autouse=True)
+def executor_only_procedure_steps(request: pytest.FixtureRequest) -> Iterator[None]:
+    """An ``executor_only`` test authors closed step kinds (D-R37 h1); see
+    :func:`tests.support.procedures.executor_only_steps`."""
+
+    if request.node.get_closest_marker("executor_only") is None:
+        yield
+        return
+    from tests.support.procedures import executor_only_steps
+
+    with executor_only_steps():
+        yield
+
+
 def test_owned_roots(base_temp: Path) -> tuple[Path, ...]:
     """The directories a test is allowed to have put a workspace binding in.
 

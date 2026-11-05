@@ -28,6 +28,10 @@ from tests.test_procedures.test_claims_terminal import (
     run,
 )
 
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
 
 def _incomplete_spec(*, inbox: bool = False, unknown: bool = True, value: str = "closed") -> Any:
     steps = claims_spec().model_dump(mode="json", by_alias=True)["steps"]
