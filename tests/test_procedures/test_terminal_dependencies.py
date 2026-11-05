@@ -252,7 +252,14 @@ def test_capture_root_is_free_for_every_item_after_the_first_in_one_closure(n: i
         assert first <= 2 * _linear(n)
         assert later == [0] * len(later)
     assert len(cache.roots) == 2
-    assert vars(cache).keys() == {"roots"}
+    # The cache may only hold the per-closure root memo (``roots``) and (lane
+    # B) the per-witness verdict memo (``witnessed``) -- never a per-vertex
+    # ancestor set. Both are keyed/valued by digests and verdicts only, never
+    # by a retained traversal state (e.g. a per-vertex visited/ancestor set).
+    cache_fields = vars(cache)
+    assert cache_fields.keys() <= {"roots", "witnessed"}
+    for value in cache_fields.values():
+        assert isinstance(value, dict)
 
 
 @pytest.mark.parametrize("n", [10, 100])

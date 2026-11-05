@@ -1,6 +1,6 @@
 {
   "activation": "abort",
-  "description": "Count governed work items through the accepted query.",
+  "description": "List governed work item ids through the accepted query.",
   "hard_caps": {
     "capture_bytes": 0,
     "items": 200,
@@ -11,45 +11,27 @@
   "input": {},
   "kind": "procedure",
   "output": {
-    "count": "int"
+    "item_ids": "list<string>{max_items: 50}"
   },
   "procedure": "project.work_item.digest",
-  "returns": "result",
+  "returns": {
+    "fields": {
+      "item_ids": {
+        "$ref": "step",
+        "path": [
+          "rows",
+          "[*]",
+          "item_id"
+        ],
+        "step": "query"
+      }
+    }
+  },
   "steps": [
     {
       "id": "read",
       "query": "project.work_items",
       "read": "query"
-    },
-    {
-      "kind": "aggregate",
-      "spec": {
-        "input": {
-          "$ref": "step",
-          "path": [
-            "rows"
-          ],
-          "step": "query"
-        },
-        "op": "count"
-      },
-      "transform": "counted"
-    },
-    {
-      "fields": {
-        "count": {
-          "$ref": "step",
-          "path": [
-            "result"
-          ],
-          "step": "counted"
-        }
-      },
-      "id": "shape",
-      "output": {
-        "count": "int"
-      },
-      "project": "result"
     }
   ]
 }
