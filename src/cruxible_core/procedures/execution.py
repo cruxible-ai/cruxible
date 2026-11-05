@@ -5570,15 +5570,9 @@ class ProcedureExecutor:
                     manifest_digest=manifest_digest,
                     record_digest=stored.record_digest,
                     sequence=stored.record.sequence,
-                    **(
-                        {}
-                        if change is None
-                        else {
-                            "item_identity_digest": identities[index],
-                            "change_kind": change.kind,
-                            "change_digest": claims_item_change_digest(change),
-                        }
-                    ),
+                    item_identity_digest=None if change is None else identities[index],
+                    change_kind=None if change is None else change.kind,
+                    change_digest=None if change is None else claims_item_change_digest(change),
                 )
             )
         return tuple(receipts), tuple(values), manifests, selected
