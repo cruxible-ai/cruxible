@@ -36,6 +36,7 @@ from cruxible_client.contracts.shapes import (
     requires_complete_input,
 )
 from cruxible_core.procedures.claims_context import ClaimsContext
+from cruxible_core.procedures.claims_units import claims_item_change_digest
 
 if TYPE_CHECKING:
     from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
@@ -2299,6 +2300,8 @@ class _RunState:
     absence_findings: set[str] = dataclass_field(default_factory=set)
     extraction_checks: dict[str, CompleteWhenResult] = dataclass_field(default_factory=dict)
     claims_changes: dict[str, tuple[CoreClaimsChange, ...]] = dataclass_field(default_factory=dict)
+    #: Each claims change's stable item identity (D-R37 g1), aligned with claims_changes.
+    claims_identities: dict[str, tuple[str, ...]] = dataclass_field(default_factory=dict)
     claims_evidence: dict[str, tuple[ClaimEvidenceReceipt | None, ...]] = dataclass_field(
         default_factory=dict
     )
@@ -4853,6 +4856,7 @@ class ProcedureExecutor:
         state.claims_diagnostics[node.node_id] = expanded.diagnostics
         state.claims_evidence[node.node_id] = expanded.evidence
         state.claims_changes[node.node_id] = expanded.changes
+        state.claims_identities[node.node_id] = expanded.identities
         self._run_terminal(
             node,
             admission=admission,
@@ -5552,7 +5556,13 @@ class ProcedureExecutor:
             payloads,
             recorded_at=recorded_at,
         )
+        # A claims item also records what it changed (D-R37 g): its stable
+        # identity, its change's kind and the digest of that canonical change,
+        # never the change body. Other terminals' items carry none.
+        changes = state.claims_changes.get(node.node_id, ())
+        identities = state.claims_identities.get(node.node_id, ())
         for index, (stored, (item_key, manifest_digest)) in enumerate(zip(group, item_drafts)):
+            change = changes[index] if index < len(changes) else None
             receipts.append(
                 TerminalChildReceiptV1(
                     child_index=index,
@@ -5560,6 +5570,15 @@ class ProcedureExecutor:
                     manifest_digest=manifest_digest,
                     record_digest=stored.record_digest,
                     sequence=stored.record.sequence,
+                    **(
+                        {}
+                        if change is None
+                        else {
+                            "item_identity_digest": identities[index],
+                            "change_kind": change.kind,
+                            "change_digest": claims_item_change_digest(change),
+                        }
+                    ),
                 )
             )
         return tuple(receipts), tuple(values), manifests, selected

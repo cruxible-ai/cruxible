@@ -2079,6 +2079,9 @@ def _fold_terminal_egress(
                     egress_digest=handle.get("egress_digest"),
                     path=handle.get("path"),
                     unchanged=handle.get("disposition") in {"unchanged", "reused"},
+                    item_identity_digest=child.get("item_identity_digest"),
+                    change_kind=child.get("change_kind"),
+                    change_digest=child.get("change_digest"),
                 )
             )
     raw_targets = payload.get("target_paths")

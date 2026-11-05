@@ -49,6 +49,7 @@ from cruxible_core.procedures.claims_diagnostics import ClaimsDiagnostics
 from cruxible_core.procedures.claims_units import (
     ClaimUnitUnresolved,
     claim_time,
+    claims_item_identity_digest,
     resolve_object,
     same_content,
     same_value,
@@ -77,6 +78,8 @@ class ExpandedClaims:
     diagnostics: ClaimsDiagnostics
     evidence: tuple[ClaimEvidenceReceipt | None, ...]
     changes: tuple[CoreClaimsChange, ...]
+    #: Each change's stable item identity (D-R37 g1), in the same order.
+    identities: tuple[str, ...] = ()
 
 
 def expand_claims(
@@ -147,6 +150,7 @@ def expand_claims(
     diagnostics = state.claims_diagnostics.setdefault(node.node_id, ClaimsDiagnostics())
     evidence: list[ClaimEvidenceReceipt | None] = []
     changes: list[CoreClaimsChange] = []
+    identities: list[str] = []
     values: list[CanonicalValue] = []
     tokens: list[frozenset[DependencyToken]] = []
     created: set[bytes] = set()
@@ -675,6 +679,16 @@ def expand_claims(
                                 value=obj,
                             )
                         )
+                        identities.append(
+                            claims_item_identity_digest(
+                                node_id=node.node_id,
+                                subject=subject_wire,
+                                claim_type=ct,
+                                qualifier=qualifier,
+                                obj=obj,
+                                context=context,
+                            )
+                        )
                         values.append(
                             cast(
                                 CanonicalValue,
@@ -709,6 +723,9 @@ def expand_claims(
                         rationale=rationale,
                     )
                 )
+                identities.append(
+                    claims_item_identity_digest(node_id=node.node_id, subject=subject_wire)
+                )
                 values.append(cast(CanonicalValue, {"key": key}))
                 tokens.append(own)
                 evidence.append(None)
@@ -739,6 +756,16 @@ def expand_claims(
                     }
                 )
             )
+            identities.append(
+                claims_item_identity_digest(
+                    node_id=node.node_id,
+                    subject=subject_wire,
+                    claim_type=ct,
+                    qualifier=qualifier,
+                    obj=obj,
+                    context=context,
+                )
+            )
             values.append(
                 cast(
                     CanonicalValue,
@@ -767,6 +794,7 @@ def expand_claims(
                 tokens=tokens,
                 evidence=evidence,
                 changes=changes,
+                identities=identities,
                 diagnostics=diagnostics,
                 reserve=reserve,
                 within=within_paths,
@@ -775,7 +803,9 @@ def expand_claims(
             raise _RunRefusal(
                 "claims_inverse_unit_unresolved", str(exc), node_id=node.node_id
             ) from exc
-    return ExpandedClaims(values, tuple(tokens), diagnostics, tuple(evidence), tuple(changes))
+    return ExpandedClaims(
+        values, tuple(tokens), diagnostics, tuple(evidence), tuple(changes), tuple(identities)
+    )
 
 
 def bind_claim_input(

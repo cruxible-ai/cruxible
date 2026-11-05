@@ -67549,6 +67549,36 @@
             "additionalProperties": false,
             "description": "One fanout child of a terminal, and the handle its sink produced for it.",
             "properties": {
+              "change_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Change Digest"
+              },
+              "change_kind": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "claim",
+                      "subject",
+                      "reobservation",
+                      "retirement"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Change Kind"
+              },
               "child_index": {
                 "minimum": 0,
                 "title": "Child Index",
@@ -67565,6 +67595,18 @@
                 ],
                 "default": null,
                 "title": "Egress Digest"
+              },
+              "item_identity_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Item Identity Digest"
               },
               "item_key": {
                 "title": "Item Key",
@@ -69741,6 +69783,36 @@
             "additionalProperties": false,
             "description": "One fanout child of a terminal, and the handle its sink produced for it.",
             "properties": {
+              "change_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Change Digest"
+              },
+              "change_kind": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "claim",
+                      "subject",
+                      "reobservation",
+                      "retirement"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Change Kind"
+              },
               "child_index": {
                 "minimum": 0,
                 "title": "Child Index",
@@ -69757,6 +69829,18 @@
                 ],
                 "default": null,
                 "title": "Egress Digest"
+              },
+              "item_identity_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Item Identity Digest"
               },
               "item_key": {
                 "title": "Item Key",

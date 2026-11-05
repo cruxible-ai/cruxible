@@ -9,7 +9,7 @@ from typing import Any, cast
 
 from pydantic import TypeAdapter
 
-from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.canonical_forms import canonicalize_literal
 from cruxible_client.contracts.claim_types import effective_canonical_form
 from cruxible_client.contracts.claims import (
@@ -38,6 +38,10 @@ class ClaimUnitUnresolved(CoreError):
 
 
 def unit_key(obj: Any, claim_type: Any, context: Any) -> bytes:
+    return canonical_bytes(_unit_value(obj, claim_type, context))
+
+
+def _unit_value(obj: Any, claim_type: Any, context: Any) -> Any:
     def object_key_value(address: SemanticAddress, predicate: str) -> object:
         held = context.slot(address, predicate, None)
         return (
@@ -56,7 +60,68 @@ def unit_key(obj: Any, claim_type: Any, context: Any) -> bytes:
         raise ClaimUnitUnresolved(
             "The inverse object key is unresolved; repair the object's key Claim."
         )
-    return canonical_bytes(key.model_dump(mode="json"))
+    return key.model_dump(mode="json")
+
+
+#: Domains of the per-item run record (D-R37 g1): a stable item identity and the
+#: digest of the one canonical change the item made.
+CLAIMS_ITEM_IDENTITY_DOMAIN = "playbill-claims-item-identity-v1"
+CLAIMS_ITEM_CHANGE_DOMAIN = "playbill-claims-item-change-v1"
+
+
+def claims_item_identity_digest(
+    *,
+    node_id: str,
+    subject: object,
+    claim_type: Any | None = None,
+    qualifier: object = None,
+    obj: Any = None,
+    context: Any = None,
+) -> str:
+    """One claims-terminal item's identity, stable across runs: {node, ClaimType, Subject, unit}.
+
+    ``child_index`` and the item's value are left out, so the same Subject and
+    unit keep one identity when other items come and go or its value changes.
+    The unit is the slot (``qualifier`` with it) plus the D-R30 unit within it:
+    the whole slot for a one-valued ClaimType, the object's unit key for a
+    many-valued one. Its every read was already made, and cached, by the
+    eligibility law that produced the change. A Subject item has no ClaimType
+    and no unit. ``subject`` is the Subject's address, or its key reference
+    while the Subject does not exist yet.
+    """
+
+    def wire(value: Any) -> Any:
+        return value.model_dump(mode="json") if hasattr(value, "model_dump") else value
+
+    unit: object = None
+    if claim_type is not None:
+        if claim_type.cardinality != "many":
+            unit = {"kind": "slot", "value": None}
+        else:
+            raw = wire(obj)
+            try:
+                unit = _unit_value(raw, claim_type, context)
+            except ClaimUnitUnresolved:
+                unit = {"kind": "object", "value": raw}
+    return typed_digest(
+        Sha256Value,
+        CLAIMS_ITEM_IDENTITY_DOMAIN,
+        {
+            "node_id": node_id,
+            "claim_type": None if claim_type is None else claim_type.predicate,
+            "subject": wire(subject),
+            "qualifier": qualifier,
+            "unit": unit,
+        },
+    ).tagged
+
+
+def claims_item_change_digest(change: Any) -> str:
+    """The digest of one item's canonical change; the change body is never stored (g2)."""
+
+    return typed_digest(
+        Sha256Value, CLAIMS_ITEM_CHANGE_DOMAIN, change.model_dump(mode="json")
+    ).tagged
 
 
 def claim_time(value: object) -> datetime | None:

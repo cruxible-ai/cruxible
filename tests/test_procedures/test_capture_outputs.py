@@ -405,7 +405,6 @@ def test_a_call_whose_every_capture_is_omitted_still_binds_its_typed_fields(
     assert final["source_capture_associations"] == []
 
 
-
 def _result_digests(tmp_path: Path, name: str, left: bytes) -> tuple[str, str, list[str]]:
     """Run the paired Line once in a fresh world: its replay key, result digest, Captures.
 
@@ -430,8 +429,6 @@ def _result_digests(tmp_path: Path, name: str, left: bytes) -> tuple[str, str, l
         state.semantic_result_digest,
         sorted(final["consumption"]["captures"]),
     )
-
-
 
 
 def test_the_result_digest_commits_the_fetched_captures(tmp_path: Path) -> None:
