@@ -3140,6 +3140,7 @@ def _render_line_member(
             TriggerTargetRefused,
             trigger_capture_output,
         )
+        from cruxible_client.contracts.provider_operations import capture_list_fields
 
         contract: ArtifactPin | ArtifactNameRef | None = None
         try:
@@ -3161,6 +3162,21 @@ def _render_line_member(
                 for node in procedure.definition.nodes
                 if isinstance(node, CallNode) and node.node_id == output.node_path
             )
+            slot = procedure.definition.slots.get(call.slot)
+            out = None if slot is None else tree_contract_resolver(tree)(slot.out)
+            if out is not None and output.field in {
+                name for name, _kind, _cap in capture_list_fields(out)
+            }:
+                # A capture_landing Trigger lands one Capture; a list field's
+                # members land together or not at all (D-R37 a7).
+                _refuse(
+                    "cruxible.authoring.line_trigger_target_list",
+                    "trigger_input",
+                    f"trigger_input {payload.trigger_input!r} names a list of Captures; a "
+                    "Trigger substitutes one Capture, never a list field.",
+                    repair_kind="replace_trigger_input",
+                    repair_description="Name a single capture output, or omit trigger_input.",
+                )
             contract = call.captures[output.field]
         assert isinstance(contract, ArtifactPin | ArtifactNameRef)
         trigger_event = CaptureEventNameSelector.model_validate(

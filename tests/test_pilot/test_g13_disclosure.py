@@ -627,7 +627,7 @@ def test_restricted_kinds_compile_under_the_body_access_coordinate(tmp_path: Pat
 
     instance, _root = pilot_world(tmp_path, "kev.json", capture_body_access="restricted")
     coordinate = instance.accepted_coordinate()
-    assert CURRENT_COMPILER_REVISION == "derive-template-v1"
+    assert CURRENT_COMPILER_REVISION == "list-captures-v1"
     from cruxible_core.service.authoring.documents import AcceptedCoordinate
 
     assert AcceptedCoordinate.from_internal(coordinate).compiler_digest == (

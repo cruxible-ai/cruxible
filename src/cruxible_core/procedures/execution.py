@@ -175,6 +175,7 @@ from cruxible_client.contracts.provider_operations import (
     OperationItemBudgetExceeded,
     OperationValueRefused,
     capture_fields,
+    capture_list_fields,
     closure_lookup,
     validate_operation_value,
 )
@@ -214,6 +215,7 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.acquisition import (
     ACQUISITION_ORIGIN_INELIGIBLE,
     ACQUISITION_OVERSIZED,
+    ACQUISITION_REFUSED,
     ProcedureCaptureMaterialV1,
     ProcedureSourceAcquisitionResultV1,
     apply_acquisition_result,
@@ -3883,8 +3885,13 @@ class ProcedureExecutor:
         # An operation whose out Contract carries no capture<K> field returns
         # its whole output as Capture wire; the call's value then names only
         # that Capture.
+        list_caps = (
+            {}
+            if out_contract is None
+            else {name: cap for name, _kind, cap in capture_list_fields(out_contract)}
+        )
         whole_wire = workspace_request is None and (
-            out_contract is None or not capture_fields(out_contract)
+            out_contract is None or not (capture_fields(out_contract) or list_caps)
         )
         if whole_wire:
             output = self._validate_operation_value(
@@ -3896,7 +3903,64 @@ class ProcedureExecutor:
                 node_id=node.node_id,
             )
         wires: dict[str, ProviderResultToExternalCapture] = {}
+        # A list<capture<K>> field is one capture output whose members are each a
+        # Capture (D-R37 a1): its member keys ``<field>/<i>`` (index for order
+        # only, a2) alias the field's rule, pin and CaptureContract, so every
+        # loop below runs over members exactly as over fields.
+        members: dict[str, str] = {}
+        member_keys: dict[str, tuple[str, ...]] = {}
+        member_requests: dict[str, str] = {}
+        if not whole_wire and workspace_request is None and isinstance(output, dict):
+            for field in fields:
+                if field not in list_caps:
+                    continue
+                listed = output.get(field)
+                if not isinstance(listed, list):
+                    raise _InternalFailure(
+                        "provider_protocol_violation",
+                        details={
+                            "node_id": node.node_id,
+                            "reason": f"capture list field {field!r} is not a list",
+                        },
+                    )
+                _check_capture_list_bound(
+                    node,
+                    field,
+                    len(listed),
+                    cap=list_caps[field],
+                    limit=_effective_max_items(admission),
+                    boundary=f"operation-out:{occurrence.operation.name}",
+                    state=state,
+                )
+                keys = tuple(f"{field}/{index}" for index in range(len(listed)))
+                member_keys[field] = keys
+                for key, member in zip(keys, listed, strict=True):
+                    members[key] = field
+                    try:
+                        wires[key] = ProviderResultToExternalCapture.model_validate(member)
+                    except ValidationError as exc:
+                        raise _InternalFailure(
+                            "provider_protocol_violation",
+                            details={
+                                "node_id": node.node_id,
+                                "reason": f"capture list member {key!r} is not Capture wire",
+                            },
+                        ) from exc
+                    member_requests[key] = _member_request_digest(
+                        wires[key], key=key, node_id=node.node_id, seen=member_requests
+                    )
+            fields = tuple(key for field in fields for key in member_keys.get(field, (field,)))
+            rules = {key: rules[members.get(key, key)] for key in fields}
+            pins = {key: pins[members.get(key, key)] for key in fields}
+            contracts = {key: contracts[members.get(key, key)] for key in fields}
+            derived_fields = frozenset(
+                key for key in fields if members.get(key, key) in derived_fields
+            )
+        #: Members dropped for a typed failure: oversized or origin-ineligible (a4).
+        dropped: dict[str, str] = {}
         for field in fields:
+            if field in members:
+                continue
             try:
                 if whole_wire:
                     wires[field] = ProviderResultToExternalCapture.model_validate(output)
@@ -3929,11 +3993,25 @@ class ProcedureExecutor:
                         "reason": f"capture field {field!r} is not Capture wire",
                     },
                 ) from exc
+        results: dict[str, ProcedureSourceAcquisitionResultV1] = {}
         for field, rule in rules.items():
             # F05/§4.1,§4.4: each capture field's own coordinate names where its
             # bytes came from (``url``, and ``final_url`` after a redirect), and
             # is checked too, before any Capture conversion.
             offending_result_origin = disallowed_origin(rule, wires[field].coordinate)
+            if offending_result_origin is not None and field in members:
+                # A list member off the permitted origins is dropped; its list is
+                # then incomplete, and absence over it never retires (D-R37 a4).
+                dropped[field] = ACQUISITION_ORIGIN_INELIGIBLE
+                results[field] = ProcedureSourceAcquisitionResultV1(
+                    node_id=node.node_id,
+                    input_name=rule.input_name,
+                    outcome="refused",
+                    reason_code=ACQUISITION_REFUSED,
+                    detail=f"The coordinate names {offending_result_origin!r}, whose origin is "
+                    "not in the Line's permitted acquisition.origins for this field.",
+                )
+                continue
             if offending_result_origin is not None:
                 raise _RunRefusal(
                     cast(ProcedureNodeRefusalCode, ACQUISITION_ORIGIN_INELIGIBLE),
@@ -3945,6 +4023,8 @@ class ProcedureExecutor:
         producer = self.slot_bindings[node.slot].build.target
         bound_generation = admission.accepted_coordinate.generation_root
         for field in fields:
+            if field in dropped:
+                continue
             try:
                 # F05b: every check independent of the result's byte length runs
                 # before classifying it as oversized, so a schema, replayability
@@ -3957,7 +4037,7 @@ class ProcedureExecutor:
                     occurrence=occurrence,
                     producer=producer,
                     bound_generation=bound_generation,
-                    field=field,
+                    field=members.get(field, field),
                     source_read_receipt=source_read_receipt,
                 )
             except (CaptureFormatError, ValidationError, ValueError) as exc:
@@ -3970,10 +4050,11 @@ class ProcedureExecutor:
             reservations=self.material_reservations,
             admission=admission,
         )
-        results: dict[str, ProcedureSourceAcquisitionResultV1] = {}
         built: dict[str, Any] = {}
         bodies: dict[str, bytes] = {}
         for field in fields:
+            if field in dropped:
+                continue
             wire, contract = wires[field], contracts[field]
             if wire.byte_length > contract.selection_budget.max_bytes:
                 # F05: a real oversized read is the typed acquisition outcome
@@ -3989,6 +4070,8 @@ class ProcedureExecutor:
                         f"{contract.selection_budget.max_bytes}-byte Capture budget."
                     ),
                 )
+                if field in members:
+                    dropped[field] = ACQUISITION_OVERSIZED
                 continue
             try:
                 built[field] = build_provider_external_capture_v2(
@@ -3999,7 +4082,7 @@ class ProcedureExecutor:
                     occurrence=occurrence,
                     producer=producer,
                     bound_generation=bound_generation,
-                    field=field,
+                    field=members.get(field, field),
                     source_read_receipt=source_read_receipt,
                     provider_output=None if whole_wire else output,
                     derivation=derivation if field in derived_fields else None,
@@ -4018,7 +4101,14 @@ class ProcedureExecutor:
             # The call's value: its out record, each committed capture field
             # naming its Capture. An oversized field is checked as absent.
             record = (
-                {**output, **digests}
+                {
+                    **output,
+                    **{field: digest for field, digest in digests.items() if field not in members},
+                    **{
+                        field: [digests[key] for key in keys if key in digests]
+                        for field, keys in member_keys.items()
+                    },
+                }
                 if workspace_request is None
                 else {
                     **self._validate_operation_value(
@@ -4088,7 +4178,15 @@ class ProcedureExecutor:
                 evaluation_time=admission.occurrence_evaluation_time,
             )
             for field in fields
+            if field not in dropped
         }
+        for field, reason in dropped.items():
+            # A failed list member is dropped, whatever its rule says (D-R37 a4).
+            decisions[field] = AcquisitionInputDecision(
+                input_name=rules[field].input_name,
+                disposition="omitted",
+                reason_codes=(reason,),
+            )
         for field in fields:
             self._journal_acquisition(
                 admission,
@@ -4097,6 +4195,7 @@ class ProcedureExecutor:
                 field=field,
                 result=results[field],
                 decision=decisions[field],
+                member_request_digest=member_requests.get(field),
             )
         for field in fields:
             if decisions[field].disposition == "refused":
@@ -4111,8 +4210,26 @@ class ProcedureExecutor:
                     decision=decisions[field],
                 )
         selected = tuple(field for field in fields if decisions[field].disposition == "selected")
+        # An omitted list member is dropped from its list, which is then
+        # incomplete; its call's other outputs are unaffected (D-R37 a4).
+        list_incomplete = any(
+            decisions[field].disposition == "omitted" for field in fields if field in members
+        )
+        if member_keys:
+            # Caps: max_items above, and every member counts toward the run's
+            # Capture bytes; past either, the call refuses before any member is
+            # bound, so nothing of the list is committed (D-R37 a3).
+            listed_bytes = sum(len(bodies[field]) for field in selected)
+            if state.capture_bytes + listed_bytes > admission.budget.max_capture_bytes:
+                reserved_store.release()
+                raise _BudgetExceeded(
+                    "max_capture_bytes",
+                    limit=admission.budget.max_capture_bytes,
+                    observed=state.capture_bytes + listed_bytes,
+                    node_id=node.node_id,
+                )
         for field in fields:
-            if decisions[field].disposition == "omitted":
+            if decisions[field].disposition == "omitted" and field not in members:
                 self._bind_omission(
                     admission=admission, state=state, rule=rules[field], decision=decisions[field]
                 )
@@ -4140,6 +4257,7 @@ class ProcedureExecutor:
                 contract_digest=pins[field].artifact_digest,
                 occurrence_path=occurrence.occurrence_path,
                 invocation_receipt_digest=invocation_receipt_digest,
+                member_request_digest=member_requests.get(field),
             )
         # The call's value: its record without the omitted capture fields. Its
         # other fields are the operation's own output, valid whatever was
@@ -4147,9 +4265,29 @@ class ProcedureExecutor:
         assert isinstance(material, dict)
         omitted = set(fields) - set(selected)
         kept = {name: value for name, value in material.items() if name not in omitted}
+        for field, keys in member_keys.items():
+            # A list names its selected members, in the provider's order.
+            kept[field] = [digests[key] for key in keys if key in selected]
+            if keys and not kept[field]:
+                # Every member was dropped: the output acquired nothing.
+                input_name = rules[keys[0]].input_name
+                state.outcomes[input_name] = AcquisitionInputOutcomeV1(
+                    input_name=input_name, disposition="omitted"
+                )
         if kept:
             state.outputs[node.as_] = normalize_canonical(kept)
             state.provenance[node.as_] = AliasProvenanceV1(whole=frozenset(base | tokens))
+        upstream_incomplete = bool(derived_fields) and not state.completeness.reads_complete(
+            _referenced_reads(node.input)
+        )
+        if list_incomplete or upstream_incomplete:
+            # A derive computes from its inputs: one over an incomplete value
+            # (a list missing a member) is incomplete too.
+            state.completeness.mark(node.as_, False)
+            if upstream_incomplete:
+                state.completeness.note(
+                    node.node_id, "upstream_incomplete", _referenced_aliases(node.input)
+                )
         reserved_store.release()
 
     def _capture_body(self, state: _RunState, capture_digest: str) -> bytes:
@@ -4454,8 +4592,13 @@ class ProcedureExecutor:
         result: ProcedureSourceAcquisitionResultV1,
         decision: AcquisitionInputDecision,
         provider_refusal: object | None = None,
+        member_request_digest: str | None = None,
     ) -> None:
-        """Journal one capture output's acquisition attempt and its decision."""
+        """Journal one capture output's acquisition attempt and its decision.
+
+        A list member (``field`` is ``<field>/<i>``) also names its identity,
+        the request digest its coordinate carries (D-R37 a2).
+        """
 
         self._append_event(
             admission,
@@ -4469,6 +4612,11 @@ class ProcedureExecutor:
                 "result": result.model_dump(mode="json", exclude={"acquisition"}),
                 "decision": decision.model_dump(mode="json"),
                 **({} if provider_refusal is None else {"provider_refusal": provider_refusal}),
+                **(
+                    {}
+                    if member_request_digest is None
+                    else {"member_request_digest": member_request_digest}
+                ),
                 "audit": {
                     "deployment_digest": admission.deployment_snapshot_digest,
                     "recorded_at": format_datetime(self.clock.now()),
@@ -4558,9 +4706,12 @@ class ProcedureExecutor:
         contract_digest: str,
         occurrence_path: str,
         invocation_receipt_digest: str,
+        member_request_digest: str | None = None,
     ) -> frozenset[DependencyToken]:
         """Bind one selected capture output: its Capture, budget, evidence and association.
 
+        A list member is one of its field's Captures: its outcome lists every
+        member bound so far, and its record names its identity (D-R37 a2).
         Returns the tokens the call's value carries for it.
         """
 
@@ -4574,10 +4725,17 @@ class ProcedureExecutor:
             provenance_grade=acquisition.provenance_grade,
             acquisition_input_name=rule.input_name,
         )
+        held = state.outcomes.get(rule.input_name)
         state.outcomes[rule.input_name] = AcquisitionInputOutcomeV1(
             input_name=rule.input_name,
             disposition="acquired",
-            capture_digests=(digest,),
+            capture_digests=(
+                tuple(sorted({*held.capture_digests, digest}))
+                if member_request_digest is not None
+                and held is not None
+                and held.disposition == "acquired"
+                else (digest,)
+            ),
         )
         self._append_event(
             admission,
@@ -4588,6 +4746,11 @@ class ProcedureExecutor:
                 "node_id": node.node_id,
                 "input_name": rule.input_name,
                 "field": field,
+                **(
+                    {}
+                    if member_request_digest is None
+                    else {"member_request_digest": member_request_digest}
+                ),
                 "capture_digest": digest,
                 "capture_contract_digest": acquisition.envelope.capture_contract_digest,
                 "acquisition_receipt_digest": acquisition.receipt.digest,
@@ -6860,6 +7023,77 @@ def _item_closure(state: _RunState, template: object, index: int) -> frozenset[D
     if _lineage_alias(template) == alias:
         return state.item_tokens(alias, index)
     return state.alias_tokens(frozenset({alias}))
+
+
+def _check_capture_list_bound(
+    node: CallNode,
+    field: str,
+    count: int,
+    *,
+    cap: int,
+    limit: int,
+    boundary: str,
+    state: _RunState,
+) -> None:
+    """Refuse a Capture list past its Contract's ``max_items`` or the run's item bound.
+
+    Checked on the provider's list as returned, before any member is validated
+    or committed: nothing of an over-long list is kept (D-R37 a3).
+    """
+
+    state.observe_items(count, boundary, field)
+    if count > cap:
+        raise _RunRefusal(
+            "contract_output_refused",
+            f"call {node.node_id!r}: capture list {field!r} holds {count} Captures; its "
+            f"Contract allows at most {cap} (max_items)",
+            node_id=node.node_id,
+        )
+    if count > limit:
+        raise _budget_refusal(
+            budget_kind="max_items",
+            limit=limit,
+            observed=count,
+            node_id=node.node_id,
+            boundary=boundary,
+            field_path=field,
+        )
+
+
+def _member_request_digest(
+    wire: ProviderResultToExternalCapture, *, key: str, node_id: str, seen: Mapping[str, str]
+) -> str:
+    """A Capture list member's identity: the request digest its coordinate carries (D-R37 a2).
+
+    The member's index orders the list and nothing else; two members naming one
+    request are one request answered twice, a protocol violation.
+    """
+
+    coordinate = wire.coordinate
+    digest = coordinate.get("request_digest") if isinstance(coordinate, Mapping) else None
+    try:
+        well_formed = isinstance(digest, str) and Sha256Value.from_tagged(digest) is not None
+    except ValueError:
+        well_formed = False
+    if not well_formed:
+        raise _InternalFailure(
+            "provider_protocol_violation",
+            details={
+                "node_id": node_id,
+                "reason": f"capture list member {key!r} names no request_digest in its "
+                "coordinate (a member's identity)",
+            },
+        )
+    if digest in seen.values():
+        raise _InternalFailure(
+            "provider_protocol_violation",
+            details={
+                "node_id": node_id,
+                "reason": f"capture list member {key!r} repeats another member's request",
+            },
+        )
+    assert isinstance(digest, str)
+    return digest
 
 
 def _is_derived_contract(contract: CaptureContract | None) -> bool:
