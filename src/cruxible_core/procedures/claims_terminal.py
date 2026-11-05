@@ -33,7 +33,6 @@ from cruxible_client.contracts.procedures.models import (
     RepeatNode,
     TransformNode,
 )
-from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
     claim_has_line_break,
     claim_rationale,
@@ -49,6 +48,7 @@ from cruxible_core.procedures.claims_context import ClaimsContext
 from cruxible_core.procedures.claims_diagnostics import ClaimsDiagnostics
 from cruxible_core.procedures.claims_units import (
     ClaimUnitUnresolved,
+    CreationIdentity,
     claim_time,
     claims_item_identity_digest,
     resolve_object,
@@ -81,6 +81,9 @@ class ExpandedClaims:
     changes: tuple[CoreClaimsChange, ...]
     #: Each change's stable item identity (D-R37 g1), in the same order.
     identities: tuple[str, ...] = ()
+    #: The items whose Subject the run creates: identified by key reference
+    #: here, finalized from delivery's lowering (D-R37 g fix 3).
+    creations: tuple[CreationIdentity, ...] = ()
 
 
 def expand_claims(
@@ -155,20 +158,20 @@ def expand_claims(
     values: list[CanonicalValue] = []
     tokens: list[frozenset[DependencyToken]] = []
     created: set[bytes] = set()
-    # D-R37 g fix: an item whose Subject this run creates is identified by the
-    # whole-artifact address shared lowering assigns that Subject -- the one it
-    # has once accepted -- so its identity is finalized after the loop, once
-    # every creation key of the terminal is known (index, key, arguments).
-    pending_identities: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+    # D-R37 g fix 3: an item whose Subject this run creates has no Subject
+    # address yet. It is identified here by its key reference (the change's own
+    # ``subject_wire``), and the executor finalizes it with the whole-artifact
+    # address delivery's lowering assigns that Subject's Subject item -- the
+    # address it has once accepted (``finalize_creation_identities``).
+    pending: list[tuple[int, bytes, dict[str, Any]]] = []
+    subject_items: dict[bytes, int] = {}
 
-    def identify(subject_wire: Any, key: dict[str, Any] | None, **parts: Any) -> None:
-        if key is None:
-            identities.append(
-                claims_item_identity_digest(node_id=node.node_id, subject=subject_wire, **parts)
-            )
-            return
-        pending_identities.append((len(identities), key, parts))
-        identities.append("")
+    def identify(subject_wire: Any, key: bytes | None, **parts: Any) -> None:
+        if key is not None:
+            pending.append((len(identities), key, parts))
+        identities.append(
+            claims_item_identity_digest(node_id=node.node_id, subject=subject_wire, **parts)
+        )
 
     nodes = (
         {}
@@ -316,8 +319,8 @@ def expand_claims(
         )
         # D-R37 g fix: an existing Subject's identity is its resolved
         # whole-artifact address (``subject_wire``); a Subject this run creates
-        # is finalized after the loop with the address lowering assigns it.
-        created_key = key if subject is None else None
+        # is finalized from the address delivery's lowering assigns it.
+        created_key = canonical_bytes(key) if subject is None else None
         for template_index, mapping in enumerate(node.claims):
             reserve()
             target = (
@@ -731,9 +734,9 @@ def expand_claims(
             except ValueError:
                 report("extract_refused", target, field="rationale", problem="rationale_invalid")
                 continue
-            creation_key = canonical_bytes(key)
-            if subject is None and creation_key not in created:
-                created.add(creation_key)
+            if created_key is not None and created_key not in created:
+                created.add(created_key)
+                subject_items[created_key] = len(values)
                 changes.append(
                     CoreSubjectChange(
                         subject_kind=node.subject.kind,
@@ -792,27 +795,6 @@ def expand_claims(
             )
             tokens.append(own)
             evidence.append(receipt)
-    if pending_identities:
-        # One placement per created Subject, not per item naming it.
-        creation_keys = {canonical_bytes(key): key for _index, key, _parts in pending_identities}
-        try:
-            placed = context.creation_paths(node.subject.kind, list(creation_keys.values()))
-        except ValueError as exc:
-            raise _RunRefusal("proposal_item_invalid", str(exc), node_id=node.node_id) from exc
-        assigned = dict(zip(creation_keys, placed, strict=True))
-        for index, key, parts in pending_identities:
-            path = assigned[canonical_bytes(key)]
-            identities[index] = claims_item_identity_digest(
-                node_id=node.node_id,
-                # A creation lowering refuses has no address: the run refuses at
-                # delivery, and its items keep the key reference they name.
-                subject=(
-                    {"subject_kind": node.subject.kind, "key": key}
-                    if path is None
-                    else SemanticAddress.whole_artifact(path)
-                ),
-                **parts,
-            )
     if enumeration is not None:
         from cruxible_core.procedures.claims_absence import append_absence
 
@@ -839,7 +821,19 @@ def expand_claims(
                 "claims_inverse_unit_unresolved", str(exc), node_id=node.node_id
             ) from exc
     return ExpandedClaims(
-        values, tuple(tokens), diagnostics, tuple(evidence), tuple(changes), tuple(identities)
+        values,
+        tuple(tokens),
+        diagnostics,
+        tuple(evidence),
+        tuple(changes),
+        tuple(identities),
+        tuple(
+            CreationIdentity(index=index, subject_item=subject_items[key], parts=parts)
+            for index, key, parts in pending
+            # Every such item follows its Subject's Subject item; one with none
+            # (no Subject item precedes it) keeps its key reference.
+            if key in subject_items
+        ),
     )
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -30,9 +30,6 @@ class ClaimsContext(Protocol):
     def claim_type(self, predicate: str) -> ClaimType | None: ...
     def subject(self, kind: str, key: Mapping[str, object]) -> SemanticAddress | None: ...
     def reference(self, kind: str, value: str) -> SemanticAddress | None: ...
-    def creation_paths(
-        self, kind: str, keys: Sequence[Mapping[str, object]]
-    ) -> tuple[str | None, ...]: ...
     def slot(
         self, subject: SemanticAddress, predicate: str, qualifier: str | None
     ) -> tuple[ClaimArtifact, ...]: ...
@@ -87,61 +84,6 @@ class AcceptedClaimsContext:
         result = None if not paths else SemanticAddress.whole_artifact(paths[0])
         self._subjects[(kind, key)] = result
         return result
-
-    def creation_paths(
-        self, kind: str, keys: Sequence[Mapping[str, object]]
-    ) -> tuple[str | None, ...]:
-        """Where each keyed creation of ``kind`` lands, as shared lowering names it.
-
-        The same machinery and order ``_assign_creations`` uses over this base:
-        canonical keys in key order, each resolved through
-        ``IdentityView.resolve_creation`` (a one-key creation's text as an alias
-        of the kind, then the key's live holders) and, when it creates, named
-        by ``assign_creation_id`` and laid over the view so a later key sees
-        it. A creation lowering would refuse (ambiguous, unassignable) has no
-        path (None). One projection binding for all of ``keys``.
-        """
-
-        from cruxible_client.contracts.subject_kinds import SubjectIdUnassignable
-        from cruxible_client.contracts.subjects import subject_path
-        from cruxible_core.indexes.subject_identity import assign_creation_id, key_order
-
-        if not keys:
-            return ()
-        if kind not in self._kinds:
-            self._kinds[kind] = live_subject_kind(self.tree, kind)
-        declared = self._kinds[kind]
-        if declared is None:
-            raise ValueError(f"SubjectKind {kind} is not live")
-        canonical = [canonical_key(declared, key, claim_type=self.claim_type) for key in keys]
-        single: dict[KeyTuple, str | None] = {}
-        for given, key in zip(keys, canonical, strict=True):
-            # lowering's ``_single_text``: a one-key creation's text as written.
-            raw = next(iter(given.values())) if len(given) == 1 else None
-            single.setdefault(
-                key, raw if len(declared.keys) == 1 and isinstance(raw, str) else None
-            )
-        paths: dict[KeyTuple, str | None] = {}
-        names: set[str] = set()
-        with self.instance.bind_accepted_projection(self.coordinate) as projection:
-            view = IdentityView(projection.typed.connection)
-            for key in sorted(single, key=key_order):
-                resolution = view.resolve_creation(
-                    kind, key, single_text=single[key], create_new=False
-                )
-                if resolution.path is not None or resolution.ambiguous:
-                    paths[key] = resolution.path
-                    continue
-                try:
-                    subject_id = assign_creation_id(view, kind, key, names=names)
-                except SubjectIdUnassignable:
-                    paths[key] = None
-                    continue
-                names.add(subject_id)
-                path = subject_path(kind, subject_id)
-                view.add_creation(path, key)
-                paths[key] = path
-        return tuple(paths[key] for key in canonical)
 
     def reference(self, kind: str, value: str) -> SemanticAddress | None:
         from cruxible_client.contracts.subjects import parse_subject, subject_path

@@ -36,7 +36,11 @@ from cruxible_client.contracts.shapes import (
     requires_complete_input,
 )
 from cruxible_core.procedures.claims_context import ClaimsContext
-from cruxible_core.procedures.claims_units import claims_item_change_digest
+from cruxible_core.procedures.claims_units import (
+    CreationIdentity,
+    claims_item_change_digest,
+    finalize_creation_identities,
+)
 
 if TYPE_CHECKING:
     from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
@@ -2314,6 +2318,10 @@ class _RunState:
     claims_changes: dict[str, tuple[CoreClaimsChange, ...]] = dataclass_field(default_factory=dict)
     #: Each claims change's stable item identity (D-R37 g1), aligned with claims_changes.
     claims_identities: dict[str, tuple[str, ...]] = dataclass_field(default_factory=dict)
+    #: The claims items whose Subject the run creates, finalized from lowering.
+    claims_creations: dict[str, tuple[CreationIdentity, ...]] = dataclass_field(
+        default_factory=dict
+    )
     claims_evidence: dict[str, tuple[ClaimEvidenceReceipt | None, ...]] = dataclass_field(
         default_factory=dict
     )
@@ -4873,6 +4881,7 @@ class ProcedureExecutor:
         state.claims_evidence[node.node_id] = expanded.evidence
         state.claims_changes[node.node_id] = expanded.changes
         state.claims_identities[node.node_id] = expanded.identities
+        state.claims_creations[node.node_id] = expanded.creations
         self._run_terminal(
             node,
             admission=admission,
@@ -5109,6 +5118,24 @@ class ProcedureExecutor:
                 {**payload, "verdict": "refused", "refusal_code": refusal.refusal.code},
             )
             raise refusal from exc
+        creations = state.claims_creations.get(node.node_id, ())
+        if prepared is not None and creations:
+            # D-R37 g fix 3: an item whose Subject this run creates takes the
+            # address preparation's lowering assigned that Subject -- one source
+            # of truth, the terminal's whole assignment with its own identity
+            # overlay -- before any record names it as prepared or delivered. A
+            # record made before preparation (refused authority, egress pending,
+            # refused preparation) keeps the key reference: no Subject is
+            # created on those paths, so no accepted Subject has that identity.
+            payload = {
+                **payload,
+                "children": _with_creation_identities(
+                    node.node_id,
+                    cast(list[dict[str, object]], payload["children"]),
+                    creations,
+                    dict(prepared.item_paths),
+                ),
+            }
         # Preparation (lowering every item) is where a large terminal spends its
         # time. The run's deadline is enforced here, before the prepared record
         # and before delivery, so a run out of time delivers nothing: its
@@ -6815,6 +6842,33 @@ def _projected_provenance(
         whole=base,
         items=tuple(_item_closure(state, template, index) for index in range(len(projected))),
     )
+
+
+def _with_creation_identities(
+    node_id: str,
+    children: list[dict[str, object]],
+    creations: tuple[CreationIdentity, ...],
+    item_paths: Mapping[str, str],
+) -> list[dict[str, object]]:
+    """The journaled children, created Subjects' items identified by their lowered address.
+
+    ``children`` are the terminal's child receipts as its records carry them;
+    ``item_paths`` is the prepared terminal's item -> path map, where a Subject
+    item's entry is the path shared lowering assigned (or reused) for it. Only
+    the identity digest of a finalized child changes: no receipt is rebuilt.
+    """
+
+    finalized = finalize_creation_identities(
+        node_id=node_id,
+        creations=creations,
+        assigned_path=lambda index: item_paths.get(str(children[index]["item_key"])),
+    )
+    if not finalized:
+        return children
+    return [
+        child if index not in finalized else {**child, "item_identity_digest": finalized[index]}
+        for index, child in enumerate(children)
+    ]
 
 
 def _inbox_cap(node: InboxEgressNode) -> tuple[int, Literal["declared", "default"]]:

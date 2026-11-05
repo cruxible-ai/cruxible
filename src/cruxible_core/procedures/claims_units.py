@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, cast
@@ -87,10 +88,10 @@ def claims_item_identity_digest(
     many-valued one. Its every read was already made, and cached, by the
     eligibility law that produced the change. A Subject item has no ClaimType
     and no unit. ``subject`` is the Subject's resolved whole-artifact address
-    (D-R37 g fix): for a Subject the run creates, the address shared lowering
-    assigns it, the one it has once accepted. One canonical identity across
-    the creating run, every later run and an absence retirement, whatever its
-    ``expect`` spelling.
+    (D-R37 g fix): one canonical identity across the creating run, every later
+    run and an absence retirement, whatever its ``expect`` spelling. For a
+    Subject the run creates, that address is the one delivery's own lowering
+    assigns it (``finalize_creation_identities``).
     """
 
     def wire(value: Any) -> Any:
@@ -121,6 +122,65 @@ def claims_item_identity_digest(
             "unit": unit,
         },
     ).tagged
+
+
+@dataclass(frozen=True)
+class CreationIdentity:
+    """A claims item whose Subject the run creates: its identity waits for lowering.
+
+    Until delivery's preparation lowers the terminal, the Subject has no
+    address, so the item is first identified by its key reference,
+    ``{subject_kind, key}`` (the Subject wire such an item's change carries).
+    ``finalize_creation_identities`` replaces it with the whole-artifact
+    address lowering assigned ``subject_item``, the terminal's Subject item
+    creating that Subject.
+    """
+
+    #: The item's position in the terminal.
+    index: int
+    #: The position of the terminal's Subject item creating its Subject.
+    subject_item: int
+    #: ``claims_item_identity_digest``'s other arguments (ClaimType, unit, ...).
+    parts: Mapping[str, Any]
+
+
+def finalize_creation_identities(
+    *,
+    node_id: str,
+    creations: Sequence[CreationIdentity],
+    assigned_path: Callable[[int], str | None],
+) -> dict[int, str]:
+    """Each created Subject's items identified by the address lowering assigned it.
+
+    One source of truth (D-R37 g fix 3): ``assigned_path`` reads, for a Subject
+    item's position, the path delivery's preparation lowered it to -- shared
+    lowering's whole-terminal assignment, over the admitted base overlaid
+    with the terminal's own members (``members_identity_overlay``: a sibling's
+    alias or key Claim can reserve or take a readable id). It is the path the
+    Subject has once accepted, so the identity equals every later run's. A
+    Subject item with no lowered path keeps its key-reference identity. One
+    address per created Subject, not per item naming it.
+
+    Returns item position -> finalized identity digest.
+    """
+
+    addresses: dict[int, object | None] = {}
+    finalized: dict[int, str] = {}
+    for creation in creations:
+        if creation.subject_item not in addresses:
+            path = assigned_path(creation.subject_item)
+            addresses[creation.subject_item] = (
+                None
+                if path is None
+                else SemanticAddress.whole_artifact(path).model_dump(mode="json")
+            )
+        address = addresses[creation.subject_item]
+        if address is None:
+            continue
+        finalized[creation.index] = claims_item_identity_digest(
+            node_id=node_id, subject=address, **creation.parts
+        )
+    return finalized
 
 
 def claims_item_change_digest(change: Any) -> str:

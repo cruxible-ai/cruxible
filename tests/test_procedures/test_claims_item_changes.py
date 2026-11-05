@@ -361,3 +361,125 @@ def test_a_many_valued_units_identity_is_its_object_however_it_is_held() -> None
     assert identity(many, held) != identity(many, LiteralClaimObject(value="closed"))
     # A one-valued slot is one unit, whatever its value.
     assert identity(one, held) == identity(one, LiteralClaimObject(value="closed"))
+
+
+def _identity_children(instance: Any, state: Any) -> dict[str, tuple[str, str | None, str]]:
+    """identity -> (change kind, Subject path, child path), as the run read serves them.
+
+    The Subject path is the created Subject's own path for a Subject item, and
+    the Subject a Claim item's member names, read from the proposal tree.
+    """
+
+    from cruxible_client.contracts.claims import parse_claim
+    from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
+
+    (served,) = service_get_playbill_procedure_run(instance, run_id=state.run_id).terminal_egress
+    assert served.children == state.terminal_egress[0].children
+    tree: Any = {}
+    if served.proposal_id is not None:
+        inspection = service_inspect_playbill_proposal(instance, proposal_id=served.proposal_id)
+        tree = instance.proposal_tree(inspection.proposal.evaluation.evaluated_tree_oid)
+    accepted = instance.tree_at(instance.accepted_coordinate().git_oid)
+    found: dict[str, tuple[str, str | None, str]] = {}
+    for child in served.children:
+        assert child.item_identity_digest is not None and child.change_kind is not None
+        assert child.item_identity_digest not in found, child
+        path = str(child.path)
+        subject: str | None = path if path.startswith("subjects/") else None
+        if path.startswith("claims/"):
+            content = tree.get(path) if path in tree else accepted.get(path)
+            if content is not None:
+                subject = parse_claim(content, path=path).statement.subject.artifact_path
+        found[child.item_identity_digest] = (child.change_kind, subject, path)
+    return found
+
+
+def test_a_creation_whose_readable_id_a_sibling_alias_reserves_keeps_one_identity(
+    tmp_path: Path,
+) -> None:
+    """D-R37 g fix 3: the creating run's identity is the address lowering assigns.
+
+    One terminal gives the live ``existing`` package the normative alias
+    ``new-value`` and creates the package keyed ``New Value``. That sibling
+    alias reserves the creation's readable id, so lowering names it
+    ``new-value-<digest>``, not ``new-value``. The creating run's items carry
+    the identity of that assigned address: a later revision and an absence
+    retirement of the created Subject's Claim carry the same identity.
+    """
+
+    from datetime import timedelta
+
+    from cruxible_client.contracts.subjects import subject_path
+    from tests.test_procedures import test_procedure_proposal_delivery as delivery
+    from tests.test_procedures import test_procedure_source_runs as fixtures
+    from tests.test_procedures import test_procedure_subject_items as items
+
+    instance, owner, root = items._identity_world(tmp_path, "existing")
+    alias = items._mapping("semantic.alias", "$item.fields.alias", role="normative")
+    line = items._identity_terminal(
+        instance,
+        owner,
+        root,
+        [
+            {"id": "existing", "alias": "new-value", "severity": "high"},
+            {"id": "New Value", "severity": "low"},
+        ],
+        mappings=[alias, items._SEVERITY],
+        create="if_absent",
+    )
+    created_run = delivery.run_line(instance, root, line)
+    created = items._delivered(instance, created_run)
+    before = _identity_children(instance, created_run)
+    ((subject_identity, (_, created_path, _)),) = [
+        (k, v) for k, v in before.items() if v[0] == "subject"
+    ]
+    assert created_path is not None
+    # The sibling alias reserves the readable id: lowering suffixes it.
+    assert created_path != subject_path(items.KIND, "new-value")
+    assert created_path.startswith(f"subjects/{items.KIND}/new-value-"), created_path
+    (claim_identity,) = [
+        k for k, (kind, subject, _) in before.items() if kind == "claim" and subject == created_path
+    ]
+    # The identity is the assigned address's, not the predicted readable id's.
+    from cruxible_client.contracts.semantic import SemanticAddress
+    from cruxible_core.procedures.claims_units import claims_item_identity_digest
+
+    assert subject_identity == claims_item_identity_digest(
+        node_id="claims", subject=SemanticAddress.whole_artifact(created_path)
+    )
+    items._identity_accept(instance, owner, created)
+    assert items._holder(instance, "New Value") == created_path
+
+    # Rerun: the created package's severity changes (a revision of its Claim).
+    (root / fixtures.RELATIVE_PATH).write_bytes(
+        fixtures.canonical_bytes(
+            {
+                "proposals": [
+                    {"id": "existing", "alias": "new-value", "severity": "high"},
+                    {"id": "New Value", "severity": "medium"},
+                ]
+            }
+        )
+    )
+    rerun_run = delivery.run_line(instance, root, line, at=fixtures.NOW + timedelta(minutes=1))
+    rerun = items._delivered(instance, rerun_run)
+    after = _identity_children(instance, rerun_run)
+    assert after[claim_identity][:2] == ("claim", created_path), after
+    assert subject_identity not in after  # the Subject exists now: no Subject item
+    items._identity_accept(instance, owner, rerun)
+
+    # Retire by absence: the source no longer lists the package it expects.
+    retiring = items._identity_terminal(
+        instance,
+        owner,
+        root,
+        [],
+        mappings=[{**items._SEVERITY, "when_absent": "mirror"}],
+        name="identity-retire",
+        expect=(created_path,),
+    )
+    retired = delivery.run_line(instance, root, retiring, at=fixtures.NOW + timedelta(minutes=2))
+    items._delivered(instance, retired)
+    assert _identity_children(instance, retired) == {
+        claim_identity: ("retirement", created_path, after[claim_identity][2])
+    }
