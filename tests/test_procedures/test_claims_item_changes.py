@@ -140,3 +140,27 @@ def test_a_child_receipt_records_its_change_as_digests_only() -> None:
     assert receipt.change_digest == digest
     with pytest.raises(ValueError, match="come together"):
         TerminalChildReceiptV1.model_validate({**base, "change_digest": digest})
+
+
+def test_a_many_valued_units_identity_is_its_object_however_it_is_held() -> None:
+    """The template's resolved object (a dict) and a held Claim's object (a model)
+    name one unit: the identity a write records is the one its retirement records."""
+
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.claims import LiteralClaimObject
+    from cruxible_core.procedures.claims_units import claims_item_identity_digest
+
+    many = SimpleNamespace(predicate="k.status", cardinality="many", inverse=None)
+    one = SimpleNamespace(predicate="k.status", cardinality="one", inverse=None)
+
+    def identity(ct: Any, obj: Any) -> str:
+        return claims_item_identity_digest(
+            node_id="write", subject={"kind": "k"}, claim_type=ct, obj=obj
+        )
+
+    held = LiteralClaimObject(value="open")
+    assert identity(many, {"kind": "literal", "value": "open"}) == identity(many, held)
+    assert identity(many, held) != identity(many, LiteralClaimObject(value="closed"))
+    # A one-valued slot is one unit, whatever its value.
+    assert identity(one, held) == identity(one, LiteralClaimObject(value="closed"))

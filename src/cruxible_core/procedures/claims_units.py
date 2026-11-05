@@ -97,6 +97,10 @@ def claims_item_identity_digest(
     if claim_type is not None:
         if claim_type.cardinality != "many":
             unit = {"kind": "slot", "value": None}
+        elif claim_type.inverse is None:
+            # claim_unit_key's object unit, built without a model: the object in
+            # its canonical form, as the eligibility law compares it (same_value).
+            unit = {"kind": "object", "value": wire(obj)}
         else:
             raw = wire(obj)
             try:
