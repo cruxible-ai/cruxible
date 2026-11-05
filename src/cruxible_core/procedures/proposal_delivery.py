@@ -156,6 +156,7 @@ from cruxible_core.procedures.terminal_dependencies import (
     TerminalItemDependencyManifestV1,
     capture_root,
     citable_captures,
+    witnessed_list_capture,
 )
 from cruxible_core.procedures.terminal_services import (
     ProposalDeliveryRefused,
@@ -460,6 +461,11 @@ def evidence_by_item(
         cited = getattr(getattr(receipt, "value", None), "capture_digest", None)
         if root is not None and isinstance(cited, str) and cited == root:
             evidence[item.item_key] = root
+            continue
+        # Absence over a Capture list: its witness cites exactly the closure (D-R37 a6).
+        listed = witnessed_list_capture(produced, receipt, cache=cache)
+        if listed is not None:
+            evidence[item.item_key] = listed
             continue
         raise ProposalDeliveryRefused(
             "proposal_item_evidence_ambiguous",
@@ -2194,6 +2200,7 @@ class ProposalTerminalEgressSink:
             return
         store = ClaimReobservationStore(self.instance)
         cited_envelopes: dict[str, CaptureEnvelopeAny] = {}
+        verified_witnesses: dict[object, None] = {}
         for child in unchanged:
             if not isinstance(child, TerminalEgressChildReceiptV3):
                 continue  # a reused Subject observes nothing
@@ -2205,6 +2212,7 @@ class ProposalTerminalEgressSink:
                     actor_id=request.actor_context.actor_id,
                     extraction=request.claims_evidence.get(child.item_key),
                     cited_envelopes=cited_envelopes,
+                    verified_witnesses=verified_witnesses,
                     extracted_value=(
                         change.value
                         if isinstance(

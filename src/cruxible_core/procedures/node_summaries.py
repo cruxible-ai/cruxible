@@ -142,13 +142,21 @@ def transform_summary(
 
 
 def call_summary(capture_fields: Iterable[str], output: object) -> CallRunSummary:
-    """A call's Captures: the digest each capture field of its output holds."""
+    """A call's Captures: the digest each capture field of its output holds.
+
+    A list field holds several, one per member, in order (D-R37 a1).
+    """
 
     held = output if isinstance(output, Mapping) else {}
+
+    def named(value: object) -> list[object]:
+        return list(value) if isinstance(value, list) else [value]
+
     digests = [
         digest
         for name in capture_fields
-        if isinstance(digest := held.get(name), str) and _DIGEST.fullmatch(digest)
+        for digest in named(held.get(name))
+        if isinstance(digest, str) and _DIGEST.fullmatch(digest)
     ]
     return CallRunSummary(
         captures=_count(len(digests)),

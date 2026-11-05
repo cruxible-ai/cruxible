@@ -178,6 +178,20 @@ a derived one covers the Captures it records, while two unrelated Captures are
 still refused. A derived Capture inherits the most restrictive `body_access` of
 its inputs.
 
+A fetch can return a **list of Captures**: its out Contract declares a
+`list<capture<*>>{max_items: N}` field and the call's `captures` names the kind.
+Each member is its own Capture, identified by the `request_digest` its
+coordinate carries; the list's order is the provider's. More than `max_items`
+members, or more bytes than the run's Capture budget, refuses the call with
+nothing kept. A member that is oversized or off the Line's permitted origins is
+dropped and the list is incomplete. An extract over the list merges every
+member's records (it declares no `header` or `complete_when`); each Claim cites
+the member its record came from, and a key in two members writes nothing.
+Absence over the list infers only when every member is complete, and its
+witness cites all of them. A Trigger never substitutes a list field, and a
+list's records narrowed by filter/dedupe cannot feed claims: narrow in a
+derive, which can take the list as a `list<capture<*>>` input.
+
 A rule can restrict a shared contract to specific logical sources:
 
 ~~~yaml

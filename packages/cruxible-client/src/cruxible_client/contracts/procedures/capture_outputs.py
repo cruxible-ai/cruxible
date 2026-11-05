@@ -9,6 +9,11 @@ Admission, trigger binding and execution all read these descriptors. A trigger
 substitutes one of them, named ``<alias>.<field>``, and only from a call with
 exactly one capture field: substituting one field of a call would leave the
 call's other fields unproduced.
+
+A ``list<capture<*>>`` field is one capture output whose members are each a
+Capture; the call's ``captures`` map binds their kind (D-R37 a1). An extract
+over it merges its members' records and declares no header or
+``complete_when`` (a5); a trigger never substitutes it (a7).
 """
 
 from __future__ import annotations
@@ -23,8 +28,8 @@ from cruxible_client.contracts.procedures.models import (
     ExtractNode,
     ProcedureDefinition,
 )
-from cruxible_client.contracts.provider_operations import capture_fields
-from cruxible_client.contracts.shapes import Contract, ContractRef
+from cruxible_client.contracts.provider_operations import capture_fields, capture_list_fields
+from cruxible_client.contracts.shapes import ANY_CAPTURE_KIND, Contract, ContractRef
 from cruxible_client.contracts.workspace_file import is_workspace_file_signature
 
 ContractLookup = Callable[[ContractRef], Contract | None]
@@ -131,6 +136,8 @@ def procedure_capture_problem(
     from cruxible_client.contracts.provider_operations import operation_signature_digest
 
     calls = {node.as_: node for node in definition.nodes if isinstance(node, CallNode)}
+    #: Per call alias, its ``list<capture<K>>`` fields: each member is a Capture (D-R37 a1).
+    list_fields: dict[str, frozenset[str]] = {}
     for node in calls.values():
         slot = definition.slots.get(node.slot)
         if (
@@ -148,7 +155,16 @@ def procedure_capture_problem(
             declared: dict[str, str] | None = None
         else:
             out = None if slot is None or contract_lookup is None else contract_lookup(slot.out)
-            declared = None if out is None else dict(capture_fields(out))
+            listed = () if out is None else capture_list_fields(out)
+            list_fields[node.as_] = frozenset(name for name, _kind, _cap in listed)
+            declared = (
+                None
+                if out is None
+                else {
+                    **dict(capture_fields(out)),
+                    **{name: kind for name, kind, _cap in listed},
+                }
+            )
         if declared is None:
             pass
         elif not node.acquires:
@@ -175,7 +191,8 @@ def procedure_capture_problem(
                 )
             for field, kind in declared.items():
                 named = node.captures[field].target.name
-                if named != kind:
+                # capture<*>: the call's captures map binds the kind (D-R37 a1).
+                if kind != ANY_CAPTURE_KIND and named != kind:
                     return (
                         "cruxible.procedure.captures_mismatch",
                         f"call {node.node_id!r}: field {field!r} is capture<{kind}>, "
@@ -205,6 +222,17 @@ def procedure_capture_problem(
             return (
                 "cruxible.procedure.extract_format_unsupported",
                 f"extract {extract.node_id!r}: core extracts json and csv, not {decoding.format}",
+            )
+        if extract.capture_field in list_fields.get(extract.capture_alias, frozenset()) and (
+            extract.header or extract.complete_when is not None
+        ):
+            # Records merge across a list's members; no one member's header or
+            # count speaks for the merged whole (D-R37 a5).
+            return (
+                "cruxible.procedure.extract_format_unsupported",
+                f"extract {extract.node_id!r} reads the Capture list {extract.capture!r}: an "
+                "extract over a list merges its members' records and declares no header "
+                "fields or complete_when",
             )
         if decoding.format == "csv" and (extract.header or extract.complete_when is not None):
             return (

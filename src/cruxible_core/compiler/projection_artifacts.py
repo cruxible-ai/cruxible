@@ -449,6 +449,7 @@ def _normalized_absence_witness(witness: AbsenceWitness) -> _NormalizedProjectio
     key = (
         "projection.absence_witness",
         witness.capture,
+        witness.members,
         witness.extract_spec,
         witness.extractor,
         witness.logical_source,

@@ -52,9 +52,12 @@ from cruxible_core.providers.provider_runtime_contract import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_PATH = REPO_ROOT / "tests/fixtures/provider_runtime_contract_v2.json"
 #: The vendored bytes: cruxible-providers ``PROVIDER_RUNTIME_CONTRACT_COMMIT``'s
-#: packages/cruxible-provider-runtime/tests/fixtures/provider_runtime_contract_v2.json.
+#: packages/cruxible-provider-runtime/tests/fixtures/provider_runtime_contract_v2.json,
+#: plus the result's generic ``incomplete_captures`` (D-R37 a4: its schema, the
+#: ``ok_incomplete_captures`` vector and ``result_incomplete_captures_not_ok``),
+#: which core leads and the providers side matches.
 PROVIDER_RUNTIME_CONTRACT_FIXTURE_DIGEST = (
-    "sha256:fffcd7de4707823eb7034022156211dc608a8a8850d4f44971595ae3ea94930c"
+    "sha256:b0c5131ea9b7b568848bcf1f18bfe642621b8ce165deb8382aad4f5fd466a62e"
 )
 
 _MODEL_MAP: dict[str, type[BaseModel]] = {
@@ -188,6 +191,12 @@ def test_provider_runtime_invalid_vectors_fail_closed() -> None:
     with pytest.raises(ProviderRuntimeWireError) as malformed:
         parse_provider_runtime_result(json.dumps(fixture["result_missing_output"]).encode())
     assert malformed.value.code == "provider_protocol_violation"
+    # Only an ok result may say which capture lists it left incomplete.
+    with pytest.raises(ProviderRuntimeWireError) as incomplete:
+        parse_provider_runtime_result(
+            json.dumps(fixture["result_incomplete_captures_not_ok"]).encode()
+        )
+    assert incomplete.value.code == "provider_protocol_violation"
 
 
 def test_only_run_context_additive_is_open() -> None:

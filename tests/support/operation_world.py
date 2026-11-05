@@ -190,11 +190,16 @@ def slotted_spec(
 
 @dataclass
 class Invoker:
-    """A fake provider process: answers with ``output`` or a typed refusal."""
+    """A fake provider process: answers with ``output`` or a typed refusal.
+
+    ``incomplete_captures`` is the result's generic word that the named
+    ``list<capture<...>>`` fields are missing members.
+    """
 
     output: Callable[[Any], dict[str, Any]] = lambda context: {"value": context.input["value"] + 1}
     refusal: tuple[str, dict[str, Any]] | None = None
     contexts: list[Any] = field(default_factory=list)
+    incomplete_captures: list[str] = field(default_factory=list)
 
     def bind_provider(self, *, occurrence):  # type: ignore[no-untyped-def]
         return BoundLocalProviderV1(
@@ -223,6 +228,7 @@ class Invoker:
                 run_id=context.run_id,
                 status="ok",
                 output=self.output(context),
+                incomplete_captures=self.incomplete_captures,
             )
         return ProviderDriverOutcomeV1(
             envelope=envelope,

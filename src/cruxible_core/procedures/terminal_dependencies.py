@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from collections import deque
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Literal
@@ -123,10 +123,16 @@ def policy_token(digest: str) -> DependencyToken:
 
 @dataclass(frozen=True)
 class AliasProvenanceV1:
-    """Runtime provenance of one alias: whole-value plus optional per-item closure."""
+    """Runtime provenance of one alias: whole-value plus optional per-item closure.
+
+    ``items_path`` names the list the per-item closures index: a transform's
+    or projection's ``items``, or an extract's ``records`` when its records
+    come from several Captures (a list's members, D-R37 a5).
+    """
 
     whole: frozenset[DependencyToken]
     items: tuple[frozenset[DependencyToken], ...] | None = None
+    items_path: str = "items"
 
     def item(self, index: int) -> frozenset[DependencyToken]:
         """Return the closure of one item, falling back to the whole-value closure."""
@@ -136,7 +142,9 @@ class AliasProvenanceV1:
         return self.whole | self.items[index]
 
     def merged(self, extra: frozenset[DependencyToken]) -> "AliasProvenanceV1":
-        return AliasProvenanceV1(whole=self.whole | extra, items=self.items)
+        return AliasProvenanceV1(
+            whole=self.whole | extra, items=self.items, items_path=self.items_path
+        )
 
 
 class DependencyEvidenceFactsV1(_StrictDependencyModel):
@@ -432,6 +440,45 @@ def derive_terminal_item_facts(
     )
 
 
+def witnessed_list_capture(
+    closure: Collection[str], receipt: object, *, cache: CaptureRootCache | None = None
+) -> str | None:
+    """The Capture an absence over a Capture list cites, when its witness names the closure.
+
+    Absence over a list is the one Claim closure of several unrelated
+    Captures that is admitted (D-R37 a6): its witness cites every member and
+    the receipt cites the first. It is admitted only when the witness's
+    members are exactly the item's closure and the receipt cites the first;
+    ``None`` otherwise.
+
+    ``cache`` (the run's) keeps each answer per distinct closure, witness and
+    cited Capture: many absence items on one witness check it once, and each
+    further item costs one lookup, as ``capture_root`` does.
+    """
+
+    witness = getattr(receipt, "absence", None)
+    members = getattr(witness, "members", ())
+    cited = getattr(getattr(receipt, "value", None), "capture_digest", None)
+    if not members:
+        return None
+    listed = frozenset(closure)
+    key = (listed, tuple(members), cited)
+    if cache is not None and key in cache.witnessed:
+        return cache.witnessed[key]
+    found = (
+        str(members[0]) if cited == members[0] and _witness_member_set(members) == listed else None
+    )
+    if cache is not None:
+        cache.witnessed[key] = found
+    return found
+
+
+def _witness_member_set(members: Sequence[str]) -> frozenset[str]:
+    """A list witness's members as a set: built once per distinct witness (tests count it)."""
+
+    return frozenset(members)
+
+
 def citable_captures(manifest: TerminalItemDependencyManifestV1 | None) -> tuple[str, ...]:
     """Every Capture in an item's closure: those it produced AND those it was admitted.
 
@@ -462,6 +509,10 @@ class CaptureRootCache:
     """
 
     roots: dict[frozenset[str], str | None] = dataclass_field(default_factory=dict)
+    #: ``witnessed_list_capture``'s answer per (closure, witness members, cited).
+    witnessed: dict[tuple[frozenset[str], tuple[str, ...], object], str | None] = dataclass_field(
+        default_factory=dict
+    )
 
 
 @dataclass
@@ -607,6 +658,7 @@ __all__ = [
     "CaptureRootCache",
     "capture_root",
     "citable_captures",
+    "witnessed_list_capture",
     "TAINT_ACCEPTED_STATE",
     "TAINT_CONSERVATIVE_DEFAULT",
     "TAINT_OMITTED_OPTIONAL",

@@ -323,10 +323,22 @@ class ProviderRuntimeProviderErrorPayload(_StrictRuntimeModel):
 
 
 class ProviderRuntimeResultEnvelope(_StrictRuntimeModel):
+    """One provider call's answer.
+
+    ``incomplete_captures`` is the provider's own word that its ``output`` is
+    missing members: it names out-Contract ``list<capture<...>>`` fields the
+    provider could not fill whole (a page it failed to fetch, say). Core
+    treats each named field exactly as a list it dropped a member from itself
+    (D-R37 a4): the call is incomplete, and absence over it never retires.
+    It is generic: core reads no provider- or operation-specific field to
+    learn it. Only an ok result carries it, and it is omitted when empty.
+    """
+
     protocol_version: str
     run_id: str
     status: Literal["ok", "refused", "error"]
     output: dict[str, Any] | None = None
+    incomplete_captures: list[str] = Field(default_factory=list, exclude_if=lambda value: not value)
     refusal: ProviderRuntimeRefusal | None = None
     error: ProviderRuntimeProviderErrorPayload | None = None
     trace: ProviderRuntimeTrace = Field(default_factory=ProviderRuntimeTrace)
@@ -347,6 +359,8 @@ class ProviderRuntimeResultEnvelope(_StrictRuntimeModel):
             raise ValueError("an error result must carry an error")
         if self.status != "ok" and self.output is not None:
             raise ValueError("only an ok result may carry output")
+        if self.status != "ok" and self.incomplete_captures:
+            raise ValueError("only an ok result may name incomplete captures")
         require_supported_protocol(self.protocol_version, where="the result envelope")
         _reject_non_finite(self.output, where="provider output")
         _reject_non_finite(self.trace.metrics, where="provider trace metrics")

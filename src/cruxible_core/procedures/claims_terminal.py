@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -84,6 +85,21 @@ class ExpandedClaims:
     #: The items whose Subject the run creates: identified by key reference
     #: here, finalized from delivery's lowering (D-R37 g fix 3).
     creations: tuple[CreationIdentity, ...] = ()
+
+
+def listed_capture_members(
+    index: dict[str, frozenset[str]], node_id: str, listed: Sequence[object]
+) -> frozenset[str]:
+    """The members of the Capture list extract ``node_id`` read, indexed once per terminal.
+
+    Every Claim rooted in a list member checks its root against this one set:
+    the list is read once per extract, never once per Claim.
+    """
+
+    held = index.get(node_id)
+    if held is None:
+        held = index[node_id] = frozenset(item for item in listed if isinstance(item, str))
+    return held
 
 
 def expand_claims(
@@ -183,6 +199,8 @@ def expand_claims(
     extract_digests = {
         n.node_id: _receipt_extract_digest(n) for n in nodes.values() if isinstance(n, ExtractNode)
     }
+    #: Each list extract's members, indexed once for every Claim it roots (D-R37 a5).
+    listed_members: dict[str, frozenset[str]] = {}
 
     def includes_input(value: object) -> bool:
         from pydantic import BaseModel
@@ -617,7 +635,16 @@ def expand_claims(
             elif len(extractors) == 1 and len(sources) == 1:
                 extracting = extractors[0]
                 read = state.outputs.get(extracting.capture_alias)
-                if isinstance(read, dict) and read.get(extracting.capture_field) != capture:
+                read_capture = (
+                    read.get(extracting.capture_field) if isinstance(read, dict) else None
+                )
+                # Over a list, the record's root is the one member it came from (D-R37 a5).
+                if isinstance(read, dict) and (
+                    capture
+                    not in listed_capture_members(listed_members, extracting.node_id, read_capture)
+                    if isinstance(read_capture, list)
+                    else read_capture != capture
+                ):
                     # The root is cited for the records the extract read; a root
                     # other than the Capture they came from would misattribute them.
                     raise _RunRefusal(

@@ -4819,6 +4819,7 @@
           },
           "AbsenceWitness": {
             "additionalProperties": false,
+            "description": "The complete enumeration an absence rests on, and the Captures it read.\n\n``capture`` is the enumeration's Capture. Over a list of Captures (D-R37\na6), ``members`` holds every member in order, ``capture`` being the\nfirst; one Capture leaves it out, the 1-tuple case. ``captures`` reads\neither form.",
             "properties": {
               "capture": {
                 "title": "Capture",
@@ -4853,6 +4854,14 @@
               "logical_source": {
                 "title": "Logical Source",
                 "type": "string"
+              },
+              "members": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Members",
+                "type": "array"
               },
               "node_id": {
                 "title": "Node Id",

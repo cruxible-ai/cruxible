@@ -676,6 +676,20 @@ def capture_fields(contract: Contract) -> tuple[tuple[str, str], ...]:
     )
 
 
+def capture_list_fields(contract: Contract) -> tuple[tuple[str, str, int], ...]:
+    """``(field, CaptureKind, max_items)`` for each ``list<capture<K>>`` field (D-R37 a1).
+
+    Each member of such a field is its own Capture; the call's ``captures:``
+    map binds the kind (``*`` here).
+    """
+
+    return tuple(
+        (name, item.type.item.capture_kind, item.type.max_items)
+        for name, item in contract.fields.items()
+        if isinstance(item.type, ListType) and isinstance(item.type.item, CaptureType)
+    )
+
+
 def refusal_detail_contract(
     operation: ProviderOperation, code: str, contracts: Mapping[str, Contract]
 ) -> Contract | None:
@@ -704,6 +718,7 @@ __all__ = [
     "ProviderOperation",
     "binding_pin",
     "capture_fields",
+    "capture_list_fields",
     "closure_lookup",
     "contract_closure",
     "operation_signature_digest",

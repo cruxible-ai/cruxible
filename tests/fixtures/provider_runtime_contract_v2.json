@@ -129,6 +129,28 @@
         ]
       }
     },
+    "result_incomplete_captures_not_ok": {
+      "error": null,
+      "incomplete_captures": [
+        "pages"
+      ],
+      "output": null,
+      "protocol_version": "2.0",
+      "refusal": {
+        "code": "too_long",
+        "detail": {
+          "limit": 3
+        },
+        "message": "declined by fixture"
+      },
+      "run_id": "RUN-contract-vector",
+      "status": "refused",
+      "trace": {
+        "endpoints_contacted": [],
+        "events": [],
+        "metrics": {}
+      }
+    },
     "result_missing_output": {
       "error": null,
       "output": null,
@@ -1102,6 +1124,13 @@
           ],
           "default": null
         },
+        "incomplete_captures": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Incomplete Captures",
+          "type": "array"
+        },
         "output": {
           "anyOf": [
             {
@@ -1505,6 +1534,25 @@
         "error": null,
         "output": {
           "echo": "hello"
+        },
+        "protocol_version": "2.0",
+        "refusal": null,
+        "run_id": "RUN-contract-vector",
+        "status": "ok",
+        "trace": {
+          "endpoints_contacted": [],
+          "events": [],
+          "metrics": {}
+        }
+      },
+      "ok_incomplete_captures": {
+        "error": null,
+        "incomplete_captures": [
+          "pages"
+        ],
+        "output": {
+          "note": "two of three pages failed",
+          "pages": []
         },
         "protocol_version": "2.0",
         "refusal": null,

@@ -484,6 +484,10 @@ class ProviderInvocationReceipt(_StrictProviderExecutionModel):
     input_digest: str
     outcome: ProviderInvocationOutcome
     output: object | None = None
+    #: The out-Contract ``list<capture<...>>`` fields the provider said it
+    #: left missing members (its result's ``incomplete_captures``, D-R37 a4),
+    #: sorted; omitted when none.
+    incomplete_captures: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     egress: ProviderEgressObservation
     fence_scope: ProviderFenceScope = Field(
         description=(
@@ -535,10 +539,19 @@ class ProviderInvocationReceipt(_StrictProviderExecutionModel):
             raise ValueError("receipt secret identities must be digest-sorted and unique")
         return value
 
+    @field_validator("incomplete_captures")
+    @classmethod
+    def _incomplete_captures(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if list(value) != sorted(set(value), key=lambda item: item.encode("utf-8")):
+            raise ValueError("incomplete capture fields must be sorted and unique")
+        return value
+
     @model_validator(mode="after")
     def _outcome_correspondence(self) -> ProviderInvocationReceipt:
         if (self.output is not None) != (self.outcome.status == "ok"):
             raise ValueError("only an ok Provider invocation may carry output")
+        if self.incomplete_captures and self.outcome.status != "ok":
+            raise ValueError("only an ok Provider invocation may name incomplete captures")
         return self
 
 
