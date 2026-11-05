@@ -682,3 +682,121 @@ def test_create_on_a_minted_kind_is_refused_at_authoring(tmp_path: Path) -> None
         install(instance, spec)
     assert refused.value.code == "cruxible.authoring.claims_type_invalid"
     assert "is minted" in refused.value.message
+
+
+# -- V2: absence and inverses follow the same value rules ---------------------------
+
+
+def _absence_line(
+    instance: Any,
+    *,
+    value: dict[str, Any],
+    when_absent: str,
+    expected: list[str],
+    inverse: bool = False,
+) -> None:
+    from tests.support.procedures import boundary_contract, contract_files
+
+    expect_row = boundary_contract("test.expect-component", {"purl": "string"})
+    accept_tree(instance, contract_files(expect_row), name="expect-row")
+    raw = upsert_spec(
+        mappings=[{"type": AFFECTED, "value": value, "when_absent": when_absent}],
+        extract={"complete_when": {"count_at": "/count"}},
+        expect="$params.expected",
+    ).model_dump(mode="python", by_alias=True)
+    raw["params"] = {"expected": f"list<{expect_row.ref.spelling}>{{max_items: 4}}"}
+    install(
+        instance,
+        procedure_spec(base=raw, reference_text=True),
+        parameters={"expected": [{"purl": purl} for purl in expected]},
+    )
+
+
+def test_a_new_target_never_suppresses_mirror_retirement(tmp_path: Path) -> None:
+    """A component's CVE moves from A to a new B: B is created and A retires, one run."""
+
+    a = "pkg:pypi/a@1"
+    instance, root = upsert_world(tmp_path, [{"purl": a, "cve": "CVE-2026-0001"}])
+    _absence_line(instance, value=target(), when_absent="mirror", expected=[a])
+    first = run(instance, root)
+    assert first.status == "succeeded", first.terminal
+    activate(instance, first)
+    old = _paths(instance, KIND)["CVE-2026-0001"]
+
+    _write(root, [{"purl": a, "cve": "CVE-2026-0002"}])
+    moved = run(instance, root, minute=1)
+    assert moved.status == "succeeded", moved.terminal
+    kinds = sorted(type(change).__name__ for change in state_changes(moved))
+    assert kinds == ["CoreClaimChange", "CoreRetirementChange", "CoreSubjectChange"]
+    activate(instance, moved)
+    vulns = _paths(instance, KIND)
+    assert {obj for _, obj in _objects(_live_claims(instance))} == {vulns["CVE-2026-0002"]}
+    assert old in vulns.values()  # the Subject stays; only its Claim retired
+
+
+@pytest.mark.parametrize("unit", ["object", "object_key"])
+def test_an_inverse_creates_its_missing_x_and_keeps_one_identity(tmp_path: Path, unit: str) -> None:
+    """V2: none of X, X missing with create: X is created in the same change."""
+
+    a = "pkg:pypi/a@1"
+    inverse = {"kind": unit, **({"predicate": KIND + ".cve_id"} if unit == "object_key" else {})}
+    instance, root = upsert_world(
+        tmp_path, [], components=(a,), types=(affected_type(inverse=inverse),)
+    )
+    _absence_line(
+        instance,
+        value=target(key="CVE-2026-0001"),
+        when_absent="inverse",
+        expected=[a],
+    )
+    first = run(instance, root)
+    assert first.status == "succeeded", json.dumps(first.terminal.model_dump(mode="json"))
+    (created,) = _subject_items(first)
+    assert created.key == {KIND + ".cve_id": "CVE-2026-0001"}
+    before = _identities(instance, first)
+    (inverse_identity,) = [k for k, kind in before.items() if kind == "claim"]
+    activate(instance, first)
+    vulnerability = _paths(instance, KIND)["CVE-2026-0001"]
+    (held,) = [c for c in _live_claims(instance) if c.statement.predicate == AFFECTED]
+    assert held.statement.object.kind == "none"
+    if unit == "object_key":
+        assert held.statement.object.of.model_dump(mode="json") == {
+            "kind": "literal",
+            "value": "CVE-2026-0001",
+        }
+    else:
+        assert held.statement.object.of.address.artifact_path == vulnerability
+
+    # The same complete absence from new bytes re-confirms it, same identity.
+    _write(root, [], note="re-read")
+    again = run(instance, root, minute=1)
+    assert again.status == "succeeded", again.terminal
+    assert not _subject_items(again)
+    assert _identities(instance, again) == {inverse_identity: "reobservation"}
+
+
+def test_an_inverse_whose_x_is_missing_without_create_is_refused_per_item(
+    tmp_path: Path,
+) -> None:
+    """V2: replaces the whole-run claims_absence_invalid refusal; the run completes."""
+
+    a, b = "pkg:pypi/a@1", "pkg:pypi/b@1"
+    instance, root = upsert_world(
+        tmp_path,
+        [{"purl": b, "cve": "CVE-2026-0001"}],
+        components=(a, b),
+        types=(affected_type(inverse={"kind": "object"}),),
+    )
+    _absence_line(
+        instance,
+        value=target(create=None, key="CVE-2026-0001"),
+        when_absent="inverse",
+        expected=[a, b],
+    )
+    state = run(instance, root)
+    assert state.status == "succeeded", json.dumps(state.terminal.model_dump(mode="json"))
+    assert not _subject_items(state)
+    refused = [d for d in _diagnostics(state) if d.problem == "value_invalid"]
+    # b's positive and a's inverse each refuse alone.
+    assert len(refused) == 2
+    assert state.terminal_egress[0].proposal_id is None

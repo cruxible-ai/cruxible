@@ -903,6 +903,24 @@ def expand_claims(
                 diagnostics=diagnostics,
                 reserve=reserve,
                 within=within_paths,
+                create_target=lambda found, closure: (
+                    None
+                    if found.slot in created
+                    else create_subject(
+                        found.slot,
+                        kind=found.kind,
+                        key=found.key_mapping(),
+                        rationale="Complete source establishes the declared inverse.",
+                        value=cast(
+                            CanonicalValue,
+                            {"key": found.key_mapping(), "subject_kind": found.kind},
+                        ),
+                        closure=closure,
+                    )
+                ),
+                pend_object=lambda index, found, subject_wire, parts: pending.append(
+                    (index, None, found.slot, subject_wire, parts)
+                ),
             )
         except ClaimUnitUnresolved as exc:
             raise _RunRefusal(

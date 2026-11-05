@@ -14,6 +14,7 @@ from cruxible_client.contracts.claim_evidence import (
 from cruxible_client.contracts.claims import NoneClaimObject, claim_artifact_digest
 from cruxible_client.contracts.content_memo import seal
 from cruxible_client.contracts.procedures.models import ExtractNode
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.procedures.claims_changes import (
     CoreClaimChange,
     CoreReobservationChange,
@@ -21,8 +22,10 @@ from cruxible_core.procedures.claims_changes import (
 )
 from cruxible_core.procedures.claims_units import (
     ClaimUnitUnresolved,
+    ValueTarget,
     claims_item_identity_digest,
     resolve_object,
+    resolve_value,
     unit_key,
 )
 
@@ -44,6 +47,8 @@ def append_absence(
     reserve: Callable[[], None],
     identities: list[str],
     within: set[object] | None = None,
+    create_target: Callable[[ValueTarget, Any], None] | None = None,
+    pend_object: Callable[[int, ValueTarget, Any, dict[str, Any]], None] | None = None,
 ) -> None:
     """One pass over the enumeration and ``expect``; every Claim read is an indexed slot read.
 
@@ -53,6 +58,12 @@ def append_absence(
     record. Findings are run-owned; the existing Line routing policy alone
     chooses inbox kinds. Absence obeys ``within`` like every other write: an
     expected Subject outside it is never retired or inverted, only counted.
+
+    An inverse's value resolves as a positive value does (V2): an existing X
+    is used; a missing X with ``create: if_absent`` is created by the run's
+    one Subject item for it (``create_target``) and the inverse names it by
+    key, its identity finalized from lowering (``pend_object``); a missing X
+    without ``create`` refuses that item (``value_invalid``), never the run.
     """
     from cruxible_core.procedures.execution import (
         _exact_evidence,
@@ -483,6 +494,7 @@ def append_absence(
                     if ct.inverse is None:
                         continue
                     inverse: dict[str, Any] = {"kind": "none"}
+                    created_target: ValueTarget | None = None
                     if ct.inverse.key.kind != "slot":
                         obj = claim.statement.object if claim is not None else None
                         if isinstance(obj, NoneClaimObject):
@@ -509,28 +521,49 @@ def append_absence(
                         else:
                             raw = resolve(mapping.value)
                             if isinstance(raw, dict) and raw.get("kind"):
-                                named = context.subject(raw["kind"], raw.get("key", {}))
-                                if named is not None:
-                                    if ct.inverse.key.kind == "object_key":
-                                        held_keys = context.slot(
-                                            named, ct.inverse.key.predicate, None
+                                named_object, value_target = resolve_value(
+                                    raw, ct, context, executor
+                                )
+                                if named_object is None:
+                                    # A missing X without create, or an invalid or
+                                    # ambiguous one: this item only, as a positive.
+                                    diagnostics.add(
+                                        ClaimsDiagnostic(
+                                            kind="extract_refused",
+                                            target=f"{path}:{ct.predicate}",
+                                            field=str(mapping.value),
+                                            problem="value_invalid",
                                         )
-                                        if (
-                                            len(held_keys) != 1
-                                            or held_keys[0].statement.object.kind != "literal"
-                                        ):
-                                            refuse(
-                                                "claims_absence_invalid: "
-                                                "inverse object key is unresolved"
-                                            )
-                                        inverse["of"] = held_keys[0].statement.object.model_dump(
-                                            mode="json"
-                                        )
-                                    else:
-                                        inverse["of"] = {
-                                            "kind": "subject",
-                                            "address": named.model_dump(mode="json"),
+                                    )
+                                    continue
+                                if value_target is not None:
+                                    created_target = value_target
+                                    inverse["of"] = (
+                                        {
+                                            "kind": "literal",
+                                            "value": _key_part(
+                                                value_target, ct.inverse.key.predicate
+                                            ),
                                         }
+                                        if ct.inverse.key.kind == "object_key"
+                                        else named_object
+                                    )
+                                elif ct.inverse.key.kind == "object_key":
+                                    named = SemanticAddress.model_validate(named_object["address"])
+                                    held_keys = context.slot(named, ct.inverse.key.predicate, None)
+                                    if (
+                                        len(held_keys) != 1
+                                        or held_keys[0].statement.object.kind != "literal"
+                                    ):
+                                        refuse(
+                                            "claims_absence_invalid: "
+                                            "inverse object key is unresolved"
+                                        )
+                                    inverse["of"] = held_keys[0].statement.object.model_dump(
+                                        mode="json"
+                                    )
+                                else:
+                                    inverse["of"] = named_object
                             elif raw is not None and not isinstance(raw, dict):
                                 inverse["of"] = {"kind": "literal", "value": raw}
                             if "of" not in inverse:
@@ -570,6 +603,10 @@ def append_absence(
                                 held_identity(subject, ct, claim),
                             )
                         continue
+                    if created_target is not None:
+                        if create_target is None:
+                            refuse("claims_absence_invalid: inverse unit cannot be resolved")
+                        create_target(created_target, own)
                     append(
                         CoreClaimChange.model_validate(
                             {
@@ -597,6 +634,21 @@ def append_absence(
                             context=context,
                         ),
                     )
+                    if created_target is not None and pend_object is not None:
+                        # Named by key until lowering lands it (D-R37 g1).
+                        pend_object(
+                            len(identities) - 1,
+                            created_target,
+                            subject,
+                            {
+                                "claim_type": ct,
+                                "qualifier": claim.statement.qualifier
+                                if claim is not None
+                                else qualifier,
+                                "obj": inverse,
+                                "context": context,
+                            },
+                        )
 
 
 def _list_members(
@@ -625,3 +677,12 @@ def _list_members(
             node_id=node_id,
         )
     return members
+
+
+def _key_part(target: ValueTarget, predicate: str) -> object:
+    """The value of ``target``'s key part ``predicate``: an object_key inverse's unit."""
+
+    for name, value in target.key:
+        if name == predicate:
+            return value
+    raise ClaimUnitUnresolved("The inverse object key is not a key part of its kind.")
