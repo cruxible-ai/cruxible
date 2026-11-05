@@ -2236,9 +2236,7 @@ def _fetched_captures(state: _RunState) -> list[str]:
     refusal means it is never bound.
     """
 
-    return sorted(
-        digest for digest in state.fetched_captures
-    )
+    return sorted(digest for digest in state.fetched_captures)
 
 
 def _consumed(state: _RunState) -> dict[str, object]:
