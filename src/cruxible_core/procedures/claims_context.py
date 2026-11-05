@@ -29,6 +29,7 @@ class ClaimsContext(Protocol):
     def slots(self, subject: SemanticAddress, predicate: str) -> tuple[ClaimArtifact, ...]: ...
     def claim_type(self, predicate: str) -> ClaimType | None: ...
     def subject(self, kind: str, key: Mapping[str, object]) -> SemanticAddress | None: ...
+    def canonical(self, kind: str, key: Mapping[str, object]) -> KeyTuple: ...
     def reference(self, kind: str, value: str) -> SemanticAddress | None: ...
     def slot(
         self, subject: SemanticAddress, predicate: str, qualifier: str | None
@@ -64,13 +65,17 @@ class AcceptedClaimsContext:
         return self._types[predicate]
 
     def subject(self, kind: str, key: Mapping[str, object]) -> SemanticAddress | None:
+        return self._subject(kind, self.canonical(kind, key))
+
+    def canonical(self, kind: str, key: Mapping[str, object]) -> KeyTuple:
+        """``key``'s canonical form under ``kind`` (its key ClaimTypes' forms, then R12)."""
+
         if kind not in self._kinds:
             self._kinds[kind] = live_subject_kind(self.tree, kind)
         declared = self._kinds[kind]
         if declared is None:
             raise ValueError(f"SubjectKind {kind} is not live")
-        canonical = canonical_key(declared, key, claim_type=self.claim_type)
-        return self._subject(kind, canonical)
+        return canonical_key(declared, key, claim_type=self.claim_type)
 
     def _subject(self, kind: str, key: KeyTuple) -> SemanticAddress | None:
         if (kind, key) in self._subjects:

@@ -36,8 +36,11 @@ from tests.support.operation_world import author, operation_build, world
 from tests.support.procedures import procedure_limits, procedure_spec
 from tests.test_procedures.test_claims_terminal import (
     KIND,
+    activate,
+    candidate_claims,
     claim_type,
     install,
+    run,
 )
 
 COMPONENT = "security.component"
@@ -303,6 +306,332 @@ def _objects(claims: list[Any]) -> set[tuple[str, str]]:
 
 def _diagnostics(state: Any) -> list[Any]:
     return [d for egress in state.terminal_egress for d in egress.claims_diagnostics]
+
+
+# -- V1: a missing target is created; one Subject item per target -----------------
+
+
+def test_a_missing_target_is_created_by_one_subject_item_per_key(tmp_path: Path) -> None:
+    entries = [
+        {"purl": "pkg:pypi/a@1", "cve": "CVE-2026-0001"},
+        {"purl": "pkg:pypi/b@1", "cve": "CVE-2026-0001"},
+        {"purl": "pkg:pypi/a@1", "cve": "CVE-2026-0002"},
+    ]
+    instance, root = upsert_world(tmp_path, entries)
+    install(instance, upsert_spec())
+    state = run(instance, root)
+    assert state.status == "succeeded", state.terminal
+    created = _subject_items(state)
+    assert sorted(c.key[KIND + ".cve_id"] for c in created) == ["CVE-2026-0001", "CVE-2026-0002"]
+    assert all(c.subject_kind == KIND for c in created)
+    claims = candidate_claims(instance, state)
+    assert len([c for c in claims if c.statement.predicate == AFFECTED]) == 3
+    activate(instance, state)
+
+    vulns = _paths(instance, KIND)
+    components = _paths(instance, COMPONENT)
+    assert set(vulns) == {"CVE-2026-0001", "CVE-2026-0002"}
+    held = _objects(_live_claims(instance))
+    assert held == {
+        (components["pkg:pypi/a@1"], vulns["CVE-2026-0001"]),
+        (components["pkg:pypi/b@1"], vulns["CVE-2026-0001"]),
+        (components["pkg:pypi/a@1"], vulns["CVE-2026-0002"]),
+    }
+    # The same source again changes nothing: the targets exist now.
+    again = run(instance, root, minute=1)
+    assert again.status == "succeeded", again.terminal
+    assert not _subject_items(again)
+    assert again.terminal_egress[0].proposal_id is None
+
+
+def _live_claims(instance: Any) -> list[Any]:
+    from cruxible_client.contracts.claims import parse_claim
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    return [
+        claim
+        for path in tree
+        if path.startswith("claims/")
+        for claim in (parse_claim(tree[path], path=path),)
+        if claim.lifecycle.state == "live"
+    ]
+
+
+def test_a_missing_target_without_create_is_refused_per_item(tmp_path: Path) -> None:
+    entries = [
+        {"purl": "pkg:pypi/a@1", "cve": "CVE-2026-0001"},
+        {"purl": "pkg:pypi/a@1", "cve": "CVE-2026-0009"},
+    ]
+    instance, root = upsert_world(tmp_path, entries, vulnerabilities=("CVE-2026-0001",))
+    install(instance, upsert_spec(value=target(create=None)))
+    state = run(instance, root)
+    assert state.status == "succeeded", state.terminal
+    assert not _subject_items(state)
+    (claim,) = candidate_claims(instance, state)
+    assert claim.statement.object.address.artifact_path == _paths(instance, KIND)["CVE-2026-0001"]
+    refused = [d for d in _diagnostics(state) if d.problem == "value_invalid"]
+    assert len(refused) == 1
+
+
+def test_a_target_held_at_base_is_used_and_never_created(tmp_path: Path) -> None:
+    entries = [{"purl": "pkg:pypi/a@1", "cve": "CVE-2026-0001"}]
+    instance, root = upsert_world(tmp_path, entries, vulnerabilities=("CVE-2026-0001",))
+    install(instance, upsert_spec())
+    state = run(instance, root)
+    assert state.status == "succeeded", state.terminal
+    assert not _subject_items(state)
+    (claim,) = candidate_claims(instance, state)
+    assert claim.statement.object.address.selector.scheme == "artifact-v1"
+    assert claim.statement.object.address.artifact_path == _paths(instance, KIND)["CVE-2026-0001"]
+
+
+def test_two_spellings_of_one_key_are_one_subject_item(tmp_path: Path) -> None:
+    """V5: the kind's R12 normalizer makes CVE-... and cve-... one key, one item."""
+
+    entries = [
+        {"purl": "pkg:pypi/a@1", "cve": "CVE-2026-0001"},
+        {"purl": "pkg:pypi/b@1", "cve": "cve-2026-0001"},
+    ]
+    instance, root = upsert_world(tmp_path, entries, lowercase=True)
+    install(instance, upsert_spec())
+    state = run(instance, root)
+    assert state.status == "succeeded", state.terminal
+    (created,) = _subject_items(state)
+    assert created.key == {KIND + ".cve_id": "cve-2026-0001"}
+    activate(instance, state)
+    (vuln,) = _paths(instance, KIND).values()
+    assert {obj for _, obj in _objects(_live_claims(instance))} == {vuln}
+
+
+def test_a_value_target_that_is_a_rows_subject_shares_its_subject_item(tmp_path: Path) -> None:
+    """V5: rows create vulnerabilities; one row's value names another row's Subject."""
+
+    related = claim_type(RELATED, f"subject<{KIND}>", value_type=(KIND,))
+    entries = [
+        {"purl": "pkg:pypi/a@1", "cve": "CVE-2026-0002"},
+        {"purl": "pkg:pypi/a@1", "cve": "CVE-2026-0001"},
+    ]
+    instance, root = upsert_world(tmp_path, entries, components=(), types=(related,))
+    # Each row's Subject is its own CVE, created if absent; each value names
+    # CVE-2026-0001, the second row's Subject.
+    spec = upsert_spec(
+        subject={"kind": KIND, "key": {"cve_id": "$item.key.advisory"}, "create": "if_absent"},
+        mappings=[{"type": RELATED, "value": target(key="CVE-2026-0001")}],
+    )
+    install(instance, spec)
+    state = run(instance, root)
+    assert state.status == "succeeded", json.dumps(state.terminal.model_dump(mode="json"))
+    created = _subject_items(state)
+    assert sorted(c.key.get("cve_id") or c.key[KIND + ".cve_id"] for c in created) == [
+        "CVE-2026-0001",
+        "CVE-2026-0002",
+    ]
+    activate(instance, state)
+    vulns = _paths(instance, KIND)
+    held = {
+        (c.statement.subject.artifact_path, c.statement.object.address.artifact_path)
+        for c in _live_claims(instance)
+        if c.statement.predicate == RELATED
+    }
+    assert held == {
+        (vulns["CVE-2026-0002"], vulns["CVE-2026-0001"]),
+        (vulns["CVE-2026-0001"], vulns["CVE-2026-0001"]),
+    }
+
+
+def test_two_spellings_of_one_row_key_are_one_subject_item(tmp_path: Path) -> None:
+    """V5 on the row side: the latent two-item refusal on raw-byte keys is gone."""
+
+    related = claim_type(
+        RELATED,
+        f"subject<{KIND}>",
+        value_type=(KIND,),
+        cardinality="many",
+        resolution_policy=ClaimResolutionPolicy(
+            cardinality="many", eligible_verdicts=("supported",), selector="all"
+        ),
+    )
+    entries = [
+        {"purl": "pkg:pypi/a@1", "cve": "CVE-2026-0001"},
+        {"purl": "pkg:pypi/b@1", "cve": "cve-2026-0001"},
+    ]
+    instance, root = upsert_world(
+        tmp_path,
+        entries,
+        components=(),
+        vulnerabilities=("CVE-2026-0008", "CVE-2026-0009"),
+        lowercase=True,
+        types=(related,),
+    )
+    spec = upsert_spec(
+        extract={
+            "key": {
+                "purl": {"at": "purl", "type": f"key_part<{COMPONENT}:purl>"},
+                "advisory": {"at": "cve", "type": "string{max_len: 256}"},
+            }
+        },
+        subject={"kind": KIND, "key": {"cve_id": "$item.key.advisory"}, "create": "if_absent"},
+        mappings=[
+            {
+                "type": RELATED,
+                "value": {"kind": KIND, "key": {"cve_id": "CVE-2026-0008"}},
+                "when": {
+                    "op": "eq",
+                    "left": {"$ref": "item", "path": ["fields", "cve"]},
+                    "right": {"literal": "CVE-2026-0001"},
+                },
+            },
+            {
+                "type": RELATED,
+                "value": {"kind": KIND, "key": {"cve_id": "CVE-2026-0009"}},
+                "when": {
+                    "op": "eq",
+                    "left": {"$ref": "item", "path": ["fields", "cve"]},
+                    "right": {"literal": "cve-2026-0001"},
+                },
+            },
+        ],
+    )
+    install(instance, spec)
+    state = run(instance, root)
+    assert state.status == "succeeded", json.dumps(state.terminal.model_dump(mode="json"))
+    (created,) = _subject_items(state)
+    assert created.subject_kind == KIND
+    activate(instance, state)
+    vulns = _paths(instance, KIND)
+    held = {
+        (c.statement.subject.artifact_path, c.statement.object.address.artifact_path)
+        for c in _live_claims(instance)
+        if c.statement.predicate == RELATED
+    }
+    assert held == {
+        (vulns["cve-2026-0001"], vulns["cve-2026-0008"]),
+        (vulns["cve-2026-0001"], vulns["cve-2026-0009"]),
+    }
+
+
+# -- D-R37 g1: one identity from the creating run on ---------------------------------
+
+
+def _identities(instance: Any, state: Any) -> dict[str, str]:
+    """identity -> change kind, as the run read serves them."""
+
+    from tests.test_procedures.test_claims_item_changes import _changes
+
+    return {identity: kind for identity, (kind, _, _) in _changes(instance, state).items()}
+
+
+def test_a_created_targets_claim_keeps_one_identity_through_reobserve_revise_and_retire(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.semantic import SemanticAddress
+    from cruxible_core.procedures.claims_units import claims_item_identity_digest
+    from tests.support.procedures import boundary_contract, contract_files
+
+    a = "pkg:pypi/a@1"
+    entries = [{"purl": a, "cve": "CVE-2026-0001", "since": "2026-01-01T00:00:00Z"}]
+    instance, root = upsert_world(tmp_path, entries)
+    expect_row = boundary_contract("test.expect-component", {"purl": "string"})
+    accept_tree(instance, contract_files(expect_row), name="expect-row")
+    raw = upsert_spec(
+        mappings=[
+            {
+                "type": AFFECTED,
+                "value": target(),
+                "effective_from": "$item.fields.since",
+                "when_absent": "mirror",
+            }
+        ],
+        extract={"complete_when": {"count_at": "/count"}},
+        expect="$params.expected",
+    ).model_dump(mode="python", by_alias=True)
+    raw["params"] = {"expected": f"list<{expect_row.ref.spelling}>{{max_items: 4}}"}
+    install(
+        instance,
+        procedure_spec(base=raw, reference_text=True),
+        parameters={"expected": [{"purl": a}]},
+    )
+
+    created = run(instance, root)
+    before = _identities(instance, created)
+    assert sorted(before.values()) == ["claim", "subject"]
+    (claim_identity,) = [k for k, kind in before.items() if kind == "claim"]
+    (subject_identity,) = [k for k, kind in before.items() if kind == "subject"]
+    activate(instance, created)
+    vulnerability = _paths(instance, KIND)["CVE-2026-0001"]
+    # The Subject item is identified by the address lowering assigned it.
+    assert subject_identity == claims_item_identity_digest(
+        node_id="write", subject=SemanticAddress.whole_artifact(vulnerability)
+    )
+
+    # Re-observed: the same unit from new bytes.
+    _write(root, entries, note="re-read")
+    assert _identities(instance, run(instance, root, minute=1)) == {claim_identity: "reobservation"}
+    # Revised: the same unit, a new effective period.
+    revised = [{**entries[0], "since": "2026-02-01T00:00:00Z"}]
+    _write(root, revised)
+    revision = run(instance, root, minute=2)
+    assert _identities(instance, revision) == {claim_identity: "claim"}
+    activate(instance, revision)
+    # Retired: the complete source no longer lists the CVE for the component.
+    _write(root, [])
+    assert _identities(instance, run(instance, root, minute=3)) == {claim_identity: "retirement"}
+
+
+# -- an ambiguous or invalid key never creates ------------------------------------
+
+
+class _Context:
+    """A Claims context whose key lookups answer as configured."""
+
+    def __init__(self, answer: Any) -> None:
+        self.answer = answer
+        self.canonicals = 0
+
+    def subject(self, kind: str, key: Any) -> Any:
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return self.answer
+
+    def canonical(self, kind: str, key: Any) -> Any:
+        self.canonicals += 1
+        if any(not isinstance(value, str) for value in key.values()):
+            raise ValueError("a key part is a string, an integer or a boolean")
+        return tuple((KIND + "." + name, value) for name, value in key.items())
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        ValueError("subject_key_ambiguous: security.vulnerability has several holders"),
+        ValueError("cve_id: not a key value"),
+    ],
+    ids=["ambiguous", "invalid"],
+)
+def test_an_ambiguous_or_invalid_key_never_creates(answer: Exception) -> None:
+    from cruxible_core.procedures.claims_units import resolve_value
+
+    context = _Context(answer)
+    obj, created = resolve_value(target(key="CVE-2026-0001"), affected_type(), context, None)
+    assert obj is None and created is None
+    assert context.canonicals == 0
+
+
+def test_only_a_missing_target_with_create_resolves_to_its_key() -> None:
+    from cruxible_core.procedures.claims_units import resolve_value
+
+    obj, created = resolve_value(target(key="CVE-2026-0001"), affected_type(), _Context(None), None)
+    assert created is not None and created.slot[0] == KIND
+    assert obj is not None and obj["address"]["selector"]["scheme"] == "subject-key-v1"
+    assert resolve_value(
+        target(create=None, key="CVE-2026-0001"), affected_type(), _Context(None), None
+    ) == (None, None)
+    # A present field result names its value.
+    present = {"tag": "present", "value": "CVE-2026-0001", "at": "/entries/0/cve"}
+    _obj, from_field = resolve_value(target(key=present), affected_type(), _Context(None), None)
+    assert from_field == created
+    absent = {"tag": "absent", "value": None}
+    assert resolve_value(target(key=absent), affected_type(), _Context(None), None) == (None, None)
 
 
 # -- V1: authoring validation ------------------------------------------------------
