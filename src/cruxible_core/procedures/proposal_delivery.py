@@ -9,10 +9,10 @@ sole proposal door exactly once per admitted operation.
 
 Three properties are load-bearing:
 
-* **Evidence is the run's own.** Each item cites the produced Capture in its
-  own dependency closure as `ExistingCaptureCitationSource`, or, when the
-  closure produced none, the one retained Capture the run was admitted (a
-  Line's trigger input). Nothing an
+* **Evidence is the run's own.** Each item cites the one root Capture of its
+  own dependency closure -- every Capture it produced or was admitted (a
+  Line's trigger input), together -- as `ExistingCaptureCitationSource`.
+  Nothing an
   author writes into a template can name, borrow, or omit evidence, and the
   Claim's grade is whatever its ClaimType's evidence admission policy says
   about that Capture.
@@ -429,7 +429,8 @@ def evidence_by_item(
 ) -> dict[str, str]:
     """Pick the one Capture each item's own closure proves as its root (D-R37 d1).
 
-    A single produced/admitted Capture is its own root. Several must share one
+    The closure is the UNION of produced and admitted Captures
+    (``citable_captures``). A single one is its own root. Several must share one
     recorded derivation root (``capture_root``, over ``derivations``): a
     receipt names which Capture the claims terminal cited, never that its
     recorded inputs cover the rest of the closure, so the cited Capture is

@@ -2,9 +2,10 @@
 
 A Line that binds its triggering Capture to a Source input (``trigger_input``)
 consumes a retained Capture: the run produces none of its own. Its proposal
-items cite that admitted Capture when their closure produced none; zero is
-still missing, more than one is ambiguous, and an explicitly selected Capture
-must still be in the item's own closure (produced or admitted).
+items cite the one root of their closure's produced AND admitted Captures
+together: one Capture is its own root, zero is missing, and several are
+ambiguous unless one derives from all the others. A provider-made source
+field never chooses the evidence.
 """
 
 from __future__ import annotations
@@ -31,7 +32,10 @@ from cruxible_client.contracts.shapes import contract_path, render_contract
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_client.contracts.triggers import CaptureLandingSchedule
 from cruxible_core.procedures.proposal_delivery import ProposalDeliveryRefused, evidence_by_item
-from cruxible_core.procedures.terminal_dependencies import TerminalItemDependencyManifestV1
+from cruxible_core.procedures.terminal_dependencies import (
+    TerminalItemDependencyManifestV1,
+    citable_captures,
+)
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
@@ -211,11 +215,6 @@ def test_an_item_cites_its_single_admitted_capture_when_its_closure_produced_non
     assert evidence_by_item(_request(), {"item-0": _manifest(admitted=(_A,))}) == {"item-0": _A}
 
 
-def test_a_produced_capture_wins_over_an_admitted_one() -> None:
-    manifests = {"item-0": _manifest(produced=(_B,), admitted=(_A,))}
-    assert evidence_by_item(_request(), manifests) == {"item-0": _B}
-
-
 def test_two_admitted_captures_are_ambiguous_and_none_is_missing() -> None:
     with pytest.raises(ProposalDeliveryRefused) as ambiguous:
         evidence_by_item(_request(), {"item-0": _manifest(admitted=(_A, _B))})
@@ -298,10 +297,104 @@ def test_evidence_by_item_is_free_for_every_item_after_the_first_sharing_a_chain
     assert len(cache.roots) == 1
 
 
-def test_an_explicitly_selected_capture_must_be_in_the_items_closure_produced_or_admitted() -> None:
-    # Provider-made source fields are inert; only the executor's closure chooses evidence.
+def test_an_unrelated_admitted_capture_refuses_beside_a_produced_one() -> None:
+    """D-R37 d1: the root is proven over produced AND admitted Captures together.
+
+    A produced B beside an admitted, unrelated A has no root
+    (``capture_root((A, B), {})`` is None). The admitted Capture is never
+    dropped in favour of the produced one, so no receipt or provider-made
+    source can make either the item's evidence.
+    """
+
+    manifest = _manifest(produced=(_B,), admitted=(_A,))
+    assert citable_captures(manifest) == (_B, _A)
+    for request in (
+        _request(),
+        _request(cited=_B),
+        _request(cited=_A),
+        _request(_selected(_A), cited=_B),
+    ):
+        with pytest.raises(ProposalDeliveryRefused) as refused:
+            evidence_by_item(request, {"item-0": manifest})
+        assert refused.value.code == "proposal_item_evidence_ambiguous"
+        assert refused.value.details["capture_digests"] == [_B, _A]
+
+
+def test_a_produced_root_derived_from_the_admitted_capture_succeeds() -> None:
+    """D-R37 d1: a derive over the trigger's admitted Capture roots the mixed closure."""
+
     manifests = {"item-0": _manifest(produced=(_B,), admitted=(_A,))}
-    assert evidence_by_item(_request(_selected(_A)), manifests) == {"item-0": _B}
+    # B's manifest records the admitted A as its input: B is the root.
+    derivations = {_B: (_A,)}
+    assert evidence_by_item(_request(cited=_B), manifests, derivations=derivations) == {
+        "item-0": _B
+    }
+    # A provider-made source naming A stays inert; the proven root decides.
+    assert evidence_by_item(
+        _request(_selected(_A), cited=_B), manifests, derivations=derivations
+    ) == {"item-0": _B}
+    # A receipt citing the admitted input, not the root, is refused.
+    with pytest.raises(ProposalDeliveryRefused) as refused:
+        evidence_by_item(_request(cited=_A), manifests, derivations=derivations)
+    assert refused.value.code == "proposal_item_evidence_ambiguous"
+
+
+@pytest.mark.parametrize("n", [10, 100])
+def test_mixed_closure_proof_is_linear_for_either_outcome(n: int) -> None:
+    """D-R37 cost: the union proof over an admitted base plus a produced cumulative chain.
+
+    Every derive records the admitted trigger Capture and every prior derive
+    (the executor's cumulative manifests). 50 items share the closure: the
+    related case proves the root once, reading only the root's own inputs
+    (linear in n); an unrelated admitted Capture refuses once per closure,
+    reading each recorded edge at most once (linear in the graph's edges --
+    proving no member reaches it needs every reachable edge read).
+    """
+
+    from cruxible_core.procedures.terminal_dependencies import CaptureRootCache
+    from tests.test_procedures.test_terminal_dependencies import (
+        _CountingDerivations,
+        _cumulative_chain,
+    )
+
+    chain, derivations = _cumulative_chain(n + 1)
+    admitted, produced = chain[0], tuple(chain[1:])
+    root = chain[-1]
+    items = 50
+    request = SimpleNamespace(
+        items=tuple(
+            SimpleNamespace(item_key=f"item-{i}", child_index=i, value=item_template())
+            for i in range(items)
+        ),
+        claims_evidence={
+            f"item-{i}": SimpleNamespace(value=SimpleNamespace(capture_digest=root))
+            for i in range(items)
+        },
+    )
+
+    def manifests(base: str):  # type: ignore[no-untyped-def]
+        return {f"item-{i}": _manifest(produced=produced, admitted=(base,)) for i in range(items)}
+
+    counted = _CountingDerivations(derivations)
+    cache = CaptureRootCache()
+    evidence = evidence_by_item(request, manifests(admitted), derivations=counted, cache=cache)  # type: ignore[arg-type]
+    assert evidence == {f"item-{i}": root for i in range(items)}
+    assert counted.edges <= 3 * n
+    assert counted.lookups <= 2 * n + 3
+    assert len(cache.roots) == 1
+
+    unrelated = "sha256:" + "f" * 64
+    counted = _CountingDerivations(derivations)
+    with pytest.raises(ProposalDeliveryRefused) as refused:
+        evidence_by_item(request, manifests(unrelated), derivations=counted, cache=cache)  # type: ignore[arg-type]
+    assert refused.value.code == "proposal_item_evidence_ambiguous"
+    assert counted.edges <= sum(len(inputs) for inputs in derivations.values())
+    assert counted.lookups <= 3 * n + 3
+    assert len(cache.roots) == 2
+
+
+def test_an_explicitly_selected_capture_never_chooses_the_evidence() -> None:
+    # Provider-made source fields are inert; only the executor's closure chooses evidence.
     assert evidence_by_item(_request(_selected(_A)), {"item-0": _manifest(produced=(_B,))}) == {
         "item-0": _B
     }

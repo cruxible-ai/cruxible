@@ -404,16 +404,20 @@ def derive_terminal_item_facts(
 
 
 def citable_captures(manifest: TerminalItemDependencyManifestV1 | None) -> tuple[str, ...]:
-    """The Captures an item may cite: those its closure produced, else those it was admitted.
+    """Every Capture in an item's closure: those it produced AND those it was admitted.
 
-    A run's own Source observation is the evidence when there is one. A run fed
-    a retained Capture instead (a Line's trigger input) produced none, and the
-    Capture it consumed is the observation its items interpret.
+    The item cites the one root of this whole set (``capture_root``, D-R37
+    d1). A run fed only a retained Capture (a Line's trigger input) produced
+    none, so its admitted Capture is the set. When the closure holds both, an
+    admitted Capture is never dropped in favour of a produced one: the root
+    must be proven over the union, so an unrelated admitted Capture refuses.
     """
 
     if manifest is None:
         return ()
-    return manifest.produced_capture_digests or manifest.admitted_capture_digests
+    return tuple(
+        dict.fromkeys((*manifest.produced_capture_digests, *manifest.admitted_capture_digests))
+    )
 
 
 @dataclass
