@@ -105,6 +105,7 @@ def _two_capture_state(items):  # type: ignore[no-untyped-def]
 
     from cruxible_core.procedures.terminal_dependencies import (
         AliasProvenanceV1,
+        CaptureRootCache,
         produced_capture_token,
     )
 
@@ -116,6 +117,8 @@ def _two_capture_state(items):  # type: ignore[no-untyped-def]
         outputs={"joined": {"items": [_element(None), _element("vendor")]}},
         provenance={"joined": provenance},
         completeness=Completeness(),
+        derivations={},
+        capture_root_cache=CaptureRootCache(),
         alias_tokens=lambda aliases: provenance.whole if "joined" in aliases else frozenset(),
     )
 
@@ -164,11 +167,15 @@ class _State:
     """The slice of a run state the fan-out and projection provenance read."""
 
     def __init__(self, outputs, provenance):  # type: ignore[no-untyped-def]
+        from cruxible_core.procedures.terminal_dependencies import CaptureRootCache
+
         self.input_payload = {}
         self.parameters = {}
         self.outputs = outputs
         self.provenance = provenance
         self.completeness = Completeness()
+        self.derivations = {}
+        self.capture_root_cache = CaptureRootCache()
 
     def alias_tokens(self, aliases):  # type: ignore[no-untyped-def]
         tokens = frozenset()

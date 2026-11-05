@@ -158,13 +158,25 @@ retention, erasure policy and byte budget. Start with the authored form:
 `cruxible capture-contract propose --template` prints this form;
 `--template --expanded` includes its defaults. Propose it with `--input FILE`.
 The shapes are `http_response`, `procedure_output`, `foreign_span` and
-`database_snapshot`. Grade defaults to `observed` (`derived` requires
-`procedure_output`); replay defaults to `attested` for HTTP responses and
-`exact` otherwise. Retention defaults to `P30D`, `erasable` to `false`,
+`database_snapshot`. Grade defaults to `observed`; a `derived` kind (a
+derive's output) takes `procedure_output`, `http_response` or `foreign_span`
+and declares `json` or `csv` decoding, so an extract can read it. Replay
+defaults to `attested` for HTTP responses and `exact` otherwise. Retention defaults to `P30D`, `erasable` to `false`,
 `max_bytes` to 16777216, and `selector_privacy` to `direct_allowed`.
 The engine supplies the component definitions. An edit keeps omitted fields;
 raise `max_bytes` or retire it with `lifecycle: retired`. A change to what the
 evidence means needs a new name.
+
+A **derive** is a call whose capture output is a `derived` kind. Its operation
+declares `effect: pure`, and a `capture<K>` (or `capture<*>`) input field
+receives a Capture this run fetched or was admitted, as Capture wire: the exact
+bytes with the envelope's coordinate. The run's identity commits only the
+Capture digest. The derived Capture records its inputs (the Captures, their
+receipts and the state reads) and its reducer (provider build, operation and the
+node's input template); `get` on it shows them. A Claim cites one root Capture:
+a derived one covers the Captures it records, while two unrelated Captures are
+still refused. A derived Capture inherits the most restrictive `body_access` of
+its inputs.
 
 A rule can restrict a shared contract to specific logical sources:
 

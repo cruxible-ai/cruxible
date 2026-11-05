@@ -35,7 +35,9 @@ from cruxible_client.contracts.operational_reads import (
     LINE_CARD_RUNS,
     OPERATIONAL_CARD_LIST_LIMIT,
     GetCaptureCard,
+    GetCaptureDerivation,
     GetCaptureErasure,
+    GetCaptureReducer,
     GetLineCard,
     GetLineEnablement,
     GetLineOccurrence,
@@ -686,6 +688,47 @@ def capture_availability(
     return "unavailable", "retained evidence unavailable at the read position", None
 
 
+def _capture_derivation(instance: PlaybillInstance, digest: str) -> GetCaptureDerivation | None:
+    """A derived Capture's manifest and reducer, read from the store; None if unreadable."""
+
+    from cruxible_client.contracts.captures import (
+        CaptureEnvelope,
+        CaptureFormatError,
+        ProviderInvocationCaptureEvidence,
+        read_derive_reducer,
+        read_input_receipt_set_manifest,
+    )
+
+    store = instance.body_store()
+    try:
+        envelope = capture_envelope(store, digest, access=_SERVICE_ACCESS)
+        manifest_digest = envelope.input_receipt_set_manifest_digest
+        if manifest_digest is None:
+            return None
+        manifest = read_input_receipt_set_manifest(store, manifest_digest)
+        reducer = None
+        if (
+            isinstance(envelope, CaptureEnvelope)
+            and isinstance(envelope.production_evidence, ProviderInvocationCaptureEvidence)
+            and envelope.reducer_digest is not None
+        ):
+            stored = read_derive_reducer(store, envelope.reducer_digest)
+            reducer = GetCaptureReducer(
+                digest=envelope.reducer_digest,
+                provider_build=stored.provider_artifact_digest,
+                operation_signature=stored.operation_signature_digest,
+                implementation=stored.implementation_digest,
+                input_template=stored.input_template_digest,
+            )
+    except (CruxibleError, CaptureFormatError, ValueError):
+        return None
+    return GetCaptureDerivation(
+        sources=manifest.input_capture_digests,
+        reads=manifest.input_accepted_state_digests,
+        reducer=reducer,
+    )
+
+
 def capture_card(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -776,6 +819,11 @@ def capture_card(
         status_detail, erasure = None, None
     else:
         status, status_detail, erasure = capture_availability(instance, digest)
+    derivation = (
+        _capture_derivation(instance, digest)
+        if not withheld and kind.kind is not None and kind.kind.epistemic_grade == "derived"
+        else None
+    )
     next_steps = [render(claim, None) for claim in citing[:1]]
     next_steps.append(read_capture(digest))
     return GetCaptureCard(
@@ -792,6 +840,7 @@ def capture_card(
         erased=None
         if erasure is None
         else GetCaptureErasure(by=erasure.erased_by, at=erasure.erased_at, because=erasure.because),
+        derivation=derivation,
         subjects=subjects,
         citing=citing,
         citing_total=citing_total,

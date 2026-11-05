@@ -740,7 +740,10 @@ def test_the_same_operation_key_with_other_member_bytes_refuses(
         evidence = kwargs.get("evidence")
         if evidence is None:
             evidence = delivery_module.evidence_by_item(
-                kwargs["request"], kwargs.get("manifests") or {}
+                kwargs["request"],
+                kwargs.get("manifests") or {},
+                derivations=kwargs.get("derivations") or {},
+                cache=kwargs.get("capture_root_cache"),
             )
         self._evidence_for_test = evidence
         prepared = drifting_prepare(self, **kwargs)

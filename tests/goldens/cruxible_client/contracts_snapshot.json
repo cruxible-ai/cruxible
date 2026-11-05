@@ -5497,7 +5497,7 @@
           },
           "CaptureType": {
             "additionalProperties": false,
-            "description": "Retained bytes of one CaptureKind, by Capture digest.",
+            "description": "Retained bytes of one CaptureKind (``*``: any), by Capture digest.",
             "properties": {
               "capture_kind": {
                 "title": "Capture Kind",
@@ -54001,7 +54001,7 @@
           },
           "CaptureType": {
             "additionalProperties": false,
-            "description": "Retained bytes of one CaptureKind, by Capture digest.",
+            "description": "Retained bytes of one CaptureKind (``*``: any), by Capture digest.",
             "properties": {
               "capture_kind": {
                 "title": "Capture Kind",
@@ -81662,7 +81662,7 @@
           },
           "CaptureType": {
             "additionalProperties": false,
-            "description": "Retained bytes of one CaptureKind, by Capture digest.",
+            "description": "Retained bytes of one CaptureKind (``*``: any), by Capture digest.",
             "properties": {
               "capture_kind": {
                 "title": "Capture Kind",
@@ -90285,7 +90285,7 @@
           },
           "CaptureType": {
             "additionalProperties": false,
-            "description": "Retained bytes of one CaptureKind, by Capture digest.",
+            "description": "Retained bytes of one CaptureKind (``*``: any), by Capture digest.",
             "properties": {
               "capture_kind": {
                 "title": "Capture Kind",

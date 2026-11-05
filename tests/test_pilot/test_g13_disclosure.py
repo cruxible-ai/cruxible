@@ -366,6 +366,159 @@ def test_authorization_work_is_constant_in_the_captures_asked(
     assert sum(item.restricted for item in found.values()) == size // 2
 
 
+def test_a_mixed_depth_derive_chain_propagates_restriction_through_every_dependent(
+    tmp_path: Path,
+) -> None:
+    """D-R37 d6: A -> X -> B -> R, R restricted, restricts every dependent.
+
+    A batched ``captures((A, B))`` must resolve the complete reachable graph
+    before publishing any decision: X, reached only through A's own chain and
+    never asked for directly, must end up restricted exactly like B (which
+    directly records R) and A (which depends on X). A nested, nothing's left
+    provisionally open just because a candidate's own fixed point looked
+    settled before the rest of the graph was known.
+    """
+
+    from datetime import UTC, datetime
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.canonical import ArtifactDigest, Sha256Value, typed_digest
+    from cruxible_client.contracts.capture_contract_inputs import (
+        CaptureContractInputRecord,
+        lower_capture_contract_input,
+    )
+    from cruxible_client.contracts.captures import (
+        CaptureRunCoordinateV1,
+        InputReceiptSetManifest,
+        build_derived_cas_capture,
+        capture_contract_digest,
+        capture_contract_path,
+        render_capture_contract,
+    )
+    from cruxible_core.service.evidence.body_access import (
+        WITHHELD_MARK,
+        capture_access_resolver,
+    )
+    from cruxible_core.service.proposals.review import withhold_review_values
+    from tests.core_support._identity_support import accept_tree
+    from tests.core_support._light_capture_support import JSON_DECODING, record_contract
+
+    def sha(label: str) -> str:
+        return typed_digest(Sha256Value, "test-g13-mixed-depth", {"label": label}).tagged
+
+    def art(label: str) -> str:
+        return typed_digest(ArtifactDigest, "test-g13-mixed-depth", {"label": label}).tagged
+
+    instance, _root = pilot_world(tmp_path, "kev.json")
+    restricted_root = record_contract(name="test.g13-root", body_access="restricted")
+    derived_view = lower_capture_contract_input(
+        CaptureContractInputRecord(
+            name="test.g13-view",
+            shape="procedure_output",
+            grade="derived",
+            replay="attested",
+            max_bytes=65536,
+            decoding=JSON_DECODING,
+        ),
+        named=True,
+    )
+    accept_tree(
+        instance,
+        {
+            capture_contract_path(restricted_root.identity.name): render_capture_contract(
+                restricted_root
+            ),
+            capture_contract_path(derived_view.identity.name): render_capture_contract(
+                derived_view
+            ),
+        },
+        name="g13-mixed-depth-kinds",
+    )
+
+    store = instance.body_store()
+    r_digest = store.store(
+        b'{"capture_contract_digest":"'
+        + capture_contract_digest(restricted_root).tagged.encode()
+        + b'","n":0}'
+    ).digest
+    producer = ArtifactIdentity(kind="Provider", name="test.g13-derive-provider")
+    run_coordinate = CaptureRunCoordinateV1(
+        run_kind="provider",
+        run_id="run-g13-mixed-depth",
+        bound_generation=sha("generation"),
+        executable_identity=producer,
+        executable_digest=sha("executable"),
+    )
+
+    def derive(label: str, *, from_digest: str) -> str:
+        result = build_derived_cas_capture(
+            store=store,
+            contract=derived_view,
+            output_body=('{"label":"%s"}' % label).encode(),
+            manifest=InputReceiptSetManifest(input_capture_digests=(from_digest,)),
+            reducer_digest=art("reducer-" + label),
+            run_coordinate=run_coordinate,
+            run_receipt_digest=sha("receipt-" + label),
+            producer=producer,
+            producer_binding_digest=sha("binding-" + label),
+            observed_at=datetime.now(UTC),
+        )
+        return result.capture_digest
+
+    b_digest = derive("b", from_digest=r_digest)
+    x_digest = derive("x", from_digest=b_digest)
+    a_digest = derive("a", from_digest=x_digest)
+
+    resolver = capture_access_resolver(instance)
+    found = resolver.captures((a_digest, b_digest))
+    assert found[a_digest].restricted and found[a_digest].inherited_restricted
+    assert found[b_digest].restricted and found[b_digest].inherited_restricted
+    # X is reached only through A's own chain, never asked for directly: it
+    # must not be left open by a nested lookup that settled early.
+    assert resolver.capture(x_digest).restricted
+
+    # The same chain, through a real proposal-review payload (C14): both
+    # named Captures are withheld, and the candidate value each names is
+    # replaced, never leaked.
+    payload = {
+        "candidate_digest": sha("candidate"),
+        "parent_semantic_root": sha("parent"),
+        "members": [
+            {
+                "base_semantic_artifact": None,
+                "candidate_semantic_artifact": {
+                    "capture_digest": a_digest,
+                    "statement": {"object": {"value": "from-a"}},
+                },
+                "semantic_delta": ["unchanged"],
+            },
+            {
+                "base_semantic_artifact": None,
+                "candidate_semantic_artifact": {
+                    "capture_digest": b_digest,
+                    "statement": {"object": {"value": "from-b"}},
+                },
+                "semantic_delta": ["unchanged"],
+            },
+        ],
+        "item_reasons": [{"item": "x"}],
+    }
+    served = withhold_review_values(instance, payload, READER)
+    assert served["withheld"]["capture_digests"] == sorted([a_digest, b_digest])
+    for member in served["members"]:
+        assert member["candidate_semantic_artifact"]["statement"]["object"] == {
+            "withheld": WITHHELD_MARK
+        }
+    assert withhold_review_values(instance, payload, KEY) == payload
+
+    # A missing derivation record fails closed, for everything depending on it.
+    with instance.body_store().capture_envelopes._connection() as connection:  # noqa: SLF001
+        connection.execute("DELETE FROM derivation_inputs WHERE capture_digest=?", (x_digest,))
+        connection.execute("DELETE FROM derivations WHERE capture_digest=?", (x_digest,))
+    fresh = capture_access_resolver(instance).capture(a_digest)
+    assert fresh.restricted and fresh.inherited_restricted
+
+
 def _candidate_dates(instance: Any, state: Any) -> set[str]:
     values = {str(c.statement.object.value) for c in candidate_claims(instance, state)}
     return {value for value in values if value.startswith("20")}
@@ -474,7 +627,7 @@ def test_restricted_kinds_compile_under_the_body_access_coordinate(tmp_path: Pat
 
     instance, _root = pilot_world(tmp_path, "kev.json", capture_body_access="restricted")
     coordinate = instance.accepted_coordinate()
-    assert CURRENT_COMPILER_REVISION == "body-access-v1"
+    assert CURRENT_COMPILER_REVISION == "derive-template-v1"
     from cruxible_core.service.authoring.documents import AcceptedCoordinate
 
     assert AcceptedCoordinate.from_internal(coordinate).compiler_digest == (
@@ -866,3 +1019,179 @@ def test_r6_a_real_restricted_note_keeps_its_section_from_a_read_only_reader(
     assert reader.withheld.capture_kinds == (sealed.identity.qualified,)
     assert all(link.file is None and link.section is None for link in reader.links)
     assert holder.withheld is None and {link.file for link in holder.links} == {SOURCE}
+
+
+class _FakeEnvelopes:
+    """The envelope index's two authorization reads, counted, over in-memory metadata."""
+
+    def __init__(self, kinds: dict[str, str], inputs: dict[str, tuple[str, ...]]) -> None:
+        self.kinds, self.inputs = kinds, inputs
+        self.contracts_of_calls = 0
+        self.derivation_inputs_calls = 0
+        self.edges = 0
+
+    def contracts_of(self, digests: Any) -> dict[str, str]:
+        self.contracts_of_calls += 1
+        return {digest: self.kinds[digest] for digest in digests if digest in self.kinds}
+
+    def derivation_inputs(self, digests: Any) -> dict[str, tuple[str, ...]]:
+        self.derivation_inputs_calls += 1
+        found = {digest: self.inputs[digest] for digest in digests if digest in self.inputs}
+        self.edges += sum(len(sources) for sources in found.values())
+        return found
+
+
+_OPEN_DERIVED, _RESTRICTED_BASE = "sha256:" + "d" * 64, "sha256:" + "e" * 64
+
+
+def _counting_resolver(
+    monkeypatch: pytest.MonkeyPatch, kinds: dict[str, str], inputs: dict[str, tuple[str, ...]]
+) -> tuple[Any, _FakeEnvelopes, dict[str, int]]:
+    """A production resolver over fake metadata, counting every access check it makes."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.service.evidence import body_access
+
+    envelopes = _FakeEnvelopes(kinds, inputs)
+    instance = SimpleNamespace(body_store=lambda: SimpleNamespace(capture_envelopes=envelopes))
+    resolver = body_access.CaptureAccessResolver(instance, coordinate=None)  # type: ignore[arg-type]
+    resolver._versions.update(
+        {
+            _OPEN_DERIVED: body_access.CaptureKindVersion(
+                identity="CaptureKind:test.view",
+                path="capture-contracts/test.view.json",
+                access="open",
+                epistemic_grade="derived",
+                self_asserted=False,
+            ),
+            _RESTRICTED_BASE: body_access.CaptureKindVersion(
+                identity="CaptureKind:test.sealed",
+                path="capture-contracts/test.sealed.json",
+                access="restricted",
+                epistemic_grade="observed",
+                self_asserted=False,
+            ),
+        }
+    )
+    counts = {"checks": 0, "restricts": 0}
+    restricted = body_access.CaptureKindAccess.restricted
+    replace = body_access.dataclasses.replace
+
+    def counted_check(self: Any) -> bool:
+        counts["checks"] += 1
+        return bool(restricted.fget(self))  # type: ignore[attr-defined]
+
+    def counted_replace(item: Any, **changes: Any) -> Any:
+        counts["restricts"] += 1
+        return replace(item, **changes)
+
+    monkeypatch.setattr(body_access.CaptureKindAccess, "restricted", property(counted_check))
+    monkeypatch.setattr(body_access, "dataclasses", SimpleNamespace(replace=counted_replace))
+    return resolver, envelopes, counts
+
+
+@pytest.mark.parametrize("depth", [10, 100])
+def test_restriction_propagates_up_a_deep_chain_with_linear_work(
+    monkeypatch: pytest.MonkeyPatch, depth: int
+) -> None:
+    """D-R37 d6 cost: a restricted base under a chain of ``depth`` open derives.
+
+    Asking for the top resolves the whole chain (one derivation read and one
+    batched kind read per depth) and propagates the restriction through a
+    reverse-dependency work queue: every edge once, every node restricted
+    once. Round 1's repeated sweep made 66 -> 5,151 checks for 10 -> 100.
+    """
+
+    chain = [f"sha256:{i:064x}" for i in range(1, depth + 1)]
+    kinds = {_RESTRICTED_BASE: _RESTRICTED_BASE, **dict.fromkeys(chain, _OPEN_DERIVED)}
+    inputs = {chain[0]: (_RESTRICTED_BASE,)}
+    inputs.update({chain[i]: (chain[i - 1],) for i in range(1, depth)})
+    resolver, envelopes, counts = _counting_resolver(monkeypatch, kinds, inputs)
+
+    found = resolver.captures((chain[-1],))
+
+    assert found[chain[-1]].inherited_restricted
+    assert all(resolver.capture(digest).inherited_restricted for digest in chain)
+    assert envelopes.derivation_inputs_calls == depth
+    assert envelopes.contracts_of_calls == depth + 1
+    assert envelopes.edges == depth
+    assert counts["restricts"] == depth
+    assert counts["checks"] <= 3 * depth + 3
+    # Settled entries are final: asking again reads nothing further.
+    before = (envelopes.derivation_inputs_calls, envelopes.contracts_of_calls)
+    resolver.captures(chain)
+    assert (envelopes.derivation_inputs_calls, envelopes.contracts_of_calls) == before
+
+
+@pytest.mark.parametrize("fanout", [10, 100])
+def test_restriction_over_a_wide_frontier_batches_kind_reads(
+    monkeypatch: pytest.MonkeyPatch, fanout: int
+) -> None:
+    """D-R37 d6 cost: root -> N open children -> N distinct restricted leaves.
+
+    Kind resolution is batched across each BFS frontier: three ``contracts_of``
+    calls (the root, its children, their leaves) whatever N is, where round 1
+    made 12 -> 102. One child with unrecorded derivation metadata fails
+    closed without changing the counts.
+    """
+
+    root = "sha256:" + "a" * 64
+    children = [f"sha256:{i:064x}" for i in range(1, fanout + 1)]
+    leaves = [f"sha256:{i + 1000:064x}" for i in range(1, fanout + 1)]
+    kinds = {
+        root: _OPEN_DERIVED,
+        **dict.fromkeys(children, _OPEN_DERIVED),
+        **dict.fromkeys(leaves, _RESTRICTED_BASE),
+    }
+    inputs = {root: tuple(children)}
+    inputs.update({child: (leaf,) for child, leaf in zip(children, leaves, strict=True)})
+    del inputs[children[0]]  # unrecorded derivation: fails closed
+    resolver, envelopes, counts = _counting_resolver(monkeypatch, kinds, inputs)
+
+    found = resolver.captures((root,))
+
+    assert found[root].inherited_restricted
+    assert all(resolver.capture(child).inherited_restricted for child in children)
+    assert envelopes.contracts_of_calls == 3
+    assert envelopes.derivation_inputs_calls == 2
+    assert envelopes.edges == 2 * fanout - 1
+    assert counts["restricts"] == fanout + 1
+    assert counts["checks"] <= 4 * fanout + 4
+
+
+def test_an_interrupted_ancestor_batch_leaves_no_ancestor_cached_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D-R37 d6: A -> {X, B}, X -> restricted R. An interruption while the
+    ancestor batch {X, B} is being resolved (after X is inserted) drops every
+    entry that request touched, so a retry of X and of A on the same resolver
+    restricts both; nothing is left cached as an open decision.
+    """
+
+    from cruxible_core.service.evidence import body_access
+
+    a, x, b = ("sha256:" + c * 64 for c in "abc")
+    kinds = {
+        a: _OPEN_DERIVED,
+        x: _OPEN_DERIVED,
+        b: _OPEN_DERIVED,
+        _RESTRICTED_BASE: _RESTRICTED_BASE,
+    }
+    inputs = {a: (x, b), x: (_RESTRICTED_BASE,), b: ()}
+    resolver, _envelopes, _counts = _counting_resolver(monkeypatch, kinds, inputs)
+
+    access = body_access.CaptureKindAccess
+
+    def interrupt_on_b(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("capture_digest") == b:
+            raise KeyboardInterrupt
+        return access(*args, **kwargs)
+
+    monkeypatch.setattr(body_access, "CaptureKindAccess", interrupt_on_b)
+    with pytest.raises(KeyboardInterrupt):
+        resolver.captures((a,))
+    monkeypatch.setattr(body_access, "CaptureKindAccess", access)
+
+    assert resolver.capture(x).inherited_restricted
+    assert resolver.capture(a).inherited_restricted

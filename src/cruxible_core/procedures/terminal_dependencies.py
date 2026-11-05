@@ -12,7 +12,10 @@ item inherit evidence it did not consume.
 from __future__ import annotations
 
 import re
+from collections import deque
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -401,19 +404,179 @@ def derive_terminal_item_facts(
 
 
 def citable_captures(manifest: TerminalItemDependencyManifestV1 | None) -> tuple[str, ...]:
-    """The Captures an item may cite: those its closure produced, else those it was admitted.
+    """Every Capture in an item's closure: those it produced AND those it was admitted.
 
-    A run's own Source observation is the evidence when there is one. A run fed
-    a retained Capture instead (a Line's trigger input) produced none, and the
-    Capture it consumed is the observation its items interpret.
+    The item cites the one root of this whole set (``capture_root``, D-R37
+    d1). A run fed only a retained Capture (a Line's trigger input) produced
+    none, so its admitted Capture is the set. When the closure holds both, an
+    admitted Capture is never dropped in favour of a produced one: the root
+    must be proven over the union, so an unrelated admitted Capture refuses.
     """
 
     if manifest is None:
         return ()
-    return manifest.produced_capture_digests or manifest.admitted_capture_digests
+    return tuple(
+        dict.fromkeys((*manifest.produced_capture_digests, *manifest.admitted_capture_digests))
+    )
+
+
+@dataclass
+class CaptureRootCache:
+    """Per-run memo for :func:`capture_root`: the proven root per distinct closure.
+
+    A derived Capture's recorded inputs are fixed the moment it is derived
+    (D-R37 c1) and never change afterward, so a closure's root stays valid for
+    the rest of the run. Sharing one cache across every ``capture_root`` call
+    in a run -- across Claims, delivery, and journaling -- means many items
+    citing the same closure prove its root once. Only that per-closure result
+    is retained: no per-vertex ancestor set is ever materialized.
+    """
+
+    roots: dict[frozenset[str], str | None] = dataclass_field(default_factory=dict)
+
+
+@dataclass
+class _RootProof:
+    """One :func:`_prove_root` result and the work it did (tests read the counts)."""
+
+    root: str | None
+    #: Recorded input entries read from ``derivations``, across both phases.
+    edges_read: int = 0
+    #: Peak entries held in the traversal's sets and queue (none is kept after).
+    held: int = 0
+
+
+def _prove_root(listed: frozenset[str], derivations: Mapping[str, Collection[str]]) -> _RootProof:
+    """Find and prove the one member of ``listed`` whose recorded inputs reach all the rest.
+
+    Recorded inputs form a DAG (a derived Capture's inputs are digest-fixed
+    before it exists), so the root, when there is one, is the only member no
+    other member reaches.
+
+    1. **Select.** One traversal from the members' recorded inputs, sharing
+       its visited set across members: each node's inputs are read at most
+       once, and a member another member reaches is eliminated. It stops as
+       soon as one member is left. Every member still in the running reads
+       its own inputs before anything deeper is read, widest first, so the
+       executor's cumulative manifests (each derive lists every prior input)
+       settle on the root's own input list alone.
+    2. **Prove.** When the selection's first walk was not the survivor's own,
+       a second traversal from the survivor alone confirms it reaches every
+       other member, stopping once they are all covered.
+
+    Each phase reads every edge at most once, so the work is linear in the
+    edges actually traversed (at worst twice the reachable graph's edges),
+    never a product of candidates and ancestors.
+    A returned root is always proven by a walk from it alone; the DAG property
+    only steers selection, so malformed (cyclic) input can only fail closed.
+    """
+
+    proof = _RootProof(root=None)
+    needed = len(listed) - 1
+    order = sorted(listed, key=lambda digest: (-len(derivations.get(digest, ())), digest))
+    visited: set[str] = set()  # reached from some member: never the root
+    expanded: set[str] = set()  # inputs already read (at most once each)
+    deeper: list[str] = []  # reached, inputs not yet read
+    eliminated = 0
+
+    def expand(node: str) -> str | None:
+        """Read ``node``'s inputs once; the survivor once only one member is left."""
+
+        nonlocal eliminated
+        expanded.add(node)
+        for source in derivations.get(node, ()):
+            proof.edges_read += 1
+            if source in visited:
+                continue
+            visited.add(source)
+            if source in listed:
+                eliminated += 1
+                if eliminated == needed:
+                    break
+            if source not in expanded:
+                deeper.append(source)
+        proof.held = max(proof.held, len(visited) + len(expanded) + len(deeper))
+        if eliminated == needed:
+            return next(digest for digest in order if digest not in visited)
+        return None
+
+    # Every member still in the running reads its own inputs first: a member
+    # another member lists directly is eliminated without walking past it.
+    survivor: str | None = None
+    for position, start in enumerate(order):
+        if start in visited:
+            continue
+        survivor = expand(start)
+        if survivor is not None:
+            if position == 0 and survivor == start:
+                # Nothing else was read: ``start``'s own inputs eliminated
+                # every other member, which proves it is the root.
+                proof.root = survivor
+                return proof
+            break
+    # Then deeper, most recently reached first, each node read at most once.
+    while survivor is None and deeper:
+        node = deeper.pop()
+        if node not in expanded:
+            survivor = expand(node)
+    if survivor is None:
+        # Two or more members no other reaches (or a cycle eliminated them all).
+        return proof
+
+    covered: set[str] = set()
+    seen = {survivor}
+    walk: deque[str] = deque((survivor,))
+    while walk:
+        node = walk.popleft()
+        for source in derivations.get(node, ()):
+            proof.edges_read += 1
+            if source in seen:
+                continue
+            seen.add(source)
+            if source in listed:
+                covered.add(source)
+                if len(covered) == needed:
+                    proof.root = survivor
+                    proof.held = max(proof.held, len(seen) + len(walk) + len(covered))
+                    return proof
+            walk.append(source)
+        proof.held = max(proof.held, len(seen) + len(walk) + len(covered))
+    return proof
+
+
+def capture_root(
+    captures: Iterable[str],
+    derivations: Mapping[str, Collection[str]],
+    *,
+    cache: CaptureRootCache | None = None,
+) -> str | None:
+    """The one Capture a value cites: the one whose recorded inputs cover the rest (D-R37 d1).
+
+    ``derivations`` maps each derived Capture to the input Captures its
+    manifest records. One Capture is its own root. Several have a root only
+    when one of them transitively derives from all the others; two unrelated
+    Captures have none (combine them through a recorded derive, or a Query).
+
+    The root is selected and proven by one bounded traversal
+    (:func:`_prove_root`), linear in the edges it reads. ``cache``, when
+    given, retains only the result per distinct closure (D-R37 cost):
+    repeating this call for the same closure costs one dict lookup.
+    """
+
+    listed = frozenset(captures)
+    if len(listed) <= 1:
+        return next(iter(listed), None)
+    if cache is not None and listed in cache.roots:
+        return cache.roots[listed]
+    root = _prove_root(listed, derivations).root
+    if cache is not None:
+        cache.roots[listed] = root
+    return root
 
 
 __all__ = [
+    "CaptureRootCache",
+    "capture_root",
     "citable_captures",
     "TAINT_ACCEPTED_STATE",
     "TAINT_CONSERVATIVE_DEFAULT",

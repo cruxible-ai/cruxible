@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import time
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -55,12 +55,15 @@ from cruxible_client.contracts.captures import (
     CaptureContractAny as CaptureContract,
 )
 from cruxible_client.contracts.captures import (
+    CaptureDerivation,
     CaptureEnvelopeV1,
     CaptureFormatError,
     CaptureRetentionErasurePolicy,
+    InputReceiptSetManifest,
     ProviderResultToExternalCapture,
     build_provider_external_capture_v2,
     capture_contract_digest,
+    derive_input_template_digest,
     validate_provider_external_capture_result,
 )
 from cruxible_client.contracts.errors import (
@@ -177,7 +180,7 @@ from cruxible_client.contracts.provider_operations import (
 )
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.resolution_contracts import InvestigationBinding
-from cruxible_client.contracts.shapes import EnumResolver, KeyCanonicalizer
+from cruxible_client.contracts.shapes import ANY_CAPTURE_KIND, EnumResolver, KeyCanonicalizer
 from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_client.contracts.workspace_file import (
@@ -289,6 +292,7 @@ from cruxible_core.procedures.terminal_dependencies import (
     TAINT_UNPROMOTED_EXHAUST,
     AcquisitionInputOutcomeV1,
     AliasProvenanceV1,
+    CaptureRootCache,
     DependencyEvidenceFactsV1,
     DependencyToken,
     TerminalChildReceiptV1,
@@ -296,6 +300,7 @@ from cruxible_core.procedures.terminal_dependencies import (
     accepted_state_token,
     admitted_capture_token,
     build_terminal_item_manifest,
+    capture_root,
     citable_captures,
     derive_terminal_item_facts,
     exhaust_token,
@@ -2247,6 +2252,12 @@ class _RunState:
     capture_bodies: dict[str, bytes] = dataclass_field(default_factory=dict)
     #: The CaptureContract digest each such Capture was committed under.
     capture_contracts: dict[str, str] = dataclass_field(default_factory=dict)
+    #: Each derived Capture this run committed, to the input Captures its
+    #: manifest records: what ``capture_root`` reads to find a value's one root.
+    derivations: dict[str, tuple[str, ...]] = dataclass_field(default_factory=dict)
+    #: Shared memo for every ``capture_root`` call this run makes (Claims,
+    #: delivery, journaling): a chain many items share is walked once (D-R37 cost).
+    capture_root_cache: CaptureRootCache = dataclass_field(default_factory=CaptureRootCache)
     #: Every Capture whose bytes this run, or a child it invoked, consumed: a
     #: provider's output, a trigger-bound or parameter Capture an extract read,
     #: a child's. Journaled on every node_fired and on finalization, so a
@@ -3722,6 +3733,26 @@ class ProcedureExecutor:
                     details={"node_id": node.node_id, "reason": "CaptureContract is unavailable"},
                 )
             contracts[field] = found
+        # A derive call (a derived out-kind) carries its inputs' Capture lineage
+        # and records them; a fetch keeps only their non-Capture lineage, since
+        # its observation is independent evidence (D-R37 c3).
+        input_lineage = state.alias_tokens(_referenced_aliases(node.input))
+        derived_fields = frozenset(
+            field for field, contract in contracts.items() if contract.epistemic_grade == "derived"
+        )
+        if derived_fields and occurrence.operation.effect != "pure":
+            # A derive is pure computation: the provider's declared word (D-R37 b5).
+            raise _RunRefusal(
+                "provider_effect_declaration_mismatch",
+                f"call {node.node_id!r} produces a derived Capture, so its operation must "
+                "declare effect: pure.",
+                node_id=node.node_id,
+            )
+        derivation = _capture_derivation(node, input_lineage) if derived_fields else None
+        if not derived_fields:
+            input_lineage = frozenset(
+                token for token in input_lineage if token.slot not in _CAPTURE_SLOTS
+            )
         resolved_request = normalize_canonical(
             _resolve_template(
                 node.input,
@@ -3971,6 +4002,7 @@ class ProcedureExecutor:
                     field=field,
                     source_read_receipt=source_read_receipt,
                     provider_output=None if whole_wire else output,
+                    derivation=derivation if field in derived_fields else None,
                 )
                 bodies[field] = base64.b64decode(wire.content_base64, validate=True)
             except (CaptureFormatError, CasError, ValidationError, ValueError) as exc:
@@ -4084,13 +4116,18 @@ class ProcedureExecutor:
                 self._bind_omission(
                     admission=admission, state=state, rule=rules[field], decision=decisions[field]
                 )
-        base = _node_policy_tokens(node, self.references) | state.control
+        base = _node_policy_tokens(node, self.references) | state.control | input_lineage
         if admission.acquisition_policy_digest is not None:
             base = base | {policy_token(admission.acquisition_policy_digest)}
         tokens: set[DependencyToken] = set()
         for field in selected:
             acquisition = results[field].acquisition
             assert acquisition is not None  # a selected result carries its Capture
+            if field in derived_fields:
+                assert derivation is not None
+                state.derivations[acquisition.capture_digest] = (
+                    derivation.manifest.input_capture_digests
+                )
             tokens |= self._bind_capture_output(
                 node,
                 admission=admission,
@@ -5047,6 +5084,8 @@ class ProcedureExecutor:
                 capped_by=capped_by,
                 claims_evidence=state.claims_evidence.get(node.node_id, ()),
                 claims_changes=state.claims_changes.get(node.node_id, ()),
+                derivations=state.derivations,
+                capture_root_cache=state.capture_root_cache,
             )
         except TerminalEgressError as exc:
             refusal = self._terminal_refusal(exc, node_id=node.node_id)
@@ -5102,9 +5141,16 @@ class ProcedureExecutor:
                     "request": request.model_dump(mode="json"),
                     "prepared": None if prepared is None else prepared.model_dump(mode="json"),
                     "evidence": {
-                        item_key: citable[0]
+                        item_key: root
                         for item_key, manifest in manifests.items()
-                        if len(citable := citable_captures(manifest)) == 1
+                        if (
+                            root := capture_root(
+                                citable_captures(manifest),
+                                state.derivations,
+                                cache=state.capture_root_cache,
+                            )
+                        )
+                        is not None
                     },
                 },
             )
@@ -5298,6 +5344,8 @@ class ProcedureExecutor:
         capped_by: EffectiveRungTermV1 | None = None,
         claims_evidence: tuple[ClaimEvidenceReceipt | None, ...] = (),
         claims_changes: tuple[CoreClaimsChange, ...] = (),
+        derivations: Mapping[str, Collection[str]] | None = None,
+        capture_root_cache: CaptureRootCache | None = None,
     ) -> tuple[TerminalEgressRequestV1, PreparedTerminalEgressV1 | None]:
         """Hand the sink the exact pins this terminal kind's law traverses.
 
@@ -5386,6 +5434,8 @@ class ProcedureExecutor:
                 request=request,
                 admission=admission,
                 manifests=manifests or {},
+                derivations=derivations or {},
+                capture_root_cache=capture_root_cache,
             )
             if prepared.proposes_nothing:
                 # Every item restated what is already live, or the change is the
@@ -5658,6 +5708,106 @@ class ProcedureExecutor:
 
         return check
 
+    def _dereference_capture_inputs(
+        self,
+        occurrence: ProviderExternalOccurrencePlan,
+        payload: dict[str, CanonicalValue],
+        *,
+        state: _RunState,
+        node_id: str,
+    ) -> dict[str, CanonicalValue]:
+        """The Provider's input: each ``capture<K>`` field's Capture as its wire (D-R37 b).
+
+        The ONE place Capture bytes enter a provider input (an architecture
+        guard holds it). Top-level fields and list members only. Each Capture
+        must be one this run fetched or was admitted; passing any other stored
+        Capture would be replay. The view is the shape providers already speak,
+        ``ProviderResultToExternalCapture``: the envelope's source and the exact
+        bytes, verbatim. Core transports them; it never parses them.
+        """
+
+        contract = closure_lookup(occurrence.contracts)(occurrence.operation.in_)
+        if contract is None:
+            return payload
+        slots = _capture_input_fields(contract)
+        if not slots:
+            return payload
+        if occurrence.operation.effect != "pure" or not any(
+            _is_derived_contract(self.capture_contracts.get(digest))
+            for digest in occurrence.capture_contracts.values()
+        ):
+            raise _RunRefusal(
+                "provider_effect_declaration_mismatch",
+                "Only a derive receives Capture inputs: an operation declaring effect: pure "
+                "whose call takes a derived CaptureKind.",
+                node_id=node_id,
+            )
+        resolved = dict(payload)
+        for field, (kind, listed) in slots.items():
+            value = payload.get(field)
+            if value is None:
+                continue
+            if listed:
+                if not isinstance(value, list):
+                    continue
+                resolved[field] = [
+                    self._capture_input_wire(item, kind=kind, state=state, node_id=node_id)
+                    for item in value
+                ]
+            else:
+                resolved[field] = self._capture_input_wire(
+                    value, kind=kind, state=state, node_id=node_id
+                )
+        return resolved
+
+    def _capture_input_wire(
+        self, digest: CanonicalValue, *, kind: str, state: _RunState, node_id: str
+    ) -> CanonicalValue:
+        """One Capture this run fetched or admitted, as Capture wire for a derive."""
+
+        fact = state.facts.get(digest) if isinstance(digest, str) else None
+        if not isinstance(digest, str) or fact is None or fact.acquisition_input_name is None:
+            raise _RunRefusal(
+                "contract_input_refused",
+                "A derive's Capture input must be one this run fetched or was admitted; "
+                "another stored Capture is replay.",
+                node_id=node_id,
+                details={"capture_digest": str(digest)},
+            )
+        body = self._capture_body(state, digest)
+        contract = self.capture_contracts.get(state.capture_contracts.get(digest, ""))
+        if kind != ANY_CAPTURE_KIND and (contract is None or contract.identity.name != kind):
+            raise _RunRefusal(
+                "contract_input_refused",
+                f"A derive's capture<{kind}> input names a Capture of another kind.",
+                node_id=node_id,
+                details={"capture_digest": digest},
+            )
+        access = BodyAccessContext(principal_id="procedure-derive", can_read_body=True)
+        envelope = parse_capture_envelope(self.bodies.read(digest, access=access))
+        source = envelope.source
+        if not isinstance(source, ExternalSourceReference):
+            raise _RunRefusal(
+                "contract_input_refused",
+                "A derive's Capture input must be an external observation.",
+                node_id=node_id,
+                details={"capture_digest": digest},
+            )
+        wire = ProviderResultToExternalCapture(
+            source_identity=source.source_identity,
+            coordinate_type=source.coordinate_type,
+            coordinate=source.coordinate,
+            selector_type=source.selector_type,
+            selector=source.selector,
+            replayability=source.replayability,
+            content_base64=base64.b64encode(body).decode("ascii"),
+            byte_length=len(body),
+            bytes_digest=envelope.commitment.digest,
+            observed_at=envelope.observed_at,
+            source_effective_time=envelope.source_effective_time,
+        )
+        return normalize_canonical(wire.model_dump(mode="json", exclude_none=True))
+
     def _invoke_provider_v4(
         self,
         *,
@@ -5727,6 +5877,11 @@ class ProcedureExecutor:
                 node_id=node_id,
             )
         input_digest = run_value_digest("provider-input", payload)
+        # The input digest, and so run identity, commits Capture digests; the
+        # Provider alone receives their bytes (D-R37 b3).
+        provider_input = self._dereference_capture_inputs(
+            occurrence, payload, state=state, node_id=node_id
+        )
         effect_id = typed_digest(
             ArtifactDigest,
             "playbill-procedure-effect-intent-v1",
@@ -5871,7 +6026,7 @@ class ProcedureExecutor:
                     "occurrence_path": occurrence.occurrence_path,
                     "invocation_id": invocation_id,
                 },
-                input=payload,
+                input=provider_input,
                 # The runtime protocol names one CaptureContract: the call's,
                 # when it commits exactly one capture field.
                 capture_contract=(
@@ -6707,6 +6862,54 @@ def _item_closure(state: _RunState, template: object, index: int) -> frozenset[D
     return state.alias_tokens(frozenset({alias}))
 
 
+def _is_derived_contract(contract: CaptureContract | None) -> bool:
+    return contract is not None and contract.epistemic_grade == "derived"
+
+
+def _capture_input_fields(contract: Contract) -> dict[str, tuple[str, bool]]:
+    """Each top-level ``capture<K>`` field, and ``list<capture<K>>`` field (members)."""
+
+    from cruxible_client.contracts.shapes import CaptureType, ListType
+
+    found: dict[str, tuple[str, bool]] = {}
+    for name, item in contract.fields.items():
+        if isinstance(item.type, CaptureType):
+            found[name] = (item.type.capture_kind, False)
+        elif isinstance(item.type, ListType) and isinstance(item.type.item, CaptureType):
+            found[name] = (item.type.item.capture_kind, True)
+    return found
+
+
+def _capture_derivation(node: CallNode, lineage: frozenset[DependencyToken]) -> CaptureDerivation:
+    """A derive call's recorded inputs: Captures, their receipts, and state reads (D-R37 c1)."""
+
+    def slot(*names: str) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                {token.digest for token in lineage if token.slot in names},
+                key=lambda item: item.encode("ascii"),
+            )
+        )
+
+    captures = slot(*_CAPTURE_SLOTS)
+    reads = slot("accepted_state")
+    if not captures and not reads:
+        raise _RunRefusal(
+            "contract_input_refused",
+            f"call {node.node_id!r} produces a derived Capture but reads no Capture or "
+            "accepted state: a derive computes from this run's evidence",
+            node_id=node.node_id,
+        )
+    return CaptureDerivation(
+        manifest=InputReceiptSetManifest(
+            input_capture_digests=captures,
+            input_receipt_digests=slot("receipt"),
+            input_accepted_state_digests=reads,
+        ),
+        input_template_digest=derive_input_template_digest(node.input),
+    )
+
+
 def _base_tokens(
     node: object,
     state: _RunState,
@@ -6812,7 +7015,15 @@ def _fan_out_list(
     # nested path has none of its own.
     lineage = provenance.items if _lineage_alias(template) == alias else None
     if lineage is None or len(lineage) < len(values):
-        if len({token for token in provenance.whole if token.slot in _CAPTURE_SLOTS}) > 1:
+        whole_captures = {
+            token.digest for token in provenance.whole if token.slot in _CAPTURE_SLOTS
+        }
+        # One Capture, or one derived root recording the rest (D-R37 d1).
+        if (
+            len(whole_captures) > 1
+            and capture_root(whole_captures, state.derivations, cache=state.capture_root_cache)
+            is None
+        ):
             raise _RunRefusal(
                 ambiguous_code,
                 "The fan-out's list was built from more than one Capture and keeps no "
@@ -7035,7 +7246,14 @@ def _exact_evidence(
             and int(path[1]) < len(lineage)
         ):
             selected = lineage[int(path[1])]
-        elif len(captures) <= 1:
+        elif len(captures) <= 1 or (
+            capture_root(
+                (token.digest for token in captures),
+                state.derivations,
+                cache=state.capture_root_cache,
+            )
+            is not None
+        ):
             selected = captures
         else:
             raise _RunRefusal(

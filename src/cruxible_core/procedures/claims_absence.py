@@ -81,14 +81,20 @@ def append_absence(
     own = _exact_evidence(
         [reference, node.expect], state=state, node_id=node.node_id, field="absence"
     )
-    captures = {
-        t.digest
-        for t in _exact_evidence(reference, state=state, node_id=node.node_id, field="enumeration")
-        if t.slot in {"produced_capture", "admitted_capture"}
-    }
-    if len(captures) != 1:
-        refuse("claims_absence_invalid: enumeration needs exactly one Capture")
-    capture = next(iter(captures))
+    # The root must be proven over the SAME closure the item's manifest records
+    # (``own``: reference and ``expect`` both), not a narrower one -- otherwise
+    # the receipt it cites could name a Capture delivery's wider closure check
+    # (D-R37 d1) cannot independently prove a root for.
+    captures = {t.digest for t in own if t.slot in {"produced_capture", "admitted_capture"}}
+    from cruxible_core.procedures.terminal_dependencies import capture_root
+
+    root = capture_root(captures, state.derivations, cache=state.capture_root_cache)
+    if root is None:
+        refuse(
+            "claims_absence_invalid: enumeration needs exactly one root Capture "
+            "(one Capture, or one derived from all the others)"
+        )
+    capture = root
     logical_source = context.logical_source(capture)
     if logical_source is None:
         refuse("claims_absence_invalid: enumeration Capture has no logical source")

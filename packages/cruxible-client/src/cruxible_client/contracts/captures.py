@@ -34,6 +34,7 @@ from cruxible_client.contracts.canonical import (
     CasDigest,
     Sha256Value,
     canonical_bytes,
+    canonical_digest,
     model_canonical_bytes,
     normalize_canonical,
     pretty_canonical_bytes,
@@ -359,6 +360,26 @@ class CaptureContractComponents(_StrictCaptureModel):
         return CaptureContractV1._digest(value)
 
 
+#: The shapes a derived CaptureKind may take (D-R37 e2): a derive's output is a
+#: procedure_output, an http_response re-expressed, or a span of a foreign document.
+DERIVED_CAPTURE_SHAPES: frozenset[str] = frozenset(
+    {"procedure_output", "http_response", "foreign_span"}
+)
+#: The decodings a derived CaptureKind may declare (D-R37 e1): extract reads them.
+DERIVED_CAPTURE_DECODINGS: frozenset[str] = frozenset({"json", "csv"})
+
+
+def _derived_kind_law(grade: str, shape: str, decoding: CaptureDecoding | None) -> None:
+    """A derived CaptureKind is extract-readable: JSON or CSV, on a derivable shape."""
+
+    if grade != "derived":
+        return
+    if shape not in DERIVED_CAPTURE_SHAPES:
+        raise ValueError("derived grade requires procedure_output, http_response or foreign_span")
+    if decoding is None or decoding.format not in DERIVED_CAPTURE_DECODINGS:
+        raise ValueError("derived grade requires json or csv decoding")
+
+
 class CaptureContract(_StrictCaptureModel):
     """Current stored contract: shape and policy, with frozen expanded components."""
 
@@ -389,8 +410,7 @@ class CaptureContract(_StrictCaptureModel):
             raise ValueError(
                 "coordinator self-source is a reserved constant, not an authored shape"
             )
-        if self.epistemic_grade == "derived" and self.shape != "procedure_output":
-            raise ValueError("derived grade requires procedure_output")
+        _derived_kind_law(self.epistemic_grade, self.shape, self.decoding)
         return self
 
     @property
@@ -472,8 +492,7 @@ class NamedCaptureContract(_StrictCaptureModel):
             and self.identity.name != COORDINATOR_SELF_SOURCE_CONTRACT_ID
         ):
             raise ValueError("coordinator self-source is reserved")
-        if self.epistemic_grade == "derived" and self.shape != "procedure_output":
-            raise ValueError("derived grade requires procedure_output")
+        _derived_kind_law(self.epistemic_grade, self.shape, self.decoding)
         capture_components(self)
         capture_retention_policy(self)
         return self
@@ -2100,11 +2119,17 @@ class InputReceiptSetManifest(_StrictCaptureModel):
     input_receipt_digests: tuple[str, ...] = ()
     input_capture_digests: tuple[str, ...] = ()
     input_claim_artifact_digests: tuple[str, ...] = ()
+    #: The accepted-state reads a derive consumed, each by its run input digest
+    #: (which commits the read's coordinate, Query, parameters and result).
+    input_accepted_state_digests: tuple[str, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
     @field_validator(
         "input_receipt_digests",
         "input_capture_digests",
         "input_claim_artifact_digests",
+        "input_accepted_state_digests",
     )
     @classmethod
     def _digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
@@ -2121,6 +2146,7 @@ class InputReceiptSetManifest(_StrictCaptureModel):
                 self.input_receipt_digests,
                 self.input_capture_digests,
                 self.input_claim_artifact_digests,
+                self.input_accepted_state_digests,
             )
         ):
             raise ValueError("input receipt-set manifest must name at least one exact input")
@@ -2133,6 +2159,50 @@ def render_input_receipt_set_manifest(manifest: InputReceiptSetManifest) -> byte
 
 def input_receipt_set_manifest_digest(manifest: InputReceiptSetManifest) -> CasDigest:
     return CasDigest(hashlib.sha256(render_input_receipt_set_manifest(manifest)).hexdigest())
+
+
+class DeriveReducer(_StrictCaptureModel):
+    """What computed a derived Capture from its inputs (D-R37 c2).
+
+    The provider build, the operation's signature and implementation, and the
+    derive node's own input template. Not the Procedure digest: an unrelated
+    Procedure edit leaves a derive's reducer, and so its Captures, unchanged.
+    Stored content-addressed; a derived provider Capture's ``reducer_digest``
+    is its CAS digest.
+    """
+
+    tag: Literal["cruxible-derive-reducer-v1"] = "cruxible-derive-reducer-v1"
+    provider_artifact_digest: str
+    operation_signature_digest: str
+    implementation_digest: str
+    input_template_digest: str
+
+    @field_validator(
+        "provider_artifact_digest",
+        "operation_signature_digest",
+        "implementation_digest",
+        "input_template_digest",
+    )
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
+def render_derive_reducer(reducer: DeriveReducer) -> bytes:
+    return canonical_bytes(reducer.model_dump(mode="json"))
+
+
+def derive_reducer_digest(reducer: DeriveReducer) -> CasDigest:
+    return CasDigest(hashlib.sha256(render_derive_reducer(reducer)).hexdigest())
+
+
+def derive_input_template_digest(template: object) -> str:
+    """The digest of one derive node's authored input template, as written."""
+
+    return "sha256:" + canonical_digest(
+        "cruxible-derive-input-template-v1", {"template": normalize_canonical(template)}
+    )
 
 
 class DirectClaimSource(_StrictCaptureModel):
@@ -2434,7 +2504,25 @@ def classify_capture_reuse(
             )
         )
         return "claim_bound" if matches else "claim_bound_mismatch"
-    return "shareable" if contract.epistemic_grade == "observed" else "not_shareable"
+    if contract.epistemic_grade == "observed" or capture_is_recorded_derive(envelope, contract):
+        return "shareable"
+    return "not_shareable"
+
+
+def capture_is_recorded_derive(envelope: CaptureEnvelopeAny, contract: CaptureContractAny) -> bool:
+    """A derive's output (D-R37): a derived kind's provider Capture naming its inputs and reducer.
+
+    Its values are evidence like an observation's: each Claim cites it as its
+    one root, and its manifest names the Captures and reads it was computed from.
+    """
+
+    return (
+        contract.epistemic_grade == "derived"
+        and isinstance(envelope, CaptureEnvelope)
+        and isinstance(envelope.production_evidence, ProviderInvocationCaptureEvidence)
+        and envelope.reducer_digest is not None
+        and envelope.input_receipt_set_manifest_digest is not None
+    )
 
 
 class CaptureBuildResult(_StrictCaptureModel):
@@ -2836,6 +2924,22 @@ def validate_provider_external_capture_result(
         )
 
 
+@dataclass(frozen=True)
+class CaptureDerivation:
+    """The exact inputs one derived provider Capture was computed from (D-R37 c)."""
+
+    manifest: InputReceiptSetManifest
+    #: ``derive_input_template_digest`` of the derive node's authored input.
+    input_template_digest: str
+
+
+def _store_exact(store: CaptureObjectStoreProtocol, content: bytes, label: str) -> str:
+    expected = CasDigest(hashlib.sha256(content).hexdigest()).tagged
+    if store.store(content).digest != expected:
+        raise CasError(f"{label} CAS digest did not reproduce")
+    return expected
+
+
 def build_provider_external_capture_v2(
     *,
     store: CaptureObjectStoreProtocol,
@@ -2848,6 +2952,7 @@ def build_provider_external_capture_v2(
     field: str = CAPTURE_FIELD,
     source_read_receipt: SourceReadReceipt | None = None,
     provider_output: object | None = None,
+    derivation: CaptureDerivation | None = None,
 ) -> CaptureBuildResult:
     """Validate one capture field of an acquiring call's result and commit its v2 Capture.
 
@@ -2857,6 +2962,12 @@ def build_provider_external_capture_v2(
     other fields, and the core-served ``workspace.file`` read, whose bytes are
     the file core read itself and whose output structures them); without it
     the receipt digests ``result`` itself.
+
+    A derived CaptureContract's Capture (a derive call's output) requires
+    ``derivation``, the exact inputs it was computed from: the manifest and the
+    reducer (the receipt's provider build, operation signature and
+    implementation, with the derive node's input template) are stored
+    content-addressed and named by the envelope's two derivation fields.
     """
 
     validate_provider_external_capture_result(
@@ -2876,6 +2987,10 @@ def build_provider_external_capture_v2(
         raise CaptureFormatError("Provider Source receipt lacks its output digest") from exc
     if result.byte_length > contract.selection_budget.max_bytes:
         raise CaptureFormatError("Provider Capture result exceeds its contract byte budget")
+    if (contract.epistemic_grade == "derived") != (derivation is not None):
+        raise CaptureFormatError(
+            "a derived Capture requires its input manifest, and only a derived one carries it"
+        )
     workspace_source = is_workspace_file_signature(occurrence.operation_signature_digest)
     content = base64.b64decode(result.content_base64, validate=True)
     if workspace_source and provider_output is None:
@@ -2922,6 +3037,26 @@ def build_provider_external_capture_v2(
         secret_references=occurrence.secret_plan.references,
         egress=receipt.egress,
     )
+    reducer_digest_value: str | None = None
+    manifest_digest_value: str | None = None
+    if derivation is not None:
+        manifest_digest_value = _store_exact(
+            store,
+            render_input_receipt_set_manifest(derivation.manifest),
+            "input receipt-set manifest",
+        )
+        reducer_digest_value = _store_exact(
+            store,
+            render_derive_reducer(
+                DeriveReducer(
+                    provider_artifact_digest=receipt.provider_artifact_digest,
+                    operation_signature_digest=receipt.operation_signature_digest,
+                    implementation_digest=receipt.implementation_digest,
+                    input_template_digest=derivation.input_template_digest,
+                )
+            ),
+            "derive reducer",
+        )
     envelope = CaptureEnvelope(
         capture_contract_digest=contract_digest_value,
         source=ExternalSourceReference(
@@ -2951,6 +3086,8 @@ def build_provider_external_capture_v2(
         producer_binding_digest=occurrence_digest,
         observed_at=result.observed_at,
         source_effective_time=result.source_effective_time,
+        reducer_digest=reducer_digest_value,
+        input_receipt_set_manifest_digest=manifest_digest_value,
         production_evidence=evidence,
     )
     return _store_general_capture(
@@ -3451,6 +3588,13 @@ def required_capture_bodies(
         required.append(envelope.source.content_digest)
     if envelope.input_receipt_set_manifest_digest is not None:
         required.append(envelope.input_receipt_set_manifest_digest)
+    if (
+        isinstance(envelope, CaptureEnvelope)
+        and isinstance(envelope.production_evidence, ProviderInvocationCaptureEvidence)
+        and envelope.reducer_digest is not None
+    ):
+        # A derived provider Capture's reducer is content-addressed too.
+        required.append(envelope.reducer_digest)
     return tuple(dict.fromkeys(required))
 
 
@@ -3808,7 +3952,56 @@ def _verify_capture_once(
             input_receipt_set_manifest_digest(manifest).tagged != manifest_digest
         ):
             raise CaptureFormatError("derived Capture receipt-set manifest does not reproduce")
+        if isinstance(envelope, CaptureEnvelope) and isinstance(
+            envelope.production_evidence, ProviderInvocationCaptureEvidence
+        ):
+            reducer = read_derive_reducer(store, envelope.reducer_digest)
+            evidence = envelope.production_evidence
+            if (
+                reducer.provider_artifact_digest != evidence.provider_artifact_digest
+                or reducer.operation_signature_digest != evidence.operation_signature_digest
+                or reducer.implementation_digest != evidence.implementation_digest
+            ):
+                raise CaptureFormatError("derived Capture reducer differs from its invocation")
     return envelope
+
+
+def read_derive_reducer(store: CaptureObjectStoreProtocol, digest: str) -> DeriveReducer:
+    """A derived provider Capture's stored reducer, verified to reproduce its digest."""
+
+    if not store.verify(digest):
+        raise CaptureFormatError("derived Capture reducer is unavailable")
+    content = store.read(
+        digest, access=BodyAccessContext(principal_id="playbill-compiler", can_read_body=True)
+    )
+    try:
+        reducer = DeriveReducer.model_validate_json(content)
+    except ValidationError as exc:
+        raise CaptureFormatError("derived Capture reducer is invalid") from exc
+    if render_derive_reducer(reducer) != content or derive_reducer_digest(reducer).tagged != digest:
+        raise CaptureFormatError("derived Capture reducer does not reproduce")
+    return reducer
+
+
+def read_input_receipt_set_manifest(
+    store: CaptureObjectStoreProtocol, digest: str
+) -> InputReceiptSetManifest:
+    """A derived Capture's stored input manifest, verified to reproduce its digest."""
+
+    if not store.verify(digest):
+        raise CaptureFormatError("derived Capture input receipt-set is unavailable")
+    content = store.read(
+        digest, access=BodyAccessContext(principal_id="playbill-compiler", can_read_body=True)
+    )
+    try:
+        manifest = InputReceiptSetManifest.model_validate_json(content)
+    except ValidationError as exc:
+        raise CaptureFormatError("derived Capture receipt-set manifest is invalid") from exc
+    if render_input_receipt_set_manifest(manifest) != content or (
+        input_receipt_set_manifest_digest(manifest).tagged != digest
+    ):
+        raise CaptureFormatError("derived Capture receipt-set manifest does not reproduce")
+    return manifest
 
 
 __all__ = [
@@ -3915,6 +4108,14 @@ __all__ = [
     "parse_capture_contract",
     "parse_capture_envelope",
     "input_receipt_set_manifest_digest",
+    "CaptureDerivation",
+    "DeriveReducer",
+    "capture_is_recorded_derive",
+    "derive_input_template_digest",
+    "derive_reducer_digest",
+    "read_derive_reducer",
+    "read_input_receipt_set_manifest",
+    "render_derive_reducer",
     "render_input_receipt_set_manifest",
     "render_capture_contract",
     "render_capture_envelope",

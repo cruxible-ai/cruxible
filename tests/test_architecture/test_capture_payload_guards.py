@@ -675,3 +675,99 @@ def test_the_word_guards_catch_what_they_forbid(guard: re.Pattern[str], sample: 
 def test_the_name_guard_ignores_the_runtime_library() -> None:
     assert not NAME_LITERAL.search("cruxible-provider-runtime")
     assert not NAME_IDENTIFIER.search("workspace_file_contracts")
+
+
+# -- b8: Capture bytes enter a provider input at exactly one point (D-R37) -------------
+
+_EXECUTION = REPO / "src/cruxible_core/procedures/execution.py"
+_INSERTION = "_dereference_capture_inputs"
+_WIRE = "_capture_input_wire"
+
+
+def _insertion_violations(source: str) -> list[str]:
+    """Where Capture bytes could reach a provider input other than the one insertion point.
+
+    Held: ``_dereference_capture_inputs`` is called once, from ``_invoke_provider_v4``;
+    ``_capture_input_wire`` (which builds the wire from a Capture's bytes) is called
+    only from it; and the provider run context's ``input`` is exactly its result.
+    """
+
+    tree = ast.parse(source)
+    found: list[str] = []
+    parents: dict[ast.AST, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+
+    def enclosing(node: ast.AST) -> str:
+        current: ast.AST | None = node
+        while current is not None and not isinstance(
+            current, ast.FunctionDef | ast.AsyncFunctionDef
+        ):
+            current = parents.get(current)
+        return "<module>" if current is None else current.name
+
+    inserted_as: set[str] = set()
+    insertions: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            name, where = node.func.attr, enclosing(node)
+            if name == _INSERTION:
+                insertions.append(where)
+                parent = parents.get(node)
+                if isinstance(parent, ast.Assign) and len(parent.targets) == 1:
+                    target = parent.targets[0]
+                    if isinstance(target, ast.Name):
+                        inserted_as.add(target.id)
+            if name == _WIRE and where != _INSERTION:
+                found.append(f"{where}:{node.lineno}: builds a derive's Capture wire")
+    if insertions != ["_invoke_provider_v4"]:
+        found.append(f"{_INSERTION} is called from {insertions}, not once by _invoke_provider_v4")
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "ProviderRuntimeRunContext"
+        ):
+            for keyword in node.keywords:
+                if keyword.arg == "input" and not (
+                    isinstance(keyword.value, ast.Name) and keyword.value.id in inserted_as
+                ):
+                    found.append(
+                        f"{enclosing(node)}:{node.lineno}: a provider input that is not "
+                        f"{_INSERTION}'s result"
+                    )
+    return found
+
+
+def test_b8_capture_bytes_enter_a_provider_input_only_at_one_point() -> None:
+    assert _insertion_violations(_EXECUTION.read_text()) == []
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        # The run context handed the digest-form payload with bytes spliced in elsewhere.
+        ("                input=provider_input,", "                input=payload,"),
+        # A second caller of the wire builder.
+        (
+            "    def _invoke_provider_v4(\n",
+            "    def _sneak(self, state):\n"
+            "        return self._capture_input_wire('x', kind='*', state=state, node_id='n')\n\n"
+            "    def _invoke_provider_v4(\n",
+        ),
+        # A second insertion point.
+        (
+            "    def _invoke_provider_v4(\n",
+            "    def _again(self, occurrence, payload, state):\n"
+            "        return self._dereference_capture_inputs(\n"
+            "            occurrence, payload, state=state, node_id='n'\n"
+            "        )\n\n"
+            "    def _invoke_provider_v4(\n",
+        ),
+    ],
+)
+def test_b8_the_insertion_guard_catches_each_bypass(old: str, new: str) -> None:
+    source = _EXECUTION.read_text()
+    assert source.count(old) == 1
+    assert _insertion_violations(source.replace(old, new))

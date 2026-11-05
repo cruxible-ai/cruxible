@@ -384,14 +384,22 @@ class SubjectType(_Shape):
         return tuple(sorted(value, key=lambda member: member.encode("utf-8")))
 
 
+#: ``capture<*>``: a Capture of any CaptureKind.
+ANY_CAPTURE_KIND = "*"
+
+
 class CaptureType(_Shape):
-    """Retained bytes of one CaptureKind, by Capture digest."""
+    """Retained bytes of one CaptureKind (``*``: any), by Capture digest."""
 
     kind: Literal["capture"] = "capture"
     capture_kind: str
 
     _capture_kind = field_validator("capture_kind")(
-        lambda value: _nfc_identifier(value, _ARTIFACT_NAME_RE, label="CaptureKind")
+        lambda value: (
+            value
+            if value == ANY_CAPTURE_KIND
+            else _nfc_identifier(value, _ARTIFACT_NAME_RE, label="CaptureKind")
+        )
     )
 
 
@@ -504,7 +512,7 @@ class _Spelling:
 
     _TOKEN = re.compile(
         r'\s*(?:(?P<str>"(?:[^"\\]|\\.)*")|(?P<num>-?[0-9]+(?:\.[0-9]+)?)'
-        r"|(?P<range>\.\.)|(?P<name>[A-Za-z_][A-Za-z0-9_.\-]*)|(?P<sym>[<>{}\[\],:@?|=]))"
+        r"|(?P<range>\.\.)|(?P<name>[A-Za-z_][A-Za-z0-9_.\-]*)|(?P<sym>[<>{}\[\],:@?|=*]))"
     )
 
     def __init__(self, text: str) -> None:
@@ -617,7 +625,11 @@ def _read_type(reader: _Spelling, depth: int = 0) -> dict[str, Any]:
         return {"kind": "subject", "subject_kinds": members}
     if name in ("key", "capture"):
         reader.take("sym", "<")
-        _k, target = reader.take("name")
+        if name == "capture" and reader.at_symbol("*"):
+            # capture<*>: a Capture of any CaptureKind (a derive's input).
+            _k, target = reader.take("sym", "*")
+        else:
+            _k, target = reader.take("name")
         reader.take("sym", ">")
         field = "subject_kind" if name == "key" else "capture_kind"
         return {"kind": name, field: target}
@@ -2180,6 +2192,13 @@ def edge_refusal(src: FieldType, dst: FieldType, *, via: EdgeVia | None = None) 
     if isinstance(src, FieldResultType) and isinstance(dst, FieldResultType):
         inner = edge_refusal(src.value, dst.value)
         return None if inner is None else f"field_result value: {inner}"
+    if isinstance(src, CaptureType) and isinstance(dst, CaptureType):
+        # capture<K> flows into capture<*>; one kind never into another.
+        return (
+            None
+            if dst.capture_kind in (ANY_CAPTURE_KIND, src.capture_kind)
+            else f"{render_type(src)} is not {render_type(dst)}"
+        )
     return f"{render_type(src)} is not {render_type(dst)}"
 
 
@@ -2519,6 +2538,7 @@ __all__ = [
     "AllOf",
     "AnyOf",
     "BoolType",
+    "ANY_CAPTURE_KIND",
     "CaptureType",
     "Comparison",
     "CountOperand",

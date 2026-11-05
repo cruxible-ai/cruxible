@@ -26,7 +26,7 @@ reserved here, the artifact is not.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Literal, Protocol, cast, runtime_checkable
 
@@ -89,6 +89,7 @@ from cruxible_core.procedures.terminal_dependencies import (
     TAINT_CONSERVATIVE_DEFAULT,
     TAINT_OMITTED_OPTIONAL,
     TAINT_UNPROMOTED_EXHAUST,
+    CaptureRootCache,
     TerminalItemDependencyManifestV1,
 )
 
@@ -1414,6 +1415,8 @@ class TerminalEgressPreparerProtocol(Protocol):
         admission: ProcedureRunAdmission,
         manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
         evidence: Mapping[str, str] | None = None,
+        derivations: Mapping[str, Collection[str]] | None = None,
+        capture_root_cache: CaptureRootCache | None = None,
     ) -> PreparedTerminalEgressV1: ...
 
 
