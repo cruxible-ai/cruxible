@@ -1019,3 +1019,142 @@ def test_r6_a_real_restricted_note_keeps_its_section_from_a_read_only_reader(
     assert reader.withheld.capture_kinds == (sealed.identity.qualified,)
     assert all(link.file is None and link.section is None for link in reader.links)
     assert holder.withheld is None and {link.file for link in holder.links} == {SOURCE}
+
+
+class _FakeEnvelopes:
+    """The envelope index's two authorization reads, counted, over in-memory metadata."""
+
+    def __init__(self, kinds: dict[str, str], inputs: dict[str, tuple[str, ...]]) -> None:
+        self.kinds, self.inputs = kinds, inputs
+        self.contracts_of_calls = 0
+        self.derivation_inputs_calls = 0
+        self.edges = 0
+
+    def contracts_of(self, digests: Any) -> dict[str, str]:
+        self.contracts_of_calls += 1
+        return {digest: self.kinds[digest] for digest in digests if digest in self.kinds}
+
+    def derivation_inputs(self, digests: Any) -> dict[str, tuple[str, ...]]:
+        self.derivation_inputs_calls += 1
+        found = {digest: self.inputs[digest] for digest in digests if digest in self.inputs}
+        self.edges += sum(len(sources) for sources in found.values())
+        return found
+
+
+_OPEN_DERIVED, _RESTRICTED_BASE = "sha256:" + "d" * 64, "sha256:" + "e" * 64
+
+
+def _counting_resolver(
+    monkeypatch: pytest.MonkeyPatch, kinds: dict[str, str], inputs: dict[str, tuple[str, ...]]
+) -> tuple[Any, _FakeEnvelopes, dict[str, int]]:
+    """A production resolver over fake metadata, counting every access check it makes."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.service.evidence import body_access
+
+    envelopes = _FakeEnvelopes(kinds, inputs)
+    instance = SimpleNamespace(body_store=lambda: SimpleNamespace(capture_envelopes=envelopes))
+    resolver = body_access.CaptureAccessResolver(instance, coordinate=None)  # type: ignore[arg-type]
+    resolver._versions.update(
+        {
+            _OPEN_DERIVED: body_access.CaptureKindVersion(
+                identity="CaptureKind:test.view",
+                path="capture-contracts/test.view.json",
+                access="open",
+                epistemic_grade="derived",
+                self_asserted=False,
+            ),
+            _RESTRICTED_BASE: body_access.CaptureKindVersion(
+                identity="CaptureKind:test.sealed",
+                path="capture-contracts/test.sealed.json",
+                access="restricted",
+                epistemic_grade="observed",
+                self_asserted=False,
+            ),
+        }
+    )
+    counts = {"checks": 0, "restricts": 0}
+    restricted = body_access.CaptureKindAccess.restricted
+    replace = body_access.dataclasses.replace
+
+    def counted_check(self: Any) -> bool:
+        counts["checks"] += 1
+        return bool(restricted.fget(self))  # type: ignore[attr-defined]
+
+    def counted_replace(item: Any, **changes: Any) -> Any:
+        counts["restricts"] += 1
+        return replace(item, **changes)
+
+    monkeypatch.setattr(body_access.CaptureKindAccess, "restricted", property(counted_check))
+    monkeypatch.setattr(body_access, "dataclasses", SimpleNamespace(replace=counted_replace))
+    return resolver, envelopes, counts
+
+
+@pytest.mark.parametrize("depth", [10, 100])
+def test_restriction_propagates_up_a_deep_chain_with_linear_work(
+    monkeypatch: pytest.MonkeyPatch, depth: int
+) -> None:
+    """D-R37 d6 cost: a restricted base under a chain of ``depth`` open derives.
+
+    Asking for the top resolves the whole chain (one derivation read and one
+    batched kind read per depth) and propagates the restriction through a
+    reverse-dependency work queue: every edge once, every node restricted
+    once. Round 1's repeated sweep made 66 -> 5,151 checks for 10 -> 100.
+    """
+
+    chain = [f"sha256:{i:064x}" for i in range(1, depth + 1)]
+    kinds = {_RESTRICTED_BASE: _RESTRICTED_BASE, **dict.fromkeys(chain, _OPEN_DERIVED)}
+    inputs = {chain[0]: (_RESTRICTED_BASE,)}
+    inputs.update({chain[i]: (chain[i - 1],) for i in range(1, depth)})
+    resolver, envelopes, counts = _counting_resolver(monkeypatch, kinds, inputs)
+
+    found = resolver.captures((chain[-1],))
+
+    assert found[chain[-1]].inherited_restricted
+    assert all(resolver.capture(digest).inherited_restricted for digest in chain)
+    assert envelopes.derivation_inputs_calls == depth
+    assert envelopes.contracts_of_calls == depth + 1
+    assert envelopes.edges == depth
+    assert counts["restricts"] == depth
+    assert counts["checks"] <= 3 * depth + 3
+    # Settled entries are final: asking again reads nothing further.
+    before = (envelopes.derivation_inputs_calls, envelopes.contracts_of_calls)
+    resolver.captures(chain)
+    assert (envelopes.derivation_inputs_calls, envelopes.contracts_of_calls) == before
+
+
+@pytest.mark.parametrize("fanout", [10, 100])
+def test_restriction_over_a_wide_frontier_batches_kind_reads(
+    monkeypatch: pytest.MonkeyPatch, fanout: int
+) -> None:
+    """D-R37 d6 cost: root -> N open children -> N distinct restricted leaves.
+
+    Kind resolution is batched across each BFS frontier: three ``contracts_of``
+    calls (the root, its children, their leaves) whatever N is, where round 1
+    made 12 -> 102. One child with unrecorded derivation metadata fails
+    closed without changing the counts.
+    """
+
+    root = "sha256:" + "a" * 64
+    children = [f"sha256:{i:064x}" for i in range(1, fanout + 1)]
+    leaves = [f"sha256:{i + 1000:064x}" for i in range(1, fanout + 1)]
+    kinds = {
+        root: _OPEN_DERIVED,
+        **dict.fromkeys(children, _OPEN_DERIVED),
+        **dict.fromkeys(leaves, _RESTRICTED_BASE),
+    }
+    inputs = {root: tuple(children)}
+    inputs.update({child: (leaf,) for child, leaf in zip(children, leaves, strict=True)})
+    del inputs[children[0]]  # unrecorded derivation: fails closed
+    resolver, envelopes, counts = _counting_resolver(monkeypatch, kinds, inputs)
+
+    found = resolver.captures((root,))
+
+    assert found[root].inherited_restricted
+    assert all(resolver.capture(child).inherited_restricted for child in children)
+    assert envelopes.contracts_of_calls == 3
+    assert envelopes.derivation_inputs_calls == 2
+    assert envelopes.edges == 2 * fanout - 1
+    assert counts["restricts"] == fanout + 1
+    assert counts["checks"] <= 4 * fanout + 4
