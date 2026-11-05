@@ -53,6 +53,7 @@ class AcceptedClaimsContext:
         self._capture_sources: dict[str, str | None] = {}
         self._kinds: dict[str, SubjectKind | None] = {}
         self._subjects: dict[tuple[str, KeyTuple], SemanticAddress | None] = {}
+        self._references: dict[tuple[str, str], SemanticAddress | None] = {}
         self._slots: dict[tuple[SemanticAddress, str, str | None], tuple[ClaimArtifact, ...]] = {}
 
     def claim_type(self, predicate: str) -> ClaimType | None:
@@ -91,20 +92,42 @@ class AcceptedClaimsContext:
         return result
 
     def reference(self, kind: str, value: str) -> SemanticAddress | None:
-        from cruxible_client.contracts.subjects import parse_subject, subject_path
+        """The live Subject of ``kind`` a text names (V4), resolved once per text.
 
+        A path (``subjects/...``) or ``kind/<id>`` names its Subject exactly.
+        Any other text takes core's one text-reference order
+        (``IdentityView.resolve``): exact live id, then alias, then the
+        kind's single key (its R12 canonical form). Several matches refuse by
+        the shared rule (``ValueError``); a retired Subject names nothing.
+        """
+
+        from cruxible_client.contracts.subjects import parse_subject
+
+        if (kind, value) in self._references:
+            return self._references[(kind, value)]
         if value.startswith("subjects/"):
-            path = value
-        elif "/" in value:
+            path: str | None = value
+        elif value.startswith(kind + "/"):
             path = "subjects/" + value + ".json"
         else:
-            path = subject_path(kind, value)
-        if not path.startswith(f"subjects/{kind}/"):
-            return None
-        content = self.tree.get(path)
-        if content is None or parse_subject(content, path=path).lifecycle.state != "live":
-            return None
-        return SemanticAddress.whole_artifact(path)
+            with self.instance.bind_accepted_projection(self.coordinate) as projection:
+                view = IdentityView(
+                    projection.typed.connection, key_reader=tree_key_reader(self.tree)
+                )
+                resolution = view.resolve(kind, value)
+            if resolution.ambiguous:
+                raise ValueError(
+                    f"subject_key_ambiguous: {kind} {value!r} names several Subjects: "
+                    + ", ".join(resolution.candidates)
+                )
+            path = resolution.path
+        result = None
+        if path is not None and path.startswith(f"subjects/{kind}/"):
+            content = self.tree.get(path)
+            if content is not None and parse_subject(content, path=path).lifecycle.state == "live":
+                result = SemanticAddress.whole_artifact(path)
+        self._references[(kind, value)] = result
+        return result
 
     def logical_source(self, capture: str) -> str | None:
         from cruxible_client.contracts.captures import parse_capture_envelope

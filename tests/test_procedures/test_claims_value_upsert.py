@@ -972,3 +972,89 @@ def test_an_object_bound_subject_scope_covers_a_just_created_target(tmp_path: Pa
     (egress,) = state.terminal_egress
     assert (egress.verdict, egress.settle_outcome) == ("delivered", "settled"), egress
     assert _accepted_affected(instance) == {"CVE-2026-0001"}
+
+
+# -- V4: expect from a header field, bare strings by the text-reference order ------
+
+
+def _header_line(instance: Any) -> None:
+    spec = upsert_spec(
+        mappings=[{"type": AFFECTED, "value": target(), "when_absent": "mirror"}],
+        extract={
+            "complete_when": {"count_at": "/count"},
+            "header": {
+                "queried": {"at": "/queried", "type": "list<string{max_len: 256}>{max_items: 8}"}
+            },
+        },
+        expect="$steps.entries.header.queried",
+    )
+    install(instance, spec)
+
+
+def test_expect_is_the_purls_a_header_lists(tmp_path: Path) -> None:
+    """Mirror retires a dropped CVE of a queried component; an unqueried one is untouched."""
+
+    a, b, c = "pkg:pypi/a@1", "pkg:pypi/b@1", "pkg:pypi/c@1"
+    entries = [
+        {"purl": a, "cve": "CVE-2026-0001"},
+        {"purl": b, "cve": "CVE-2026-0002"},
+        {"purl": c, "cve": "CVE-2026-0003"},
+    ]
+    instance, root = upsert_world(tmp_path, entries)
+    _write(root, entries, queried=[a, b, c])
+    _header_line(instance)
+    first = run(instance, root)
+    assert first.status == "succeeded", json.dumps(first.terminal.model_dump(mode="json"))
+    activate(instance, first)
+    assert _accepted_affected(instance) == {"CVE-2026-0001", "CVE-2026-0002", "CVE-2026-0003"}
+
+    # b is checked and clean now; c was not checked this time.
+    _write(root, entries[:1], queried=[a, b])
+    second = run(instance, root, minute=1)
+    assert second.status == "succeeded", second.terminal
+    kinds = sorted(type(change).__name__ for change in state_changes(second))
+    assert kinds == ["CoreReobservationChange", "CoreRetirementChange"]  # a re-read, b retired
+    activate(instance, second)
+    assert _accepted_affected(instance) == {"CVE-2026-0001", "CVE-2026-0003"}
+
+
+@pytest.mark.parametrize("header", ["absent", "invalid"])
+def test_an_absent_or_invalid_header_leaves_the_source_incomplete(
+    tmp_path: Path, header: str
+) -> None:
+    a = "pkg:pypi/a@1"
+    entries = [{"purl": a, "cve": "CVE-2026-0001"}]
+    instance, root = upsert_world(tmp_path, entries)
+    _write(root, entries, queried=[a])
+    _header_line(instance)
+    first = run(instance, root)
+    assert first.status == "succeeded", first.terminal
+    activate(instance, first)
+
+    if header == "absent":
+        _write(root, [])
+    else:
+        _write(root, [], queried="not-a-list")
+    state = run(instance, root, minute=1)
+    assert state.status == "succeeded", json.dumps(state.terminal.model_dump(mode="json"))
+    assert not [c for c in state_changes(state) if type(c).__name__ == "CoreRetirementChange"]
+    assert any(d.problem == "source_incomplete" for d in _diagnostics(state))
+    assert _accepted_affected(instance) == {"CVE-2026-0001"}
+
+
+def test_an_expect_text_resolves_id_first_then_by_key(tmp_path: Path) -> None:
+    """V4: a bare string is an exact id, else an alias, else the kind's single key."""
+
+    a = "pkg:pypi/a@1"
+    instance, _root = upsert_world(tmp_path, [{"purl": a, "cve": "CVE-2026-0001"}])
+    path = _paths(instance, COMPONENT)[a]
+    subject_id = path.removeprefix(f"subjects/{COMPONENT}/").removesuffix(".json")
+    from cruxible_core.procedures.claims_context import AcceptedClaimsContext
+
+    context = AcceptedClaimsContext(instance, instance.accepted_coordinate())
+    assert context.reference(COMPONENT, a).artifact_path == path  # by key
+    assert context.reference(COMPONENT, subject_id).artifact_path == path  # by id
+    assert context.reference(COMPONENT, f"{COMPONENT}/{subject_id}").artifact_path == path
+    assert context.reference(COMPONENT, path).artifact_path == path
+    assert context.reference(COMPONENT, "pkg:pypi/unknown@1") is None
+    assert context.reference(KIND, a) is None  # another kind's key names nothing here

@@ -79,6 +79,14 @@ def append_absence(
     extracting = enumeration
     reference = f"$steps.{extracting.as_}"
     expected = resolve(node.expect)
+    # A header field result (V4): present names its value; absent or invalid
+    # leaves the Subjects expected unknown, so the source is incomplete.
+    expect_unknown = False
+    if isinstance(expected, dict) and expected.get("tag") in {"present", "absent", "invalid"}:
+        if expected["tag"] == "present":
+            expected = expected.get("value")
+        else:
+            expected, expect_unknown = [], True
     listed = resolve(reference)
     if not isinstance(expected, list):
         refuse("claims_absence_invalid: expect must be a Subject list")
@@ -197,6 +205,7 @@ def append_absence(
             refuse("claims_expect_outside_only_keys: expect must be a subset of only_keys")
     complete = (
         (check is None or check.held)
+        and not expect_unknown
         and not invalid_enumeration
         and (listed.get("complete", True) if isinstance(listed, dict) else True)
         and (
