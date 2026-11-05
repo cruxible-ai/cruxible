@@ -20,6 +20,7 @@ import pytest
 from cruxible_core.procedures.claims_units import claims_item_change_digest
 from cruxible_core.procedures.terminal_dependencies import TerminalChildReceiptV1
 from cruxible_core.service.procedures.procedure_runs import service_get_playbill_procedure_run
+from tests.support.procedures import procedure_spec
 from tests.test_procedures.test_claims_absence_safety import safety_world
 from tests.test_procedures.test_claims_terminal import (
     KIND,
@@ -163,12 +164,11 @@ def test_a_subject_created_with_its_claim_then_retired_by_absence_keeps_its_iden
 ) -> None:
     """D-R37 g fix: an absence retirement carries the created positive's identity.
 
-    The creating run has no resolved Subject address yet. Once the Subject
-    and Claim are accepted, the source Capture no longer mentions this CVE
-    at all; the resulting retirement must carry the SAME item identity the
-    creating run gave its Claim -- the pre-fix code hashed the resolved
-    ``SemanticAddress`` (``context.subject``'s whole-artifact address) for
-    the retirement, an identity unrelated to the creating run's.
+    The creating run identifies its Claim by the whole-artifact address
+    lowering assigns the Subject it creates. Once both are accepted, the
+    source Capture no longer mentions this CVE at all; the retirement, whose
+    key-shaped ``expect`` resolves to that Subject's address, carries the
+    SAME item identity the creating run gave its Claim.
     """
 
     from cruxible_client.contracts.authoring.inputs import QueryDefinitionInput
@@ -180,10 +180,7 @@ def test_a_subject_created_with_its_claim_then_retired_by_absence_keeps_its_iden
     document = {**_entries(("CVE-2026-0001", "open")), "count": 1}
     instance, root = claims_world(tmp_path, document, seed_subjects=False)
 
-    # A key-shaped expect list (``{"cve_id": ...}``, no subject_id/path): the
-    # same key reference the creating run's ``node.subject.key`` resolved,
-    # so the fix's identity-subject rebuild applies to it, unlike a
-    # path/id-named expect.
+    # A key-shaped expect list (``{"cve_id": ...}``, no subject_id/path).
     watch_row = boundary_contract("test.watched-by-key", {"cve_id": "string"})
     accept_tree(instance, contract_files(watch_row), name="watch-row")
     author(
@@ -219,6 +216,98 @@ def test_a_subject_created_with_its_claim_then_retired_by_absence_keeps_its_iden
     retired = _changes(instance, run(instance, root, minute=1))
     assert set(retired) == {claim_identity}
     assert retired[claim_identity][0] == "retirement"
+
+
+_EXPECT_SPELLINGS = ("key", "bare_path", "path_row", "subject_id")
+
+
+def _subdir(tmp_path: Path, name: str) -> Path:
+    path = tmp_path / name
+    path.mkdir()
+    return path
+
+
+def _created_then_retired(tmp_path: Path, spelling: str) -> tuple[str, str, str]:
+    """Create a Subject with its Claim, accept, then retire it by absence.
+
+    ``expect`` comes from a Line parameter, spelled one way for the retiring
+    run. Returns (created Claim identity, retirement identity, Subject path).
+    """
+
+    from cruxible_client.contracts.subjects import subject_path
+    from tests.core_support._identity_support import accept_tree
+    from tests.support.procedures import boundary_contract, contract_files
+
+    document = {**_entries(("CVE-2026-0001", "open")), "count": 1}
+    instance, root = claims_world(tmp_path, document, seed_subjects=False)
+    if spelling == "bare_path":
+        expected_type = "list<string>{max_items: 4}"
+    else:
+        field = {"key": "cve_id", "path_row": "path", "subject_id": "subject_id"}[spelling]
+        row = boundary_contract("test.expect-row", {field: "string"})
+        accept_tree(instance, contract_files(row), name="expect-row")
+        expected_type = f"list<{row.ref.spelling}>{{max_items: 4}}"
+    raw = claims_spec(subject_create="if_absent").model_dump(mode="python", by_alias=True)
+    raw["params"] = {"expected": expected_type}
+    raw["steps"][1]["complete_when"] = {"count_at": "/count"}
+    write = raw["steps"][-1]
+    write["claims"][0]["when_absent"] = "mirror"
+    write["expect"] = "$params.expected"
+
+    def line(name: str, expected: list[Any]) -> None:
+        raw["procedure"] = "test." + name
+        install(
+            instance,
+            procedure_spec(base=raw, reference_text=True),
+            line_name=name,
+            parameters={"expected": expected},
+        )
+
+    line("create-line", [])
+    created = run(instance, root, line="create-line")
+    before = _changes(instance, created)
+    (claim_identity,) = [k for k, (kind, _, _) in before.items() if kind == "claim"]
+    activate(instance, created)
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    (path,) = [p for p in tree if p.startswith(f"subjects/{KIND}/")]
+    subject_id = path.removeprefix(f"subjects/{KIND}/").removesuffix(".json")
+    assert path == subject_path(KIND, subject_id)
+    expected = {
+        "key": {"cve_id": "CVE-2026-0001"},
+        "bare_path": path,
+        "path_row": {"path": path},
+        "subject_id": {"subject_id": subject_id},
+    }[spelling]
+    line("retire-line", [expected])
+    (root / "data/doc.json").write_text(json.dumps({"entries": [], "count": 0}))
+    retired = _changes(instance, run(instance, root, minute=1, line="retire-line"))
+    ((retired_identity, (kind, _, _)),) = retired.items()
+    assert kind == "retirement"
+    return claim_identity, retired_identity, path
+
+
+@pytest.mark.executor_only
+def test_a_created_subjects_retirement_keeps_its_identity_however_expect_spells_it(
+    tmp_path: Path,
+) -> None:
+    """D-R37 g fix: one canonical identity, the resolved whole-artifact address.
+
+    The creating run identifies its Claim by the address lowering assigns the
+    Subject it creates; a retirement by absence resolves its ``expect`` to the
+    same accepted Subject. A key-shaped, bare-path, path-row and ID-only
+    ``expect`` give one identity digest, the created Claim's.
+    """
+
+    found = {
+        spelling: _created_then_retired(_subdir(tmp_path, spelling), spelling)
+        for spelling in _EXPECT_SPELLINGS
+    }
+    for claim_identity, retired_identity, _path in found.values():
+        assert retired_identity == claim_identity
+    # The four worlds create the same Subject, so they agree on one digest.
+    assert len({identity for identity, _, _ in found.values()}) == 1
+    assert len({path for _, _, path in found.values()}) == 1
 
 
 def test_a_child_receipt_records_its_change_as_digests_only() -> None:

@@ -33,7 +33,7 @@ from cruxible_client.contracts.procedures.models import (
     RepeatNode,
     TransformNode,
 )
-from cruxible_client.contracts.semantic import subject_key_selector_value
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
     claim_has_line_break,
     claim_rationale,
@@ -155,6 +155,21 @@ def expand_claims(
     values: list[CanonicalValue] = []
     tokens: list[frozenset[DependencyToken]] = []
     created: set[bytes] = set()
+    # D-R37 g fix: an item whose Subject this run creates is identified by the
+    # whole-artifact address shared lowering assigns that Subject -- the one it
+    # has once accepted -- so its identity is finalized after the loop, once
+    # every creation key of the terminal is known (index, key, arguments).
+    pending_identities: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+
+    def identify(subject_wire: Any, key: dict[str, Any] | None, **parts: Any) -> None:
+        if key is None:
+            identities.append(
+                claims_item_identity_digest(node_id=node.node_id, subject=subject_wire, **parts)
+            )
+            return
+        pending_identities.append((len(identities), key, parts))
+        identities.append("")
+
     nodes = (
         {}
         if executor.plan is None
@@ -299,23 +314,10 @@ def expand_claims(
                 "key": key,
             }
         )
-        # D-R37 g fix: one canonical Subject identity across the creating run
-        # and later runs. Subject addresses come from kind + key through the
-        # normalizer, so the creation's own key-derived address is computed
-        # here too, rather than hashing {subject_kind, key} in the creating
-        # run and the resolved SemanticAddress (a different shape) once the
-        # Subject exists. Identity only: ``subject_wire`` (the committed
-        # change body) is unchanged. Built as a plain dict, the
-        # ``SemanticAddress.subject_key`` wire shape without constructing it
-        # (no per-item model build; D-R37 g cost).
-        identity_subject = {
-            "tag": "playbill-semantic-address-v1",
-            "artifact_path": f"subject-kinds/{node.subject.kind}.json",
-            "selector": {
-                "scheme": "subject-key-v1",
-                "value": subject_key_selector_value(key),
-            },
-        }
+        # D-R37 g fix: an existing Subject's identity is its resolved
+        # whole-artifact address (``subject_wire``); a Subject this run creates
+        # is finalized after the loop with the address lowering assigns it.
+        created_key = key if subject is None else None
         for template_index, mapping in enumerate(node.claims):
             reserve()
             target = (
@@ -697,15 +699,13 @@ def expand_claims(
                                 value=obj,
                             )
                         )
-                        identities.append(
-                            claims_item_identity_digest(
-                                node_id=node.node_id,
-                                subject=identity_subject,
-                                claim_type=ct,
-                                qualifier=qualifier,
-                                obj=obj,
-                                context=context,
-                            )
+                        identify(
+                            subject_wire,
+                            created_key,
+                            claim_type=ct,
+                            qualifier=qualifier,
+                            obj=obj,
+                            context=context,
                         )
                         values.append(
                             cast(
@@ -741,9 +741,7 @@ def expand_claims(
                         rationale=rationale,
                     )
                 )
-                identities.append(
-                    claims_item_identity_digest(node_id=node.node_id, subject=identity_subject)
-                )
+                identify(subject_wire, created_key)
                 values.append(cast(CanonicalValue, {"key": key}))
                 tokens.append(own)
                 evidence.append(None)
@@ -774,15 +772,13 @@ def expand_claims(
                     }
                 )
             )
-            identities.append(
-                claims_item_identity_digest(
-                    node_id=node.node_id,
-                    subject=identity_subject,
-                    claim_type=ct,
-                    qualifier=qualifier,
-                    obj=obj,
-                    context=context,
-                )
+            identify(
+                subject_wire,
+                created_key,
+                claim_type=ct,
+                qualifier=qualifier,
+                obj=obj,
+                context=context,
             )
             values.append(
                 cast(
@@ -796,6 +792,27 @@ def expand_claims(
             )
             tokens.append(own)
             evidence.append(receipt)
+    if pending_identities:
+        # One placement per created Subject, not per item naming it.
+        creation_keys = {canonical_bytes(key): key for _index, key, _parts in pending_identities}
+        try:
+            placed = context.creation_paths(node.subject.kind, list(creation_keys.values()))
+        except ValueError as exc:
+            raise _RunRefusal("proposal_item_invalid", str(exc), node_id=node.node_id) from exc
+        assigned = dict(zip(creation_keys, placed, strict=True))
+        for index, key, parts in pending_identities:
+            path = assigned[canonical_bytes(key)]
+            identities[index] = claims_item_identity_digest(
+                node_id=node.node_id,
+                # A creation lowering refuses has no address: the run refuses at
+                # delivery, and its items keep the key reference they name.
+                subject=(
+                    {"subject_kind": node.subject.kind, "key": key}
+                    if path is None
+                    else SemanticAddress.whole_artifact(path)
+                ),
+                **parts,
+            )
     if enumeration is not None:
         from cruxible_core.procedures.claims_absence import append_absence
 
