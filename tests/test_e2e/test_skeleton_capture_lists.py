@@ -194,9 +194,16 @@ def view(sources: list[dict[str, Any]], watched: list[dict[str, Any]]) -> bytes:
 class Pages:
     """Answers the paged fetch with ``pages`` (one URL each) and the derive over them."""
 
-    def __init__(self, pages: list[bytes], *, urls: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        pages: list[bytes],
+        *,
+        urls: list[str] | None = None,
+        sources: list[str] | None = None,
+    ) -> None:
         self.pages = pages
         self.urls = urls or [f"{ORIGIN}/kev/{index}" for index in range(len(pages))]
+        self.sources = sources or [LOGICAL_SOURCE] * len(pages)
         self.derive_inputs: list[dict[str, Any]] = []
 
     def invoker(self) -> Invoker:
@@ -204,7 +211,10 @@ class Pages:
             if "feed" in context.input:
                 return {
                     "pages": [
-                        _wire(body, url) for body, url in zip(self.pages, self.urls, strict=True)
+                        _wire(body, url, source=source)
+                        for body, url, source in zip(
+                            self.pages, self.urls, self.sources, strict=True
+                        )
                     ]
                 }
             self.derive_inputs.append(dict(context.input))
@@ -597,3 +607,200 @@ def test_a_derive_over_the_list_follows_its_completeness(tmp_path: Path, failed:
         second_call.summary.capture_digests
     )
     activate(instance, second)
+
+
+# -- Every member of a witness is owed proof (review-template-b, finding 1) ----------
+
+
+def _delisting(instance: Any, *, line: str = "test.kev-pages-line", **pages: Any) -> Any:
+    """Run the complete catalog, activate it, then run the delisted catalog."""
+
+    first = run_pages(instance, Pages(split(catalog())), line=line)
+    assert first.status == "succeeded", first.terminal
+    activate(instance, first)
+    second = run_pages(
+        instance, Pages(split(catalog("kev-catalog-delisted")), **pages), line=line, minute=1
+    )
+    return second
+
+
+def _absence_paths(instance: Any, state: Any) -> tuple[Any, Any]:
+    """The delisting's inverse (backing witness) and retirement (retirement witness)."""
+
+    from cruxible_client.contracts.claims import claim_path
+
+    changed = _by(proposed(instance, state))
+    inverse = changed[(_cve(DELISTED), LISTED_IN)]
+    retired = changed[(_cve(DELISTED), DATE_ADDED)]
+    assert inverse.backing.procedure_evidence.absence.members
+    assert retired.retirement.absence.members
+    return claim_path(inverse.identity.name), claim_path(retired.identity.name)
+
+
+def _later_member(state: Any) -> str:
+    (call,) = (node for node in state.nodes if node.node == "pages")
+    members = tuple(call.summary.capture_digests)
+    assert len(members) == 3
+    return members[-1]
+
+
+def _law_refusals(monkeypatch: pytest.MonkeyPatch) -> dict[str, set[str]]:
+    """Every Claim path the Claim law refuses from here on, with its codes.
+
+    Recorded at the law itself, so a refusal at delivery's evaluation and one
+    at settlement's re-evaluation read alike.
+    """
+
+    from cruxible_core.proposals import proposals
+
+    refused: dict[str, set[str]] = {}
+    evaluate = proposals.evaluate_claim_law
+
+    def recording(claim: Any, **kwargs: Any) -> Any:
+        result = evaluate(claim, **kwargs)
+        for item in result.diagnostics if result.verdict == "refused" else ():
+            refused.setdefault(kwargs["path"], set()).add(item.code)
+        return result
+
+    monkeypatch.setattr(proposals, "evaluate_claim_law", recording)
+    return refused
+
+
+@pytest.mark.parametrize("defect", ["missing", "corrupt", "unproduced"])
+def test_acceptance_verifies_every_member_of_an_inverse_and_a_retirement_witness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str
+) -> None:
+    """Only the LAST page is missing, corrupt or unproduced: the inverse and the retirement
+    both refuse, though the receipt each carries cites the first page."""
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(), line="test.kev-pages-line")
+    second = _delisting(instance)
+    assert second.status == "succeeded", second.terminal
+    inverse_path, retired_path = _absence_paths(instance, second)
+    later = _later_member(second)
+    store = instance.body_store()
+    envelope = _envelope(instance, later)
+    if defect == "missing":
+        assert store.erase(envelope.commitment.digest)
+    elif defect == "corrupt":
+        target = store._path(envelope.commitment.digest)
+        target.chmod(0o644)
+        target.write_bytes(b"not the page")
+    else:
+        from cruxible_core.exhaust.producer_receipts import JournalProducerReceiptResolver
+
+        produced = JournalProducerReceiptResolver.produced_capture
+
+        def unproduced(self: Any, capture_digest: str, *, run_id: str) -> Any:
+            return () if capture_digest == later else produced(self, capture_digest, run_id=run_id)
+
+        monkeypatch.setattr(JournalProducerReceiptResolver, "produced_capture", unproduced)
+    refused = _law_refusals(monkeypatch)
+    from cruxible_client.contracts.errors import SettlementIntegrityError
+
+    with pytest.raises(SettlementIntegrityError):
+        activate(instance, second)
+    assert refused.get(inverse_path) == {"cruxible.claim.evidence_unavailable"}, refused
+    assert refused.get(retired_path) == {"cruxible.claim.evidence_unavailable"}, refused
+
+
+def test_acceptance_refuses_a_witness_whose_later_member_names_another_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The last page names another logical source. A run that (here, wrongly) let it into
+    the enumeration still cannot land the inverse or the retirement: the law reads every
+    member's own envelope."""
+
+    from cruxible_client.contracts.claims import claim_path
+    from cruxible_core.procedures.claims_context import AcceptedClaimsContext
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(), line="test.kev-pages-line")
+    first = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-line")
+    held = _by(proposed(instance, first))
+    activate(instance, first)
+    real = AcceptedClaimsContext.logical_source
+
+    def blind(self: Any, capture: str) -> str | None:
+        found = real(self, capture)
+        return LOGICAL_SOURCE if found == "other.source" else found
+
+    monkeypatch.setattr(AcceptedClaimsContext, "logical_source", blind)
+    refused = _law_refusals(monkeypatch)
+    sources = [LOGICAL_SOURCE, LOGICAL_SOURCE, "other.source"]
+    second = run_pages(
+        instance,
+        Pages(split(catalog("kev-catalog-delisted")), sources=sources),
+        line="test.kev-pages-line",
+        minute=1,
+    )
+    assert second.status != "succeeded"
+    # The inverse revises the held listing; the retirement retires the held date.
+    assert refused == {
+        claim_path(held[(_cve(DELISTED), predicate)].identity.name): {
+            "cruxible.claim.evidence_unavailable"
+        }
+        for predicate in (LISTED_IN, DATE_ADDED)
+    }, refused
+
+
+@pytest.mark.parametrize("defect", [None, "unavailable", "invalid", "other_source"])
+def test_an_absence_reobservation_verifies_every_member_of_its_witness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str | None
+) -> None:
+    """A held inverse re-observed on a complete list records only when every page stands.
+
+    Only the LAST page is defective: unavailable, failing verification, or naming another
+    logical source. The re-observation's receipt cites the first page, which is sound.
+    """
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.procedures.claims_context import AcceptedClaimsContext
+    from cruxible_core.service.evidence import capture_reads
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(), line="test.kev-pages-line")
+    first = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-line")
+    held = _by(proposed(instance, first))
+    activate(instance, first)
+    delisted = split(catalog("kev-catalog-delisted"))
+    second = run_pages(instance, Pages(delisted), line="test.kev-pages-line", minute=1)
+    activate(instance, second)
+    inverse = held[(_cve(DELISTED), LISTED_IN)].identity.name
+    assert ClaimReobservationStore(instance).history(inverse) == ()
+
+    last = f"{ORIGIN}/kev/2"
+    sources = None
+    if defect == "other_source":
+        sources = [LOGICAL_SOURCE, LOGICAL_SOURCE, "other.source"]
+        real_source = AcceptedClaimsContext.logical_source
+
+        def blind(self: Any, capture: str) -> str | None:
+            found = real_source(self, capture)
+            return LOGICAL_SOURCE if found == "other.source" else found
+
+        monkeypatch.setattr(AcceptedClaimsContext, "logical_source", blind)
+    elif defect is not None:
+        real_verify = capture_reads.verify_accepted_capture
+
+        def failing(instance: Any, coordinate: Any, digest: str, **kwargs: Any) -> Any:
+            verified = real_verify(instance, coordinate, digest, **kwargs)
+            if isinstance(verified, str) or verified.envelope.source.coordinate.get("url") != last:
+                return verified
+            if defect == "unavailable":
+                return "capture_unavailable"
+            raise capture_reads.CaptureReadInvalid("Capture verification failed: corrupt")
+
+        monkeypatch.setattr(capture_reads, "verify_accepted_capture", failing)
+    third = run_pages(
+        instance, Pages(delisted, sources=sources), line="test.kev-pages-line", minute=2
+    )
+    assert third.status == "succeeded", third.terminal
+    (call,) = (node for node in third.nodes if node.node == "pages")
+    members = tuple(call.summary.capture_digests)
+    recorded = ClaimReobservationStore(instance).history(inverse)
+    if defect is None:
+        assert [record.capture_digest for record in recorded] == [members[0]]
+    else:
+        assert recorded == ()

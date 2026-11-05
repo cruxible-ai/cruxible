@@ -1829,6 +1829,9 @@ class _MemberContext:
     #: candidate is not this: what it cites for the first time still needs proof.
     replaying_accepted: bool = False
     rechecking: bool = False
+    #: Absence witnesses this evaluation already found standing, shared by every
+    #: Claim it judges: N Claims on one witness verify its Captures once.
+    verified_absence_witnesses: dict[object, None] = dataclasses.field(default_factory=dict)
 
     def accepted_coordinate(self) -> AcceptedCoordinate:
         return AcceptedCoordinate.from_internal(self.current)
@@ -3372,6 +3375,7 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         origin_replay_exempt=not retiring,
         erasure_records=_erasure_records(context),
         erasure_contract=_erasure_authority(context),
+        verified_absence_witnesses=context.verified_absence_witnesses,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -4701,6 +4705,7 @@ def _evaluate_scoped_members(
         # Bound to this evaluation only; never carry authorization across writes.
         attestation_principal_provider = cache(attestation_principal_provider)
     used_expansions: set[str] = set()
+    verified_absence_witnesses: dict[object, None] = {}
     accepted: list[_AcceptedMember] = []
     accepted_referents: frozenset[AcceptedCoordinate] | None = None
     candidate_identities: Mapping[str, tuple[ArtifactIdentity, str]] | None = None
@@ -4771,6 +4776,7 @@ def _evaluate_scoped_members(
             acceptance_laws=acceptance_laws,
             historical_law_coordinate=historical_law_coordinates.get(path),
             replaying_accepted=replaying_accepted,
+            verified_absence_witnesses=verified_absence_witnesses,
         )
         try:
             verdict = kind.evaluate(member_context)

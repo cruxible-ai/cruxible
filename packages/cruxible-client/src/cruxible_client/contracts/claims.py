@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any, Literal, TypeAlias, cast
@@ -44,6 +44,7 @@ from cruxible_client.contracts.captures import (
     ProducerReceiptResolverProtocol,
     ProducerVersions,
     VerifiedCaptureMemo,
+    _RequestCaptureProofEpoch,
     capture_components,
     capture_contract_digest,
     capture_contract_is_self_asserted,
@@ -99,7 +100,7 @@ from cruxible_client.contracts.declared_blocks import (
     projection_window_intersecting,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.errors import FormatError
+from cruxible_client.contracts.errors import CasError, FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
@@ -1719,6 +1720,100 @@ def _named_capture_contract(store: CaptureObjectStoreProtocol, digest: str) -> s
         return None
 
 
+def _backing_absence(claim: ClaimArtifact) -> AbsenceWitness | None:
+    """The absence witness an inverse's procedure evidence carries, if any."""
+
+    receipt = getattr(claim.backing, "procedure_evidence", None)
+    return None if receipt is None else receipt.absence
+
+
+def absence_witness_refusal(
+    witness: AbsenceWitness,
+    *,
+    capture_store: CaptureObjectStoreProtocol,
+    contracts_by_digest: Mapping[str, Sequence[AcceptedCaptureContract]] | None,
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None,
+    ledger_resolver: LedgerMaterialResolverProtocol | None,
+    producer_artifact_digests: Mapping[str, str] | None,
+    producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
+    verified: MutableMapping[object, None] | None = None,
+) -> str | None:
+    """Why an absence witness does not stand on its Captures, or ``None`` when it does.
+
+    Every Capture the enumeration read (``witness.captures``: one, or every
+    member of a list, D-R37 a6) must be retained, verify under its exact
+    accepted CaptureContract with daemon proof that a run produced it, and
+    name the witness's logical source.
+
+    ``verified`` is the evaluation's record of witnesses it already found
+    standing, shared by every Claim one evaluation judges: many Claims on one
+    witness verify its members once. A record answers only under the
+    request's body-change epoch it was made in (the producer receipt
+    resolver's), so no warm answer outlives a body landing or erasure; with
+    no epoch nothing is recorded and every witness is verified afresh.
+    """
+
+    epoch = (
+        producer_receipt_resolver._capture_proof_epoch()
+        if isinstance(producer_receipt_resolver, _RequestCaptureProofEpoch)
+        else None
+    )
+    key = (
+        None
+        if verified is None or epoch is None
+        else (epoch, witness.captures, witness.logical_source)
+    )
+    if key is not None and key in verified:
+        return None
+    for capture in witness.captures:
+        memo = (
+            None
+            if producer_receipt_resolver is None
+            else producer_receipt_resolver.recall_verified(capture)
+        )
+        named = (
+            memo.envelope.capture_contract_digest
+            if memo is not None
+            else _named_capture_contract(capture_store, capture)
+        )
+        choices = (
+            ()
+            if contracts_by_digest is None or named is None
+            else contracts_by_digest.get(named, ())
+        )
+        contract = next(iter(choices), None)
+        if contract is None and named is not None and historical_capture_contract is not None:
+            contract = historical_capture_contract(named)
+        if contract is None:
+            return "The absence witness CaptureContract is unavailable; acquire the source again."
+        try:
+            envelope = verify_capture(
+                capture,
+                store=capture_store,
+                contract=contract.contract,
+                ledger_resolver=ledger_resolver,
+                producer_artifact_digests=producer_artifact_digests,
+                producer_receipt_resolver=producer_receipt_resolver,
+                require_production_proof=True,
+            )
+            retained = all(
+                capture_store.verify(body) for body in capture_retained_body_digests(envelope)
+            )
+        except (CasError, FormatError, ValueError):
+            # Missing, corrupt (the store refuses bytes that do not match their
+            # address) or unproduced: the witness does not stand on it.
+            retained = False
+        if not retained:
+            return "Absence witness bytes are no longer retained; acquire the source again."
+        if getattr(envelope.source, "source_identity", None) != witness.logical_source:
+            return (
+                "The absence witness names a different logical source; acquire the declared source."
+            )
+    if key is not None and verified is not None:
+        verified[key] = None
+    return None
+
+
 def _citation_contract(
     capture_digest: str,
     *,
@@ -2012,6 +2107,7 @@ def evaluate_claim_law(
     value_contracts: ContractResolver | None = None,
     value_enums: EnumResolver | None = None,
     value_keys: KeyCanonicalizer | None = None,
+    verified_absence_witnesses: MutableMapping[object, None] | None = None,
 ) -> ClaimLawResult:
     """Evaluate one Claim against exact resolved dependencies and immutable Captures.
 
@@ -2050,6 +2146,11 @@ def evaluate_claim_law(
     verifies against the exact contract version it names even after that
     contract has a successor: the Claim's capture-contract pins are provenance,
     resolved in accepted history, never required to be the live head.
+
+    An absence witness, a retirement's or an inverse's, owes every Capture it
+    read the proof a new citation owes (``absence_witness_refusal``).
+    `verified_absence_witnesses` is the evaluation's record of witnesses
+    already found standing, shared by every Claim it judges.
 
     With `claim_type_v7_semantics` (Claim law v2 revision 8, v3 revision 10) a
     v7 ClaimType's rules apply; every earlier ClaimType means `accumulate` and
@@ -3020,81 +3121,45 @@ def evaluate_claim_law(
                 ),
             )
         )
-    witness = None if claim.retirement is None else claim.retirement.absence
-    previous_witness = (
-        None
-        if predecessor is None or predecessor.claim.retirement is None
-        else predecessor.claim.retirement.absence
-    )
-    if witness is not None and witness != previous_witness and require_new_citation_proof:
-        # A mirror's proof is attribution, not a changed assertion/backing.
-        # It nevertheless owes the same retained, daemon-produced Capture that
-        # a new inverse cites. Accepted historical witnesses remain readable
-        # after ordinary governed erasure, just like inherited backing.
-        # Over a list of Captures the witness cites every member (D-R37 a6):
-        # each is owed the same retained, verified, daemon-produced proof.
-        for witness_capture in witness.captures:
-            verified = (
-                None
-                if producer_receipt_resolver is None
-                else producer_receipt_resolver.recall_verified(witness_capture)
-            )
-            named = (
-                verified.envelope.capture_contract_digest
-                if verified is not None
-                else _named_capture_contract(capture_store, witness_capture)
-            )
-            choices = (
-                ()
-                if contracts_by_digest is None or named is None
-                else contracts_by_digest.get(named, ())
-            )
-            witness_contract = next(iter(choices), None)
-            if (
-                witness_contract is None
-                and named is not None
-                and historical_capture_contract is not None
-            ):
-                witness_contract = historical_capture_contract(named)
-            if witness_contract is None:
-                return _diagnostic(
-                    "cruxible.claim.evidence_unavailable",
-                    "The absence witness CaptureContract is unavailable; acquire the source again.",
-                    path=path,
-                )
-            try:
-                witness_envelope = verify_capture(
-                    witness_capture,
-                    store=capture_store,
-                    contract=witness_contract.contract,
-                    ledger_resolver=ledger_resolver,
-                    producer_artifact_digests=(
-                        known_producer_digests
-                        if known_producer_digests is not None
-                        else producer_artifact_digests
-                    ),
-                    producer_receipt_resolver=producer_receipt_resolver,
-                    require_production_proof=True,
-                )
-                retained = all(
-                    capture_store.verify(body)
-                    for body in capture_retained_body_digests(witness_envelope)
-                )
-            except (FormatError, ValueError):
-                retained = False
-            if not retained:
-                return _diagnostic(
-                    "cruxible.claim.evidence_unavailable",
-                    "Absence witness bytes are no longer retained; acquire the source again.",
-                    path=path,
-                )
-            if getattr(witness_envelope.source, "source_identity", None) != witness.logical_source:
-                return _diagnostic(
-                    "cruxible.claim.evidence_unavailable",
-                    "The absence witness names a different logical source; "
-                    "acquire the declared source.",
-                    path=path,
-                )
+    # An absence witness owes every Capture it read the proof a new citation
+    # owes: retained bytes, its exact CaptureContract, daemon production proof
+    # and the declared logical source. That holds for a retirement's witness
+    # (a mirror's proof is attribution, not a changed assertion/backing) and
+    # for an inverse's backing witness alike, and over a list of Captures for
+    # every member, not only the one the receipt cites (D-R37 a6). A witness
+    # carried unchanged from the accepted predecessor is not new evidence;
+    # accepted historical witnesses remain readable after ordinary governed
+    # erasure, just like inherited backing.
+    for witness, previous_witness in (
+        (
+            None if claim.retirement is None else claim.retirement.absence,
+            None
+            if predecessor is None or predecessor.claim.retirement is None
+            else predecessor.claim.retirement.absence,
+        ),
+        (
+            _backing_absence(claim),
+            None if predecessor is None else _backing_absence(predecessor.claim),
+        ),
+    ):
+        if witness is None or witness == previous_witness or not require_new_citation_proof:
+            continue
+        refusal = absence_witness_refusal(
+            witness,
+            capture_store=capture_store,
+            contracts_by_digest=contracts_by_digest,
+            historical_capture_contract=historical_capture_contract,
+            ledger_resolver=ledger_resolver,
+            producer_artifact_digests=(
+                known_producer_digests
+                if known_producer_digests is not None
+                else producer_artifact_digests
+            ),
+            producer_receipt_resolver=producer_receipt_resolver,
+            verified=verified_absence_witnesses,
+        )
+        if refusal is not None:
+            return _diagnostic("cruxible.claim.evidence_unavailable", refusal, path=path)
     if (replacing or rebinding) and not capture_contract_pin_digests.issubset(
         cited_contract_versions
     ):
@@ -3266,6 +3331,7 @@ __all__ = [
     "claim_statement_address",
     "claim_statement_digest",
     "claim_statement_card",
+    "absence_witness_refusal",
     "evaluate_claim_law",
     "new_claim_id",
     "merge_claim_citations",

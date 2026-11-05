@@ -33,7 +33,7 @@ from cruxible_client.contracts.captures import (
     observed_content,
     parse_capture_envelope,
 )
-from cruxible_client.contracts.claim_evidence import ClaimEvidenceReceipt
+from cruxible_client.contracts.claim_evidence import AbsenceWitness, ClaimEvidenceReceipt
 from cruxible_client.contracts.claim_verdicts import (
     CaptureReobservationEvidence,
     CaptureVerdictEvidence,
@@ -280,6 +280,7 @@ class ClaimReobservationStore:
         extraction: ClaimEvidenceReceipt | None = None,
         extracted_value: object = None,
         cited_envelopes: dict[str, CaptureEnvelopeAny] | None = None,
+        verified_witnesses: dict[object, None] | None = None,
     ) -> tuple[CaptureEnvelopeAny, str]:
         """The re-observing Capture's envelope, or the typed refusal.
 
@@ -290,6 +291,10 @@ class ClaimReobservationStore:
         The returned content digest is the cited Capture's unchanged digest:
         freshness keeps using its existing indexed key, even if other bytes in
         the newly observed catalog changed.
+
+        An absence re-observation owes its witness's every Capture the same
+        proof (``_witness_refusal``, D-R37 a6): over a list of Captures, not
+        only the member the receipt cites.
         """
 
         from cruxible_core.service.evidence.capture_reads import (
@@ -349,6 +354,15 @@ class ClaimReobservationStore:
                     and extraction.absence.logical_source == original.absence.logical_source
                     and claim.statement.object.model_dump(mode="json") == extracted_value
                 )
+                if same_extraction:
+                    refusal = self._witness_refusal(
+                        extraction.absence,
+                        envelope=envelope,
+                        coordinate=coordinate,
+                        verified=verified_witnesses,
+                    )
+                    if refusal is not None:
+                        raise ClaimReobservationRefused(refusal)
             if not same_extraction:
                 raise ClaimReobservationRefused("extraction does not prove the same value and key")
         wanted = (envelope.capture_contract_digest, observed_content(envelope).digest)
@@ -384,6 +398,66 @@ class ClaimReobservationStore:
             "cites under its contract"
         )
 
+    def _witness_refusal(
+        self,
+        witness: AbsenceWitness,
+        *,
+        envelope: CaptureEnvelopeAny,
+        coordinate: AcceptedProjectionCoordinate,
+        verified: dict[object, None] | None,
+    ) -> str | None:
+        """Why an absence witness's Captures do not stand at ``coordinate``, or ``None``.
+
+        Every Capture the enumeration read must verify there as daemon-admitted
+        evidence (retained, its exact accepted CaptureContract, production
+        proof) and name the witness's logical source. ``envelope`` is the cited
+        Capture's, already verified. ``verified`` is the delivery's record of
+        witnesses already found standing, keyed by the coordinate and the body
+        store's landing head: many re-observations on one witness verify its
+        members once, and no answer outlives a body landing or erasure.
+        """
+
+        from cruxible_core.service.evidence.capture_reads import (
+            CaptureReadInvalid,
+            verify_accepted_capture,
+        )
+
+        try:
+            landed: object = self.instance.body_store().landings.head()
+        except (OSError, CruxibleError, ValueError):
+            landed = None
+        key = (
+            None
+            if verified is None or landed is None
+            else (coordinate.git_oid, landed, witness.captures, witness.logical_source)
+        )
+        if key is not None and verified is not None and key in verified:
+            return None
+        for member in witness.captures:
+            held = envelope
+            if member != witness.capture:
+                try:
+                    checked = verify_accepted_capture(
+                        self.instance,
+                        coordinate,
+                        member,
+                        access=_ACCESS,
+                        captures=self.instance.capture_verification_context(),
+                    )
+                except (CaptureReadInvalid, CruxibleError, ReadRefusalError, ValueError) as exc:
+                    return (
+                        f"absence witness Capture {member} does not verify as daemon-admitted "
+                        f"evidence: {exc}"
+                    )
+                if isinstance(checked, str):
+                    return f"absence witness Capture {member} is not admissible here ({checked})"
+                held = checked.envelope
+            if getattr(held.source, "source_identity", None) != witness.logical_source:
+                return f"absence witness Capture {member} names a different logical source"
+        if key is not None and verified is not None:
+            verified[key] = None
+        return None
+
     @staticmethod
     def _at(
         *, claim_id: str, capture_digest: str, envelope: CaptureEnvelopeAny, now: datetime
@@ -418,6 +492,7 @@ class ClaimReobservationStore:
         extraction: ClaimEvidenceReceipt | None = None,
         extracted_value: object = None,
         cited_envelopes: dict[str, CaptureEnvelopeAny] | None = None,
+        verified_witnesses: dict[object, None] | None = None,
     ) -> ReobservationRecord | None:
         """Record one admissible re-observation at the current head; a repeat is the same record.
 
@@ -446,6 +521,7 @@ class ClaimReobservationStore:
                 extraction=extraction,
                 extracted_value=extracted_value,
                 cited_envelopes=cited_envelopes,
+                verified_witnesses=verified_witnesses,
             )
             self._at(
                 claim_id=claim_id,
@@ -488,6 +564,7 @@ class ClaimReobservationStore:
                 extraction=extraction,
                 extracted_value=extracted_value,
                 cited_envelopes=cited_envelopes,
+                verified_witnesses=verified_witnesses,
             )
             journal = self._journal(create=True)
             assert journal is not None

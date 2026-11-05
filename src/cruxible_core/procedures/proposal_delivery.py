@@ -2200,6 +2200,7 @@ class ProposalTerminalEgressSink:
             return
         store = ClaimReobservationStore(self.instance)
         cited_envelopes: dict[str, CaptureEnvelopeAny] = {}
+        verified_witnesses: dict[object, None] = {}
         for child in unchanged:
             if not isinstance(child, TerminalEgressChildReceiptV3):
                 continue  # a reused Subject observes nothing
@@ -2211,6 +2212,7 @@ class ProposalTerminalEgressSink:
                     actor_id=request.actor_context.actor_id,
                     extraction=request.claims_evidence.get(child.item_key),
                     cited_envelopes=cited_envelopes,
+                    verified_witnesses=verified_witnesses,
                     extracted_value=(
                         change.value
                         if isinstance(
