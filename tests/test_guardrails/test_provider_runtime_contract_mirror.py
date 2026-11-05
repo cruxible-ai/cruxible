@@ -53,11 +53,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_PATH = REPO_ROOT / "tests/fixtures/provider_runtime_contract_v2.json"
 #: The vendored bytes: cruxible-providers ``PROVIDER_RUNTIME_CONTRACT_COMMIT``'s
 #: packages/cruxible-provider-runtime/tests/fixtures/provider_runtime_contract_v2.json,
-#: plus the result's generic ``incomplete_captures`` (D-R37 a4: its schema, the
-#: ``ok_incomplete_captures`` vector and ``result_incomplete_captures_not_ok``),
-#: which core leads and the providers side matches.
+#: exactly, including the result's generic ``incomplete_captures`` (D-R37 a4:
+#: its schema, the ``ok_incomplete_captures`` vector and
+#: ``result_incomplete_captures_not_ok``), which core led and the providers
+#: side now matches at this pin.
 PROVIDER_RUNTIME_CONTRACT_FIXTURE_DIGEST = (
-    "sha256:b0c5131ea9b7b568848bcf1f18bfe642621b8ce165deb8382aad4f5fd466a62e"
+    "sha256:b0d77f0a956a0ec3e09a35614a7c8a8804e23e7c7263831f2422f0d36addc7d8"
 )
 
 _MODEL_MAP: dict[str, type[BaseModel]] = {

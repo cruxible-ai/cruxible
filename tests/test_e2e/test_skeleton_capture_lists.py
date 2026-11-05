@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import importlib.util
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -825,6 +827,209 @@ def test_a_list_the_provider_says_is_incomplete_never_retires(tmp_path: Path) ->
     assert second.status == "succeeded", second.terminal
     (call,) = (node for node in second.nodes if node.node == "pages")
     assert len(call.summary.capture_digests) == 3
+    assert second.completeness is not None and not second.completeness.complete
+    (written,) = _summaries(second, "claims")
+    assert written.inverse_written == 0
+    # Nothing changed: no retirement, no inverse, so nothing is proposed.
+    assert second.terminal_egress[0].proposal_id is None
+    assert any(
+        item.kind == "claim_not_in_source" and item.source_incomplete for item in second.findings
+    ), second.findings
+
+
+# -- the real web.fetch.pages adapter (never a double), one page genuinely failed --------
+
+REAL_PAGES_URL = "https://pages.test/kev"
+REAL_PAGE_PARAM = "id"
+REAL_PAGE_VALUES = ("aaaa", "bbbb")
+#: Exactly fits one value's built URL; a second value cannot join it, so the
+#: real split (``cruxible_provider_web.pages.split_pages``) always makes two
+#: pages, one value each -- confirmed against this checkout's adapter.
+REAL_MAX_URL_CHARS = 30
+
+
+def _web_fetch_pages() -> Any:
+    """The providers checkout's own ``web.fetch.pages`` adapter (never a copy of it)."""
+
+    checkout = require_provider_checkout()
+    package = checkout / "packages/cruxible-provider-web/src/cruxible_provider_web"
+    if not package.is_dir():
+        pytest.fail(f"{checkout} carries no cruxible-provider-web package")
+    if "cruxible_provider_web" not in sys.modules:
+        # Loaded from the checkout by location; the import path is left alone.
+        spec = importlib.util.spec_from_file_location(
+            "cruxible_provider_web",
+            package / "__init__.py",
+            submodule_search_locations=[str(package)],
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["cruxible_provider_web"] = module
+        spec.loader.exec_module(module)
+    from cruxible_provider_web.pages import WebFetchPages
+
+    return WebFetchPages
+
+
+def real_pages_spec() -> Any:
+    """fetch-pages (real web.fetch.pages) -> extract -> claims, with absence."""
+
+    steps: list[dict[str, Any]] = [
+        {
+            "call": "pages",
+            "slot": "pages",
+            "captures": {"captures": KEV_KIND},
+            "input": {
+                "url": REAL_PAGES_URL,
+                "page_param": REAL_PAGE_PARAM,
+                "query": [{"name": REAL_PAGE_PARAM, "values": list(REAL_PAGE_VALUES)}],
+                "max_url_chars": REAL_MAX_URL_CHARS,
+                "expected_format": "json",
+                "logical_source": LOGICAL_SOURCE,
+            },
+        },
+        {"read": "watched", "query": "test.watched-vulnerabilities"},
+        _extract_step("$steps.pages.captures"),
+    ]
+    steps.append(_claims_step("$steps.entries.records", absence=True))
+    slots = {
+        "pages": {
+            "in": "web.fetch.pages.request@1",
+            "out": "web.fetch.pages.result@1",
+            "effect": "external_read",
+        }
+    }
+    return build_spec(
+        "test.kev-real-pages",
+        reference_text=True,
+        input={},
+        output={},
+        slots=slots,
+        hard_caps=procedure_limits(provider_calls=2, capture_bytes=1_048_576, read_rows=500),
+        steps=steps,
+    )
+
+
+class RealPages:
+    """Answers the "pages" call by running the real ``web.fetch.pages`` adapter
+    in-process, over a mocked transport keyed by its own exact built page URLs
+    (``REAL_MAX_URL_CHARS`` forces one value, hence one page, per request)."""
+
+    def __init__(self, *, ok: bytes, fail: bool) -> None:
+        self.ok_body = ok
+        self.fail = fail
+
+    def _urls(self) -> tuple[str, str]:
+        from cruxible_provider_web.fetch import with_query
+
+        return tuple(
+            with_query(REAL_PAGES_URL, [(REAL_PAGE_PARAM, [value], "repeat")])
+            for value in REAL_PAGE_VALUES
+        )  # type: ignore[return-value]
+
+    def client_factory(self) -> Any:
+        import httpx
+        from cruxible_provider_web.http import RecordingClient
+
+        ok_url, fail_url = self._urls()
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if url == ok_url:
+                return httpx.Response(
+                    200, headers={"content-type": "application/json"}, content=self.ok_body
+                )
+            assert url == fail_url, url
+            if self.fail:
+                return httpx.Response(
+                    500, headers={"content-type": "text/plain"}, content=b"internal error"
+                )
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                content=b'{"vulnerabilities": []}',
+            )
+
+        def factory(recorder: Any, *, url: str, timeout_seconds: float) -> Any:
+            del url
+            return RecordingClient(
+                recorder, timeout_seconds=timeout_seconds, transport=httpx.MockTransport(handle)
+            )
+
+        return factory
+
+    def invoker(self) -> Invoker:
+        web_fetch_pages = _web_fetch_pages()
+        from cruxible_provider_runtime.egress import EgressRecorder
+        from cruxible_provider_runtime.protocol import Budgets
+        from cruxible_provider_runtime.provider_api import ProviderRunContext
+
+        holder = Invoker(output=lambda context: {})
+
+        def output(context: Any) -> dict[str, Any]:
+            result = web_fetch_pages(client_factory=self.client_factory())(
+                ProviderRunContext(
+                    run_id=context.run_id,
+                    input=dict(context.input),
+                    operation="web.fetch.pages",
+                    operation_signature_digest="sha256:" + "9" * 64,
+                    build_digest="sha256:" + "b" * 64,
+                    implementation_digest="sha256:" + "a" * 64,
+                    declared_endpoints=("dynamic:target-from-run-input",),
+                    budgets=Budgets(wall_clock_seconds=30, output_bytes=4_000_000),
+                    coordinates={},
+                    capture_contract=None,
+                    secrets={},
+                    egress=EgressRecorder(),
+                )
+            )
+            assert result.status == "ok", result
+            # The real result's own word, not a hand-set flag (a4).
+            holder.incomplete_captures = list(result.incomplete_captures)
+            return dict(result.output)
+
+        holder.output = output
+        return holder
+
+
+def test_a_real_failed_page_leaves_the_list_incomplete_and_suppresses_retirement(
+    tmp_path: Path,
+) -> None:
+    """The real ``web.fetch.pages`` adapter (never a double): one page's 500
+    response leaves ``captures`` with one member and the envelope's own
+    ``incomplete_captures`` naming it (a4, read off the real wire, not set by
+    hand). A later run whose surviving page no longer lists the watched CVE
+    neither retires its date nor inverts its listing, exactly as for a page
+    core itself dropped."""
+
+    instance = skeleton_world(tmp_path)
+    install(instance, real_pages_spec(), line="test.kev-real-pages-line")
+    watched = WATCHED[0]
+    listed_body = json.dumps(
+        {"vulnerabilities": [{"cveID": watched, "dateAdded": "2024-01-01"}]}
+    ).encode()
+    first = run(  # type: ignore[arg-type]
+        instance, RealPages(ok=listed_body, fail=False), line="test.kev-real-pages-line"
+    )
+    assert first.status == "succeeded", first.terminal
+    assert first.completeness is None
+    claims = _by(proposed(instance, first))
+    assert set(claims) == {(_cve(c), LISTED_IN) for c in WATCHED} | {(_cve(watched), DATE_ADDED)}
+    (call,) = (node for node in first.nodes if node.node == "pages")
+    assert len(call.summary.capture_digests) == 2
+    activate(instance, first)
+
+    delisted_body = json.dumps({"vulnerabilities": []}).encode()
+    second = run(  # type: ignore[arg-type]
+        instance,
+        RealPages(ok=delisted_body, fail=True),
+        line="test.kev-real-pages-line",
+        minute=1,
+    )
+    assert second.status == "succeeded", second.terminal
+    (second_call,) = (node for node in second.nodes if node.node == "pages")
+    # The failed page is genuinely dropped: one Capture, not two.
+    assert len(second_call.summary.capture_digests) == 1
     assert second.completeness is not None and not second.completeness.complete
     (written,) = _summaries(second, "claims")
     assert written.inverse_written == 0

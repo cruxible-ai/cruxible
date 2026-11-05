@@ -63,6 +63,7 @@ OPERATIONS = (
     "calc.reduce",
     "doc.to_markdown",
     "match.record",
+    "noop.captures",
     "noop.echo",
     "ocr.extract",
     "score.rank",
@@ -71,7 +72,9 @@ OPERATIONS = (
     "ts.anomaly",
     "ts.forecast",
     "web.fetch",
+    "web.fetch.pages",
     "web.render",
+    "web.render.dom",
     "workspace.file",
 )
 #: Kit and domain vocabulary core logic must never branch on (R3).

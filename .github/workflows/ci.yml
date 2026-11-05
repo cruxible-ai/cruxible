@@ -10,9 +10,10 @@ env:
   # The cruxible-providers commit the provider-runtime tests run against
   # (tests/support/provider_checkout.py): the runtime is installed from it, the
   # provider wheels the installation tests transfer are built from it, and the
-  # end-to-end skeleton (tests/test_e2e) runs its web.fetch. Capture = payload:
-  # cruxible-provider-web 0.4.0 (branch claude/capture-payload).
-  CRUXIBLE_PROVIDERS_COMMIT: f27a831b088d1af4d25ce2a421453f24d68abb76
+  # end-to-end skeleton (tests/test_e2e) runs its web.fetch. D-R37 providers
+  # template: runtime 0.4.0, web 0.5.0, noop 0.4.0, docs/quant/workspace 0.3.1
+  # (branch claude/providers-template).
+  CRUXIBLE_PROVIDERS_COMMIT: f8d90c9f4d31e3619d970b3e6f96f171648368b3
 
 jobs:
   test:
