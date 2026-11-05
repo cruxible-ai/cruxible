@@ -462,6 +462,12 @@ def evidence_by_item(
         if root is not None and isinstance(cited, str) and cited == root:
             evidence[item.item_key] = root
             continue
+        if root is not None and receipt is None and _creates_subject(request, item.item_key):
+            # A Subject item carries no receipt to check: its key Claims cite the
+            # root delivery proves over the recorded derivation graph, the root
+            # its sibling Claims' receipts cite (a Subject made from a derive).
+            evidence[item.item_key] = root
+            continue
         # Absence over a Capture list: its witness cites exactly the closure (D-R37 a6).
         listed = witnessed_list_capture(produced, receipt, cache=cache)
         if listed is not None:
@@ -477,6 +483,11 @@ def evidence_by_item(
             },
         )
     return evidence
+
+
+def _creates_subject(request: TerminalEgressRequestV1, item_key: str) -> bool:
+    changes = getattr(request, "claims_changes", None) or {}
+    return isinstance(changes.get(item_key), CoreSubjectChange)
 
 
 def _keyless_statement(item: CoreClaimChange) -> AuthoringClaimStatement:

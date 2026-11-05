@@ -80,6 +80,9 @@ class SettleTarget:
     basis: MandateBasis | None = None
     value: object = None
     before: object = None
+    #: The binding Subject is an object the change itself creates, of a kind the
+    #: grant's ``subject_creation`` names (V3): within any ``subject_scope``.
+    created_object: bool = False
 
 
 def _object_value(obj: object) -> object:
@@ -317,6 +320,7 @@ def settle_targets(
                 basis=_change_basis(claim, change_kind),
                 value=None if change_kind == "retire" else _object_value(statement.object),
                 before=before,
+                created_object=role == "object" and subject_path in created,
             )
         )
     return tuple(targets), tuple(issues)
@@ -576,7 +580,13 @@ def _target_gaps(
                     target,
                 )
             )
-        elif mandate.subject_scope is not None and target.subject not in mandate.subject_scope:
+        elif (
+            mandate.subject_scope is not None
+            and target.subject not in mandate.subject_scope
+            # A just-created object of a listed kind cannot have been named in
+            # advance; subject_creation is what scopes it (V3).
+            and not target.created_object
+        ):
             gaps.append(
                 (
                     "subject",

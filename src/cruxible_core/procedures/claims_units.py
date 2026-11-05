@@ -28,6 +28,7 @@ from cruxible_client.contracts.shapes import (
 )
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.errors import CoreError
+from cruxible_core.indexes.subject_identity import KeyTuple, key_encoding
 
 _OBJECT: TypeAdapter[ClaimObject] = TypeAdapter(ClaimObject)
 # The statement's own field type: the same lax datetime parse, then UTC.
@@ -44,6 +45,21 @@ def unit_key(obj: Any, claim_type: Any, context: Any) -> bytes:
 
 def _unit_value(obj: Any, claim_type: Any, context: Any) -> Any:
     def object_key_value(address: SemanticAddress, predicate: str) -> object:
+        reference = address.subject_key_reference
+        if reference is not None:
+            # A Subject this run creates (V1) is named by its canonical key: the
+            # key part is the value its key Claim will hold once accepted.
+            _kind, key = reference
+            if not isinstance(key, dict):
+                return None
+            return next(
+                (
+                    value
+                    for name, value in key.items()
+                    if name == predicate or predicate.endswith("." + name)
+                ),
+                None,
+            )
         held = context.slot(address, predicate, None)
         return (
             held[0].statement.object.value
@@ -126,22 +142,46 @@ def claims_item_identity_digest(
 
 @dataclass(frozen=True)
 class CreationIdentity:
-    """A claims item whose Subject the run creates: its identity waits for lowering.
+    """A claims item naming a Subject the run creates: its identity waits for lowering.
 
-    Until delivery's preparation lowers the terminal, the Subject has no
-    address, so the item is first identified by its key reference,
-    ``{subject_kind, key}`` (the Subject wire such an item's change carries).
-    ``finalize_creation_identities`` replaces it with the whole-artifact
-    address lowering assigned ``subject_item``, the terminal's Subject item
-    creating that Subject.
+    Until delivery's preparation lowers the terminal, a created Subject has no
+    address, so the item is first identified by its key reference: the
+    ``{subject_kind, key}`` Subject wire, or a ``subject-key-v1`` object for a
+    value target the run creates (V1). ``finalize_creation_identities``
+    replaces each with the whole-artifact address lowering assigned the
+    terminal's Subject item creating that Subject.
     """
 
     #: The item's position in the terminal.
     index: int
-    #: The position of the terminal's Subject item creating its Subject.
-    subject_item: int
+    #: The position of the Subject item creating its Subject; None when it exists.
+    subject_item: int | None
     #: ``claims_item_identity_digest``'s other arguments (ClaimType, unit, ...).
     parts: Mapping[str, Any]
+    #: The position of the Subject item creating its object; None when it exists.
+    object_item: int | None = None
+    #: The resolved Subject address of an item whose Subject exists.
+    subject: object = None
+
+
+def _landed_object(obj: Any, address: object) -> Any:
+    """``obj`` naming its created target by the address lowering assigned it."""
+
+    target = {"kind": "subject", "address": address}
+    if isinstance(obj, Mapping) and obj.get("kind") == "none":
+        return {"kind": "none", "of": target}
+    return target
+
+
+def _unit_reads_object(claim_type: Any) -> bool:
+    """Whether a Claim's identity unit is its object's address (not its key, not the slot).
+
+    An ``object_key`` unit is the object's key value, already final in the
+    creating run; every other unit is computed from the landed object.
+    """
+
+    inverse = getattr(claim_type, "inverse", None)
+    return inverse is None or inverse.key.kind != "object_key"
 
 
 def finalize_creation_identities(
@@ -165,20 +205,33 @@ def finalize_creation_identities(
     """
 
     addresses: dict[int, object | None] = {}
-    finalized: dict[int, str] = {}
-    for creation in creations:
-        if creation.subject_item not in addresses:
-            path = assigned_path(creation.subject_item)
-            addresses[creation.subject_item] = (
+
+    def address_of(item: int) -> object | None:
+        if item not in addresses:
+            path = assigned_path(item)
+            addresses[item] = (
                 None
                 if path is None
                 else SemanticAddress.whole_artifact(path).model_dump(mode="json")
             )
-        address = addresses[creation.subject_item]
-        if address is None:
+        return addresses[item]
+
+    finalized: dict[int, str] = {}
+    for creation in creations:
+        subject = (
+            creation.subject if creation.subject_item is None else address_of(creation.subject_item)
+        )
+        if subject is None:
             continue
+        parts = dict(creation.parts)
+        if creation.object_item is not None:
+            target = address_of(creation.object_item)
+            if target is None:
+                continue
+            if _unit_reads_object(parts.get("claim_type")):
+                parts["obj"] = _landed_object(parts.get("obj"), target)
         finalized[creation.index] = claims_item_identity_digest(
-            node_id=node_id, subject=address, **creation.parts
+            node_id=node_id, subject=subject, **parts
         )
     return finalized
 
@@ -257,16 +310,76 @@ def same_content(
     )
 
 
+@dataclass(frozen=True)
+class ValueTarget:
+    """A Subject a Subject-valued template names by key and creates when absent (V1).
+
+    ``key`` is canonical (each part's ClaimType form, then its R12 normalizer),
+    so two spellings of one key are one target and one Subject item (V5).
+    """
+
+    kind: str
+    key: KeyTuple
+
+    @property
+    def slot(self) -> tuple[str, str]:
+        """The (kind, canonical key) a run creates one Subject item for."""
+
+        return self.kind, key_encoding(self.key)
+
+    def key_mapping(self) -> dict[str, Any]:
+        return {predicate: value for predicate, value in self.key}
+
+    def address(self) -> SemanticAddress:
+        return SemanticAddress.subject_key(self.kind, self.key_mapping())
+
+
+def _present_key(key: object) -> object:
+    """A key template's resolved parts: a present field result is its value.
+
+    An absent or invalid part leaves the result tagged, so the key refuses.
+    """
+
+    if not isinstance(key, dict):
+        return key
+    return {
+        name: part["value"]
+        if isinstance(part, dict) and part.get("tag") == "present" and "value" in part
+        else part
+        for name, part in key.items()
+    }
+
+
 def resolve_object(
     value: Any, claim_type: Any, context: Any, executor: Any, *, trusted: bool = False
 ) -> dict[str, Any] | None:
     """The same value resolution for positive writes and enumeration presence."""
+
+    return resolve_value(value, claim_type, context, executor, trusted=trusted)[0]
+
+
+def resolve_value(
+    value: Any, claim_type: Any, context: Any, executor: Any, *, trusted: bool = False
+) -> tuple[dict[str, Any] | None, ValueTarget | None]:
+    """The resolved object, and the Subject the run creates for it, if any (V1).
+
+    A Subject-valued template naming a missing Subject by key with
+    ``create: if_absent`` resolves to that key (a ``subject-key-v1`` object,
+    which shared lowering lands on the Subject item creating it). A missing
+    target without ``create``, an invalid key and an ambiguous one resolve to
+    nothing: an ambiguous or invalid resolution never creates.
+    """
+
     if claim_has_line_break(value):
-        return None
+        return None, None
     if isinstance(claim_type.value, SubjectType):
+        target: ValueTarget | None = None
         try:
             if isinstance(value, dict) and value.get("kind") in claim_type.value.subject_kinds:
-                address = context.subject(value["kind"], value.get("key", {}))
+                kind, key = value["kind"], _present_key(value.get("key", {}))
+                address = context.subject(kind, key)
+                if address is None and value.get("create") == "if_absent":
+                    target = ValueTarget(kind=kind, key=context.canonical(kind, key))
             elif isinstance(value, str):
                 found = [context.reference(kind, value) for kind in claim_type.value.subject_kinds]
                 found = [a for a in found if a is not None]
@@ -274,12 +387,12 @@ def resolve_object(
             else:
                 address = None
         except (ValueError, KeyError, TypeError):
-            address = None
-        return (
-            None
-            if address is None
-            else {"kind": "subject", "address": address.model_dump(mode="json")}
-        )
+            address, target = None, None
+        if address is not None:
+            return {"kind": "subject", "address": address.model_dump(mode="json")}, None
+        if target is not None:
+            return {"kind": "subject", "address": target.address().model_dump(mode="json")}, target
+        return None, None
     checked = (
         None
         if trusted
@@ -293,11 +406,11 @@ def resolve_object(
         )
     )
     if isinstance(checked, FieldInvalid):
-        return None
+        return None, None
     from cruxible_core.procedures.extract import wire_value
 
     literal = value if checked is None else wire_value(checked.value)
     return {
         "kind": "literal",
         "value": canonicalize_literal(literal, effective_canonical_form(claim_type)),
-    }
+    }, None

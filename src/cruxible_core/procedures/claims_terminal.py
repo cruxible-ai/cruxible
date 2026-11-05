@@ -39,6 +39,7 @@ from cruxible_client.contracts.shapes import (
     claim_rationale,
     requires_complete_input,
 )
+from cruxible_core.indexes.subject_identity import key_encoding
 from cruxible_core.procedures.claims_changes import (
     CoreClaimChange,
     CoreClaimsChange,
@@ -52,7 +53,7 @@ from cruxible_core.procedures.claims_units import (
     CreationIdentity,
     claim_time,
     claims_item_identity_digest,
-    resolve_object,
+    resolve_value,
     same_content,
     same_value,
     unit_holders,
@@ -173,21 +174,51 @@ def expand_claims(
     identities: list[str] = []
     values: list[CanonicalValue] = []
     tokens: list[frozenset[DependencyToken]] = []
-    created: set[bytes] = set()
-    # D-R37 g fix 3: an item whose Subject this run creates has no Subject
-    # address yet. It is identified here by its key reference (the change's own
-    # ``subject_wire``), and the executor finalizes it with the whole-artifact
-    # address delivery's lowering assigns that Subject's Subject item -- the
-    # address it has once accepted (``finalize_creation_identities``).
-    pending: list[tuple[int, bytes, dict[str, Any]]] = []
-    subject_items: dict[bytes, int] = {}
+    # One Subject item per (kind, canonical key) the run creates, a row's
+    # Subject and a value's target alike (V5): a value target that is also a
+    # row's Subject shares its item, and two spellings of one key are one item.
+    created: set[tuple[str, str]] = set()
+    # D-R37 g fix 3: an item naming a Subject this run creates has no address
+    # for it yet. It is identified here by its key reference (the change's own
+    # ``subject_wire``, or a ``subject-key-v1`` object), and the executor
+    # finalizes it with the whole-artifact address delivery's lowering assigns
+    # that Subject's Subject item -- the address it has once accepted
+    # (``finalize_creation_identities``).
+    pending: list[
+        tuple[int, tuple[str, str] | None, tuple[str, str] | None, Any, dict[str, Any]]
+    ] = []
+    subject_items: dict[tuple[str, str], int] = {}
 
-    def identify(subject_wire: Any, key: bytes | None, **parts: Any) -> None:
-        if key is not None:
-            pending.append((len(identities), key, parts))
+    def identify(
+        subject_wire: Any,
+        key: tuple[str, str] | None,
+        target: tuple[str, str] | None = None,
+        **parts: Any,
+    ) -> None:
+        if key is not None or target is not None:
+            pending.append((len(identities), key, target, subject_wire, parts))
         identities.append(
             claims_item_identity_digest(node_id=node.node_id, subject=subject_wire, **parts)
         )
+
+    def create_subject(
+        slot: tuple[str, str],
+        *,
+        kind: str,
+        key: Any,
+        rationale: str,
+        value: CanonicalValue,
+        closure: frozenset[DependencyToken],
+    ) -> None:
+        """The run's one Subject item for ``slot``, before the first change naming it."""
+
+        created.add(slot)
+        subject_items[slot] = len(values)
+        changes.append(CoreSubjectChange(subject_kind=kind, key=key, rationale=rationale))
+        identify({"subject_kind": kind, "key": key}, slot)
+        values.append(value)
+        tokens.append(closure)
+        evidence.append(None)
 
     nodes = (
         {}
@@ -338,7 +369,11 @@ def expand_claims(
         # D-R37 g fix: an existing Subject's identity is its resolved
         # whole-artifact address (``subject_wire``); a Subject this run creates
         # is finalized from the address delivery's lowering assigns it.
-        created_key = canonical_bytes(key) if subject is None else None
+        created_key = (
+            None
+            if subject is not None
+            else (node.subject.kind, key_encoding(context.canonical(node.subject.kind, key)))
+        )
         for template_index, mapping in enumerate(node.claims):
             reserve()
             target = (
@@ -396,7 +431,7 @@ def expand_claims(
                     lexeme=str(value)[:512],
                 )
                 continue
-            obj = resolve_object(value, ct, context, executor, trusted=present)
+            obj, value_target = resolve_value(value, ct, context, executor, trusted=present)
             if obj is None:
                 report("extract_refused", target, field=str(mapping.value), problem="value_invalid")
                 continue
@@ -455,6 +490,7 @@ def expand_claims(
                 state.completeness.downgraded += 1
                 value = ct.incomplete_fallback
                 obj = {"kind": "literal", "value": value}
+                value_target = None
             if obj["kind"] == "literal":
                 obj["value"] = canonicalize_literal(obj["value"], effective_canonical_form(ct))
             # Typed once: every held-vs-incoming comparison and the write read
@@ -776,19 +812,29 @@ def expand_claims(
                 report("extract_refused", target, field="rationale", problem="rationale_invalid")
                 continue
             if created_key is not None and created_key not in created:
-                created.add(created_key)
-                subject_items[created_key] = len(values)
-                changes.append(
-                    CoreSubjectChange(
-                        subject_kind=node.subject.kind,
-                        key=key,
-                        rationale=rationale,
-                    )
+                create_subject(
+                    created_key,
+                    kind=node.subject.kind,
+                    key=key,
+                    rationale=rationale,
+                    value=cast(CanonicalValue, {"key": key}),
+                    closure=own,
                 )
-                identify(subject_wire, created_key)
-                values.append(cast(CanonicalValue, {"key": key}))
-                tokens.append(own)
-                evidence.append(None)
+            target_key = None if value_target is None else value_target.slot
+            if value_target is not None and value_target.slot not in created:
+                # The value's target is created in the same change (V1), by the
+                # one Subject item a row naming it would also use (V5).
+                create_subject(
+                    value_target.slot,
+                    kind=value_target.kind,
+                    key=value_target.key_mapping(),
+                    rationale=rationale,
+                    value=cast(
+                        CanonicalValue,
+                        {"key": value_target.key_mapping(), "subject_kind": value_target.kind},
+                    ),
+                    closure=own,
+                )
             changes.append(
                 CoreClaimChange.model_validate(
                     {
@@ -819,6 +865,7 @@ def expand_claims(
             identify(
                 subject_wire,
                 created_key,
+                target_key,
                 claim_type=ct,
                 qualifier=qualifier,
                 obj=obj,
@@ -856,6 +903,24 @@ def expand_claims(
                 diagnostics=diagnostics,
                 reserve=reserve,
                 within=within_paths,
+                create_target=lambda found, closure: (
+                    None
+                    if found.slot in created
+                    else create_subject(
+                        found.slot,
+                        kind=found.kind,
+                        key=found.key_mapping(),
+                        rationale="Complete source establishes the declared inverse.",
+                        value=cast(
+                            CanonicalValue,
+                            {"key": found.key_mapping(), "subject_kind": found.kind},
+                        ),
+                        closure=closure,
+                    )
+                ),
+                pend_object=lambda index, found, subject_wire, parts: pending.append(
+                    (index, None, found.slot, subject_wire, parts)
+                ),
             )
         except ClaimUnitUnresolved as exc:
             raise _RunRefusal(
@@ -869,11 +934,17 @@ def expand_claims(
         tuple(changes),
         tuple(identities),
         tuple(
-            CreationIdentity(index=index, subject_item=subject_items[key], parts=parts)
-            for index, key, parts in pending
-            # Every such item follows its Subject's Subject item; one with none
+            CreationIdentity(
+                index=index,
+                subject_item=None if key is None else subject_items[key],
+                parts=parts,
+                object_item=None if target is None else subject_items[target],
+                subject=None if key is not None else subject_wire,
+            )
+            for index, key, target, subject_wire, parts in pending
+            # Every such item follows the Subject items it names; one with none
             # (no Subject item precedes it) keeps its key reference.
-            if key in subject_items
+            if (key is None or key in subject_items) and (target is None or target in subject_items)
         ),
     )
 

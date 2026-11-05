@@ -693,6 +693,7 @@ def _claim_object(
 
 
 _ClaimPayloadT = TypeVar("_ClaimPayloadT", bound=ClaimAuthoringPayload)
+_ObjectT = TypeVar("_ObjectT")
 
 
 def _live_subject_in(tree: Mapping[str, bytes], path: str) -> bool:
@@ -4177,6 +4178,26 @@ def _key_slot(address: SemanticAddress) -> tuple[str, str]:
     return address.artifact_path, address.selector.value
 
 
+def _object_subject(value: object) -> tuple[str, SemanticAddress] | None:
+    """The Subject a Claim object names, by field: its value, or the X of a none of X."""
+
+    if isinstance(value, SubjectClaimObject):
+        return "statement.object.address", value.address
+    if isinstance(value, AuthoringNoneClaimObject | NoneClaimObject) and isinstance(
+        value.of, SubjectClaimObject
+    ):
+        return "statement.object.of.address", value.of.address
+    return None
+
+
+def _with_object_subject(value: _ObjectT, address: SemanticAddress) -> _ObjectT:
+    """``value`` naming ``address`` where it names a Subject (``_object_subject``)."""
+
+    if isinstance(value, SubjectClaimObject):
+        return cast(_ObjectT, SubjectClaimObject(address=address))
+    return cast(_ObjectT, AuthoringNoneClaimObject(of=SubjectClaimObject(address=address)))
+
+
 def _subject_key_addresses(
     member: AuthoringChangeSetMember,
 ) -> tuple[tuple[str, SemanticAddress], ...]:
@@ -4188,9 +4209,9 @@ def _subject_key_addresses(
     found: list[tuple[str, SemanticAddress]] = []
     if statement.subject.selector.scheme == "subject-key-v1":
         found.append(("statement.subject", statement.subject))
-    value = statement.object
-    if isinstance(value, SubjectClaimObject) and value.address.selector.scheme == "subject-key-v1":
-        found.append(("statement.object.address", value.address))
+    named = _object_subject(statement.object)
+    if named is not None and named[1].selector.scheme == "subject-key-v1":
+        found.append(named)
     return tuple(found)
 
 
@@ -4206,10 +4227,11 @@ def _with_keys_landed(
     statement = payload.statement
     subject = landed(statement.subject)
     value = statement.object
-    if isinstance(value, SubjectClaimObject):
-        target = landed(value.address)
-        if target != value.address:
-            value = SubjectClaimObject(address=target)
+    named = _object_subject(value)
+    if named is not None:
+        target = landed(named[1])
+        if target != named[1]:
+            value = _with_object_subject(value, target)
     if subject == statement.subject and value is statement.object:
         return payload
     return payload.model_copy(
@@ -4470,10 +4492,11 @@ def _with_landed_addresses(
     statement = member.statement
     subject = landed(statement.subject)
     value = statement.object
-    if isinstance(value, SubjectClaimObject):
-        target = landed(value.address)
-        if target != value.address:
-            value = SubjectClaimObject(address=target)
+    named = _object_subject(value)
+    if named is not None:
+        target = landed(named[1])
+        if target != named[1]:
+            value = _with_object_subject(value, target)
     if subject == statement.subject and value is statement.object:
         return member
     return member.model_copy(
@@ -4555,8 +4578,9 @@ def _recheck_key_references_lowered(
             if content is not None:
                 written = parse_claim(content, path=path).statement
                 value = member.statement.object
-                if isinstance(written.object, SubjectClaimObject):
-                    value = SubjectClaimObject(address=written.object.address)
+                landed = _object_subject(written.object)
+                if landed is not None:
+                    value = _with_object_subject(value, landed[1])
                 member = member.model_copy(
                     update={
                         "statement": member.statement.model_copy(
