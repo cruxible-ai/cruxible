@@ -248,7 +248,7 @@
     "unsupported_backend",
     "unsupported_protocol"
   ],
-  "runtime_version": "0.3.0",
+  "runtime_version": "0.4.0",
   "schemas": {
     "Budgets": {
       "additionalProperties": false,

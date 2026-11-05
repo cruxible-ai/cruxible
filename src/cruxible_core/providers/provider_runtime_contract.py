@@ -35,7 +35,7 @@ from cruxible_client.contracts.errors import ExecutionError
 PROVIDER_RUNTIME_PROTOCOL = "2.0"
 #: The cruxible-providers commit the vendored contract fixture was taken from
 #: (``tests/fixtures/provider_runtime_contract_v2.json``).
-PROVIDER_RUNTIME_CONTRACT_COMMIT = "1961ce24f056784890e40849ba447e80542e3469"
+PROVIDER_RUNTIME_CONTRACT_COMMIT = "f8d90c9f4d31e3619d970b3e6f96f171648368b3"
 PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS = (
     "dynamic:target-from-configuration",
     "dynamic:target-from-run-input",
