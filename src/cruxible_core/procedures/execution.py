@@ -2229,10 +2229,15 @@ def _is_derived_capture(state: _RunState, digest: str) -> bool:
 
 
 def _fetched_captures(state: _RunState) -> list[str]:
-    """The fetched, non-derived Captures this run consumed, sorted (D-R37 f1)."""
+    """The fetched, non-derived Captures this run built, sorted (D-R37 f1).
+
+    Independent of ``consumed_captures``: a Capture an acquiring call built and
+    journaled as acquired counts here even when its own disposition refused,
+    omitted, or otherwise never bound it.
+    """
 
     return sorted(
-        digest for digest in state.consumed_captures if not _is_derived_capture(state, digest)
+        digest for digest in state.fetched_captures if not _is_derived_capture(state, digest)
     )
 
 
@@ -2284,6 +2289,12 @@ class _RunState:
     #: a child's. Journaled on every node_fired and on finalization, so a
     #: reader of a running or finished run knows what its values derive from (C14).
     consumed_captures: set[str] = dataclass_field(default_factory=set)
+    #: Every Capture an acquiring call built and journaled as acquired this run,
+    #: whether or not its disposition went on to bind (D-R37 f1). Distinct from
+    #: ``consumed_captures``: a refused or omitted sibling's Capture is still
+    #: fetched evidence, and a refusal or halt must not erase it from the
+    #: result digest just because it was never selected or consumed.
+    fetched_captures: set[str] = dataclass_field(default_factory=set)
     #: Which aliases hold incomplete values, and the control lineage's state.
     completeness: Completeness = dataclass_field(default_factory=Completeness)
     #: Whether the value this run returns is complete, data and control lineage
@@ -4052,6 +4063,10 @@ class ProcedureExecutor:
                 )
             )
         for field, item in built.items():
+            # D-R37 f1: fetched the moment it is built and journaled as
+            # acquired, independent of the disposition its own rule reaches
+            # below (selected, omitted or refused).
+            state.fetched_captures.add(item.capture_digest)
             envelope = item.envelope
             source = envelope.source
             assert isinstance(source, ExternalSourceReference)
@@ -6305,6 +6320,8 @@ class ProcedureExecutor:
             capture_bytes=state.capture_bytes,
             # One set: a repeat body's consumption is the run's.
             consumed_captures=state.consumed_captures,
+            # One set: a repeat body's fetched evidence is the run's (D-R37 f1).
+            fetched_captures=state.fetched_captures,
         )
         if body.operation == "transform":
             if body.transform_kind is None or not isinstance(body.spec, BaseModel):

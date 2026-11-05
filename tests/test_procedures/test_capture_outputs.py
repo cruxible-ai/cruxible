@@ -24,7 +24,12 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.procedures.authored import CallStep, ProjectStep
+from cruxible_client.contracts.procedures.authored import (
+    CallStep,
+    GuardStep,
+    HaltStep,
+    ProjectStep,
+)
 from cruxible_client.contracts.procedures.capture_outputs import (
     TriggerTargetRefused,
     capture_output_descriptors,
@@ -47,6 +52,7 @@ def _paired_world(
     trigger_input: str | None = None,
     acquisition: dict[str, Any] | None = None,
     returned: tuple[str, ...] = ("left", "note"),
+    halt_after_call: bool = False,
 ) -> Any:
     from cruxible_client.authoring.inputs import LineInput
     from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
@@ -166,6 +172,26 @@ def _paired_world(
                     captures={"left": "test.events-v1", "right": "test.other-v1"},
                     slot="pair",
                     input={"query": "orders"},
+                ),
+                *(
+                    [
+                        # A statically-true guard always takes the halt branch
+                        # at runtime; ``out`` stays statically reachable (R3)
+                        # through the branch never taken.
+                        GuardStep(
+                            guard={
+                                "op": "eq",
+                                "left": {"literal": True},
+                                "right": {"literal": True},
+                            },
+                            id="gate",
+                            then={"goto": "stop"},
+                            else_={"goto": "out"},
+                        ),
+                        HaltStep(halt="stop after fetch", id="stop"),
+                    ]
+                    if halt_after_call
+                    else []
                 ),
                 ProjectStep(
                     project="out",
@@ -466,3 +492,138 @@ def test_the_result_digest_commits_the_fetched_captures(tmp_path: Path) -> None:
         semantic_replay_key_digest=key, status="succeeded", output=output, refusal=None
     )
     assert unfetched == result(()) != digest
+
+
+def _spy_on_fetched_captures(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """Record what ``_fetched_captures`` actually computes, without changing it.
+
+    The production call site looks up the name in the module's globals each
+    time it runs, so patching it here is observed at the real call (inside
+    the finalize path), not a copy.
+    """
+
+    import cruxible_core.procedures.execution as execution_module
+
+    observed: list[list[str]] = []
+    real = execution_module._fetched_captures
+
+    def spy(state: Any) -> list[str]:
+        value = real(state)
+        observed.append(value)
+        return value
+
+    monkeypatch.setattr(execution_module, "_fetched_captures", spy)
+    return observed
+
+
+def test_a_refused_runs_result_digest_commits_the_selected_siblings_fetched_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-R37 f1 fix: a sibling's refusal does not erase Captures already fetched.
+
+    Both ``doc.left`` and ``doc.right`` are built and journaled as acquired
+    before either field's disposition is decided; ``doc.right`` then refuses
+    for staleness, before either field is bound or consumed
+    (``consumed_captures`` stays empty, proven below). The recorded result
+    digest still commits both fetched Captures: changing either field's
+    bytes -- simulated by swapping its digest -- changes it, and so does
+    dropping the selected sibling entirely, which is what the pre-fix
+    ``consumed_captures``-only set did on a refusal.
+    """
+
+    from cruxible_core.procedures.execution import procedure_semantic_result_digest
+
+    observed = _spy_on_fetched_captures(monkeypatch)
+    instance = _paired_world(
+        tmp_path, acquisition={"doc.right": {"max_age": "PT1M", "on_stale": "refuse"}}
+    )
+    output = _paired_output(right_observed_at="2026-10-29T11:00:00Z")
+    state, _ = run_line(instance, invoker=Invoker(output=output), name=LINE_NAME)
+
+    assert state.status == "node_refused", state.terminal
+    assert state.terminal.code == "cruxible.acquisition.stale"
+    assert _journal(instance, state.run_id, "produced_capture") == []
+    (final,) = _journal(instance, state.run_id, "attempt_finalized")
+    assert final["consumption"]["captures"] == []
+    assert final["semantic_result_digest"] == state.semantic_result_digest
+
+    (fetched,) = observed
+    # Both Captures were built and journaled as acquired before the refusal,
+    # even though neither was ever bound or consumed.
+    assert len(fetched) == 2
+    digest = state.semantic_result_digest
+
+    def result(fetched_captures: Any) -> str:
+        from cruxible_core.procedures.execution import ProcedureRunRefusalV1
+
+        return procedure_semantic_result_digest(
+            semantic_replay_key_digest=state.semantic_replay_key_digest,
+            status="refused",
+            output=None,
+            refusal=ProcedureRunRefusalV1.model_validate(final["refusal"]),
+            fetched_captures=fetched_captures,
+        )
+
+    assert result(sorted(fetched)) == digest
+    assert result([fetched[0], "sha256:" + "0" * 64]) != digest
+    assert result(["sha256:" + "0" * 64, fetched[1]]) != digest
+    assert result(()) != digest
+
+
+def test_a_halted_runs_result_digest_commits_an_omitted_fields_fetched_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-R37 f1 fix: a fetch-then-halt still commits what it fetched.
+
+    ``doc.right`` is stale and omitted: built and journaled as acquired, but
+    never bound or consumed (only ``doc.left`` is selected; ``_bind_omission``
+    never touches ``consumed_captures``). The Procedure halts right after the
+    call. The halted run's result digest still commits the omitted field's
+    fetched bytes: changing them -- simulated by swapping its digest --
+    changes the digest, even though ``doc.right`` was never selected or
+    consumed.
+    """
+
+    from cruxible_core.procedures.execution import procedure_semantic_result_digest
+
+    observed = _spy_on_fetched_captures(monkeypatch)
+    instance = _paired_world(
+        tmp_path,
+        acquisition={"doc.right": {"max_age": "PT1M", "on_stale": "omit"}},
+        halt_after_call=True,
+    )
+    output = _paired_output(right_observed_at="2026-10-29T11:00:00Z")
+    state, _ = run_line(instance, invoker=Invoker(output=output), name=LINE_NAME)
+
+    assert state.status == "halted", state.terminal
+    decisions = {
+        item["input_name"]: item["decision"]["disposition"]
+        for item in _journal(instance, state.run_id, "source_acquisition")
+    }
+    assert decisions == {"doc.left": "selected", "doc.right": "omitted"}
+    produced = _journal(instance, state.run_id, "produced_capture")
+    assert [item["field"] for item in produced] == ["left"]
+    (final,) = _journal(instance, state.run_id, "attempt_finalized")
+    assert sorted(final["consumption"]["captures"]) == [produced[0]["capture_digest"]]
+    assert final["semantic_result_digest"] == state.semantic_result_digest
+
+    (fetched,) = observed
+    assert len(fetched) == 2
+    digest = state.semantic_result_digest
+
+    def result(fetched_captures: Any) -> str:
+        return procedure_semantic_result_digest(
+            semantic_replay_key_digest=state.semantic_replay_key_digest,
+            status="halted",
+            output=None,
+            refusal=None,
+            halt=final["halt"],
+            fetched_captures=fetched_captures,
+        )
+
+    assert result(sorted(fetched)) == digest
+    assert result([fetched[0], "sha256:" + "0" * 64]) != digest
+    assert result(["sha256:" + "0" * 64, fetched[1]]) != digest
+    # The omitted field's fetched bytes are not dropped just because they
+    # were never selected or consumed.
+    assert result([produced[0]["capture_digest"]]) != digest
