@@ -690,7 +690,7 @@ def test_create_on_a_minted_kind_is_refused_at_authoring(tmp_path: Path) -> None
 def _absence_line(
     instance: Any,
     *,
-    value: dict[str, Any],
+    value: Any,
     when_absent: str,
     expected: list[str],
     inverse: bool = False,
@@ -799,6 +799,81 @@ def test_an_inverse_whose_x_is_missing_without_create_is_refused_per_item(
     refused = [d for d in _diagnostics(state) if d.problem == "value_invalid"]
     # b's positive and a's inverse each refuse alone.
     assert len(refused) == 2
+    assert state.terminal_egress[0].proposal_id is None
+
+
+def _subject_id(path: str, kind: str) -> str:
+    return path.removeprefix(f"subjects/{kind}/").removesuffix(".json")
+
+
+@pytest.mark.parametrize("unit", ["object", "object_key"])
+def test_an_inverse_names_an_existing_target_from_a_string_value(tmp_path: Path, unit: str) -> None:
+    """V2: a ``kind/id`` reference string resolves like a positive value, never a literal.
+
+    Authoring types a literal Subject string only in this exact-id form (the
+    dict ``{kind, key, create}`` form names any key); at runtime the same
+    string must name its target through the shared resolver, not fall back
+    to ``{kind: literal, value: <text>}``.
+    """
+
+    a = "pkg:pypi/a@1"
+    inverse = {"kind": unit, **({"predicate": KIND + ".cve_id"} if unit == "object_key" else {})}
+    instance, root = upsert_world(
+        tmp_path,
+        [],
+        components=(a,),
+        vulnerabilities=("CVE-2026-0001",),
+        types=(affected_type(inverse=inverse),),
+    )
+    subject_id = _subject_id(_paths(instance, KIND)["CVE-2026-0001"], KIND)
+    _absence_line(
+        instance,
+        value=f"{KIND}/{subject_id}",
+        when_absent="inverse",
+        expected=[a],
+    )
+    state = run(instance, root)
+    assert state.status == "succeeded", json.dumps(state.terminal.model_dump(mode="json"))
+    assert not _subject_items(state)
+    assert not [d for d in _diagnostics(state) if d.problem == "value_invalid"]
+    activate(instance, state)
+    vulnerability = _paths(instance, KIND)["CVE-2026-0001"]
+    (held,) = [c for c in _live_claims(instance) if c.statement.predicate == AFFECTED]
+    assert held.statement.object.kind == "none"
+    if unit == "object_key":
+        assert held.statement.object.of.model_dump(mode="json") == {
+            "kind": "literal",
+            "value": "CVE-2026-0001",
+        }
+    else:
+        assert held.statement.object.of.address.artifact_path == vulnerability
+
+
+@pytest.mark.parametrize("unit", ["object", "object_key"])
+def test_an_inverse_whose_string_value_is_unresolved_is_refused_per_item(
+    tmp_path: Path, unit: str
+) -> None:
+    """V2: a string value never creates; an unresolved target is value_invalid, per item."""
+
+    a = "pkg:pypi/a@1"
+    inverse = {"kind": unit, **({"predicate": KIND + ".cve_id"} if unit == "object_key" else {})}
+    instance, root = upsert_world(
+        tmp_path,
+        [],
+        components=(a,),
+        types=(affected_type(inverse=inverse),),
+    )
+    _absence_line(
+        instance,
+        value=f"{KIND}/does-not-exist",
+        when_absent="inverse",
+        expected=[a],
+    )
+    state = run(instance, root)
+    assert state.status == "succeeded", json.dumps(state.terminal.model_dump(mode="json"))
+    assert not _subject_items(state)
+    refused = [d for d in _diagnostics(state) if d.problem == "value_invalid"]
+    assert len(refused) == 1
     assert state.terminal_egress[0].proposal_id is None
 
 

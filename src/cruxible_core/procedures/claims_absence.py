@@ -15,6 +15,7 @@ from cruxible_client.contracts.claims import NoneClaimObject, claim_artifact_dig
 from cruxible_client.contracts.content_memo import seal
 from cruxible_client.contracts.procedures.models import ExtractNode
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import SubjectType
 from cruxible_core.procedures.claims_changes import (
     CoreClaimChange,
     CoreReobservationChange,
@@ -529,7 +530,9 @@ def append_absence(
                                 inverse["of"] = obj.model_dump(mode="json")
                         else:
                             raw = resolve(mapping.value)
-                            if isinstance(raw, dict) and raw.get("kind"):
+                            if isinstance(ct.value, SubjectType) or (
+                                isinstance(raw, dict) and raw.get("kind")
+                            ):
                                 named_object, value_target = resolve_value(
                                     raw, ct, context, executor
                                 )
