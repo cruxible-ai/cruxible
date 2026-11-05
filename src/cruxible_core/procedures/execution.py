@@ -3913,6 +3913,7 @@ class ProcedureExecutor:
         members: dict[str, str] = {}
         member_keys: dict[str, tuple[str, ...]] = {}
         member_requests: dict[str, str] = {}
+        requests_seen: set[str] = set()
         if not whole_wire and workspace_request is None and isinstance(output, dict):
             for field in fields:
                 if field not in list_caps:
@@ -3950,8 +3951,9 @@ class ProcedureExecutor:
                             },
                         ) from exc
                     member_requests[key] = _member_request_digest(
-                        wires[key], key=key, node_id=node.node_id, seen=member_requests
+                        wires[key], key=key, node_id=node.node_id, seen=requests_seen
                     )
+                    requests_seen.add(member_requests[key])
             fields = tuple(key for field in fields for key in member_keys.get(field, (field,)))
             rules = {key: rules[members.get(key, key)] for key in fields}
             pins = {key: pins[members.get(key, key)] for key in fields}
@@ -7187,7 +7189,7 @@ def _extract_only_keys(node: ExtractNode, *, state: _RunState) -> list[dict[str,
 
 
 def _member_request_digest(
-    wire: ProviderResultToExternalCapture, *, key: str, node_id: str, seen: Mapping[str, str]
+    wire: ProviderResultToExternalCapture, *, key: str, node_id: str, seen: Collection[str]
 ) -> str:
     """A Capture list member's identity: the request digest its coordinate carries (D-R37 a2).
 
@@ -7210,7 +7212,7 @@ def _member_request_digest(
                 "coordinate (a member's identity)",
             },
         )
-    if digest in seen.values():
+    if digest in seen:
         raise _InternalFailure(
             "provider_protocol_violation",
             details={
