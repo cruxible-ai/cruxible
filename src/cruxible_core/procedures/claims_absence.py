@@ -14,6 +14,7 @@ from cruxible_client.contracts.claim_evidence import (
 from cruxible_client.contracts.claims import NoneClaimObject, claim_artifact_digest
 from cruxible_client.contracts.content_memo import seal
 from cruxible_client.contracts.procedures.models import ExtractNode
+from cruxible_client.contracts.semantic import subject_key_selector_value
 from cruxible_core.procedures.claims_changes import (
     CoreClaimChange,
     CoreReobservationChange,
@@ -149,6 +150,37 @@ def append_absence(
             return context.subject(node.subject.kind, row.get("key", row))
         return None
 
+    def identity_subject(subject: Any, row: object) -> Any:
+        """The identity-stable Subject reference for one ``expect`` entry (D-R37 g fix).
+
+        Matches claims_terminal's item identity: the key-derived address,
+        whenever ``expect`` structurally carries the same key parts
+        ``node.subject.key`` names (nested under ``key``, or flat, as a
+        key-sourced query row carries them alongside a ``subject_id`` hint)
+        -- the same address whether or not the Subject existed yet when that
+        Claim was created. When ``expect`` carries no such key (a bare
+        path/id reference with nothing else), there is nothing to rebuild it
+        from; its resolved address stands in unchanged, as before this fix.
+        """
+
+        if isinstance(row, dict):
+            key_candidate = row.get("key", row)
+            required = set(node.subject.key)
+            if isinstance(key_candidate, dict) and required <= set(key_candidate):
+                # The ``SemanticAddress.subject_key`` wire shape as a plain
+                # dict, without constructing it (no per-item model build).
+                return {
+                    "tag": "playbill-semantic-address-v1",
+                    "artifact_path": f"subject-kinds/{node.subject.kind}.json",
+                    "selector": {
+                        "scheme": "subject-key-v1",
+                        "value": subject_key_selector_value(
+                            {name: key_candidate[name] for name in required}
+                        ),
+                    },
+                }
+        return subject
+
     expects: dict[str, tuple[Any, Any]] = {}
     for row in expected:
         try:
@@ -260,6 +292,7 @@ def append_absence(
         if path in refused:
             continue
         records = by_subject.get(path, [])
+        stable_subject = identity_subject(subject, expect_row)
         for index, mapping in enumerate(node.claims):
             if mapping.when_absent == "keep":
                 continue
@@ -461,7 +494,7 @@ def append_absence(
                                 ),
                                 receipt,
                                 {"retire": claim.identity.name, "template": index},
-                                held_identity(subject, ct, claim),
+                                held_identity(stable_subject, ct, claim),
                             )
                         continue
                     if ct.inverse is None:
@@ -535,7 +568,7 @@ def append_absence(
                                 ),
                                 receipt,
                                 {"retire": claim.identity.name, "template": index},
-                                held_identity(subject, ct, claim),
+                                held_identity(stable_subject, ct, claim),
                             )
                         continue
                     seen_changes.add(unit)
@@ -551,7 +584,7 @@ def append_absence(
                                 ),
                                 receipt,
                                 {"absence": path, "template": index, "unit": inverse},
-                                held_identity(subject, ct, claim),
+                                held_identity(stable_subject, ct, claim),
                             )
                         continue
                     append(
@@ -574,7 +607,7 @@ def append_absence(
                         {"absence": path, "template": index, "unit": inverse},
                         claims_item_identity_digest(
                             node_id=node.node_id,
-                            subject=subject,
+                            subject=stable_subject,
                             claim_type=ct,
                             qualifier=claim.statement.qualifier if claim is not None else qualifier,
                             obj=inverse,

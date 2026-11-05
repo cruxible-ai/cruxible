@@ -22,6 +22,7 @@ from cruxible_core.procedures.terminal_dependencies import TerminalChildReceiptV
 from cruxible_core.service.procedures.procedure_runs import service_get_playbill_procedure_run
 from tests.test_procedures.test_claims_absence_safety import safety_world
 from tests.test_procedures.test_claims_terminal import (
+    KIND,
     activate,
     claims_spec,
     claims_world,
@@ -111,6 +112,113 @@ def test_a_retirement_from_absence_carries_the_retired_positives_identity(
     retired = _changes(instance, run(instance, root, minute=1))
     assert {kind for kind, _, _ in retired.values()} == {"retirement"}
     assert set(retired) == set(positives)
+
+
+def test_a_subject_created_with_its_claim_keeps_one_identity_after_acceptance(
+    tmp_path: Path,
+) -> None:
+    """D-R37 g fix: one canonical Subject identity across creation and later runs.
+
+    The creating run has no resolved Subject address yet, so its items hash
+    the key-derived address computed before acceptance. Once the Subject and
+    Claim are accepted, a reobservation and a revision each keep the claim
+    item's identity -- before the fix, every later run hashed the resolved
+    ``SemanticAddress`` instead (a different shape than the creating run's),
+    so the comparison saw an unrelated removal/addition rather than the same
+    item changing.
+    """
+
+    instance, root = claims_world(
+        tmp_path,
+        _entries(("CVE-2026-0001", "open"), ("CVE-2026-0002", "open")),
+        seed_subjects=False,
+    )
+    install(instance, claims_spec(subject_create="if_absent"))
+
+    created = run(instance, root)
+    before = _changes(instance, created)
+    assert len(before) == 4  # two Subject creations, two Claims
+    assert {kind for kind, _, _ in before.values()} == {"subject", "claim"}
+    claim_identities = {k for k, (kind, _, _) in before.items() if kind == "claim"}
+    assert len(claim_identities) == 2
+    activate(instance, created)
+
+    # 0001 keeps its value; 0002's changes. The whole document's bytes
+    # change either way, so 0001 is re-observed from a fresh Capture and
+    # 0002 is revised.
+    (root / "data/doc.json").write_text(
+        json.dumps(_entries(("CVE-2026-0001", "open"), ("CVE-2026-0002", "closed")))
+    )
+    later = run(instance, root, minute=1)
+    after = _changes(instance, later)
+    # No new Subject items: both Subjects already exist. Both claim items
+    # keep the identities the creating run gave them.
+    assert set(after) == claim_identities
+    assert sorted(kind for kind, _, _ in after.values()) == ["claim", "reobservation"]
+
+
+@pytest.mark.executor_only
+def test_a_subject_created_with_its_claim_then_retired_by_absence_keeps_its_identity(
+    tmp_path: Path,
+) -> None:
+    """D-R37 g fix: an absence retirement carries the created positive's identity.
+
+    The creating run has no resolved Subject address yet. Once the Subject
+    and Claim are accepted, the source Capture no longer mentions this CVE
+    at all; the resulting retirement must carry the SAME item identity the
+    creating run gave its Claim -- the pre-fix code hashed the resolved
+    ``SemanticAddress`` (``context.subject``'s whole-artifact address) for
+    the retirement, an identity unrelated to the creating run's.
+    """
+
+    from cruxible_client.contracts.authoring.inputs import QueryDefinitionInput
+    from cruxible_client.contracts.query.authored import QuerySpecInput
+    from tests.core_support._identity_support import accept_tree
+    from tests.support.operation_world import author
+    from tests.support.procedures import boundary_contract, contract_files, procedure_spec
+
+    document = {**_entries(("CVE-2026-0001", "open")), "count": 1}
+    instance, root = claims_world(tmp_path, document, seed_subjects=False)
+
+    # A key-shaped expect list (``{"cve_id": ...}``, no subject_id/path): the
+    # same key reference the creating run's ``node.subject.key`` resolved,
+    # so the fix's identity-subject rebuild applies to it, unlike a
+    # path/id-named expect.
+    watch_row = boundary_contract("test.watched-by-key", {"cve_id": "string"})
+    accept_tree(instance, contract_files(watch_row), name="watch-row")
+    author(
+        instance,
+        QueryDefinitionInput(
+            kind="query_definition",
+            query_definition=QuerySpecInput.model_validate(
+                {
+                    "query": "test.watched-by-key",
+                    "from": {"v": KIND},
+                    "row": watch_row.ref.spelling,
+                    "fields": ["v.cve_id"],
+                }
+            ),
+        ),
+        name="watched-by-key-query",
+    )
+
+    raw = claims_spec(subject_create="if_absent").model_dump(mode="python", by_alias=True)
+    raw["steps"].insert(1, {"read": "watched", "query": "test.watched-by-key"})
+    raw["steps"][2]["complete_when"] = {"count_at": "/count"}
+    write = raw["steps"][-1]
+    write["claims"][0]["when_absent"] = "mirror"
+    write["expect"] = {"$ref": "step", "step": "watched", "path": ["rows"]}
+    install(instance, procedure_spec(base=raw, reference_text=True))
+
+    created = run(instance, root)
+    before = _changes(instance, created)
+    (claim_identity,) = [k for k, (kind, _, _) in before.items() if kind == "claim"]
+    activate(instance, created)
+
+    (root / "data/doc.json").write_text(json.dumps({"entries": [], "count": 0}))
+    retired = _changes(instance, run(instance, root, minute=1))
+    assert set(retired) == {claim_identity}
+    assert retired[claim_identity][0] == "retirement"
 
 
 def test_a_child_receipt_records_its_change_as_digests_only() -> None:

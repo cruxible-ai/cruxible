@@ -86,8 +86,11 @@ def claims_item_identity_digest(
     the whole slot for a one-valued ClaimType, the object's unit key for a
     many-valued one. Its every read was already made, and cached, by the
     eligibility law that produced the change. A Subject item has no ClaimType
-    and no unit. ``subject`` is the Subject's address, or its key reference
-    while the Subject does not exist yet.
+    and no unit. ``subject`` is the Subject's key-derived address
+    (``SemanticAddress.subject_key``, D-R37 g fix): one canonical identity
+    across the run that creates the Subject and every later run, rather than
+    the raw ``{subject_kind, key}`` reference of the creating run and the
+    resolved whole-artifact ``SemanticAddress`` of later ones.
     """
 
     def wire(value: Any) -> Any:

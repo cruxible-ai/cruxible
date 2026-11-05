@@ -33,6 +33,7 @@ from cruxible_client.contracts.procedures.models import (
     RepeatNode,
     TransformNode,
 )
+from cruxible_client.contracts.semantic import subject_key_selector_value
 from cruxible_client.contracts.shapes import (
     claim_has_line_break,
     claim_rationale,
@@ -298,6 +299,23 @@ def expand_claims(
                 "key": key,
             }
         )
+        # D-R37 g fix: one canonical Subject identity across the creating run
+        # and later runs. Subject addresses come from kind + key through the
+        # normalizer, so the creation's own key-derived address is computed
+        # here too, rather than hashing {subject_kind, key} in the creating
+        # run and the resolved SemanticAddress (a different shape) once the
+        # Subject exists. Identity only: ``subject_wire`` (the committed
+        # change body) is unchanged. Built as a plain dict, the
+        # ``SemanticAddress.subject_key`` wire shape without constructing it
+        # (no per-item model build; D-R37 g cost).
+        identity_subject = {
+            "tag": "playbill-semantic-address-v1",
+            "artifact_path": f"subject-kinds/{node.subject.kind}.json",
+            "selector": {
+                "scheme": "subject-key-v1",
+                "value": subject_key_selector_value(key),
+            },
+        }
         for template_index, mapping in enumerate(node.claims):
             reserve()
             target = (
@@ -682,7 +700,7 @@ def expand_claims(
                         identities.append(
                             claims_item_identity_digest(
                                 node_id=node.node_id,
-                                subject=subject_wire,
+                                subject=identity_subject,
                                 claim_type=ct,
                                 qualifier=qualifier,
                                 obj=obj,
@@ -724,7 +742,7 @@ def expand_claims(
                     )
                 )
                 identities.append(
-                    claims_item_identity_digest(node_id=node.node_id, subject=subject_wire)
+                    claims_item_identity_digest(node_id=node.node_id, subject=identity_subject)
                 )
                 values.append(cast(CanonicalValue, {"key": key}))
                 tokens.append(own)
@@ -759,7 +777,7 @@ def expand_claims(
             identities.append(
                 claims_item_identity_digest(
                     node_id=node.node_id,
-                    subject=subject_wire,
+                    subject=identity_subject,
                     claim_type=ct,
                     qualifier=qualifier,
                     obj=obj,

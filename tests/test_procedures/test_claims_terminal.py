@@ -101,6 +101,7 @@ def claims_world(
     types: tuple[ClaimType, ...] = (),
     rows: Contract = ROW,
     capture_body_access: str = "open",
+    seed_subjects: bool = True,
 ) -> tuple[Any, Path]:
     import json
 
@@ -129,17 +130,18 @@ def claims_world(
         },
         name="claims-vocabulary",
     )
-    for index, key in enumerate(dict.fromkeys(r["id"] for r in document.get("entries", []))):
-        author(
-            instance,
-            SubjectInput(
-                kind="subject",
-                subject_kind=KIND,
-                key={"cve_id": key},
-                rationale="Watched vulnerability.",
-            ),
-            name=f"watched-{index}",
-        )
+    if seed_subjects:
+        for index, key in enumerate(dict.fromkeys(r["id"] for r in document.get("entries", []))):
+            author(
+                instance,
+                SubjectInput(
+                    kind="subject",
+                    subject_kind=KIND,
+                    key={"cve_id": key},
+                    rationale="Watched vulnerability.",
+                ),
+                name=f"watched-{index}",
+            )
     return instance, root
 
 
@@ -147,6 +149,7 @@ def claims_spec(
     *,
     mappings: list[dict[str, Any]] | None = None,
     steps: list[dict[str, Any]] | None = None,
+    subject_create: str = "never",
     **extra: Any,
 ) -> Any:
     return procedure_spec(
@@ -191,7 +194,11 @@ def claims_spec(
             {
                 "id": "write",
                 "for_each": "$steps.entries.records",
-                "subject": {"kind": KIND, "key": {"cve_id": "$item.key.cve_id"}},
+                "subject": {
+                    "kind": KIND,
+                    "key": {"cve_id": "$item.key.cve_id"},
+                    "create": subject_create,
+                },
                 "claims": mappings or [{"type": PREDICATE, "value": "$item.fields.status"}],
             },
         ],
