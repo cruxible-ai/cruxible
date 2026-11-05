@@ -731,3 +731,53 @@ def test_incomplete_captures_names_only_declared_capture_lists(
     assert completed["receipt"]["outcome"]["code"] == "provider_protocol_violation"
     assert completed["receipt"].get("output") is None
     assert journal(instance, state.run_id, "produced_capture") == []
+
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt"])
+def test_a_later_witness_members_unreadable_envelope_refuses_as_unavailable(
+    damage: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-R37 a6, cold context: when a LATER member's envelope cannot be read
+    (missing, or bytes that fail their address), naming its contract raises a
+    storage error. The witness check answers "no longer retained" instead of
+    letting the error escape evaluation, for inverse and retirement witnesses
+    alike (both go through this one check)."""
+
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts import claims
+    from cruxible_client.contracts.errors import CasError
+
+    digests = _digests(3)
+    later = digests[-1]
+
+    def read(digest: str, **kwargs: Any) -> bytes:
+        if digest == later:
+            raise CasError(f"{damage} envelope {digest}")
+        raise AssertionError("only the later member is read cold in this test")
+
+    original = claims._named_capture_contract
+
+    def named(store: Any, digest: str) -> str | None:
+        return "contract" if digest != later else original(store, digest)
+
+    monkeypatch.setattr(claims, "_named_capture_contract", named)
+    monkeypatch.setattr(
+        claims,
+        "verify_capture",
+        lambda capture, **kwargs: SimpleNamespace(
+            source=SimpleNamespace(source_identity="test.kev-pages")
+        ),
+    )
+    monkeypatch.setattr(claims, "capture_retained_body_digests", lambda envelope: ("body",))
+    store = SimpleNamespace(read=read, verify=lambda digest: True)
+    refusal = claims.absence_witness_refusal(
+        _witness(capture=digests[0], members=list(digests)),
+        capture_store=store,  # type: ignore[arg-type]
+        contracts_by_digest={"contract": [SimpleNamespace(contract=None)]},  # type: ignore[dict-item]
+        historical_capture_contract=None,
+        ledger_resolver=None,
+        producer_artifact_digests=None,
+        producer_receipt_resolver=None,
+    )
+    assert refusal == "Absence witness bytes are no longer retained; acquire the source again."

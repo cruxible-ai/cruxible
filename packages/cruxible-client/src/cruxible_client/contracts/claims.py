@@ -1771,11 +1771,16 @@ def absence_witness_refusal(
             if producer_receipt_resolver is None
             else producer_receipt_resolver.recall_verified(capture)
         )
-        named = (
-            memo.envelope.capture_contract_digest
-            if memo is not None
-            else _named_capture_contract(capture_store, capture)
-        )
+        try:
+            named = (
+                memo.envelope.capture_contract_digest
+                if memo is not None
+                else _named_capture_contract(capture_store, capture)
+            )
+        except CasError:
+            # A missing or corrupt envelope (cold context): the same answer as
+            # missing or corrupt bytes below, never an escaping storage error.
+            return "Absence witness bytes are no longer retained; acquire the source again."
         choices = (
             ()
             if contracts_by_digest is None or named is None
