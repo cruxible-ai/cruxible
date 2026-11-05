@@ -359,6 +359,30 @@ class CaptureContractComponents(_StrictCaptureModel):
         return CaptureContractV1._digest(value)
 
 
+#: The shapes a derived CaptureKind may take (D-R37 e2): a derive's output is a
+#: procedure_output, an http_response re-expressed, or a span of a foreign document.
+DERIVED_CAPTURE_SHAPES: frozenset[str] = frozenset(
+    {"procedure_output", "http_response", "foreign_span"}
+)
+#: The decodings a derived CaptureKind may declare (D-R37 e1): extract reads them.
+DERIVED_CAPTURE_DECODINGS: frozenset[str] = frozenset({"json", "csv"})
+
+
+def _derived_kind_law(
+    grade: str, shape: str, decoding: CaptureDecoding | None
+) -> None:
+    """A derived CaptureKind is extract-readable: JSON or CSV, on a derivable shape."""
+
+    if grade != "derived":
+        return
+    if shape not in DERIVED_CAPTURE_SHAPES:
+        raise ValueError(
+            "derived grade requires procedure_output, http_response or foreign_span"
+        )
+    if decoding is None or decoding.format not in DERIVED_CAPTURE_DECODINGS:
+        raise ValueError("derived grade requires json or csv decoding")
+
+
 class CaptureContract(_StrictCaptureModel):
     """Current stored contract: shape and policy, with frozen expanded components."""
 
@@ -389,8 +413,7 @@ class CaptureContract(_StrictCaptureModel):
             raise ValueError(
                 "coordinator self-source is a reserved constant, not an authored shape"
             )
-        if self.epistemic_grade == "derived" and self.shape != "procedure_output":
-            raise ValueError("derived grade requires procedure_output")
+        _derived_kind_law(self.epistemic_grade, self.shape, self.decoding)
         return self
 
     @property
@@ -472,8 +495,7 @@ class NamedCaptureContract(_StrictCaptureModel):
             and self.identity.name != COORDINATOR_SELF_SOURCE_CONTRACT_ID
         ):
             raise ValueError("coordinator self-source is reserved")
-        if self.epistemic_grade == "derived" and self.shape != "procedure_output":
-            raise ValueError("derived grade requires procedure_output")
+        _derived_kind_law(self.epistemic_grade, self.shape, self.decoding)
         capture_components(self)
         capture_retention_policy(self)
         return self

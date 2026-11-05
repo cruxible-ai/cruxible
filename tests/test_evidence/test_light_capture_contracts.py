@@ -12,6 +12,9 @@ from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
     CaptureContractV1,
+    CaptureCsvDecoding,
+    CaptureDecoding,
+    CaptureDecodingLimits,
     capture_contract_path,
     capture_contract_successor_break,
     contract_source_kinds,
@@ -242,15 +245,66 @@ def test_builtin_migration_is_one_successor_and_old_capture_bytes_stay_pinned():
     )
 
 
-def test_capture_input_forbids_unknown_shape_and_derived_http():
+def test_capture_input_forbids_unknown_shape_and_undecodable_derived():
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
         CaptureContractInputRecord(name="test.bad", shape="anything")
-    with pytest.raises(ValidationError, match="derived grade"):
+    with pytest.raises(ValidationError, match="derived grade requires json or csv"):
         lower_capture_contract_input(
             CaptureContractInputRecord(name="test.bad", shape="http_response", grade="derived")
         )
+
+
+def _decoding(format_: str) -> CaptureDecoding:
+    return CaptureDecoding(
+        format=format_,  # type: ignore[arg-type]
+        csv=CaptureCsvDecoding() if format_ == "csv" else None,
+        limits=CaptureDecodingLimits(decoded_bytes=1 << 20, depth=8, records=100),
+    )
+
+
+@pytest.mark.parametrize("shape", ["procedure_output", "http_response", "foreign_span"])
+@pytest.mark.parametrize("format_", ["json", "csv"])
+@pytest.mark.parametrize("named", [False, True])
+def test_derived_kind_admits_json_or_csv_on_a_derivable_shape(shape, format_, named):
+    contract = lower_capture_contract_input(
+        CaptureContractInputRecord(
+            name="test.derived", shape=shape, grade="derived", decoding=_decoding(format_)
+        ),
+        named=named,
+    )
+    assert contract.epistemic_grade == "derived"
+    assert contract.decoding is not None and contract.decoding.format == format_
+
+
+@pytest.mark.parametrize("format_", ["text", "bytes", None])
+@pytest.mark.parametrize("named", [False, True])
+def test_derived_kind_refuses_text_bytes_or_no_decoding(format_, named):
+    from pydantic import ValidationError
+
+    record = CaptureContractInputRecord(
+        name="test.derived",
+        shape="procedure_output",
+        grade="derived",
+        **({} if format_ is None else {"decoding": _decoding(format_)}),
+    )
+    with pytest.raises(ValidationError, match="derived grade requires json or csv decoding"):
+        lower_capture_contract_input(record, named=named)
+
+
+@pytest.mark.parametrize("named", [False, True])
+def test_derived_kind_refuses_a_database_snapshot(named):
+    from pydantic import ValidationError
+
+    record = CaptureContractInputRecord(
+        name="test.derived",
+        shape="database_snapshot",
+        grade="derived",
+        decoding=_decoding("json"),
+    )
+    with pytest.raises(ValidationError, match="procedure_output, http_response or foreign_span"):
+        lower_capture_contract_input(record, named=named)
 
 
 def test_sdk_payload_preserves_omitted_patch_fields_on_round_trip():
