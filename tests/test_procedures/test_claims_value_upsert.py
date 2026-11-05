@@ -1058,3 +1058,102 @@ def test_an_expect_text_resolves_id_first_then_by_key(tmp_path: Path) -> None:
     assert context.reference(COMPONENT, path).artifact_path == path
     assert context.reference(COMPONENT, "pkg:pypi/unknown@1") is None
     assert context.reference(KIND, a) is None  # another kind's key names nothing here
+
+
+# -- work counts: one creation item per (kind, canonical key); flat per item --------
+
+#: Records per measured run: the marginal cost of a record must not grow with N.
+_SIZES = (10, 55, 100)
+#: The marginal per-record cost at the large end may exceed the small end's by
+#: this ratio plus slack (fixed costs and digest-length noise), never more.
+_SLOPE_RATIO = 1.15
+_SLOPE_SLACK = 2.0
+
+
+def _counted_run(
+    tmp_path: Path, entries: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> dict[str, float]:
+    from collections import Counter
+
+    from cruxible_core.procedures.claims_context import AcceptedClaimsContext
+    from tests.test_scale._counters import counting, trace_sqlite
+
+    lookups: Counter[str] = Counter()
+    original_subject = AcceptedClaimsContext._subject
+
+    def counted_subject(self: Any, kind: str, key: Any) -> Any:
+        if (kind, key) not in self._subjects:
+            lookups[kind] += 1  # a lookup that reaches the projection
+        return original_subject(self, kind, key)
+
+    monkeypatch.setattr(AcceptedClaimsContext, "_subject", counted_subject)
+    with trace_sqlite(tmp_path):
+        instance, root = upsert_world(tmp_path, entries, components=())
+        install(
+            instance,
+            upsert_spec(
+                subject={
+                    "kind": COMPONENT,
+                    "key": {"purl": "$item.key.purl"},
+                    "create": "if_absent",
+                }
+            ),
+        )
+        lookups.clear()
+        with counting(tmp_path) as window:
+            state = run(instance, root)
+    assert state.status == "succeeded", state.terminal
+    assert not window.unexplained, window.unexplained
+    created = Counter(c.subject_kind for c in _subject_items(state))
+    return {
+        "component_items": created[COMPONENT],
+        "vulnerability_items": created[KIND],
+        "component_lookups": lookups[COMPONENT],
+        "vulnerability_lookups": lookups[KIND],
+        "sql_statements": window.counts["sql_statements"],
+        "projection_binds": window.counts["projection_binds"],
+    }
+
+
+def _records(size: int, *, targets: int) -> list[dict[str, Any]]:
+    """``size`` new components; record i names CVE ``i mod targets`` (all new)."""
+
+    return [
+        {"purl": f"pkg:pypi/c{index}@1", "cve": f"CVE-2026-{index % targets:04d}"}
+        for index in range(size)
+    ]
+
+
+@pytest.mark.parametrize("shape", ["one_target", "many_targets"])
+def test_value_upsert_work_is_one_item_per_key_and_flat_per_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str
+) -> None:
+    measured: dict[int, dict[str, float]] = {}
+    for size in _SIZES:
+        targets = 1 if shape == "one_target" else size
+        found = _counted_run(
+            _subdir(tmp_path, f"n{size}"), _records(size, targets=targets), monkeypatch
+        )
+        # One Subject item per distinct (kind, canonical key), rows and values alike,
+        # and one key lookup per distinct key: the context caches each (kind, key).
+        assert found["component_items"] == size
+        assert found["vulnerability_items"] == targets
+        assert found["component_lookups"] == size
+        assert found["vulnerability_lookups"] == targets
+        measured[size] = found
+    small, middle, large = (measured[size] for size in _SIZES)
+    step = (_SIZES[1] - _SIZES[0], _SIZES[2] - _SIZES[1])
+    for counter in ("sql_statements", "projection_binds"):
+        low = (middle[counter] - small[counter]) / step[0]
+        high = (large[counter] - middle[counter]) / step[1]
+        assert high <= low * _SLOPE_RATIO + _SLOPE_SLACK, (counter, measured)
+    report = __import__("os").environ.get("VALUE_UPSERT_COUNTS")
+    if report:
+        with open(report, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"shape": shape, "measured": measured}) + "\n")
+
+
+def _subdir(tmp_path: Path, name: str) -> Path:
+    path = tmp_path / name
+    path.mkdir()
+    return path
