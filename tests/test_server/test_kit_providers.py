@@ -130,11 +130,14 @@ def test_the_same_wheel_and_lock_reproduce_identical_definitions_on_fresh_instan
         f"cp{sys.version_info.major}{sys.version_info.minor}"
     )
     assert set(local_env.materialization_digests) == {environment}
-    (implementation,) = provider.implementations
-    assert implementation.implementation_digest == provider_implementation_digest(
-        entrypoint=implementation.entrypoint,
-        distribution_sha256=provider.runtime_artifact.distribution.sha256,
-    )
+    # noop.echo and noop.captures are served by two distinct entrypoints, so the
+    # package ships two implementations, each checked against its own digest.
+    assert len(provider.implementations) == 2
+    for implementation in provider.implementations:
+        assert implementation.implementation_digest == provider_implementation_digest(
+            entrypoint=implementation.entrypoint,
+            distribution_sha256=provider.runtime_artifact.distribution.sha256,
+        )
 
 
 # --- a kit bundling its provider, end to end ---------------------------------

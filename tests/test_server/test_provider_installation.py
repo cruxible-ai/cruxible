@@ -434,7 +434,7 @@ def _web_contract_members(wheel: Path) -> dict[str, bytes]:
 
 @pytest.fixture
 def installed_web(installer_http, provider_checkout):
-    """The real web wheel installed after its fifteen Contracts (and their closure)."""
+    """The real web wheel installed after its thirty-five Contracts (and their closure)."""
 
     from cruxible_client.contracts.shapes import contract_digest, parse_contract
 
@@ -444,10 +444,11 @@ def installed_web(installer_http, provider_checkout):
     wheels = provider_checkout.wheels
     wheel = next(wheels.glob("cruxible_provider_web-*.whl"))
     members = _web_contract_members(wheel)
-    # 3 operations x (in, out) + 5 + 5 + 2 refusals, and the six nested
-    # Contracts they pin: the coordinate (with its headers and pages), the
-    # zero-field selector, the window and the render's cited source.
-    assert len(members) == 24
+    # 5 operations x (in, out), 5 web.fetch + 5 web.fetch.pages + 2 web.render +
+    # 2 web.render.dom + 5 search.web refusals, and the six nested Contracts
+    # they pin: the coordinate (with its headers and pages), the zero-field
+    # selector, the window and the render's cited source.
+    assert len(members) == 35
     _accept(http, instance_id, reviewer, members, name="web-contracts")
     installed = install_provider_wheel(
         client,
@@ -455,8 +456,8 @@ def installed_web(installer_http, provider_checkout):
         wheel=wheel,
         lock=provider_checkout.repository / "packages/cruxible-provider-web/uv.lock",
         dependency_wheels=(next(wheels.glob("cruxible_provider_runtime-*.whl")),),
-        # web.render's implementation declares the browser extra; without it that
-        # implementation is not installed at all. web.fetch needs none.
+        # web.render.dom's implementation declares the browser extra; without it
+        # that implementation is not installed at all. The others need none.
         extras=("browser",),
     )
     assert installed.installed and installed.registered, installed
@@ -484,22 +485,30 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
 
     http, instance_id, reviewer = installer_http
     client, installed, digests = installed_web
-    # Readiness is per operation and truthful. web.fetch and search.web need
-    # nothing beyond the base install. web.render's implementation needs the
-    # browser extra (this install asked for it) and a Chromium matching the
-    # installed Playwright, which the install probes for rather than assumes:
-    # where none is present, the operation is installed but not ready, and the
-    # install says so.
+    # Readiness is per operation and truthful. web.fetch, web.fetch.pages,
+    # search.web and web.render (a pure derive) need nothing beyond the base
+    # install. web.render.dom's implementation needs the browser extra (this
+    # install asked for it) and a Chromium matching the installed Playwright,
+    # which the install probes for rather than assumes: where none is present,
+    # the operation is installed but not ready, and the install says so.
     readiness = {row.operation: row for row in installed.operations}
-    assert set(readiness) == {"web.fetch", "search.web", "web.render"}
+    assert set(readiness) == {
+        "web.fetch",
+        "web.fetch.pages",
+        "search.web",
+        "web.render",
+        "web.render.dom",
+    }
     assert all(row.installed for row in readiness.values()), installed.operations
     assert readiness["search.web"].missing_requirements == ()
     assert readiness["web.fetch"].missing_requirements == ()
-    assert set(readiness["web.render"].missing_requirements) <= {
+    assert readiness["web.fetch.pages"].missing_requirements == ()
+    assert readiness["web.render"].missing_requirements == ()
+    assert set(readiness["web.render.dom"].missing_requirements) <= {
         "runtime resource: playwright.chromium"
     }
     assert installed.status == (
-        "blocked" if readiness["web.render"].missing_requirements else "ready"
+        "blocked" if readiness["web.render.dom"].missing_requirements else "ready"
     )
     # The registration pinned every operation and every declared refusal to
     # the accepted Contracts.
@@ -508,7 +517,13 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     build_path = provider_path(installed.build)
     build = parse_provider(tree[build_path], path=build_path)
     served = {operation.name: operation for operation in build.operations}
-    assert set(served) == {"web.fetch", "search.web", "web.render"}
+    assert set(served) == {
+        "web.fetch",
+        "web.fetch.pages",
+        "search.web",
+        "web.render",
+        "web.render.dom",
+    }
     for operation in served.values():
         refs = (
             operation.in_,
@@ -524,7 +539,15 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
         "redirect_limit",
         "unsupported_redirect_scheme",
     }
-    assert set(served["web.render"].refusals) == {"engine_unavailable", "provider_declined"}
+    assert set(served["web.fetch.pages"].refusals) == {
+        "credential_unavailable",
+        "cross_origin_credentialed_redirect",
+        "provider_declined",
+        "redirect_limit",
+        "unsupported_redirect_scheme",
+    }
+    assert set(served["web.render"].refusals) == {"provider_declined"}
+    assert set(served["web.render.dom"].refusals) == {"engine_unavailable", "provider_declined"}
     assert set(served["search.web"].refusals) == {
         "cross_origin_credentialed_redirect",
         "provider_declined",

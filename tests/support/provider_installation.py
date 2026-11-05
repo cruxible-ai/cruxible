@@ -4,8 +4,11 @@ import hashlib
 import json
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 #: The one Contract ``local.increment`` reads and returns: ``{n: int}``. An
 #: install pins it, so a world accepts it (``local_call_contract_files``) before
@@ -53,30 +56,61 @@ def accept_local_call_contract(instance_id: str, approve: Any) -> None:
     approve(proposal.admission.proposal_id)
 
 
-def noop_contract_files() -> dict[str, bytes]:
-    """The reference noop operation's actual typed input, output and refusals."""
-    from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
+def _load_checkout_module(checkout: Path, name: str, relative_package: str) -> Any:
+    """A providers-checkout package, loaded by file location (never via sys.path).
 
-    definitions = {
-        "noop.echo.request": {"mode": "string?", "text": "string?"},
-        "noop.echo.result": {
-            "echo": "string",
-            "credential_length": "int?",
-            "credential_fingerprint": "string?",
-            "context_repr": "string?",
-        },
-        "noop.echo.refusal.credential_missing": {"ref": "string"},
-        "noop.echo.refusal.provider_declined": {
-            "mode": "string?",
-            "known": "list<string>{max_items: 32}?",
-            "run_id": "string?",
-        },
-    }
-    members = {}
-    for name, fields in definitions.items():
-        contract = Contract.model_validate({"name": name, "version": 1, "fields": fields})
-        members[contract_path(name, 1)] = render_contract(contract)
-    return members
+    Mirrors ``tests/test_e2e/test_skeleton_kev_epss.py``'s ``_web_fetch``: the
+    module is imported by its exact file location and cached in ``sys.modules``
+    under its real name, so its own internal imports (and any absolute import of
+    a sibling package already on the ambient path, e.g. ``cruxible_provider_runtime``)
+    resolve normally.
+    """
+
+    import importlib.util
+    import sys
+
+    if name in sys.modules:
+        return sys.modules[name]
+    package = checkout / relative_package
+    if not package.is_dir():
+        pytest.fail(f"{checkout} carries no {name} package")
+    spec = importlib.util.spec_from_file_location(
+        name, package / "__init__.py", submodule_search_locations=[str(package)]
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def noop_contract_files() -> dict[str, bytes]:
+    """The reference noop operation's actual typed Contracts, straight from the package.
+
+    ``cruxible_provider_noop.contract_members()`` out of the pinned providers
+    checkout (the same one ``provider_checkout`` builds wheels from), so this
+    is exactly the tree the package itself ships under ``contracts/``
+    (including ``noop.captures``), never a hand-maintained duplicate that can
+    drift from it.
+    """
+    from tests.support.provider_checkout import require_provider_checkout
+
+    checkout = require_provider_checkout()
+    noop = _load_checkout_module(
+        checkout,
+        "cruxible_provider_noop",
+        "packages/cruxible-provider-noop/src/cruxible_provider_noop",
+    )
+    return noop.contract_members()
+
+
+def _lock_root_version(lock_path: Path) -> str:
+    """The version of the package a ``uv.lock`` is the root lock for (its own entry)."""
+
+    lock = tomllib.loads(lock_path.read_text())
+    roots = [row for row in lock["package"] if row.get("source") == {"editable": "."}]
+    assert len(roots) == 1, f"expected one editable root package in {lock_path}"
+    return str(roots[0]["version"])
 
 
 def build_local_call(
@@ -103,9 +137,13 @@ def build_local_call(
     module.mkdir(parents=True)
     (module / "__init__.py").write_text("")
     entry_points = "".join(f'"{operation}" = "{entrypoint}"\n' for operation in operations)
+    # The lock below is copied verbatim from the workspace package's own lock
+    # (its root), so this package's own version must match that root's version
+    # exactly, or resolve_provider_package's lock-root identity check fails.
+    version = _lock_root_version(repository / "packages/cruxible-provider-workspace/uv.lock")
     (project / "pyproject.toml").write_text(f"""[project]
 name = "{name}"
-version = "0.3.0"
+version = "{version}"
 requires-python = ">=3.11"
 dependencies = ["cruxible-provider-runtime>=0.3.0"]
 [project.entry-points."cruxible.providers"]
@@ -140,7 +178,7 @@ class Increment:
         {
             "schema_version": 2,
             "provider_id": name,
-            "distribution": {"name": name, "version": "0.3.0"},
+            "distribution": {"name": name, "version": version},
             "entrypoint_group": "cruxible.providers",
             "supported_protocol_majors": [2],
             "implementations": [
