@@ -3031,67 +3031,70 @@ def evaluate_claim_law(
         # It nevertheless owes the same retained, daemon-produced Capture that
         # a new inverse cites. Accepted historical witnesses remain readable
         # after ordinary governed erasure, just like inherited backing.
-        verified = (
-            None
-            if producer_receipt_resolver is None
-            else producer_receipt_resolver.recall_verified(witness.capture)
-        )
-        named = (
-            verified.envelope.capture_contract_digest
-            if verified is not None
-            else _named_capture_contract(capture_store, witness.capture)
-        )
-        choices = (
-            ()
-            if contracts_by_digest is None or named is None
-            else contracts_by_digest.get(named, ())
-        )
-        witness_contract = next(iter(choices), None)
-        if (
-            witness_contract is None
-            and named is not None
-            and historical_capture_contract is not None
-        ):
-            witness_contract = historical_capture_contract(named)
-        if witness_contract is None:
-            return _diagnostic(
-                "cruxible.claim.evidence_unavailable",
-                "The absence witness CaptureContract is unavailable; acquire the source again.",
-                path=path,
+        # Over a list of Captures the witness cites every member (D-R37 a6):
+        # each is owed the same retained, verified, daemon-produced proof.
+        for witness_capture in witness.captures:
+            verified = (
+                None
+                if producer_receipt_resolver is None
+                else producer_receipt_resolver.recall_verified(witness_capture)
             )
-        try:
-            witness_envelope = verify_capture(
-                witness.capture,
-                store=capture_store,
-                contract=witness_contract.contract,
-                ledger_resolver=ledger_resolver,
-                producer_artifact_digests=(
-                    known_producer_digests
-                    if known_producer_digests is not None
-                    else producer_artifact_digests
-                ),
-                producer_receipt_resolver=producer_receipt_resolver,
-                require_production_proof=True,
+            named = (
+                verified.envelope.capture_contract_digest
+                if verified is not None
+                else _named_capture_contract(capture_store, witness_capture)
             )
-            retained = all(
-                capture_store.verify(body)
-                for body in capture_retained_body_digests(witness_envelope)
+            choices = (
+                ()
+                if contracts_by_digest is None or named is None
+                else contracts_by_digest.get(named, ())
             )
-        except (FormatError, ValueError):
-            retained = False
-        if not retained:
-            return _diagnostic(
-                "cruxible.claim.evidence_unavailable",
-                "Absence witness bytes are no longer retained; acquire the source again.",
-                path=path,
-            )
-        if getattr(witness_envelope.source, "source_identity", None) != witness.logical_source:
-            return _diagnostic(
-                "cruxible.claim.evidence_unavailable",
-                "The absence witness names a different logical source; "
-                "acquire the declared source.",
-                path=path,
-            )
+            witness_contract = next(iter(choices), None)
+            if (
+                witness_contract is None
+                and named is not None
+                and historical_capture_contract is not None
+            ):
+                witness_contract = historical_capture_contract(named)
+            if witness_contract is None:
+                return _diagnostic(
+                    "cruxible.claim.evidence_unavailable",
+                    "The absence witness CaptureContract is unavailable; acquire the source again.",
+                    path=path,
+                )
+            try:
+                witness_envelope = verify_capture(
+                    witness_capture,
+                    store=capture_store,
+                    contract=witness_contract.contract,
+                    ledger_resolver=ledger_resolver,
+                    producer_artifact_digests=(
+                        known_producer_digests
+                        if known_producer_digests is not None
+                        else producer_artifact_digests
+                    ),
+                    producer_receipt_resolver=producer_receipt_resolver,
+                    require_production_proof=True,
+                )
+                retained = all(
+                    capture_store.verify(body)
+                    for body in capture_retained_body_digests(witness_envelope)
+                )
+            except (FormatError, ValueError):
+                retained = False
+            if not retained:
+                return _diagnostic(
+                    "cruxible.claim.evidence_unavailable",
+                    "Absence witness bytes are no longer retained; acquire the source again.",
+                    path=path,
+                )
+            if getattr(witness_envelope.source, "source_identity", None) != witness.logical_source:
+                return _diagnostic(
+                    "cruxible.claim.evidence_unavailable",
+                    "The absence witness names a different logical source; "
+                    "acquire the declared source.",
+                    path=path,
+                )
     if (replacing or rebinding) and not capture_contract_pin_digests.issubset(
         cited_contract_versions
     ):

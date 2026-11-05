@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from cruxible_client.contracts.claim_evidence import CaptureBasis
 from tests.core_support._identity_support import accept_tree
 from tests.support.operation_world import NOW, Invoker, author_line, author_procedure, build_files
 from tests.support.procedures import boundary_contract, contract_files, procedure_limits
@@ -28,6 +29,7 @@ from tests.support.provider_checkout import require_provider_checkout
 from tests.test_e2e.test_skeleton_kev_epss import (
     CATALOG,
     DATE_ADDED,
+    DELISTED,
     EXCHANGES,
     FIXTURES,
     KEV_KIND,
@@ -42,6 +44,7 @@ from tests.test_e2e.test_skeleton_kev_epss import (
     _contract_digest_in,
     _cve,
     _summaries,
+    activate,
     pinned_extract_digest,
     proposed,
     run,
@@ -412,7 +415,73 @@ def test_extract_over_a_list_cites_each_records_page(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.parametrize("absence", [False])
+def test_absence_over_a_complete_list_cites_every_page_and_retires(tmp_path: Path) -> None:
+    """a6: every page complete, so absence infers and retires; the witness cites all pages."""
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(), line="test.kev-pages-line")
+    first = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-line")
+    assert first.status == "succeeded", first.terminal
+    assert first.completeness is None
+    claims = _by(proposed(instance, first))
+    assert set(claims) == {
+        *((_cve(c), LISTED_IN) for c in WATCHED),
+        *((_cve(c), DATE_ADDED) for c in listed_watched()),
+    }
+    (call,) = (node for node in first.nodes if node.node == "pages")
+    members = tuple(call.summary.capture_digests)
+    unlisted = claims[(_cve(UNLISTED), LISTED_IN)].backing.procedure_evidence
+    assert isinstance(unlisted.value, CaptureBasis)
+    assert unlisted.absence is not None
+    assert unlisted.absence.captures == unlisted.absence.members == members
+    assert unlisted.value.capture_digest == members[0] == unlisted.absence.capture
+    assert unlisted.absence.logical_source == LOGICAL_SOURCE
+    activate(instance, first)
+
+    # The catalog delists one CVE: its date retires and its listing inverts, on a
+    # witness citing all three pages of the second run.
+    delisted = split(catalog("kev-catalog-delisted"))
+    second = run_pages(instance, Pages(delisted), line="test.kev-pages-line", minute=1)
+    assert second.status == "succeeded", second.terminal
+    changed = _by(proposed(instance, second))
+    assert set(changed) == {(_cve(DELISTED), LISTED_IN), (_cve(DELISTED), DATE_ADDED)}
+    retired = changed[(_cve(DELISTED), DATE_ADDED)]
+    assert retired.lifecycle.state == "retired" and retired.retirement.absence is not None
+    (second_call,) = (node for node in second.nodes if node.node == "pages")
+    second_members = tuple(second_call.summary.capture_digests)
+    assert retired.retirement.absence.captures == second_members
+    inverse = changed[(_cve(DELISTED), LISTED_IN)].backing.procedure_evidence
+    assert inverse.absence is not None and inverse.absence.captures == second_members
+    # Acceptance verifies the witness page by page.
+    activate(instance, second)
+
+
+def test_a_failed_page_leaves_the_list_incomplete_and_absence_suppressed(
+    tmp_path: Path,
+) -> None:
+    """a4 + a6: the off-origin page is dropped; present records still write."""
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(), line="test.kev-pages-line", origins=True)
+    page_bodies = split(catalog())
+    urls = [f"{ORIGIN}/kev/0", "https://elsewhere.test/kev/1", f"{ORIGIN}/kev/2"]
+    state = run_pages(instance, Pages(page_bodies, urls=urls), line="test.kev-pages-line")
+    assert state.status == "succeeded", state.terminal
+    assert state.completeness is not None and not state.completeness.complete
+    claims = _by(proposed(instance, state))
+    where = page_of(page_bodies)
+    kept = [cve for cve in listed_watched() if where[cve] != 1]
+    assert kept and len(kept) < len(listed_watched())
+    # Only the kept pages' records write; nothing is inferred absent.
+    assert set(claims) == {
+        *((_cve(c), LISTED_IN) for c in kept),
+        *((_cve(c), DATE_ADDED) for c in kept),
+    }
+    (written,) = _summaries(state, "claims")
+    assert written.inverse_written == 0
+
+
+@pytest.mark.parametrize("absence", [False, True])
 def test_a_key_in_two_pages_writes_nothing_for_it(tmp_path: Path, absence: bool) -> None:
     """a5: a cross-member duplicate is a duplicate: no Claim for it, and no absence."""
 

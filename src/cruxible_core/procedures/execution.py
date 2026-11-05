@@ -311,6 +311,7 @@ from cruxible_core.procedures.terminal_dependencies import (
     produced_capture_token,
     receipt_token,
     terminal_item_key,
+    witnessed_list_capture,
 )
 from cruxible_core.procedures.transforms import (
     TransformInputInvalid,
@@ -5406,6 +5407,10 @@ class ProcedureExecutor:
                                 citable_captures(manifest),
                                 state.derivations,
                                 cache=state.capture_root_cache,
+                            )
+                            or witnessed_list_capture(
+                                citable_captures(manifest),
+                                getattr(request, "claims_evidence", {}).get(item_key),
                             )
                         )
                         is not None

@@ -357,3 +357,82 @@ def test_a_trigger_on_a_list_field_is_refused(tmp_path: Path) -> None:
     with pytest.raises(AuthoringLoweringError) as caught:
         pages_world(tmp_path, trigger_input="doc.pages")
     assert caught.value.code == "cruxible.authoring.line_trigger_target_list"
+
+
+# -- the absence witness over a list (a6) -----------------------------------------
+
+
+def _witness(**changes: Any) -> Any:
+    from cruxible_client.contracts.claim_evidence import AbsenceWitness
+    from cruxible_client.contracts.projection import AcceptedCoordinate
+
+    digest = "sha256:" + "1" * 64
+    return AbsenceWitness.model_validate(
+        {
+            "run_id": "run-1",
+            "procedure_digest": digest,
+            "node_id": "write",
+            "capture": "sha256:" + "a" * 64,
+            "extract_spec": digest,
+            "extractor": "json-pointer-v1",
+            "logical_source": "test.kev-pages",
+            "enumerated_key_digest": digest,
+            "expect_coordinate": AcceptedCoordinate(
+                git_oid="0" * 40,
+                semantic_root=digest,
+                generation_root=digest,
+                compiler_digest=digest,
+            ),
+            **changes,
+        }
+    )
+
+
+def test_one_capture_is_the_witness_one_tuple_case_byte_for_byte() -> None:
+    from cruxible_client.contracts.canonical import canonical_bytes
+
+    single = _witness()
+    assert single.captures == (single.capture,)
+    # The single-Capture witness keeps its exact shape: no members key at all.
+    assert "members" not in single.model_dump(mode="json")
+    listed = _witness(members=[single.capture, "sha256:" + "b" * 64])
+    assert listed.captures == (single.capture, "sha256:" + "b" * 64)
+    assert canonical_bytes(listed.model_dump(mode="json")) != canonical_bytes(
+        single.model_dump(mode="json")
+    )
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        ["sha256:" + "b" * 64, "sha256:" + "a" * 64],  # capture is not the first member
+        ["sha256:" + "a" * 64],  # one member is the plain one-Capture form
+        ["sha256:" + "a" * 64, "sha256:" + "a" * 64],  # members are distinct
+    ],
+)
+def test_a_witness_lists_two_or_more_distinct_members_led_by_its_capture(
+    members: list[str],
+) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _witness(members=members)
+
+
+def test_delivery_admits_a_list_witness_only_for_exactly_its_members() -> None:
+    from types import SimpleNamespace
+
+    from cruxible_core.procedures.terminal_dependencies import witnessed_list_capture
+
+    first, second, other = ("sha256:" + c * 64 for c in "abc")
+    witness = _witness(members=[first, second])
+
+    def receipt(cited: str, absence: Any = witness) -> Any:
+        return SimpleNamespace(value=SimpleNamespace(capture_digest=cited), absence=absence)
+
+    assert witnessed_list_capture((second, first), receipt(first)) == first
+    assert witnessed_list_capture((first, second, other), receipt(first)) is None
+    assert witnessed_list_capture((first,), receipt(first)) is None
+    assert witnessed_list_capture((first, second), receipt(second)) is None
+    assert witnessed_list_capture((first, second), receipt(first, absence=_witness())) is None
+    assert witnessed_list_capture((first, second), None) is None

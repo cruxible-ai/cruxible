@@ -88,7 +88,12 @@ def append_absence(
     captures = {t.digest for t in own if t.slot in {"produced_capture", "admitted_capture"}}
     from cruxible_core.procedures.terminal_dependencies import capture_root
 
-    root = capture_root(captures, state.derivations, cache=state.capture_root_cache)
+    members = _list_members(extracting, state, captures, node_id=node.node_id)
+    root = (
+        capture_root(captures, state.derivations, cache=state.capture_root_cache)
+        if members is None
+        else members[0]
+    )
     if root is None:
         refuse(
             "claims_absence_invalid: enumeration needs exactly one root Capture "
@@ -98,6 +103,10 @@ def append_absence(
     logical_source = context.logical_source(capture)
     if logical_source is None:
         refuse("claims_absence_invalid: enumeration Capture has no logical source")
+    if members is not None and any(
+        context.logical_source(member) != logical_source for member in members
+    ):
+        refuse("claims_absence_invalid: the enumeration's Captures name different logical sources")
     from cruxible_client.contracts.procedures.extract import EXTRACTOR_VERSIONS
     from cruxible_core.procedures.claims_terminal import _receipt_extract_digest
 
@@ -185,6 +194,7 @@ def append_absence(
             procedure_digest=admission.procedure_artifact_digest,
             node_id=node.node_id,
             capture=capture,
+            members=() if members is None or len(members) < 2 else members,
             extract_spec=extract_spec,
             extractor=extractor,
             logical_source=logical_source,
@@ -557,3 +567,31 @@ def append_absence(
                         receipt,
                         {"absence": path, "template": index, "unit": inverse},
                     )
+
+
+def _list_members(
+    extracting: ExtractNode, state: Any, captures: set[str], *, node_id: str
+) -> tuple[str, ...] | None:
+    """The members of the Capture list an enumeration reads, or ``None`` for one Capture.
+
+    Absence over a list cites every member (D-R37 a6), and only those: the
+    enumeration's closure must hold exactly the list's Captures. Whether
+    each member is complete is the extract's completeness, which a dropped
+    member already makes incomplete.
+    """
+
+    from cruxible_core.procedures.execution import _RunRefusal
+
+    call = state.outputs.get(extracting.capture_alias)
+    held = call.get(extracting.capture_field) if isinstance(call, dict) else None
+    if not isinstance(held, list):
+        return None
+    members = tuple(item for item in held if isinstance(item, str))
+    if not members or len(members) != len(held) or set(members) != captures:
+        raise _RunRefusal(
+            "claims_absence_invalid",
+            "claims_absence_invalid: an enumeration over a Capture list cites exactly the "
+            "list's members",
+            node_id=node_id,
+        )
+    return members

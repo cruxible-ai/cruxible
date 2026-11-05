@@ -87,10 +87,19 @@ class CompleteWhenResult(_Receipt):
 
 
 class AbsenceWitness(_Receipt):
+    """The complete enumeration an absence rests on, and the Captures it read.
+
+    ``capture`` is the enumeration's Capture. Over a list of Captures (D-R37
+    a6), ``members`` holds every member in order, ``capture`` being the
+    first; one Capture leaves it out, the 1-tuple case. ``captures`` reads
+    either form.
+    """
+
     run_id: str
     procedure_digest: str
     node_id: str
     capture: str
+    members: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     extract_spec: str
     extractor: str
     logical_source: str
@@ -106,11 +115,28 @@ class AbsenceWitness(_Receipt):
         "capture", "extract_spec", "enumerated_key_digest", "procedure_digest"
     )(_digest)
 
+    @field_validator("members")
+    @classmethod
+    def _members(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for member in value:
+            _digest(member)
+        if value and (len(value) < 2 or len(set(value)) != len(value)):
+            raise ValueError("absence witness members are two or more distinct Captures")
+        return value
+
     @model_validator(mode="after")
     def _complete(self) -> AbsenceWitness:
         if self.complete_when is not None and not self.complete_when.held:
             raise ValueError("absence witness requires a complete enumeration")
+        if self.members and self.members[0] != self.capture:
+            raise ValueError("absence witness capture is its first member")
         return self
+
+    @property
+    def captures(self) -> tuple[str, ...]:
+        """Every Capture the enumeration read: its members, or its one Capture."""
+
+        return self.members or (self.capture,)
 
 
 class ClaimEvidenceReceipt(_Receipt):

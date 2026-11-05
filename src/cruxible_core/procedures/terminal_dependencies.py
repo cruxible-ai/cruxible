@@ -411,6 +411,24 @@ def derive_terminal_item_facts(
     )
 
 
+def witnessed_list_capture(closure: Collection[str], receipt: object) -> str | None:
+    """The Capture an absence over a Capture list cites, when its witness names the closure.
+
+    Absence over a list is the one Claim closure of several unrelated
+    Captures that is admitted (D-R37 a6): its witness cites every member and
+    the receipt cites the first. It is admitted only when the witness's
+    members are exactly the item's closure and the receipt cites the first;
+    ``None`` otherwise.
+    """
+
+    witness = getattr(receipt, "absence", None)
+    members = getattr(witness, "members", ())
+    cited = getattr(getattr(receipt, "value", None), "capture_digest", None)
+    if not members or set(members) != set(closure) or cited != members[0]:
+        return None
+    return str(members[0])
+
+
 def citable_captures(manifest: TerminalItemDependencyManifestV1 | None) -> tuple[str, ...]:
     """Every Capture in an item's closure: those it produced AND those it was admitted.
 
@@ -586,6 +604,7 @@ __all__ = [
     "CaptureRootCache",
     "capture_root",
     "citable_captures",
+    "witnessed_list_capture",
     "TAINT_ACCEPTED_STATE",
     "TAINT_CONSERVATIVE_DEFAULT",
     "TAINT_OMITTED_OPTIONAL",
