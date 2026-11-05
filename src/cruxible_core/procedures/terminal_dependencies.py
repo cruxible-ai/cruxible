@@ -123,10 +123,16 @@ def policy_token(digest: str) -> DependencyToken:
 
 @dataclass(frozen=True)
 class AliasProvenanceV1:
-    """Runtime provenance of one alias: whole-value plus optional per-item closure."""
+    """Runtime provenance of one alias: whole-value plus optional per-item closure.
+
+    ``items_path`` names the list the per-item closures index: a transform's
+    or projection's ``items``, or an extract's ``records`` when its records
+    come from several Captures (a list's members, D-R37 a5).
+    """
 
     whole: frozenset[DependencyToken]
     items: tuple[frozenset[DependencyToken], ...] | None = None
+    items_path: str = "items"
 
     def item(self, index: int) -> frozenset[DependencyToken]:
         """Return the closure of one item, falling back to the whole-value closure."""
@@ -136,7 +142,9 @@ class AliasProvenanceV1:
         return self.whole | self.items[index]
 
     def merged(self, extra: frozenset[DependencyToken]) -> "AliasProvenanceV1":
-        return AliasProvenanceV1(whole=self.whole | extra, items=self.items)
+        return AliasProvenanceV1(
+            whole=self.whole | extra, items=self.items, items_path=self.items_path
+        )
 
 
 class DependencyEvidenceFactsV1(_StrictDependencyModel):

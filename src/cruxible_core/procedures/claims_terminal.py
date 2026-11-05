@@ -590,7 +590,15 @@ def expand_claims(
             elif len(extractors) == 1 and len(sources) == 1:
                 extracting = extractors[0]
                 read = state.outputs.get(extracting.capture_alias)
-                if isinstance(read, dict) and read.get(extracting.capture_field) != capture:
+                read_capture = (
+                    read.get(extracting.capture_field) if isinstance(read, dict) else None
+                )
+                # Over a list, the record's root is the one member it came from (D-R37 a5).
+                if isinstance(read, dict) and (
+                    capture not in read_capture
+                    if isinstance(read_capture, list)
+                    else read_capture != capture
+                ):
                     # The root is cited for the records the extract read; a root
                     # other than the Capture they came from would misattribute them.
                     raise _RunRefusal(

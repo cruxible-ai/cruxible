@@ -223,16 +223,16 @@ def resolve_procedure_spec(
                     }
                     retyped = dict(output_fields)
                     for field, declared in output_fields.items():
-                        kind = bound.get(field)
+                        bound_kind = bound.get(field)
                         typed = declared.type
-                        if kind is None:
+                        if bound_kind is None:
                             continue
                         if (
                             isinstance(typed, CaptureType)
                             and typed.capture_kind == ANY_CAPTURE_KIND
                         ):
                             retyped[field] = declared.model_copy(
-                                update={"type": CaptureType(capture_kind=kind)}
+                                update={"type": CaptureType(capture_kind=bound_kind)}
                             )
                         elif (
                             isinstance(typed, ListType)
@@ -242,7 +242,7 @@ def resolve_procedure_spec(
                             retyped[field] = declared.model_copy(
                                 update={
                                     "type": typed.model_copy(
-                                        update={"item": CaptureType(capture_kind=kind)}
+                                        update={"item": CaptureType(capture_kind=bound_kind)}
                                     )
                                 }
                             )

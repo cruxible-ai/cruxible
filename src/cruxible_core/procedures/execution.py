@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import time
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -252,7 +252,7 @@ from cruxible_core.procedures.egress import (
     effective_rung_digest,
     verify_terminal_egress_receipt,
 )
-from cruxible_core.procedures.extract import ExtractRefused, run_extract
+from cruxible_core.procedures.extract import ExtractOutcome, ExtractRefused, run_extract
 from cruxible_core.procedures.input_planes import (
     AcceptedClaimRunInputV1,
     AcceptedStateRunInputV2,
@@ -2267,6 +2267,8 @@ class _RunState:
     consumed_captures: set[str] = dataclass_field(default_factory=set)
     #: Which aliases hold incomplete values, and the control lineage's state.
     completeness: Completeness = dataclass_field(default_factory=Completeness)
+    #: Acquiring calls whose Capture list dropped a failed member (D-R37 a4).
+    dropped_members: set[str] = dataclass_field(default_factory=set)
     #: Whether the value this run returns is complete, data and control lineage
     #: both; a parent's invoke reads it from the child's completion record.
     return_complete: bool = True
@@ -4277,17 +4279,10 @@ class ProcedureExecutor:
         if kept:
             state.outputs[node.as_] = normalize_canonical(kept)
             state.provenance[node.as_] = AliasProvenanceV1(whole=frozenset(base | tokens))
-        upstream_incomplete = bool(derived_fields) and not state.completeness.reads_complete(
-            _referenced_reads(node.input)
-        )
-        if list_incomplete or upstream_incomplete:
-            # A derive computes from its inputs: one over an incomplete value
-            # (a list missing a member) is incomplete too.
-            state.completeness.mark(node.as_, False)
-            if upstream_incomplete:
-                state.completeness.note(
-                    node.node_id, "upstream_incomplete", _referenced_aliases(node.input)
-                )
+        if list_incomplete:
+            # The call's value is incomplete (the node's completeness, below);
+            # a derive over it is too, as over any incomplete input.
+            state.dropped_members.add(node.as_)
         reserved_store.release()
 
     def _capture_body(self, state: _RunState, capture_digest: str) -> bytes:
@@ -4305,10 +4300,17 @@ class ProcedureExecutor:
         return body
 
     def _run_extract(self, node: ExtractNode, *, state: _RunState) -> None:
-        """Read one Capture's records, typed, by its CaptureContract's decoding."""
+        """Read one Capture's records, typed, by its CaptureContract's decoding.
+
+        Over a list of Captures, each member's records are read the same way
+        and merged (D-R37 a5): each record's lineage is its own member.
+        """
 
         call = state.outputs.get(node.capture_alias)
         capture_digest = call.get(node.capture_field) if isinstance(call, dict) else None
+        if isinstance(capture_digest, list):
+            self._run_list_extract(node, capture_digest, state=state)
+            return
         if not isinstance(capture_digest, str):
             raise _RunRefusal(
                 "runtime_reference_unresolved",
@@ -4316,42 +4318,8 @@ class ProcedureExecutor:
                 "or was admitted (an omitted or defaulted acquisition binds none)",
                 node_id=node.node_id,
             )
-        try:
-            content = self._capture_body(state, capture_digest)
-        except Exception as exc:
-            raise _RunRefusal(
-                "source_material_unavailable",
-                f"extract {node.node_id!r}: the Capture's bytes are unavailable",
-                node_id=node.node_id,
-            ) from exc
-        contract = self.capture_contracts.get(state.capture_contracts.get(capture_digest, ""))
-        row = None if self.contract_resolver is None else self.contract_resolver(node.row)
-        if contract is None or row is None:
-            raise _InternalFailure(
-                "provider_protocol_violation",
-                details={
-                    "node_id": node.node_id,
-                    "reason": "the extract's CaptureContract or row Contract is unavailable",
-                },
-            )
-        only_keys = None
-        if node.only_keys is not None:
-            resolved = _resolve_node_template(
-                node.only_keys,
-                node_id=node.node_id,
-                input_payload=state.input_payload,
-                parameters=state.parameters,
-                outputs=state.outputs,
-            )
-            if not isinstance(resolved, list) or not all(
-                isinstance(item, dict) for item in resolved
-            ):
-                raise _RunRefusal(
-                    "runtime_reference_unresolved",
-                    f"extract {node.node_id!r}: only_keys resolves to a list of key records",
-                    node_id=node.node_id,
-                )
-            only_keys = cast(list[dict[str, object]], resolved)
+        content, contract, row = self._extract_inputs(node, capture_digest, state=state)
+        only_keys = _extract_only_keys(node, state=state)
         try:
             outcome = run_extract(
                 node,
@@ -4371,6 +4339,125 @@ class ProcedureExecutor:
                 node_id=node.node_id,
                 details=exc.details or None,
             ) from exc
+        self._bind_extract(node, outcome, state=state)
+
+    def _extract_inputs(
+        self, node: ExtractNode, capture_digest: str, *, state: _RunState
+    ) -> tuple[bytes, CaptureContract | None, Contract]:
+        """One Capture's exact bytes, its CaptureContract and the extract's row Contract."""
+
+        try:
+            content = self._capture_body(state, capture_digest)
+        except Exception as exc:
+            raise _RunRefusal(
+                "source_material_unavailable",
+                f"extract {node.node_id!r}: the Capture's bytes are unavailable",
+                node_id=node.node_id,
+            ) from exc
+        contract = self.capture_contracts.get(state.capture_contracts.get(capture_digest, ""))
+        row = None if self.contract_resolver is None else self.contract_resolver(node.row)
+        if contract is None or row is None:
+            raise _InternalFailure(
+                "provider_protocol_violation",
+                details={
+                    "node_id": node.node_id,
+                    "reason": "the extract's CaptureContract or row Contract is unavailable",
+                },
+            )
+        return content, contract, row
+
+    def _run_list_extract(
+        self, node: ExtractNode, members: Sequence[object], *, state: _RunState
+    ) -> None:
+        """Extract over a list of Captures: every member's records, merged (D-R37 a5).
+
+        A header or ``complete_when`` speaks for one document, never for the
+        merged whole: both are refused. A key in two members is a duplicate and
+        writes nothing; each record's lineage is the one member it came from.
+        """
+
+        from cruxible_core.procedures.extract import merge_outcomes
+
+        if node.header or node.complete_when is not None:
+            raise _RunRefusal(
+                "extract_format_unsupported",
+                f"extract {node.node_id!r} reads a list of Captures: it declares no header "
+                "or complete_when",
+                node_id=node.node_id,
+            )
+        only_keys = _extract_only_keys(node, state=state)
+        outcomes = []
+        for member in members:
+            if not isinstance(member, str):
+                raise _RunRefusal(
+                    "runtime_reference_unresolved",
+                    f"extract {node.node_id!r}: {node.capture!r} holds a non-Capture member",
+                    node_id=node.node_id,
+                )
+            content, contract, row = self._extract_inputs(node, member, state=state)
+            try:
+                outcomes.append(
+                    run_extract(
+                        node,
+                        capture_digest=member,
+                        content=content,
+                        decoding=getattr(contract, "decoding", None),
+                        row=row,
+                        resolve=self.contract_resolver,
+                        enums=self.enum_resolver,
+                        only_keys=only_keys,
+                        keys=self.key_rules,
+                    )
+                )
+            except ExtractRefused as exc:
+                raise _RunRefusal(
+                    cast(ProcedureNodeRefusalCode, exc.code),
+                    str(exc),
+                    node_id=node.node_id,
+                    details=exc.details or None,
+                ) from exc
+        try:
+            outcome, sources = merge_outcomes(
+                outcomes, duplicates=node.duplicates, keyed=bool(node.key)
+            )
+        except ExtractRefused as exc:
+            raise _RunRefusal(
+                cast(ProcedureNodeRefusalCode, exc.code),
+                str(exc),
+                node_id=node.node_id,
+                details=exc.details or None,
+            ) from exc
+        call_tokens = state.alias_tokens(frozenset({node.capture_alias}))
+        member_tokens = [
+            frozenset(
+                token
+                for token in call_tokens
+                if token.slot in _CAPTURE_SLOTS and token.digest == member
+            )
+            for member in members
+        ]
+        self._bind_extract(
+            node,
+            outcome,
+            state=state,
+            items=tuple(member_tokens[source] for source in sources),
+        )
+
+    def _bind_extract(
+        self,
+        node: ExtractNode,
+        outcome: ExtractOutcome,
+        *,
+        state: _RunState,
+        items: tuple[frozenset[DependencyToken], ...] | None = None,
+    ) -> None:
+        """Bind an extract's outcome: its value, diagnostics, completeness and lineage.
+
+        ``items`` is each record's own Capture lineage when its records come
+        from several Captures (a list's members): the alias then carries it
+        for ``records`` (D-R37 a5).
+        """
+
         if node.duplicates == "refuse_key":
             from cruxible_client.contracts.canonical import canonical_bytes
             from cruxible_client.contracts.shapes import DuplicateArm
@@ -4420,7 +4507,9 @@ class ProcedureExecutor:
         state.provenance[node.as_] = AliasProvenanceV1(
             whole=_node_policy_tokens(node, self.references)
             | state.control
-            | state.alias_tokens(frozenset({node.capture_alias}))
+            | state.alias_tokens(frozenset({node.capture_alias})),
+            items=items,
+            items_path="items" if items is None else "records",
         )
 
     def _apply_closed(
@@ -4553,11 +4642,17 @@ class ProcedureExecutor:
                     and self.plan is not None
                     and self.plan.definition.slots[node.slot].may_truncate
                 )
-                tracker.mark(alias, tracker.reads_complete(reads) and not truncates)
+                # A Capture list that dropped a member is incomplete (D-R37 a4).
+                dropped = alias in state.dropped_members
+                tracker.mark(alias, tracker.reads_complete(reads) and not truncates and not dropped)
                 if alias in tracker.incomplete:
                     tracker.note(
                         getattr(node, "node_id", alias),
-                        "may_truncate" if truncates else "upstream_incomplete",
+                        "may_truncate"
+                        if truncates
+                        else "incomplete_input"
+                        if dropped
+                        else "upstream_incomplete",
                         (name for name, _ in reads),
                     )
 
@@ -6999,19 +7094,24 @@ def _template_alias(value: object) -> str | None:
     return None
 
 
-def _lineage_alias(value: object) -> str | None:
+def _lineage_alias(value: object, state: _RunState | None = None) -> str | None:
     """The alias whose per-element lineage a template may use, or None.
 
-    Per-element lineage is recorded for one exact path: the ``items`` list a
-    transform or projection produced (``$steps.<alias>.items``). Any other path
-    into the same alias -- a sibling field, a nested list -- has no lineage of
-    its own and must not borrow that one.
+    Per-element lineage is recorded for one exact path, the provenance's
+    ``items_path``: the ``items`` list a transform or projection produced
+    (``$steps.<alias>.items``), or the ``records`` of an extract over a list
+    of Captures. Any other path into the same alias -- a sibling field, a
+    nested list -- has no lineage of its own and must not borrow that one.
     """
 
     if not isinstance(value, str) or not value.startswith(_STEP_PREFIX):
         return None
     parts = value[len(_STEP_PREFIX) :].split(".")
-    return parts[0] if len(parts) == 2 and parts[1] == "items" else None
+    if len(parts) != 2:
+        return None
+    provenance = None if state is None else state.provenance.get(parts[0])
+    path = "items" if provenance is None else provenance.items_path
+    return parts[0] if parts[1] == path else None
 
 
 def _item_closure(state: _RunState, template: object, index: int) -> frozenset[DependencyToken]:
@@ -7020,7 +7120,7 @@ def _item_closure(state: _RunState, template: object, index: int) -> frozenset[D
     alias = _template_alias(template)
     if alias is None:
         return frozenset()
-    if _lineage_alias(template) == alias:
+    if _lineage_alias(template, state) == alias:
         return state.item_tokens(alias, index)
     return state.alias_tokens(frozenset({alias}))
 
@@ -7058,6 +7158,27 @@ def _check_capture_list_bound(
             boundary=boundary,
             field_path=field,
         )
+
+
+def _extract_only_keys(node: ExtractNode, *, state: _RunState) -> list[dict[str, object]] | None:
+    """The key records an extract's ``only_keys`` selects, or ``None`` when it reads all."""
+
+    if node.only_keys is None:
+        return None
+    resolved = _resolve_node_template(
+        node.only_keys,
+        node_id=node.node_id,
+        input_payload=state.input_payload,
+        parameters=state.parameters,
+        outputs=state.outputs,
+    )
+    if not isinstance(resolved, list) or not all(isinstance(item, dict) for item in resolved):
+        raise _RunRefusal(
+            "runtime_reference_unresolved",
+            f"extract {node.node_id!r}: only_keys resolves to a list of key records",
+            node_id=node.node_id,
+        )
+    return cast(list[dict[str, object]], resolved)
 
 
 def _member_request_digest(
@@ -7167,6 +7288,8 @@ def _alias_provenance_payload(provenance: AliasProvenanceV1) -> CanonicalValue:
     return {
         "whole": tokens(provenance.whole),
         "items": None if provenance.items is None else [tokens(item) for item in provenance.items],
+        # Journaled only when it is not the default ``items``.
+        **({} if provenance.items_path == "items" else {"items_path": provenance.items_path}),
     }
 
 
@@ -7247,7 +7370,7 @@ def _fan_out_list(
         return values, tuple(whole for _ in values)
     # Lineage belongs to the exact path it was recorded for; a sibling or
     # nested path has none of its own.
-    lineage = provenance.items if _lineage_alias(template) == alias else None
+    lineage = provenance.items if _lineage_alias(template, state) == alias else None
     if lineage is None or len(lineage) < len(values):
         whole_captures = {
             token.digest for token in provenance.whole if token.slot in _CAPTURE_SLOTS
@@ -7468,13 +7591,14 @@ def _exact_evidence(
         captures = frozenset(token for token in provenance.whole if token.slot in _CAPTURE_SLOTS)
         shared = provenance.whole - captures
         lineage = provenance.items
+        listed = provenance.items_path
         if not path:
             selected = captures
-        elif path == ["items"] and lineage is not None:
+        elif path == [listed] and lineage is not None:
             selected = frozenset().union(*lineage) if lineage else frozenset()
         elif (
             len(path) >= 2
-            and path[0] == "items"
+            and path[0] == listed
             and path[1].isdigit()
             and lineage is not None
             and int(path[1]) < len(lineage)

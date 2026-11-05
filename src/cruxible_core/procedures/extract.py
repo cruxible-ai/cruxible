@@ -1264,6 +1264,73 @@ def run_extract(
     )
 
 
+def merge_outcomes(
+    outcomes: Sequence[ExtractOutcome],
+    *,
+    duplicates: Literal["refuse_run", "refuse_key", "first"],
+    keyed: bool,
+) -> tuple[ExtractOutcome, tuple[int, ...]]:
+    """One extract's results over a list of Captures, and each record's member (D-R37 a5).
+
+    Records merge in member order, each keeping its member-local locator (its
+    receipt names that member's Capture). A key held in two members is a
+    duplicate wherever it appears: nothing is written for it, and the merged
+    result is incomplete, as for a refused duplicate key within one Capture;
+    ``refuse_run`` refuses. Completeness is every member's. Returns the merged
+    outcome and, per entry of its ``records``, the index of the member it came
+    from.
+    """
+
+    def key_of(key: Mapping[str, object]) -> bytes:
+        return canonical_bytes({name: wire_value(value) for name, value in key.items()})
+
+    first_seen: dict[bytes, tuple[int, str]] = {}
+    shared: set[bytes] = set()
+    if keyed:
+        for member, outcome in enumerate(outcomes):
+            for item in outcome.held:
+                if isinstance(item, InvalidRecordArm):
+                    continue
+                key = key_of(item.key)
+                seen = first_seen.setdefault(
+                    key, (member, item.record if isinstance(item, DuplicateArm) else item.locator)
+                )
+                if seen[0] != member:
+                    shared.add(key)
+    held: list[_Record | InvalidRecordArm | DuplicateArm] = []
+    members: list[int] = []
+    across = 0
+    invalid_fields: dict[str, int] = {}
+    for member, outcome in enumerate(outcomes):
+        for name, count in outcome.invalid_fields.items():
+            invalid_fields[name] = invalid_fields.get(name, 0) + count
+        for item in outcome.held:
+            if isinstance(item, _Record) and keyed and key_of(item.key) in shared:
+                first_member, first = first_seen[key_of(item.key)]
+                if duplicates == "refuse_run":
+                    raise ExtractRefused(
+                        "extract_duplicate_key",
+                        f"records {first} (member {first_member}) and {item.locator} "
+                        f"(member {member}) share one key",
+                        details={"first": first, "record": item.locator},
+                    )
+                across += 1
+                held.append(DuplicateArm(record=item.locator, key=item.key, first=first))
+                continue
+            held.append(item)
+            if isinstance(item, _Record):
+                members.append(member)
+    merged = ExtractOutcome(
+        held=held,
+        held_header={},
+        complete_when_held=all(outcome.complete_when_held for outcome in outcomes),
+        invalid_records=sum(outcome.invalid_records for outcome in outcomes),
+        duplicates=sum(outcome.duplicates for outcome in outcomes) + across,
+        invalid_fields=invalid_fields,
+    )
+    return merged, tuple(members)
+
+
 Extractor = Literal["json-pointer-v1", "csv-cell-v1"]
 
 __all__ = [
@@ -1276,6 +1343,7 @@ __all__ = [
     "field_result_wire",
     "held_result",
     "held_wire",
+    "merge_outcomes",
     "run_extract",
     "wire_value",
 ]
