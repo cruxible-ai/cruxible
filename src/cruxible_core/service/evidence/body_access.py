@@ -193,8 +193,10 @@ class CaptureAccessResolver:
                     if source not in self._captures:
                         unknown[source] = None
             if unknown:
-                self._resolve_own_kind(tuple(unknown))
+                # Registered before resolving: an interruption partway through
+                # the batch must not leave an inserted ancestor cached as open.
                 unsettled.update(unknown)
+                self._resolve_own_kind(tuple(unknown))
             next_frontier: list[str] = []
             for digest in frontier:
                 for source in graph[digest] or ():

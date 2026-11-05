@@ -1158,3 +1158,40 @@ def test_restriction_over_a_wide_frontier_batches_kind_reads(
     assert envelopes.edges == 2 * fanout - 1
     assert counts["restricts"] == fanout + 1
     assert counts["checks"] <= 4 * fanout + 4
+
+
+def test_an_interrupted_ancestor_batch_leaves_no_ancestor_cached_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D-R37 d6: A -> {X, B}, X -> restricted R. An interruption while the
+    ancestor batch {X, B} is being resolved (after X is inserted) drops every
+    entry that request touched, so a retry of X and of A on the same resolver
+    restricts both; nothing is left cached as an open decision.
+    """
+
+    from cruxible_core.service.evidence import body_access
+
+    a, x, b = ("sha256:" + c * 64 for c in "abc")
+    kinds = {
+        a: _OPEN_DERIVED,
+        x: _OPEN_DERIVED,
+        b: _OPEN_DERIVED,
+        _RESTRICTED_BASE: _RESTRICTED_BASE,
+    }
+    inputs = {a: (x, b), x: (_RESTRICTED_BASE,), b: ()}
+    resolver, _envelopes, _counts = _counting_resolver(monkeypatch, kinds, inputs)
+
+    access = body_access.CaptureKindAccess
+
+    def interrupt_on_b(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("capture_digest") == b:
+            raise KeyboardInterrupt
+        return access(*args, **kwargs)
+
+    monkeypatch.setattr(body_access, "CaptureKindAccess", interrupt_on_b)
+    with pytest.raises(KeyboardInterrupt):
+        resolver.captures((a,))
+    monkeypatch.setattr(body_access, "CaptureKindAccess", access)
+
+    assert resolver.capture(x).inherited_restricted
+    assert resolver.capture(a).inherited_restricted
