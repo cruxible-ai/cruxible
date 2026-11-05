@@ -117,45 +117,93 @@ class CaptureAccessResolver:
         wanted = tuple(dict.fromkeys(digests))
         missing = [digest for digest in wanted if digest not in self._captures]
         if missing:
-            named = self.instance.body_store().capture_envelopes.contracts_of(missing)
-            self.versions(set(named.values()))
-            for digest in missing:
-                contract = named.get(digest)
-                self._captures[digest] = CaptureKindAccess(
-                    capture_digest=digest,
-                    contract_digest=contract,
-                    kind=None if contract is None else self._versions[contract],
-                )
+            self._resolve_own_kind(missing)
             self._inherit(missing)
         return {digest: self._captures[digest] for digest in wanted}
+
+    def _resolve_own_kind(self, digests: Sequence[str]) -> None:
+        """Record each digest's own kind access, never its inheritance.
+
+        Never recurses into ``_inherit``: it only ever fills in base facts
+        (``self._captures`` entries with ``inherited_restricted`` at its
+        default), so a caller still assembling a reachable derivation graph
+        can resolve an ancestor's own kind without publishing its restriction
+        decision before the whole graph is in hand.
+        """
+
+        named = self.instance.body_store().capture_envelopes.contracts_of(digests)
+        self.versions(set(named.values()))
+        for digest in digests:
+            contract = named.get(digest)
+            self._captures[digest] = CaptureKindAccess(
+                capture_digest=digest,
+                contract_digest=contract,
+                kind=None if contract is None else self._versions[contract],
+            )
 
     def _inherit(self, digests: Iterable[str]) -> None:
         """Restrict each open derived Capture whose inputs, transitively, are restricted.
 
-        One batched index read per derivation depth; inputs resolve through
-        ``captures`` (memoized), so a chain is walked once per request.
+        Resolves the COMPLETE reachable derivation graph for ``digests`` first
+        -- every ancestor's own kind, at most one batched index read per
+        depth -- then settles a single fixed point over the whole graph
+        together. No entry is published as an open decision until every node
+        it transitively depends on is accounted for: unlike resolving each
+        input through a separate, nested call, a deeper ancestor already seen
+        earlier in this same graph is never revisited, and an ancestor
+        discovered only through a longer path is never left out (D-R37 d6).
+        Missing derivation metadata for any node fails closed, and that
+        failure propagates to everything depending on it.
         """
 
-        derived = [
+        seed = {
             digest
             for digest in digests
             if (item := self._captures[digest]).kind is not None
             and item.kind.epistemic_grade == "derived"
             and not item.restricted
-        ]
-        if not derived:
+        }
+        if not seed:
             return
-        recorded = self.instance.body_store().capture_envelopes.derivation_inputs(derived)
-        inputs = {item for digest in derived for item in recorded.get(digest, ())}
-        self.captures(inputs - set(derived))
-        # A derived input in this same batch may itself inherit: settle to a fixed point.
+
+        # Phase 1: discover the whole reachable graph, breadth-first by
+        # derivation depth, resolving each newly-seen ancestor's own kind
+        # (never its inheritance) so the fixed point below sees every node.
+        graph: dict[str, tuple[str, ...] | None] = {}
+        frontier = seed
+        while frontier:
+            recorded = self.instance.body_store().capture_envelopes.derivation_inputs(frontier)
+            next_frontier: set[str] = set()
+            for digest in frontier:
+                sources = recorded.get(digest)
+                graph[digest] = sources
+                if not sources:
+                    continue
+                unknown = [source for source in sources if source not in self._captures]
+                if unknown:
+                    self._resolve_own_kind(unknown)
+                for source in sources:
+                    if source in graph:
+                        continue
+                    known = self._captures[source]
+                    if (
+                        known.kind is not None
+                        and known.kind.epistemic_grade == "derived"
+                        and not known.restricted
+                    ):
+                        next_frontier.add(source)
+            frontier = next_frontier
+
+        # Phase 2: one fixed point over the whole graph together. A node's
+        # sources may include another node in this same graph that has not
+        # settled yet; repeating until nothing changes reaches every
+        # dependent regardless of discovery or iteration order.
         changed = True
         while changed:
             changed = False
-            for digest in derived:
+            for digest, sources in graph.items():
                 if self._captures[digest].inherited_restricted:
                     continue
-                sources = recorded.get(digest)
                 if sources is None or any(self._captures[item].restricted for item in sources):
                     self._captures[digest] = dataclasses.replace(
                         self._captures[digest], inherited_restricted=True

@@ -366,6 +366,159 @@ def test_authorization_work_is_constant_in_the_captures_asked(
     assert sum(item.restricted for item in found.values()) == size // 2
 
 
+def test_a_mixed_depth_derive_chain_propagates_restriction_through_every_dependent(
+    tmp_path: Path,
+) -> None:
+    """D-R37 d6: A -> X -> B -> R, R restricted, restricts every dependent.
+
+    A batched ``captures((A, B))`` must resolve the complete reachable graph
+    before publishing any decision: X, reached only through A's own chain and
+    never asked for directly, must end up restricted exactly like B (which
+    directly records R) and A (which depends on X). A nested, nothing's left
+    provisionally open just because a candidate's own fixed point looked
+    settled before the rest of the graph was known.
+    """
+
+    from datetime import UTC, datetime
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.canonical import ArtifactDigest, Sha256Value, typed_digest
+    from cruxible_client.contracts.capture_contract_inputs import (
+        CaptureContractInputRecord,
+        lower_capture_contract_input,
+    )
+    from cruxible_client.contracts.captures import (
+        CaptureRunCoordinateV1,
+        InputReceiptSetManifest,
+        build_derived_cas_capture,
+        capture_contract_digest,
+        capture_contract_path,
+        render_capture_contract,
+    )
+    from cruxible_core.service.evidence.body_access import (
+        WITHHELD_MARK,
+        capture_access_resolver,
+    )
+    from cruxible_core.service.proposals.review import withhold_review_values
+    from tests.core_support._identity_support import accept_tree
+    from tests.core_support._light_capture_support import JSON_DECODING, record_contract
+
+    def sha(label: str) -> str:
+        return typed_digest(Sha256Value, "test-g13-mixed-depth", {"label": label}).tagged
+
+    def art(label: str) -> str:
+        return typed_digest(ArtifactDigest, "test-g13-mixed-depth", {"label": label}).tagged
+
+    instance, _root = pilot_world(tmp_path, "kev.json")
+    restricted_root = record_contract(name="test.g13-root", body_access="restricted")
+    derived_view = lower_capture_contract_input(
+        CaptureContractInputRecord(
+            name="test.g13-view",
+            shape="procedure_output",
+            grade="derived",
+            replay="attested",
+            max_bytes=65536,
+            decoding=JSON_DECODING,
+        ),
+        named=True,
+    )
+    accept_tree(
+        instance,
+        {
+            capture_contract_path(restricted_root.identity.name): render_capture_contract(
+                restricted_root
+            ),
+            capture_contract_path(derived_view.identity.name): render_capture_contract(
+                derived_view
+            ),
+        },
+        name="g13-mixed-depth-kinds",
+    )
+
+    store = instance.body_store()
+    r_digest = store.store(
+        b'{"capture_contract_digest":"'
+        + capture_contract_digest(restricted_root).tagged.encode()
+        + b'","n":0}'
+    ).digest
+    producer = ArtifactIdentity(kind="Provider", name="test.g13-derive-provider")
+    run_coordinate = CaptureRunCoordinateV1(
+        run_kind="provider",
+        run_id="run-g13-mixed-depth",
+        bound_generation=sha("generation"),
+        executable_identity=producer,
+        executable_digest=sha("executable"),
+    )
+
+    def derive(label: str, *, from_digest: str) -> str:
+        result = build_derived_cas_capture(
+            store=store,
+            contract=derived_view,
+            output_body=('{"label":"%s"}' % label).encode(),
+            manifest=InputReceiptSetManifest(input_capture_digests=(from_digest,)),
+            reducer_digest=art("reducer-" + label),
+            run_coordinate=run_coordinate,
+            run_receipt_digest=sha("receipt-" + label),
+            producer=producer,
+            producer_binding_digest=sha("binding-" + label),
+            observed_at=datetime.now(UTC),
+        )
+        return result.capture_digest
+
+    b_digest = derive("b", from_digest=r_digest)
+    x_digest = derive("x", from_digest=b_digest)
+    a_digest = derive("a", from_digest=x_digest)
+
+    resolver = capture_access_resolver(instance)
+    found = resolver.captures((a_digest, b_digest))
+    assert found[a_digest].restricted and found[a_digest].inherited_restricted
+    assert found[b_digest].restricted and found[b_digest].inherited_restricted
+    # X is reached only through A's own chain, never asked for directly: it
+    # must not be left open by a nested lookup that settled early.
+    assert resolver.capture(x_digest).restricted
+
+    # The same chain, through a real proposal-review payload (C14): both
+    # named Captures are withheld, and the candidate value each names is
+    # replaced, never leaked.
+    payload = {
+        "candidate_digest": sha("candidate"),
+        "parent_semantic_root": sha("parent"),
+        "members": [
+            {
+                "base_semantic_artifact": None,
+                "candidate_semantic_artifact": {
+                    "capture_digest": a_digest,
+                    "statement": {"object": {"value": "from-a"}},
+                },
+                "semantic_delta": ["unchanged"],
+            },
+            {
+                "base_semantic_artifact": None,
+                "candidate_semantic_artifact": {
+                    "capture_digest": b_digest,
+                    "statement": {"object": {"value": "from-b"}},
+                },
+                "semantic_delta": ["unchanged"],
+            },
+        ],
+        "item_reasons": [{"item": "x"}],
+    }
+    served = withhold_review_values(instance, payload, READER)
+    assert served["withheld"]["capture_digests"] == sorted([a_digest, b_digest])
+    for member in served["members"]:
+        assert member["candidate_semantic_artifact"]["statement"]["object"] == {
+            "withheld": WITHHELD_MARK
+        }
+    assert withhold_review_values(instance, payload, KEY) == payload
+
+    # A missing derivation record fails closed, for everything depending on it.
+    with instance.body_store().capture_envelopes._connection() as connection:  # noqa: SLF001
+        connection.execute("DELETE FROM derivation_inputs WHERE capture_digest=?", (x_digest,))
+        connection.execute("DELETE FROM derivations WHERE capture_digest=?", (x_digest,))
+    fresh = capture_access_resolver(instance).capture(a_digest)
+    assert fresh.restricted and fresh.inherited_restricted
+
+
 def _candidate_dates(instance: Any, state: Any) -> set[str]:
     values = {str(c.statement.object.value) for c in candidate_claims(instance, state)}
     return {value for value in values if value.startswith("20")}
