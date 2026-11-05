@@ -2231,9 +2231,9 @@ def _is_derived_capture(state: _RunState, digest: str) -> bool:
 def _fetched_captures(state: _RunState) -> list[str]:
     """The fetched, non-derived Captures this run built, sorted (D-R37 f1).
 
-    Independent of ``consumed_captures``: a Capture an acquiring call built and
-    journaled as acquired counts here even when its own disposition refused,
-    omitted, or otherwise never bound it.
+    Independent of ``consumed_captures``: a Capture counts here once its builder
+    returns, even when the out-Contract check, its own disposition or any later
+    refusal means it is never bound.
     """
 
     return sorted(
@@ -2289,11 +2289,12 @@ class _RunState:
     #: a child's. Journaled on every node_fired and on finalization, so a
     #: reader of a running or finished run knows what its values derive from (C14).
     consumed_captures: set[str] = dataclass_field(default_factory=set)
-    #: Every Capture an acquiring call built and journaled as acquired this run,
-    #: whether or not its disposition went on to bind (D-R37 f1). Distinct from
-    #: ``consumed_captures``: a refused or omitted sibling's Capture is still
-    #: fetched evidence, and a refusal or halt must not erase it from the
-    #: result digest just because it was never selected or consumed.
+    #: Every Capture an acquiring call built this run, added when its builder
+    #: returns, whether or not it went on to bind (D-R37 f1). Distinct from
+    #: ``consumed_captures``: a Capture behind an out-Contract refusal, or a
+    #: refused or omitted sibling, is still fetched evidence, and a refusal or
+    #: halt must not erase it from the result digest just because it was never
+    #: selected or consumed.
     fetched_captures: set[str] = dataclass_field(default_factory=set)
     #: Which aliases hold incomplete values, and the control lineage's state.
     completeness: Completeness = dataclass_field(default_factory=Completeness)
@@ -4018,6 +4019,10 @@ class ProcedureExecutor:
                     source_read_receipt=source_read_receipt,
                     provider_output=None if whole_wire else output,
                 )
+                # D-R37 f1: fetched the moment its builder returns, before
+                # the out-Contract check or any acquisition rule below can
+                # refuse; independent of selection and consumption.
+                state.fetched_captures.add(built[field].capture_digest)
                 bodies[field] = base64.b64decode(wire.content_base64, validate=True)
             except (CaptureFormatError, CasError, ValidationError, ValueError) as exc:
                 raise _InternalFailure(
@@ -4063,10 +4068,6 @@ class ProcedureExecutor:
                 )
             )
         for field, item in built.items():
-            # D-R37 f1: fetched the moment it is built and journaled as
-            # acquired, independent of the disposition its own rule reaches
-            # below (selected, omitted or refused).
-            state.fetched_captures.add(item.capture_digest)
             envelope = item.envelope
             source = envelope.source
             assert isinstance(source, ExternalSourceReference)

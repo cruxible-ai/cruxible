@@ -53,6 +53,7 @@ def _paired_world(
     acquisition: dict[str, Any] | None = None,
     returned: tuple[str, ...] = ("left", "note"),
     halt_after_call: bool = False,
+    note_type: str = "string",
 ) -> Any:
     from cruxible_client.authoring.inputs import LineInput
     from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
@@ -96,7 +97,7 @@ def _paired_world(
             "fields": {
                 "left": {"type": "capture<test.events-v1>"},
                 "right": {"type": "capture<test.other-v1>"},
-                "note": {"type": "string"},
+                "note": {"type": note_type},
             },
         }
     )
@@ -627,3 +628,67 @@ def test_a_halted_runs_result_digest_commits_an_omitted_fields_fetched_bytes(
     # The omitted field's fetched bytes are not dropped just because they
     # were never selected or consumed.
     assert result([produced[0]["capture_digest"]]) != digest
+
+
+def test_an_out_contract_refusal_commits_the_captures_built_before_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-R37 f1 fix 2: fetched tracking starts when a Capture's builder returns.
+
+    Both Capture fields are valid wires; only the unrelated typed ``note``
+    (``"paired"`` against a declared ``int``) fails the out-Contract, which is
+    checked after each Capture's builder has returned. Neither Capture is
+    selected or consumed. The refused run's result digest still commits both
+    fetched Captures: under the same replay key and the same refusal, either
+    Capture replaced by one built from changed bytes changes it, and so
+    does an empty fetched set, which is what tracking from the acquisition
+    loop (after the out-Contract check) recorded.
+    """
+
+    from cruxible_core.procedures.execution import (
+        ProcedureRunRefusalV1,
+        procedure_semantic_result_digest,
+    )
+
+    observed = _spy_on_fetched_captures(monkeypatch)
+    runs = []
+    for name, left in (("first", b'{"side": "left"}'), ("changed", b'{"side": "LEFT"}')):
+        root = tmp_path / name
+        root.mkdir()
+        instance = _paired_world(root, returned=("note",), note_type="int")
+        output = lambda context, left=left: {  # noqa: E731
+            "left": _wire(left),
+            "right": _wire(b'{"side": "right"}'),
+            "note": "paired",
+        }
+        state, _ = run_line(instance, invoker=Invoker(output=output), name=LINE_NAME)
+        assert state.status == "node_refused", state.terminal
+        assert state.terminal.code == "contract_output_refused", state.terminal
+        assert _journal(instance, state.run_id, "produced_capture") == []
+        (final,) = _journal(instance, state.run_id, "attempt_finalized")
+        assert final["consumption"]["captures"] == []
+        assert final["semantic_result_digest"] == state.semantic_result_digest
+        runs.append((state, final))
+
+    first, changed = observed
+    # Both Captures were built before the out-Contract refusal.
+    assert len(first) == len(changed) == 2
+    (state, final), _ = runs
+    # The second world built its Captures from the changed bytes.
+    assert not set(first) & set(changed)
+
+    def result(fetched_captures: Any) -> str:
+        return procedure_semantic_result_digest(
+            semantic_replay_key_digest=state.semantic_replay_key_digest,
+            status="refused",
+            output=None,
+            refusal=ProcedureRunRefusalV1.model_validate(final["refusal"]),
+            fetched_captures=fetched_captures,
+        )
+
+    digest = state.semantic_result_digest
+    assert result(first) == digest
+    # Either fetched Capture replaced by one built from other bytes changes it.
+    assert result([first[0], *changed[1:]]) != digest
+    assert result([*changed[:1], first[1]]) != digest
+    assert result(()) != digest
