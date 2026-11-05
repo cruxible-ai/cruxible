@@ -12,8 +12,9 @@ item inherit evidence it did not consume.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -414,32 +415,110 @@ def citable_captures(manifest: TerminalItemDependencyManifestV1 | None) -> tuple
     return manifest.produced_capture_digests or manifest.admitted_capture_digests
 
 
-def capture_root(captures: Iterable[str], derivations: Mapping[str, Iterable[str]]) -> str | None:
+@dataclass
+class CaptureRootCache:
+    """Per-run memo for :func:`capture_root`: ancestor sets and resolved roots.
+
+    A derived Capture's recorded inputs are fixed the moment it is derived
+    (D-R37 c1) and never change afterward, so a memo entry stays valid for the
+    rest of the run. Sharing one cache across every ``capture_root`` call in a
+    run -- across Claims, delivery, and journaling -- means a long derive
+    chain many items share is walked once, not once per item and not once per
+    candidate within an item.
+    """
+
+    ancestors: dict[str, frozenset[str]] = dataclass_field(default_factory=dict)
+    roots: dict[frozenset[str], str | None] = dataclass_field(default_factory=dict)
+
+
+def _capture_ancestors(
+    digest: str,
+    derivations: Mapping[str, Iterable[str]],
+    memo: dict[str, frozenset[str]],
+) -> frozenset[str]:
+    """``digest``'s full transitive derivation sources, sharing work with ``memo``.
+
+    An iterative post-order walk: every node reached on the way to ``digest``
+    -- not only ``digest`` itself -- gets its own ancestor set computed once
+    and memoized, built from its direct sources plus whichever of THEIR
+    ancestor sets are already known. A chain several candidates in the same
+    ``capture_root`` call share, or that many separate calls share, is
+    therefore visited once in total: no candidate walks past a node another
+    candidate already settled.
+    """
+
+    cached = memo.get(digest)
+    if cached is not None:
+        return cached
+    # Phase 1: discover a post-order (every direct source before its node)
+    # over exactly the reachable nodes not already memoized.
+    order: list[str] = []
+    visiting = {digest}
+    stack: list[tuple[str, Iterator[str]]] = [(digest, iter(derivations.get(digest, ())))]
+    while stack:
+        node, sources = stack[-1]
+        descended = False
+        for source in sources:
+            if source in memo or source in visiting:
+                continue
+            visiting.add(source)
+            stack.append((source, iter(derivations.get(source, ()))))
+            descended = True
+            break
+        if not descended:
+            order.append(node)
+            stack.pop()
+    # Phase 2: build each node's ancestor set, in that order, so a node's
+    # direct sources are already in ``memo`` by the time it is computed.
+    for node in order:
+        reached: set[str] = set()
+        for source in derivations.get(node, ()):
+            reached.add(source)
+            known = memo.get(source)
+            if known is not None:
+                reached.update(known)
+        memo[node] = frozenset(reached)
+    return memo[digest]
+
+
+def capture_root(
+    captures: Iterable[str],
+    derivations: Mapping[str, Iterable[str]],
+    *,
+    cache: CaptureRootCache | None = None,
+) -> str | None:
     """The one Capture a value cites: the one whose recorded inputs cover the rest (D-R37 d1).
 
     ``derivations`` maps each derived Capture to the input Captures its
     manifest records. One Capture is its own root. Several have a root only
     when one of them transitively derives from all the others; two unrelated
     Captures have none (combine them through a recorded derive, or a Query).
+
+    ``cache``, when given, memoizes both each node's ancestor set and the
+    resolved root per distinct closure (D-R37 cost): a chain shared by many
+    Claims is walked once for the whole run, and repeating this call for the
+    same closure costs one dict lookup.
     """
 
-    listed = set(captures)
+    listed = frozenset(captures)
     if len(listed) <= 1:
         return next(iter(listed), None)
+    if cache is not None and listed in cache.roots:
+        return cache.roots[listed]
+    memo = cache.ancestors if cache is not None else {}
+    root: str | None = None
     for candidate in sorted(listed):
-        reached: set[str] = set()
-        frontier = [candidate]
-        while frontier:
-            for source in derivations.get(frontier.pop(), ()):
-                if source not in reached:
-                    reached.add(source)
-                    frontier.append(source)
+        reached = _capture_ancestors(candidate, derivations, memo)
         if listed - {candidate} <= reached:
-            return candidate
-    return None
+            root = candidate
+            break
+    if cache is not None:
+        cache.roots[listed] = root
+    return root
 
 
 __all__ = [
+    "CaptureRootCache",
     "capture_root",
     "citable_captures",
     "TAINT_ACCEPTED_STATE",

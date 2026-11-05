@@ -292,6 +292,7 @@ from cruxible_core.procedures.terminal_dependencies import (
     TAINT_UNPROMOTED_EXHAUST,
     AcquisitionInputOutcomeV1,
     AliasProvenanceV1,
+    CaptureRootCache,
     DependencyEvidenceFactsV1,
     DependencyToken,
     TerminalChildReceiptV1,
@@ -2254,6 +2255,9 @@ class _RunState:
     #: Each derived Capture this run committed, to the input Captures its
     #: manifest records: what ``capture_root`` reads to find a value's one root.
     derivations: dict[str, tuple[str, ...]] = dataclass_field(default_factory=dict)
+    #: Shared memo for every ``capture_root`` call this run makes (Claims,
+    #: delivery, journaling): a chain many items share is walked once (D-R37 cost).
+    capture_root_cache: CaptureRootCache = dataclass_field(default_factory=CaptureRootCache)
     #: Every Capture whose bytes this run, or a child it invoked, consumed: a
     #: provider's output, a trigger-bound or parameter Capture an extract read,
     #: a child's. Journaled on every node_fired and on finalization, so a
@@ -5137,7 +5141,13 @@ class ProcedureExecutor:
                     "evidence": {
                         item_key: root
                         for item_key, manifest in manifests.items()
-                        if (root := capture_root(citable_captures(manifest), state.derivations))
+                        if (
+                            root := capture_root(
+                                citable_captures(manifest),
+                                state.derivations,
+                                cache=state.capture_root_cache,
+                            )
+                        )
                         is not None
                     },
                 },
@@ -7003,7 +7013,11 @@ def _fan_out_list(
             token.digest for token in provenance.whole if token.slot in _CAPTURE_SLOTS
         }
         # One Capture, or one derived root recording the rest (D-R37 d1).
-        if len(whole_captures) > 1 and capture_root(whole_captures, state.derivations) is None:
+        if (
+            len(whole_captures) > 1
+            and capture_root(whole_captures, state.derivations, cache=state.capture_root_cache)
+            is None
+        ):
             raise _RunRefusal(
                 ambiguous_code,
                 "The fan-out's list was built from more than one Capture and keeps no "
@@ -7227,7 +7241,12 @@ def _exact_evidence(
         ):
             selected = lineage[int(path[1])]
         elif len(captures) <= 1 or (
-            capture_root((token.digest for token in captures), state.derivations) is not None
+            capture_root(
+                (token.digest for token in captures),
+                state.derivations,
+                cache=state.capture_root_cache,
+            )
+            is not None
         ):
             selected = captures
         else:

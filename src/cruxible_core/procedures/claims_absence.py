@@ -88,7 +88,7 @@ def append_absence(
     }
     from cruxible_core.procedures.terminal_dependencies import capture_root
 
-    root = capture_root(captures, state.derivations)
+    root = capture_root(captures, state.derivations, cache=state.capture_root_cache)
     if root is None:
         refuse(
             "claims_absence_invalid: enumeration needs exactly one root Capture "

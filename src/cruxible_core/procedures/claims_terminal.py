@@ -567,6 +567,7 @@ def expand_claims(
             root = capture_root(
                 (t.digest for t in own if t.slot in {"produced_capture", "admitted_capture"}),
                 state.derivations,
+                cache=state.capture_root_cache,
             )
             if root is None:
                 raise _RunRefusal(
