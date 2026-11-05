@@ -200,8 +200,10 @@ class Pages:
         *,
         urls: list[str] | None = None,
         sources: list[str] | None = None,
+        incomplete_captures: list[str] | None = None,
     ) -> None:
         self.pages = pages
+        self.incomplete_captures = incomplete_captures or []
         self.urls = urls or [f"{ORIGIN}/kev/{index}" for index in range(len(pages))]
         self.sources = sources or [LOGICAL_SOURCE] * len(pages)
         self.derive_inputs: list[dict[str, Any]] = []
@@ -222,7 +224,7 @@ class Pages:
             wire = _wire(body, VIEW_URL, source="test.kev-view")
             return {**wire, "tag": "playbill-provider-result-to-external-capture-v1"}
 
-        return Invoker(output=output)
+        return Invoker(output=output, incomplete_captures=self.incomplete_captures)
 
 
 def _claims_step(entries: str, *, absence: bool) -> dict[str, Any]:
@@ -804,3 +806,30 @@ def test_an_absence_reobservation_verifies_every_member_of_its_witness(
         assert [record.capture_digest for record in recorded] == [members[0]]
     else:
         assert recorded == ()
+
+
+def test_a_list_the_provider_says_is_incomplete_never_retires(tmp_path: Path) -> None:
+    """All three pages land, but the provider names ``pages`` incomplete (a page it failed
+    itself): the delisting neither retires nor inverts, as for a page core dropped."""
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(), line="test.kev-pages-line")
+    first = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-line")
+    activate(instance, first)
+    second = run_pages(
+        instance,
+        Pages(split(catalog("kev-catalog-delisted")), incomplete_captures=["pages"]),
+        line="test.kev-pages-line",
+        minute=1,
+    )
+    assert second.status == "succeeded", second.terminal
+    (call,) = (node for node in second.nodes if node.node == "pages")
+    assert len(call.summary.capture_digests) == 3
+    assert second.completeness is not None and not second.completeness.complete
+    (written,) = _summaries(second, "claims")
+    assert written.inverse_written == 0
+    # Nothing changed: no retirement, no inverse, so nothing is proposed.
+    assert second.terminal_egress[0].proposal_id is None
+    assert any(
+        item.kind == "claim_not_in_source" and item.source_incomplete for item in second.findings
+    ), second.findings

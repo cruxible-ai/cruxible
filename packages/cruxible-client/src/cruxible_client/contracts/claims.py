@@ -3144,7 +3144,7 @@ def evaluate_claim_law(
     ):
         if witness is None or witness == previous_witness or not require_new_citation_proof:
             continue
-        refusal = absence_witness_refusal(
+        witness_refusal = absence_witness_refusal(
             witness,
             capture_store=capture_store,
             contracts_by_digest=contracts_by_digest,
@@ -3158,8 +3158,8 @@ def evaluate_claim_law(
             producer_receipt_resolver=producer_receipt_resolver,
             verified=verified_absence_witnesses,
         )
-        if refusal is not None:
-            return _diagnostic("cruxible.claim.evidence_unavailable", refusal, path=path)
+        if witness_refusal is not None:
+            return _diagnostic("cruxible.claim.evidence_unavailable", witness_refusal, path=path)
     if (replacing or rebinding) and not capture_contract_pin_digests.issubset(
         cited_contract_versions
     ):

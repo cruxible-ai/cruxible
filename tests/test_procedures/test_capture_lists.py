@@ -682,3 +682,52 @@ def test_many_absence_reobservations_on_one_witness_verify_each_member_once(
         assert refusal is None
     # The cited first member is verified by the caller; every later one once.
     assert verified == digests[1:]
+
+
+# -- The provider's own completeness word (a4, provider side) -----------------------
+
+
+def test_a_list_the_provider_says_is_incomplete_is_incomplete(tmp_path: Path) -> None:
+    """Three members land, but the provider names ``pages`` incomplete: the call is."""
+
+    instance = pages_world(tmp_path)
+    members = [page(body, index) for index, body in enumerate(bodies(3))]
+    invoker = Invoker(output=answer(members), incomplete_captures=["pages"])
+    state, _ = run_line(instance, invoker=invoker, name=LINE_NAME)
+    assert state.status == "succeeded", state.terminal
+    # Every member is still committed; the list is incomplete all the same.
+    assert len(state.result["pages"]) == 3
+    assert state.completeness is not None and not state.completeness.complete
+    (completed,) = journal(instance, state.run_id, "provider_invocation_completed")
+    assert completed["receipt"]["incomplete_captures"] == ["pages"]
+    decisions = journal(instance, state.run_id, "source_acquisition")
+    assert {item["decision"]["disposition"] for item in decisions} == {"selected"}
+
+
+def test_a_complete_answer_journals_no_incomplete_captures(tmp_path: Path) -> None:
+    instance = pages_world(tmp_path)
+    members = [page(body, index) for index, body in enumerate(bodies(3))]
+    state, _ = run_line(instance, invoker=Invoker(output=answer(members)), name=LINE_NAME)
+    assert state.status == "succeeded", state.terminal
+    assert state.completeness is None
+    (completed,) = journal(instance, state.run_id, "provider_invocation_completed")
+    # Omitted when empty: an earlier receipt's bytes are unchanged.
+    assert "incomplete_captures" not in completed["receipt"]
+
+
+@pytest.mark.parametrize("named", [["note"], ["elsewhere"], ["pages", "pages"]])
+def test_incomplete_captures_names_only_declared_capture_lists(
+    tmp_path: Path, named: list[str]
+) -> None:
+    """A string field, an undeclared field or a repeat: provider_protocol_violation."""
+
+    instance = pages_world(tmp_path)
+    members = [page(body, index) for index, body in enumerate(bodies(3))]
+    invoker = Invoker(output=answer(members), incomplete_captures=named)
+    state, _ = run_line(instance, invoker=invoker, name=LINE_NAME)
+    assert state.status != "succeeded"
+    assert state.terminal.code == "provider_protocol_violation", state.terminal
+    (completed,) = journal(instance, state.run_id, "provider_invocation_completed")
+    assert completed["receipt"]["outcome"]["code"] == "provider_protocol_violation"
+    assert completed["receipt"].get("output") is None
+    assert journal(instance, state.run_id, "produced_capture") == []

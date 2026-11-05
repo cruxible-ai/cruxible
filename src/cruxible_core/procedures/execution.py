@@ -4217,7 +4217,10 @@ class ProcedureExecutor:
         selected = tuple(field for field in fields if decisions[field].disposition == "selected")
         # An omitted list member is dropped from its list, which is then
         # incomplete; its call's other outputs are unaffected (D-R37 a4).
-        list_incomplete = any(
+        # A list the provider itself says is missing members (its result's
+        # generic ``incomplete_captures``) is incomplete exactly as one core
+        # dropped a member from.
+        list_incomplete = bool(invocation_receipt.incomplete_captures) or any(
             decisions[field].disposition == "omitted" for field in fields if field in members
         )
         if member_keys:
@@ -4243,7 +4246,7 @@ class ProcedureExecutor:
             base = base | {policy_token(admission.acquisition_policy_digest)}
         tokens: set[DependencyToken] = set()
         #: Each list's bound members, accumulated here and recorded once per list.
-        listed: dict[str, list[str]] = {}
+        bound_members: dict[str, list[str]] = {}
         for field in selected:
             acquisition = results[field].acquisition
             assert acquisition is not None  # a selected result carries its Capture
@@ -4267,8 +4270,10 @@ class ProcedureExecutor:
                 member_request_digest=member_requests.get(field),
             )
             if field in members:
-                listed.setdefault(rules[field].input_name, []).append(acquisition.capture_digest)
-        for input_name, captures in listed.items():
+                bound_members.setdefault(rules[field].input_name, []).append(
+                    acquisition.capture_digest
+                )
+        for input_name, captures in bound_members.items():
             # One outcome per list naming every bound member: built once, not
             # rebuilt and re-sorted per member.
             state.outcomes[input_name] = AcquisitionInputOutcomeV1(
@@ -6368,6 +6373,23 @@ class ProcedureExecutor:
             trace = provider_canonical_value(driver_result.envelope.trace.model_dump(mode="python"))
             stderr = driver_result.stderr
             duration_microseconds = max(0, round(driver_result.duration_seconds * 1_000_000))
+        incomplete_captures: tuple[str, ...] = ()
+        if driver_result is not None and outcome.status == "ok":
+            incomplete_captures, violation = _provider_incomplete_captures(
+                driver_result.envelope.incomplete_captures, occurrence=occurrence
+            )
+            if violation is not None:
+                # The provider named a field that is no list of Captures its
+                # out Contract declares: its word cannot be read, so the call
+                # carries no output (provider_protocol_violation).
+                outcome = map_provider_refusal(
+                    "provider_protocol_violation",
+                    message=violation,
+                    detail={
+                        "incomplete_captures": list(driver_result.envelope.incomplete_captures)
+                    },
+                )
+                output = None
         verified_binding = (
             driver_result.verified_binding
             if driver_result is not None
@@ -6396,6 +6418,7 @@ class ProcedureExecutor:
             input_digest=input_digest,
             outcome=outcome,
             output=journal_output,
+            incomplete_captures=incomplete_captures,
             egress=egress,
             # From the binding: a subprocess Provider's process-group fence, or
             # "in_process" for a core built-in (providers/builtin_runtime.py).
@@ -7166,6 +7189,31 @@ def _check_capture_list_bound(
             boundary=boundary,
             field_path=field,
         )
+
+
+def _provider_incomplete_captures(
+    named: Sequence[str], *, occurrence: Any
+) -> tuple[tuple[str, ...], str | None]:
+    """The list fields a provider says it left incomplete, sorted, or why it cannot say so.
+
+    The result's ``incomplete_captures`` may name only the bound operation's
+    out-Contract ``list<capture<...>>`` fields, each once. Core reads this one
+    generic field and no provider- or operation-specific one (D-R37 a4).
+    """
+
+    if not named:
+        return (), None
+    out = closure_lookup(occurrence.contracts)(occurrence.operation.out)
+    listed = set() if out is None else {name for name, _kind, _cap in capture_list_fields(out)}
+    undeclared = sorted({name for name in named if name not in listed})
+    if undeclared:
+        return (), (
+            f"incomplete_captures names {undeclared!r}, which are not list<capture<...>> "
+            f"fields of operation {occurrence.operation.name!r}'s out Contract"
+        )
+    if len(set(named)) != len(named):
+        return (), "incomplete_captures names a field more than once"
+    return tuple(sorted(named, key=lambda item: item.encode("utf-8"))), None
 
 
 def _member_tokens(
