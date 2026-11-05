@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -1077,11 +1077,20 @@ def procedure_semantic_result_digest(
     output: CanonicalValue | None,
     refusal: ProcedureRunRefusalV1 | None,
     halt: CanonicalValue | None = None,
+    fetched_captures: Iterable[str] = (),
 ) -> str:
-    """Commit only replay-stable output or refusal material."""
+    """Commit only replay-stable output or refusal material.
+
+    A run is identified by its inputs and the evidence it fetched (D-R37 f1):
+    the sorted digests of the fetched, non-derived Captures it consumed join
+    the preimage. They are present only when non-empty, so a run that fetched
+    nothing keeps its digest (f2).
+    """
 
     if (status == "refused") != (refusal is not None):
         raise ValueError("semantic Procedure refusal shape is inconsistent")
+    fetched = sorted(set(fetched_captures))
+    evidence: dict[str, CanonicalValue] = {"fetched_captures": [*fetched]} if fetched else {}
     if status == "halted":
         if halt is None or output is not None or refusal is not None:
             raise ValueError("semantic Procedure halt shape is inconsistent")
@@ -1092,6 +1101,7 @@ def procedure_semantic_result_digest(
                 "semantic_replay_key_digest": semantic_replay_key_digest,
                 "status": "halted",
                 "halt": halt,
+                **evidence,
             },
         ).tagged
     if halt is not None:
@@ -1104,6 +1114,7 @@ def procedure_semantic_result_digest(
             "status": status,
             "output": output if status == "succeeded" else None,
             "refusal": None if refusal is None else _semantic_refusal_payload(refusal),
+            **evidence,
         },
     ).tagged
 
@@ -2204,6 +2215,26 @@ class _TransformInputInvalid(ExecutionError):
 CONSUMPTION_VERSION = 1
 
 
+def _is_derived_capture(state: _RunState, digest: str) -> bool:
+    """Whether a consumed Capture is derived-grade, a function of fetched ones.
+
+    TODO(lane A, claude/template-derive): answer from the derived-Capture law
+    (the Capture's recorded derivation / derived epistemic grade) once it lands.
+    Until then every consumed Capture counts as fetched.
+    """
+
+    del state, digest
+    return False
+
+
+def _fetched_captures(state: _RunState) -> list[str]:
+    """The fetched, non-derived Captures this run consumed, sorted (D-R37 f1)."""
+
+    return sorted(
+        digest for digest in state.consumed_captures if not _is_derived_capture(state, digest)
+    )
+
+
 def _consumed(state: _RunState) -> dict[str, object]:
     """The run's consumed Captures so far, versioned: an empty set is proven empty."""
 
@@ -2672,6 +2703,7 @@ class ProcedureExecutor:
                 output=output,
                 refusal=refusal,
                 halt=halt,
+                fetched_captures=_fetched_captures(state),
             )
         summary = state.completeness.summary()
         final_payload = {

@@ -403,3 +403,65 @@ def test_a_call_whose_every_capture_is_omitted_still_binds_its_typed_fields(
     (final,) = _journal(instance, state.run_id, "attempt_finalized")
     assert final["capture_bytes"] == 0
     assert final["source_capture_associations"] == []
+
+
+
+def _result_digests(tmp_path: Path, name: str, left: bytes) -> tuple[str, str, list[str]]:
+    """Run the paired Line once in a fresh world: its replay key, result digest, Captures.
+
+    The Procedure returns only the typed ``note``, so its output never names a Capture.
+    """
+
+    root = tmp_path / name
+    root.mkdir()
+    instance = _paired_world(root, returned=("note",))
+    output = lambda context: {  # noqa: E731
+        "left": _wire(left),
+        "right": _wire(b'{"side": "right"}'),
+        "note": "paired",
+    }
+    state, _ = run_line(instance, invoker=Invoker(output=output), name=LINE_NAME)
+    assert state.status == "succeeded", state.terminal
+    assert state.result == {"note": "paired"}
+    (final,) = _journal(instance, state.run_id, "attempt_finalized")
+    assert final["semantic_result_digest"] == state.semantic_result_digest
+    return (
+        state.semantic_replay_key_digest,
+        state.semantic_result_digest,
+        sorted(final["consumption"]["captures"]),
+    )
+
+
+
+
+def test_the_result_digest_commits_the_fetched_captures(tmp_path: Path) -> None:
+    """D-R37 f1/f2: a run is identified by its inputs and its fetched evidence.
+
+    The recorded result digest is the replay key and typed output plus the
+    sorted fetched Captures: the same Captures recompute it exactly, in any
+    order, and any other evidence under the same key and output does not.
+    Without fetched evidence the preimage is the pre-(f) one, byte for byte.
+    """
+
+    from cruxible_core.procedures.execution import procedure_semantic_result_digest
+
+    key, digest, captures = _result_digests(tmp_path, "first", b'{"side": "left"}')
+    assert len(captures) == 2
+    output = {"note": "paired"}
+
+    def result(fetched: Any = ()) -> str:
+        return procedure_semantic_result_digest(
+            semantic_replay_key_digest=key,
+            status="succeeded",
+            output=output,
+            refusal=None,
+            fetched_captures=fetched,
+        )
+
+    assert digest == result(captures) == result(reversed(captures))
+    assert result(captures[:1]) != digest
+    assert result([*captures[:1], "sha256:" + "0" * 64]) != digest
+    unfetched = procedure_semantic_result_digest(
+        semantic_replay_key_digest=key, status="succeeded", output=output, refusal=None
+    )
+    assert unfetched == result(()) != digest
