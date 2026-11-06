@@ -86,8 +86,10 @@ def apply_evidence_changes(
     }
     rows = []
     for predicate in moved:
-        live, captured = held.get(predicate, (0, 0))
-        rows.append((predicate, live + deltas[predicate][0], captured + deltas[predicate][1]))
+        was_live, was_captured = held.get(predicate, (0, 0))
+        rows.append(
+            (predicate, was_live + deltas[predicate][0], was_captured + deltas[predicate][1])
+        )
     execute_in(
         connection,
         "DELETE FROM claim_type_evidence_counts WHERE predicate IN ({})",

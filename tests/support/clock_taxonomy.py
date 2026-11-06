@@ -90,6 +90,10 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     # The generations at which each ClaimType's kinds last changed.
     ("OntologyIndex", "kinds_at"): "SETTLEMENT ORDER",
     ("LineTriggerBinding", "generation"): "SETTLEMENT ORDER",
+    # The accepted generation an accepted proposal's change set settled in (W5).
+    ("ProposalListEntry", "accepted_generation"): "SETTLEMENT ORDER",
+    ("PlaybillProposalListEntryV1", "accepted_generation"): "SETTLEMENT ORDER",
+    ("GetProposalCard", "generation"): "SETTLEMENT ORDER",
     # The accepted generation a dispatched Trigger occurrence fires on.
     ("TriggerFire", "generation"): "SETTLEMENT ORDER",
     # A signed mint consent is accepted only within a window around the
