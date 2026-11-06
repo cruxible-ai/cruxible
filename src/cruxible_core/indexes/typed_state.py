@@ -76,6 +76,7 @@ from cruxible_core.compiler.projection_artifacts import (
 from cruxible_core.exhaust.promotions import parse_exhaust_promotion
 from cruxible_core.indexes.claim_units import SCHEMA_STATEMENTS as CLAIM_UNITS_SCHEMA
 from cruxible_core.indexes.claim_units import literal_value_digest, object_unit_text
+from cruxible_core.indexes.pair_units import SCHEMA_STATEMENTS as PAIR_UNITS_SCHEMA
 from cruxible_core.indexes.sql_batch import (
     execute_values,
     insert_rows,
@@ -576,6 +577,10 @@ def schema_sql() -> str:
             # ClaimType, with its unit and polarity, kept current at accept
             # (``claim_units.refresh_claim_units``).
             *CLAIM_UNITS_SCHEMA,
+            # The pair index (Subject-valued key parts): each pair's ends, its
+            # live fact slots and those slots by end, kept current at accept
+            # (``pair_units.refresh_pair_index``).
+            *PAIR_UNITS_SCHEMA,
         ]
     )
     from cruxible_core.indexes.provider_heads import SCHEMA_SQL as PROVIDER_HEADS_SQL
