@@ -309,10 +309,10 @@ its whole reverse-pin closure in the same generation, so vocabulary evolution
 needs no second tool and no second generation either.
 `cruxible_authoring_example` serves `change-set` and
 `claim-type-succession` as starting points, and `procedure`, `line`,
-`acquisition-policy` and `procedure-mandate` templates that are accepted
+`trigger` and `procedure-mandate` templates that are accepted
 together. A `line` input's `parameters` is checked against its Procedure's input
-contract at authoring; its `acquisition_policy_name` is needed only when the
-Procedure has Source nodes.
+contract at authoring; its optional `acquisition` map sets per-capture-output
+rules (`<call>.<field>` to `max_age`, `on_unavailable`, `on_stale`, ...).
 
 ## Procedures
 
