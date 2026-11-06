@@ -25,8 +25,6 @@ from typing import Any, Literal, cast
 from cruxible_client.contracts.capture_erasure import CaptureErasureRecord
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
-    NoneClaimObject,
-    SubjectClaimObject,
 )
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.operational_reads import (
@@ -92,6 +90,7 @@ from cruxible_core.evidence.capture_erasures import erased_body
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.claim_lines import served_claim_value
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.operational_viewer import (
     OperationalViewer,
@@ -943,12 +942,7 @@ def capture_contract_rows(
 
 
 def _claim_value(claim: ClaimArtifact) -> object:
-    obj = claim.statement.object
-    if isinstance(obj, SubjectClaimObject):
-        return _subject_ref(obj.address.artifact_path)
-    if isinstance(obj, NoneClaimObject):
-        return obj.model_dump(mode="json")
-    return obj.value
+    return served_claim_value(claim.statement.object)
 
 
 def _prediction_state(

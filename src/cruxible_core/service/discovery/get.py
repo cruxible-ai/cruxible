@@ -45,7 +45,6 @@ from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimRetirementReason,
     NoneClaimObject,
-    SubjectClaimObject,
     claim_artifact_digest,
     claim_path,
     claim_statement_digest,
@@ -148,6 +147,7 @@ from cruxible_core.indexes.query_selection import LIVE_SUBJECT_COUNT_SQL, PREDIC
 from cruxible_core.indexes.subject_identity import KeyReader, KeyTuple
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.change_reasons import ChangeReasons
+from cruxible_core.service.discovery.claim_lines import served_claim_value, served_none
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.kit_owners import kit_owners, owned_by
@@ -1090,7 +1090,8 @@ def _render_proposal_step(surface: ReadSurface, step: str, proposal_id: str) -> 
 def _claim_value(row: ClaimValueRecord) -> object:
     if row.object_kind == "none":
         # A none contending in a one-valued slot is shown as the none it states.
-        return {"none": _none_of(row.object)}
+        assert isinstance(row.object, NoneClaimObject)
+        return served_none(row.object)
     if row.object_kind == "subject" and isinstance(row.value, str):
         return _subject_ref(row.value)
     return row.value
@@ -1100,10 +1101,7 @@ def _none_of(obj: object) -> object:
     """The unit a none says is empty, as a read shows it: None for a whole slot."""
 
     assert isinstance(obj, NoneClaimObject)
-    of = obj.of
-    if isinstance(of, SubjectClaimObject):
-        return _subject_ref(of.address.artifact_path)
-    return None if of is None else of.value
+    return served_none(obj)["none"]
 
 
 def _value_key(row: ClaimValueRecord) -> str:
@@ -1113,12 +1111,7 @@ def _value_key(row: ClaimValueRecord) -> str:
 
 
 def _artifact_value(claim: ClaimArtifact) -> object:
-    obj = claim.statement.object
-    if isinstance(obj, SubjectClaimObject):
-        return _subject_ref(obj.address.artifact_path)
-    if isinstance(obj, NoneClaimObject):
-        return obj.model_dump(mode="json")
-    return obj.value
+    return served_claim_value(claim.statement.object)
 
 
 def _slot_values(
@@ -3353,7 +3346,6 @@ def _get_backlinks(
     """
 
     from cruxible_client.contracts.backlinks import BACKLINKS_MAX_LIMIT, BacklinksRequest
-
     from cruxible_core.service.discovery.backlinks import (
         backlinks_of_resolved,
         resolve_backlink_target,
