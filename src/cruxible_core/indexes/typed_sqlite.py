@@ -21,6 +21,14 @@ from cruxible_core.indexes.evidence.citation_sql import (
     populate_citations,
     remove_owner_citations,
 )
+from cruxible_core.indexes.evidence.evidence_counts import (
+    SCHEMA_SQL as EVIDENCE_COUNTS_SCHEMA_SQL,
+)
+from cruxible_core.indexes.evidence.evidence_counts import (
+    apply_evidence_changes,
+    evidence_states,
+    rebuild_evidence_counts,
+)
 from cruxible_core.indexes.logical_digest import (
     NON_LOGICAL_TABLES,
     RowDeltaRecorder,
@@ -297,7 +305,9 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
 
 
 def complete_schema_sql() -> str:
-    return "\n".join((schema_sql(), SCHEMA_SQL, BACKLINKS_SCHEMA_SQL, _METADATA_SQL))
+    return "\n".join(
+        (schema_sql(), SCHEMA_SQL, BACKLINKS_SCHEMA_SQL, EVIDENCE_COUNTS_SCHEMA_SQL, _METADATA_SQL)
+    )
 
 
 def schema_objects(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
@@ -445,6 +455,9 @@ def replace_rows(
             connection, "SELECT path,identity,kind FROM artifact_lookup WHERE path IN ({})", changed
         )
     )
+    # W8: the replaced Claims' evidence state before the change (keyed reads).
+    evidence_claims = {identity for identity, _subject, _predicate in unit_claims}
+    evidence_before = evidence_states(connection, evidence_claims)
     from cruxible_core.indexes.provider_heads import remove_provider_domains
 
     remove_provider_domains(
@@ -590,6 +603,14 @@ def replace_rows(
         )
     # After the citation index: a Claim's section citations are read from it.
     refresh_backlinks(connection, parsed=parsed, sources=sources, replaced=replaced, bodies=bodies)
+    if not changed:
+        rebuild_evidence_counts(connection)
+    else:
+        apply_evidence_changes(
+            connection,
+            evidence_before,
+            evidence_states(connection, evidence_claims | incoming_claims),
+        )
     for fact in parsed.semantic_facts:
         if fact.schema_id not in ("cruxible.procedure.track_record", "cruxible.line.track_record"):
             continue

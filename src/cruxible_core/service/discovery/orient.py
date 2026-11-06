@@ -54,6 +54,7 @@ from cruxible_client.contracts.orient import (
     OrientContract,
     OrientDocument,
     OrientEnablements,
+    OrientEvidenceCounts,
     OrientKind,
     OrientKindDetail,
     OrientKindSummary,
@@ -86,6 +87,7 @@ from cruxible_core.indexes.query_selection import (
     KIND_PREDICATE_COUNTS_SQL,
     LIVE_SUBJECT_COUNTS_SQL,
 )
+from cruxible_core.indexes.sql_batch import select_in
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.service.discovery.activity import ActivityPosition, activity_page
@@ -346,6 +348,40 @@ def _descriptor(
         live_claims=live_claims if full else None,
         subjects_with_value=subjects_with_value if full else None,
     )
+
+
+def _with_evidence_counts(
+    connection: sqlite3.Connection, descriptors: Sequence[OrientPredicate]
+) -> tuple[OrientPredicate, ...]:
+    """W8: each full descriptor's live Claims by how they are backed.
+
+    One primary-key seek per descriptor of the maintained per-predicate counters
+    (``indexes/evidence/evidence_counts.py``); never a Claim scan. A Claim with
+    no captured evidence is ``unmet`` under ``evidence_requirement: captured``
+    and ``own_word`` otherwise.
+    """
+
+    if not descriptors:
+        return ()
+    held = {
+        str(predicate): (int(live), int(captured))
+        for predicate, live, captured in select_in(
+            connection,
+            "SELECT predicate, live, captured FROM claim_type_evidence_counts "
+            "WHERE predicate IN ({})",
+            sorted({item.predicate for item in descriptors}),
+        )
+    }
+    out = []
+    for item in descriptors:
+        live, captured = held.get(item.predicate, (0, 0))
+        rest = live - captured
+        required = item.evidence_requirement == "captured"
+        counts = OrientEvidenceCounts(
+            admitted=captured, own_word=0 if required else rest, unmet=rest if required else 0
+        )
+        out.append(item.model_copy(update={"evidence_counts": counts}))
+    return tuple(out)
 
 
 def _kind_names(state: _State) -> tuple[str, ...]:
@@ -987,6 +1023,9 @@ def service_playbill_orient(
         page, next_cursor = _page(
             rows, keys, view=view, served=served, continuation=continuation, limit=limit
         )
+        if section == "claim_types" and page:
+            with instance.bind_accepted_projection(coordinate) as projection:
+                page = _with_evidence_counts(projection.typed.connection, page)
         first = None if not page or first_ref is None else first_ref(page[0])
         if first is not None:
             calls.append(_Call("get", (("ref", first),)))
@@ -1688,21 +1727,24 @@ def _kind_detail(
                 (kind, ORIENT_SAMPLE_SUBJECTS),
             )
         )
-    predicates = sorted(
-        (
-            _descriptor(
-                item,
-                name=names[item.predicate],
-                evidence=state.evidence.get(item.predicate, ()),
-                full=True,
-                live_claims=counts.get(item.predicate, (0, 0))[0],
-                subjects_with_value=counts.get(item.predicate, (0, 0))[1],
-                placement=state.placements.get(item.predicate),
-            )
-            for item in of_kind
-        ),
-        key=lambda item: item.name,
-    )
+        predicates = sorted(
+            _with_evidence_counts(
+                connection,
+                tuple(
+                    _descriptor(
+                        item,
+                        name=names[item.predicate],
+                        evidence=state.evidence.get(item.predicate, ()),
+                        full=True,
+                        live_claims=counts.get(item.predicate, (0, 0))[0],
+                        subjects_with_value=counts.get(item.predicate, (0, 0))[1],
+                        placement=state.placements.get(item.predicate),
+                    )
+                    for item in of_kind
+                ),
+            ),
+            key=lambda item: item.name,
+        )
     evidence, hoisted = _hoist_evidence(predicates)
     return OrientKindDetail(
         kind=kind,
