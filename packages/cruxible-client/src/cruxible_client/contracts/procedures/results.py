@@ -119,6 +119,7 @@ ProcedureNodeRefusalCode: TypeAlias = Literal[
     "extract_format_unsupported",
     "read_ceiling_exceeded",
     "query_contract_violated",
+    "state_tap_refused",
     "repeat_exhausted",
     "budget_exhausted",
     "runtime_reference_unresolved",
@@ -1294,6 +1295,12 @@ class ProcedureRunReceipt(_StrictResultModel):
     evaluation_time: datetime
     validated_pins: tuple[ArtifactPin, ...]
     admitted_inputs: tuple[dict[str, object], ...]
+    #: The reads the run made mid-run (D-R38): the same run-input records as
+    #: ``admitted_inputs``, listed apart because they are not in the run's
+    #: admission identity; their digests are in its semantic result.
+    late_reads: tuple[dict[str, object], ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
     attribution: ProcedureRunAttribution
     stream_instance_id: str
     journal_family: str

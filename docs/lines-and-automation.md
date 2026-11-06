@@ -61,6 +61,18 @@ never in Procedure syntax: authoring refuses guard, halt, select, repeat,
 invoke, emit, project and the shape/join/aggregate/union/derive transforms with
 `procedure_step_closed`, naming the step.
 
+That order is the usual shape, not a rule. Cruxible checks the step kinds and the
+data dependencies: a step may use only the outputs of steps before it that it
+depends on. So a Procedure may fetch twice (a detail fetch keyed by the first),
+chain derives, or read state late. A read whose parameters use only the run's
+input, its params, literals and other such reads runs at admission and is part
+of the run's identity. A read keyed by a fetch, derive or extract output (a
+**late read**, say the memberships of the one inventory an SBOM names) runs
+when that output is ready, against the same accepted state as the run's other
+reads. It counts against the same read budget, its refusal refuses the run,
+and the run receipt lists it under `late_reads`, apart from the admitted
+inputs.
+
 The SDK's `Sequence` is a thin builder over that spec: each step returns a
 handle, and `handle["field"]` is a typed reference to one of its fields. This
 one reads the file, extracts its records, and ends in a claims step with one

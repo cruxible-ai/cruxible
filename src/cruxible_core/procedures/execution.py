@@ -99,7 +99,11 @@ from cruxible_client.contracts.procedures.contracts import (
     ProcedureContractItemBudgetExceeded,
     ValidatedProcedureContract,
 )
-from cruxible_client.contracts.procedures.graph import analyze_procedure, reference_templates
+from cruxible_client.contracts.procedures.graph import (
+    analyze_procedure,
+    late_state_taps,
+    reference_templates,
+)
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
     line_identity_digest,
@@ -1091,19 +1095,25 @@ def procedure_semantic_result_digest(
     refusal: ProcedureRunRefusalV1 | None,
     halt: CanonicalValue | None = None,
     fetched_captures: Iterable[str] = (),
+    late_reads: Iterable[str] = (),
 ) -> str:
     """Commit only replay-stable output or refusal material.
 
     A run is identified by its inputs and the evidence it fetched (D-R37 f1):
     the sorted digests of the fetched, non-derived Captures it consumed join
     the preimage. They are present only when non-empty, so a run that fetched
-    nothing keeps its digest (f2).
+    nothing keeps its digest (f2). A late read's record (D-R38) joins it the
+    same way: ``late_reads`` is the sorted run-input digests of the reads the
+    run made mid-run, present only when it made one.
     """
 
     if (status == "refused") != (refusal is not None):
         raise ValueError("semantic Procedure refusal shape is inconsistent")
     fetched = sorted(set(fetched_captures))
     evidence: dict[str, CanonicalValue] = {"fetched_captures": [*fetched]} if fetched else {}
+    late = sorted(set(late_reads))
+    if late:
+        evidence["late_reads"] = [*late]
     if status == "halted":
         if halt is None or output is not None or refusal is not None:
             raise ValueError("semantic Procedure halt shape is inconsistent")
@@ -1863,6 +1873,98 @@ def state_tap_view(node: ReadNode, value: object) -> CanonicalValue:
     return normalize_canonical(value)
 
 
+def read_state_tap(
+    accepted: AcceptedProcedure,
+    node: ReadNode,
+    *,
+    read_parameters: CanonicalValue,
+    accepted_coordinate: AcceptedCoordinate,
+    state_reader: StateTapReaderProtocol,
+    bodies: ContentAddressedBodyStore,
+    remaining: int,
+) -> tuple[AcceptedStateRunMaterial, int]:
+    """Run one accepted-state read under ``remaining`` rows; its material and rows.
+
+    The one place a read becomes material, for an admission read and a late
+    read alike (D-R38): both read the accepted-state plane at the run's pinned
+    coordinate, under what is left of the run's one read ceiling, and refuse
+    ``read_ceiling_exceeded`` rather than return part of their result.
+    """
+
+    binding = node.claim_type if node.claim_type is not None else node.query
+    assert binding is not None  # a read names exactly one selection
+    query = resolved_pin(accepted, binding)
+    try:
+        if remaining < 1:
+            raise ReadCeilingExceeded(clipped=("max_results",), candidates=None, ceiling=0)
+        if node.reads_claims:
+            assert isinstance(read_parameters, dict)
+            assert node.subject_kind is not None
+            identity = read_parameters["subject_id"]
+            if not isinstance(identity, str):
+                raise ExecutionError("Subject id must resolve to a string")
+            read = state_reader.read_accepted_claim(
+                claim_type=query,
+                subject_kind=node.subject_kind,
+                subject_id=identity,
+                cardinality=node.cardinality,
+                limit=node.limit,
+                coordinate=accepted_coordinate,
+                ceiling=remaining,
+            )
+        else:
+            read = state_reader.read_accepted_state(
+                query=query,
+                parameters=read_parameters,
+                coordinate=accepted_coordinate,
+                ceiling=remaining,
+            )
+    except QueryContractViolated as exc:
+        raise ProcedureBoundaryRefused(
+            "query_contract_violated",
+            exc.reason,
+            details={"node": node.node_id, "direction": exc.direction, **exc.details},
+        ) from exc
+    except ReadCeilingExceeded as exc:
+        raise ProcedureBoundaryRefused(
+            "read_ceiling_exceeded",
+            "A Procedure read would be clipped by the run's read ceiling; it refuses "
+            "rather than return part of its result.",
+            details={
+                "node": node.node_id,
+                "clipped": list(exc.clipped),
+                "candidates": exc.candidates,
+                "ceiling": exc.ceiling,
+            },
+        ) from exc
+    except Exception as exc:
+        raise ProcedureBoundaryRefused(
+            "state_tap_refused",
+            "The accepted-state reader refused this selection.",
+            details={"node_id": node.node_id, "reason": str(exc)},
+        ) from exc
+    value = state_tap_view(node, read.value)
+    retained = bodies.store(canonical_bytes(value))
+    common = dict(
+        input_name=node.as_,
+        read_coordinate=accepted_coordinate,
+        parameters_digest=run_value_digest("state-parameters", read_parameters),
+        result_digest=run_value_digest("state-result", value),
+        effective_query_budgets=read.effective_budgets,
+        material_body_digest=retained.digest,
+    )
+    run_input = (
+        AcceptedClaimRunInputV1.model_validate(
+            dict(common, claim_type_digest=query.artifact_digest)
+        )
+        if node.reads_claims
+        else AcceptedStateRunInputV2.model_validate(
+            dict(common, query_definition_digest=query.artifact_digest)
+        )
+    )
+    return AcceptedStateRunMaterial(input=run_input, value=value), read.rows
+
+
 def bind_accepted_state_materials(
     accepted: AcceptedProcedure,
     *,
@@ -1873,16 +1975,18 @@ def bind_accepted_state_materials(
     invocation_input: object,
     parameters: object,
 ) -> tuple[AcceptedStateRunMaterial, ...]:
-    """Read and retain every accepted-state read this run will observe.
+    """Read and retain every admission read this run will observe.
 
     Every run lane reads the accepted-state plane the SAME way, so this is the
-    one place a read becomes admitted material. ``read_ceiling`` is the rows
-    the run's reads may return in all, as its admission budget states it (its
-    Line's, or what an invoking parent has left): Query reads
-    and Claim reads alike draw it down, and the read that would pass it
-    refuses ``read_ceiling_exceeded``.
+    one place an admission read becomes admitted material. ``read_ceiling`` is
+    the rows the run's reads may return in all, as its admission budget states
+    it (its Line's, or what an invoking parent has left): Query reads and Claim
+    reads alike draw it down, and the read that would pass it refuses
+    ``read_ceiling_exceeded``. A late read (D-R38, ``late_state_taps``) is not
+    bound here: it runs mid-run and draws on what admission left.
     """
 
+    late = late_state_taps(accepted.procedure.definition)
     materials: list[AcceptedStateRunMaterial] = []
     values: dict[str, CanonicalValue] = {}
     # One ceiling across the run's reads: each read gets what is left of it.
@@ -1890,85 +1994,23 @@ def bind_accepted_state_materials(
     for node in accepted.procedure.definition.nodes:
         if isinstance(node, ProjectNode) and node.literal is not None:
             values[node.as_] = normalize_canonical(node.literal)
-        if not isinstance(node, ReadNode):
+        if not isinstance(node, ReadNode) or node.as_ in late:
             continue
-        binding = node.claim_type if node.claim_type is not None else node.query
-        assert binding is not None  # a read names exactly one selection
-        query = resolved_pin(accepted, binding)
         read_parameters = state_tap_parameters(
             node, invocation_input=invocation_input, parameters=parameters, values=values
         )
-        try:
-            if remaining < 1:
-                raise ReadCeilingExceeded(clipped=("max_results",), candidates=None, ceiling=0)
-            if node.reads_claims:
-                assert isinstance(read_parameters, dict)
-                assert node.subject_kind is not None
-                identity = read_parameters["subject_id"]
-                if not isinstance(identity, str):
-                    raise ExecutionError("Subject id must resolve to a string")
-                read = state_reader.read_accepted_claim(
-                    claim_type=query,
-                    subject_kind=node.subject_kind,
-                    subject_id=identity,
-                    cardinality=node.cardinality,
-                    limit=node.limit,
-                    coordinate=accepted_coordinate,
-                    ceiling=remaining,
-                )
-            else:
-                read = state_reader.read_accepted_state(
-                    query=query,
-                    parameters=read_parameters,
-                    coordinate=accepted_coordinate,
-                    ceiling=remaining,
-                )
-            remaining -= read.rows
-        except QueryContractViolated as exc:
-            raise ProcedureBoundaryRefused(
-                "query_contract_violated",
-                exc.reason,
-                details={"node": node.node_id, "direction": exc.direction, **exc.details},
-            ) from exc
-        except ReadCeilingExceeded as exc:
-            raise ProcedureBoundaryRefused(
-                "read_ceiling_exceeded",
-                "A Procedure read would be clipped by the run's read ceiling; it refuses "
-                "rather than return part of its result.",
-                details={
-                    "node": node.node_id,
-                    "clipped": list(exc.clipped),
-                    "candidates": exc.candidates,
-                    "ceiling": exc.ceiling,
-                },
-            ) from exc
-        except Exception as exc:
-            raise ProcedureBoundaryRefused(
-                "state_tap_refused",
-                "The accepted-state reader refused this selection.",
-                details={"node_id": node.node_id, "reason": str(exc)},
-            ) from exc
-        value = state_tap_view(node, read.value)
-        values[node.as_] = value
-        retained = bodies.store(canonical_bytes(value))
-        common = dict(
-            input_name=node.as_,
-            read_coordinate=accepted_coordinate,
-            parameters_digest=run_value_digest("state-parameters", read_parameters),
-            result_digest=run_value_digest("state-result", value),
-            effective_query_budgets=read.effective_budgets,
-            material_body_digest=retained.digest,
+        material, rows = read_state_tap(
+            accepted,
+            node,
+            read_parameters=read_parameters,
+            accepted_coordinate=accepted_coordinate,
+            state_reader=state_reader,
+            bodies=bodies,
+            remaining=remaining,
         )
-        run_input = (
-            AcceptedClaimRunInputV1.model_validate(
-                dict(common, claim_type_digest=query.artifact_digest)
-            )
-            if node.reads_claims
-            else AcceptedStateRunInputV2.model_validate(
-                dict(common, query_definition_digest=query.artifact_digest)
-            )
-        )
-        materials.append(AcceptedStateRunMaterial(input=run_input, value=value))
+        remaining -= rows
+        values[node.as_] = normalize_canonical(material.value)
+        materials.append(material)
     materials.sort(key=lambda item: item.input.input_name.encode("utf-8"))
     return tuple(materials)
 
@@ -2331,6 +2373,8 @@ class _RunState:
     node_summaries: dict[str, NodeRunSummary] = dataclass_field(default_factory=dict)
     #: Rows each admitted accepted-state read returned, by input name.
     read_rows_by_input: dict[str, int] = dataclass_field(default_factory=dict)
+    #: Each late read this run made (D-R38), by its alias: its run-input record.
+    late_reads: dict[str, AcceptedStateRunInput] = dataclass_field(default_factory=dict)
     #: How each claims terminal's change landed, from its delivery.
     claims_deliveries: dict[str, ClaimsDelivery] = dataclass_field(default_factory=dict)
 
@@ -2407,6 +2451,7 @@ class ProcedureExecutor:
         completeness_probe: CompletenessProbe | None = None,
         key_rules: KeyCanonicalizer | None = None,
         claims_context: ClaimsContext | None = None,
+        state_reader: StateTapReaderProtocol | None = None,
     ) -> None:
         self.journal = journal
         self.bodies = bodies
@@ -2450,6 +2495,9 @@ class ProcedureExecutor:
         # coordinate; every key<K> / key_part<K:p> value reads through them.
         self.key_rules = key_rules
         self.claims_context = claims_context
+        # Late reads (D-R38) read accepted state mid-run, at the admitted
+        # coordinate, through the same reader admission reads use.
+        self.state_reader = state_reader
         # A sink harness told whether each sink's value is complete (the law's
         # real sinks belong to the Claims terminal).
         self.completeness_probe = completeness_probe
@@ -2729,6 +2777,7 @@ class ProcedureExecutor:
                 refusal=refusal,
                 halt=halt,
                 fetched_captures=_fetched_captures(state),
+                late_reads=[run_input_digest(item) for item in state.late_reads.values()],
             )
         summary = state.completeness.summary()
         final_payload = {
@@ -2776,6 +2825,18 @@ class ProcedureExecutor:
             # What the run consumed, versioned, so a reader tells proven-empty from
             # a record written before C14 provenance (fail closed; D-R25 R4).
             **_consumed(state),
+            # The reads the run made mid-run (D-R38), apart from its admitted
+            # inputs; recorded only when it made one, so other runs keep their bytes.
+            **(
+                {
+                    "late_reads": [
+                        state.late_reads[name].model_dump(mode="json")
+                        for name in sorted(state.late_reads, key=lambda item: item.encode("utf-8"))
+                    ]
+                }
+                if state.late_reads
+                else {}
+            ),
             "provider_calls": state.provider_calls,
             "capture_bytes": state.capture_bytes,
             "invocation_receipt_digests": state.invocation_receipt_digests,
@@ -3035,6 +3096,74 @@ class ProcedureExecutor:
             )
         return state
 
+    def _run_late_read(
+        self,
+        node: ReadNode,
+        *,
+        accepted: AcceptedProcedure,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+    ) -> None:
+        """Run one late read now, at the admitted coordinate (D-R38).
+
+        Its selection names runtime output, so it could not bind at admission:
+        it reads the same accepted state an admission read would, through the
+        same reader, under what is left of the run's one read ceiling (its
+        children's reads included), and its refusal is the run's refusal.
+        """
+
+        if self.state_reader is None:
+            raise ExecutionError("a late read needs the run's accepted-state reader")
+        try:
+            read_parameters = state_tap_parameters(
+                node,
+                invocation_input=state.input_payload,
+                parameters=state.parameters,
+                values=state.outputs,
+            )
+        except ExecutionError as exc:
+            raise _RunRefusal(
+                "runtime_reference_unresolved",
+                "A late read's selection did not resolve.",
+                node_id=node.node_id,
+            ) from exc
+        remaining = (
+            effective_read_rows(admission.budget.max_read_rows, admission.hard_caps.max_read_rows)
+            - state.read_rows
+        )
+        try:
+            material, rows = read_state_tap(
+                accepted,
+                node,
+                read_parameters=read_parameters,
+                accepted_coordinate=admission.accepted_coordinate,
+                state_reader=self.state_reader,
+                bodies=self.bodies,
+                remaining=remaining,
+            )
+        except ProcedureBoundaryRefused as exc:
+            raise _RunRefusal(
+                exc.code, str(exc), node_id=node.node_id, details=exc.details
+            ) from exc
+        state.read_rows += rows
+        state.read_rows_by_input[node.as_] = rows
+        state.late_reads[node.as_] = material.input
+        digest = run_input_digest(material.input)
+        state.outputs[node.as_] = normalize_canonical(material.value)
+        state.provenance[node.as_] = AliasProvenanceV1(
+            whole=frozenset(
+                {
+                    accepted_state_token(digest),
+                    policy_token(accepted_read_definition_digest(material.input)),
+                }
+            )
+        )
+        state.facts[digest] = DependencyEvidenceFactsV1(
+            epistemic_grade="observed",
+            provenance_grade="self-asserted",
+            taint_labels=(TAINT_ACCEPTED_STATE,),
+        )
+
     def _verify_correspondence(
         self,
         admission: ProcedureRunAdmission,
@@ -3107,6 +3236,7 @@ class ProcedureExecutor:
                 if isinstance(node, ProjectNode) and node.literal is not None
             }
         )
+        late = late_state_taps(procedure.definition)
         expected_state_inputs = {
             node.as_: (
                 self._pin(
@@ -3124,7 +3254,7 @@ class ProcedureExecutor:
                 ),
             )
             for node in procedure.definition.nodes
-            if isinstance(node, ReadNode)
+            if isinstance(node, ReadNode) and node.as_ not in late
         }
         actual_state_inputs = {item.input_name: item for item in admission.accepted_state_inputs}
         if set(actual_state_inputs) != set(expected_state_inputs):
@@ -3520,6 +3650,8 @@ class ProcedureExecutor:
             )
             return None
         if isinstance(node, ReadNode):
+            if node.as_ in late_state_taps(accepted.procedure.definition):
+                self._run_late_read(node, accepted=accepted, admission=admission, state=state)
             if node.as_ not in state.outputs:
                 raise ExecutionError("admitted read material is absent")
             rows = state.read_rows_by_input.get(
@@ -4696,8 +4828,11 @@ class ProcedureExecutor:
         alias = getattr(node, "as_", None)
         if isinstance(alias, str) and alias in state.outputs:
             if isinstance(node, ReadNode):
-                # A read completed within its ceiling, or the node refused.
-                tracker.mark(alias, True)
+                # A read completed within its ceiling, or the node refused. A
+                # late read selected by an incomplete value is incomplete too.
+                tracker.mark(alias, tracker.reads_complete(reads))
+                if alias in tracker.incomplete:
+                    tracker.note(node.node_id, "upstream_incomplete", (name for name, _ in reads))
             else:
                 truncates = (
                     isinstance(node, CallNode)

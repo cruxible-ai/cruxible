@@ -578,7 +578,11 @@ def expand_claims(
                             if isinstance(name, str)
                             and isinstance(producer, ReadNode)
                             and producer.reads_claims
-                            for entry in admission.accepted_state_inputs
+                            # A late read's record is the run's, not its admission's (D-R38).
+                            for entry in (
+                                *admission.accepted_state_inputs,
+                                *state.late_reads.values(),
+                            )
                             if entry.input_name in {name, producer.node_id}
                         },
                     )

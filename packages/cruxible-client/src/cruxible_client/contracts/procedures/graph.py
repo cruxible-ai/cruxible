@@ -362,18 +362,11 @@ def analyze_procedure(definition: ProcedureDefinition) -> ProcedureGraph:
             counts[candidate.node_id] = (low + produced_here, high + produced_here)
 
     alias_nodes = {_node_alias(node): node for node in definition.nodes if _node_alias(node)}
+    # A read may name any output available to it (D-R38): one fed only by
+    # input, params, literals and other admission reads binds at admission;
+    # one fed by runtime output is a late read (``late_state_taps``).
     for node in definition.nodes:
         _validate_node_references(node, available=available[node.node_id])
-        if isinstance(node, ReadNode):
-            for location, template in _reference_templates(node):
-                for alias in _step_alias_references(template, location=location):
-                    producer = alias_nodes[alias]
-                    if not isinstance(producer, ReadNode) and not (
-                        isinstance(producer, ProjectNode) and producer.literal is not None
-                    ):
-                        raise ProcedureGraphFormatError(
-                            "admission selectors cannot depend on runtime output"
-                        )
 
     for node in definition.nodes:
         if not isinstance(node, ExtractNode):
@@ -405,6 +398,45 @@ def analyze_procedure(definition: ProcedureDefinition) -> ProcedureGraph:
         reachable_aliases=reachable_aliases,
         produced_alias=produced,
     )
+
+
+def _read_aliases(node: ReadNode) -> frozenset[str]:
+    """The step aliases one read's selection (its parameters or Subject) names."""
+
+    return frozenset(
+        alias
+        for location, template in _reference_templates(node)
+        for alias in _step_alias_references(
+            template, location=f"Procedure node {node.node_id!r} field {location!r}"
+        )
+    )
+
+
+@sealed_memo
+def late_state_taps(definition: ProcedureDefinition) -> frozenset[str]:
+    """The aliases of the reads that run mid-run, in dataflow order (D-R38).
+
+    A read whose selection names only invocation input, params, literals and
+    other admission reads is an admission read: it binds before node one and is
+    part of the run's admission identity, exactly as before. A read whose
+    selection names any other output (a call's, a derive's, an extract's, a
+    computed value's, or a late read's) is late: it runs when its inputs are
+    ready, at the run's pinned accepted coordinate, and its result enters the
+    run's result digest instead of its admission.
+    """
+
+    admission: set[str] = set()
+    late: set[str] = set()
+    for node in definition.nodes:
+        if isinstance(node, ProjectNode) and node.literal is not None:
+            admission.add(node.as_)
+        if not isinstance(node, ReadNode):
+            continue
+        if _read_aliases(node) <= admission:
+            admission.add(node.as_)
+        else:
+            late.add(node.as_)
+    return frozenset(late)
 
 
 @sealed_memo
@@ -500,4 +532,5 @@ __all__ = [
     "analyze_procedure",
     "compute_procedure_definition_digest",
     "compute_procedure_node_digests",
+    "late_state_taps",
 ]

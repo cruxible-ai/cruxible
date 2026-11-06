@@ -2224,6 +2224,12 @@ def _provider_admission_terminal(
     )
 
 
+#: The read refusals a late read (D-R38) makes mid-run, at its own node.
+_LATE_READ_REFUSAL_CODES = frozenset(
+    {"read_ceiling_exceeded", "query_contract_violated", "state_tap_refused"}
+)
+
+
 def _state_from_records(
     instance: PlaybillInstance,
     *,
@@ -2565,7 +2571,10 @@ def _state_from_records(
                 )
                 refusal_code = str(refusal.get("code", "guard_refused"))
                 raw_detail_code = refusal.get("detail_code")
-                if refusal_code in get_args(ProcedureAdmissionRefusalCode):
+                if refusal_code in get_args(ProcedureAdmissionRefusalCode) and not (
+                    # A late read's refusal (D-R38) is its node's, not admission's.
+                    refusal_code in _LATE_READ_REFUSAL_CODES and refusal.get("node_id")
+                ):
                     terminal = ProcedureAdmissionRefusal.model_validate(
                         {
                             "code": refusal_code,
@@ -2851,6 +2860,11 @@ def _public_run_receipt(
         validated_pins=admission.full_pins,
         admitted_inputs=tuple(
             cast(dict[str, object], item.model_dump(mode="json")) for item in admission.run_inputs
+        ),
+        late_reads=tuple(
+            cast(dict[str, object], item)
+            for item in (final.get("late_reads", ()) if isinstance(final, dict) else ())
+            if isinstance(item, dict)
         ),
         attribution=attribution,
         stream_instance_id=stream.instance_id,
@@ -3475,6 +3489,9 @@ def service_run_playbill_procedure(
             contract_resolver=accepted_contract_resolver(instance, coordinate),
             key_rules=accepted_key_rules(instance, coordinate),
             claims_context=AcceptedClaimsContext(instance, coordinate),
+            state_reader=PlaybillProcedureStateTapReader(
+                instance=instance, evaluation_time=evaluation_time
+            ),
             clock=_DeterministicClock(evaluation_time),
             nested_runner=ServedNestedProcedureRunner(
                 instance,
@@ -4622,6 +4639,9 @@ def _run_playbill_line(
                 contract_resolver=accepted_contract_resolver(instance, coordinate),
                 key_rules=accepted_key_rules(instance, coordinate),
                 claims_context=AcceptedClaimsContext(instance, coordinate),
+                state_reader=PlaybillProcedureStateTapReader(
+                    instance=instance, evaluation_time=evaluation_time
+                ),
                 clock=_DeterministicClock(evaluation_time),
                 nested_runner=ServedNestedProcedureRunner(
                     instance,

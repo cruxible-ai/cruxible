@@ -35757,6 +35757,7 @@
                   "extract_format_unsupported",
                   "read_ceiling_exceeded",
                   "query_contract_violated",
+                  "state_tap_refused",
                   "repeat_exhausted",
                   "budget_exhausted",
                   "runtime_reference_unresolved",
@@ -36446,6 +36447,7 @@
                   "extract_format_unsupported",
                   "read_ceiling_exceeded",
                   "query_contract_violated",
+                  "state_tap_refused",
                   "repeat_exhausted",
                   "budget_exhausted",
                   "runtime_reference_unresolved",
@@ -60657,6 +60659,23 @@
             "type": "integer"
           }
         },
+        "late_reads": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "late_reads",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Late Reads",
+            "type": "array"
+          }
+        },
         "line_identity": {
           "default": null,
           "default_json_serializable": true,
@@ -62100,6 +62119,7 @@
                   "extract_format_unsupported",
                   "read_ceiling_exceeded",
                   "query_contract_violated",
+                  "state_tap_refused",
                   "repeat_exhausted",
                   "budget_exhausted",
                   "runtime_reference_unresolved",
@@ -62896,6 +62916,15 @@
             "minimum": 1,
             "title": "Last Sequence",
             "type": "integer"
+          },
+          "late_reads": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Late Reads",
+            "type": "array"
           },
           "line_identity": {
             "anyOf": [
@@ -66006,6 +66035,7 @@
                   "extract_format_unsupported",
                   "read_ceiling_exceeded",
                   "query_contract_violated",
+                  "state_tap_refused",
                   "repeat_exhausted",
                   "budget_exhausted",
                   "runtime_reference_unresolved",
@@ -66752,6 +66782,15 @@
                 "minimum": 1,
                 "title": "Last Sequence",
                 "type": "integer"
+              },
+              "late_reads": {
+                "default": [],
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Late Reads",
+                "type": "array"
               },
               "line_identity": {
                 "anyOf": [
