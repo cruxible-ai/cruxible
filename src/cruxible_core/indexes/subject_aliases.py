@@ -437,11 +437,14 @@ def _tree_alias_index(tree: Mapping[str, bytes]) -> sqlite3.Connection:
         "basis TEXT, term TEXT, value TEXT)"
     )
     # The key Claims of declared keyed kinds, as the projection's claims rows hold them.
+    # A pair kind's Subject-valued key Claims carry their end in ``object_path``.
     connection.execute(
         "CREATE TABLE claims (identity TEXT, subject_path TEXT, predicate TEXT, qualifier TEXT, "
         "lifecycle TEXT, object_kind TEXT, subject_selector_scheme TEXT, literal_type TEXT, "
-        "literal_text TEXT, literal_integer_text TEXT, literal_boolean INTEGER)"
+        "literal_text TEXT, literal_integer_text TEXT, literal_boolean INTEGER, "
+        "object_path TEXT, object_selector_scheme TEXT)"
     )
+    connection.execute("CREATE INDEX claims_by_object_subject ON claims(object_path,identity)")
     connection.execute(
         "CREATE TABLE subject_kinds (identity TEXT, rule TEXT, uniqueness TEXT, "
         "key_predicates TEXT, lifecycle TEXT)"
@@ -465,8 +468,9 @@ def _tree_alias_index(tree: Mapping[str, bytes]) -> sqlite3.Connection:
                     declared.lifecycle.state,
                 ),
             )
-            if declared.lifecycle.state == "live":
-                key_predicates.update(declared.keys)
+            # Every keyed kind's key Claims, a retired (grandfathered) pair kind's
+            # included: its ends stay pinned while its pairs live.
+            key_predicates.update(declared.keys)
     needles = tuple(f'"{predicate}"'.encode() for predicate in sorted(key_predicates))
     for path in tree:
         source: Any
@@ -480,7 +484,7 @@ def _tree_alias_index(tree: Mapping[str, bytes]) -> sqlite3.Connection:
             if source.statement.predicate in key_predicates:
                 fields = _claim_fields(source)
                 connection.execute(
-                    "INSERT INTO claims VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO claims VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         source.identity.qualified,
                         fields["subject_path"],
@@ -493,6 +497,8 @@ def _tree_alias_index(tree: Mapping[str, bytes]) -> sqlite3.Connection:
                         fields.get("literal_text"),
                         fields.get("literal_integer_text"),
                         fields.get("literal_boolean"),
+                        fields.get("object_path"),
+                        fields.get("object_selector_scheme"),
                     ),
                 )
         else:
