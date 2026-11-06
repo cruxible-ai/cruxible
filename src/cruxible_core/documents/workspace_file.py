@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import errno
 import fcntl
+import fnmatch
 import hashlib
 import os
 import stat
@@ -28,6 +29,7 @@ from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.workspace_file import (
     ExecutedWorkspaceFileSourceRequestV2,
     SourceReadReceipt,
+    WorkspaceFileGlobRequestV1,
     WorkspaceFileSourceRequestV2,
 )
 
@@ -50,6 +52,8 @@ WorkspaceFilePathClass = Literal[
     "workspace_unnamed",
     # The authored request names a workspace no authorized root (or several) is called.
     "workspace_unknown",
+    # A glob read matches more files than its cap (D-R41).
+    "glob_over_cap",
 ]
 
 
@@ -161,11 +165,23 @@ class WorkspaceFileReader:
         author's.
         """
 
+        root = self._resolve_root(request.workspace)
+        return ExecutedWorkspaceFileSourceRequestV2.executing(
+            request,
+            workspace=root.name,
+            binding_digest=workspace_binding_digest(
+                instance_id=self.instance_id, canonical_root=root
+            ),
+        )
+
+    def _resolve_root(self, workspace: str | None) -> Path:
+        """The one authorized root an authored ``workspace`` (or its absence) names."""
+
         if self.operating_profile == "cloud" and not self.daemon_owned:
             raise WorkspaceFileReadRefused(
                 "cloud_no_mounts", "cloud profile has no daemon-local workspace mounts"
             )
-        if request.workspace is None:
+        if workspace is None:
             candidates = self._attached if len(self._attached) == 1 else self._roots
             if not candidates:
                 raise WorkspaceFileReadRefused(
@@ -178,25 +194,78 @@ class WorkspaceFileReader:
                     workspace_names=self.workspace_names,
                 )
         else:
-            candidates = tuple(root for root in self._roots if root.name == request.workspace)
+            candidates = tuple(root for root in self._roots if root.name == workspace)
             if len(candidates) != 1:
                 raise WorkspaceFileReadRefused(
                     "workspace_unknown",
                     (
-                        f"no authorized workspace is named {request.workspace!r}"
+                        f"no authorized workspace is named {workspace!r}"
                         if not candidates
-                        else f"several authorized workspaces are named {request.workspace!r}"
+                        else f"several authorized workspaces are named {workspace!r}"
                     ),
                     workspace_names=self.workspace_names,
                 )
         (root,) = candidates
-        return ExecutedWorkspaceFileSourceRequestV2.executing(
-            request,
-            workspace=root.name,
-            binding_digest=workspace_binding_digest(
-                instance_id=self.instance_id, canonical_root=root
-            ),
-        )
+        return root
+
+    def expand(self, request: WorkspaceFileGlobRequestV1) -> tuple[str, ...]:
+        """The relative paths a glob matches under its workspace, sorted, within its cap.
+
+        One directory listing per directory a pattern component reads, never a
+        tree walk. A match is a candidate only: each is read afterwards as an
+        ordinary ``workspace.file`` read, which applies every containment and
+        no-follow check. Hidden entries match only a pattern that starts with
+        ``.``, and Git metadata, Cruxible control and key paths and managed
+        roots never match. More matches than ``max_files`` refuses
+        ``glob_over_cap``.
+        """
+
+        root = self._resolve_root(request.workspace)
+        found: list[str] = [""]
+        parts = request.glob.split("/")
+        for position, part in enumerate(parts):
+            leaf = position == len(parts) - 1
+            pattern = any(character in part for character in "*?[")
+            following: list[str] = []
+            for prefix in found:
+                directory = root.joinpath(*prefix.split("/")) if prefix else root
+                if pattern:
+                    try:
+                        names = sorted(
+                            name
+                            for name in os.listdir(directory)
+                            if fnmatch.fnmatchcase(name, part)
+                            and (part.startswith(".") or not name.startswith("."))
+                        )
+                    except (FileNotFoundError, NotADirectoryError):
+                        continue
+                    except PermissionError as exc:
+                        raise WorkspaceFileReadRefused(
+                            "unreadable", "a workspace glob directory cannot be listed"
+                        ) from exc
+                else:
+                    names = [part]
+                for name in names:
+                    relative = f"{prefix}/{name}" if prefix else name
+                    try:
+                        self._deny_path(tuple(relative.split("/")))
+                        self._check_managed_root(root.joinpath(*relative.split("/")))
+                        status = os.lstat(root.joinpath(*relative.split("/")))
+                    except (WorkspaceFileReadRefused, FileNotFoundError, NotADirectoryError):
+                        continue
+                    # A directory is never a match; only a directory (never a
+                    # link to one) is walked into. A link or special file that
+                    # matches is a candidate, and its read refuses it.
+                    if stat.S_ISDIR(status.st_mode) != leaf:
+                        following.append(relative)
+            found = following
+        matches = tuple(sorted(found, key=lambda item: item.encode("utf-8")))
+        if len(matches) > request.max_files:
+            raise WorkspaceFileReadRefused(
+                "glob_over_cap",
+                f"the glob matches more than its {request.max_files} files",
+            )
+        return matches
 
     def _root_for(self, binding_digest: str) -> Path:
         for root in self._roots:

@@ -2294,6 +2294,49 @@ def _provider_admission_terminal(
     )
 
 
+def _source_observation_rows(
+    derived: Sequence[ProcedureDerivedSourceRequest],
+    reads: Sequence[SourceReadReceipt],
+    associations: Sequence[ProcedureSourceCaptureAssociation],
+    completed_inputs: Mapping[str, str],
+) -> list[
+    tuple[
+        ProcedureDerivedSourceRequest | None,
+        SourceReadReceipt | None,
+        ProcedureSourceCaptureAssociation | None,
+    ]
+]:
+    """One occurrence's observations: each Capture with the read and request behind it.
+
+    An occurrence derives one Source request (and one read) per file it read: a
+    glob read (D-R41) has one per member, matched to a Capture by the input its
+    invocation consumed. An occurrence that bound no Capture shows each read.
+    """
+
+    def request_for(read: SourceReadReceipt | None) -> ProcedureDerivedSourceRequest | None:
+        if read is not None:
+            for item in derived:
+                if item.request_digest == read.derived_request_digest:
+                    return item
+        return derived[0] if derived else None
+
+    def read_for(association: ProcedureSourceCaptureAssociation) -> SourceReadReceipt | None:
+        if len(reads) <= 1:
+            return reads[0] if reads else None
+        consumed = completed_inputs.get(association.invocation_receipt_digest)
+        return next((read for read in reads if read.provider_input_digest == consumed), None)
+
+    if associations:
+        return [
+            (request_for(read), read, association)
+            for association in associations
+            for read in (read_for(association),)
+        ]
+    if reads:
+        return [(request_for(read), read, None) for read in reads]
+    return [(request_for(None), None, None)]
+
+
 #: The read refusals a late read (D-R38) makes mid-run, at its own node.
 _LATE_READ_REFUSAL_CODES = frozenset(
     {"read_ceiling_exceeded", "query_contract_violated", "state_tap_refused"}
@@ -2322,8 +2365,12 @@ def _state_from_records(
     invocation_receipt_digests: list[str] = []
     source_capture_associations: tuple[ProcedureSourceCaptureAssociation, ...] = ()
     provider_invocations: dict[str, Literal["started", "completed"]] = {}
-    derived_source_requests: dict[str, ProcedureDerivedSourceRequest] = {}
-    source_reads: dict[str, SourceReadReceipt] = {}
+    # Per occurrence, each Source request it derived and each read, in journal
+    # order: a glob read (D-R41) derives and reads one per matched file.
+    derived_source_requests: dict[str, list[ProcedureDerivedSourceRequest]] = {}
+    source_reads: dict[str, list[SourceReadReceipt]] = {}
+    #: Each completed invocation's input digest, by its receipt digest.
+    completed_inputs: dict[str, str] = {}
     produced_source_associations: list[ProcedureSourceCaptureAssociation] = []
     terminal_egress: dict[str, ProcedureTerminalEgress] = {}
     children: list[ProcedureChildInvocation] = []
@@ -2401,13 +2448,16 @@ def _state_from_records(
             if (
                 derived.run_id != run_id
                 or derived.admission_binding_digest != stored.record.admission_binding_digest
-                or derived.occurrence_path in derived_source_requests
+                or any(
+                    item.request_digest == derived.request_digest
+                    for item in derived_source_requests.get(derived.occurrence_path, ())
+                )
             ):
                 raise ProcedureRunRecoveryRequired(
                     f"{ProcedureRunRecoveryRequired.code}: derived Source request does not bind "
                     "this run exactly"
                 )
-            derived_source_requests[derived.occurrence_path] = derived
+            derived_source_requests.setdefault(derived.occurrence_path, []).append(derived)
         if stored.record.event_kind == "source_read" and isinstance(payload, dict):
             try:
                 read_receipt = SourceReadReceipt.model_validate(payload.get("receipt"))
@@ -2419,13 +2469,16 @@ def _state_from_records(
                 read_receipt.run_id != run_id
                 or read_receipt.admission_binding_digest != stored.record.admission_binding_digest
                 or payload.get("receipt_digest") != source_read_receipt_digest(read_receipt)
-                or read_receipt.occurrence_path in source_reads
+                or any(
+                    item.derived_request_digest == read_receipt.derived_request_digest
+                    for item in source_reads.get(read_receipt.occurrence_path, ())
+                )
             ):
                 raise ProcedureRunRecoveryRequired(
                     f"{ProcedureRunRecoveryRequired.code}: Source read receipt does not bind "
                     "this run exactly"
                 )
-            source_reads[read_receipt.occurrence_path] = read_receipt
+            source_reads.setdefault(read_receipt.occurrence_path, []).append(read_receipt)
         if stored.record.event_kind == "provider_invocation_started":
             try:
                 started = ProviderInvocationStarted.model_validate(payload)
@@ -2451,20 +2504,22 @@ def _state_from_records(
                     f"{ProcedureRunRecoveryRequired.code}: Provider start is not admitted exactly"
                 )
             if planned[0].occurrence_kind == "source":
-                derived_for_start = derived_source_requests.get(started.occurrence_path)
-                if derived_for_start is None:
+                derived_for_path = derived_source_requests.get(started.occurrence_path, [])
+                if not derived_for_path:
                     raise ProcedureRunRecoveryRequired(
                         f"{ProcedureRunRecoveryRequired.code}: Source spawn lacks its exact "
                         "pre-spawn derived request result"
                     )
-                expected_inputs = {run_value_digest("provider-input", derived_for_start.request)}
-                read_for_start = source_reads.get(started.occurrence_path)
-                if read_for_start is not None:
+                derived_digests = {item.request_digest for item in derived_for_path}
+                expected_inputs = {
+                    run_value_digest("provider-input", item.request) for item in derived_for_path
+                }
+                for read_for_start in source_reads.get(started.occurrence_path, ()):
                     # A governed workspace read hands the Provider the bytes the
                     # daemon really read, not the request that named them. The
                     # read receipt is what binds the two, so the reconstruction
                     # requires that binding before it accepts the substitution.
-                    if read_for_start.derived_request_digest != derived_for_start.request_digest:
+                    if read_for_start.derived_request_digest not in derived_digests:
                         raise ProcedureRunRecoveryRequired(
                             f"{ProcedureRunRecoveryRequired.code}: Source read receipt names "
                             "another derived request"
@@ -2498,6 +2553,7 @@ def _state_from_records(
                 )
             provider_invocations[completed.invocation_id] = "completed"
             invocation_receipt_digests.append(completed.receipt_digest)
+            completed_inputs[completed.receipt_digest] = completed.receipt.input_digest
         if stored.record.event_kind == "produced_capture" and isinstance(payload, dict):
             occurrence_path = payload.get("occurrence_path")
             invocation_receipt_digest = payload.get("invocation_receipt_digest")
@@ -2831,14 +2887,16 @@ def _state_from_records(
             capture_digest=None if association is None else association.capture_digest,
         )
         for occurrence_path, derived, receipt, association in (
-            (path, derived_source_requests.get(path), source_reads.get(path), produced)
+            (path, *row)
             for path in sorted(
                 set(derived_source_requests) | set(source_reads) | set(captures_by_path),
                 key=lambda item: item.encode("utf-8"),
             )
-            for produced in (
-                cast(list[ProcedureSourceCaptureAssociation | None], captures_by_path.get(path))
-                or [None]
+            for row in _source_observation_rows(
+                derived_source_requests.get(path, []),
+                source_reads.get(path, []),
+                captures_by_path.get(path, []),
+                completed_inputs,
             )
         )
     )

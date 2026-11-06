@@ -111,6 +111,19 @@ cx.changes(rationale="The Acme discontinued-parts check.") \
 accepted Procedure in the same form, each typed reference rendered as its
 `$...` text for review.
 
+To read many files at once, name a `glob` instead of `relative_path`, say
+`{"logical_source": "acme.notices", "glob": "supplier/*.json", "max_files": 50}`.
+Each component may use `*`, `?` and `[...]`; `**` is not a pattern. The
+built-in lists the matches, sorted by their real names, and reads each one as
+an ordinary file read, so the capture field holds a list of Captures, one per
+file, and an extract over it cites each record's own file. Hidden files match
+only a pattern that starts with `.`. More matches than `max_files` (default
+100, at most 1000) refuses the read (`glob_over_cap`). A file that cannot be
+read (a link, say) is left out and the list is incomplete. A glob names only
+the files that exist now: an extract straight over it never judges absence,
+so a file the glob no longer matches retires nothing. Each file counts as one
+provider call against the run's budget.
+
 ### Write the Line, its Trigger and its mandate
 
 A Line, its Triggers and its mandate are definitions like any other, so they

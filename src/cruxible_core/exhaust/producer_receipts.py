@@ -467,8 +467,12 @@ class JournalProducerReceiptResolver:
         """Re-check the receipt links within one partition's records, in order."""
 
         admissions: dict[tuple[str, str], ProcedureAdmissionBoundPayload] = {}
+        # One occurrence may derive and read several Source requests (a glob read,
+        # D-R41, reads one file each): a derived request is named by its run and
+        # request digest, and a read by its run, occurrence and the provider
+        # input it handed the invocation.
         derived_requests: dict[tuple[str, str], ProcedureDerivedSourceRequest | None] = {}
-        source_reads: dict[tuple[str, str], SourceReadReceipt | None] = {}
+        source_reads: dict[tuple[str, str, str], SourceReadReceipt | None] = {}
         for stored in records:
             record = stored.record
             if record.event_kind not in _PROOF_EVENT_KINDS:
@@ -535,7 +539,7 @@ class JournalProducerReceiptResolver:
                         raise ValueError(
                             "Derived Source request journal coordinates do not correspond"
                         )
-                    key = (derived.run_id, derived.occurrence_path)
+                    key = (derived.run_id, derived.request_digest)
                     derived_requests[key] = None if key in derived_requests else derived
                 except (KeyError, TypeError, ValidationError, ValueError) as exc:
                     self._malformed(
@@ -558,9 +562,13 @@ class JournalProducerReceiptResolver:
                         or record.admission_binding_digest != receipt.admission_binding_digest
                     ):
                         raise ValueError("Source-read journal coordinates do not correspond")
-                    key = (receipt.run_id, receipt.occurrence_path)
-                    resolved_derived = derived_requests.get(key)
-                    if resolved_derived is None:
+                    resolved_derived = derived_requests.get(
+                        (receipt.run_id, receipt.derived_request_digest)
+                    )
+                    if (
+                        resolved_derived is None
+                        or resolved_derived.occurrence_path != receipt.occurrence_path
+                    ):
                         raise ValueError("Source-read receipt has no exact derived Source request")
                     # v1 history carries the authored request; v2 the daemon's
                     # executed request. Both name the binding digest the read used.
@@ -579,7 +587,12 @@ class JournalProducerReceiptResolver:
                         raise ValueError(
                             "Source-read receipt differs from its derived Source request"
                         )
-                    source_reads[key] = None if key in source_reads else receipt
+                    read_key = (
+                        receipt.run_id,
+                        receipt.occurrence_path,
+                        receipt.provider_input_digest,
+                    )
+                    source_reads[read_key] = None if read_key in source_reads else receipt
                 except (KeyError, TypeError, ValidationError, ValueError) as exc:
                     self._malformed(
                         record_digest=stored.record_digest,
@@ -624,7 +637,11 @@ class JournalProducerReceiptResolver:
                             "Provider completion differs from its exact admitted occurrence"
                         )
                     source_read = source_reads.get(
-                        (provider_receipt.run_id, provider_receipt.occurrence_path)
+                        (
+                            provider_receipt.run_id,
+                            provider_receipt.occurrence_path,
+                            provider_receipt.input_digest,
+                        )
                     )
                     if is_workspace_file_signature(provider_receipt.operation_signature_digest) != (
                         source_read is not None
