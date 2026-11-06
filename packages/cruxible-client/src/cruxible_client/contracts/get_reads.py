@@ -521,6 +521,9 @@ class GetProposalCard(_StrictGetModel):
     actor: str | None = Field(default=None, exclude_if=_omit_none)
     admitted_at: str | None = Field(default=None, exclude_if=_omit_none)
     rationale: str | None = Field(default=None, exclude_if=_omit_none)
+    #: A settled, accepted proposal: the accepted generation (sequence) it
+    #: produced, from its settlement record. Absent otherwise.
+    generation: int | None = Field(default=None, exclude_if=_omit_none)
     changes: tuple[GetProposalChange, ...] = ()
     #: Why a refused proposal was refused: every stored diagnostic, in order.
     refusal: tuple[GetProposalRefusal, ...] = Field(default=(), exclude_if=lambda value: not value)

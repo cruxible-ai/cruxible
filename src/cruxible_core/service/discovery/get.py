@@ -1949,6 +1949,7 @@ def _proposal_card(
         admitted_at=entry.admitted_at,
         rationale=None if admission is None else admission.rationale,
         originating_line=None if admission is None else admission.originating_line,
+        generation=entry.accepted_generation,
         changes=tuple(changes),
         refusal=refusal,
         next=() if step is None else (_render_proposal_step(surface, step, resolved.identity),),

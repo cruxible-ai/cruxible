@@ -72554,6 +72554,18 @@
           "ProposalListEntry": {
             "additionalProperties": false,
             "properties": {
+              "accepted_generation": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Accepted Generation"
+              },
               "actor_id": {
                 "anyOf": [
                   {
@@ -72759,6 +72771,26 @@
     },
     "ProposalListEntry": {
       "fields": {
+        "accepted_generation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "accepted_generation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Accepted Generation"
+          }
+        },
         "actor_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -72971,6 +73003,18 @@
       "json_schema": {
         "additionalProperties": false,
         "properties": {
+          "accepted_generation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Accepted Generation"
+          },
           "actor_id": {
             "anyOf": [
               {
