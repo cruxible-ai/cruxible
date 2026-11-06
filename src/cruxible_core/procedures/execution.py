@@ -611,6 +611,12 @@ class ProcedureRunAdmission(_StrictExecutionModel):
     investigation: InvestigationBinding | None = None
     trigger_binding: LineTriggerBinding | None = None
     parent_binding: ProcedureParentBindingV1 | None = None
+    #: A manual Line run on other parameters than its Line's (D-R39): the digest
+    #: of its Line spec and its parameters. It runs without the Line's mandate,
+    #: and this is its authority basis instead: propose, never settle.
+    parameter_override_digest: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     admitted_at: datetime
     semantic_replay_key_digest: str
     admission_binding_digest: str
@@ -634,6 +640,7 @@ class ProcedureRunAdmission(_StrictExecutionModel):
         "sensitivity_policy_digest",
         "mandate_coordinate_digest",
         "calibration_coordinate_digest",
+        "parameter_override_digest",
         "semantic_replay_key_digest",
         "admission_binding_digest",
     )
@@ -707,6 +714,10 @@ class ProcedureRunAdmission(_StrictExecutionModel):
         if self.accepted_coordinate != self.bound_coordinate:
             raise ValueError("admission bound and accepted coordinates differ")
         validate_run_input_vector(self.run_inputs, expected_accepted=self.accepted_coordinate)
+        if self.parameter_override_digest is not None and (
+            self.invocation_origin != "line" or self.parent_binding is not None
+        ):
+            raise ValueError("only a root Line run overrides its Line's parameters")
         self._plan_shape()
         if bool(self.exhaust_inputs) != (self.exhaust_access_binding_digest is not None):
             raise ValueError(
@@ -1649,6 +1660,13 @@ def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmission) -> st
             "parent_binding": None
             if admission.parent_binding is None
             else admission.parent_binding.model_dump(mode="json"),
+            # Present only on an overridden Line run (D-R39), so every other
+            # run keeps its identity.
+            **(
+                {}
+                if admission.parameter_override_digest is None
+                else {"parameter_override_digest": admission.parameter_override_digest}
+            ),
         },
     ).tagged
 
@@ -5887,6 +5905,9 @@ class ProcedureExecutor:
         # has no accepted Line), but it still builds a real v2 request under
         # its own ephemeral Line spec -- the only authority basis it has.
         v2_capable = admission.plans_providers or self.ephemeral_spec_digest is not None
+        # An overridden Line run's authority basis is its override (D-R39), as a
+        # direct run's is its ephemeral spec (C4): propose, never settle.
+        ephemeral_authority = self.ephemeral_spec_digest or admission.parameter_override_digest
         if v2_capable and isinstance(node, CaptureEgressNode):
             return (
                 build_terminal_egress_request_v2(
@@ -5921,9 +5942,7 @@ class ProcedureExecutor:
                     admission=admission,
                     procedure_mandate_digest=prepared.procedure_mandate_digest,
                     ephemeral_spec_digest=(
-                        self.ephemeral_spec_digest
-                        if prepared.procedure_mandate_digest is None
-                        else None
+                        ephemeral_authority if prepared.procedure_mandate_digest is None else None
                     ),
                     calibration_reading_digests=(),
                     target_paths=prepared.target_paths,

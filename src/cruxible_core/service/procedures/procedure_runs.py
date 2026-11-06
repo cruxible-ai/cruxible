@@ -209,6 +209,7 @@ from cruxible_core.procedures.acquisition import (
 )
 from cruxible_core.procedures.claims_context import AcceptedClaimsContext
 from cruxible_core.procedures.egress import (
+    EPHEMERAL_RUN_RUNG_CEILING,
     SERVED_AUTHORITY_TERMS,
     CaptureTerminalEgressSink,
     PreparedTerminalEgressV1,
@@ -643,6 +644,21 @@ class LineRunRequest(_StrictProcedureSurfaceModel):
             "skew bound refuses."
         ),
     )
+    parameters: dict[str, object] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "Per-run values over the Line's parameters (checked against the Procedure's "
+            "params Contract). A run whose parameters differ from the Line's runs without "
+            "the Line's mandate: it may propose, never settle. Triggers always run on the "
+            "Line's own parameters."
+        ),
+    )
+
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def _parameters(cls, value: object) -> object:
+        return None if value is None else normalize_canonical(value)
 
     @field_validator("line")
     @classmethod
@@ -3786,9 +3802,27 @@ def _run_playbill_line(
             key: value for key, value in accepted_line.line.bindings.items() if "." not in key
         },
     )
+    # A Line supplies the Procedure's parameters; a Line run's input is empty. A
+    # manual run may override them (D-R39): the override is the run's own
+    # invocation input, so it is in the run's identity, and the run then runs
+    # without the Line's mandate, capped at propose.
+    supplied = accepted_line.line.parameters
+    if not isinstance(supplied, dict):  # the Line law accepts a record only
+        raise ExecutionError("accepted Line parameters are not a record")
+    if request.parameters is not None and trigger_fire is not None:
+        raise ExecutionError("a Trigger's occurrence runs on its Line's own parameters")
+    pinned_parameters = accepted.procedure.definition.effective_parameters(supplied)
+    line_parameters = accepted.procedure.definition.effective_parameters(
+        {**supplied, **(request.parameters or {})}
+    )
+    parameters_overridden = line_parameters != pinned_parameters
     require_run_permission(
         "cruxible_line_run",
-        target_rung=line_authority_rung(accepted_line, accepted),
+        target_rung=(
+            min(line_authority_rung(accepted_line, accepted), EPHEMERAL_RUN_RUNG_CEILING)
+            if parameters_overridden
+            else line_authority_rung(accepted_line, accepted)
+        ),
         caller_rung=caller_rung,
     )
     if (
@@ -3882,7 +3916,11 @@ def _run_playbill_line(
         coordinate=coordinate,
         evaluation_time=evaluation_time,
     )
-    if not mandates and line_authority_rung(accepted_line, accepted) > 1:
+    if (
+        not mandates
+        and not parameters_overridden
+        and line_authority_rung(accepted_line, accepted) > 1
+    ):
         return _line_refusal_state(
             accepted,
             accepted_line,
@@ -4361,11 +4399,6 @@ def _run_playbill_line(
             message="The accepted Provider closure for this Line is incomplete.",
             details={"reason": str(exc), "repair": "Accept the Provider closure this graph pins."},
         )
-    # A Line supplies the Procedure's parameters; a Line run's input is empty.
-    supplied = accepted_line.line.parameters
-    if not isinstance(supplied, dict):  # the Line law accepts a record only
-        raise ExecutionError("accepted Line parameters are not a record")
-    line_parameters = accepted.procedure.definition.effective_parameters(supplied)
     plan_digest = procedure_acquisition_plan_digest(plan)
     try:
         materials = _line_state_materials(
@@ -4398,12 +4431,14 @@ def _run_playbill_line(
         )
     full_pins = accepted.procedure.pins
     node_pin_sets = procedure_node_pin_sets(accepted)
+    # An overridden run binds none of the Line's mandates (D-R39).
+    run_mandates = () if parameters_overridden else mandates
     mandate_coordinate_digest = typed_digest(
         Sha256Value,
         "playbill-line-mandate-coordinate-v1",
         {
             "accepted_coordinate": accepted_coordinate.model_dump(mode="json"),
-            "mandates": [digest for digest, _mandate in mandates],
+            "mandates": [digest for digest, _mandate in run_mandates],
         },
     ).tagged
     sensitivity_policy_digest = typed_digest(
@@ -4468,6 +4503,18 @@ def _run_playbill_line(
             "sensitivity_policy_digest": sensitivity_policy_digest,
             "mandate_coordinate_digest": mandate_coordinate_digest,
             "calibration_coordinate_digest": calibration_coordinate_digest,
+            "parameter_override_digest": (
+                typed_digest(
+                    Sha256Value,
+                    "playbill-line-parameter-override-v1",
+                    {
+                        "line_spec_digest": accepted_line.artifact_digest,
+                        "parameters": line_parameters,
+                    },
+                ).tagged
+                if parameters_overridden
+                else None
+            ),
             "admitted_at": evaluation_time,
         }
     )
@@ -4522,7 +4569,7 @@ def _run_playbill_line(
     # An observe-only Line runs with no mandate; its effective rung is then
     # capped at the mandate-free ceiling, which is observe.
     mandate_rung = max(
-        (procedure_mandate_rung(mandate) for _digest, mandate in mandates), default=None
+        (procedure_mandate_rung(mandate) for _digest, mandate in run_mandates), default=None
     )
     effective_rung = compute_effective_rung(
         procedure_terminal_capability=accepted.procedure.definition.terminal_capability,
@@ -4541,6 +4588,7 @@ def _run_playbill_line(
         calibration_coordinate_digest=calibration_coordinate_digest,
         procedure_mandate_rung=mandate_rung,
         caller_tier_rung=caller_rung,
+        parameters_overridden=parameters_overridden,
     )
     if investigation is not None or trigger_binding is not None:
         prepared = bind_prepared_investigation(
@@ -4581,7 +4629,7 @@ def _run_playbill_line(
                 producer_binding_digest=accepted.artifact_digest,
             ),
             proposal=ProposalTerminalEgressSink(
-                instance=instance, accepted_mandates=dict(mandates)
+                instance=instance, accepted_mandates=dict(run_mandates)
             ),
             inbox=InboxTerminalEgressSink(
                 store=LineInboxStore(instance),
@@ -4651,7 +4699,7 @@ def _run_playbill_line(
                     provider_runtime_operator,
                     workspace_file_reader,
                     _DeterministicClock(evaluation_time),
-                    mandates=dict(mandates),
+                    mandates=dict(run_mandates),
                     bindings=dict(accepted_line.line.bindings),
                     acquisition=dict(accepted_line.line.acquisition),
                 ),

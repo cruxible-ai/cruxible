@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-02:core-exec",
-    "surface_digest": "sha256:cc9c8abbea253d12f4e4d39a8834cc4a8d67f34429b2c09713833da64fbd58be"
+    "surface_digest": "sha256:f01d977c5c567fa4c33de656c4018ad88e8793f6b2c239abaa516db5ab0c505a"
   },
   "surface": {
     "cli_leaves": [
@@ -1604,7 +1604,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/lines/{line}/runs",
         "request_model": "cruxible_core.service.playbill_procedure_runs.LineRunRequest",
-        "request_schema_digest": "sha256:e19d66a6235f052cfb0e1563de6632ca448b4550019dc573e583d66e492f7bc9",
+        "request_schema_digest": "sha256:f9360750a34aa61c3f2d35598e6e4eb548192185bc5376ea138833057f6feff6",
         "response_model": "cruxible_client.contracts.ProcedureRunState",
         "response_schema_digest": "sha256:55942c6cc72a1177a1a195e4d920fb42768a5cf52bc214ce531298c7382c8736"
       },
@@ -2569,7 +2569,7 @@
           "run_line"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_line_run",
-        "input_schema_digest": "sha256:1076543b7c6eaf77e6ef5000f063104c7c58a12a3ea1e2946465defa431933f9",
+        "input_schema_digest": "sha256:f0671802cb81791cef6038c088f1037c42346620977a8c24956bf557458724f1",
         "name": "cruxible_line_run",
         "output_schema_digest": "sha256:a0b68fec6656312b3842c195a5cef8619bc065e5da8fb9dd2e7ac5d64961b062",
         "permission": "READ_ONLY"

@@ -2443,7 +2443,7 @@ PRD-c1… rollout-healthy procedure_unit satisfied run=RUN-3f…
 cruxible line enable LINE [--dry-run|--commit] [--at OID] [--json]
 cruxible line disable LINE [--dry-run|--commit] [--at OID] [--json]
 cruxible line run LINE [--event FILE|-] [--repeat] [--resolution-contract FILE|-]
-  [--occurrence-id ID] [--evaluation-time TS] [--json]
+  [--occurrence-id ID] [--evaluation-time TS] [--parameters FILE|-] [--json]
 cruxible line evaluate LINE [--since TS --until TS] [--dry-run | --dispatch] [--limit 100]
   [--cursor CURSOR] [--json]
 cruxible line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit N] [--json]
@@ -2455,6 +2455,10 @@ Manual `run --occurrence-id` only asserts the id derived at admission, including
 that admission's daemon evaluation instant. A later retry derives a different
 manual id. Select retained pending work with `line dispatch --occurrence-id ID`,
 using an id shown by `line evaluate` or `get Line:NAME`.
+`run --parameters` overrides the Line's parameters for that one run, checked
+against the Procedure's params Contract. A run on other parameters than the
+Line's runs without the Line's mandate, so it can propose but never settle.
+Triggers always run on the Line's own parameters.
 `evaluate --dispatch` does both in one command: it evaluates every page of the
 range (following `--cursor` itself, with the same `--until`), then dispatches
 each occurrence that evaluation made pending, one by one, and reports both

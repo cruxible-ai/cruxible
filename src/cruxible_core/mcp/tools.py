@@ -1670,6 +1670,16 @@ def register_tools(
         evaluation_time: str | None = None,
         occurrence_id: str | None = None,
         resolution_contract: contracts.ResolutionContractReference | None = None,
+        parameters: Annotated[
+            JsonValue,
+            Field(
+                description=(
+                    "Parameter values (an object) over the Line's, for this run only; checked "
+                    "against the Procedure's params Contract. A run on other parameters runs "
+                    "without the Line's mandate: it may propose, never settle."
+                )
+            ),
+        ] = None,
     ) -> contracts.ProcedureRunState:
         """Run an accepted Line once now, as a manual occurrence; never a Trigger's.
 
@@ -1677,6 +1687,9 @@ def register_tools(
         ``repeat`` runs an event its Triggers already admitted again.
         ``occurrence_id`` asserts this admission, including its daemon instant;
         use line_dispatch to select a retained pending occurrence.
+        ``parameters`` override the Line's for this run only (checked against
+        the Procedure's params Contract); a run on other parameters runs
+        without the Line's mandate, so it may propose but never settle.
         """
         return handlers.handle_playbill_line_run(
             require_instance_id(instance_id),
@@ -1686,6 +1699,7 @@ def register_tools(
             resolution_contract=resolution_contract,
             event=event,
             repeat=repeat,
+            parameters=parameters,
         )
 
     @_tool

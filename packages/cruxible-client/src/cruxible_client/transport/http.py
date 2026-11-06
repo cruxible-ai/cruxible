@@ -1776,10 +1776,12 @@ class CruxibleClient:
         resolution_contract: contracts.ResolutionContractReference | None = None,
         event: contracts.TriggerEventReference | None = None,
         repeat: bool = False,
+        parameters: Mapping[str, Any] | None = None,
     ) -> contracts.ProcedureRunState:
         response = self._client.post(
             f"/api/v1/{instance_id}/lines/{line}/runs",
             json={
+                **({"parameters": dict(parameters)} if parameters is not None else {}),
                 **(
                     {"resolution_contract": resolution_contract.model_dump(mode="json")}
                     if resolution_contract is not None

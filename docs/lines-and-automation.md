@@ -172,8 +172,11 @@ Capture list: sha256:75f0fda7…
 Proposal settle: sha256:84437408… candidate sha256:14fb95b1… (settle fell back: cruxible.settle.authority_capped_by_line_max_authority)
 ~~~
 
-Its Line is capped at `propose`, so the settle step proposed. The proposal
-reads like anyone's, with the run that made it and each item's reason:
+Its Line is capped at `propose`, so the settle step proposed. `line run
+--parameters FILE` runs it once on other parameter values (another file, say):
+that run is not the one the Line's mandate covers, so it proposes and never
+settles. The proposal reads like anyone's, with the run that made it and each
+item's reason:
 
 ~~~text
 $ cruxible proposal review sha256:84437408…

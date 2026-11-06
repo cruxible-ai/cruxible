@@ -1620,6 +1620,7 @@ def handle_playbill_line_run(
     resolution_contract: contracts.ResolutionContractReference | None = None,
     event: contracts.TriggerEventReference | None = None,
     repeat: bool = False,
+    parameters: object = None,
 ) -> contracts.ProcedureRunState:
     request = LineRunRequest.model_validate(
         {
@@ -1627,6 +1628,7 @@ def handle_playbill_line_run(
             "resolution_contract": resolution_contract,
             "event": event,
             "repeat": repeat,
+            "parameters": parameters,
             "occurrence_id": occurrence_id,
             "evaluation_time": (
                 None if evaluation_time is None else parse_datetime(evaluation_time)
@@ -1639,6 +1641,7 @@ def handle_playbill_line_run(
             resolution_contract=resolution_contract,
             event=event,
             repeat=repeat,
+            parameters=request.parameters,
             line=line,
             occurrence_id=request.occurrence_id,
             evaluation_time=(

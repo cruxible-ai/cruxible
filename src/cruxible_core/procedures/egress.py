@@ -350,7 +350,20 @@ def _mandate_term(
     mandate_coordinate_digest: str,
     procedure_mandate_rung: int | None,
     caller_tier_rung: int | None = None,
+    parameters_overridden: bool = False,
 ) -> EffectiveRungTermReadingV1:
+    if parameters_overridden:
+        # D-R39: a run on other parameters than its Line's is not the run the
+        # Line's mandate covers. It proposes in full, as a direct run does.
+        return EffectiveRungTermReadingV1(
+            term="mandate_grant",
+            rung=EPHEMERAL_RUN_RUNG_CEILING,
+            reason=(
+                "This run overrides its Line's parameters, so it runs without the Line's "
+                "mandate: it may propose, never settle."
+            ),
+            basis_digest=mandate_coordinate_digest,
+        )
     if procedure_mandate_rung is None:
         return EffectiveRungTermReadingV1(
             term="mandate_grant",
@@ -397,12 +410,15 @@ def compute_effective_rung(
     calibration_coordinate_digest: str,
     procedure_mandate_rung: int | None = None,
     caller_tier_rung: int | None = None,
+    parameters_overridden: bool = False,
 ) -> EffectiveRungV1:
     """Fold the five §8.5.1 terms; each may narrow the result and none may widen it.
 
     ``procedure_mandate_rung`` is the rung of the exact accepted Procedure
     mandate bound to this run; an absent mandate leaves
-    :data:`MANDATE_FREE_RUNG_CEILING` untouched.  No calibration cap is
+    :data:`MANDATE_FREE_RUNG_CEILING` untouched. A manual run that overrides
+    its Line's parameters (``parameters_overridden``, D-R39) binds no mandate
+    and is capped at propose.  No calibration cap is
     registered, so the calibration term reads rung 3 and never narrows.
     """
 
@@ -433,6 +449,7 @@ def compute_effective_rung(
             mandate_coordinate_digest=mandate_coordinate_digest,
             procedure_mandate_rung=procedure_mandate_rung,
             caller_tier_rung=caller_tier_rung,
+            parameters_overridden=parameters_overridden,
         ),
         EffectiveRungTermReadingV1(
             term="calibration",
@@ -1456,7 +1473,15 @@ def require_procedure_mandate(
             ),
         )
     if request.ephemeral_spec_digest is not None:
-        if line_identity is not None or line_digest is not None:
+        # A Line run claims ephemeral authority only as the override it was
+        # admitted with (D-R39): its parameters are not the ones its Line's
+        # mandate covers, so it proposes on its own, never settles.
+        overridden = (
+            admission.parameter_override_digest is not None
+            and admission.parent_binding is None
+            and request.ephemeral_spec_digest == admission.parameter_override_digest
+        )
+        if (line_identity is not None or line_digest is not None) and not overridden:
             raise TerminalAuthorityRefusal(
                 "procedure_mandate_line_mismatch",
                 "Ephemeral authority is claimed by a run admitted under an accepted Line.",
