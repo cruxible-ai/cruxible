@@ -99,6 +99,131 @@ def executor_only_steps() -> Iterator[None]:
         yield
 
 
+# -- closed step kinds through the builder (R-ON4) ------------------------------------
+#
+# The SDK ``Sequence`` has no builder for the step kinds the template closes
+# (project, guard, halt, invoke, select, repeat, emit and the closed transforms).
+# An ``executor_only`` test that composes one with open steps appends it here.
+
+
+def closed_step(
+    plan: Any, step: Any, *, name: str | None = None, fields: tuple[str, ...] | None = None
+) -> Any:
+    """Append ``step`` to a ``Sequence``; a value step returns its ``Handle``."""
+
+    from cruxible_client.authoring.procedures import Handle
+
+    plan._steps.append(step)  # noqa: SLF001
+    return None if name is None else Handle("step", step=name, fields=fields)
+
+
+def project(
+    plan: Any,
+    name: str,
+    *,
+    fields: Any = None,
+    literal: object = None,
+    output: Mapping[str, Any] | None = None,
+    leaf: bool = False,
+    id: str | None = None,
+    next: str | None = None,
+) -> Any:
+    step = ProjectStep.model_validate(
+        dict(
+            project=name,
+            fields=dict(fields) if isinstance(fields, Mapping) else fields,
+            literal=literal,
+            output=None if output is None else dict(output),
+            leaf=leaf,
+            id=id,
+            next=next,
+        )
+    )
+    known = (
+        tuple(output)
+        if output is not None
+        else tuple(fields)
+        if isinstance(fields, Mapping)
+        else None
+    )
+    return closed_step(plan, step, name=name, fields=known)
+
+
+def emit(
+    plan: Any, capture_contract: str, *, input: Any, result: Any, id: str | None = None
+) -> None:
+    from cruxible_client.contracts.procedures.authored import EmitStep
+
+    closed_step(plan, EmitStep(emit=capture_contract, input=input, result=result, id=id))
+
+
+def guard(
+    plan: Any,
+    predicate: Any,
+    *,
+    then: Any = None,
+    else_: Any = None,
+    id: str | None = None,
+) -> None:
+    from cruxible_client.contracts.procedures.authored import GuardStep
+
+    data: dict[str, Any] = {"guard": predicate, "then": then, "id": id}
+    if else_ is not None:
+        data["else"] = else_
+    closed_step(plan, GuardStep.model_validate(data))
+
+
+def halt_step(
+    plan: Any, reason: str | None, *, message: str | None = None, id: str | None = None
+) -> None:
+    from cruxible_client.contracts.procedures.authored import HaltStep
+
+    closed_step(plan, HaltStep(halt=reason, message=message, id=id))
+
+
+def invoke(
+    plan: Any,
+    procedure: str,
+    *,
+    input: Any,
+    as_: str,
+    params: Mapping[str, Any] | None = None,
+    id: str | None = None,
+    next: str | None = None,
+) -> Any:
+    from cruxible_client.contracts.procedures.authored import InvokeStep
+
+    step = InvokeStep.model_validate(
+        {
+            "invoke": procedure,
+            "input": input,
+            "params": dict(params or {}),
+            "as": as_,
+            "id": id,
+            "next": next,
+        }
+    )
+    return closed_step(plan, step, name=as_)
+
+
+def abort(code: str, message: str) -> Any:
+    from cruxible_client.contracts.procedures.authored import AbortAction, AbortDetail
+
+    return AbortAction(abort=AbortDetail(code=code, message=message))
+
+
+def halt(reason: str | None, *, message: str | None = None, id: str | None = None) -> Any:
+    from cruxible_client.contracts.procedures.authored import HaltAction
+
+    return HaltAction(halt=reason, message=message, id=id)
+
+
+def goto(step: str) -> Any:
+    from cruxible_client.contracts.procedures.authored import GotoAction
+
+    return GotoAction(goto=step)
+
+
 def procedure_spec(
     procedure: str | None = None,
     *,

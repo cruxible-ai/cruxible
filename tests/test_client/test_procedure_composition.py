@@ -8,11 +8,8 @@ from cruxible_client.authoring.procedures import (
     ProcedureCompositionError,
     ProcedureLimits,
     Sequence,
-    abort,
     eq,
-    goto,
     gt,
-    halt,
     item,
     lower_procedure_spec,
 )
@@ -21,6 +18,7 @@ from cruxible_client.contracts.procedures.authored import ProcedureSpecError
 from cruxible_client.contracts.provider_operations import ProcedureSlot
 from cruxible_client.contracts.refs import Ref, step_ref
 from cruxible_client.contracts.shapes import Contract
+from tests.support.procedures import abort, emit, goto, guard, halt, halt_step, project
 
 # Executor-only fixtures: these tests author Procedure step kinds the template
 # closes at authoring (D-R37 h1) to cover their executor handlers (h3).
@@ -51,7 +49,7 @@ def sequence(**kwargs):
 
 def test_a_sequence_states_one_spec_and_previews_it_with_the_shared_lowering():
     plan = sequence(slots=SLOTS)
-    first = plan.project("first", fields={"count": 1}, output={"count": "int"})
+    first = project(plan, "first", fields={"count": 1}, output={"count": "int"})
     plan.call("second", slot=PROVIDER_SLOT, input=first.whole)
     preview = plan.preview()
     assert preview.ready_for_prepare, preview.errors
@@ -91,7 +89,7 @@ def test_handles_are_typed_refs_checked_against_the_fields_a_step_produces():
     )
     with pytest.raises(KeyError, match="did you mean count"):
         answer["cuont"]
-    shaped = plan.project("shaped", fields={"count": answer["count"]}, output={"count": "int"})
+    shaped = project(plan, "shaped", fields={"count": answer["count"]}, output={"count": "int"})
     with pytest.raises(KeyError, match="no field 'label'"):
         shaped["label"]
     assert plan.params["limit"].graph_text() == "$params.limit"
@@ -111,8 +109,8 @@ def test_source_project_emit_matches_security_dogfood_shape():
         input={"url": "https://example.org"},
         slot=PROVIDER_SLOT,
     )
-    plan.project("summary", output={"count": "int"}, fields={"count": 1})
-    plan.emit("security.evidence", input=fetch.whole, result=step_ref("summary"), id="emit")
+    project(plan, "summary", output={"count": "int"}, fields={"count": 1})
+    emit(plan, "security.evidence", input=fetch.whole, result=step_ref("summary"), id="emit")
     preview = plan.preview()
     assert preview.ready_for_prepare, preview.errors
     assert preview.terminals == ("emit",)
@@ -142,8 +140,8 @@ def test_existing_node_identities_survive_sequence_adoption():
         slot=PROVIDER_SLOT,
         input={},
     )
-    plan.project("result", id="retain", next="emit", fields={"count": 1})
-    plan.emit("evidence", input=observation.whole, result=step_ref("result"), id="emit")
+    project(plan, "result", id="retain", next="emit", fields={"count": 1})
+    emit(plan, "evidence", input=observation.whole, result=step_ref("result"), id="emit")
     preview = plan.preview()
     assert preview.ready_for_prepare, preview.errors
     assert preview.edges == {"fetch": {"next": "retain"}, "retain": {"next": "emit"}, "emit": {}}
@@ -154,30 +152,30 @@ def test_existing_node_identities_survive_sequence_adoption():
 
     # Whole-output wiring follows aliases, not node identities.
     calls = sequence(slots=SLOTS)
-    value = calls.project("value", id="produce", fields={"count": 1})
+    value = project(calls, "value", id="produce", fields={"count": 1})
     calls.call("answer", id="consume", slot=PROVIDER_SLOT, input=value.whole)
     assert calls.preview().ready_for_prepare
     assert calls.preview().nodes[1]["input"] == "$steps.value"
     clash = sequence(slots=SLOTS)
-    value = clash.project("value", id="produce", fields={"count": 1})
+    value = project(clash, "value", id="produce", fields={"count": 1})
     clash.call("answer", id="produce", slot=PROVIDER_SLOT, input=value.whole)
     assert not clash.preview().ready_for_prepare
 
 
 def test_declared_fields_are_checked_against_their_literal_values():
     plan = sequence()
-    plan.project("bad", fields={"count": "wrong"}, output={"count": "int"})
+    project(plan, "bad", fields={"count": "wrong"}, output={"count": "int"})
     errors = plan.preview().errors
     assert [d.code for d in errors] == ["procedure_operand_type_mismatch"]
 
 
 def test_guard_branches_are_typed_actions_inspected_by_the_shared_graph_law():
     plan = sequence()
-    seed = plan.project("seed", fields={"count": 1}, output={"count": "int"})
-    plan.guard(gt(seed["count"], 0), then=goto("yes"), else_=goto("no"), id="check")
-    yes = plan.project("yes", fields={"count": 2}, next="emit")
-    plan.halt(None, id="no")
-    plan.emit("evidence", input=yes.whole, result=yes.whole, id="emit")
+    seed = project(plan, "seed", fields={"count": 1}, output={"count": "int"})
+    guard(plan, gt(seed["count"], 0), then=goto("yes"), else_=goto("no"), id="check")
+    yes = project(plan, "yes", fields={"count": 2}, next="emit")
+    halt_step(plan, None, id="no")
+    emit(plan, "evidence", input=yes.whole, result=yes.whole, id="emit")
     plan.returns(yes)
     preview = plan.preview()
     assert preview.ready_for_prepare, preview.errors
@@ -185,15 +183,15 @@ def test_guard_branches_are_typed_actions_inspected_by_the_shared_graph_law():
     assert set(preview.terminals) == {"no", "emit"}
     # An abort arm carries its typed diagnostic into the stored guard.
     aborting = sequence()
-    seed = aborting.project("seed", fields={"count": 1}, output={"count": "int"})
-    aborting.guard(gt(seed["count"], 0), else_=abort("empty", "Nothing to count"))
-    aborting.project("result", fields={"count": seed["count"]})
-    guard = aborting.preview().nodes[1]
-    assert (guard["on_false"], guard["refusal_code"]) == ("$abort", "empty")
+    seed = project(aborting, "seed", fields={"count": 1}, output={"count": "int"})
+    guard(aborting, gt(seed["count"], 0), else_=abort("empty", "Nothing to count"))
+    project(aborting, "result", fields={"count": seed["count"]})
+    guard_node = aborting.preview().nodes[1]
+    assert (guard_node["on_false"], guard_node["refusal_code"]) == ("$abort", "empty")
     halting = sequence()
-    seed = halting.project("seed", fields={"count": 1}, output={"count": "int"})
-    halting.guard(gt(seed["count"], 0), else_=halt("empty", message="Nothing remains"))
-    halting.project("result", fields={"count": seed["count"]})
+    seed = project(halting, "seed", fields={"count": 1}, output={"count": "int"})
+    guard(halting, gt(seed["count"], 0), else_=halt("empty", message="Nothing remains"))
+    project(halting, "result", fields={"count": seed["count"]})
     assert halting.preview().nodes[-1] == {
         "kind": "halt",
         "node_id": "step_2_halt",
@@ -204,26 +202,26 @@ def test_guard_branches_are_typed_actions_inspected_by_the_shared_graph_law():
 
 def test_guard_merge_rejects_branch_only_alias():
     plan = sequence()
-    plan.project("seed", fields={"count": 1}, output={"count": "int"})
-    plan.guard(eq(True, True), then=goto("yes"), else_=goto("emit"), id="check")
-    yes = plan.project("yes", fields={"count": 2})
-    plan.emit("evidence", input=yes.whole, result=yes.whole, id="emit")
+    project(plan, "seed", fields={"count": 1}, output={"count": "int"})
+    guard(plan, eq(True, True), then=goto("yes"), else_=goto("emit"), id="check")
+    yes = project(plan, "yes", fields={"count": 2})
+    emit(plan, "evidence", input=yes.whole, result=yes.whole, id="emit")
     assert any("every path" in d.message for d in plan.preview().errors)
 
 
 def _duplicate(plan):
-    plan.project("same", fields={"count": 1})
-    plan.project("same", fields={"count": 2})
+    project(plan, "same", fields={"count": 1})
+    project(plan, "same", fields={"count": 2})
 
 
 def _unreachable(plan):
-    first = plan.project("first", fields={"count": 1})
-    plan.emit("evidence", input=first.whole, result=first.whole)
-    plan.project("unreachable", fields={"count": 2})
+    first = project(plan, "first", fields={"count": 1})
+    emit(plan, "evidence", input=first.whole, result=first.whole)
+    project(plan, "unreachable", fields={"count": 2})
 
 
 def _missing_target(plan):
-    plan.project("first", fields={"count": 1}, next="missing")
+    project(plan, "first", fields={"count": 1}, next="missing")
 
 
 @pytest.mark.parametrize("compose", [_duplicate, _unreachable, _missing_target])
@@ -236,12 +234,14 @@ def test_invalid_graphs_use_shared_validator(compose):
 
 def test_a_returned_record_that_breaks_the_declared_output_is_refused():
     plan = sequence()
-    plan.project(
+    project(
+        plan,
         "first",
         fields={"count": 1},
         output={"count": "int"},
     )
-    second = plan.project(
+    second = project(
+        plan,
         "second",
         fields={"count": "x"},
         output={"count": "string"},
@@ -255,7 +255,7 @@ def test_a_returned_record_that_breaks_the_declared_output_is_refused():
 def test_a_sequence_declares_hard_caps_only():
     # The operating budget is the Line's, within these caps (B4-0 limits).
     plan = sequence(hard_caps=LIMITS)
-    plan.project("result", fields={"count": 1})
+    project(plan, "result", fields={"count": 1})
     lowered = lower_procedure_spec(plan.build().spec).definition
     assert "budget" not in lowered
     assert lowered["hard_caps"]["max_provider_calls"] == LIMITS.provider_calls
@@ -270,7 +270,7 @@ def test_sdk_changeset_carries_procedure_line_and_mandate_together():
 
     pb = object.__new__(Cruxible)  # These public builders do not require transport.
     plan = sequence()
-    plan.project("result", fields={"count": 1})
+    project(plan, "result", fields={"count": 1})
     changes = (
         ChangeSetDraft(pb)
         .procedure(definition=plan)
@@ -315,7 +315,7 @@ def test_sequence_through_sdk_authoring_acceptance_and_existing_executor(tmp_pat
     instance, owner = initialize_local(tmp_path)
     actor = AuthenticatedActor(actor_id="owner")
     plan = sequence()
-    plan.project("result", fields={"count": 7})
+    project(plan, "result", fields={"count": 7})
     draft = Cruxible.procedure(object(), definition=plan)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     compiled = coordinator.compile(
@@ -369,7 +369,7 @@ def test_claims_step_is_terminal_and_derives_maximum_authority():
         row="test.row@1",
         fields={"status": {"at": "status"}},
     )
-    plan.project("summary", output={"count": "int"}, fields={"count": 1})
+    project(plan, "summary", output={"count": "int"}, fields={"count": 1})
     plan.claims(
         (ClaimTemplateSpec(type="catalog.part.in_stock", value=True),),
         for_each=entries["records"],
@@ -392,7 +392,7 @@ def test_claims_step_is_terminal_and_derives_maximum_authority():
 
 def test_a_post_inbox_step_reading_an_unproduced_output_is_refused():
     plan = sequence()
-    plan.project("result", fields={"count": 1})
+    project(plan, "result", fields={"count": 1})
     plan.inbox(
         "test.inbox-note@1",
         fields={"note": step_ref("missing", "count")},
@@ -412,11 +412,12 @@ def test_a_valid_post_inbox_step_ends_its_path_and_preserves_its_bounds():
     from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_MAX
 
     plan = sequence()
-    listed = plan.project(
+    listed = project(
+        plan,
         "listed",
         fields={"items": [{"note": "a"}]},
     )
-    plan.project("result", fields={"count": 1})
+    project(plan, "result", fields={"count": 1})
     plan.inbox(
         "test.inbox-note@1",
         for_each=listed["items"],
@@ -467,7 +468,7 @@ def test_claims_templates_lower_typed_subject_keys_and_values():
         fields={"in_stock": {"at": "in_stock", "type": "bool"}},
         key={"part_id": {"at": "part_id"}},
     )
-    plan.project("summary", output={"count": "int"}, fields={"count": 1})
+    project(plan, "summary", output={"count": "int"}, fields={"count": 1})
     plan.claims(
         (ClaimTemplateSpec(type="catalog.part.in_stock", value=item("fields", "in_stock")),),
         for_each=entries["records"],

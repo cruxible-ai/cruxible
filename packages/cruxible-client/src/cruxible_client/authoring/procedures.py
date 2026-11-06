@@ -27,47 +27,25 @@ from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
 )
 from cruxible_client.contracts.procedures.authored import (
-    AbortAction,
-    AbortDetail,
-    AggregateSpec,
-    BranchAction,
+    OPEN_TRANSFORM_KINDS,
     CallStep,
     ClaimsStep,
     ClaimsSubjectSpec,
     ClaimTemplateSpec,
     DedupeSpec,
-    DeriveCaseSpec,
-    DeriveSpec,
-    EmitStep,
     ExtractStep,
     FieldType,
     FilterSpec,
-    GotoAction,
-    GuardStep,
-    HaltAction,
-    HaltStep,
     InboxStep,
-    InvokeStep,
-    JoinSpec,
     ProcedureLimits,
     ProcedureSpec,
     ProcedureSpecError,
-    ProjectStep,
     ReadStep,
-    RepeatBody,
-    RepeatCall,
-    RepeatStep,
-    RepeatTransform,
     ReturnFields,
     ReturnFrom,
-    SelectStep,
-    ShapeFieldSpec,
-    ShapeSpec,
     Step,
     Template,
-    TransformSpec,
     TransformStep,
-    UnionSpec,
     extract_view_fields,
     lower_procedure_spec,
     refuse_closed_steps,
@@ -82,7 +60,6 @@ from cruxible_client.contracts.procedures.models import (
     TERMINAL_NODE_KINDS,
     AuthorityVerb,
     ProcedureDefinition,
-    TransformKind,
     derived_terminal_capability,
 )
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
@@ -257,18 +234,6 @@ def not_(part: Predicate) -> Not:
 
 def count(ref: Ref) -> CountOperand:
     return CountOperand(count=ref)
-
-
-def abort(code: str, message: str) -> AbortAction:
-    return AbortAction(abort=AbortDetail(code=code, message=message))
-
-
-def halt(reason: str | None, *, message: str | None = None, id: str | None = None) -> HaltAction:
-    return HaltAction(halt=reason, message=message, id=id)
-
-
-def goto(step: str) -> GotoAction:
-    return GotoAction(goto=step)
 
 
 # -- the builder ---------------------------------------------------------------------
@@ -465,138 +430,29 @@ class Sequence:
             ),
         )
 
-    def project(
-        self,
-        name: str,
-        *,
-        fields: Mapping[str, Template] | Ref | None = None,
-        literal: object = None,
-        output: Mapping[str, FieldType] | None = None,
-        leaf: bool = False,
-        id: str | None = None,
-        next: str | None = None,
-    ) -> Handle:
-        """A typed record from run values (``fields``) or exact data (``literal``)."""
-
-        step = ProjectStep.model_validate(
-            dict(
-                project=name,
-                fields=dict(fields) if isinstance(fields, Mapping) else fields,
-                literal=literal,
-                output=None if output is None else dict(output),
-                leaf=leaf,
-                id=id,
-                next=next,
-            )
-        )
-        known = (
-            tuple(output)
-            if output is not None
-            else tuple(fields)
-            if isinstance(fields, Mapping)
-            else None
-        )
-        return self._add(step, name, known)
-
     def transform(
         self,
         name: str,
         *,
-        kind: TransformKind,
-        spec: TransformSpec,
+        kind: Literal["filter", "dedupe"],
+        spec: FilterSpec | DedupeSpec,
         id: str | None = None,
         next: str | None = None,
     ) -> Handle:
-        """A closed transform; its records are typed as they flow."""
+        """Narrow records with a filter or dedupe; their records are typed as they flow.
 
-        step = TransformStep(transform=name, kind=kind, spec=spec, id=id, next=next)
-        return self._add(step, name, None)
-
-    def invoke(
-        self,
-        procedure: str,
-        *,
-        input: Template,
-        as_: str,
-        params: Mapping[str, Template] | None = None,
-        id: str | None = None,
-        next: str | None = None,
-    ) -> Handle:
-        """Invoke an accepted Procedure under this run's limits and authority.
-
-        ``params`` are the child's parameter values, over its defaults.
+        The other transform kinds are closed (computation lives in a derive).
         """
 
-        step = InvokeStep.model_validate(
-            {
-                "invoke": procedure,
-                "input": input,
-                "params": dict(params or {}),
-                "as": as_,
-                "id": id,
-                "next": next,
-            }
-        )
-        return self._add(step, as_, None)
-
-    def select(
-        self,
-        name: str,
-        *,
-        sources: tuple[str, ...],
-        output: Mapping[str, FieldType] | None = None,
-        id: str | None = None,
-        next: str | None = None,
-    ) -> Handle:
-        """Join mutually exclusive branch producers into one value."""
-
-        step = SelectStep(
-            select=name,
-            sources=sources,
-            output=None if output is None else dict(output),
-            id=id,
-            next=next,
-        )
-        return self._add(step, name, None if output is None else tuple(output))
-
-    def repeat(
-        self,
-        name: str,
-        *,
-        max_attempts: int,
-        body: tuple[RepeatBody, ...],
-        until: Predicate,
-        id: str | None = None,
-        next: str | None = None,
-    ) -> Handle:
-        """Run ``body`` (calls and closed transforms) until ``until`` holds, bounded."""
-
-        step = RepeatStep(
-            repeat=name, max_attempts=max_attempts, body=body, until=until, id=id, next=next
-        )
+        if kind not in OPEN_TRANSFORM_KINDS:
+            raise ProcedureSpecError(
+                "procedure_step_closed",
+                name,
+                f"The {kind} transform is closed: a Procedure narrows with filter and "
+                "dedupe only. Computation lives in a provider derive.",
+            )
+        step = TransformStep(transform=name, kind=kind, spec=spec, id=id, next=next)
         return self._add(step, name, None)
-
-    # -- control and terminals ---------------------------------------------------------
-
-    def guard(
-        self,
-        predicate: Predicate,
-        *,
-        then: BranchAction | None = None,
-        else_: BranchAction | None = None,
-        id: str | None = None,
-    ) -> None:
-        """Branch: ``then`` (default: continue), ``else`` (default: abort guard_refused)."""
-
-        data: dict[str, Any] = {"guard": predicate, "then": then, "id": id}
-        if else_ is not None:
-            data["else"] = else_
-        self._steps.append(GuardStep.model_validate(data))
-
-    def halt(
-        self, reason: str | None, *, message: str | None = None, id: str | None = None
-    ) -> None:
-        self._steps.append(HaltStep(halt=reason, message=message, id=id))
 
     def inbox(
         self,
@@ -648,18 +504,6 @@ class Sequence:
                 id=id,
             )
         )
-
-    def emit(
-        self,
-        capture_contract: str,
-        *,
-        input: Template,
-        result: Template,
-        id: str | None = None,
-    ) -> None:
-        """Emit evidence as a Capture; ``result`` is the Procedure's typed return value."""
-
-        self._steps.append(EmitStep(emit=capture_contract, input=input, result=result, id=id))
 
     def returns(self, value: str | Handle | ReturnFrom | ReturnFields) -> None:
         """What the Procedure returns: a step (or its handle), or a return projection."""
@@ -746,28 +590,18 @@ class Sequence:
 
 
 __all__ = [
-    "AggregateSpec",
     "CompositionDiagnostic",
     "DedupeSpec",
-    "DeriveCaseSpec",
-    "DeriveSpec",
     "FilterSpec",
     "Handle",
-    "JoinSpec",
     "ProcedureCompositionError",
     "ProcedureLimits",
     "ProcedurePreview",
     "ProcedureSpec",
     "Ref",
-    "RepeatCall",
-    "RepeatTransform",
     "ReturnFields",
     "ReturnFrom",
     "Sequence",
-    "ShapeFieldSpec",
-    "ShapeSpec",
-    "UnionSpec",
-    "abort",
     "absent",
     "all_of",
     "any_of",
@@ -775,9 +609,7 @@ __all__ = [
     "eq",
     "field",
     "ge",
-    "goto",
     "gt",
-    "halt",
     "is_in",
     "item",
     "le",

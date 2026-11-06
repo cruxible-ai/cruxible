@@ -105,11 +105,26 @@ def test_the_authoring_input_refuses_a_closed_step_offline() -> None:
 
 
 def test_the_sdk_preview_names_the_closed_step() -> None:
+    from tests.support.procedures import project
+
     procedure = Sequence("demo", input={}, output={"n": "int"})
-    procedure.project("summary", fields={"n": 1})
+    project(procedure, "summary", fields={"n": 1})
     preview = procedure.preview()
     assert not preview.ready_for_prepare
     assert [error.code for error in preview.errors] == ["procedure_step_closed"]
+
+
+def test_the_sdk_has_no_builder_for_a_closed_step_kind() -> None:
+    """R-ON4: the closed step kinds' builder methods are cut before 0.5.0."""
+
+    import cruxible_client.authoring.procedures as builder
+
+    for method in ("project", "guard", "halt", "invoke", "select", "repeat", "emit"):
+        assert not hasattr(Sequence, method), method
+    for helper in ("abort", "goto", "halt", "ShapeSpec", "JoinSpec", "DeriveSpec"):
+        assert helper not in builder.__all__, helper
+    with pytest.raises(ValueError):
+        Sequence("demo").transform("shaped", kind="shape", spec={"fields": {}})  # type: ignore[arg-type]
 
 
 def test_the_service_authoring_path_refuses_below_the_input(tmp_path) -> None:
