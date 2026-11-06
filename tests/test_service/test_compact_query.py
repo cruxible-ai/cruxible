@@ -842,3 +842,19 @@ def test_spec_mode_clips_path_budgets_at_execution_not_in_the_spec(
     assert clipped_digest == digest
     assert (budgets.max_results, budgets.max_paths, budgets.max_paths_per_result) == (1, 1, 1)
     assert budgets.max_traversal_depth == 1
+
+
+def test_subject_valued_column_type_uses_the_type_grammar_spelling() -> None:
+    """W1: a query column's Subject type is spelled ``subject<K>`` as orient serves it."""
+
+    from cruxible_client.contracts.shapes import SubjectType, render_type
+
+    from cruxible_core.service.discovery.compact_query import _compact_columns, _CompactPlan
+
+    request = QueryRequest.model_validate({"kind": SUBJECT_KIND, "select": ["parent"]})
+    _columns_, output, _notes = _compact_columns(
+        _CompactPlan(_follow_vocabulary(), request), request
+    )
+    (column,) = output
+    assert column.type == "subject<project.batch>"
+    assert column.type == render_type(SubjectType(subject_kinds=("project.batch",)))

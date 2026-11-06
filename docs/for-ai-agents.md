@@ -134,7 +134,7 @@ Kinds (4):
   ...
   catalog.part  subjects=4  evidence=cruxible.coordinator-self-source-v1
     category  one  enum[brakes|filters|wipers|lighting]
-    fits  many  subject:catalog.vehicle  evidence=cruxible.coordinator-self-source-v1,cruxible.foreign-source.catalog,cruxible.foreign-source.fitment
+    fits  many  subject<catalog.vehicle>  evidence=cruxible.coordinator-self-source-v1,cruxible.foreign-source.catalog,cruxible.foreign-source.fitment
     ...
 Queries:
   catalog.parts_for_vehicle(vehicle: string)  The parts that fit one vehicle.
