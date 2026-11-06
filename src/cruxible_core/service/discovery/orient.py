@@ -820,6 +820,7 @@ def service_playbill_orient(
         "accepted_at": instance.accepted_evaluation_time(coordinate.git_oid),
         "evaluation_time": moment,
         "mirror_url": instance.ledger_mirror_url(),
+        "retention_generations": instance.retention.generations,
     }
     calls: list[_Call] = []
     if section == "subject_kinds":

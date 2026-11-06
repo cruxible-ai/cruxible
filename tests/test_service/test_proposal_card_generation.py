@@ -65,9 +65,7 @@ def _accept(instance: PlaybillInstance, proposal_id: str) -> int:
 
 
 def _card(instance: PlaybillInstance, proposal_id: str) -> GetProposalCard:
-    card = service_playbill_get(
-        instance, request=GetRequest(ref=proposal_id), access=_ACCESS
-    ).card
+    card = service_playbill_get(instance, request=GetRequest(ref=proposal_id), access=_ACCESS).card
     assert isinstance(card, GetProposalCard)
     return card
 

@@ -15,6 +15,7 @@ from typing import Annotated, Any, Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts import AcceptedCoordinate
+from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
     ClaimTypeContention,
@@ -22,7 +23,6 @@ from cruxible_client.contracts.claim_types import (
     EvidenceRequirement,
     RevisionEvidence,
 )
-from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.claims import ClaimRetirementReason
 from cruxible_client.contracts.doc_sections import SectionPath
 from cruxible_client.contracts.operational_reads import (

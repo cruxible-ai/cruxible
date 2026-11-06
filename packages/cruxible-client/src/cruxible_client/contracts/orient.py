@@ -742,6 +742,9 @@ class OrientResult(_StrictOrientModel):
     accepted_at: datetime
     evaluation_time: datetime
     mirror_url: str | None = Field(default=None, exclude_if=_is_none)
+    #: How many accepted generations before the head keep a ready projection
+    #: (the instance's retention setting); a read at an older one rebuilds it.
+    retention_generations: int | None = Field(default=None, ge=1, exclude_if=_is_none)
     floor: OrientFloor | None = Field(default=None, exclude_if=_is_none)
     you: OrientYou | None = Field(default=None, exclude_if=_is_none)
     kinds: tuple[OrientKindSummary, ...] | None = Field(default=None, exclude_if=_is_none)

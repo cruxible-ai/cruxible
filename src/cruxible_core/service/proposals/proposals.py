@@ -475,9 +475,7 @@ def _proposal_entries(
                 withdrawal_present=row["withdrawal_path"] is not None,
                 stale_paths=stale_paths if awaiting_readmit else (),
                 accepted_generation=(
-                    int(row["accepted_sequence"])
-                    if not missing and reason == "accepted"
-                    else None
+                    int(row["accepted_sequence"]) if not missing and reason == "accepted" else None
                 ),
             )
         )

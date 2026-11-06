@@ -28405,6 +28405,22 @@
             "title": "Duration Us"
           }
         },
+        "incomplete_captures": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "incomplete_captures",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Incomplete Captures",
+            "type": "array"
+          }
+        },
         "kind": {
           "default": null,
           "default_json_serializable": true,
@@ -28423,6 +28439,35 @@
             ],
             "default": null,
             "title": "Kind"
+          }
+        },
+        "members": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "members",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/GetRunListMember"
+            },
+            "title": "Members",
+            "type": "array"
+          }
+        },
+        "members_truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "members_truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Members Truncated",
+            "type": "boolean"
           }
         },
         "node": {
@@ -28828,6 +28873,74 @@
             "title": "ExtractRunSummary",
             "type": "object"
           },
+          "GetRunListMember": {
+            "additionalProperties": false,
+            "description": "One member of a call's ``list<capture>`` output, as the run journaled it (D-R37 a).\n\n``index`` orders the list; ``request`` is the member's identity (the request\ndigest its coordinate carries). ``status`` is core's acquisition decision:\n``selected`` (committed), ``omitted`` (dropped; the list is then\nincomplete) or ``refused``; ``reason`` is its first reason code.",
+            "properties": {
+              "capture": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Capture"
+              },
+              "field": {
+                "title": "Field",
+                "type": "string"
+              },
+              "index": {
+                "minimum": 0,
+                "title": "Index",
+                "type": "integer"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "request": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request"
+              },
+              "status": {
+                "enum": [
+                  "selected",
+                  "omitted",
+                  "defaulted",
+                  "refused"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "field",
+              "index",
+              "status"
+            ],
+            "title": "GetRunListMember",
+            "type": "object"
+          },
           "GuardOperand": {
             "additionalProperties": false,
             "description": "One comparison a guard evaluated: its operator, and its numeric or bool operands.\n\nAn operand that is anything else (a string, a list, a record) is left out;\nso is the whole comparison when neither operand is a number or a boolean.\nA number past ``NODE_SUMMARY_INT_MAX`` is left out too, and ``out_of_range``\nsays so. ``present`` and ``absent`` carry whether the reference resolved as\n``left``.",
@@ -29097,6 +29210,14 @@
             "default": null,
             "title": "Duration Us"
           },
+          "incomplete_captures": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Incomplete Captures",
+            "type": "array"
+          },
           "kind": {
             "anyOf": [
               {
@@ -29108,6 +29229,19 @@
             ],
             "default": null,
             "title": "Kind"
+          },
+          "members": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/GetRunListMember"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "members_truncated": {
+            "default": false,
+            "title": "Members Truncated",
+            "type": "boolean"
           },
           "node": {
             "title": "Node",
@@ -43537,6 +43671,27 @@
             "title": "Queries"
           }
         },
+        "retention_generations": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "retention_generations",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retention Generations"
+          }
+        },
         "runs": {
           "default": null,
           "default_json_serializable": true,
@@ -47227,6 +47382,19 @@
             ],
             "default": null,
             "title": "Queries"
+          },
+          "retention_generations": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retention Generations"
           },
           "runs": {
             "anyOf": [
@@ -64590,6 +64758,74 @@
             "title": "ExtractRunSummary",
             "type": "object"
           },
+          "GetRunListMember": {
+            "additionalProperties": false,
+            "description": "One member of a call's ``list<capture>`` output, as the run journaled it (D-R37 a).\n\n``index`` orders the list; ``request`` is the member's identity (the request\ndigest its coordinate carries). ``status`` is core's acquisition decision:\n``selected`` (committed), ``omitted`` (dropped; the list is then\nincomplete) or ``refused``; ``reason`` is its first reason code.",
+            "properties": {
+              "capture": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Capture"
+              },
+              "field": {
+                "title": "Field",
+                "type": "string"
+              },
+              "index": {
+                "minimum": 0,
+                "title": "Index",
+                "type": "integer"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "request": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request"
+              },
+              "status": {
+                "enum": [
+                  "selected",
+                  "omitted",
+                  "defaulted",
+                  "refused"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "field",
+              "index",
+              "status"
+            ],
+            "title": "GetRunListMember",
+            "type": "object"
+          },
           "GetRunNode": {
             "additionalProperties": false,
             "description": "One node that finished, in journal order.\n\n``duration_us`` is absent: the journal records every event of a run at the\nrun's evaluation instant (the deterministic clock), so per-node durations\nare not derivable from it. ``summary`` is what flowed through a node that\nsucceeded (its records, rows, Captures, branch or Claim counts), by kind;\nit is absent for a node that refused or failed, and for a kind that keeps\nnone (``project``, ``select``, ``invoke``).",
@@ -64607,6 +64843,14 @@
                 "default": null,
                 "title": "Duration Us"
               },
+              "incomplete_captures": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Incomplete Captures",
+                "type": "array"
+              },
               "kind": {
                 "anyOf": [
                   {
@@ -64618,6 +64862,19 @@
                 ],
                 "default": null,
                 "title": "Kind"
+              },
+              "members": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/GetRunListMember"
+                },
+                "title": "Members",
+                "type": "array"
+              },
+              "members_truncated": {
+                "default": false,
+                "title": "Members Truncated",
+                "type": "boolean"
               },
               "node": {
                 "title": "Node",

@@ -23,8 +23,10 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.operational_reads import (
     OPERATIONAL_CARD_LIST_LIMIT,
+    RUN_CARD_LIST_MEMBERS_MAX,
     GetProcedureRunCard,
     GetRunCurrentNode,
+    GetRunListMember,
     GetRunNode,
     GetRunOutcome,
     GetRunTrigger,
@@ -402,6 +404,7 @@ def procedure_run_card(
         )
         for stored in reversed(fired)
     ]
+    members, members_cut = _list_members(instance, journal, stream, run_id)
     status: RunStatus = "running"
     current: GetRunCurrentNode | None = None
     receipt_digest: str | None = None
@@ -445,6 +448,7 @@ def procedure_run_card(
     if locator.final_payload_digest is None:
         # A running run: what its fired nodes derive from, as journaled so far.
         withheld = run_values_withheld(instance, run_id, access)
+    nodes = _with_members(nodes, members, members_cut, completeness)
     if withheld is not None:
         # C14: values extracted from restricted Captures stay withheld, while
         # it runs and after: node summaries, the result, refusal details.
@@ -490,6 +494,102 @@ def procedure_run_card(
         withheld=withheld,
         next=tuple(next_steps),
     )
+
+
+def _list_members(
+    instance: PlaybillInstance,
+    journal: LocalJournalBackend,
+    stream: JournalStreamIdentityV1,
+    run_id: str,
+) -> tuple[dict[str, list[GetRunListMember]], bool]:
+    """Each call node's list members, from the run's ``source_acquisition`` records.
+
+    One journal-index range of this run's acquisition records, bounded by the
+    card's member limit; one payload read per record on it. A list member's
+    record names its field ``<field>/<index>``; a whole capture field has none.
+    """
+
+    stored = journal.index.select(
+        stream,
+        run_id=run_id,
+        event_kind="source_acquisition",
+        limit=RUN_CARD_LIST_MEMBERS_MAX + 1,
+    )
+    found: dict[str, list[GetRunListMember]] = {}
+    for item in stored[:RUN_CARD_LIST_MEMBERS_MAX]:
+        payload = run_payload(instance, item.record.payload_digest)
+        if not isinstance(payload, Mapping):
+            continue
+        field, slash, index = str(payload.get("field", "")).rpartition("/")
+        if not slash or not index.isdigit():
+            continue
+        decision = payload.get("decision")
+        result = payload.get("result")
+        decision = decision if isinstance(decision, Mapping) else {}
+        result = result if isinstance(result, Mapping) else {}
+        selected = list(decision.get("selected_capture_digests") or ())
+        considered = list(decision.get("considered_capture_digests") or ())
+        reasons = list(decision.get("reason_codes") or ())
+        status = decision.get("disposition")
+        if status not in ("selected", "omitted", "defaulted", "refused"):
+            continue
+        reason = reasons[0] if reasons else result.get("reason_code")
+        request = payload.get("member_request_digest")
+        found.setdefault(str(payload.get("node_id", "?")), []).append(
+            GetRunListMember(
+                field=field,
+                index=int(index),
+                capture=(selected or considered or [None])[0],
+                request=request if isinstance(request, str) else None,
+                status=status,
+                reason=reason if isinstance(reason, str) else None,
+            )
+        )
+    return found, len(stored) > RUN_CARD_LIST_MEMBERS_MAX
+
+
+def _with_members(
+    nodes: list[GetRunNode],
+    members: Mapping[str, list[GetRunListMember]],
+    truncated: bool,
+    completeness: object,
+) -> list[GetRunNode]:
+    """Attach each call's list members and the list fields it ended incomplete.
+
+    A list is incomplete when a member was dropped (``omitted``), or when the
+    finished run's completeness records the call's own ``incomplete_input``
+    (the provider's ``incomplete_captures`` word): naming fields when it does,
+    else every list the call returned.
+    """
+
+    flagged: dict[str, set[str] | None] = {}
+    for reason in getattr(completeness, "reasons", ()) or ():
+        if reason.kind != "incomplete_input":
+            continue
+        named = {name.partition(".")[2] for name in reason.inputs if "." in name}
+        held = flagged.get(reason.node, set())
+        flagged[reason.node] = None if not named or held is None else held | named
+    out = []
+    for node in nodes:
+        listed = members.get(node.node, [])
+        if not listed:
+            out.append(node)
+            continue
+        fields = {item.field for item in listed}
+        said = flagged.get(node.node, set())
+        incomplete = {item.field for item in listed if item.status == "omitted"} | (
+            fields if said is None else said & fields
+        )
+        out.append(
+            node.model_copy(
+                update={
+                    "members": tuple(sorted(listed, key=lambda item: (item.field, item.index))),
+                    "members_truncated": truncated,
+                    "incomplete_captures": tuple(sorted(incomplete)),
+                }
+            )
+        )
+    return out
 
 
 def run_arming_withheld(
