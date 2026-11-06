@@ -338,3 +338,54 @@ def test_backlinks_work_does_not_grow_with_the_number_of_claim_types(
         steps[size] = _vm_steps(instance, request)
     # Flat, not merely sublinear: 60 more ClaimTypes may add no work at all.
     assert steps[64] <= steps[4] * 1.05 + 10, steps
+
+
+def test_get_detail_backlinks_serves_the_backlinks_page(tmp_path: Path) -> None:
+    """D-R32: ``get <ref> detail=backlinks`` answers the backlinks read's pages."""
+
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    access = BodyAccessContext(principal_id="reader", can_read_body=True)
+
+    def get(ref: str, **fields):
+        return service_playbill_get(
+            instance, request=GetRequest(ref=ref, detail="backlinks", **fields), access=access
+        )
+
+    instance, _ = seed_write_surface(tmp_path)
+    write(instance, about(f"{KIND}/wi-1"), cite("wi-1", "ready"))
+    whole = get(f"{KIND}/wi-1")
+    assert whole.kind == "subject" and whole.detail == "backlinks"
+    assert whole.backlinks is not None
+    assert whole.backlinks.links == links(instance, ref=f"{KIND}/wi-1").links
+    assert not whole.truncated and whole.next_cursor is None
+    first = get(f"{KIND}/wi-1", limit=1)
+    assert first.truncated and first.next_cursor is not None
+    second = get(f"{KIND}/wi-1", limit=1, cursor=first.next_cursor)
+    assert first.backlinks is not None and second.backlinks is not None
+    assert (*first.backlinks.links, *second.backlinks.links) == whole.backlinks.links
+    assert first.coordinate == second.coordinate == whole.coordinate
+    # A ClaimType answers its guidance; a Claim refuses as a get detail.
+    guidance = get(STATUS)
+    assert guidance.kind == "claim_type" and guidance.backlinks is not None
+    with pytest.raises(ReadRefusalError) as refused:
+        get(whole.backlinks.links[1].source)
+    assert refused.value.error_code == "cruxible.get.detail_unsupported"
+
+
+def test_default_mcp_profile_reaches_backlinks_through_get(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D-R32: the default profile's ``cruxible_get`` takes ``detail="backlinks"``."""
+
+    import asyncio
+
+    from cruxible_core.mcp.server import create_server
+
+    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "default")
+    tools = {tool.name: tool for tool in asyncio.run(create_server().list_tools())}
+    assert "cruxible_backlinks" not in tools
+    detail = tools["cruxible_get"].inputSchema["properties"]["detail"]
+    assert "backlinks" in detail["enum"]

@@ -236,8 +236,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Provider:NAME[/BUILD]/Contract:<name>/v<N>, "
         "ApprovalPolicy:instance, "
         "ProcedureRuntimePolicy:instance, or a proposal id -- and want its values. detail: summary "
-        "(default card), evidence, why, history, proof (full envelope), body (Document bytes "
-        "by range). A wrong name refuses with the nearest names."
+        "(default card), evidence, why, history, incoming, runs, backlinks (notes, "
+        "Documents and cited sections pointing at a Subject; guidance Documents of a "
+        "ClaimType or Procedure), proof (full envelope), body (Document bytes by range). "
+        "A wrong name refuses with the nearest names."
     ),
     "cruxible_query": (
         "Use to answer any question over accepted state in one call. Compact: kind "

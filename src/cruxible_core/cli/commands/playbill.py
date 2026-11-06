@@ -5723,24 +5723,27 @@ def backlinks(
         f"{result.coordinate.git_oid}): {len(result.links)}"
     )
     for link in result.links:
-        where = "" if link.file is None else f" {link.file}#{'/'.join(link.section or ())}"
-        extra = [
-            item
-            for item in (
-                link.title,
-                link.subject and f"on {link.subject}",
-                link.field,
-                link.role,
-                link.drift,
-            )
-            if item
-        ]
-        click.echo(
-            f"  {link.relation} {link.source_kind} {link.source}{where}"
-            + (f"  [{'; '.join(extra)}]" if extra else "")
-        )
+        click.echo("  " + _backlink_line(link))
     if result.next_cursor is not None:
         click.echo(f"next: cruxible backlinks ... --cursor {result.next_cursor}")
+
+
+def _backlink_line(link: Any) -> str:
+    where = "" if link.file is None else f" {link.file}#{'/'.join(link.section or ())}"
+    extra = [
+        item
+        for item in (
+            link.title,
+            link.subject and f"on {link.subject}",
+            link.field,
+            link.role,
+            link.drift,
+        )
+        if item
+    ]
+    return f"{link.relation} {link.source_kind} {link.source}{where}" + (
+        f"  [{'; '.join(extra)}]" if extra else ""
+    )
 
 
 @playbill_group.command("get")
@@ -5748,7 +5751,17 @@ def backlinks(
 @click.option(
     "--detail",
     type=click.Choice(
-        ["summary", "evidence", "why", "history", "incoming", "runs", "proof", "body"]
+        [
+            "summary",
+            "evidence",
+            "why",
+            "history",
+            "incoming",
+            "runs",
+            "backlinks",
+            "proof",
+            "body",
+        ]
     ),
     default="summary",
     show_default=True,
@@ -5774,12 +5787,12 @@ def backlinks(
     "--limit",
     type=int,
     default=None,
-    help="Rows per --detail history, incoming or runs page (default 20).",
+    help="Rows per --detail history, incoming, runs or backlinks page (default 20).",
 )
 @click.option(
     "--cursor",
     default=None,
-    help="Continue --detail history, incoming or runs from its next_cursor.",
+    help="Continue --detail history, incoming, runs or backlinks from its next_cursor.",
 )
 @click.option(
     "--field",
@@ -6168,6 +6181,12 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
                 f"{run.run}  {run.status}  started {run.started_at.isoformat()}  "
                 f"nodes_done={run.nodes_done}  {run.procedure}"
             )
+        return
+    if result.backlinks is not None:
+        if not result.backlinks.links:
+            click.echo(f"(no backlinks into {result.backlinks.target})")
+        for link in result.backlinks.links:
+            click.echo(_backlink_line(link))
         return
     if result.incoming is not None:
         if not result.incoming.claims:

@@ -4349,6 +4349,10 @@ class Cruxible:
         asserting Subject, predicate and Claim of each edge pointing at it.
         ``detail="runs"`` on a Line answers its Procedure runs newest
         admission first (``GetLineRuns``), every page read.
+        ``detail="backlinks"`` on a Subject, ClaimType or Procedure answers
+        what points into it (``GetBacklinks``), every page read: notes and
+        Documents ``about`` a Subject and the sections its live Claims cite,
+        or the Documents that ``guides`` a definition.
 
         Next: ``detail="evidence"`` for what backs a Claim, ``detail="history"`` for its
         revisions, ``detail="proof"`` for the full envelope; ``card.ref`` passes the thing
@@ -4411,6 +4415,7 @@ class Cruxible:
                     result.history,
                     result.incoming,
                     result.runs,
+                    result.backlinks,
                     result.body,
                     result.why,
                     result.proof,
@@ -4636,6 +4641,24 @@ class Cruxible:
             result = result.model_copy(
                 update={
                     "incoming": result.incoming.model_copy(update={"claims": tuple(pointing)}),
+                    "truncated": False,
+                    "next_cursor": None,
+                }
+            )
+        if result.backlinks is not None:
+            # Every page, pinned to the first page's coordinate by the cursor.
+            links = list(result.backlinks.links)
+            page = result
+            while page.truncated and page.next_cursor is not None:
+                page = self._client.get(
+                    self._instance_id,
+                    request=request.model_copy(update={"at": None, "cursor": page.next_cursor}),
+                )
+                assert page.backlinks is not None
+                links.extend(page.backlinks.links)
+            result = result.model_copy(
+                update={
+                    "backlinks": result.backlinks.model_copy(update={"links": tuple(links)}),
                     "truncated": False,
                     "next_cursor": None,
                 }

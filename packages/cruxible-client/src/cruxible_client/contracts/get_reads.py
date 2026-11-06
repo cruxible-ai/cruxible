@@ -22,7 +22,9 @@ from cruxible_client.contracts.claim_types import (
     EvidenceRequirement,
     RevisionEvidence,
 )
+from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.claims import ClaimRetirementReason
+from cruxible_client.contracts.doc_sections import SectionPath
 from cruxible_client.contracts.operational_reads import (
     GetCaptureCard,
     GetCaptureErasure,
@@ -42,7 +44,9 @@ from cruxible_client.contracts.read_values import ClaimLine as ClaimLine
 from cruxible_client.contracts.read_values import ShownValue
 from cruxible_client.contracts.repairs import ServedRepair
 
-GetDetail = Literal["summary", "evidence", "why", "history", "incoming", "runs", "proof", "body"]
+GetDetail = Literal[
+    "summary", "evidence", "why", "history", "incoming", "runs", "backlinks", "proof", "body"
+]
 GetRefKind = Literal[
     "claim",
     "subject",
@@ -81,7 +85,7 @@ GET_BODY_RANGE_MAX_BYTES = 256 * 1024
 GET_HISTORY_DEFAULT_LIMIT = 20
 GET_HISTORY_MAX_LIMIT = 200
 #: The ``get`` details that page with ``limit`` and ``cursor``.
-GET_PAGED_DETAILS: tuple[str, ...] = ("history", "incoming", "runs")
+GET_PAGED_DETAILS: tuple[str, ...] = ("history", "incoming", "runs", "backlinks")
 
 # A git oid or a prefix of one; the read resolves it (at least 12 hex, unique).
 _GIT_OID = r"^[0-9a-f]{1,64}$"
@@ -89,10 +93,10 @@ _GIT_OID = r"^[0-9a-f]{1,64}$"
 # Which details apply to which kind of reference.
 GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "claim": ("summary", "evidence", "why", "history", "proof"),
-    "subject": ("summary", "why", "history", "incoming", "proof"),
-    "claim_type": ("summary", "history", "proof"),
+    "subject": ("summary", "why", "history", "incoming", "backlinks", "proof"),
+    "claim_type": ("summary", "history", "backlinks", "proof"),
     "document": ("summary", "why", "history", "proof", "body"),
-    "procedure": ("summary", "history", "proof"),
+    "procedure": ("summary", "history", "backlinks", "proof"),
     "query": ("summary", "history", "proof"),
     "capture_contract": ("summary", "history", "proof"),
     "trigger": ("summary", "history", "proof"),
@@ -154,8 +158,8 @@ class GetRequest(_StrictGetModel):
     at: AcceptedCoordinate | str | None = None
     evaluation_time: datetime | None = None
     surface: ReadSurface = "mcp"
-    # ``detail="history"``, ``"incoming"`` and ``"runs"`` page: rows per page
-    # (default 20) and the opaque ``next_cursor`` of the page before.
+    # ``detail="history"``, ``"incoming"``, ``"runs"`` and ``"backlinks"`` page:
+    # rows per page (default 20) and the opaque ``next_cursor`` of the page before.
     limit: int | None = Field(default=None, ge=1, le=GET_HISTORY_MAX_LIMIT)
     cursor: str | None = Field(default=None, min_length=1)
     # ``detail="history"`` on a Subject: only this field's events.
@@ -189,7 +193,9 @@ class GetRequest(_StrictGetModel):
         if (
             self.limit is not None or self.cursor is not None
         ) and self.detail not in GET_PAGED_DETAILS:
-            raise ValueError('limit and cursor page detail="history", "incoming" or "runs" only')
+            raise ValueError(
+                'limit and cursor page detail="history", "incoming", "runs" or "backlinks" only'
+            )
         if self.field is not None and self.detail != "history":
             raise ValueError('field narrows detail="history" on a Subject only')
         return self
@@ -852,6 +858,44 @@ class GetBody(_StrictGetModel):
     content_base64: str | None = Field(default=None, exclude_if=_omit_none)
 
 
+BacklinkRelation = Literal["cites", "about", "guides"]
+BacklinkSourceKind = Literal["Claim", "Note", "Document"]
+SectionDrift = Literal["changed_since_cited", "unchanged", "unknown"]
+
+
+class Backlink(_StrictGetModel):
+    """One pointer into a Subject, ClaimType, Procedure or workspace section."""
+
+    relation: BacklinkRelation
+    source_kind: BacklinkSourceKind
+    source: str = Field(description="CLM-…, NOTE-… or the Document's identity.")
+    title: str | None = Field(default=None, description="A Document's title.")
+    subject: str | None = Field(default=None, description="A citing Claim's Subject (kind/id).")
+    field: str | None = Field(default=None, description="A citing Claim's predicate.")
+    role: str | None = Field(default=None, description="A citation's role: evidence or copy.")
+    file: str | None = Field(default=None, description="The workspace source (files.yaml name).")
+    section: SectionPath | None = None
+    cited_digest: str | None = Field(default=None, description="The section's bytes when cited.")
+    drift: SectionDrift | None = Field(
+        default=None, description="Section rows: has the section moved since it was cited?"
+    )
+
+
+class GetBacklinks(_StrictGetModel):
+    """``detail="backlinks"`` (D-R32): one page of the pointers into the reference.
+
+    The same rows as the ``backlinks`` read: notes and Documents ``about`` a
+    Subject and the sections its live Claims cite; the Documents that ``guides``
+    a ClaimType or Procedure.
+    """
+
+    target: str = Field(description="What the links point into, as resolved.")
+    links: tuple[Backlink, ...]
+    #: C14: links citing a Capture withheld from this reader keep their relation
+    #: and source, without the section (file, heading path, cited digest).
+    withheld: BodyRestricted | None = Field(default=None, exclude_if=_omit_none)
+
+
 class GetResult(_StrictGetModel):
     tag: Literal["playbill-get-result-v1"] = "playbill-get-result-v1"
     ref: str
@@ -862,6 +906,7 @@ class GetResult(_StrictGetModel):
     history: GetHistoryAny | None = Field(default=None, exclude_if=_omit_none)
     incoming: GetIncoming | None = Field(default=None, exclude_if=_omit_none)
     runs: GetLineRuns | None = Field(default=None, exclude_if=_omit_none)
+    backlinks: GetBacklinks | None = Field(default=None, exclude_if=_omit_none)
     body: GetBody | None = Field(default=None, exclude_if=_omit_none)
     # Today's explain output, unchanged.
     why: dict[str, Any] | None = Field(default=None, exclude_if=_omit_none)
@@ -870,7 +915,8 @@ class GetResult(_StrictGetModel):
     reason: GetProposedReason | None = Field(default=None, exclude_if=_omit_none)
     # Today's full accepted envelope, unchanged.
     proof: dict[str, Any] | None = Field(default=None, exclude_if=_omit_none)
-    # Paging of ``detail="history"``, ``"incoming"`` and ``"runs"``; absent on every other detail.
+    # Paging of ``detail="history"``, ``"incoming"``, ``"runs"`` and ``"backlinks"``;
+    # absent on every other detail.
     truncated: bool | None = Field(default=None, exclude_if=_omit_none)
     next_cursor: str | None = Field(default=None, exclude_if=_omit_none)
     coordinate: GetCoordinate
@@ -918,6 +964,11 @@ class GetBatchResult(_StrictGetModel):
 
 
 __all__ = [
+    "Backlink",
+    "BacklinkRelation",
+    "BacklinkSourceKind",
+    "GetBacklinks",
+    "SectionDrift",
     "GET_BATCH_MAX_REFS",
     "GET_BODY_DEFAULT_MAX_BYTES",
     "GET_BODY_RANGE_MAX_BYTES",

@@ -1202,7 +1202,15 @@ def register_tools(
             ),
         ],
         detail: Literal[
-            "summary", "evidence", "why", "history", "incoming", "runs", "proof", "body"
+            "summary",
+            "evidence",
+            "why",
+            "history",
+            "incoming",
+            "runs",
+            "backlinks",
+            "proof",
+            "body",
         ] = "summary",
         range: Annotated[
             ByteRange | None,

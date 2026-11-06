@@ -65,6 +65,7 @@ from cruxible_client.contracts.get_reads import (
     ByteRange,
     GetApprovalPolicyCard,
     GetAttestationEvidence,
+    GetBacklinks,
     GetBody,
     GetCaptureContractCard,
     GetCaptureErasure,
@@ -3110,6 +3111,8 @@ def service_playbill_get(
     ordinary public get always keeps its nearest-name repair suggestions.
     """
 
+    if request.detail == "backlinks":
+        return _get_backlinks(instance, request, access=access)
     continuation, at = _history_continuation(instance, request)
     coordinate = resolve_read_coordinate(instance, at)
     evaluation_time = request.evaluation_time or utc_now()
@@ -3333,6 +3336,64 @@ def service_playbill_get(
         detail=request.detail,
         coordinate=GetCoordinate(git_oid=served.git_oid[:12], generation=generation),
         evaluation_time=evaluation_time,
+        **fields,
+    )
+
+
+def _get_backlinks(
+    instance: PlaybillInstance,
+    request: GetRequest,
+    *,
+    access: BodyAccessContext,
+) -> GetResult:
+    """``detail="backlinks"`` (D-R32): one page of the backlinks read, as a ``get`` answer.
+
+    The page is the ``backlinks`` read's own keyset page (and cursor), so it
+    costs the page's rows, never the target's whole link set.
+    """
+
+    from cruxible_client.contracts.backlinks import BACKLINKS_MAX_LIMIT, BacklinksRequest
+
+    from cruxible_core.service.discovery.backlinks import (
+        backlinks_of_resolved,
+        resolve_backlink_target,
+    )
+
+    backlinks_request = BacklinksRequest(
+        ref=request.ref,
+        limit=min(request.limit or GET_HISTORY_DEFAULT_LIMIT, BACKLINKS_MAX_LIMIT),
+        cursor=request.cursor,
+        at=request.at,
+        surface=request.surface,
+    )
+    resolved, coordinate = resolve_backlink_target(instance, backlinks_request, access=access)
+    allowed = GET_DETAILS_BY_KIND[resolved.kind]
+    if request.detail not in allowed:
+        raise ReadRefusalError(
+            "cruxible.get.detail_unsupported",
+            f'detail="{request.detail}" does not apply to a {resolved.kind.replace("_", " ")}; '
+            f"it takes {', '.join(allowed)}",
+            repair=RepairOperation(
+                operation="cruxible.get", arguments={"ref": resolved.display, "detail": "summary"}
+            ),
+            repair_line=f"Run {_render_get(request.surface, resolved.display)}",
+            context={"ref": resolved.display, "kind": resolved.kind, "allowed": list(allowed)},
+        )
+    page = backlinks_of_resolved(instance, resolved, request=backlinks_request, access=access)
+    fields: dict[str, Any] = {}
+    if request.full_coordinate:
+        fields["accepted_coordinate"] = ClientCoordinate.model_validate(
+            AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
+        )
+    return GetResult(
+        ref=resolved.display,
+        kind=resolved.kind,
+        detail="backlinks",
+        backlinks=GetBacklinks(target=page.target, links=page.links, withheld=page.withheld),
+        truncated=page.truncated,
+        next_cursor=page.next_cursor,
+        coordinate=page.coordinate,
+        evaluation_time=request.evaluation_time or utc_now(),
         **fields,
     )
 
