@@ -13,12 +13,14 @@ from typing import Any, Protocol
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from cruxible_client.contracts.attestation_evidence import ClaimAttestationEvidenceRequest
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestation,
     ClaimAttestationAppendRequest,
     ClaimAttestationAppendResult,
     ClaimAttestationCaptureReference,
     ClaimAttestationStatement,
+    ClaimStance,
     PreparedClaimAttestationRequest,
     claim_attestation_v2_statement_bytes,
 )
@@ -34,6 +36,7 @@ from cruxible_client.contracts.errors import SigningKeyError
 from cruxible_client.contracts.principals import PRINCIPAL_KEY_ENV
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.contracts.write import Evidence
 from cruxible_client.errors import InstanceScopeError
 
 
@@ -394,18 +397,70 @@ def append_prepared_claim_attestation(
         instance_id,
         request=ClaimAttestationAppendRequest(
             attestation=attestation,
-            capture_references=(
-                tuple(
-                    ClaimAttestationCaptureReference(capture_digest=item.capture_digest)
-                    for item in prepared.capture_references
-                )
-                if prepared.attestation_basis == "new_capture"
-                else ()
+            capture_references=tuple(
+                ClaimAttestationCaptureReference(capture_digest=item.capture_digest)
+                for item in prepared.capture_references
             ),
-            note=prepared.note,
         ),
     )
     return ClaimAttestationAppendResult.model_validate(result)
+
+
+def attest_claim(
+    client: Any,
+    instance_id: str,
+    *,
+    claim_id: str,
+    stance: ClaimStance,
+    signer: ClaimAttestationSigner,
+    attested_at: datetime,
+    because: str | None = None,
+    evidence: Evidence | None = None,
+    workspace: Path | None = None,
+    valid_until: datetime | None = None,
+    referent_coordinate: AcceptedCoordinate | None = None,
+) -> ClaimAttestationAppendResult:
+    """Attest one Claim on write's evidence options, then sign and append it once (D-R42).
+
+    ``because`` is the caller's own words, cited as a self-source Capture;
+    ``evidence`` is one write evidence option (``self``, ``section`` with
+    ``own_words``, ``file``, ``capture``, ``contract``), file and section
+    evidence observed here from ``workspace``. The daemon makes or resolves
+    those Captures at its head, which becomes the signed referent. With
+    neither, the attestation cites the Claim's own evidence.
+    """
+
+    claim = claim_id.removeprefix("Claim:")
+    captures: tuple[ClaimAttestationCaptureReference, ...] = ()
+    if because is not None or evidence is not None:
+        from cruxible_client.authoring.write_evidence import observe_evidence
+
+        if evidence is not None and workspace is not None:
+            evidence = observe_evidence(evidence, workspace=workspace)
+        made = client.prepare_claim_attestation_evidence(
+            instance_id,
+            request=ClaimAttestationEvidenceRequest(
+                claim_id=claim, because=because, evidence=evidence
+            ),
+        )
+        captures = tuple(
+            ClaimAttestationCaptureReference(capture_digest=digest)
+            for digest in made.capture_digests
+        )
+        referent_coordinate = made.referent_coordinate
+    return append_prepared_claim_attestation(
+        client,
+        instance_id,
+        prepared=PreparedClaimAttestationRequest(
+            claim_id=claim,
+            stance=stance,
+            capture_references=captures,
+            referent_coordinate=referent_coordinate,
+            attested_at=attested_at,
+            valid_until=valid_until,
+        ),
+        signer=signer,
+    )
 
 
 __all__ = [
@@ -415,5 +470,6 @@ __all__ = [
     "PRINCIPAL_KEY_ENV",
     "prepare_claim_attestation",
     "append_prepared_claim_attestation",
+    "attest_claim",
     "local_attestation_signer_from_environment",
 ]

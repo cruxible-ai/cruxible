@@ -1629,9 +1629,18 @@ when policy and your tier allow; `--no-accept` keeps it for review.
 ## claim
 
 ~~~text
-cruxible claim attest CLAIM_ID --support|--contradict|--unsure [--note TEXT]
+cruxible claim attest CLAIM_ID --support|--contradict|--unsure [--because TEXT]
+  [--evidence-file PATH#ANCHOR | --section FILE#Heading/Path [--own-words] |
+   --capture CAP-… | --evidence-contract NAME] [--workspace-root DIR]
   [--valid-until TS] [--json]
 ~~~
+
+The evidence options are `cruxible set`'s: `--because` cites your own words
+as a self-source Capture, and one of `--evidence-file`, `--section` (with
+`--own-words`, the section's text is your own words), `--capture` or
+`--evidence-contract` cites evidence. The daemon makes or resolves those
+Captures at its head and the attestation signs them; with none, it cites the
+Claim's own evidence. It stays a signed append: nothing is proposed.
 
 `claim attest` prints what it recorded (stance, Claim, time and event) and
 whether it counts toward the verdict, for example `counts toward verdict: no

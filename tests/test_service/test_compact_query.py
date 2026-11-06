@@ -848,7 +848,6 @@ def test_subject_valued_column_type_uses_the_type_grammar_spelling() -> None:
     """W1: a query column's Subject type is spelled ``subject<K>`` as orient serves it."""
 
     from cruxible_client.contracts.shapes import SubjectType, render_type
-
     from cruxible_core.service.discovery.compact_query import _compact_columns, _CompactPlan
 
     request = QueryRequest.model_validate({"kind": SUBJECT_KIND, "select": ["parent"]})

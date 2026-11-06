@@ -65,6 +65,9 @@
   "/api/v1/{instance_id}/claim-attestations": {
     "POST": "ClaimAttestationAppendResult"
   },
+  "/api/v1/{instance_id}/claim-attestations/evidence": {
+    "POST": "ClaimAttestationEvidenceResult"
+  },
   "/api/v1/{instance_id}/claim-types/migrations": {
     "POST": "ClaimTypeMigrationPreflight | ClaimTypeMigrationResult"
   },

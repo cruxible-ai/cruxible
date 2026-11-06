@@ -292,7 +292,7 @@ doesn't actually fit:
 
 ~~~text
 $ cruxible claim attest CLM-9482bb3b… --contradict \
-    --note "Tried bp-2210 on a 2019 Civic at the shop: the caliper bracket doesn't match."
+    --because "Tried bp-2210 on a 2019 Civic at the shop: the caliper bracket doesn't match."
 Recorded contradict on CLM-9482bb3b… at 2026-10-21T18:38:28Z (event sha256:…)
 counts toward verdict: no (recorded, not accepted: the verdict reads accepted attestations)
 ~~~

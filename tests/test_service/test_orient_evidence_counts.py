@@ -114,7 +114,9 @@ def test_counts_follow_writes_revisions_and_retirements(tmp_path: Path) -> None:
     _recount(instance)
     assert _served(instance)[STATUS] == (0, 2, 0)
     assert _served(instance)[MEASURED] == (1, 0, 0)
-    measured = next(change.claim for change in revised.changes if change.field in ("measured", MEASURED))
+    measured = next(
+        change.claim for change in revised.changes if change.field in ("measured", MEASURED)
+    )
     _write(instance, {"op": "retire", "target": measured, "reason": "superseded"})
     _recount(instance)
     assert _served(instance)[MEASURED] == (0, 0, 0)

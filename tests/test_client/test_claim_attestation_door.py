@@ -48,8 +48,8 @@ def test_sdk_attest_signs_with_a_real_local_key_and_appends_once(tmp_path: Path)
         clock=lambda: datetime(2026, 8, 28, 18, tzinfo=UTC),
     )
 
-    first = pb.attest(claim_id, stance="support", signer=signer, note="examined")
-    retry = pb.attest(claim_id, stance="support", signer=signer, note="examined")
+    first = pb.attest(claim_id, stance="support", signer=signer)
+    retry = pb.attest(claim_id, stance="support", signer=signer)
 
     assert retry == first
     assert len(instance.claim_attestation_evidence_store().events()) == 1

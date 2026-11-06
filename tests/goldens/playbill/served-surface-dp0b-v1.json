@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-06:core-surface",
-    "surface_digest": "sha256:91653cffbd8f38a9e21c7cf9fd4346c03d1930e5a2e36e407fdc60deb7b461b4"
+    "surface_digest": "sha256:9b976e02021bb16f686e07d5de5b7cfab5773980f4e91d9f3c2e925544bc4180"
   },
   "surface": {
     "cli_leaves": [
@@ -858,6 +858,7 @@
       "playbill_predict",
       "playbill_prediction_list",
       "playbill_prepare_approval",
+      "playbill_prepare_claim_attestation_evidence",
       "playbill_procedure_dispose",
       "playbill_procedure_measure",
       "playbill_procedure_readiness",
@@ -1111,9 +1112,21 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/claim-attestations",
         "request_model": "cruxible_client.contracts.claim_attestations.ClaimAttestationAppendRequest",
-        "request_schema_digest": "sha256:336d7a7c817e083ff2bd7f0c5da061e9ba8327f88f03ed304d1618f3f1741efd",
+        "request_schema_digest": "sha256:0570a923a97608020c0ce4b75fc516c14d0dbe16a9fbad607a54dd916b20a61e",
         "response_model": "cruxible_client.contracts.claim_attestations.ClaimAttestationAppendResult",
         "response_schema_digest": "sha256:2bf86b73b85f4070fffea7e91e0f38668b7dfed17c7cd5b3d054c1c8ed93dce2"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.prepare_claim_attestation_evidence",
+        "facade_operations": [
+          "playbill_prepare_claim_attestation_evidence"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/claim-attestations/evidence",
+        "request_model": "cruxible_client.contracts.attestation_evidence.ClaimAttestationEvidenceRequest",
+        "request_schema_digest": "sha256:242d2f1f43935eda09d0084e985257f3d49f7399f70b7b8218be7a3c2b775872",
+        "response_model": "cruxible_client.contracts.attestation_evidence.ClaimAttestationEvidenceResult",
+        "response_schema_digest": "sha256:5943fc34fc382941bef2295eb0c18f3f063940858acc6696f820db6922bc5e69"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.migrate_claim_type",
@@ -2252,14 +2265,12 @@
       },
       {
         "client_operations": [
-          "append_claim_attestation",
-          "get",
           "orient",
           "server_info",
           "whoami"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_claim_attest",
-        "input_schema_digest": "sha256:062e65a3735681da8aaae45567c0f3ae08f3d45d3788297e6e70be976b457c19",
+        "input_schema_digest": "sha256:70dbf43ecfdf5060029a756e9a3b7e199b2dad558d75cfcb0b2cde142d34b528",
         "name": "cruxible_claim_attest",
         "output_schema_digest": "sha256:ccc87e67574b1793bfc91a3c5b4b2fe3b4fc42bdaa0fd819f20ce5dec74ef3b8",
         "permission": "GOVERNED_WRITE"

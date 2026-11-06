@@ -28,7 +28,6 @@ from cruxible_client.artifacts import (
     write_layout,
 )
 from cruxible_client.authoring.attestations import (
-    append_prepared_claim_attestation,
     local_attestation_signer_from_environment,
     principal_records,
 )
@@ -91,7 +90,6 @@ from cruxible_client.contracts.capture_contract_inputs import (
 )
 from cruxible_client.contracts.claim_attestations import (
     ClaimStance,
-    PreparedClaimAttestationRequest,
 )
 from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.compact_query import QueryClaim
@@ -151,6 +149,7 @@ from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_client.contracts.write import (
     ApprovalNeeded,
     Change,
+    ContractEvidence,
     DocOp,
     FileEvidence,
     RetireRequest,
@@ -4331,7 +4330,44 @@ def run_action(
 @click.option("--support", is_flag=True)
 @click.option("--contradict", is_flag=True)
 @click.option("--unsure", is_flag=True)
-@click.option("--note")
+@click.option(
+    "--because",
+    default=None,
+    help="Your own words; cited as a self-source Capture.",
+)
+@click.option(
+    "--evidence-file",
+    default=None,
+    help="PATH#ANCHOR: cite text found once in a catalogued workspace file.",
+)
+@click.option(
+    "--section",
+    "section_ref",
+    default=None,
+    help="FILE#Heading/Path: cite a catalogued file's section (FILE# for the preamble).",
+)
+@click.option(
+    "--own-words",
+    is_flag=True,
+    help="With --section: the section's text is your own words, not observed evidence.",
+)
+@click.option(
+    "--capture",
+    default=None,
+    help="Cite an existing Capture: its handle CAP-<12+ hex>, or its sha256 digest.",
+)
+@click.option(
+    "--evidence-contract",
+    default=None,
+    help="Cite the newest verified Capture of this CaptureContract about the Claim's Subject.",
+)
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace whose file catalog --evidence-file and --section read.",
+)
 @click.option(
     "--valid-until",
     default=None,
@@ -4347,19 +4383,31 @@ def attest_claim(
     support: bool,
     contradict: bool,
     unsure: bool,
-    note: str | None,
+    because: str | None,
+    evidence_file: str | None,
+    section_ref: str | None,
+    own_words: bool,
+    capture: str | None,
+    evidence_contract: str | None,
+    workspace_root: str,
     valid_until: str | None,
     output_json: bool,
 ) -> None:
     """Sign that this caller examined the current exact Claim.
 
-    The attestation is recorded and shown on the Claim (get --detail
-    evidence). It counts toward the verdict only through the ClaimType's
-    consequence policy; with none, a standing --contradict is resurfaced in
-    `next` for an agent to judge. --unsure holds the Claim's contested `next` rows until
-    what you examined changes, instead of forcing a judgment you are not
-    confident in. --json prints the structured append result.
+    With no evidence option it cites the Claim's own evidence. --because cites
+    your own words; --evidence-file, --section (with --own-words), --capture or
+    --evidence-contract cite evidence the way `cruxible set` does. It stays a
+    signed append, never a proposal. The attestation is shown on the Claim (get
+    --detail evidence) and counts toward the verdict only through the
+    ClaimType's consequence policy; with none, a standing --contradict is
+    resurfaced in `next` for an agent to judge. --unsure holds the Claim's
+    contested `next` rows until what you examined changes. --json prints the
+    structured append result.
     """
+
+    from cruxible_client.authoring.attestations import attest_claim as attest
+    from cruxible_client.authoring.write_evidence import rebind_evidence
 
     selected = tuple(
         value
@@ -4372,6 +4420,35 @@ def attest_claim(
     )
     if len(selected) != 1:
         raise click.UsageError("choose exactly one of --support, --contradict, or --unsure")
+    given = [
+        flag
+        for flag, value in (
+            ("--evidence-file", evidence_file),
+            ("--section", section_ref),
+            ("--capture", capture),
+            ("--evidence-contract", evidence_contract),
+        )
+        if value is not None
+    ]
+    if len(given) > 1:
+        raise click.UsageError(f"pass one of {', '.join(given)}, not several")
+    if own_words and section_ref is None:
+        raise click.UsageError("--own-words applies to --section")
+    evidence: Any = None
+    try:
+        if evidence_contract is not None:
+            evidence = ContractEvidence(contract=evidence_contract)
+        elif given:
+            evidence = rebind_evidence(
+                file=evidence_file,
+                section=section_ref,
+                capture=capture,
+                workspace=Path(workspace_root),
+            )
+            if own_words:
+                evidence = evidence.model_copy(update={"own_words": True})
+    except (ValidationError, ValueError) as exc:
+        raise click.UsageError(str(exc)) from None
     stance = selected[0]
     claim = claim_id.removeprefix("Claim:")
     attested_at = datetime.now(UTC)
@@ -4382,22 +4459,21 @@ def attest_claim(
             instance_id,
             workspace_root=_custody_workspace_root(),
         )
-        appended = append_prepared_claim_attestation(
+        appended = attest(
             client,
             instance_id,
-            prepared=PreparedClaimAttestationRequest(
-                claim_id=claim,
-                attestation_basis="examined_existing",
-                stance=cast(ClaimStance, stance),
-                attested_at=attested_at,
-                valid_until=(
-                    None
-                    if valid_until is None
-                    else datetime.fromisoformat(valid_until.replace("Z", "+00:00"))
-                ),
-                note=note,
-            ),
+            claim_id=claim,
+            stance=cast(ClaimStance, stance),
             signer=signer,
+            attested_at=attested_at,
+            because=because,
+            evidence=evidence,
+            workspace=Path(workspace_root),
+            valid_until=(
+                None
+                if valid_until is None
+                else datetime.fromisoformat(valid_until.replace("Z", "+00:00"))
+            ),
         )
         if output_json:
             return appended, None

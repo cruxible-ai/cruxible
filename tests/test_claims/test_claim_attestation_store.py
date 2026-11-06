@@ -91,21 +91,13 @@ def _store(tmp_path: Path, *, crash_hook=None) -> ClaimAttestationEvidenceStore:
 def test_append_duplicate_and_historical_prefix_are_byte_stable(tmp_path: Path) -> None:
     store = _store(tmp_path)
     first = _attestation()
-    receipt = store.append(attestation=first, verification_account=_account(first), note="seen")
-    assert (
-        store.append(
-            attestation=first,
-            verification_account=_account(first),
-            note="a retry cannot rewrite the note",
-        )
-        == receipt
-    )
+    receipt = store.append(attestation=first, verification_account=_account(first))
+    assert store.append(attestation=first, verification_account=_account(first)) == receipt
 
     second = _attestation(stance="contradict")
     second_receipt = store.append(
         attestation=second,
         verification_account=_account(second),
-        note=None,
     )
     assert second_receipt.partition_sequence == 2
     assert len(store.events(at_head=receipt.recorded_head)) == 1
@@ -114,7 +106,6 @@ def test_append_duplicate_and_historical_prefix_are_byte_stable(tmp_path: Path) 
         store.append(
             attestation=first,
             verification_account=_account(first),
-            note=None,
         ).recorded_head
         == receipt.recorded_head
     )
@@ -144,7 +135,6 @@ def test_crash_windows_are_inert_or_roll_forward(
         crashing.append(
             attestation=attestation,
             verification_account=_account(attestation),
-            note=None,
         )
 
     reopened = _store(tmp_path)
@@ -153,7 +143,6 @@ def test_crash_windows_are_inert_or_roll_forward(
         duplicate = reopened.append(
             attestation=attestation,
             verification_account=_account(attestation),
-            note=None,
         )
         assert duplicate.partition_sequence == 1
     else:
@@ -162,7 +151,6 @@ def test_crash_windows_are_inert_or_roll_forward(
             reopened.append(
                 attestation=attestation,
                 verification_account=_account(attestation),
-                note=None,
             ).partition_sequence
             == 1
         )
@@ -179,7 +167,6 @@ def test_post_chain_exception_rolls_forward_on_the_next_access(tmp_path: Path) -
         store.append(
             attestation=attestation,
             verification_account=_account(attestation),
-            note=None,
         )
     store.crash_hook = None
     # The same process re-verifies and publishes the durable event itself.
@@ -187,7 +174,6 @@ def test_post_chain_exception_rolls_forward_on_the_next_access(tmp_path: Path) -
     retried = store.append(
         attestation=attestation,
         verification_account=_account(attestation),
-        note=None,
     )
     assert retried.partition_sequence == 1
     assert len(store.events()) == 1
@@ -199,7 +185,6 @@ def test_unknown_head_and_corrupt_marker_refuse_typed(tmp_path: Path) -> None:
     receipt = store.append(
         attestation=attestation,
         verification_account=_account(attestation),
-        note=None,
     )
     with pytest.raises(ClaimAttestationStoreError, match="attestation_head_unknown"):
         store.events(at_head="sha256:" + "9" * 64)
@@ -221,13 +206,11 @@ def test_accelerator_is_verified_rebuilt_and_selects_reducer_frontier(
     first_receipt = store.append(
         attestation=first,
         verification_account=_account(first),
-        note=None,
     )
     second = _attestation(stance="contradict")
     second_receipt = store.append(
         attestation=second,
         verification_account=_account(second),
-        note=None,
     )
 
     # Every new-capture event remains outstanding even though the same principal
@@ -273,7 +256,6 @@ def test_transition_replay_refuses_repeated_event_with_unchanged_map_typed(
     receipt = store.append(
         attestation=attestation,
         verification_account=_account(attestation),
-        note=None,
     )
     current, node, _entries = _current_root_and_map(store)
     forged = store._published_root(
@@ -294,7 +276,7 @@ def test_transition_replay_refuses_unrelated_partition_map_change_typed(
 ) -> None:
     store = _store(tmp_path)
     first = _attestation()
-    store.append(attestation=first, verification_account=_account(first), note=None)
+    store.append(attestation=first, verification_account=_account(first))
     current, _node, entries = _current_root_and_map(store)
     second = _attestation(claim_id="CLM-1123456789abcdef0123456789abcdef")
 
@@ -304,7 +286,7 @@ def test_transition_replay_refuses_unrelated_partition_map_change_typed(
 
     store.crash_hook = crash
     with pytest.raises(RuntimeError, match="after_step2"):
-        store.append(attestation=second, verification_account=_account(second), note=None)
+        store.append(attestation=second, verification_account=_account(second))
     second_marker = next(
         path
         for path in (store.root / "partitions").glob("*/00000000000000000001.json")
@@ -359,17 +341,15 @@ def test_transition_replay_refuses_true_published_root_fork_typed(tmp_path: Path
     first_receipt = store.append(
         attestation=first,
         verification_account=_account(first),
-        note=None,
     )
     second = _attestation(
         claim_id="CLM-1123456789abcdef0123456789abcdef",
     )
-    store.append(attestation=second, verification_account=_account(second), note=None)
+    store.append(attestation=second, verification_account=_account(second))
     third = _attestation(attested_at=NOW + timedelta(seconds=1))
     third_receipt = store.append(
         attestation=third,
         verification_account=_account(third),
-        note=None,
     )
     full_chain = store._validated_chain(store._load_pointer().root_digest)
     first_root = full_chain.roots[1]
@@ -409,7 +389,6 @@ def test_unpublished_root_object_is_not_a_historical_read_head(tmp_path: Path) -
     receipt = store.append(
         attestation=attestation,
         verification_account=_account(attestation),
-        note=None,
     )
     current, node, _entries = _current_root_and_map(store)
     unpublished = store._published_root(
@@ -427,7 +406,7 @@ def test_unpublished_root_object_is_not_a_historical_read_head(tmp_path: Path) -
 def test_idempotency_payload_mismatch_refuses_typed(tmp_path: Path) -> None:
     store = _store(tmp_path)
     attestation = _attestation()
-    store.append(attestation=attestation, verification_account=_account(attestation), note=None)
+    store.append(attestation=attestation, verification_account=_account(attestation))
     altered = attestation.model_copy(update={"signature": "02" * 64})
 
     with pytest.raises(ClaimAttestationStoreError, match="idempotency_payload_mismatch"):
@@ -458,7 +437,6 @@ def test_partition_tip_removes_per_append_full_scan_and_cold_fold_loads_once(
         store.append(
             attestation=attestation,
             verification_account=_account(attestation),
-            note=None,
         )
         tip = store._validated_chain(store._load_pointer().root_digest).tip
         map_sizes.append(store._object_path("map-node", tip.partition_map_digest).stat().st_size)
@@ -488,10 +466,10 @@ def test_corrupt_pointer_with_two_maximal_roots_refuses_recovery_ambiguous(
 ) -> None:
     left = _store(tmp_path / "left")
     first = _attestation()
-    left.append(attestation=first, verification_account=_account(first), note=None)
+    left.append(attestation=first, verification_account=_account(first))
     right = _store(tmp_path / "right")
     second = _attestation(claim_id="CLM-1123456789abcdef0123456789abcdef")
-    right.append(attestation=second, verification_account=_account(second), note=None)
+    right.append(attestation=second, verification_account=_account(second))
 
     for relative in ("objects", "partitions"):
         shutil.copytree(right.root / relative, left.root / relative, dirs_exist_ok=True)
@@ -515,9 +493,7 @@ def test_events_after_a_root_reads_only_what_was_published_since(
             claim_id=f"CLM-{ordinal:032x}", attested_at=NOW + timedelta(seconds=ordinal)
         )
         receipts.append(
-            store.append(
-                attestation=attestation, verification_account=_account(attestation), note=None
-            )
+            store.append(attestation=attestation, verification_account=_account(attestation))
         )
     head = store.head()
     assert head == receipts[-1].current_head

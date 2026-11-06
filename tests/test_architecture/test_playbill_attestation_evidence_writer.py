@@ -140,7 +140,7 @@ def test_evidence_writer_guard_catches_a_store_bound_to_a_local(
     (source_root / "rogue.py").write_text(
         "def rogue(instance, attestation, account):\n"
         "    store = instance.claim_attestation_evidence_store()\n"
-        "    store.append(attestation=attestation, verification_account=account, note=None)\n",
+        "    store.append(attestation=attestation, verification_account=account)\n",
         encoding="utf-8",
     )
     monkeypatch.setitem(_store_gateway_calls.__globals__, "SOURCE_ROOT", source_root)

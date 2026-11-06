@@ -78,6 +78,7 @@ from cruxible_client.contracts.write import (
     CreateChange,
     CreatedSubject,
     DocOp,
+    Evidence,
     ExpectedValue,
     FileEvidence,
     NoneValue,
@@ -894,27 +895,23 @@ def register_tools(
         *,
         claim_id: str,
         stance: Literal["support", "contradict", "unsure"],
-        note: str | None = None,
-        valid_until: datetime | None = None,
-        capture_digests: Annotated[
-            list[str] | None,
+        because: Annotated[
+            str | None,
+            Field(description="Your own words; cited as a self-source Capture."),
+        ] = None,
+        evidence: Annotated[
+            Evidence | None,
             Field(
                 description=(
-                    "New Captures you examined; attests on that new evidence instead of "
-                    "the Claim's own citations."
+                    "One write evidence option: self, section (own_words), file "
+                    "(PATH#ANCHOR), capture (CAP-…/sha256) or contract. Omit both this "
+                    "and because to attest the Claim's own evidence."
                 )
             ),
         ] = None,
-        referent_coordinate: Annotated[
-            contracts.AcceptedCoordinate | None,
-            Field(description="With capture_digests: the accepted coordinate you read."),
-        ] = None,
-        attested_at: Annotated[
-            datetime | None,
-            Field(description="With capture_digests: when you observed the new Capture."),
-        ] = None,
+        valid_until: datetime | None = None,
     ) -> ClaimAttestationAppendResult:
-        """Sign that the caller examined this exact Claim, then append the evidence.
+        """Sign that the caller examined this exact Claim, then append it (never a proposal).
 
         ``unsure`` holds the Claim's contested ``next`` rows until what was examined
         changes; a hold on stale or uncovered evidence lapses at ``valid_until``,
@@ -925,11 +922,9 @@ def register_tools(
             require_instance_id(instance_id),
             claim_id,
             stance,
-            note,
-            valid_until,
-            capture_digests=capture_digests,
-            referent_coordinate=_dump(referent_coordinate),
-            attested_at=attested_at,
+            because=because,
+            evidence=None if evidence is None else _dump(evidence),
+            valid_until=valid_until,
         )
 
     @_tool

@@ -18,7 +18,6 @@ from cruxible_client import (
 )
 from cruxible_client.artifacts import unpack_artifact
 from cruxible_client.authoring.attestations import (
-    append_prepared_claim_attestation,
     local_attestation_signer_from_environment,
 )
 from cruxible_client.authoring.bind import bind_catalogued_selection_input
@@ -55,9 +54,7 @@ from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, Captu
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendResult,
-    ClaimAttestationCaptureReference,
     ClaimStance,
-    PreparedClaimAttestationRequest,
 )
 from cruxible_client.contracts.declared_blocks import (
     BlockRepinResult,
@@ -128,7 +125,6 @@ from cruxible_core.coverage.workspace import (
     observe_workspace,
 )
 from cruxible_core.errors import ConfigError, DaemonOperationScopeError, DataValidationError
-from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.mcp.daemon import (
     DaemonUnavailableError,
     configured_daemon_target,
@@ -913,76 +909,51 @@ def handle_playbill_migrate_claim_type(
     )
 
 
-def _handle_claim_attestation(
-    client: Any,
-    instance_id: str,
-    prepared: PreparedClaimAttestationRequest,
-) -> ClaimAttestationAppendResult:
-    signer = local_attestation_signer_from_environment(
-        client,
-        instance_id,
-        # A forbidden root for key custody; nothing under it is read.
-        workspace_root=mcp_workspace_root(guard=False),
-    )
-    return append_prepared_claim_attestation(
-        client,
-        instance_id,
-        prepared=prepared,
-        signer=signer,
-    )
-
-
 def handle_playbill_claim_attest(
     instance_id: str,
     claim_id: str,
     stance: ClaimStance,
-    note: str | None,
-    valid_until: datetime | None = None,
     *,
-    capture_digests: list[str] | None = None,
-    referent_coordinate: Mapping[str, Any] | None = None,
-    attested_at: datetime | None = None,
+    because: str | None = None,
+    evidence: Mapping[str, Any] | None = None,
+    valid_until: datetime | None = None,
 ) -> ClaimAttestationAppendResult:
-    """Attest the examined Claim, or a new Capture of it when capture digests are given."""
+    """Attest the Claim on write's evidence options (D-R42), or on its own evidence."""
 
-    if capture_digests is not None and not capture_digests:
-        raise DataValidationError(
-            "capture_digests must name at least one new Capture; omit it to attest the "
-            "Claim's own citations"
-        )
-    if referent_coordinate is not None and not capture_digests:
-        raise DataValidationError("referent_coordinate applies only with capture_digests")
-    if attested_at is not None and not capture_digests:
-        raise DataValidationError(
-            "attested_at applies only with capture_digests; an examined-Claim attestation "
-            "is signed at the time of the call"
-        )
+    from pydantic import TypeAdapter
+
+    from cruxible_client.authoring.attestations import attest_claim
+    from cruxible_client.contracts.write import Evidence
+
     try:
-        prepared = PreparedClaimAttestationRequest(
-            claim_id=claim_id.removeprefix("Claim:"),
-            attestation_basis="new_capture" if capture_digests else "examined_existing",
-            stance=stance,
-            capture_references=tuple(
-                ClaimAttestationCaptureReference(capture_digest=digest)
-                for digest in sorted(set(capture_digests or ()), key=lambda d: d.encode())
-            ),
-            referent_coordinate=(
-                None
-                if referent_coordinate is None
-                else AcceptedCoordinate.model_validate(referent_coordinate)
-            ),
-            attested_at=datetime.now(UTC) if attested_at is None else attested_at,
-            valid_until=valid_until,
-            note=note,
-        )
+        parsed = None if evidence is None else TypeAdapter(Evidence).validate_python(evidence)
     except ValidationError as exc:
         raise DataValidationError(
-            "cruxible_claim_attest: invalid request", errors=validation_lines(exc)
+            "cruxible_claim_attest: invalid evidence", errors=validation_lines(exc)
         ) from exc
-    return _daemon_call(
-        lambda client: _handle_claim_attestation(client, instance_id, prepared),
-        operation_name="cruxible_claim_attest",
-    )
+
+    def call(client: Any) -> ClaimAttestationAppendResult:
+        signer = local_attestation_signer_from_environment(
+            client,
+            instance_id,
+            # A forbidden root for key custody; nothing under it is read.
+            workspace_root=mcp_workspace_root(guard=False),
+        )
+        return attest_claim(
+            client,
+            instance_id,
+            claim_id=claim_id,
+            stance=stance,
+            signer=signer,
+            attested_at=datetime.now(UTC),
+            because=because,
+            evidence=parsed,
+            # File and section evidence are read here, beside the workspace.
+            workspace=mcp_workspace_root() if parsed is not None else None,
+            valid_until=valid_until,
+        )
+
+    return _daemon_call(call, operation_name="cruxible_claim_attest")
 
 
 def handle_playbill_authoring_example(

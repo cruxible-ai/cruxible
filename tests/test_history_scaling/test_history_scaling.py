@@ -187,7 +187,7 @@ def _append(store: ClaimAttestationEvidenceStore, ordinal: int) -> None:
         # A new Claim each time: the head map grows with every attested Claim.
         claim_id=f"CLM-{ordinal:032x}",
     )
-    store.append(attestation=attestation, verification_account=_account(attestation), note=None)
+    store.append(attestation=attestation, verification_account=_account(attestation))
 
 
 def test_attestation_append_and_ticks_do_not_grow_with_attestations(

@@ -953,45 +953,24 @@ attest(
     *,
     stance: ClaimStance,
     signer: ClaimAttestationSigner,
-    note: str | None = None,
+    because: str | None = None,
+    evidence: Evidence | None = None,
     valid_until: datetime | None = None,
 ) -> ClaimAttestationAppendResult
 ```
 
-Prepares the exact examined-existing Claim statement, signs locally, and appends it through the attestation service.
+Signs that the caller examined the exact Claim and appends it once. With neither `because` nor `evidence` it cites the Claim's own evidence; otherwise the daemon first makes or resolves the cited Captures from write's evidence options, at its head, and the statement signs them.
 
-**Conditions and effects:** Does not change the Claim’s statement or sign a proposal approval. Checks signer/key/ref bindings and current service authority.
+**Conditions and effects:** A signed append, never a proposal or generation; does not change the Claim's statement or sign a proposal approval. File and section evidence are read from this context's workspace; unobserved workspace evidence, or a workspace source with no accepted CaptureContract, refuses before signing.
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `claim` | Required | Claim ID or typed ClaimRef; typed refs also assert their observed coordinate. |
 | `stance` | Required | Signed attestation stance admitted by ClaimStance. |
 | `signer` | Required | Caller-provisioned signing capability of the protocol required by this method. |
-| `note` | `None` | Optional note carried by the prepared attestation request. |
+| `because` | `None` | Your own words, cited as a self-source Capture bound to the Claim. |
+| `evidence` | `None` | One write evidence option: `SelfEvidence`, `SectionEvidence` (with `own_words`), `FileEvidence`, `CaptureEvidence` or `ContractEvidence`. |
 | `valid_until` | `None` | Optional attestation expiry instant. |
-
-<a id="api-cruxible-attest-new-capture"></a>
-
-### `Cruxible.attest_new_capture`
-
-[Source](src/cruxible_client/authoring/sdk.py)
-
-```text
-attest_new_capture(
-    request: PreparedClaimAttestationRequest,
-    *,
-    signer: ClaimAttestationSigner,
-) -> ClaimAttestationAppendResult
-```
-
-Signs and appends an already-staged new-capture attestation request.
-
-**Conditions and effects:** attestation_basis must be new_capture; capture registration/acquisition is not invented by this method.
-
-| Parameter | Default | Meaning |
-|---|---|---|
-| `request` | Required | Typed request specified by the signature; new-capture attestation requires that basis. |
-| `signer` | Required | Caller-provisioned signing capability of the protocol required by this method. |
 
 <a id="api-cruxible-next"></a>
 

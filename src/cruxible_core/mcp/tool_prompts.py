@@ -158,7 +158,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_claim_attest": (
         "Use when you examined a Claim and want to sign support, contradict, or unsure on it, "
-        "optionally citing new Captures you examined."
+        "optionally citing your own words (because) or one write evidence option (evidence)."
     ),
     "cruxible_authoring_example": (
         "Use when you need a model-constructed Claim, Procedure, Line, acquisition policy, "

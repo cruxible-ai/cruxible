@@ -10,6 +10,10 @@ from fastapi import Path as PathParam
 from starlette.concurrency import run_in_threadpool
 
 from cruxible_client import contracts
+from cruxible_client.contracts.attestation_evidence import (
+    ClaimAttestationEvidenceRequest,
+    ClaimAttestationEvidenceResult,
+)
 from cruxible_client.contracts.authoring.models import (
     AuthoringCompileSubmitRequest,
     AuthoringIntentCompileRequest,
@@ -742,6 +746,20 @@ def migrate_claim_type(
     req: ClaimTypeMigrationRequest,
 ) -> contracts.ClaimTypeMigrationResponse:
     return playbill_api.playbill_migrate_claim_type(
+        resolve_server_instance_id(instance_id),
+        request=req,
+    )
+
+
+@router.post(
+    "/{instance_id}/claim-attestations/evidence",
+    response_model=ClaimAttestationEvidenceResult,
+)
+def prepare_claim_attestation_evidence(
+    instance_id: str,
+    req: ClaimAttestationEvidenceRequest,
+) -> ClaimAttestationEvidenceResult:
+    return playbill_api.playbill_prepare_claim_attestation_evidence(
         resolve_server_instance_id(instance_id),
         request=req,
     )
