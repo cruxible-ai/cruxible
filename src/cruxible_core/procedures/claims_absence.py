@@ -13,6 +13,7 @@ from cruxible_client.contracts.claim_evidence import (
 )
 from cruxible_client.contracts.claims import NoneClaimObject, claim_artifact_digest
 from cruxible_client.contracts.content_memo import seal
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.models import ExtractNode
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import SubjectType
@@ -155,6 +156,10 @@ def append_absence(
                 extracting.node_id,
                 "duplicate_key" if arm.get("tag") == "duplicate" else "invalid_record",
             )
+        if arm.get("tag") == "invalid_record":
+            # A refused record has no key to name a Subject by (D-R40): the
+            # enumeration is already incomplete, and it never names a deletion.
+            continue
         record = arm.get("record") if arm.get("tag") == "record" else arm
         if not isinstance(record, dict):
             continue
@@ -162,7 +167,7 @@ def append_absence(
             key = resolve(node.subject.key, record)
             keys.append(record.get("key") or key)
             subject = context.subject(node.subject.kind, key)
-        except (ValueError, KeyError, TypeError):
+        except (ExecutionError, ValueError, KeyError, TypeError):
             invalid_enumeration = True
             continue  # unknown key taints lineage; it never authorizes a deletion
         if subject is None:

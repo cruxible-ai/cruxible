@@ -552,7 +552,12 @@ quiet no-op; a different value reports `held_disagrees` with both values.
 A many-valued slot adds values without retiring the others.
 
 Invalid mapped fields are excluded before any proposal and recorded as typed
-`extract_refused` findings. Duplicate keys under `duplicates: refuse_key`
+`extract_refused` findings. A whole record the extract cannot read is refused
+alone, with its locators and a typed reason: `not_an_object` (a JSON record
+that is not an object), `key_absent`, `key_unparseable`, or
+`key_part_out_of_bounds` (a key value its key ClaimType's type does not admit,
+say longer than its `max_len`). Its siblings still write; the read is
+incomplete, so absence retires nothing. Duplicate keys under `duplicates: refuse_key`
 produce `duplicate_key` findings with the key and every record locator.
 Findings stay in the run report unless the Line explicitly routes their kinds
 to its inbox, for example `findings: {inbox: [extract_refused, duplicate_key]}`.

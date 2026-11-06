@@ -1415,6 +1415,10 @@ ProblemCode = Literal[
     "key_unparseable",
     "key_absent",
     "header_invalid",
+    # A record refused whole at extract (D-R40): not an object, or a key part
+    # outside its key ClaimType's declared values.
+    "not_an_object",
+    "key_part_out_of_bounds",
 ]
 
 
@@ -1497,6 +1501,15 @@ EnumResolver = Callable[[str], "tuple[str, ...] | None"]
 
 class KeyValueRefused(ValueError):
     """A value that is not a key of its kind; the message says why."""
+
+
+class KeyPartOutOfBounds(KeyValueRefused):
+    """A key part whose canonical value its key ClaimType's declared value type refuses.
+
+    No Subject can hold it (its key Claim would be refused at publication), so
+    a reader refuses it where it meets it: an extract refuses that record alone
+    (``key_part_out_of_bounds``, D-R40).
+    """
 
 
 class KeyCanonicalizer(Protocol):
@@ -2569,6 +2582,7 @@ __all__ = [
     "KeyCanonicalizer",
     "KeyPartType",
     "KeyType",
+    "KeyPartOutOfBounds",
     "KeyValueRefused",
     "ListType",
     "LiteralOperand",

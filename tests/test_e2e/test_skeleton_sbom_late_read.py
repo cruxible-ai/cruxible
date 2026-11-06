@@ -153,7 +153,7 @@ def _kind(name: str, *, grade: str = "observed") -> Any:
     )
 
 
-def sbom_world(tmp_path: Path) -> tuple[Any, Path]:
+def sbom_world(tmp_path: Path, *, purl_type: str = "string") -> tuple[Any, Path]:
     """Components keyed by purl, inventories by id, and the SBOM derive provider."""
 
     instance = skeleton_world(tmp_path)
@@ -199,7 +199,13 @@ def sbom_world(tmp_path: Path) -> tuple[Any, Path]:
                 for t in (
                     membership_type(IN_INVENTORY, f"subject<{INVENTORY}>"),
                     membership_type(LISTED_IN, "string{max_len: 256}"),
-                    _key_type(PURL, COMPONENT),
+                    _claim_type(
+                        PURL,
+                        purl_type,
+                        allowed_subject_kinds=[COMPONENT],
+                        evidence_requirement="none",
+                        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(rules=()),
+                    ),
                     _key_type(INVENTORY_ID, INVENTORY),
                 )
             },
@@ -250,10 +256,17 @@ def sbom_world(tmp_path: Path) -> tuple[Any, Path]:
     return instance, root
 
 
-def write_sbom(root: Path, inventory: str, purls: Sequence[str]) -> None:
+def write_sbom(root: Path, inventory: str, purls: Sequence[object]) -> None:
+    """The SBOM; a member that is not a purl string is written as it is (a bad record)."""
+
     document = {
         "metadata": {"component": {"purl": inventory}},
-        "components": [{"purl": purl, "name": purl.rsplit("/", 1)[-1]} for purl in purls],
+        "components": [
+            {"purl": purl, "name": purl.rsplit("/", 1)[-1]}
+            if isinstance(purl, str) and purl.startswith("pkg:")
+            else purl
+            for purl in purls
+        ],
     }
     (root / SBOM_PATH).write_text(json.dumps(document, sort_keys=True))
 
@@ -264,7 +277,9 @@ def components(sbom: bytes) -> bytes:
     document = json.loads(sbom)
     inventory = document["metadata"]["component"]["purl"]
     listed = [
-        {"purl": item["purl"], "name": item["name"], "inventory": inventory}
+        {"purl": item["purl"], "name": item.get("name"), "inventory": inventory}
+        if isinstance(item, dict)
+        else item  # a provider passes on what it cannot read; extract refuses it
         for item in document["components"]
     ]
     derived = {"inventory": inventory, "components": listed, "count": len(listed)}

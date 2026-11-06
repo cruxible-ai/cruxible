@@ -190,7 +190,12 @@ from cruxible_client.contracts.provider_operations import (
 )
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.resolution_contracts import InvestigationBinding
-from cruxible_client.contracts.shapes import ANY_CAPTURE_KIND, EnumResolver, KeyCanonicalizer
+from cruxible_client.contracts.shapes import (
+    ANY_CAPTURE_KIND,
+    EnumResolver,
+    InvalidRecordArm,
+    KeyCanonicalizer,
+)
 from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_client.contracts.workspace_file import (
@@ -4670,6 +4675,33 @@ class ProcedureExecutor:
         for ``records`` (D-R37 a5).
         """
 
+        refused: dict[tuple[str, str | None], tuple[list[str], int, str | None]] = {}
+        for arm in outcome.held:
+            if isinstance(arm, InvalidRecordArm):
+                # A record refused alone (D-R40), reported on the run by its
+                # typed reason; its siblings read on.
+                problem = arm.problems[0]
+                locators, count, lexeme = refused.get(
+                    (problem.code, problem.field), ([], 0, problem.lexeme)
+                )
+                if len(locators) < 10:
+                    locators.append(arm.record)
+                refused[(problem.code, problem.field)] = (locators, count + 1, lexeme)
+        if refused:
+            diagnostics = state.claims_diagnostics.setdefault(node.node_id, ClaimsDiagnostics())
+            for (code, field), (locators, count, lexeme) in refused.items():
+                diagnostics.add(
+                    ClaimsDiagnostic(
+                        kind="extract_refused",
+                        target=node.node_id,
+                        field=field,
+                        problem=code,
+                        lexeme=lexeme,
+                        record_locators=tuple(locators),
+                        record_count=count,
+                        source_incomplete=True,
+                    )
+                )
         if node.duplicates == "refuse_key":
             from cruxible_client.contracts.canonical import canonical_bytes
             from cruxible_client.contracts.shapes import DuplicateArm

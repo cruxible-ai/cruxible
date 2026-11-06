@@ -836,7 +836,61 @@ def accepted_key_rules(
         value = read(f"ClaimType:{predicate}")
         return value if isinstance(value, ClaimType) else None
 
-    return KeyRules(subject_kind, claim_type)
+    return BoundedKeyRules(subject_kind, claim_type)
+
+
+class BoundedKeyRules(KeyRules):
+    """A run's key rules: a canonical key part must also be a value its key ClaimType holds.
+
+    A key part outside its key ClaimType's declared value type (too long, out of
+    range) names no Subject that can exist: its key Claim would be refused at
+    publication. A run refuses it where it reads it (``KeyPartOutOfBounds``), so
+    an extract refuses that one record, ``key_part_out_of_bounds`` (D-R40).
+    """
+
+    def canonical(self, subject_kind: str, part: str | None, value: object) -> object:
+        from cruxible_client.contracts.shapes import FieldInvalid, KeyPartOutOfBounds, check_value
+        from cruxible_client.contracts.subject_kinds import key_predicate
+
+        canonical = super().canonical(subject_kind, part, value)
+        declared = self.kind(subject_kind)
+        assert declared is not None  # the canonical read refuses an undeclared kind
+        if part is not None:
+            parts: Mapping[str, object] = {part: canonical}
+        elif isinstance(canonical, Mapping):
+            parts = canonical
+        else:
+            parts = {declared.keys[0].removeprefix(subject_kind + "."): canonical}
+        for name, part_value in parts.items():
+            predicate = key_predicate(declared, name)
+            definition = None if predicate is None else self.claim_type(predicate)
+            if definition is None:
+                continue
+            checked = check_value(part_value, definition.value, at="", field=name)
+            if isinstance(checked, FieldInvalid):
+                raise KeyPartOutOfBounds(
+                    f"{predicate}: {checked.problem.code} for its declared value type"
+                )
+        return canonical
+
+    def rule_token(self, subject_kind: str) -> object:
+        """The identity rules, and each key ClaimType's value type the bound reads."""
+
+        from cruxible_client.contracts.shapes import render_type
+
+        declared = self.kind(subject_kind)
+        token = super().rule_token(subject_kind)
+        if declared is None:
+            return token
+        return {
+            "rules": token,
+            "bounds": {
+                predicate: None
+                if (definition := self.claim_type(predicate)) is None
+                else render_type(definition.value)
+                for predicate in declared.keys
+            },
+        }
 
 
 def accepted_contract_resolver(
