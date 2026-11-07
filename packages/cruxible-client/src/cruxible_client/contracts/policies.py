@@ -16,6 +16,7 @@ from cruxible_client.contracts.canonical import (
     canonical_bytes,
     normalize_canonical,
 )
+from cruxible_client.contracts.captures import CaptureShape
 from cruxible_client.contracts.claim_type_structure import ClaimCardinality, ClaimRole
 from cruxible_client.contracts.content_memo import sealed_memo
 from cruxible_client.contracts.governance import governance_identifier
@@ -206,6 +207,23 @@ class _EvidenceRuleBase(_StrictPolicyModel):
 
 CAPTURE_CONTRACT_REF_ROLE = "capture-contract"
 
+CaptureContractFamily = Literal["workspace_file"]
+"""A named group of catalogued CaptureContracts, closed to one member today.
+
+``workspace_file`` is every catalogued workspace file's own foreign-source
+CaptureContract (one per file, name ``playbill.foreign-source.<name>``, built
+by ``foreign_source_capture_contract``). Membership is the contract's own
+declared ``shape`` -- always ``"foreign_span"`` for that builder -- never a
+string match on its name, so a rule naming the family admits a file added to
+the workspace catalog later with no edit, and an uncatalogued file (which has
+no CaptureContract at all) is never admitted.
+"""
+
+#: Each family's declared-shape membership test. One entry today.
+CAPTURE_CONTRACT_FAMILY_SHAPES: Mapping[CaptureContractFamily, CaptureShape] = MappingProxyType(
+    {"workspace_file": "foreign_span"}
+)
+
 
 class CaptureContractAdmission(ArtifactRef):
     """One named contract, optionally restricted to provider-declared sources."""
@@ -226,7 +244,14 @@ class ClaimEvidenceAdmissionRule(_EvidenceRuleBase):
     tag: Literal["cruxible-claim-evidence-admission-rule-v4"] = (
         "cruxible-claim-evidence-admission-rule-v4"
     )
-    capture_contracts: tuple[CaptureContractAdmission, ...]
+    capture_contracts: tuple[CaptureContractAdmission, ...] = ()
+    #: Whole families of catalogued CaptureContracts this rule admits, by their
+    #: own declared shape (D1, 2026-11-06). No logical_source restriction: the
+    #: workspace catalog is itself the admission boundary (an uncatalogued file
+    #: has no contract to restrict).
+    capture_contract_families: tuple[CaptureContractFamily, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
     @field_validator("capture_contracts", mode="before")
     @classmethod
@@ -254,8 +279,6 @@ class ClaimEvidenceAdmissionRule(_EvidenceRuleBase):
     def _contracts(
         cls, value: tuple[CaptureContractAdmission, ...]
     ) -> tuple[CaptureContractAdmission, ...]:
-        if not value:
-            raise ValueError("capture_contracts must not be empty")
         names = tuple(item.target.qualified for item in value)
         if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
             raise ValueError("capture_contracts must be sorted and unique by identity")
@@ -266,21 +289,56 @@ class ClaimEvidenceAdmissionRule(_EvidenceRuleBase):
                 )
         return value
 
-    def names_capture_contract(self, *, identity: str | None) -> bool:
+    @field_validator("capture_contract_families")
+    @classmethod
+    def _families(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _sorted_unique(value, label="capture_contract_families")
+
+    @model_validator(mode="after")
+    def _admits_something(self) -> "ClaimEvidenceAdmissionRule":
+        if not self.capture_contracts and not self.capture_contract_families:
+            raise ValueError(
+                "capture_contracts must not be empty unless capture_contract_families is set"
+            )
+        return self
+
+    def names_capture_contract(
+        self, *, identity: str | None, shape: CaptureShape | str | None = None
+    ) -> bool:
         """A rule names every accepted version of the contracts it names.
 
         That is safe because a contract successor must be compatible with its
         predecessor; a change that alters what the evidence means is a new
         contract identity, which the rule does not name until someone edits it.
+
+        ``shape`` additionally matches a declared ``capture_contract_families``
+        entry by the contract's own shape, never by its name.
         """
 
-        return any(item.target.qualified == identity for item in self.capture_contracts)
-
-    def admits_source(self, *, identity: str | None, logical_source: str | None) -> bool:
-        if identity is None:
+        if any(item.target.qualified == identity for item in self.capture_contracts):
+            return True
+        if shape is None or not self.capture_contract_families:
             return False
-        sources = _rule_source_sets(self).get(identity)
-        return sources is not None and (not sources or logical_source in sources)
+        return shape in {
+            CAPTURE_CONTRACT_FAMILY_SHAPES[family] for family in self.capture_contract_families
+        }
+
+    def admits_source(
+        self,
+        *,
+        identity: str | None,
+        logical_source: str | None,
+        shape: CaptureShape | str | None = None,
+    ) -> bool:
+        if identity is not None:
+            sources = _rule_source_sets(self).get(identity)
+            if sources is not None:
+                return not sources or logical_source in sources
+        if shape is not None and self.capture_contract_families:
+            return shape in {
+                CAPTURE_CONTRACT_FAMILY_SHAPES[family] for family in self.capture_contract_families
+            }
+        return False
 
 
 @sealed_memo
@@ -486,6 +544,9 @@ class EvidenceAdmissionInput(_StrictPolicyModel):
     #: The accepted identity of the exact contract version the Capture names.
     #: Identity rules match it; exact-digest rules ignore it.
     capture_contract_identity: str | None = None
+    #: The contract's own declared shape (never derived from its name): the
+    #: only signal a ``capture_contract_families`` entry matches against.
+    capture_contract_shape: CaptureShape | Literal["coordinator_self_source"] | None = None
     evidence_kind: str | None = None
     logical_source: str | None = None
     reducer_digest: str | None = None
@@ -563,7 +624,9 @@ def evidence_rule_matches_source(
     rule: ClaimEvidenceAdmissionRule, evidence: EvidenceAdmissionInput
 ) -> bool:
     return rule.admits_source(
-        identity=evidence.capture_contract_identity, logical_source=evidence.logical_source
+        identity=evidence.capture_contract_identity,
+        logical_source=evidence.logical_source,
+        shape=evidence.capture_contract_shape,
     )
 
 
@@ -578,7 +641,9 @@ def evaluate_claim_evidence_admission_trace(
     contract_rules = tuple(
         rule
         for rule in policy.rules
-        if rule.names_capture_contract(identity=evidence.capture_contract_identity)
+        if rule.names_capture_contract(
+            identity=evidence.capture_contract_identity, shape=evidence.capture_contract_shape
+        )
     )
     closest_rule_id: str | None = None
     if contract_rules:
@@ -610,7 +675,9 @@ def evaluate_claim_evidence_admission_trace(
         rule
         for rule in policy.rules
         if evidence.claim_role in rule.claim_roles
-        and rule.names_capture_contract(identity=evidence.capture_contract_identity)
+        and rule.names_capture_contract(
+            identity=evidence.capture_contract_identity, shape=evidence.capture_contract_shape
+        )
         and evidence_rule_matches_source(rule, evidence)
     ]
     if len(matches) != 1:

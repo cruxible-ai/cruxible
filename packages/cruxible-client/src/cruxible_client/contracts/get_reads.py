@@ -33,6 +33,7 @@ from cruxible_client.contracts.operational_reads import (
     LiveView,
     RunRow,
 )
+from cruxible_client.contracts.policies import CaptureContractFamily
 from cruxible_client.contracts.procedures.authored import ProcedureSpec
 from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
 from cruxible_client.contracts.proposal_models import OriginatingLine
@@ -313,6 +314,11 @@ class GetEvidenceRule(_StrictGetModel):
     rule_id: str
     roles: tuple[ClaimRole, ...]
     contracts: tuple[str, ...]
+    #: Whole families of catalogued CaptureContracts this rule also admits
+    #: (by the contract's own declared shape, never its name).
+    families: tuple[CaptureContractFamily, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
     admission: Literal["origin_only", "direct", "derivational"]
 
 

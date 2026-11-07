@@ -5845,7 +5845,17 @@
                 "title": "Attestation Requirement",
                 "type": "string"
               },
+              "capture_contract_families": {
+                "default": [],
+                "items": {
+                  "const": "workspace_file",
+                  "type": "string"
+                },
+                "title": "Capture Contract Families",
+                "type": "array"
+              },
               "capture_contracts": {
+                "default": [],
                 "items": {
                   "$ref": "#/$defs/CaptureContractAdmission"
                 },
@@ -5888,8 +5898,7 @@
               "rule_id",
               "claim_roles",
               "admission",
-              "subject_binding",
-              "capture_contracts"
+              "subject_binding"
             ],
             "title": "ClaimEvidenceAdmissionRule",
             "type": "object"
@@ -82005,7 +82014,17 @@
                 "title": "Attestation Requirement",
                 "type": "string"
               },
+              "capture_contract_families": {
+                "default": [],
+                "items": {
+                  "const": "workspace_file",
+                  "type": "string"
+                },
+                "title": "Capture Contract Families",
+                "type": "array"
+              },
               "capture_contracts": {
+                "default": [],
                 "items": {
                   "$ref": "#/$defs/CaptureContractAdmission"
                 },
@@ -82048,8 +82067,7 @@
               "rule_id",
               "claim_roles",
               "admission",
-              "subject_binding",
-              "capture_contracts"
+              "subject_binding"
             ],
             "title": "ClaimEvidenceAdmissionRule",
             "type": "object"
@@ -90628,7 +90646,17 @@
                 "title": "Attestation Requirement",
                 "type": "string"
               },
+              "capture_contract_families": {
+                "default": [],
+                "items": {
+                  "const": "workspace_file",
+                  "type": "string"
+                },
+                "title": "Capture Contract Families",
+                "type": "array"
+              },
               "capture_contracts": {
+                "default": [],
                 "items": {
                   "$ref": "#/$defs/CaptureContractAdmission"
                 },
@@ -90671,8 +90699,7 @@
               "rule_id",
               "claim_roles",
               "admission",
-              "subject_binding",
-              "capture_contracts"
+              "subject_binding"
             ],
             "title": "ClaimEvidenceAdmissionRule",
             "type": "object"

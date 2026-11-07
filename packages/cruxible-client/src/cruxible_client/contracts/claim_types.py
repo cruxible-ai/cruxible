@@ -720,6 +720,8 @@ def _requirement_law_refusal(claim_type: ClaimType, *, path: str) -> CompilerDia
             item.target.name not in own
             for rule in claim_type.evidence_admission_policy.rules
             for item in rule.capture_contracts
+        ) or any(
+            rule.capture_contract_families for rule in claim_type.evidence_admission_policy.rules
         )
         if not declared:
             return _diagnostic(

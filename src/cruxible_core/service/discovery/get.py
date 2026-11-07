@@ -1428,6 +1428,7 @@ def _claim_type_card(
             rule_id=rule.rule_id,
             roles=rule.claim_roles,
             contracts=tuple(item.target.qualified for item in rule.capture_contracts),
+            families=rule.capture_contract_families,
             admission=rule.admission,
         )
         for rule in claim_type.evidence_admission_policy.rules

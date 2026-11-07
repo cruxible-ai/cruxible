@@ -493,6 +493,28 @@ def test_an_identity_rule_names_the_contract_on_the_card(tmp_path: Path) -> None
     assert card is not None and card.model_dump()["evidence"] == (IDENTITY.qualified,)
 
 
+def test_a_family_rule_names_the_family_on_the_card(tmp_path: Path) -> None:
+    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
+    from tests.test_claims.test_identity_evidence_rules import PREDICATE, _rules_type, _World
+
+    world = _World(tmp_path)
+    family_rule = ClaimEvidenceAdmissionRule(
+        rule_id="workspace",
+        claim_roles=("normative", "observation"),
+        capture_contract_families=("workspace_file",),
+        admission="direct",
+        subject_binding="exact_claim_subject",
+    )
+    world.seed(_rules_type(family_rule))
+
+    card = _get(world.instance, f"ClaimType:{PREDICATE}").card
+
+    assert card is not None
+    (rule,) = card.model_dump()["evidence_rules"]
+    assert rule["families"] == ("workspace_file",)
+    assert rule["contracts"] == ()
+
+
 def test_an_unsure_attestation_with_nothing_to_hold_shows_no_hold(tmp_path: Path) -> None:
     from datetime import timedelta
 

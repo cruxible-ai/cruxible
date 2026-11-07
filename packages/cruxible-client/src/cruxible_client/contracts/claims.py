@@ -1404,6 +1404,10 @@ def evaluate_capture_evidence_admissions(
         if isinstance(envelope.source, ExternalSourceReference)
         else None
     )
+    # The contract's own declared shape, never its name: the one signal a
+    # capture_contract_families entry matches against. A legacy v1 contract
+    # declares no shape, so it never joins a family.
+    contract_shape = getattr(capture_contract.contract, "shape", None)
     has_extracted_inputs = (
         claim.backing.procedure_evidence is not None
         and claim.backing.procedure_evidence.value.basis == "derived"
@@ -1414,10 +1418,13 @@ def evaluate_capture_evidence_admissions(
             rule
             for rule in claim_type.evidence_admission_policy.rules
             if claim.statement.role in rule.claim_roles
-            and rule.names_capture_contract(identity=capture_contract.contract.identity.qualified)
+            and rule.names_capture_contract(
+                identity=capture_contract.contract.identity.qualified, shape=contract_shape
+            )
             and rule.admits_source(
                 identity=capture_contract.contract.identity.qualified,
                 logical_source=logical_source,
+                shape=contract_shape,
             )
         )
         source_bound = any(subject_binding_by_rule[rule.rule_id] for rule in matching_rules)
@@ -1450,6 +1457,7 @@ def evaluate_capture_evidence_admissions(
                     claim_role=claim.statement.role,
                     capture_contract_digest=capture_contract.artifact_digest,
                     capture_contract_identity=capture_contract.contract.identity.qualified,
+                    capture_contract_shape=contract_shape,
                     evidence_kind=kind,
                     logical_source=logical_source,
                     reducer_digest=claim.backing.reducer_digest,
