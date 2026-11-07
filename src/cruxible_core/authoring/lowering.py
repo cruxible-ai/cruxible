@@ -2206,6 +2206,9 @@ def _lower_claim(
             capture_contract=accepted_contract,
             envelope=capture_envelope,
             verified_attestations=(),
+            historical_capture_contract=lambda digest: instance.accepted_capture_contract_version(
+                public_base, digest
+            ),
         )
         if not any(decision.trace.result.verdict == "eligible" for decision in admissions):
             _refuse(
