@@ -2292,7 +2292,7 @@ def _key_definition_issues(
     if not changed:
         return []
     issues: list[SubjectIdentityIssue] = _pair_key_type_issues(
-        connection, changed=changed, changed_kinds=changed_kinds
+        connection, changed=changed, changed_kinds=changed_kinds, candidate_tree=candidate_tree
     )
     keyed: dict[str, tuple[str, ...]] = {}
     for identity, keys in connection.execute(
@@ -2410,6 +2410,7 @@ def _pair_key_type_issues(
     *,
     changed: Mapping[str, tuple[ClaimType, ClaimType | None]],
     changed_kinds: set[str],
+    candidate_tree: Mapping[str, bytes],
 ) -> list[SubjectIdentityIssue]:
     """A pair kind's endpoint ClaimTypes are frozen with it (R13, F1).
 
@@ -2419,8 +2420,11 @@ def _pair_key_type_issues(
     when the same change succeeds the SubjectKind. A literal key ClaimType of a
     live kind becomes Subject-valued only beside a SubjectKind successor, which
     the boundary judges (``endpoint_declaration_fixed``), and never while the
-    kind holds a Subject. A key ClaimType is about its kind only, so the kinds
-    it may key are its own allowed kinds: one indexed read each.
+    kind holds a Subject. That conversion guard reads the key as the change
+    leaves it: a successor that drops the predicate from its key (say, to
+    minted) makes no pair kind, so the ClaimType may become an ordinary link. A
+    key ClaimType is about its kind only, so the kinds it may key are its own
+    allowed kinds: one indexed read each.
     """
 
     from cruxible_client.contracts.subject_kinds import subject_kind_path
@@ -2459,11 +2463,16 @@ def _pair_key_type_issues(
                         )
                     )
             elif new is not None and claim_value_kind(new.value) == "subject":
-                # Literal -> Subject: the kind would become a pair kind. Never
-                # while it holds a Subject (live or retired, its kind live or
-                # retired: a full build would make those pairs without
-                # endpoints), and only beside a SubjectKind successor, whose law
-                # and boundary judge the pair kind.
+                # Literal -> Subject: the kind would become a pair kind -- if
+                # the change leaves the predicate in its key. Never while it
+                # holds a Subject (live or retired, its kind live or retired: a
+                # full build would make those pairs without endpoints), and
+                # only beside a SubjectKind successor, whose law and boundary
+                # judge the pair kind.
+                if kind in changed_kinds:
+                    successor = _any_subject_kind(candidate_tree, kind)
+                    if successor is None or predicate not in successor.keys:
+                        continue
                 if _kind_has_subjects(connection, kind):
                     issues.append(_not_yet_a_pair_kind(kind))
                     continue

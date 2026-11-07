@@ -726,6 +726,43 @@ def test_a_claim_type_alone_cannot_make_a_kind_with_subjects_a_pair_kind() -> No
     assert "cruxible.subject_kind.endpoint_declaration_fixed" in judge(parent, beside)
 
 
+def test_a_former_key_may_become_an_ordinary_link_when_the_kind_drops_it() -> None:
+    """Review F4: K(serial) with a retired Subject succeeds to minted, and serial becomes
+    a plain subject<pt.component> link: no pair kind is made, so nothing refuses."""
+
+    from cruxible_client.contracts.shapes import coerce_field_type
+    from cruxible_client.contracts.subject_kinds import SubjectKindMinted
+
+    parent = _literal_owned_with_a_retired_subject()
+    minted = successor_kind(keyed(OWNED, O_SERIAL), identity_rule=SubjectKindMinted())
+    link = _type_successor(
+        O_SERIAL, value=coerce_field_type({"kind": "subject", "subject_kinds": (COMPONENT,)})
+    )
+    change = {
+        subject_kind_path(OWNED): render_subject_kind(minted),
+        claim_type_path(O_SERIAL): link,
+    }
+    assert judge(parent, change) == []
+    # Kept in the key (a same-rule successor beside it), the same conversion refuses.
+    kept = {
+        **change,
+        subject_kind_path(OWNED): render_subject_kind(successor_kind(keyed(OWNED, O_SERIAL))),
+    }
+    assert "cruxible.subject_kind.endpoint_declaration_fixed" in judge(parent, kept)
+    # A pre-existing Subject-valued endpoint stays frozen even when its kind drops it.
+    world = _world()
+    exposure_minted = successor_kind(KINDS[EXPOSURE], identity_rule=SubjectKindMinted())
+    literal_end = _type_successor(E_COMPONENT, value=coerce_field_type({"kind": "string"}))
+    codes = judge(
+        world,
+        {
+            subject_kind_path(EXPOSURE): render_subject_kind(exposure_minted),
+            claim_type_path(E_COMPONENT): literal_end,
+        },
+    )
+    assert "cruxible.subject_kind.key_claim_type_broken" in codes
+
+
 def test_a_mixed_key_rekeys_its_literal_part_only() -> None:
     parent = definitions()
     put(parent, *end(COMPONENT, "c1", 1))
