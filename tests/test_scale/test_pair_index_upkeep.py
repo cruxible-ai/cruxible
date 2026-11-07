@@ -118,3 +118,63 @@ def test_one_claim_accept_is_flat_in_pairs_shells_and_history(root: Path, world:
             measured,
             window.attribution[:3],
         )
+
+
+# -- the candidate boundary on a routine write: flat in the keyed vocabulary (review F3) --
+
+
+def _vocabulary(size: int) -> dict[str, bytes]:
+    """The base world plus ``size`` retired and ``size`` live keyed SubjectKinds, unrelated."""
+
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.subject_kinds import (
+        render_subject_kind,
+        subject_kind_digest,
+        subject_kind_path,
+    )
+    from tests.core_support._pair_support import keyed, successor_kind
+
+    tree = _base()
+    for index in range(size):
+        retired = keyed(f"pt.r{index}", f"pt.r{index}.slug")
+        tree[subject_kind_path(retired.subject_kind)] = render_subject_kind(
+            successor_kind(
+                retired,
+                lifecycle=ArtifactLifecycle(
+                    state="retired", predecessor_digest=subject_kind_digest(retired).tagged
+                ),
+            )
+        )
+        live = keyed(f"pt.l{index}", f"pt.l{index}.slug")
+        tree[subject_kind_path(live.subject_kind)] = render_subject_kind(live)
+    return tree
+
+
+def test_a_fact_write_is_judged_flat_in_the_keyed_vocabulary(root: Path) -> None:
+    from cruxible_core.indexes.subject_identity import candidate_identity_issues
+    from tests.core_support._pair_support import HeldTree
+
+    measured: list[dict[str, int]] = []
+    for size in SIZES:
+        tree = _vocabulary(size)
+        connection = projection(tree, path=root / f"vocabulary-{size}.sqlite3")
+        parent = HeldTree(tree, connection)
+        changes = put({}, claim(50, SCOPE, literal("required"), subject=TARGET))
+        with counting(root) as window:
+            issues = candidate_identity_issues(
+                current_tree=parent,
+                candidate_tree={**tree, **changes},
+                scope=tuple(sorted(changes)),
+            )
+        assert issues == ()
+        assert window.unexplained == [], window.unexplained
+        measured.append({counter: window.counts[counter] for counter in COUNTED})
+        connection.close()
+    small, large = measured
+    for counter in COUNTED:
+        assert small[counter] > 0
+        assert large[counter] <= small[counter] * RATIO + SLACK[counter], (
+            counter,
+            measured,
+            window.attribution[:3],
+        )

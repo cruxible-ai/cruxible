@@ -457,6 +457,7 @@ def _tree_alias_index(tree: Mapping[str, bytes]) -> sqlite3.Connection:
         "CREATE TABLE subject_kinds (identity TEXT, rule TEXT, uniqueness TEXT, "
         "key_predicates TEXT, lifecycle TEXT)"
     )
+    connection.execute("CREATE INDEX subject_kinds_by_identity ON subject_kinds(identity)")
     connection.execute(
         "CREATE TABLE subject_keys (subject_path TEXT PRIMARY KEY, kind TEXT, key_encoding TEXT)"
     )

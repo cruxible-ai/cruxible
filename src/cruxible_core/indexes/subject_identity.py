@@ -1223,7 +1223,7 @@ def _endpoint_issues(
     scope: tuple[str, ...],
     subject_parts: _SubjectParts,
     touched_identities: set[str],
-    key_kinds: Mapping[str, str],
+    kind_keys: Callable[[str], tuple[str, ...]],
 ) -> list[SubjectIdentityIssue]:
     """A pair's endpoints are frozen for life, and its ends stay live while it is.
 
@@ -1297,7 +1297,7 @@ def _endpoint_issues(
             pair = str(subject_path)
             if (
                 str(identity) not in touched_identities
-                and key_kinds.get(str(predicate)) == subject_kind_of(pair)[0]
+                and str(predicate) in kind_keys(subject_kind_of(pair)[0])
                 and subject_parts.is_part(str(predicate))
             ):
                 pairs.add(pair)
@@ -1529,6 +1529,61 @@ def _not_yet_a_pair_kind(kind: str) -> SubjectIdentityIssue:
     )
 
 
+class _KindKeys:
+    """Each kind's key predicates as a change leaves them: one indexed read per kind.
+
+    A kind the change declares or succeeds reads its candidate SubjectKind
+    (whatever its lifecycle); any other kind its parent row (whatever its
+    lifecycle). A Claim version is a key Claim when its predicate is a key of
+    its own Subject's kind, so a touched Claim costs a read of its statement's
+    head and its kind's keys, never the instance's vocabulary.
+    """
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        candidate_tree: Mapping[str, bytes],
+        changed_kinds: set[str],
+    ) -> None:
+        self._connection = connection
+        self._candidate = candidate_tree
+        self._changed = changed_kinds
+        self._known: dict[str, tuple[str, ...]] = {}
+
+    def keys(self, kind: str) -> tuple[str, ...]:
+        if kind not in self._known:
+            if kind in self._changed:
+                declared = _any_subject_kind(self._candidate, kind)
+                self._known[kind] = () if declared is None else tuple(declared.keys)
+            else:
+                self._known[kind] = _parent_kind_keys(self._connection, kind)
+        return self._known[kind]
+
+    def key_claim_row(self, content: bytes | None, path: str) -> _KeyClaimRow | None:
+        head = _claim_head(content)
+        if head is None:
+            return None
+        subject, predicate = head
+        if not subject.startswith(_SUBJECTS):
+            return None
+        kind = subject_kind_of(subject)[0]
+        if predicate not in self.keys(kind):
+            return None
+        return _key_claim_row(content, path, {predicate: kind})
+
+
+def _claim_head(content: bytes | None) -> tuple[str, str] | None:
+    """A Claim version's Subject path and predicate, read without validating the Claim."""
+
+    if content is None:
+        return None
+    try:
+        statement = json.loads(content)["statement"]
+        return str(statement["subject"]["artifact_path"]), str(statement["predicate"])
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
 def _shell(tree: Mapping[str, bytes], path: str) -> Any | None:
     from cruxible_client.contracts.subjects import parse_subject
 
@@ -1749,34 +1804,11 @@ def candidate_identity_issues(
         return tuple(issues)
 
     with tree_index_connection(current_tree)() as connection:
-        # Every live keyed kind's key predicates, the parent's overlaid with this change.
-        key_kinds: dict[str, str] = {}
-        for identity, keys in connection.execute(
-            "SELECT identity, key_predicates FROM subject_kinds "
-            "WHERE rule='keys' AND lifecycle='live'"
-        ):
-            kind = str(identity).removeprefix("SubjectKind:")
-            if kind not in changed_kinds:
-                key_kinds.update((predicate, kind) for predicate in json.loads(str(keys)))
-        for kind in changed_kinds:
-            declared_kind = declared(kind)
-            if declared_kind is not None:
-                key_kinds.update((predicate, kind) for predicate in declared_kind.keys)
-        # Every keyed kind's key predicates, retired kinds' included: a
-        # grandfathered pair kind's endpoints stay frozen too.
-        every_key_kinds = dict(key_kinds)
-        for identity, keys in connection.execute(
-            "SELECT identity, key_predicates FROM subject_kinds "
-            "WHERE rule='keys' AND lifecycle='retired'"
-        ):
-            kind = str(identity).removeprefix("SubjectKind:")
-            if kind not in changed_kinds:
-                every_key_kinds.update((predicate, kind) for predicate in json.loads(str(keys)))
-        for kind in changed_kinds:
-            any_kind = _any_subject_kind(candidate_tree, kind)
-            if any_kind is not None:
-                every_key_kinds.update((predicate, kind) for predicate in any_kind.keys)
-        needles = tuple(f'"{predicate}"'.encode() for predicate in sorted(every_key_kinds))
+        # Each touched Claim's Subject kind's key predicates, read by one indexed
+        # seek per kind (the parent's SubjectKind overlaid with this change's, a
+        # retired kind's included: a grandfathered pair's endpoints stay frozen),
+        # never by enumerating the keyed kinds.
+        kind_keys = _KindKeys(connection, candidate_tree, changed_kinds)
         # The key Claim versions the change touches, and the Subjects whose key they move.
         touched: dict[str, tuple[_KeyClaimRow | None, _KeyClaimRow | None]] = {}
         aliases_removed: set[tuple[str, str]] = set()
@@ -1785,16 +1817,9 @@ def candidate_identity_issues(
             before_bytes, after_bytes = current_tree.get(path), candidate_tree.get(path)
             aliases_removed.update(_alias_rows(before_bytes, path))
             aliases_added.update(_alias_rows(after_bytes, path))
-            if not needles or not any(
-                needle in content
-                for content in (before_bytes, after_bytes)
-                if content is not None
-                for needle in needles
-            ):
-                continue
             rows = (
-                _key_claim_row(before_bytes, path, every_key_kinds),
-                _key_claim_row(after_bytes, path, every_key_kinds),
+                kind_keys.key_claim_row(before_bytes, path),
+                kind_keys.key_claim_row(after_bytes, path),
             )
             if rows == (None, None):
                 continue
@@ -1816,7 +1841,7 @@ def candidate_identity_issues(
                 scope=scope,
                 subject_parts=subject_parts,
                 touched_identities=touched_identities,
-                key_kinds=every_key_kinds,
+                kind_keys=kind_keys.keys,
             )
         )
         issues.extend(
