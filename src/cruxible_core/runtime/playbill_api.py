@@ -2788,6 +2788,14 @@ def playbill_runbook_run(instance_id: str, name: str) -> RunbookRunResult:
 
     check_permission("cruxible_runbook_run", instance_id=instance_id, audit_success=False)
     enforce_customer_code_execution_supported()
+    if get_capability_ceiling() < PermissionMode.GOVERNED_WRITE:
+        # Every step is a run that retains its journal (or a journal fire), so a
+        # read-only daemon refuses a Runbook run before reading any definition.
+        check_permission(
+            "cruxible_runbook_run",
+            instance_id=instance_id,
+            required_override=PermissionMode.GOVERNED_WRITE,
+        )
     actor = _write_actor_context(instance_id)
     if actor is None:
         raise AuthenticationError("Runbook run requires an authenticated actor identity")
