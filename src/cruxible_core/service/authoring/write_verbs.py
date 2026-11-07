@@ -618,6 +618,7 @@ class _Planner:
         self._planned_keys: dict[tuple[str, str], _Bound] = {}
         self._pending_paths: dict[str, _Bound] = {}
         self._retired_here: dict[str, bool] | None = None
+        self._pending_members: set[str] = set()
         self._key_reader: KeyReader | None = None
         # Each re-bind a ``from_capture`` expanded into, by its position in the
         # expanded changes: the Capture whose citation it replaces.
@@ -1278,12 +1279,13 @@ class _Planner:
         parts = tuple(
             SubjectKeyPart(predicate=predicate, value=part_value(value)) for predicate, value in key
         )
-        taken = {payload.member_identity for payload in self.plan.pending.values()}
         rationale = self.request.because
         payload = SubjectCreationAuthoringPayload(
             subject_kind=kind, key=parts, rationale=rationale, create_new=create_new
         )
-        if payload.member_identity in taken:
+        # The members already planned, kept as they are planned: one set
+        # lookup per creation, never a re-digest of every earlier one.
+        if payload.member_identity in self._pending_members:
             # Two creations alike in every field would be one member: the label
             # tells them apart, so each lowers to its own Subject (on one line,
             # within a Claim rationale's length: it backs the key Claims).
@@ -1436,13 +1438,15 @@ class _Planner:
             label, kind, key, create_new=create_new, single_text=single_text
         )
         self.plan.pending[label] = payload
+        member = payload.member_identity
+        self._pending_members.add(member)
         bound = _Bound(
             index=index,
             label=label,
             kind=kind,
             path=None,
             resolved="created",
-            member=payload.member_identity,
+            member=member,
             key=key,
         )
         self.plan.labels[label] = bound
