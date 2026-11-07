@@ -157,6 +157,7 @@ def test_a_named_incomplete_field_is_flagged_despite_other_visible_lists() -> No
 class _FakeRecord:
     sequence: int
     payload_digest: str
+    event_kind: str = "source_acquisition"
 
 
 @dataclass
@@ -168,11 +169,10 @@ class _FakeIndex:
     """A minimal stand-in for ``LocalJournalBackend.index``, in memory.
 
     Filters an in-memory list the same way the real index's ``select``
-    does (sequence range and limit; ``run_id``/``event_kind`` are accepted
-    but every fake record already belongs to the one run and kind under
-    test). Counts calls and rows returned, so a test can assert the work
-    stays bounded by the number of probes issued, not by how many records
-    exist.
+    does (event kind, sequence range and limit; ``run_id`` is accepted but
+    every fake record already belongs to the one run under test). Counts
+    calls and rows returned, so a test can assert the work stays bounded by
+    the number of probes issued, not by how many records exist.
     """
 
     def __init__(self, records: list[_FakeStored]) -> None:
@@ -196,7 +196,8 @@ class _FakeIndex:
         rows = [
             item
             for item in self.records
-            if (first_sequence is None or item.record.sequence >= first_sequence)
+            if (event_kind is None or item.record.event_kind == event_kind)
+            and (first_sequence is None or item.record.sequence >= first_sequence)
             and (last_sequence is None or item.record.sequence <= last_sequence)
         ]
         rows.sort(key=lambda item: item.record.sequence, reverse=descending)
@@ -211,21 +212,58 @@ class _FakeJournal:
     index: _FakeIndex
 
 
+def _store_payload(instance: Any, payload: dict[str, Any]) -> str:
+    from cruxible_core.exhaust.records import journal_payload_bytes
+
+    content = journal_payload_bytes(payload)
+    metadata = instance.body_store().store(content, journal_payload=True)
+    digest: str = metadata.digest
+    return digest
+
+
 def _stored_acquisition(
     instance: Any, *, node_id: str, field: str, index: int, sequence: int
 ) -> _FakeStored:
-    """One real, body-store-backed ``source_acquisition`` payload at ``sequence``."""
-
-    from cruxible_core.exhaust.records import journal_payload_bytes
+    """One real, body-store-backed list-member ``source_acquisition`` payload."""
 
     payload = {
         "field": f"{field}/{index}",
         "decision": {"disposition": "selected", "selected_capture_digests": []},
         "node_id": node_id,
     }
-    content = journal_payload_bytes(payload)
-    metadata = instance.body_store().store(content, journal_payload=True)
-    return _FakeStored(record=_FakeRecord(sequence=sequence, payload_digest=metadata.digest))
+    digest = _store_payload(instance, payload)
+    return _FakeStored(record=_FakeRecord(sequence=sequence, payload_digest=digest))
+
+
+def _stored_scalar_acquisition(
+    instance: Any, *, node_id: str, field: str, sequence: int
+) -> _FakeStored:
+    """One real, body-store-backed scalar (whole-capture) ``source_acquisition`` payload.
+
+    Its ``field`` names no index at all (``"document"``, not ``"document/0"``):
+    a whole capture field, never a list member.
+    """
+
+    payload = {
+        "field": field,
+        "decision": {"disposition": "selected", "selected_capture_digests": []},
+        "node_id": node_id,
+    }
+    digest = _store_payload(instance, payload)
+    return _FakeStored(record=_FakeRecord(sequence=sequence, payload_digest=digest))
+
+
+def _stored_node_fired(instance: Any, *, sequence: int) -> _FakeStored:
+    """One real, body-store-backed ``node_fired`` record at ``sequence``.
+
+    ``_list_members`` never parses a ``node_fired`` payload, only its
+    sequence, so its content is a placeholder.
+    """
+
+    digest = _store_payload(instance, {"node_id": "unused"})
+    return _FakeStored(
+        record=_FakeRecord(sequence=sequence, payload_digest=digest, event_kind="node_fired")
+    )
 
 
 def _three_call_world(instance: Any, *, second_members: int, third_members: int) -> Any:
@@ -323,6 +361,86 @@ def test_the_truncation_checks_are_flat_in_unrelated_member_growth(tmp_path: Pat
         counts[size] = (journal.index.calls, journal.index.rows_returned)
     print("F2a truncation checks at 1/100 unrelated members per call", counts)
     assert counts[1] == counts[100]
+
+
+def test_an_undisplayed_predecessors_overflow_never_lands_on_the_first_shown_node(
+    tmp_path: Path,
+) -> None:
+    """F1: the first interval's lower bound is the run's actual predecessor.
+
+    "earlier" is not among the card's displayed nodes (it fired before the
+    latest ones the card shows); it alone makes
+    ``RUN_CARD_LIST_MEMBERS_MAX + 1`` list-member acquisitions, enough to
+    fill and overflow the page by itself. Ten extract nodes fire after it,
+    each with no acquisitions of its own, and only they are displayed.
+    Defaulting the first interval's lower bound to zero (rather than reading
+    "earlier"'s own ``node_fired`` sequence) would let its one leftover
+    acquisition land in the first displayed extract's own probe range.
+    """
+
+    from cruxible_client.contracts.operational_reads import RUN_CARD_LIST_MEMBERS_MAX, GetRunNode
+    from cruxible_core.service.discovery.runs import _list_members, _with_members
+    from tests.core_support._support import initialize_local
+
+    instance, _owner = initialize_local(tmp_path)
+    records = [
+        _stored_acquisition(instance, node_id="earlier", field="pages", index=i, sequence=i + 1)
+        for i in range(RUN_CARD_LIST_MEMBERS_MAX + 1)
+    ]
+    sequence = RUN_CARD_LIST_MEMBERS_MAX + 2
+    records.append(_stored_node_fired(instance, sequence=sequence))  # "earlier" fires
+    sequence += 1
+    displayed = []
+    for i in range(10):
+        displayed.append(GetRunNode(node=f"extract-{i}", kind="extract", sequence=sequence))
+        sequence += 1
+    journal = _FakeJournal(_FakeIndex(records))
+    found, truncated = _list_members(instance, journal, object(), "run-1", displayed)
+    # "earlier" fills the page (it is the only source of acquisitions); its
+    # own overflow member is not among its displayed card's nodes to blame.
+    assert len(found["earlier"]) == RUN_CARD_LIST_MEMBERS_MAX
+    assert truncated == frozenset()
+    out = {node.node: node for node in _with_members(displayed, found, truncated, None)}
+    assert all(node.members_truncated is False for node in out.values())
+    assert all(node.members == () for node in out.values())
+
+
+def test_a_scalar_acquisition_is_never_counted_as_an_unserved_list_member(tmp_path: Path) -> None:
+    """F2: only list-member acquisitions count in the existence check.
+
+    "first" fills the page exactly. "scalar" fires after one acquisition of
+    its own, past the page, but that field names no index at all (a whole
+    capture field, never a list): it must not be mistaken for an unserved
+    list member just because some ``source_acquisition`` record exists in
+    its range.
+    """
+
+    from cruxible_client.contracts.operational_reads import RUN_CARD_LIST_MEMBERS_MAX, GetRunNode
+    from cruxible_core.service.discovery.runs import _list_members, _with_members
+    from tests.core_support._support import initialize_local
+
+    instance, _owner = initialize_local(tmp_path)
+    records = [
+        _stored_acquisition(instance, node_id="first", field="pages", index=i, sequence=i + 1)
+        for i in range(RUN_CARD_LIST_MEMBERS_MAX)
+    ]
+    first_node = GetRunNode(node="first", kind="provider", sequence=RUN_CARD_LIST_MEMBERS_MAX + 1)
+    scalar_sequence = RUN_CARD_LIST_MEMBERS_MAX + 2
+    records.append(
+        _stored_scalar_acquisition(
+            instance, node_id="scalar", field="document", sequence=scalar_sequence
+        )
+    )
+    scalar_node = GetRunNode(node="scalar", kind="provider", sequence=scalar_sequence + 1)
+    nodes = [first_node, scalar_node]
+    journal = _FakeJournal(_FakeIndex(records))
+    found, truncated = _list_members(instance, journal, object(), "run-1", nodes)
+    assert truncated == frozenset()
+    out = {node.node: node for node in _with_members(nodes, found, truncated, None)}
+    assert out["scalar"].members == ()
+    assert out["scalar"].members_truncated is False
+    assert out["first"].members_truncated is False
+    assert len(out["first"].members) == RUN_CARD_LIST_MEMBERS_MAX
 
 
 def test_the_members_read_is_flat_in_other_runs(tmp_path: Path, traced: None) -> None:

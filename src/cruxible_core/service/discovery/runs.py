@@ -496,6 +496,19 @@ def procedure_run_card(
     )
 
 
+def _list_member_field(payload: Mapping[str, object]) -> tuple[str, int] | None:
+    """``(field, index)`` when ``payload`` names a list member, else ``None``.
+
+    A list member's record names its field ``<field>/<index>``; a whole
+    (scalar) capture field has none, so it never answers here.
+    """
+
+    field, slash, index = str(payload.get("field", "")).rpartition("/")
+    if not slash or not index.isdigit():
+        return None
+    return field, int(index)
+
+
 def _list_members(
     instance: PlaybillInstance,
     journal: LocalJournalBackend,
@@ -510,15 +523,20 @@ def _list_members(
     record names its field ``<field>/<index>``; a whole capture field has
     none.
 
-    The second value is every displayed call with members past that range,
-    found with one bounded indexed existence probe (``limit=1``) per
+    The second value is every displayed call with list members past that
+    range, found with one bounded indexed existence probe (``limit=1``) per
     displayed node whose own firing sequence falls after the range's last
     served record -- never a scan of all records, and never a query at all
     for a node fully inside it. Each probe's range is exactly that node's own
-    span: after the previous displayed node's firing sequence (nodes run one
-    at a time, so no other node's records fall in between) and no later than
-    this node's own, which is why it can tell one call's own overflow from
-    another's without reading node ids out of the overflow region.
+    span: after the previous *fired* node's firing sequence -- the run's
+    actual predecessor, read once up front even when it is outside the
+    card's displayed window, never the displayed list's own first entry --
+    through this node's own (nodes run one at a time, so no other node's
+    records fall in between). A probe that lands on a record checks that one
+    record's own field: a scalar (whole-capture) acquisition answers no list
+    member and does not flag the call, so a probe whose one matched record
+    happens to be scalar while a later list member of the same call also
+    went unserved can still read as complete; the bound stays one query.
     """
 
     stored = journal.index.select(
@@ -532,9 +550,10 @@ def _list_members(
         payload = run_payload(instance, item.record.payload_digest)
         if not isinstance(payload, Mapping):
             continue
-        field, slash, index = str(payload.get("field", "")).rpartition("/")
-        if not slash or not index.isdigit():
+        member = _list_member_field(payload)
+        if member is None:
             continue
+        field, index = member
         decision = payload.get("decision")
         result = payload.get("result")
         decision = decision if isinstance(decision, Mapping) else {}
@@ -550,7 +569,7 @@ def _list_members(
         found.setdefault(str(payload.get("node_id", "?")), []).append(
             GetRunListMember(
                 field=field,
-                index=int(index),
+                index=index,
                 capture=(selected or considered or [None])[0],
                 request=request if isinstance(request, str) else None,
                 status=status,
@@ -558,9 +577,24 @@ def _list_members(
             )
         )
     truncated_nodes: set[str] = set()
-    if len(stored) > RUN_CARD_LIST_MEMBERS_MAX:
+    if len(stored) > RUN_CARD_LIST_MEMBERS_MAX and nodes:
         served_through = stored[RUN_CARD_LIST_MEMBERS_MAX - 1].record.sequence
+        # The displayed list's own first entry is not necessarily the run's
+        # first fired node: the card shows only the latest ones. Anchor the
+        # first interval on the actual preceding node_fired record (one
+        # lookup, done once), so an earlier, undisplayed call's own overflow
+        # is never attributed to the first displayed node.
         previous_sequence = 0
+        preceding = journal.index.select(
+            stream,
+            run_id=run_id,
+            event_kind="node_fired",
+            last_sequence=nodes[0].sequence - 1,
+            descending=True,
+            limit=1,
+        )
+        if preceding:
+            previous_sequence = preceding[0].record.sequence
         for node in nodes:
             lower = max(served_through, previous_sequence) + 1
             if lower <= node.sequence:
@@ -573,7 +607,9 @@ def _list_members(
                     limit=1,
                 )
                 if overflow:
-                    truncated_nodes.add(node.node)
+                    payload = run_payload(instance, overflow[0].record.payload_digest)
+                    if isinstance(payload, Mapping) and _list_member_field(payload) is not None:
+                        truncated_nodes.add(node.node)
             previous_sequence = node.sequence
     return found, frozenset(truncated_nodes)
 
