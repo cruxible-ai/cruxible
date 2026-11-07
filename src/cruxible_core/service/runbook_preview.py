@@ -154,16 +154,19 @@ def _reads(reader: DefinitionReader, definition: Any) -> tuple[RunbookPreviewRea
         if not isinstance(node, ReadNode):
             continue
         query_name: str | None = None
+        kinds: set[str] = set()
         if node.query is not None:
             query_name = node.query.target.name
             query = reader.source(node.query.target.qualified)
-            predicates = (
-                tuple(query.referenced_predicates) if isinstance(query, QueryDefinition) else ()
-            )
+            predicates: tuple[str, ...] = ()
+            if isinstance(query, QueryDefinition):
+                predicates = tuple(query.referenced_predicates)
+                # The kinds it enters and walks to, even with no predicate read
+                # (a Query projecting only subject_id reads its entry kind).
+                kinds.update(query.subject_kinds)
         else:
             assert node.claim_type is not None
             predicates = (node.claim_type.target.name,)
-        kinds: set[str] = set()
         if node.subject_kind is not None:
             kinds.add(node.subject_kind)
         for predicate in predicates:

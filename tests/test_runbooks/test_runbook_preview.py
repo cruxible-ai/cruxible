@@ -48,11 +48,13 @@ def _queries(instance: Any) -> None:
 
     cve_row = boundary_contract("test.cve-row", {"cve_id": "string"})
     purl_row = boundary_contract("test.purl-row", {"purl": "string"})
+    id_row = boundary_contract("test.id-row", {"subject_id": "string"})
     accept_tree(
         instance,
         {
             **contract_files(cve_row),
             **contract_files(purl_row),
+            **contract_files(id_row),
             claim_type_path(NOTE): render_claim_type(note),
         },
         name="preview-vocabulary",
@@ -72,6 +74,13 @@ def _queries(instance: Any) -> None:
             "where": f"exists c.{AFFECTED}",
             "row": purl_row.ref.spelling,
             "fields": ["c.purl"],
+        },
+        {
+            # Reads no predicate at all: only its entry kind's Subjects.
+            "query": "test.cve-subjects",
+            "from": {"v": KIND},
+            "row": id_row.ref.spelling,
+            "fields": ["v.subject_id"],
         },
         {
             "query": "test.noted",
@@ -102,8 +111,9 @@ def _watcher(instance: Any) -> None:
     raw["steps"][1]["header"] = {"first": {"at": "/entries/0/cve", "type": "string{max_len: 256}"}}
     raw["steps"].insert(0, {"read": "affected", "query": "test.affected"})
     raw["steps"].insert(1, {"read": "noted", "query": "test.noted"})
+    raw["steps"].insert(2, {"read": "subjects", "query": "test.cve-subjects"})
     raw["steps"].insert(
-        4,
+        5,
         {
             "read": "late",
             "query": "test.watched",
@@ -169,7 +179,11 @@ def test_the_preview_composes_what_each_step_can_do(tmp_path: Path) -> None:
     watcher = _step(preview, 1)
     assert watcher.procedure == f"Procedure:{WATCHER}"
     reads = {read.node_id: read for read in watcher.reads}
-    assert set(reads) == {"affected", "noted", "late"}
+    assert set(reads) == {"affected", "noted", "subjects", "late"}
+    # A Query that reads no predicate still reads its entry kind and its key (F5).
+    assert reads["subjects"].claim_types == ()
+    assert reads["subjects"].subject_kinds == (KIND,)
+    assert reads["subjects"].key_claim_types == (f"{KIND}.cve_id",)
     assert reads["affected"].query == "test.affected"
     assert set(reads["affected"].claim_types) >= {AFFECTED}
     assert COMPONENT in reads["affected"].subject_kinds
