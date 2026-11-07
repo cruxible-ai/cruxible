@@ -43,6 +43,7 @@ from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.service.discovery.orient import service_playbill_orient
 from cruxible_core.service.list_pages import ListCursorMismatch
 from cruxible_core.storage.cas import BodyAccessContext
+from tests.core_support._pair_reference import reference_pairs
 from tests.core_support._pair_world import (
     APP_EXPOSURE,
     COMPONENT,
@@ -144,42 +145,7 @@ def _card(instance: PlaybillInstance, ref: str) -> Any:
 
 
 def _reference_pairs(instance: PlaybillInstance, end: str) -> dict[tuple[str, str], list[str]]:
-    """Every pair naming ``end`` that holds a live fact, from every Claim row.
-
-    A pair names the end when one of its Subject-valued key Claims points at
-    it; it holds a live fact when any live Claim about it is not a key Claim.
-    """
-
-    path = f"subjects/{end}.json"
-    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        connection = projection.typed.connection
-        keys = {
-            str(identity).removeprefix("SubjectKind:"): set(json.loads(str(predicates)))
-            for identity, predicates in connection.execute(
-                "SELECT identity, key_predicates FROM subject_kinds"
-            )
-        }
-        rows = connection.execute(
-            "SELECT subject_path, predicate, object_kind, object_path, lifecycle FROM claims"
-        ).fetchall()
-    kind_of = {pair: pair.split("/")[1] for pair, *_rest in rows}
-    naming = {
-        (pair, predicate)
-        for pair, predicate, kind, obj, _lifecycle in rows
-        if kind == "subject" and obj == path and predicate in keys.get(kind_of[pair], ())
-    }
-    holding = {
-        pair
-        for pair, predicate, _kind, _obj, lifecycle in rows
-        if lifecycle == "live" and predicate not in keys.get(kind_of[pair], ())
-    }
-    found: dict[tuple[str, str], list[str]] = {}
-    for pair, predicate in naming:
-        if pair in holding:
-            found.setdefault((kind_of[pair], predicate.rsplit(".", 1)[1]), []).append(
-                pair.removeprefix("subjects/").removesuffix(".json")
-            )
-    return {key: sorted(value) for key, value in found.items()}
+    return reference_pairs(instance, end, at=datetime.now(UTC)).listed
 
 
 # -- a pair's card ------------------------------------------------------------------
@@ -281,7 +247,8 @@ def test_pairs_detail_pages_every_live_pair_once_matching_the_reference(
         assert sum(len(group.pairs) for group in page.pairs.groups) <= limit
         for group in page.pairs.groups:
             assert group.more is False
-            listed.setdefault((group.kind, group.part), []).extend(group.pairs)
+            if group.pairs:
+                listed.setdefault((group.kind, group.part), []).extend(group.pairs)
             order.extend((group.kind, group.part, pair) for pair in group.pairs)
     assert listed == _reference_pairs(instance, C1)
     assert order == sorted(order) and len(order) == EXPOSED + 1

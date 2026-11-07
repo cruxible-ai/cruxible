@@ -6193,8 +6193,12 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
                     )
             for group in card.get("pairs", ()):
                 more = ", ..." if group.get("more") else ""
+                hidden = f"  ({group['hidden']} hidden)" if group.get("hidden") else ""
                 click.echo(
-                    f"pairs {group['kind']} by {group['part']}: " + ", ".join(group["pairs"]) + more
+                    f"pairs {group['kind']} by {group['part']}: "
+                    + (", ".join(group["pairs"]) or "-")
+                    + more
+                    + hidden
                 )
         else:
             for key, value in card.items():
@@ -6286,6 +6290,8 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
         for group in result.pairs.groups:
             for pair in group.pairs:
                 click.echo(f"{pair}  {group.kind}  by {group.part}")
+            if group.hidden:
+                click.echo(f"({group.hidden} hidden {group.kind} by {group.part})")
         return
     if result.incoming is not None:
         if not result.incoming.claims:

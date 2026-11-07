@@ -4692,7 +4692,12 @@ class Cruxible:
                 for group in page.pairs.groups:
                     last = groups[-1] if groups else None
                     if last is not None and (last.kind, last.part) == (group.kind, group.part):
-                        groups[-1] = last.model_copy(update={"pairs": (*last.pairs, *group.pairs)})
+                        groups[-1] = last.model_copy(
+                            update={
+                                "pairs": (*last.pairs, *group.pairs),
+                                "hidden": last.hidden + group.hidden,
+                            }
+                        )
                     else:
                         groups.append(group)
             result = result.model_copy(

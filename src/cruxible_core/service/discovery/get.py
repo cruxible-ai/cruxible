@@ -172,11 +172,16 @@ from cruxible_core.service.discovery.operational import (
 )
 from cruxible_core.service.discovery.operational_viewer import OperationalViewer
 from cruxible_core.service.discovery.pair_reads import (
+    CARD_SCAN,
     PairsCursorInvalid,
+    cut_page,
     end_pair_groups,
+    fact_claim_paths,
     group_pairs,
+    page_candidates,
+    page_scan,
     pair_ends,
-    pairs_page,
+    visible_pairs,
 )
 from cruxible_core.service.discovery.read_flags import (
     answer_flags,
@@ -1301,20 +1306,38 @@ def _subject_card(
                 (path,),
             ).fetchone()[0]
         )
-        # A pair's ends (its pair_ends rows) and, as an end, its pairs per pair
-        # kind and part (pair_units seeks): bounded by the card, never a scan.
+        # A pair's ends (its pair_ends rows) and, as an end, its pair candidates
+        # per pair kind and part (pair_units seeks): at most CARD_SCAN per group.
         ends = pair_ends(projection.typed.connection, path)
-        end_groups = []
-        for group in end_pair_groups(projection.typed.connection, path):
-            found = group_pairs(projection.typed.connection, path, group, limit=GET_CARD_PAIRS + 1)
-            end_groups.append(
-                GetEndPairs(
-                    kind=group.kind,
-                    part=short_field_name(group.part, group.kind, accepted_predicates),
-                    pairs=tuple(_subject_ref(item) for item in found[:GET_CARD_PAIRS]),
-                    more=len(found) > GET_CARD_PAIRS,
-                )
+        scanned = [
+            (group, group_pairs(projection.typed.connection, path, group, limit=CARD_SCAN + 1))
+            for group in end_pair_groups(projection.typed.connection, path)
+        ]
+        examined = [(group, pair) for group, found in scanned for pair in found[:CARD_SCAN]]
+        fact_paths = fact_claim_paths(projection.typed.connection, examined)
+    # Candidates only propose: each is listed when one of its facts is visible.
+    visible = visible_pairs(
+        instance,
+        coordinate,
+        pairs=[pair for _group, pair in examined],
+        claim_paths=fact_paths,
+        evaluation_time=evaluation_time,
+    )
+    end_groups = []
+    for group, found in scanned:
+        visible_found = [pair for pair in found[:CARD_SCAN] if pair in visible]
+        more = len(visible_found) > GET_CARD_PAIRS or len(found) > CARD_SCAN
+        if not found:
+            continue
+        end_groups.append(
+            GetEndPairs(
+                kind=group.kind,
+                part=short_field_name(group.part, group.kind, accepted_predicates),
+                pairs=tuple(_subject_ref(item) for item in visible_found[:GET_CARD_PAIRS]),
+                hidden=len(found[:CARD_SCAN]) - len(visible_found),
+                more=more,
             )
+        )
     held = unsure_holds(
         instance,
         coordinate,
@@ -2870,15 +2893,16 @@ def _pairs(
     coordinate: AcceptedProjectionCoordinate,
     resolved: ResolvedRef,
     *,
+    evaluation_time: datetime,
     request: GetRequest,
     limit: int,
     continuation: ListContinuation | None,
 ) -> tuple[GetPairs, bool, str | None]:
     """One page of the pairs this Subject is an end of, by pair kind, part and id.
 
-    Keyset seeks of the pair index after the cursor's (part, pair): the page
-    reads its own rows and one more per fact predicate, never the Subject's
-    whole set of pairs (``pair_reads``).
+    Keyset seeks of the pair index after the cursor's (part, pair), at most
+    ``page_scan(limit)`` candidates, judged by one batched fact read: the page
+    never reads the Subject's whole set of pairs (``pair_reads``).
     """
 
     after: tuple[str, str] | None = None
@@ -2890,22 +2914,37 @@ def _pairs(
             )
         after = (continuation.last_key[0], continuation.last_key[1])
     path = resolved.path or f"subjects/{_name(resolved.identity)}.json"
+    scan = page_scan(limit)
     with instance.bind_accepted_projection(coordinate) as projection:
         try:
-            page = pairs_page(projection.typed.connection, path, after=after, limit=limit)
+            candidates = page_candidates(
+                projection.typed.connection, path, after=after, count=scan + 1
+            )
         except PairsCursorInvalid as exc:
             raise ListCursorMismatch(
                 f"{ListCursorMismatch.error_code}: the cursor does not continue this "
                 "listing; read pairs again without a cursor"
             ) from exc
-        accepted_predicates = _live_predicates(projection) if page.groups else frozenset()
+        fact_paths = fact_claim_paths(projection.typed.connection, candidates[:scan])
+        accepted_predicates = _live_predicates(projection) if candidates else frozenset()
+    # Candidates only propose: each is listed when one of its facts is visible;
+    # a hidden one is counted and the cursor moves past it.
+    visible = visible_pairs(
+        instance,
+        coordinate,
+        pairs=[pair for _group, pair in candidates[:scan]],
+        claim_paths=fact_paths,
+        evaluation_time=evaluation_time,
+    )
+    page = cut_page(candidates, visible, limit=limit, scan=scan)
     groups = tuple(
         GetEndPairs(
             kind=group.kind,
             part=short_field_name(group.part, group.kind, accepted_predicates),
             pairs=tuple(_subject_ref(item) for item in listed),
+            hidden=hidden,
         )
-        for group, listed in page.groups
+        for group, listed, hidden in page.groups
     )
     next_cursor = (
         None
@@ -3454,6 +3493,7 @@ def service_playbill_get(
             instance,
             coordinate,
             resolved,
+            evaluation_time=evaluation_time,
             request=request,
             limit=request.limit or GET_HISTORY_DEFAULT_LIMIT,
             continuation=continuation,

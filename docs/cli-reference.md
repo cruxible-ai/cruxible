@@ -2108,9 +2108,16 @@ and facts never imply the link: authority stays on the link.
 - `get` of a pair lists its `ends` (part, end `kind/id`, endpoint Claim) in key
   order, then its facts; a retired pair still names its ends. `get` of an end
   lists the pairs naming it per pair kind and part (`pairs`, five each, `more`
-  when cut); `--detail pairs` pages them all. Only pairs holding a live fact
-  are listed: a pair whose facts are all retired is a historical shell, which
-  `--detail incoming` still reaches through its key Claims.
+  when more may follow); `--detail pairs` pages them all. A pair is listed only
+  when it holds a visible fact: a live, positive Claim that is supported and
+  current at the read's instant, as a query reads by default. Pairs whose facts
+  are all hidden (not yet effective, expired, stale, contradicted, or only a
+  none) are counted as `hidden` instead. A card examines ten candidates per
+  group, and a page at most twice its `--limit` plus eight; a page can list
+  fewer rows than `--limit` while it says more follow, and its cursor continues
+  after the last candidate it examined. A pair whose facts are all retired is a
+  historical shell, which `--detail incoming` still reaches through its key
+  Claims.
 
 Creating. A write's `create` names each end as `kind/id` (an id, an alias or a
 single key) or `{"created": label}` for an end the same write creates; ends are

@@ -318,8 +318,11 @@ class GetPairEnd(_StrictGetModel):
 class GetEndPairs(_StrictGetModel):
     """The pairs a Subject is an end of through one key part of one pair kind, in id order.
 
-    Only pairs holding a live fact are listed (the pair index); a pair whose
-    facts are all retired is a historical shell, reached through ``incoming``.
+    A pair is listed when it holds a visible fact: a live, positive, supported
+    and current Claim (a query's default visibility at the read's instant). A
+    pair whose facts are all hidden (not yet effective, expired, stale,
+    contradicted) is counted in ``hidden``; one whose facts are all retired is
+    a historical shell, reached through ``incoming``.
     """
 
     #: The pair kind.
@@ -328,15 +331,20 @@ class GetEndPairs(_StrictGetModel):
     part: str
     #: The pairs, ``kind/id``.
     pairs: tuple[str, ...]
-    #: On a card: more pairs follow; ``detail="pairs"`` pages them all.
+    #: Pairs read here whose facts are all hidden, so not listed.
+    hidden: int = Field(default=0, ge=0, exclude_if=lambda value: value == 0)
+    #: On a card: more pairs may follow; ``detail="pairs"`` pages them all.
     more: bool = Field(default=False, exclude_if=lambda value: value is False)
 
 
 class GetPairs(_StrictGetModel):
     """One page of the pairs a Subject is an end of, by pair kind and key part.
 
-    Read through the pair index one page at a time: a page costs its rows,
-    never the Subject's whole set of pairs nor any other Subject's.
+    Read through the pair index one page at a time: a page examines at most
+    twice its ``limit`` plus eight candidate pairs, never the Subject's whole
+    set of pairs nor any other Subject's. Hidden candidates are counted per
+    group, never listed; a page may hold fewer rows than ``limit`` while
+    ``truncated`` says more candidates follow.
     """
 
     kind: Literal["pairs"] = "pairs"
