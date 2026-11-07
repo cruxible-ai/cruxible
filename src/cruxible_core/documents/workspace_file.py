@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import errno
 import fcntl
+import fnmatch
 import hashlib
 import os
 import stat
@@ -28,6 +29,7 @@ from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.workspace_file import (
     ExecutedWorkspaceFileSourceRequestV2,
     SourceReadReceipt,
+    WorkspaceFileGlobRequestV1,
     WorkspaceFileSourceRequestV2,
 )
 
@@ -50,6 +52,8 @@ WorkspaceFilePathClass = Literal[
     "workspace_unnamed",
     # The authored request names a workspace no authorized root (or several) is called.
     "workspace_unknown",
+    # A glob read matches more files than its cap (D-R41).
+    "glob_over_cap",
 ]
 
 
@@ -95,6 +99,22 @@ def workspace_binding_digest(*, instance_id: str, canonical_root: Path) -> str:
 class WorkspaceFileReadResultV1:
     provider_input: CanonicalValue
     receipt: SourceReadReceipt
+
+
+#: One directory's identity at the moment it was listed: ``(device, inode,
+#: st_mtime_ns, st_ctime_ns)``. A cache entry is trusted only while a fresh
+#: stat of the same directory still matches it, so content changed since (or
+#: a directory inode reused for a different directory) is never read from it.
+DirectoryIdentity = tuple[int, int, int, int]
+
+#: One glob operation's shared directory-entry cache (D-R41): a real
+#: directory's identity, listing and name-set, keyed by its ``(device,
+#: inode)`` so every matched member under it reuses one listing instead of
+#: relisting it. Callers create a fresh cache per glob operation; it is
+#: never kept longer.
+DirectoryEntryCache = dict[
+    tuple[int, int], tuple[DirectoryIdentity, tuple[str, ...], frozenset[str]]
+]
 
 
 class WorkspaceFileReader:
@@ -161,11 +181,23 @@ class WorkspaceFileReader:
         author's.
         """
 
+        root = self._resolve_root(request.workspace)
+        return ExecutedWorkspaceFileSourceRequestV2.executing(
+            request,
+            workspace=root.name,
+            binding_digest=workspace_binding_digest(
+                instance_id=self.instance_id, canonical_root=root
+            ),
+        )
+
+    def _resolve_root(self, workspace: str | None) -> Path:
+        """The one authorized root an authored ``workspace`` (or its absence) names."""
+
         if self.operating_profile == "cloud" and not self.daemon_owned:
             raise WorkspaceFileReadRefused(
                 "cloud_no_mounts", "cloud profile has no daemon-local workspace mounts"
             )
-        if request.workspace is None:
+        if workspace is None:
             candidates = self._attached if len(self._attached) == 1 else self._roots
             if not candidates:
                 raise WorkspaceFileReadRefused(
@@ -178,25 +210,78 @@ class WorkspaceFileReader:
                     workspace_names=self.workspace_names,
                 )
         else:
-            candidates = tuple(root for root in self._roots if root.name == request.workspace)
+            candidates = tuple(root for root in self._roots if root.name == workspace)
             if len(candidates) != 1:
                 raise WorkspaceFileReadRefused(
                     "workspace_unknown",
                     (
-                        f"no authorized workspace is named {request.workspace!r}"
+                        f"no authorized workspace is named {workspace!r}"
                         if not candidates
-                        else f"several authorized workspaces are named {request.workspace!r}"
+                        else f"several authorized workspaces are named {workspace!r}"
                     ),
                     workspace_names=self.workspace_names,
                 )
         (root,) = candidates
-        return ExecutedWorkspaceFileSourceRequestV2.executing(
-            request,
-            workspace=root.name,
-            binding_digest=workspace_binding_digest(
-                instance_id=self.instance_id, canonical_root=root
-            ),
-        )
+        return root
+
+    def expand(self, request: WorkspaceFileGlobRequestV1) -> tuple[str, ...]:
+        """The relative paths a glob matches under its workspace, sorted, within its cap.
+
+        One directory listing per directory a pattern component reads, never a
+        tree walk. A match is a candidate only: each is read afterwards as an
+        ordinary ``workspace.file`` read, which applies every containment and
+        no-follow check. Hidden entries match only a pattern that starts with
+        ``.``, and Git metadata, Cruxible control and key paths and managed
+        roots never match. More matches than ``max_files`` refuses
+        ``glob_over_cap``.
+        """
+
+        root = self._resolve_root(request.workspace)
+        found: list[str] = [""]
+        parts = request.glob.split("/")
+        for position, part in enumerate(parts):
+            leaf = position == len(parts) - 1
+            pattern = any(character in part for character in "*?[")
+            following: list[str] = []
+            for prefix in found:
+                directory = root.joinpath(*prefix.split("/")) if prefix else root
+                if pattern:
+                    try:
+                        names = sorted(
+                            name
+                            for name in os.listdir(directory)
+                            if fnmatch.fnmatchcase(name, part)
+                            and (part.startswith(".") or not name.startswith("."))
+                        )
+                    except (FileNotFoundError, NotADirectoryError):
+                        continue
+                    except PermissionError as exc:
+                        raise WorkspaceFileReadRefused(
+                            "unreadable", "a workspace glob directory cannot be listed"
+                        ) from exc
+                else:
+                    names = [part]
+                for name in names:
+                    relative = f"{prefix}/{name}" if prefix else name
+                    try:
+                        self._deny_path(tuple(relative.split("/")))
+                        self._check_managed_root(root.joinpath(*relative.split("/")))
+                        status = os.lstat(root.joinpath(*relative.split("/")))
+                    except (WorkspaceFileReadRefused, FileNotFoundError, NotADirectoryError):
+                        continue
+                    # A directory is never a match; only a directory (never a
+                    # link to one) is walked into. A link or special file that
+                    # matches is a candidate, and its read refuses it.
+                    if stat.S_ISDIR(status.st_mode) != leaf:
+                        following.append(relative)
+            found = following
+        matches = tuple(sorted(found, key=lambda item: item.encode("utf-8")))
+        if len(matches) > request.max_files:
+            raise WorkspaceFileReadRefused(
+                "glob_over_cap",
+                f"the glob matches more than its {request.max_files} files",
+            )
+        return matches
 
     def _root_for(self, binding_digest: str) -> Path:
         for root in self._roots:
@@ -252,21 +337,105 @@ class WorkspaceFileReader:
             )
 
     @staticmethod
-    def _actual_component(parent_fd: int, requested: str) -> str:
-        """Resolve one component using the directory's real spelling."""
+    def _directory_entries(
+        parent_fd: int, *, cache: DirectoryEntryCache | None = None, force_refresh: bool = False
+    ) -> tuple[tuple[str, ...], frozenset[str]]:
+        """List a directory once, reusing the result for sibling files in one glob.
 
+        ``cache`` is keyed by the parent descriptor's ``(device, inode)``,
+        never by the fd number itself (each file read reopens the directory,
+        so the same real directory gets a fresh, numerically different fd):
+        this is what lets sibling members of a glob share one listing. An
+        entry is trusted only while a fresh stat of ``parent_fd`` still
+        matches the directory's identity when it was listed (device, inode,
+        and its own ``st_mtime_ns``/``st_ctime_ns``): a directory whose
+        content changed since, or whose inode was reused for a different
+        directory, is relisted rather than trusted. ``force_refresh`` relists
+        unconditionally (still updating the cache), for a caller that already
+        knows a cached candidate let it down.
+        """
+
+        key: tuple[int, int] | None = None
+        identity: DirectoryIdentity | None = None
+        if cache is not None:
+            try:
+                parent_stat = os.fstat(parent_fd)
+            except OSError:
+                parent_stat = None
+            if parent_stat is not None:
+                key = (parent_stat.st_dev, parent_stat.st_ino)
+                identity = (
+                    parent_stat.st_dev,
+                    parent_stat.st_ino,
+                    parent_stat.st_mtime_ns,
+                    parent_stat.st_ctime_ns,
+                )
+                if not force_refresh:
+                    cached = cache.get(key)
+                    if cached is not None and cached[0] == identity:
+                        return cached[1], cached[2]
         try:
-            entries = os.listdir(parent_fd)
+            entries = tuple(os.listdir(parent_fd))
         except PermissionError as exc:
             raise WorkspaceFileReadRefused(
                 "unreadable", "workspace source directory cannot be listed"
             ) from exc
-        if requested in entries:
-            return requested
+        by_name = frozenset(entries)
+        if cache is not None and key is not None and identity is not None:
+            cache[key] = (identity, entries, by_name)
+        return entries, by_name
+
+    @staticmethod
+    def _same_object(parent_fd: int, one: str, other: str) -> tuple[int, int] | None:
+        """The shared ``(device, inode)`` if a fresh stat of ``one`` and ``other`` agree.
+
+        A stat is a snapshot, not a hold: the name can still be renamed to a
+        different object the instant after this returns. The caller that
+        goes on to open ``other`` must fstat what it actually opened and
+        compare it to the identity returned here before trusting it -- this
+        call only produces the identity to compare against, never a guarantee
+        about what a later open will see.
+        """
+
+        try:
+            stat_one = os.stat(one, dir_fd=parent_fd, follow_symlinks=False)
+            stat_other = os.stat(other, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            return None
+        identity = (stat_one.st_dev, stat_one.st_ino)
+        if identity != (stat_other.st_dev, stat_other.st_ino):
+            return None
+        return identity
+
+    @staticmethod
+    def _resolve_component(
+        parent_fd: int, requested: str, cache: DirectoryEntryCache | None
+    ) -> tuple[str, tuple[int, int] | None] | None:
+        """``requested``'s real spelling in ``parent_fd``'s listing, or ``None`` if unplaced.
+
+        A case-folding candidate recovered from ``cache`` is returned only
+        once a fresh stat confirms it presently names the same object as
+        ``requested``: a stale listing's candidate is never substituted on
+        its word alone. ``None`` lets the caller relist and retry once
+        before refusing.
+
+        The second element is the identity verified for a substituted
+        candidate (``None`` when the exact requested name was used
+        unchanged, since nothing was substituted to verify). The verification
+        here is only a stat, taken before the name is opened: the caller
+        must still fstat what it opens and compare it to this identity
+        before trusting the bytes behind it, or the candidate could be
+        swapped for a different object in the gap between this check and
+        that open.
+        """
+
+        entries, by_name = WorkspaceFileReader._directory_entries(parent_fd, cache=cache)
+        if requested in by_name:
+            return requested, None
         try:
             os.stat(requested, dir_fd=parent_fd, follow_symlinks=False)
-        except FileNotFoundError as exc:
-            raise WorkspaceFileReadRefused("missing", "workspace source is unavailable") from exc
+        except FileNotFoundError:
+            return None
         requested_key = unicodedata.normalize("NFC", requested).casefold()
         matches = tuple(
             entry
@@ -274,8 +443,45 @@ class WorkspaceFileReader:
             if unicodedata.normalize("NFC", entry).casefold() == requested_key
         )
         if len(matches) != 1:
+            return None
+        candidate = matches[0]
+        if cache is None:
+            return candidate, None
+        identity = WorkspaceFileReader._same_object(parent_fd, requested, candidate)
+        if identity is None:
+            return None
+        return candidate, identity
+
+    @staticmethod
+    def _actual_component(
+        parent_fd: int, requested: str, *, cache: DirectoryEntryCache | None = None
+    ) -> tuple[str, tuple[int, int] | None]:
+        """Resolve one component using the directory's real spelling.
+
+        ``cache``, scoped to one glob operation (D-R41), reuses a directory's
+        entries across sibling reads instead of relisting it per file; every
+        descriptor, no-follow and real-name check below still runs per file.
+        A cached listing that cannot place ``requested`` (absent from it, or
+        resolving to an object a fresh stat no longer agrees is the same one)
+        is never trusted as final: the directory is relisted once and
+        ``requested`` resolved again from that fresh result before refusing.
+
+        Returns the resolved name together with the identity verified for it
+        (``None`` when the exact requested name was used unchanged). The
+        verification is a stat taken here, not a hold on the object: the
+        caller must fstat the descriptor it opens for this name and refuse
+        before reading anything from it if that disagrees with a non-``None``
+        identity, since the name can still be swapped in the gap between
+        this resolution and that open.
+        """
+
+        resolved = WorkspaceFileReader._resolve_component(parent_fd, requested, cache)
+        if resolved is None and cache is not None:
+            WorkspaceFileReader._directory_entries(parent_fd, cache=cache, force_refresh=True)
+            resolved = WorkspaceFileReader._resolve_component(parent_fd, requested, cache)
+        if resolved is None:
             raise WorkspaceFileReadRefused("missing", "workspace source is unavailable")
-        return matches[0]
+        return resolved
 
     @staticmethod
     def _fd_path(descriptor: int) -> Path:
@@ -311,7 +517,16 @@ class WorkspaceFileReader:
         resolved_max_bytes: int,
         derived_request_digest: str,
         read_at: datetime,
+        directory_cache: DirectoryEntryCache | None = None,
     ) -> WorkspaceFileReadResultV1:
+        """Read one file, with every containment and no-follow check strict.
+
+        ``directory_cache``, scoped to one glob operation (D-R41), reuses a
+        directory's entries across sibling reads instead of relisting it per
+        file; omitted (the default), every call lists its own directory, as
+        before.
+        """
+
         if self.operating_profile == "cloud" and not self.daemon_owned:
             raise WorkspaceFileReadRefused(
                 "cloud_no_mounts", "cloud profile has no daemon-local workspace mounts"
@@ -336,7 +551,9 @@ class WorkspaceFileReader:
             root_real = self._fd_path(descriptors[0])
             self._check_managed_root(root_real)
             for component in parts[:-1]:
-                actual = self._actual_component(descriptors[-1], component)
+                actual, verified_identity = self._actual_component(
+                    descriptors[-1], component, cache=directory_cache
+                )
                 before = os.stat(actual, dir_fd=descriptors[-1], follow_symlinks=False)
                 if stat.S_ISLNK(before.st_mode):
                     raise WorkspaceFileReadRefused(
@@ -347,7 +564,22 @@ class WorkspaceFileReader:
                         "non_regular", "workspace source parent must be a directory"
                     )
                 descriptors.append(os.open(actual, flags_directory, dir_fd=descriptors[-1]))
-            actual_leaf = self._actual_component(descriptors[-1], parts[-1])
+                # ``actual`` may have been a case-folding substitution for
+                # ``component`` (D-R41/F3): the stat above that confirmed it
+                # is a directory ran against the same race window the
+                # resolution did, so only the descriptor just opened -- fstat
+                # before it is used for anything -- can be trusted against
+                # the identity verified at resolution time.
+                if verified_identity is not None:
+                    opened_dir = os.fstat(descriptors[-1])
+                    if (opened_dir.st_dev, opened_dir.st_ino) != verified_identity:
+                        raise WorkspaceFileReadRefused(
+                            "changed_during_read",
+                            "workspace source changed while it was read",
+                        )
+            actual_leaf, leaf_identity = self._actual_component(
+                descriptors[-1], parts[-1], cache=directory_cache
+            )
             before = os.stat(actual_leaf, dir_fd=descriptors[-1], follow_symlinks=False)
             if stat.S_ISLNK(before.st_mode):
                 raise WorkspaceFileReadRefused(
@@ -355,6 +587,14 @@ class WorkspaceFileReader:
                 )
             descriptors.append(os.open(actual_leaf, flags_file, dir_fd=descriptors[-1]))
             opened = os.fstat(descriptors[-1])
+            # Same race as above, for the leaf: a candidate substituted for
+            # ``parts[-1]`` could have been swapped between the stat that
+            # verified it and this open, so the opened descriptor's own
+            # identity is what is checked, before any byte of it is read.
+            if leaf_identity is not None and (opened.st_dev, opened.st_ino) != leaf_identity:
+                raise WorkspaceFileReadRefused(
+                    "changed_during_read", "workspace source changed while it was read"
+                )
             if not stat.S_ISREG(opened.st_mode):
                 raise WorkspaceFileReadRefused(
                     "non_regular", "workspace source must be a regular file"

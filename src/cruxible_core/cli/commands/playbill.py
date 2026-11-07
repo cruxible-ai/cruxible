@@ -8368,6 +8368,16 @@ def dispatch_line(
     default=None,
     help="Assert the ISO-8601 instant you expect; the daemon clock decides.",
 )
+@click.option(
+    "--parameters",
+    "parameters_file",
+    type=PayloadFile(),
+    help=(
+        "Parameter values JSON/YAML over the Line's, for this run only (checked against "
+        "the Procedure's params Contract). A run on other parameters runs without the "
+        "Line's mandate: it may propose, never settle."
+    ),
+)
 @json_option
 @handle_errors
 def run_line(
@@ -8377,6 +8387,7 @@ def run_line(
     contract_file: str | None,
     occurrence_id: str | None,
     evaluation_time: str | None,
+    parameters_file: str | None,
     output_json: bool,
 ) -> None:
     """Run LINE once now: one manual occurrence under the Line's inputs, budgets and authority.
@@ -8398,6 +8409,7 @@ def run_line(
             "resolution_contract": resolution_contract,
             "event": event,
             "repeat": repeat,
+            "parameters": None if parameters_file is None else _read_mapping(parameters_file),
         }
     )
     result = _server_call(
@@ -8411,6 +8423,7 @@ def run_line(
             evaluation_time=(
                 None if request.evaluation_time is None else request.evaluation_time.isoformat()
             ),
+            **({"parameters": request.parameters} if request.parameters is not None else {}),
         ),
         command_name="cruxible line run",
     )

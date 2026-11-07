@@ -61,6 +61,7 @@ def test_line_run_schema_exposes_occurrence_assertions_and_exact_investigation()
         "line",
         "evaluation_time",
         "occurrence_id",
+        "parameters",
     }
     # The evaluation instant is an assertion the daemon checks, never the
     # occurrence's own instant, so it is optional on every surface.

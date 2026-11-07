@@ -446,6 +446,9 @@ class ServedNestedProcedureRunner:
             clock=self.clock,
             nested_runner=replace(self, prefix=child_prefix),
             parent_context=context,
+            state_reader=PlaybillProcedureStateTapReader(
+                instance=self.instance, evaluation_time=self.evaluation_time
+            ),
         )
         if result.status == "succeeded" and capture_store is not None:
             capture_store.release()

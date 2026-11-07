@@ -13,6 +13,7 @@ from cruxible_client.contracts.claim_evidence import (
 )
 from cruxible_client.contracts.claims import NoneClaimObject, claim_artifact_digest
 from cruxible_client.contracts.content_memo import seal
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.models import ExtractNode
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import SubjectType
@@ -114,6 +115,23 @@ def append_absence(
     captures = {t.digest for t in own if t.slot in {"produced_capture", "admitted_capture"}}
     from cruxible_core.procedures.terminal_dependencies import capture_root
 
+    called = state.outputs.get(extracting.capture_alias)
+    if (
+        extracting.capture_alias in state.glob_lists
+        and isinstance(called, dict)
+        and called.get(extracting.capture_field) == []
+    ):
+        # A glob that matched nothing (D-R41) enumerates no Capture; a glob never
+        # judges absence anyway, so the source is incomplete and nothing retires.
+        diagnostics.add(
+            ClaimsDiagnostic(
+                kind="incomplete_source",
+                target=node.node_id,
+                problem="source_incomplete",
+                source_incomplete=True,
+            )
+        )
+        return
     members = _list_members(extracting, state, captures, node_id=node.node_id)
     root = (
         capture_root(captures, state.derivations, cache=state.capture_root_cache)
@@ -155,6 +173,10 @@ def append_absence(
                 extracting.node_id,
                 "duplicate_key" if arm.get("tag") == "duplicate" else "invalid_record",
             )
+        if arm.get("tag") == "invalid_record":
+            # A refused record has no key to name a Subject by (D-R40): the
+            # enumeration is already incomplete, and it never names a deletion.
+            continue
         record = arm.get("record") if arm.get("tag") == "record" else arm
         if not isinstance(record, dict):
             continue
@@ -162,7 +184,7 @@ def append_absence(
             key = resolve(node.subject.key, record)
             keys.append(record.get("key") or key)
             subject = context.subject(node.subject.kind, key)
-        except (ValueError, KeyError, TypeError):
+        except (ExecutionError, ValueError, KeyError, TypeError):
             invalid_enumeration = True
             continue  # unknown key taints lineage; it never authorizes a deletion
         if subject is None:
@@ -208,6 +230,9 @@ def append_absence(
         (check is None or check.held)
         and not expect_unknown
         and not invalid_enumeration
+        # A glob names the files that exist now (D-R41): an extract straight over
+        # one never judges absence, so a file it no longer matches retires nothing.
+        and extracting.capture_alias not in state.glob_lists
         and (listed.get("complete", True) if isinstance(listed, dict) else True)
         and (
             state.completeness.at_sink(_referenced_reads(node.expect))

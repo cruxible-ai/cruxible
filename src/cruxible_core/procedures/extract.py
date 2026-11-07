@@ -69,6 +69,7 @@ from cruxible_client.contracts.shapes import (
     IntType,
     InvalidRecordArm,
     KeyCanonicalizer,
+    KeyPartOutOfBounds,
     KeyPartType,
     KeyType,
     KeyValueRefused,
@@ -496,6 +497,8 @@ def _check(
             # Extraction already builds its own compact result. Avoid allocating
             # a public FieldPresent merely to unpack its canonical value.
             canonical = keys.canonical(field_type.subject_kind, part, value)
+        except KeyPartOutOfBounds:
+            return _bad("key_part_out_of_bounds", field, value)
         except KeyValueRefused:
             return _bad("key_unparseable", field, value)
         return ("present", canonical, at)
@@ -743,7 +746,15 @@ def _index(
         )
     keys: dict[str, dict[str, object]] = {}
     problems: dict[str, tuple[Problem, ...]] = {}
+    json_records = not isinstance(document, _CsvTable)
     for locator, record in records:
+        if json_records and not isinstance(record, dict):
+            # A JSON record is an object (D-R40): anything else is refused alone,
+            # its siblings still read, and the extract is incomplete.
+            problems[locator] = (
+                Problem(code="not_an_object", field=None, lexeme=_json_kind(record)),
+            )
+            continue
         if isinstance(record, _RaggedRow):
             problems[locator] = (
                 Problem(
@@ -774,7 +785,11 @@ def _index(
                 absent = lexeme is _MISSING or lexeme is None
                 found_problems.append(
                     Problem(
-                        code="key_absent" if absent else "key_unparseable",
+                        code="key_absent"
+                        if absent
+                        else "key_part_out_of_bounds"
+                        if result[1] == "key_part_out_of_bounds"
+                        else "key_unparseable",
                         field=name,
                         lexeme=result[3] if result[0] == "invalid" else None,
                     )
@@ -807,6 +822,20 @@ def _index(
         selector_matched=selector_matched,
     )
     return d_key, _D.remember(d_key, built)
+
+
+def _json_kind(value: object) -> str:
+    """The JSON kind of a non-object record, as its refusal names it."""
+
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, bool):
+        return "boolean"
+    if value is None:
+        return "null"
+    return "number"
 
 
 @dataclass(frozen=True)

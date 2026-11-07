@@ -61,6 +61,18 @@ never in Procedure syntax: authoring refuses guard, halt, select, repeat,
 invoke, emit, project and the shape/join/aggregate/union/derive transforms with
 `procedure_step_closed`, naming the step.
 
+That order is the usual shape, not a rule. Cruxible checks the step kinds and the
+data dependencies: a step may use only the outputs of steps before it that it
+depends on. So a Procedure may fetch twice (a detail fetch keyed by the first),
+chain derives, or read state late. A read whose parameters use only the run's
+input, its params, literals and other such reads runs at admission and is part
+of the run's identity. A read keyed by a fetch, derive or extract output (a
+**late read**, say the memberships of the one inventory an SBOM names) runs
+when that output is ready, against the same accepted state as the run's other
+reads. It counts against the same read budget, its refusal refuses the run,
+and the run receipt lists it under `late_reads`, apart from the admitted
+inputs.
+
 The SDK's `Sequence` is a thin builder over that spec: each step returns a
 handle, and `handle["field"]` is a typed reference to one of its fields. This
 one reads the file, extracts its records, and ends in a claims step with one
@@ -98,6 +110,19 @@ cx.changes(rationale="The Acme discontinued-parts check.") \
 `procedure.spec()` is the exact spec every surface submits; `get` shows an
 accepted Procedure in the same form, each typed reference rendered as its
 `$...` text for review.
+
+To read many files at once, name a `glob` instead of `relative_path`, say
+`{"logical_source": "acme.notices", "glob": "supplier/*.json", "max_files": 50}`.
+Each component may use `*`, `?` and `[...]`; `**` is not a pattern. The
+built-in lists the matches, sorted by their real names, and reads each one as
+an ordinary file read, so the capture field holds a list of Captures, one per
+file, and an extract over it cites each record's own file. Hidden files match
+only a pattern that starts with `.`. More matches than `max_files` (default
+100, at most 1000) refuses the read (`glob_over_cap`). A file that cannot be
+read (a link, say) is left out and the list is incomplete. A glob names only
+the files that exist now: an extract straight over it never judges absence,
+so a file the glob no longer matches retires nothing. Each file counts as one
+provider call against the run's budget.
 
 ### Write the Line, its Trigger and its mandate
 
@@ -160,8 +185,11 @@ Capture list: sha256:75f0fda7…
 Proposal settle: sha256:84437408… candidate sha256:14fb95b1… (settle fell back: cruxible.settle.authority_capped_by_line_max_authority)
 ~~~
 
-Its Line is capped at `propose`, so the settle step proposed. The proposal
-reads like anyone's, with the run that made it and each item's reason:
+Its Line is capped at `propose`, so the settle step proposed. `line run
+--parameters FILE` runs it once on other parameter values (another file, say):
+that run is not the one the Line's mandate covers, so it proposes and never
+settles. The proposal reads like anyone's, with the run that made it and each
+item's reason:
 
 ~~~text
 $ cruxible proposal review sha256:84437408…
@@ -537,7 +565,12 @@ quiet no-op; a different value reports `held_disagrees` with both values.
 A many-valued slot adds values without retiring the others.
 
 Invalid mapped fields are excluded before any proposal and recorded as typed
-`extract_refused` findings. Duplicate keys under `duplicates: refuse_key`
+`extract_refused` findings. A whole record the extract cannot read is refused
+alone, with its locators and a typed reason: `not_an_object` (a JSON record
+that is not an object), `key_absent`, `key_unparseable`, or
+`key_part_out_of_bounds` (a key value its key ClaimType's type does not admit,
+say longer than its `max_len`). Its siblings still write; the read is
+incomplete, so absence retires nothing. Duplicate keys under `duplicates: refuse_key`
 produce `duplicate_key` findings with the key and every record locator.
 Findings stay in the run report unless the Line explicitly routes their kinds
 to its inbox, for example `findings: {inbox: [extract_refused, duplicate_key]}`.

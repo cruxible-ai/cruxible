@@ -99,7 +99,11 @@ from cruxible_client.contracts.procedures.contracts import (
     ProcedureContractItemBudgetExceeded,
     ValidatedProcedureContract,
 )
-from cruxible_client.contracts.procedures.graph import analyze_procedure, reference_templates
+from cruxible_client.contracts.procedures.graph import (
+    analyze_procedure,
+    late_state_taps,
+    reference_templates,
+)
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
     line_identity_digest,
@@ -186,17 +190,26 @@ from cruxible_client.contracts.provider_operations import (
 )
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.resolution_contracts import InvestigationBinding
-from cruxible_client.contracts.shapes import ANY_CAPTURE_KIND, EnumResolver, KeyCanonicalizer
+from cruxible_client.contracts.shapes import (
+    ANY_CAPTURE_KIND,
+    EnumResolver,
+    InvalidRecordArm,
+    KeyCanonicalizer,
+)
 from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_client.contracts.workspace_file import (
     ExecutedWorkspaceFileSourceRequestV2,
     SourceReadReceipt,
     WorkspaceBindingDigestAuthored,
+    WorkspaceFileGlobRequestV1,
+    is_workspace_glob,
+    parse_authored_workspace_glob,
     parse_authored_workspace_request,
     source_read_receipt_digest,
 )
 from cruxible_core.documents.workspace_file import (
+    DirectoryEntryCache,
     WorkspaceFileReader,
     WorkspaceFileReadRefused,
 )
@@ -221,6 +234,7 @@ from cruxible_core.procedures.acquisition import (
     ACQUISITION_ORIGIN_INELIGIBLE,
     ACQUISITION_OVERSIZED,
     ACQUISITION_REFUSED,
+    ACQUISITION_UNAVAILABLE,
     ProcedureCaptureMaterialV1,
     ProcedureSourceAcquisitionResultV1,
     apply_acquisition_result,
@@ -607,6 +621,12 @@ class ProcedureRunAdmission(_StrictExecutionModel):
     investigation: InvestigationBinding | None = None
     trigger_binding: LineTriggerBinding | None = None
     parent_binding: ProcedureParentBindingV1 | None = None
+    #: A manual Line run on other parameters than its Line's (D-R39): the digest
+    #: of its Line spec and its parameters. It runs without the Line's mandate,
+    #: and this is its authority basis instead: propose, never settle.
+    parameter_override_digest: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     admitted_at: datetime
     semantic_replay_key_digest: str
     admission_binding_digest: str
@@ -630,6 +650,7 @@ class ProcedureRunAdmission(_StrictExecutionModel):
         "sensitivity_policy_digest",
         "mandate_coordinate_digest",
         "calibration_coordinate_digest",
+        "parameter_override_digest",
         "semantic_replay_key_digest",
         "admission_binding_digest",
     )
@@ -703,6 +724,10 @@ class ProcedureRunAdmission(_StrictExecutionModel):
         if self.accepted_coordinate != self.bound_coordinate:
             raise ValueError("admission bound and accepted coordinates differ")
         validate_run_input_vector(self.run_inputs, expected_accepted=self.accepted_coordinate)
+        if self.parameter_override_digest is not None and (
+            self.invocation_origin != "line" or self.parent_binding is not None
+        ):
+            raise ValueError("only a root Line run overrides its Line's parameters")
         self._plan_shape()
         if bool(self.exhaust_inputs) != (self.exhaust_access_binding_digest is not None):
             raise ValueError(
@@ -1091,19 +1116,25 @@ def procedure_semantic_result_digest(
     refusal: ProcedureRunRefusalV1 | None,
     halt: CanonicalValue | None = None,
     fetched_captures: Iterable[str] = (),
+    late_reads: Iterable[str] = (),
 ) -> str:
     """Commit only replay-stable output or refusal material.
 
     A run is identified by its inputs and the evidence it fetched (D-R37 f1):
     the sorted digests of the fetched, non-derived Captures it consumed join
     the preimage. They are present only when non-empty, so a run that fetched
-    nothing keeps its digest (f2).
+    nothing keeps its digest (f2). A late read's record (D-R38) joins it the
+    same way: ``late_reads`` is the sorted run-input digests of the reads the
+    run made mid-run, present only when it made one.
     """
 
     if (status == "refused") != (refusal is not None):
         raise ValueError("semantic Procedure refusal shape is inconsistent")
     fetched = sorted(set(fetched_captures))
     evidence: dict[str, CanonicalValue] = {"fetched_captures": [*fetched]} if fetched else {}
+    late = sorted(set(late_reads))
+    if late:
+        evidence["late_reads"] = [*late]
     if status == "halted":
         if halt is None or output is not None or refusal is not None:
             raise ValueError("semantic Procedure halt shape is inconsistent")
@@ -1639,6 +1670,13 @@ def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmission) -> st
             "parent_binding": None
             if admission.parent_binding is None
             else admission.parent_binding.model_dump(mode="json"),
+            # Present only on an overridden Line run (D-R39), so every other
+            # run keeps its identity.
+            **(
+                {}
+                if admission.parameter_override_digest is None
+                else {"parameter_override_digest": admission.parameter_override_digest}
+            ),
         },
     ).tagged
 
@@ -1863,6 +1901,98 @@ def state_tap_view(node: ReadNode, value: object) -> CanonicalValue:
     return normalize_canonical(value)
 
 
+def read_state_tap(
+    accepted: AcceptedProcedure,
+    node: ReadNode,
+    *,
+    read_parameters: CanonicalValue,
+    accepted_coordinate: AcceptedCoordinate,
+    state_reader: StateTapReaderProtocol,
+    bodies: ContentAddressedBodyStore,
+    remaining: int,
+) -> tuple[AcceptedStateRunMaterial, int]:
+    """Run one accepted-state read under ``remaining`` rows; its material and rows.
+
+    The one place a read becomes material, for an admission read and a late
+    read alike (D-R38): both read the accepted-state plane at the run's pinned
+    coordinate, under what is left of the run's one read ceiling, and refuse
+    ``read_ceiling_exceeded`` rather than return part of their result.
+    """
+
+    binding = node.claim_type if node.claim_type is not None else node.query
+    assert binding is not None  # a read names exactly one selection
+    query = resolved_pin(accepted, binding)
+    try:
+        if remaining < 1:
+            raise ReadCeilingExceeded(clipped=("max_results",), candidates=None, ceiling=0)
+        if node.reads_claims:
+            assert isinstance(read_parameters, dict)
+            assert node.subject_kind is not None
+            identity = read_parameters["subject_id"]
+            if not isinstance(identity, str):
+                raise ExecutionError("Subject id must resolve to a string")
+            read = state_reader.read_accepted_claim(
+                claim_type=query,
+                subject_kind=node.subject_kind,
+                subject_id=identity,
+                cardinality=node.cardinality,
+                limit=node.limit,
+                coordinate=accepted_coordinate,
+                ceiling=remaining,
+            )
+        else:
+            read = state_reader.read_accepted_state(
+                query=query,
+                parameters=read_parameters,
+                coordinate=accepted_coordinate,
+                ceiling=remaining,
+            )
+    except QueryContractViolated as exc:
+        raise ProcedureBoundaryRefused(
+            "query_contract_violated",
+            exc.reason,
+            details={"node": node.node_id, "direction": exc.direction, **exc.details},
+        ) from exc
+    except ReadCeilingExceeded as exc:
+        raise ProcedureBoundaryRefused(
+            "read_ceiling_exceeded",
+            "A Procedure read would be clipped by the run's read ceiling; it refuses "
+            "rather than return part of its result.",
+            details={
+                "node": node.node_id,
+                "clipped": list(exc.clipped),
+                "candidates": exc.candidates,
+                "ceiling": exc.ceiling,
+            },
+        ) from exc
+    except Exception as exc:
+        raise ProcedureBoundaryRefused(
+            "state_tap_refused",
+            "The accepted-state reader refused this selection.",
+            details={"node_id": node.node_id, "reason": str(exc)},
+        ) from exc
+    value = state_tap_view(node, read.value)
+    retained = bodies.store(canonical_bytes(value))
+    common = dict(
+        input_name=node.as_,
+        read_coordinate=accepted_coordinate,
+        parameters_digest=run_value_digest("state-parameters", read_parameters),
+        result_digest=run_value_digest("state-result", value),
+        effective_query_budgets=read.effective_budgets,
+        material_body_digest=retained.digest,
+    )
+    run_input = (
+        AcceptedClaimRunInputV1.model_validate(
+            dict(common, claim_type_digest=query.artifact_digest)
+        )
+        if node.reads_claims
+        else AcceptedStateRunInputV2.model_validate(
+            dict(common, query_definition_digest=query.artifact_digest)
+        )
+    )
+    return AcceptedStateRunMaterial(input=run_input, value=value), read.rows
+
+
 def bind_accepted_state_materials(
     accepted: AcceptedProcedure,
     *,
@@ -1873,16 +2003,18 @@ def bind_accepted_state_materials(
     invocation_input: object,
     parameters: object,
 ) -> tuple[AcceptedStateRunMaterial, ...]:
-    """Read and retain every accepted-state read this run will observe.
+    """Read and retain every admission read this run will observe.
 
     Every run lane reads the accepted-state plane the SAME way, so this is the
-    one place a read becomes admitted material. ``read_ceiling`` is the rows
-    the run's reads may return in all, as its admission budget states it (its
-    Line's, or what an invoking parent has left): Query reads
-    and Claim reads alike draw it down, and the read that would pass it
-    refuses ``read_ceiling_exceeded``.
+    one place an admission read becomes admitted material. ``read_ceiling`` is
+    the rows the run's reads may return in all, as its admission budget states
+    it (its Line's, or what an invoking parent has left): Query reads and Claim
+    reads alike draw it down, and the read that would pass it refuses
+    ``read_ceiling_exceeded``. A late read (D-R38, ``late_state_taps``) is not
+    bound here: it runs mid-run and draws on what admission left.
     """
 
+    late = late_state_taps(accepted.procedure.definition)
     materials: list[AcceptedStateRunMaterial] = []
     values: dict[str, CanonicalValue] = {}
     # One ceiling across the run's reads: each read gets what is left of it.
@@ -1890,85 +2022,23 @@ def bind_accepted_state_materials(
     for node in accepted.procedure.definition.nodes:
         if isinstance(node, ProjectNode) and node.literal is not None:
             values[node.as_] = normalize_canonical(node.literal)
-        if not isinstance(node, ReadNode):
+        if not isinstance(node, ReadNode) or node.as_ in late:
             continue
-        binding = node.claim_type if node.claim_type is not None else node.query
-        assert binding is not None  # a read names exactly one selection
-        query = resolved_pin(accepted, binding)
         read_parameters = state_tap_parameters(
             node, invocation_input=invocation_input, parameters=parameters, values=values
         )
-        try:
-            if remaining < 1:
-                raise ReadCeilingExceeded(clipped=("max_results",), candidates=None, ceiling=0)
-            if node.reads_claims:
-                assert isinstance(read_parameters, dict)
-                assert node.subject_kind is not None
-                identity = read_parameters["subject_id"]
-                if not isinstance(identity, str):
-                    raise ExecutionError("Subject id must resolve to a string")
-                read = state_reader.read_accepted_claim(
-                    claim_type=query,
-                    subject_kind=node.subject_kind,
-                    subject_id=identity,
-                    cardinality=node.cardinality,
-                    limit=node.limit,
-                    coordinate=accepted_coordinate,
-                    ceiling=remaining,
-                )
-            else:
-                read = state_reader.read_accepted_state(
-                    query=query,
-                    parameters=read_parameters,
-                    coordinate=accepted_coordinate,
-                    ceiling=remaining,
-                )
-            remaining -= read.rows
-        except QueryContractViolated as exc:
-            raise ProcedureBoundaryRefused(
-                "query_contract_violated",
-                exc.reason,
-                details={"node": node.node_id, "direction": exc.direction, **exc.details},
-            ) from exc
-        except ReadCeilingExceeded as exc:
-            raise ProcedureBoundaryRefused(
-                "read_ceiling_exceeded",
-                "A Procedure read would be clipped by the run's read ceiling; it refuses "
-                "rather than return part of its result.",
-                details={
-                    "node": node.node_id,
-                    "clipped": list(exc.clipped),
-                    "candidates": exc.candidates,
-                    "ceiling": exc.ceiling,
-                },
-            ) from exc
-        except Exception as exc:
-            raise ProcedureBoundaryRefused(
-                "state_tap_refused",
-                "The accepted-state reader refused this selection.",
-                details={"node_id": node.node_id, "reason": str(exc)},
-            ) from exc
-        value = state_tap_view(node, read.value)
-        values[node.as_] = value
-        retained = bodies.store(canonical_bytes(value))
-        common = dict(
-            input_name=node.as_,
-            read_coordinate=accepted_coordinate,
-            parameters_digest=run_value_digest("state-parameters", read_parameters),
-            result_digest=run_value_digest("state-result", value),
-            effective_query_budgets=read.effective_budgets,
-            material_body_digest=retained.digest,
+        material, rows = read_state_tap(
+            accepted,
+            node,
+            read_parameters=read_parameters,
+            accepted_coordinate=accepted_coordinate,
+            state_reader=state_reader,
+            bodies=bodies,
+            remaining=remaining,
         )
-        run_input = (
-            AcceptedClaimRunInputV1.model_validate(
-                dict(common, claim_type_digest=query.artifact_digest)
-            )
-            if node.reads_claims
-            else AcceptedStateRunInputV2.model_validate(
-                dict(common, query_definition_digest=query.artifact_digest)
-            )
-        )
-        materials.append(AcceptedStateRunMaterial(input=run_input, value=value))
+        remaining -= rows
+        values[node.as_] = normalize_canonical(material.value)
+        materials.append(material)
     materials.sort(key=lambda item: item.input.input_name.encode("utf-8"))
     return tuple(materials)
 
@@ -2304,6 +2374,9 @@ class _RunState:
     completeness: Completeness = dataclass_field(default_factory=Completeness)
     #: Acquiring calls whose Capture list dropped a failed member (D-R37 a4).
     dropped_members: set[str] = dataclass_field(default_factory=set)
+    #: Acquiring calls that read a workspace glob (D-R41): their lists name the
+    #: files that exist now, so an extract straight over one never judges absence.
+    glob_lists: set[str] = dataclass_field(default_factory=set)
     #: Whether the value this run returns is complete, data and control lineage
     #: both; a parent's invoke reads it from the child's completion record.
     return_complete: bool = True
@@ -2331,6 +2404,8 @@ class _RunState:
     node_summaries: dict[str, NodeRunSummary] = dataclass_field(default_factory=dict)
     #: Rows each admitted accepted-state read returned, by input name.
     read_rows_by_input: dict[str, int] = dataclass_field(default_factory=dict)
+    #: Each late read this run made (D-R38), by its alias: its run-input record.
+    late_reads: dict[str, AcceptedStateRunInput] = dataclass_field(default_factory=dict)
     #: How each claims terminal's change landed, from its delivery.
     claims_deliveries: dict[str, ClaimsDelivery] = dataclass_field(default_factory=dict)
 
@@ -2366,6 +2441,21 @@ class _RunState:
     def item_tokens(self, alias: str, index: int) -> frozenset[DependencyToken]:
         found = self.provenance.get(alias)
         return frozenset() if found is None else found.item(index)
+
+
+@dataclass
+class _GlobMembers:
+    """What a glob read (D-R41) fills, per member key, for the call's shared commit."""
+
+    wires: dict[str, ProviderResultToExternalCapture]
+    members: dict[str, str]
+    member_keys: dict[str, tuple[str, ...]]
+    member_requests: dict[str, str]
+    dropped: dict[str, str]
+    results: dict[str, ProcedureSourceAcquisitionResultV1]
+    receipts: dict[str, tuple[ProviderInvocationReceipt, str]]
+    source_reads: dict[str, SourceReadReceipt | None]
+    outputs: dict[str, object]
 
 
 def _effective_max_items(admission: ProcedureRunAdmission) -> int:
@@ -2407,6 +2497,7 @@ class ProcedureExecutor:
         completeness_probe: CompletenessProbe | None = None,
         key_rules: KeyCanonicalizer | None = None,
         claims_context: ClaimsContext | None = None,
+        state_reader: StateTapReaderProtocol | None = None,
     ) -> None:
         self.journal = journal
         self.bodies = bodies
@@ -2450,6 +2541,9 @@ class ProcedureExecutor:
         # coordinate; every key<K> / key_part<K:p> value reads through them.
         self.key_rules = key_rules
         self.claims_context = claims_context
+        # Late reads (D-R38) read accepted state mid-run, at the admitted
+        # coordinate, through the same reader admission reads use.
+        self.state_reader = state_reader
         # A sink harness told whether each sink's value is complete (the law's
         # real sinks belong to the Claims terminal).
         self.completeness_probe = completeness_probe
@@ -2729,6 +2823,7 @@ class ProcedureExecutor:
                 refusal=refusal,
                 halt=halt,
                 fetched_captures=_fetched_captures(state),
+                late_reads=[run_input_digest(item) for item in state.late_reads.values()],
             )
         summary = state.completeness.summary()
         final_payload = {
@@ -2776,6 +2871,18 @@ class ProcedureExecutor:
             # What the run consumed, versioned, so a reader tells proven-empty from
             # a record written before C14 provenance (fail closed; D-R25 R4).
             **_consumed(state),
+            # The reads the run made mid-run (D-R38), apart from its admitted
+            # inputs; recorded only when it made one, so other runs keep their bytes.
+            **(
+                {
+                    "late_reads": [
+                        state.late_reads[name].model_dump(mode="json")
+                        for name in sorted(state.late_reads, key=lambda item: item.encode("utf-8"))
+                    ]
+                }
+                if state.late_reads
+                else {}
+            ),
             "provider_calls": state.provider_calls,
             "capture_bytes": state.capture_bytes,
             "invocation_receipt_digests": state.invocation_receipt_digests,
@@ -3035,6 +3142,74 @@ class ProcedureExecutor:
             )
         return state
 
+    def _run_late_read(
+        self,
+        node: ReadNode,
+        *,
+        accepted: AcceptedProcedure,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+    ) -> None:
+        """Run one late read now, at the admitted coordinate (D-R38).
+
+        Its selection names runtime output, so it could not bind at admission:
+        it reads the same accepted state an admission read would, through the
+        same reader, under what is left of the run's one read ceiling (its
+        children's reads included), and its refusal is the run's refusal.
+        """
+
+        if self.state_reader is None:
+            raise ExecutionError("a late read needs the run's accepted-state reader")
+        try:
+            read_parameters = state_tap_parameters(
+                node,
+                invocation_input=state.input_payload,
+                parameters=state.parameters,
+                values=state.outputs,
+            )
+        except ExecutionError as exc:
+            raise _RunRefusal(
+                "runtime_reference_unresolved",
+                "A late read's selection did not resolve.",
+                node_id=node.node_id,
+            ) from exc
+        remaining = (
+            effective_read_rows(admission.budget.max_read_rows, admission.hard_caps.max_read_rows)
+            - state.read_rows
+        )
+        try:
+            material, rows = read_state_tap(
+                accepted,
+                node,
+                read_parameters=read_parameters,
+                accepted_coordinate=admission.accepted_coordinate,
+                state_reader=self.state_reader,
+                bodies=self.bodies,
+                remaining=remaining,
+            )
+        except ProcedureBoundaryRefused as exc:
+            raise _RunRefusal(
+                exc.code, str(exc), node_id=node.node_id, details=exc.details
+            ) from exc
+        state.read_rows += rows
+        state.read_rows_by_input[node.as_] = rows
+        state.late_reads[node.as_] = material.input
+        digest = run_input_digest(material.input)
+        state.outputs[node.as_] = normalize_canonical(material.value)
+        state.provenance[node.as_] = AliasProvenanceV1(
+            whole=frozenset(
+                {
+                    accepted_state_token(digest),
+                    policy_token(accepted_read_definition_digest(material.input)),
+                }
+            )
+        )
+        state.facts[digest] = DependencyEvidenceFactsV1(
+            epistemic_grade="observed",
+            provenance_grade="self-asserted",
+            taint_labels=(TAINT_ACCEPTED_STATE,),
+        )
+
     def _verify_correspondence(
         self,
         admission: ProcedureRunAdmission,
@@ -3107,6 +3282,7 @@ class ProcedureExecutor:
                 if isinstance(node, ProjectNode) and node.literal is not None
             }
         )
+        late = late_state_taps(procedure.definition)
         expected_state_inputs = {
             node.as_: (
                 self._pin(
@@ -3124,7 +3300,7 @@ class ProcedureExecutor:
                 ),
             )
             for node in procedure.definition.nodes
-            if isinstance(node, ReadNode)
+            if isinstance(node, ReadNode) and node.as_ not in late
         }
         actual_state_inputs = {item.input_name: item for item in admission.accepted_state_inputs}
         if set(actual_state_inputs) != set(expected_state_inputs):
@@ -3520,6 +3696,8 @@ class ProcedureExecutor:
             )
             return None
         if isinstance(node, ReadNode):
+            if node.as_ in late_state_taps(accepted.procedure.definition):
+                self._run_late_read(node, accepted=accepted, admission=admission, state=state)
             if node.as_ not in state.outputs:
                 raise ExecutionError("admitted read material is absent")
             rows = state.read_rows_by_input.get(
@@ -3704,6 +3882,172 @@ class ProcedureExecutor:
         except WorkspaceFileReadRefused as exc:
             raise _workspace_refusal(exc, node_id=node.node_id) from exc
 
+    def _authored_workspace_glob(
+        self, node: CallNode, resolved_request: object
+    ) -> WorkspaceFileGlobRequestV1:
+        """The authored glob read, or a typed refusal (D-R41)."""
+
+        if self.workspace_file_reader is None:
+            self._executed_workspace_request(node, resolved_request)  # refuses, typed
+        try:
+            return parse_authored_workspace_glob(resolved_request)
+        except WorkspaceBindingDigestAuthored as exc:
+            raise _RunRefusal(
+                "workspace_file_read_refused",
+                str(exc),
+                node_id=node.node_id,
+                detail_code="binding",
+                details={"path_class": "binding", "repair_commands": []},
+            ) from exc
+        except ValidationError as exc:
+            raise _workspace_refusal(exc, node_id=node.node_id) from exc
+
+    def _acquire_workspace_glob(
+        self,
+        node: CallNode,
+        request: WorkspaceFileGlobRequestV1,
+        *,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+        occurrence: ProviderExternalOccurrencePlan,
+        fields: tuple[str, ...],
+        rules: dict[str, AcquisitionRule],
+        pins: dict[str, ArtifactPin],
+        contracts: dict[str, CaptureContract],
+        into: _GlobMembers,
+    ) -> tuple[
+        tuple[str, ...],
+        dict[str, AcquisitionRule],
+        dict[str, ArtifactPin],
+        dict[str, CaptureContract],
+    ]:
+        """Read every file a glob matches as one list member each (D-R41).
+
+        Each match is an ordinary ``workspace.file`` read: its own derived
+        request, read receipt and built-in invocation, and one Capture of the
+        call's one capture field, ``<field>/<i>`` in sorted match order. A
+        member that fails to read (gone, refused, declined) is dropped, so the
+        list is incomplete: it is never read as absent. Past the glob's
+        ``max_files`` the read refuses before any file is read.
+        """
+
+        reader = self.workspace_file_reader
+        assert reader is not None  # _authored_workspace_glob refused otherwise
+        (field,) = fields  # the core-served read has exactly one capture field
+        rule, pin, contract = rules[field], pins[field], contracts[field]
+        try:
+            matches = reader.expand(request)
+        except WorkspaceFileReadRefused as exc:
+            raise _workspace_refusal(exc, node_id=node.node_id) from exc
+        _check_capture_list_bound(
+            node,
+            field,
+            len(matches),
+            cap=request.max_files,
+            limit=_effective_max_items(admission),
+            boundary="workspace-glob",
+            state=state,
+        )
+        keys = tuple(f"{field}/{index}" for index in range(len(matches)))
+        # Shared across every member below (D-R41): sibling files in the same
+        # directory reuse one real-name listing instead of relisting it each.
+        directory_cache: DirectoryEntryCache = {}
+        for key, relative_path in zip(keys, matches, strict=True):
+            into.members[key] = field
+
+            def drop(detail: str, key: str = key) -> None:
+                into.dropped[key] = ACQUISITION_UNAVAILABLE
+                into.results[key] = ProcedureSourceAcquisitionResultV1(
+                    node_id=node.node_id,
+                    input_name=rule.input_name,
+                    outcome="unavailable",
+                    reason_code=ACQUISITION_UNAVAILABLE,
+                    detail=detail,
+                )
+
+            try:
+                executed = reader.resolve(request.member(relative_path))
+            except (ValidationError, WorkspaceFileReadRefused) as exc:
+                drop(f"{relative_path!r} cannot be read: {exc}")
+                continue
+            derived = build_procedure_derived_source_request(
+                run_id=admission.run_id,
+                admission_binding_digest=admission.admission_binding_digest,
+                occurrence_path=occurrence.occurrence_path,
+                node_id=node.node_id,
+                input_name=node.as_,
+                request=executed.model_dump(mode="json"),
+            )
+            into.member_requests[key] = derived.request_digest
+            self._append_event(
+                admission, records, "source_request_derived", derived.model_dump(mode="json")
+            )
+            try:
+                read = reader.read(
+                    executed,
+                    run_id=admission.run_id,
+                    admission_binding_digest=admission.admission_binding_digest,
+                    occurrence_path=occurrence.occurrence_path,
+                    policy_coordinate=admission.accepted_coordinate,
+                    resolved_max_bytes=contract.selection_budget.max_bytes,
+                    derived_request_digest=derived.request_digest,
+                    read_at=self.clock.now(),
+                    directory_cache=directory_cache,
+                )
+            except (ValidationError, WorkspaceFileReadRefused) as exc:
+                drop(f"{relative_path!r} cannot be read: {exc}")
+                continue
+            self._append_event(
+                admission,
+                records,
+                "source_read",
+                {
+                    "receipt": read.receipt.model_dump(mode="json"),
+                    "receipt_digest": source_read_receipt_digest(read.receipt),
+                },
+            )
+            try:
+                output, receipt, receipt_digest = self._invoke_provider_v4(
+                    node_id=node.node_id,
+                    slot=node.slot,
+                    repeat_node_id=None,
+                    effect_policy=None,
+                    payload=read.provider_input,
+                    contract_out=None,
+                    admission=admission,
+                    state=state,
+                    records=records,
+                    occurrence=occurrence,
+                )
+            except _ProviderNodeRefusal as exc:
+                drop(f"{relative_path!r} was declined: {exc.refusal.message}")
+                continue
+            payload = read.provider_input
+            assert isinstance(payload, dict)
+            into.receipts[key] = (receipt, receipt_digest)
+            into.source_reads[key] = read.receipt
+            into.outputs[key] = output
+            into.wires[key] = ProviderResultToExternalCapture(
+                source_identity=executed.logical_source,
+                coordinate_type=executed.coordinate_type,
+                coordinate=executed.coordinate,
+                selector_type=executed.selector_type,
+                selector=executed.selector,
+                replayability=executed.replayability,
+                content_base64=str(payload["bytes"]),
+                byte_length=int(cast(int, payload["byte_length"])),
+                bytes_digest=str(payload["bytes_digest"]),
+                observed_at=read.receipt.read_at,
+            )
+        into.member_keys[field] = keys
+        return (
+            keys,
+            {key: rule for key in keys},
+            {key: pin for key in keys},
+            {key: contract for key in keys},
+        )
+
     def _run_acquiring_call(
         self,
         node: CallNode,
@@ -3819,228 +4163,273 @@ class ProcedureExecutor:
                     "origin is not in the Line's permitted acquisition.origins for this field.",
                     node_id=node.node_id,
                 )
+        # A glob read (D-R41) is one ordinary workspace read per matched file;
+        # each member carries its own read and invocation receipts.
+        glob_request: WorkspaceFileGlobRequestV1 | None = None
+        if bound_operation(occurrence).builtin == WORKSPACE_FILE_BUILTIN and is_workspace_glob(
+            resolved_request
+        ):
+            glob_request = self._authored_workspace_glob(node, resolved_request)
+        receipts: dict[str, tuple[ProviderInvocationReceipt, str]] = {}
+        source_reads: dict[str, SourceReadReceipt | None] = {}
+        outputs: dict[str, object] = {}
+        results: dict[str, ProcedureSourceAcquisitionResultV1] = {}
         workspace_request: ExecutedWorkspaceFileSourceRequestV2 | None = None
-        if bound_operation(occurrence).builtin == WORKSPACE_FILE_BUILTIN:
-            # The author names the workspace logically, or not at all; the daemon
-            # resolves its root and executes -- and journals -- the request with
-            # that root's binding digest, before anything is read.
-            workspace_request = self._executed_workspace_request(node, resolved_request)
-        derived_request = build_procedure_derived_source_request(
-            run_id=admission.run_id,
-            admission_binding_digest=admission.admission_binding_digest,
-            occurrence_path=occurrence.occurrence_path,
-            node_id=node.node_id,
-            input_name=node.as_,
-            request=(
-                resolved_request
-                if workspace_request is None
-                else workspace_request.model_dump(mode="json")
-            ),
-        )
-        self._append_event(
-            admission,
-            records,
-            "source_request_derived",
-            derived_request.model_dump(mode="json"),
-        )
-        source_read_receipt: SourceReadReceipt | None = None
-        provider_payload = resolved_request
-        if workspace_request is not None:
-            assert self.workspace_file_reader is not None  # resolved by it above
-            # The core-served read has exactly one capture field (an acceptance law).
-            (workspace_contract,) = contracts.values()
-            try:
-                workspace_read = self.workspace_file_reader.read(
-                    workspace_request,
-                    run_id=admission.run_id,
-                    admission_binding_digest=admission.admission_binding_digest,
-                    occurrence_path=occurrence.occurrence_path,
-                    policy_coordinate=admission.accepted_coordinate,
-                    resolved_max_bytes=workspace_contract.selection_budget.max_bytes,
-                    derived_request_digest=derived_request.request_digest,
-                    read_at=self.clock.now(),
-                )
-            except (ValidationError, WorkspaceFileReadRefused) as exc:
-                raise _workspace_refusal(exc, node_id=node.node_id) from exc
-            provider_payload = workspace_read.provider_input
-            source_read_receipt = workspace_read.receipt
-            self._append_event(
-                admission,
-                records,
-                "source_read",
-                {
-                    "receipt": source_read_receipt.model_dump(mode="json"),
-                    "receipt_digest": source_read_receipt_digest(source_read_receipt),
-                },
-            )
-        try:
-            output, invocation_receipt, invocation_receipt_digest = self._invoke_provider_v4(
-                node_id=node.node_id,
-                slot=node.slot,
-                repeat_node_id=None,
-                effect_policy=None,
-                payload=provider_payload,
-                contract_out=None,
+        member_keys: dict[str, tuple[str, ...]] = {}
+        members: dict[str, str] = {}
+        member_requests: dict[str, str] = {}
+        dropped: dict[str, str] = {}
+        wires: dict[str, ProviderResultToExternalCapture] = {}
+        whole_wire = False
+        output: object = {}
+        if glob_request is not None:
+            fields, rules, pins, contracts = self._acquire_workspace_glob(
+                node,
+                glob_request,
                 admission=admission,
                 state=state,
                 records=records,
                 occurrence=occurrence,
+                fields=fields,
+                rules=rules,
+                pins=pins,
+                contracts=contracts,
+                into=_GlobMembers(
+                    wires=wires,
+                    members=members,
+                    member_keys=member_keys,
+                    member_requests=member_requests,
+                    dropped=dropped,
+                    results=results,
+                    receipts=receipts,
+                    source_reads=source_reads,
+                    outputs=outputs,
+                ),
             )
-        except _ProviderNodeRefusal as exc:
-            # Only a typed refusal the operation declares absorbable is absorbed,
-            # and only for a capture output whose rule omits an unavailable input.
-            absorbable = provider_refusal_is_absorbable(occurrence.operation, exc.outcome)
-            if not absorbable or any(rule.on_unavailable != "omit" for rule in rules.values()):
-                raise
-            unavailable: dict[str, ProcedureSourceAcquisitionResultV1] = {}
-            unavailable_decisions: dict[str, AcquisitionInputDecision] = {}
-            for field, rule in rules.items():
-                unavailable[field] = ProcedureSourceAcquisitionResultV1(
-                    node_id=node.node_id,
-                    input_name=rule.input_name,
-                    outcome="unavailable",
-                    reason_code="cruxible.acquisition.unavailable",
-                    detail=exc.refusal.message,
-                )
-                unavailable_decisions[field] = apply_acquisition_result(
-                    rule,
-                    unavailable[field],
-                    default_authorized=rule.input_name in self.default_authorizations,
-                    evaluation_time=admission.occurrence_evaluation_time,
-                )
-                self._journal_acquisition(
+        else:
+            if bound_operation(occurrence).builtin == WORKSPACE_FILE_BUILTIN:
+                # The author names the workspace logically, or not at all; the daemon
+                # resolves its root and executes -- and journals -- the request with
+                # that root's binding digest, before anything is read.
+                workspace_request = self._executed_workspace_request(node, resolved_request)
+            derived_request = build_procedure_derived_source_request(
+                run_id=admission.run_id,
+                admission_binding_digest=admission.admission_binding_digest,
+                occurrence_path=occurrence.occurrence_path,
+                node_id=node.node_id,
+                input_name=node.as_,
+                request=(
+                    resolved_request
+                    if workspace_request is None
+                    else workspace_request.model_dump(mode="json")
+                ),
+            )
+            self._append_event(
+                admission,
+                records,
+                "source_request_derived",
+                derived_request.model_dump(mode="json"),
+            )
+            source_read_receipt: SourceReadReceipt | None = None
+            provider_payload = resolved_request
+            if workspace_request is not None:
+                assert self.workspace_file_reader is not None  # resolved by it above
+                # The core-served read has exactly one capture field (an acceptance law).
+                (workspace_contract,) = contracts.values()
+                try:
+                    workspace_read = self.workspace_file_reader.read(
+                        workspace_request,
+                        run_id=admission.run_id,
+                        admission_binding_digest=admission.admission_binding_digest,
+                        occurrence_path=occurrence.occurrence_path,
+                        policy_coordinate=admission.accepted_coordinate,
+                        resolved_max_bytes=workspace_contract.selection_budget.max_bytes,
+                        derived_request_digest=derived_request.request_digest,
+                        read_at=self.clock.now(),
+                    )
+                except (ValidationError, WorkspaceFileReadRefused) as exc:
+                    raise _workspace_refusal(exc, node_id=node.node_id) from exc
+                provider_payload = workspace_read.provider_input
+                source_read_receipt = workspace_read.receipt
+                self._append_event(
                     admission,
                     records,
-                    node=node,
-                    field=field,
-                    result=unavailable[field],
-                    decision=unavailable_decisions[field],
-                    provider_refusal=exc.outcome.model_dump(mode="json"),
+                    "source_read",
+                    {
+                        "receipt": source_read_receipt.model_dump(mode="json"),
+                        "receipt_digest": source_read_receipt_digest(source_read_receipt),
+                    },
                 )
-            for field, rule in rules.items():
-                self._bind_omission(
+            try:
+                output, invocation_receipt, invocation_receipt_digest = self._invoke_provider_v4(
+                    node_id=node.node_id,
+                    slot=node.slot,
+                    repeat_node_id=None,
+                    effect_policy=None,
+                    payload=provider_payload,
+                    contract_out=None,
                     admission=admission,
                     state=state,
-                    rule=rule,
-                    decision=unavailable_decisions[field],
+                    records=records,
+                    occurrence=occurrence,
                 )
-            return
-        out_contract = closure_lookup(occurrence.contracts)(occurrence.operation.out)
-        # An operation whose out Contract carries no capture<K> field returns
-        # its whole output as Capture wire; the call's value then names only
-        # that Capture.
-        list_caps = (
-            {}
-            if out_contract is None
-            else {name: cap for name, _kind, cap in capture_list_fields(out_contract)}
-        )
-        whole_wire = workspace_request is None and (
-            out_contract is None or not (capture_fields(out_contract) or list_caps)
-        )
-        if whole_wire:
-            output = self._validate_operation_value(
-                occurrence,
-                normalize_canonical(output),
-                direction="out",
-                admission=admission,
-                state=state,
-                node_id=node.node_id,
-            )
-        wires: dict[str, ProviderResultToExternalCapture] = {}
-        # A list<capture<K>> field is one capture output whose members are each a
-        # Capture (D-R37 a1): its member keys ``<field>/<i>`` (index for order
-        # only, a2) alias the field's rule, pin and CaptureContract, so every
-        # loop below runs over members exactly as over fields.
-        members: dict[str, str] = {}
-        member_keys: dict[str, tuple[str, ...]] = {}
-        member_requests: dict[str, str] = {}
-        requests_seen: set[str] = set()
-        if not whole_wire and workspace_request is None and isinstance(output, dict):
-            for field in fields:
-                if field not in list_caps:
-                    continue
-                listed = output.get(field)
-                if not isinstance(listed, list):
-                    raise _InternalFailure(
-                        "provider_protocol_violation",
-                        details={
-                            "node_id": node.node_id,
-                            "reason": f"capture list field {field!r} is not a list",
-                        },
+            except _ProviderNodeRefusal as exc:
+                # Only a typed refusal the operation declares absorbable is absorbed,
+                # and only for a capture output whose rule omits an unavailable input.
+                absorbable = provider_refusal_is_absorbable(occurrence.operation, exc.outcome)
+                if not absorbable or any(rule.on_unavailable != "omit" for rule in rules.values()):
+                    raise
+                unavailable: dict[str, ProcedureSourceAcquisitionResultV1] = {}
+                unavailable_decisions: dict[str, AcquisitionInputDecision] = {}
+                for field, rule in rules.items():
+                    unavailable[field] = ProcedureSourceAcquisitionResultV1(
+                        node_id=node.node_id,
+                        input_name=rule.input_name,
+                        outcome="unavailable",
+                        reason_code="cruxible.acquisition.unavailable",
+                        detail=exc.refusal.message,
                     )
-                _check_capture_list_bound(
-                    node,
-                    field,
-                    len(listed),
-                    cap=list_caps[field],
-                    limit=_effective_max_items(admission),
-                    boundary=f"operation-out:{occurrence.operation.name}",
+                    unavailable_decisions[field] = apply_acquisition_result(
+                        rule,
+                        unavailable[field],
+                        default_authorized=rule.input_name in self.default_authorizations,
+                        evaluation_time=admission.occurrence_evaluation_time,
+                    )
+                    self._journal_acquisition(
+                        admission,
+                        records,
+                        node=node,
+                        field=field,
+                        result=unavailable[field],
+                        decision=unavailable_decisions[field],
+                        provider_refusal=exc.outcome.model_dump(mode="json"),
+                    )
+                for field, rule in rules.items():
+                    self._bind_omission(
+                        admission=admission,
+                        state=state,
+                        rule=rule,
+                        decision=unavailable_decisions[field],
+                    )
+                return
+            out_contract = closure_lookup(occurrence.contracts)(occurrence.operation.out)
+            # An operation whose out Contract carries no capture<K> field returns
+            # its whole output as Capture wire; the call's value then names only
+            # that Capture.
+            list_caps = (
+                {}
+                if out_contract is None
+                else {name: cap for name, _kind, cap in capture_list_fields(out_contract)}
+            )
+            whole_wire = workspace_request is None and (
+                out_contract is None or not (capture_fields(out_contract) or list_caps)
+            )
+            if whole_wire:
+                output = self._validate_operation_value(
+                    occurrence,
+                    normalize_canonical(output),
+                    direction="out",
+                    admission=admission,
                     state=state,
+                    node_id=node.node_id,
                 )
-                keys = tuple(f"{field}/{index}" for index in range(len(listed)))
-                member_keys[field] = keys
-                for key, member in zip(keys, listed, strict=True):
-                    members[key] = field
-                    try:
-                        wires[key] = ProviderResultToExternalCapture.model_validate(member)
-                    except ValidationError as exc:
+            # A list<capture<K>> field is one capture output whose members are each a
+            # Capture (D-R37 a1): its member keys ``<field>/<i>`` (index for order
+            # only, a2) alias the field's rule, pin and CaptureContract, so every
+            # loop below runs over members exactly as over fields.
+            requests_seen: set[str] = set()
+            if not whole_wire and workspace_request is None and isinstance(output, dict):
+                for field in fields:
+                    if field not in list_caps:
+                        continue
+                    listed = output.get(field)
+                    if not isinstance(listed, list):
                         raise _InternalFailure(
                             "provider_protocol_violation",
                             details={
                                 "node_id": node.node_id,
-                                "reason": f"capture list member {key!r} is not Capture wire",
+                                "reason": f"capture list field {field!r} is not a list",
                             },
-                        ) from exc
-                    member_requests[key] = _member_request_digest(
-                        wires[key], key=key, node_id=node.node_id, seen=requests_seen
+                        )
+                    _check_capture_list_bound(
+                        node,
+                        field,
+                        len(listed),
+                        cap=list_caps[field],
+                        limit=_effective_max_items(admission),
+                        boundary=f"operation-out:{occurrence.operation.name}",
+                        state=state,
                     )
-                    requests_seen.add(member_requests[key])
-            fields = tuple(key for field in fields for key in member_keys.get(field, (field,)))
-            rules = {key: rules[members.get(key, key)] for key in fields}
-            pins = {key: pins[members.get(key, key)] for key in fields}
-            contracts = {key: contracts[members.get(key, key)] for key in fields}
-            derived_fields = frozenset(
-                key for key in fields if members.get(key, key) in derived_fields
-            )
-        #: Members dropped for a typed failure: oversized or origin-ineligible (a4).
-        dropped: dict[str, str] = {}
-        for field in fields:
-            if field in members:
-                continue
-            try:
-                if whole_wire:
-                    wires[field] = ProviderResultToExternalCapture.model_validate(output)
-                elif workspace_request is None or source_read_receipt is None:
-                    if not isinstance(output, dict):
-                        raise ValueError("an acquiring call's output is a record")
-                    wires[field] = ProviderResultToExternalCapture.model_validate(output.get(field))
-                else:
-                    # The core-served read commits the file's exact bytes, the
-                    # ones core read and handed the operation; its output
-                    # structures them.
-                    assert isinstance(provider_payload, dict)
-                    wires[field] = ProviderResultToExternalCapture(
-                        source_identity=workspace_request.logical_source,
-                        coordinate_type=workspace_request.coordinate_type,
-                        coordinate=workspace_request.coordinate,
-                        selector_type=workspace_request.selector_type,
-                        selector=workspace_request.selector,
-                        replayability=workspace_request.replayability,
-                        content_base64=str(provider_payload["bytes"]),
-                        byte_length=int(cast(int, provider_payload["byte_length"])),
-                        bytes_digest=str(provider_payload["bytes_digest"]),
-                        observed_at=source_read_receipt.read_at,
-                    )
-            except (ValidationError, ValueError) as exc:
-                raise _InternalFailure(
-                    "provider_protocol_violation",
-                    details={
-                        "node_id": node.node_id,
-                        "reason": f"capture field {field!r} is not Capture wire",
-                    },
-                ) from exc
-        results: dict[str, ProcedureSourceAcquisitionResultV1] = {}
+                    keys = tuple(f"{field}/{index}" for index in range(len(listed)))
+                    member_keys[field] = keys
+                    for key, member in zip(keys, listed, strict=True):
+                        members[key] = field
+                        try:
+                            wires[key] = ProviderResultToExternalCapture.model_validate(member)
+                        except ValidationError as exc:
+                            raise _InternalFailure(
+                                "provider_protocol_violation",
+                                details={
+                                    "node_id": node.node_id,
+                                    "reason": f"capture list member {key!r} is not Capture wire",
+                                },
+                            ) from exc
+                        member_requests[key] = _member_request_digest(
+                            wires[key], key=key, node_id=node.node_id, seen=requests_seen
+                        )
+                        requests_seen.add(member_requests[key])
+                fields = tuple(key for field in fields for key in member_keys.get(field, (field,)))
+                rules = {key: rules[members.get(key, key)] for key in fields}
+                pins = {key: pins[members.get(key, key)] for key in fields}
+                contracts = {key: contracts[members.get(key, key)] for key in fields}
+                derived_fields = frozenset(
+                    key for key in fields if members.get(key, key) in derived_fields
+                )
+            #: Members dropped for a typed failure: oversized or origin-ineligible (a4).
+            for field in fields:
+                if field in members:
+                    continue
+                try:
+                    if whole_wire:
+                        wires[field] = ProviderResultToExternalCapture.model_validate(output)
+                    elif workspace_request is None or source_read_receipt is None:
+                        if not isinstance(output, dict):
+                            raise ValueError("an acquiring call's output is a record")
+                        wires[field] = ProviderResultToExternalCapture.model_validate(
+                            output.get(field)
+                        )
+                    else:
+                        # The core-served read commits the file's exact bytes, the
+                        # ones core read and handed the operation; its output
+                        # structures them.
+                        assert isinstance(provider_payload, dict)
+                        wires[field] = ProviderResultToExternalCapture(
+                            source_identity=workspace_request.logical_source,
+                            coordinate_type=workspace_request.coordinate_type,
+                            coordinate=workspace_request.coordinate,
+                            selector_type=workspace_request.selector_type,
+                            selector=workspace_request.selector,
+                            replayability=workspace_request.replayability,
+                            content_base64=str(provider_payload["bytes"]),
+                            byte_length=int(cast(int, provider_payload["byte_length"])),
+                            bytes_digest=str(provider_payload["bytes_digest"]),
+                            observed_at=source_read_receipt.read_at,
+                        )
+                except (ValidationError, ValueError) as exc:
+                    raise _InternalFailure(
+                        "provider_protocol_violation",
+                        details={
+                            "node_id": node.node_id,
+                            "reason": f"capture field {field!r} is not Capture wire",
+                        },
+                    ) from exc
+            for field in fields:
+                receipts[field] = (invocation_receipt, invocation_receipt_digest)
+                source_reads[field] = source_read_receipt
+                outputs[field] = output
         for field, rule in rules.items():
+            if field in dropped:
+                continue  # a glob member that failed to read has no Capture wire
             # F05/§4.1,§4.4: each capture field's own coordinate names where its
             # bytes came from (``url``, and ``final_url`` after a redirect), and
             # is checked too, before any Capture conversion.
@@ -4079,12 +4468,12 @@ class ProcedureExecutor:
                 validate_provider_external_capture_result(
                     contract=contracts[field],
                     result=wires[field],
-                    receipt=invocation_receipt,
+                    receipt=receipts[field][0],
                     occurrence=occurrence,
                     producer=producer,
                     bound_generation=bound_generation,
                     field=members.get(field, field),
-                    source_read_receipt=source_read_receipt,
+                    source_read_receipt=source_reads[field],
                 )
             except (CaptureFormatError, ValidationError, ValueError) as exc:
                 raise _InternalFailure(
@@ -4124,13 +4513,13 @@ class ProcedureExecutor:
                     store=reserved_store,
                     contract=contract,
                     result=wire,
-                    receipt=invocation_receipt,
+                    receipt=receipts[field][0],
                     occurrence=occurrence,
                     producer=producer,
                     bound_generation=bound_generation,
                     field=members.get(field, field),
-                    source_read_receipt=source_read_receipt,
-                    provider_output=None if whole_wire else output,
+                    source_read_receipt=source_reads[field],
+                    provider_output=None if whole_wire else outputs[field],
                     derivation=derivation if field in derived_fields else None,
                 )
                 # D-R37 f1: fetched the moment its builder returns, before
@@ -4148,6 +4537,14 @@ class ProcedureExecutor:
         digests = {field: item.capture_digest for field, item in built.items()}
         if whole_wire:
             material: CanonicalValue = normalize_canonical(digests)
+        elif glob_request is not None:
+            # A glob's value names only its Captures, in match order.
+            material = normalize_canonical(
+                {
+                    field: [digests[key] for key in keys if key in digests]
+                    for field, keys in member_keys.items()
+                }
+            )
         else:
             assert isinstance(output, dict)
             # The call's value: its out record, each committed capture field
@@ -4267,9 +4664,9 @@ class ProcedureExecutor:
         # A list the provider itself says is missing members (its result's
         # generic ``incomplete_captures``) is incomplete exactly as one core
         # dropped a member from.
-        list_incomplete = bool(invocation_receipt.incomplete_captures) or any(
-            decisions[field].disposition == "omitted" for field in fields if field in members
-        )
+        list_incomplete = any(
+            receipt.incomplete_captures for receipt, _digest in receipts.values()
+        ) or any(decisions[field].disposition == "omitted" for field in fields if field in members)
         if member_keys:
             # Caps: max_items above, and every member counts toward the run's
             # Capture bytes; past either, the call refuses before any member is
@@ -4313,7 +4710,7 @@ class ProcedureExecutor:
                 body=bodies[field],
                 contract_digest=pins[field].artifact_digest,
                 occurrence_path=occurrence.occurrence_path,
-                invocation_receipt_digest=invocation_receipt_digest,
+                invocation_receipt_digest=receipts[field][1],
                 member_request_digest=member_requests.get(field),
             )
             if field in members:
@@ -4351,6 +4748,11 @@ class ProcedureExecutor:
             # The call's value is incomplete (the node's completeness, below);
             # a derive over it is too, as over any incomplete input.
             state.dropped_members.add(node.as_)
+        if glob_request is not None:
+            # A glob names the files that exist now: an extract straight over it
+            # never judges absence, so a file it no longer matches retires
+            # nothing (D-R41).
+            state.glob_lists.add(node.as_)
         reserved_store.release()
 
     def _capture_body(self, state: _RunState, capture_digest: str) -> bytes:
@@ -4520,6 +4922,33 @@ class ProcedureExecutor:
         for ``records`` (D-R37 a5).
         """
 
+        refused: dict[tuple[str, str | None], tuple[list[str], int, str | None]] = {}
+        for arm in outcome.held:
+            if isinstance(arm, InvalidRecordArm):
+                # A record refused alone (D-R40), reported on the run by its
+                # typed reason; its siblings read on.
+                problem = arm.problems[0]
+                locators, count, lexeme = refused.get(
+                    (problem.code, problem.field), ([], 0, problem.lexeme)
+                )
+                if len(locators) < 10:
+                    locators.append(arm.record)
+                refused[(problem.code, problem.field)] = (locators, count + 1, lexeme)
+        if refused:
+            diagnostics = state.claims_diagnostics.setdefault(node.node_id, ClaimsDiagnostics())
+            for (code, field), (locators, count, lexeme) in refused.items():
+                diagnostics.add(
+                    ClaimsDiagnostic(
+                        kind="extract_refused",
+                        target=node.node_id,
+                        field=field,
+                        problem=code,
+                        lexeme=lexeme,
+                        record_locators=tuple(locators),
+                        record_count=count,
+                        source_incomplete=True,
+                    )
+                )
         if node.duplicates == "refuse_key":
             from cruxible_client.contracts.canonical import canonical_bytes
             from cruxible_client.contracts.shapes import DuplicateArm
@@ -4696,8 +5125,11 @@ class ProcedureExecutor:
         alias = getattr(node, "as_", None)
         if isinstance(alias, str) and alias in state.outputs:
             if isinstance(node, ReadNode):
-                # A read completed within its ceiling, or the node refused.
-                tracker.mark(alias, True)
+                # A read completed within its ceiling, or the node refused. A
+                # late read selected by an incomplete value is incomplete too.
+                tracker.mark(alias, tracker.reads_complete(reads))
+                if alias in tracker.incomplete:
+                    tracker.note(node.node_id, "upstream_incomplete", (name for name, _ in reads))
             else:
                 truncates = (
                     isinstance(node, CallNode)
@@ -5752,6 +6184,9 @@ class ProcedureExecutor:
         # has no accepted Line), but it still builds a real v2 request under
         # its own ephemeral Line spec -- the only authority basis it has.
         v2_capable = admission.plans_providers or self.ephemeral_spec_digest is not None
+        # An overridden Line run's authority basis is its override (D-R39), as a
+        # direct run's is its ephemeral spec (C4): propose, never settle.
+        ephemeral_authority = self.ephemeral_spec_digest or admission.parameter_override_digest
         if v2_capable and isinstance(node, CaptureEgressNode):
             return (
                 build_terminal_egress_request_v2(
@@ -5786,9 +6221,7 @@ class ProcedureExecutor:
                     admission=admission,
                     procedure_mandate_digest=prepared.procedure_mandate_digest,
                     ephemeral_spec_digest=(
-                        self.ephemeral_spec_digest
-                        if prepared.procedure_mandate_digest is None
-                        else None
+                        ephemeral_authority if prepared.procedure_mandate_digest is None else None
                     ),
                     calibration_reading_digests=(),
                     target_paths=prepared.target_paths,

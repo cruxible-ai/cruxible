@@ -439,7 +439,12 @@ def test_a_run_reads_the_identity_rules_at_its_admitted_coordinate(
         "pkg:npm/%40Scope/Left-Pad@1"
     )
     assert rules.canonical(RELEASE, None, "pkg:github/Org/Repo@v1") == "pkg:github/org/repo@v1"
-    assert rules.rule_token(PACKAGE) == tree_key_rules(tree(instance)).rule_token(PACKAGE)
+    # The same identity rules as the tree's, and the key ClaimTypes' value types a
+    # run's key rules bound each part by (D-R40).
+    token = rules.rule_token(PACKAGE)
+    assert isinstance(token, dict)
+    assert token["rules"] == tree_key_rules(tree(instance)).rule_token(PACKAGE)
+    assert token["bounds"] == {"pkg.package.name": "string{max_len: 256}"}
 
 
 def test_an_encoded_dot_subpath_reads_as_one_key_on_every_route(

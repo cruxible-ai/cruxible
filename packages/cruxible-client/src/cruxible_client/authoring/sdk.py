@@ -5373,9 +5373,14 @@ class Line:
         repeat: bool = False,
         occurrence_id: str | None = None,
         resolution_contract: ResolutionContractReference | None = None,
+        parameters: Mapping[str, Any] | None = None,
     ) -> ProcedureRun:
         """Run the Line once now: one manual occurrence, under the Line's own inputs,
         budgets, authority ceiling and mandate. It never selects or consumes a Trigger.
+
+        ``parameters`` override the Line's for this run only, checked against the
+        Procedure's params Contract. A run whose parameters differ from the Line's
+        runs without the Line's mandate: it may propose, never settle.
 
         ``event`` is the retained Capture event a Line whose Procedure takes an
         event input runs on; an event the enabled Line already admitted refuses
@@ -5395,6 +5400,7 @@ class Line:
             event=event,
             repeat=repeat,
             evaluation_time=cx._evaluation_time(),
+            **({"parameters": dict(parameters)} if parameters is not None else {}),
         )
         return ProcedureRun(cx, result)
 

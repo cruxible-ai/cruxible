@@ -209,6 +209,7 @@ from cruxible_core.procedures.acquisition import (
 )
 from cruxible_core.procedures.claims_context import AcceptedClaimsContext
 from cruxible_core.procedures.egress import (
+    EPHEMERAL_RUN_RUNG_CEILING,
     SERVED_AUTHORITY_TERMS,
     CaptureTerminalEgressSink,
     PreparedTerminalEgressV1,
@@ -643,6 +644,21 @@ class LineRunRequest(_StrictProcedureSurfaceModel):
             "skew bound refuses."
         ),
     )
+    parameters: dict[str, object] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "Per-run values over the Line's parameters (checked against the Procedure's "
+            "params Contract). A run whose parameters differ from the Line's runs without "
+            "the Line's mandate: it may propose, never settle. Triggers always run on the "
+            "Line's own parameters."
+        ),
+    )
+
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def _parameters(cls, value: object) -> object:
+        return None if value is None else normalize_canonical(value)
 
     @field_validator("line")
     @classmethod
@@ -820,7 +836,64 @@ def accepted_key_rules(
         value = read(f"ClaimType:{predicate}")
         return value if isinstance(value, ClaimType) else None
 
-    return KeyRules(subject_kind, claim_type)
+    return BoundedKeyRules(subject_kind, claim_type)
+
+
+class BoundedKeyRules(KeyRules):
+    """A run's key rules: a canonical key part must also be a value its key ClaimType holds.
+
+    A key part outside its key ClaimType's declared value type (too long, out of
+    range) names no Subject that can exist: its key Claim would be refused at
+    publication. A run refuses it where it reads it (``KeyPartOutOfBounds``), so
+    an extract refuses that one record, ``key_part_out_of_bounds`` (D-R40).
+    """
+
+    def canonical(self, subject_kind: str, part: str | None, value: object) -> object:
+        from cruxible_client.contracts.shapes import FieldInvalid, KeyPartOutOfBounds, check_value
+        from cruxible_client.contracts.subject_kinds import key_predicate
+
+        canonical = super().canonical(subject_kind, part, value)
+        declared = self.kind(subject_kind)
+        assert declared is not None  # the canonical read refuses an undeclared kind
+        if part is not None:
+            parts: Mapping[str, object] = {part: canonical}
+        elif isinstance(canonical, Mapping):
+            parts = canonical
+        else:
+            parts = {declared.keys[0].removeprefix(subject_kind + "."): canonical}
+        for name, part_value in parts.items():
+            predicate = key_predicate(declared, name)
+            definition = None if predicate is None else self.claim_type(predicate)
+            if definition is None:
+                continue
+            # A problem only: no result is allocated for a part that holds.
+            checked = check_value(
+                part_value, definition.value, at="", field=name, _problem_only=True
+            )
+            if isinstance(checked, FieldInvalid):
+                raise KeyPartOutOfBounds(
+                    f"{predicate}: {checked.problem.code} for its declared value type"
+                )
+        return canonical
+
+    def rule_token(self, subject_kind: str) -> object:
+        """The identity rules, and each key ClaimType's value type the bound reads."""
+
+        from cruxible_client.contracts.shapes import render_type
+
+        declared = self.kind(subject_kind)
+        token = super().rule_token(subject_kind)
+        if declared is None:
+            return token
+        return {
+            "rules": token,
+            "bounds": {
+                predicate: None
+                if (definition := self.claim_type(predicate)) is None
+                else render_type(definition.value)
+                for predicate in declared.keys
+            },
+        }
 
 
 def accepted_contract_resolver(
@@ -2224,6 +2297,67 @@ def _provider_admission_terminal(
     )
 
 
+def _source_observation_rows(
+    derived: Sequence[ProcedureDerivedSourceRequest],
+    reads: Sequence[SourceReadReceipt],
+    associations: Sequence[ProcedureSourceCaptureAssociation],
+    completed_inputs: Mapping[str, str],
+) -> list[
+    tuple[
+        ProcedureDerivedSourceRequest | None,
+        SourceReadReceipt | None,
+        ProcedureSourceCaptureAssociation | None,
+    ]
+]:
+    """One occurrence's observations: each Capture with the read and request behind it.
+
+    An occurrence derives one Source request (and one read) per file it read: a
+    glob read (D-R41) has one per member, matched to a Capture by the input its
+    invocation consumed. An occurrence that bound no Capture shows each read.
+
+    Both joins are index lookups, built once per occurrence rather than
+    rescanned per member: a glob with N matches stays linear in N instead of
+    rescanning ``derived``/``reads`` once per association.
+    """
+
+    by_request_digest: dict[str, ProcedureDerivedSourceRequest] = {}
+    for one_derived in derived:
+        by_request_digest.setdefault(one_derived.request_digest, one_derived)
+    by_provider_input: dict[str, SourceReadReceipt] = {}
+    if len(reads) > 1:
+        for one_read in reads:
+            by_provider_input.setdefault(one_read.provider_input_digest, one_read)
+
+    def request_for(read: SourceReadReceipt | None) -> ProcedureDerivedSourceRequest | None:
+        if read is not None:
+            found = by_request_digest.get(read.derived_request_digest)
+            if found is not None:
+                return found
+        return derived[0] if derived else None
+
+    def read_for(association: ProcedureSourceCaptureAssociation) -> SourceReadReceipt | None:
+        if len(reads) <= 1:
+            return reads[0] if reads else None
+        consumed = completed_inputs.get(association.invocation_receipt_digest)
+        return by_provider_input.get(consumed) if consumed is not None else None
+
+    if associations:
+        return [
+            (request_for(read), read, association)
+            for association in associations
+            for read in (read_for(association),)
+        ]
+    if reads:
+        return [(request_for(read), read, None) for read in reads]
+    return [(request_for(None), None, None)]
+
+
+#: The read refusals a late read (D-R38) makes mid-run, at its own node.
+_LATE_READ_REFUSAL_CODES = frozenset(
+    {"read_ceiling_exceeded", "query_contract_violated", "state_tap_refused"}
+)
+
+
 def _state_from_records(
     instance: PlaybillInstance,
     *,
@@ -2246,8 +2380,24 @@ def _state_from_records(
     invocation_receipt_digests: list[str] = []
     source_capture_associations: tuple[ProcedureSourceCaptureAssociation, ...] = ()
     provider_invocations: dict[str, Literal["started", "completed"]] = {}
-    derived_source_requests: dict[str, ProcedureDerivedSourceRequest] = {}
-    source_reads: dict[str, SourceReadReceipt] = {}
+    # Per occurrence, each Source request it derived and each read, in journal
+    # order: a glob read (D-R41) derives and reads one per matched file.
+    derived_source_requests: dict[str, list[ProcedureDerivedSourceRequest]] = {}
+    source_reads: dict[str, list[SourceReadReceipt]] = {}
+    #: Each occurrence path's derived request digests seen so far: backs the
+    #: duplicate check and the provider-start validation without rescanning
+    #: ``derived_source_requests[path]``, which grows with a glob's members.
+    derived_request_digests: dict[str, set[str]] = {}
+    #: Each occurrence path's read derived-request digests seen so far: backs
+    #: the read duplicate check without rescanning ``source_reads[path]``.
+    source_read_digests: dict[str, set[str]] = {}
+    #: Each occurrence path's provider-input digests a started invocation may
+    #: present: one ``run_value_digest`` per derived request and one
+    #: ``provider_input_digest`` per read, folded in as each is seen rather
+    #: than rebuilt (and re-hashed) at every invocation start.
+    expected_provider_inputs: dict[str, set[str]] = {}
+    #: Each completed invocation's input digest, by its receipt digest.
+    completed_inputs: dict[str, str] = {}
     produced_source_associations: list[ProcedureSourceCaptureAssociation] = []
     terminal_egress: dict[str, ProcedureTerminalEgress] = {}
     children: list[ProcedureChildInvocation] = []
@@ -2322,16 +2472,23 @@ def _state_from_records(
                 raise ProcedureRunRecoveryRequired(
                     f"{ProcedureRunRecoveryRequired.code}: derived Source request is invalid"
                 ) from exc
+            path_derived_digests = derived_request_digests.setdefault(
+                derived.occurrence_path, set()
+            )
             if (
                 derived.run_id != run_id
                 or derived.admission_binding_digest != stored.record.admission_binding_digest
-                or derived.occurrence_path in derived_source_requests
+                or derived.request_digest in path_derived_digests
             ):
                 raise ProcedureRunRecoveryRequired(
                     f"{ProcedureRunRecoveryRequired.code}: derived Source request does not bind "
                     "this run exactly"
                 )
-            derived_source_requests[derived.occurrence_path] = derived
+            derived_source_requests.setdefault(derived.occurrence_path, []).append(derived)
+            path_derived_digests.add(derived.request_digest)
+            expected_provider_inputs.setdefault(derived.occurrence_path, set()).add(
+                run_value_digest("provider-input", derived.request)
+            )
         if stored.record.event_kind == "source_read" and isinstance(payload, dict):
             try:
                 read_receipt = SourceReadReceipt.model_validate(payload.get("receipt"))
@@ -2339,17 +2496,34 @@ def _state_from_records(
                 raise ProcedureRunRecoveryRequired(
                     f"{ProcedureRunRecoveryRequired.code}: Source read receipt is invalid"
                 ) from exc
+            path_read_digests = source_read_digests.setdefault(read_receipt.occurrence_path, set())
             if (
                 read_receipt.run_id != run_id
                 or read_receipt.admission_binding_digest != stored.record.admission_binding_digest
                 or payload.get("receipt_digest") != source_read_receipt_digest(read_receipt)
-                or read_receipt.occurrence_path in source_reads
+                or read_receipt.derived_request_digest in path_read_digests
             ):
                 raise ProcedureRunRecoveryRequired(
                     f"{ProcedureRunRecoveryRequired.code}: Source read receipt does not bind "
                     "this run exactly"
                 )
-            source_reads[read_receipt.occurrence_path] = read_receipt
+            # A governed workspace read hands the Provider the bytes the
+            # daemon really read, not the request that named them. The read
+            # receipt is what binds the two, so the reconstruction requires
+            # that binding before it accepts the substitution -- checked here,
+            # once per read, rather than rescanned per invocation start.
+            if read_receipt.derived_request_digest not in derived_request_digests.get(
+                read_receipt.occurrence_path, ()
+            ):
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Source read receipt names "
+                    "another derived request"
+                )
+            source_reads.setdefault(read_receipt.occurrence_path, []).append(read_receipt)
+            path_read_digests.add(read_receipt.derived_request_digest)
+            expected_provider_inputs.setdefault(read_receipt.occurrence_path, set()).add(
+                read_receipt.provider_input_digest
+            )
         if stored.record.event_kind == "provider_invocation_started":
             try:
                 started = ProviderInvocationStarted.model_validate(payload)
@@ -2375,25 +2549,18 @@ def _state_from_records(
                     f"{ProcedureRunRecoveryRequired.code}: Provider start is not admitted exactly"
                 )
             if planned[0].occurrence_kind == "source":
-                derived_for_start = derived_source_requests.get(started.occurrence_path)
-                if derived_for_start is None:
+                # Every derived request's provider-input digest, and every
+                # read's binding to one, were folded into
+                # ``expected_provider_inputs`` above as each was seen (and the
+                # read's binding already validated there), so this is a set
+                # lookup: never a rescan of a glob's growing member lists, and
+                # never a re-hash of requests already seen.
+                if started.occurrence_path not in derived_request_digests:
                     raise ProcedureRunRecoveryRequired(
                         f"{ProcedureRunRecoveryRequired.code}: Source spawn lacks its exact "
                         "pre-spawn derived request result"
                     )
-                expected_inputs = {run_value_digest("provider-input", derived_for_start.request)}
-                read_for_start = source_reads.get(started.occurrence_path)
-                if read_for_start is not None:
-                    # A governed workspace read hands the Provider the bytes the
-                    # daemon really read, not the request that named them. The
-                    # read receipt is what binds the two, so the reconstruction
-                    # requires that binding before it accepts the substitution.
-                    if read_for_start.derived_request_digest != derived_for_start.request_digest:
-                        raise ProcedureRunRecoveryRequired(
-                            f"{ProcedureRunRecoveryRequired.code}: Source read receipt names "
-                            "another derived request"
-                        )
-                    expected_inputs.add(read_for_start.provider_input_digest)
+                expected_inputs = expected_provider_inputs.get(started.occurrence_path, set())
                 if started.input_digest not in expected_inputs:
                     raise ProcedureRunRecoveryRequired(
                         f"{ProcedureRunRecoveryRequired.code}: Source spawn lacks its exact "
@@ -2422,6 +2589,7 @@ def _state_from_records(
                 )
             provider_invocations[completed.invocation_id] = "completed"
             invocation_receipt_digests.append(completed.receipt_digest)
+            completed_inputs[completed.receipt_digest] = completed.receipt.input_digest
         if stored.record.event_kind == "produced_capture" and isinstance(payload, dict):
             occurrence_path = payload.get("occurrence_path")
             invocation_receipt_digest = payload.get("invocation_receipt_digest")
@@ -2565,7 +2733,10 @@ def _state_from_records(
                 )
                 refusal_code = str(refusal.get("code", "guard_refused"))
                 raw_detail_code = refusal.get("detail_code")
-                if refusal_code in get_args(ProcedureAdmissionRefusalCode):
+                if refusal_code in get_args(ProcedureAdmissionRefusalCode) and not (
+                    # A late read's refusal (D-R38) is its node's, not admission's.
+                    refusal_code in _LATE_READ_REFUSAL_CODES and refusal.get("node_id")
+                ):
                     terminal = ProcedureAdmissionRefusal.model_validate(
                         {
                             "code": refusal_code,
@@ -2752,14 +2923,16 @@ def _state_from_records(
             capture_digest=None if association is None else association.capture_digest,
         )
         for occurrence_path, derived, receipt, association in (
-            (path, derived_source_requests.get(path), source_reads.get(path), produced)
+            (path, *row)
             for path in sorted(
                 set(derived_source_requests) | set(source_reads) | set(captures_by_path),
                 key=lambda item: item.encode("utf-8"),
             )
-            for produced in (
-                cast(list[ProcedureSourceCaptureAssociation | None], captures_by_path.get(path))
-                or [None]
+            for row in _source_observation_rows(
+                derived_source_requests.get(path, []),
+                source_reads.get(path, []),
+                captures_by_path.get(path, []),
+                completed_inputs,
             )
         )
     )
@@ -2851,6 +3024,11 @@ def _public_run_receipt(
         validated_pins=admission.full_pins,
         admitted_inputs=tuple(
             cast(dict[str, object], item.model_dump(mode="json")) for item in admission.run_inputs
+        ),
+        late_reads=tuple(
+            cast(dict[str, object], item)
+            for item in (final.get("late_reads", ()) if isinstance(final, dict) else ())
+            if isinstance(item, dict)
         ),
         attribution=attribution,
         stream_instance_id=stream.instance_id,
@@ -3475,6 +3653,9 @@ def service_run_playbill_procedure(
             contract_resolver=accepted_contract_resolver(instance, coordinate),
             key_rules=accepted_key_rules(instance, coordinate),
             claims_context=AcceptedClaimsContext(instance, coordinate),
+            state_reader=PlaybillProcedureStateTapReader(
+                instance=instance, evaluation_time=evaluation_time
+            ),
             clock=_DeterministicClock(evaluation_time),
             nested_runner=ServedNestedProcedureRunner(
                 instance,
@@ -3769,9 +3950,27 @@ def _run_playbill_line(
             key: value for key, value in accepted_line.line.bindings.items() if "." not in key
         },
     )
+    # A Line supplies the Procedure's parameters; a Line run's input is empty. A
+    # manual run may override them (D-R39): the override is the run's own
+    # invocation input, so it is in the run's identity, and the run then runs
+    # without the Line's mandate, capped at propose.
+    supplied = accepted_line.line.parameters
+    if not isinstance(supplied, dict):  # the Line law accepts a record only
+        raise ExecutionError("accepted Line parameters are not a record")
+    if request.parameters is not None and trigger_fire is not None:
+        raise ExecutionError("a Trigger's occurrence runs on its Line's own parameters")
+    pinned_parameters = accepted.procedure.definition.effective_parameters(supplied)
+    line_parameters = accepted.procedure.definition.effective_parameters(
+        {**supplied, **(request.parameters or {})}
+    )
+    parameters_overridden = line_parameters != pinned_parameters
     require_run_permission(
         "cruxible_line_run",
-        target_rung=line_authority_rung(accepted_line, accepted),
+        target_rung=(
+            min(line_authority_rung(accepted_line, accepted), EPHEMERAL_RUN_RUNG_CEILING)
+            if parameters_overridden
+            else line_authority_rung(accepted_line, accepted)
+        ),
         caller_rung=caller_rung,
     )
     if (
@@ -3865,7 +4064,11 @@ def _run_playbill_line(
         coordinate=coordinate,
         evaluation_time=evaluation_time,
     )
-    if not mandates and line_authority_rung(accepted_line, accepted) > 1:
+    if (
+        not mandates
+        and not parameters_overridden
+        and line_authority_rung(accepted_line, accepted) > 1
+    ):
         return _line_refusal_state(
             accepted,
             accepted_line,
@@ -4344,11 +4547,6 @@ def _run_playbill_line(
             message="The accepted Provider closure for this Line is incomplete.",
             details={"reason": str(exc), "repair": "Accept the Provider closure this graph pins."},
         )
-    # A Line supplies the Procedure's parameters; a Line run's input is empty.
-    supplied = accepted_line.line.parameters
-    if not isinstance(supplied, dict):  # the Line law accepts a record only
-        raise ExecutionError("accepted Line parameters are not a record")
-    line_parameters = accepted.procedure.definition.effective_parameters(supplied)
     plan_digest = procedure_acquisition_plan_digest(plan)
     try:
         materials = _line_state_materials(
@@ -4381,12 +4579,14 @@ def _run_playbill_line(
         )
     full_pins = accepted.procedure.pins
     node_pin_sets = procedure_node_pin_sets(accepted)
+    # An overridden run binds none of the Line's mandates (D-R39).
+    run_mandates = () if parameters_overridden else mandates
     mandate_coordinate_digest = typed_digest(
         Sha256Value,
         "playbill-line-mandate-coordinate-v1",
         {
             "accepted_coordinate": accepted_coordinate.model_dump(mode="json"),
-            "mandates": [digest for digest, _mandate in mandates],
+            "mandates": [digest for digest, _mandate in run_mandates],
         },
     ).tagged
     sensitivity_policy_digest = typed_digest(
@@ -4451,6 +4651,18 @@ def _run_playbill_line(
             "sensitivity_policy_digest": sensitivity_policy_digest,
             "mandate_coordinate_digest": mandate_coordinate_digest,
             "calibration_coordinate_digest": calibration_coordinate_digest,
+            "parameter_override_digest": (
+                typed_digest(
+                    Sha256Value,
+                    "playbill-line-parameter-override-v1",
+                    {
+                        "line_spec_digest": accepted_line.artifact_digest,
+                        "parameters": line_parameters,
+                    },
+                ).tagged
+                if parameters_overridden
+                else None
+            ),
             "admitted_at": evaluation_time,
         }
     )
@@ -4505,7 +4717,7 @@ def _run_playbill_line(
     # An observe-only Line runs with no mandate; its effective rung is then
     # capped at the mandate-free ceiling, which is observe.
     mandate_rung = max(
-        (procedure_mandate_rung(mandate) for _digest, mandate in mandates), default=None
+        (procedure_mandate_rung(mandate) for _digest, mandate in run_mandates), default=None
     )
     effective_rung = compute_effective_rung(
         procedure_terminal_capability=accepted.procedure.definition.terminal_capability,
@@ -4524,6 +4736,7 @@ def _run_playbill_line(
         calibration_coordinate_digest=calibration_coordinate_digest,
         procedure_mandate_rung=mandate_rung,
         caller_tier_rung=caller_rung,
+        parameters_overridden=parameters_overridden,
     )
     if investigation is not None or trigger_binding is not None:
         prepared = bind_prepared_investigation(
@@ -4564,7 +4777,7 @@ def _run_playbill_line(
                 producer_binding_digest=accepted.artifact_digest,
             ),
             proposal=ProposalTerminalEgressSink(
-                instance=instance, accepted_mandates=dict(mandates)
+                instance=instance, accepted_mandates=dict(run_mandates)
             ),
             inbox=InboxTerminalEgressSink(
                 store=LineInboxStore(instance),
@@ -4622,6 +4835,9 @@ def _run_playbill_line(
                 contract_resolver=accepted_contract_resolver(instance, coordinate),
                 key_rules=accepted_key_rules(instance, coordinate),
                 claims_context=AcceptedClaimsContext(instance, coordinate),
+                state_reader=PlaybillProcedureStateTapReader(
+                    instance=instance, evaluation_time=evaluation_time
+                ),
                 clock=_DeterministicClock(evaluation_time),
                 nested_runner=ServedNestedProcedureRunner(
                     instance,
@@ -4631,7 +4847,7 @@ def _run_playbill_line(
                     provider_runtime_operator,
                     workspace_file_reader,
                     _DeterministicClock(evaluation_time),
-                    mandates=dict(mandates),
+                    mandates=dict(run_mandates),
                     bindings=dict(accepted_line.line.bindings),
                     acquisition=dict(accepted_line.line.acquisition),
                 ),

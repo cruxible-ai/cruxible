@@ -544,8 +544,12 @@ def service_execute_direct_procedure(
     contract_resolver: Callable[[ContractRef], Contract | None] | None = None,
     key_rules: KeyCanonicalizer | None = None,
     claims_context: ClaimsContext | None = None,
+    state_reader: StateTapReaderProtocol | None = None,
 ) -> ProcedureRunResultV1:
-    """Execute through the shared runtime; no transport duplicates orchestration."""
+    """Execute through the shared runtime; no transport duplicates orchestration.
+
+    ``state_reader`` reads the run's late reads (D-R38) at its admitted coordinate.
+    """
 
     if contract_validator is None:
         if contract_resolver is None:
@@ -578,6 +582,7 @@ def service_execute_direct_procedure(
             key_rules=key_rules,
             claims_context=claims_context,
             ephemeral_spec_digest=ephemeral_spec_digest,
+            state_reader=state_reader,
         ).execute(prepared, accepted)
     finally:
         index.close()

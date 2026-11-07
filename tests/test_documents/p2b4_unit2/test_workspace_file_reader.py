@@ -15,6 +15,7 @@ from cruxible_client.contracts.workspace_file import (
     WorkspaceFileSourceRequestV2,
 )
 from cruxible_core.documents.workspace_file import (
+    DirectoryEntryCache,
     WorkspaceFileReader,
     WorkspaceFileReadRefused,
     workspace_binding_digest,
@@ -60,6 +61,7 @@ def _read(
     request: ExecutedWorkspaceFileSourceRequestV2,
     *,
     max_bytes: int = 1024,
+    directory_cache: DirectoryEntryCache | None = None,
 ):
     return reader.read(
         request,
@@ -70,6 +72,7 @@ def _read(
         resolved_max_bytes=max_bytes,
         derived_request_digest="sha256:" + "2" * 64,
         read_at=datetime(2026, 9, 2, tzinfo=UTC),
+        directory_cache=directory_cache,
     )
 
 
@@ -444,6 +447,60 @@ def test_disappearing_file_after_open_refuses(
     with pytest.raises(WorkspaceFileReadRefused) as caught:
         _read(_reader(root), _request(root, "note"))
     assert caught.value.path_class == "missing"
+
+
+def test_a_resolved_candidate_swapped_right_after_its_identity_check_is_never_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A glob directory cache's resolved candidate, swapped the instant after
+    it was verified to be the requested name's object, must never be read
+    (F3, round 3): ``_same_object`` only takes a snapshot, and the name it
+    verified can be a different object by the time ``read`` opens it.
+
+    ``_actual_component`` is the seam ``read`` trusts for both the resolved
+    name and the identity verified for it; this swaps the file it names
+    immediately after a real, successful verification -- the same gap a
+    genuine case-folding candidate recovered from a stale cache would leave
+    open -- without depending on the host filesystem's own case-folding or
+    normalization behavior to construct two colliding real names. The
+    resolution layer's own correctness (that it verifies a case-folding
+    candidate and refuses a stale one) is covered directly by the
+    ``_resolve_component``/``_same_object`` tests in
+    ``test_workspace_glob_expand.py``; this test is read's half of the
+    contract: carrying a verified identity through to the open and
+    refusing, before any byte is read, if the opened object disagrees.
+    """
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    target = root / "note.json"
+    target.write_bytes(b"original")
+
+    real_actual_component = WorkspaceFileReader._actual_component
+    swapped = False
+
+    def swap_after_resolution(
+        parent_fd: int, requested: str, *, cache: DirectoryEntryCache | None = None
+    ) -> tuple[str, tuple[int, int] | None]:
+        nonlocal swapped
+        actual, _ = real_actual_component(parent_fd, requested, cache=cache)
+        verified = os.stat(actual, dir_fd=parent_fd, follow_symlinks=False)
+        verified_identity = (verified.st_dev, verified.st_ino)
+        if not swapped:
+            swapped = True
+            (root / actual).unlink()
+            (root / actual).write_bytes(b"swapped")
+        return actual, verified_identity
+
+    monkeypatch.setattr(
+        WorkspaceFileReader, "_actual_component", staticmethod(swap_after_resolution)
+    )
+
+    with pytest.raises(WorkspaceFileReadRefused) as caught:
+        _read(_reader(root), _request(root, "note.json"))
+    assert caught.value.path_class == "changed_during_read"
+    assert swapped, "the injected swap never ran: the test did not reach an open"
+    assert target.read_bytes() == b"swapped"  # confirms the swap really happened
 
 
 def _authored(relative_path: str, workspace: str | None = None) -> WorkspaceFileSourceRequestV2:

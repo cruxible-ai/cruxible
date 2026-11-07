@@ -323,6 +323,89 @@ class WorkspaceFileSourceRequestV2(_StrictWorkspaceFileModel):
         return None if value is None else _workspace_name(value)
 
 
+#: The most files one glob read may match (D-R41): past its cap a glob refuses.
+MAX_WORKSPACE_GLOB_FILES = 1000
+_GLOB_CHARACTERS = frozenset("*?[")
+
+
+class WorkspaceFileGlobRequestV1(_StrictWorkspaceFileModel):
+    """An authored ``workspace.file`` read of every file a glob matches (D-R41).
+
+    ``glob`` is a relative POSIX path whose components may use ``*``, ``?``
+    and ``[...]`` (a ``**`` component is not a pattern in v1). The daemon
+    lists the matches under the resolved workspace, sorted by their real
+    names, and reads each as one ordinary ``workspace.file`` read: the call's
+    capture field holds one Capture per file, in that order. More matches
+    than ``max_files`` refuses the read. A file that fails to read is dropped
+    and the list is incomplete; a file the glob no longer matches is simply
+    not read, and nothing about it retires.
+    """
+
+    tag: Literal["playbill-workspace-file-glob-request-v1"] = (
+        "playbill-workspace-file-glob-request-v1"
+    )
+    logical_source: str
+    workspace: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    glob: str
+    max_files: int = Field(default=100, ge=1, le=MAX_WORKSPACE_GLOB_FILES)
+    coordinate_type: str
+    coordinate: object
+    selector_type: str
+    selector: object
+    replayability: Literal["exact", "attested_only"] = "exact"
+
+    _canonical = field_validator("coordinate", "selector", mode="before")(normalize_canonical)
+
+    @field_validator("logical_source", "coordinate_type", "selector_type")
+    @classmethod
+    def _nonempty(cls, value: str) -> str:
+        return WorkspaceFileSourceRequest._nonempty(value)
+
+    @field_validator("glob")
+    @classmethod
+    def _glob(cls, value: str) -> str:
+        WorkspaceFileSourceRequest._relative_path(value)
+        parts = value.split("/")
+        if any(part == "**" for part in parts):
+            raise ValueError("a workspace glob matches within one directory per component")
+        if not any(character in _GLOB_CHARACTERS for character in value):
+            raise ValueError("a workspace glob names a pattern; read one file by relative_path")
+        return value
+
+    @field_validator("workspace")
+    @classmethod
+    def _workspace(cls, value: str | None) -> str | None:
+        return None if value is None else _workspace_name(value)
+
+    def member(self, relative_path: str) -> WorkspaceFileSourceRequestV2:
+        """The ordinary one-file request the daemon reads for one match."""
+
+        return WorkspaceFileSourceRequestV2(
+            logical_source=self.logical_source,
+            workspace=self.workspace,
+            relative_path=relative_path,
+            coordinate_type=self.coordinate_type,
+            coordinate=self.coordinate,
+            selector_type=self.selector_type,
+            selector=self.selector,
+            replayability=self.replayability,
+        )
+
+
+def is_workspace_glob(value: object) -> bool:
+    """Whether an authored ``workspace.file`` call input reads a glob (it names ``glob``)."""
+
+    return isinstance(value, dict) and "glob" in value
+
+
+def parse_authored_workspace_glob(value: object) -> WorkspaceFileGlobRequestV1:
+    """Read an authored glob request; the binding digest is the daemon's, never the author's."""
+
+    if isinstance(value, dict) and "workspace_binding_digest" in value:
+        raise WorkspaceBindingDigestAuthored()
+    return WorkspaceFileGlobRequestV1.model_validate(value)
+
+
 class ExecutedWorkspaceFileSourceRequestV2(_StrictWorkspaceFileModel):
     """What the daemon executed for one authored v2 request: the root it resolved.
 
@@ -508,8 +591,12 @@ __all__ = [
     "workspace_file_contracts",
     "workspace_file_refusal_contracts",
     "workspace_file_signature_digest",
+    "MAX_WORKSPACE_GLOB_FILES",
+    "WorkspaceFileGlobRequestV1",
     "WorkspaceFileSourceRequest",
     "WorkspaceFileSourceRequestV2",
+    "is_workspace_glob",
+    "parse_authored_workspace_glob",
     "parse_authored_workspace_request",
     "parse_executed_workspace_request",
     "source_read_receipt_digest",
