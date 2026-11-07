@@ -101,11 +101,20 @@ class WorkspaceFileReadResultV1:
     receipt: SourceReadReceipt
 
 
+#: One directory's identity at the moment it was listed: ``(device, inode,
+#: st_mtime_ns, st_ctime_ns)``. A cache entry is trusted only while a fresh
+#: stat of the same directory still matches it, so content changed since (or
+#: a directory inode reused for a different directory) is never read from it.
+DirectoryIdentity = tuple[int, int, int, int]
+
 #: One glob operation's shared directory-entry cache (D-R41): a real
-#: directory's ``(listing, name-set)``, keyed by its ``(device, inode)`` so
-#: every matched member under it reuses one listing instead of relisting it.
-#: Callers create a fresh cache per glob operation; it is never kept longer.
-DirectoryEntryCache = dict[tuple[int, int], tuple[tuple[str, ...], frozenset[str]]]
+#: directory's identity, listing and name-set, keyed by its ``(device,
+#: inode)`` so every matched member under it reuses one listing instead of
+#: relisting it. Callers create a fresh cache per glob operation; it is
+#: never kept longer.
+DirectoryEntryCache = dict[
+    tuple[int, int], tuple[DirectoryIdentity, tuple[str, ...], frozenset[str]]
+]
 
 
 class WorkspaceFileReader:
@@ -329,17 +338,25 @@ class WorkspaceFileReader:
 
     @staticmethod
     def _directory_entries(
-        parent_fd: int, *, cache: DirectoryEntryCache | None = None
+        parent_fd: int, *, cache: DirectoryEntryCache | None = None, force_refresh: bool = False
     ) -> tuple[tuple[str, ...], frozenset[str]]:
         """List a directory once, reusing the result for sibling files in one glob.
 
         ``cache`` is keyed by the parent descriptor's ``(device, inode)``,
         never by the fd number itself (each file read reopens the directory,
         so the same real directory gets a fresh, numerically different fd):
-        this is what lets sibling members of a glob share one listing.
+        this is what lets sibling members of a glob share one listing. An
+        entry is trusted only while a fresh stat of ``parent_fd`` still
+        matches the directory's identity when it was listed (device, inode,
+        and its own ``st_mtime_ns``/``st_ctime_ns``): a directory whose
+        content changed since, or whose inode was reused for a different
+        directory, is relisted rather than trusted. ``force_refresh`` relists
+        unconditionally (still updating the cache), for a caller that already
+        knows a cached candidate let it down.
         """
 
         key: tuple[int, int] | None = None
+        identity: DirectoryIdentity | None = None
         if cache is not None:
             try:
                 parent_stat = os.fstat(parent_fd)
@@ -347,19 +364,72 @@ class WorkspaceFileReader:
                 parent_stat = None
             if parent_stat is not None:
                 key = (parent_stat.st_dev, parent_stat.st_ino)
-                cached = cache.get(key)
-                if cached is not None:
-                    return cached
+                identity = (
+                    parent_stat.st_dev,
+                    parent_stat.st_ino,
+                    parent_stat.st_mtime_ns,
+                    parent_stat.st_ctime_ns,
+                )
+                if not force_refresh:
+                    cached = cache.get(key)
+                    if cached is not None and cached[0] == identity:
+                        return cached[1], cached[2]
         try:
             entries = tuple(os.listdir(parent_fd))
         except PermissionError as exc:
             raise WorkspaceFileReadRefused(
                 "unreadable", "workspace source directory cannot be listed"
             ) from exc
-        indexed = (entries, frozenset(entries))
-        if cache is not None and key is not None:
-            cache[key] = indexed
-        return indexed
+        by_name = frozenset(entries)
+        if cache is not None and key is not None and identity is not None:
+            cache[key] = (identity, entries, by_name)
+        return entries, by_name
+
+    @staticmethod
+    def _same_object(parent_fd: int, one: str, other: str) -> bool:
+        """Whether ``one`` and ``other``, freshly stat'd in one directory, name the same object."""
+
+        try:
+            stat_one = os.stat(one, dir_fd=parent_fd, follow_symlinks=False)
+            stat_other = os.stat(other, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            return False
+        return (stat_one.st_dev, stat_one.st_ino) == (stat_other.st_dev, stat_other.st_ino)
+
+    @staticmethod
+    def _resolve_component(
+        parent_fd: int, requested: str, cache: DirectoryEntryCache | None
+    ) -> str | None:
+        """``requested``'s real spelling in ``parent_fd``'s listing, or ``None`` if unplaced.
+
+        A case-folding candidate recovered from ``cache`` is returned only
+        once a fresh stat confirms it presently names the same object as
+        ``requested``: a stale listing's candidate is never substituted on
+        its word alone. ``None`` lets the caller relist and retry once
+        before refusing.
+        """
+
+        entries, by_name = WorkspaceFileReader._directory_entries(parent_fd, cache=cache)
+        if requested in by_name:
+            return requested
+        try:
+            os.stat(requested, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        requested_key = unicodedata.normalize("NFC", requested).casefold()
+        matches = tuple(
+            entry
+            for entry in entries
+            if unicodedata.normalize("NFC", entry).casefold() == requested_key
+        )
+        if len(matches) != 1:
+            return None
+        candidate = matches[0]
+        if cache is not None and not WorkspaceFileReader._same_object(
+            parent_fd, requested, candidate
+        ):
+            return None
+        return candidate
 
     @staticmethod
     def _actual_component(
@@ -370,24 +440,19 @@ class WorkspaceFileReader:
         ``cache``, scoped to one glob operation (D-R41), reuses a directory's
         entries across sibling reads instead of relisting it per file; every
         descriptor, no-follow and real-name check below still runs per file.
+        A cached listing that cannot place ``requested`` (absent from it, or
+        resolving to an object a fresh stat no longer agrees is the same one)
+        is never trusted as final: the directory is relisted once and
+        ``requested`` resolved again from that fresh result before refusing.
         """
 
-        entries, by_name = WorkspaceFileReader._directory_entries(parent_fd, cache=cache)
-        if requested in by_name:
-            return requested
-        try:
-            os.stat(requested, dir_fd=parent_fd, follow_symlinks=False)
-        except FileNotFoundError as exc:
-            raise WorkspaceFileReadRefused("missing", "workspace source is unavailable") from exc
-        requested_key = unicodedata.normalize("NFC", requested).casefold()
-        matches = tuple(
-            entry
-            for entry in entries
-            if unicodedata.normalize("NFC", entry).casefold() == requested_key
-        )
-        if len(matches) != 1:
+        resolved = WorkspaceFileReader._resolve_component(parent_fd, requested, cache)
+        if resolved is None and cache is not None:
+            WorkspaceFileReader._directory_entries(parent_fd, cache=cache, force_refresh=True)
+            resolved = WorkspaceFileReader._resolve_component(parent_fd, requested, cache)
+        if resolved is None:
             raise WorkspaceFileReadRefused("missing", "workspace source is unavailable")
-        return matches[0]
+        return resolved
 
     @staticmethod
     def _fd_path(descriptor: int) -> Path:
