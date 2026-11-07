@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 from cruxible_client.contracts.get_reads import GetRequest
-from cruxible_client.contracts.operational_reads import GetProcedureRunCard
+from cruxible_client.contracts.operational_reads import GetProcedureRunCard, GetRunListMember
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.support.operation_world import Invoker
@@ -28,6 +28,10 @@ from tests.test_procedures.test_capture_lists import (
 )
 
 _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=True)
+
+
+def _member(field: str, index: int) -> GetRunListMember:
+    return GetRunListMember(field=field, index=index, status="selected")
 
 
 def _card(instance: Any, run_id: str) -> GetProcedureRunCard:
@@ -102,6 +106,53 @@ def traced(tmp_path: Path):  # type: ignore[no-untyped-def]
 
     with trace_sqlite(tmp_path):
         yield
+
+
+def test_an_empty_list_the_provider_says_is_incomplete_is_flagged_with_no_members() -> None:
+    """F2: a wholly empty list still carries the provider's own ``incomplete_input``.
+
+    The run's recorded ``CompletenessReason`` names the call's field even
+    though no member of it ever reached the ``source_acquisition`` page (an
+    empty ``list<capture>`` writes no member records at all).
+    """
+
+    from cruxible_client.contracts.claim_evidence import CompletenessReason, RunCompleteness
+    from cruxible_client.contracts.operational_reads import GetRunNode
+    from cruxible_core.service.discovery.runs import _with_members
+
+    nodes = [GetRunNode(node="doc", kind="provider", sequence=1)]
+    completeness = RunCompleteness(
+        complete=False, reasons=(CompletenessReason(node="doc", kind="incomplete_input", inputs=("doc.pages",)),)
+    )
+    (doc,) = _with_members(nodes, {}, False, completeness)
+    assert doc.members == ()
+    assert doc.members_truncated is False
+    assert doc.incomplete_captures == ("pages",)
+
+
+def test_a_node_whose_members_all_fall_beyond_the_window_is_marked_truncated() -> None:
+    """F2: when the run's member page is truncated, a node with none of its
+
+    own members on the page (they all fell beyond the 64-record window) is
+    still marked ``members_truncated``, not silently reported as complete.
+    """
+
+    from cruxible_client.contracts.operational_reads import GetRunNode
+    from cruxible_core.service.discovery.runs import _with_members
+
+    nodes = [
+        GetRunNode(node="first", kind="provider", sequence=1),
+        GetRunNode(node="second", kind="provider", sequence=2),
+    ]
+    # "first"'s members are on the page; "second" acquired members too, but
+    # the run-wide range query hit its cap before reaching them, so they
+    # never appear in ``members`` at all.
+    members = {"first": [_member("pages", 0)]}
+    out = {node.node: node for node in _with_members(nodes, members, True, None)}
+    assert out["first"].members_truncated is True
+    assert out["second"].members == ()
+    assert out["second"].members_truncated is True
+    assert out["second"].incomplete_captures == ()
 
 
 def test_the_members_read_is_flat_in_other_runs(tmp_path: Path, traced: None) -> None:

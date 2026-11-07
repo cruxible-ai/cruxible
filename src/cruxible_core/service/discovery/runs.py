@@ -559,7 +559,11 @@ def _with_members(
     A list is incomplete when a member was dropped (``omitted``), or when the
     finished run's completeness records the call's own ``incomplete_input``
     (the provider's ``incomplete_captures`` word): naming fields when it does,
-    else every list the call returned.
+    else every list the call returned. Both are derived from the run's own
+    record independently of whether any member of this call made it onto the
+    member page: an empty list the provider still declared incomplete, and a
+    list every member of which fell beyond the page's window, both carry what
+    the run recorded rather than being silently dropped.
     """
 
     flagged: dict[str, set[str] | None] = {}
@@ -572,14 +576,23 @@ def _with_members(
     out = []
     for node in nodes:
         listed = members.get(node.node, [])
-        if not listed:
+        fields = {item.field for item in listed}
+        omitted = {item.field for item in listed if item.status == "omitted"}
+        said = flagged.get(node.node, set())
+        if said is None:
+            declared = fields
+        elif listed:
+            declared = said & fields
+        else:
+            # No member of this call reached the page (an empty list, or one
+            # wholly beyond the window): the reason's own field names are all
+            # there is to report.
+            declared = said
+        incomplete = omitted | declared
+        if not listed and not incomplete and not truncated:
+            # Nothing recorded against this call: leave it untouched.
             out.append(node)
             continue
-        fields = {item.field for item in listed}
-        said = flagged.get(node.node, set())
-        incomplete = {item.field for item in listed if item.status == "omitted"} | (
-            fields if said is None else said & fields
-        )
         out.append(
             node.model_copy(
                 update={
