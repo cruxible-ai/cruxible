@@ -393,12 +393,40 @@ class _TreeLedgerResolver:
         return content
 
 
+def _staged_capture_contract_by_digest(
+    base_tree: Mapping[str, bytes],
+    staged_paths: Iterable[str],
+    contract_digest: str,
+) -> AcceptedCaptureContract | None:
+    """A CaptureContract this same lowering call just staged, by exact digest.
+
+    ``staged_paths`` is this one Claim's own newly-installed dependency paths
+    (``_install_claim_dependencies``'s ``dependency_paths``) -- bounded by
+    this change, never the whole tree -- so checking each is a keyed lookup
+    over a handful of entries, not a catalog walk.
+    """
+
+    for path in staged_paths:
+        if not path.startswith("capture-contracts/"):
+            continue
+        content = base_tree.get(path)
+        if content is None:
+            continue
+        contract = parse_capture_contract(content, path=path)
+        if capture_contract_digest(contract).tagged == contract_digest:
+            return AcceptedCaptureContract(
+                path=path, contract=contract, artifact_digest=contract_digest
+            )
+    return None
+
+
 def _capture_contract_at_base(
     instance: PlaybillInstance,
     *,
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
     contract_digest: str,
+    staged_paths: Iterable[str] = (),
 ) -> AcceptedCaptureContract:
     with instance.bind_accepted_projection(base) as projection:
         path = projection.citations.capture_contract_path(contract_digest)
@@ -410,6 +438,13 @@ def _capture_contract_at_base(
         )
         if historical is not None:
             return historical
+        # Or this exact write's own working-selection lowering just staged it
+        # (a foreign-source dependency this same member installs for the
+        # first time): neither accepted nor enumerated, a keyed check over
+        # this change's own small set of newly-staged paths.
+        staged = _staged_capture_contract_by_digest(base_tree, staged_paths, contract_digest)
+        if staged is not None:
+            return staged
         _refuse(
             "cruxible.authoring.capture_contract_unresolved",
             "source.capture_digest",
@@ -1790,6 +1825,7 @@ def _lower_claim(
             base=base,
             base_tree=candidate_base_tree,
             contract_digest=envelope.capture_contract_digest,
+            staged_paths=dependency_paths,
         )
         try:
             accepted_producer_digests = _producer_digests_for_capture(
@@ -2211,8 +2247,9 @@ def _lower_claim(
             capture_contract=accepted_contract,
             envelope=capture_envelope,
             verified_attestations=(),
-            historical_capture_contract=lambda digest: instance.accepted_capture_contract_version(
-                public_base, digest
+            historical_capture_contract=lambda digest: (
+                _staged_capture_contract_by_digest(candidate_base_tree, dependency_paths, digest)
+                or instance.accepted_capture_contract_version(public_base, digest)
             ),
         )
         if not any(decision.trace.result.verdict == "eligible" for decision in admissions):

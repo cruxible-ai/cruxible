@@ -3332,11 +3332,26 @@ def _subject_versions(
     )
 
 
+def _staged_capture_contracts_by_digest(
+    resolved: Mapping[str, AcceptedCaptureContract],
+) -> dict[str, AcceptedCaptureContract]:
+    """This change's own resolved CaptureContracts, re-keyed by exact digest.
+
+    ``resolved`` is identity-keyed and already bounded to the members this
+    one change touches (never a catalog or instance-wide walk), so re-keying
+    it by digest is one small, fixed-size dict build per law evaluation, not
+    an enumeration of accepted history.
+    """
+
+    return {accepted.artifact_digest: accepted for accepted in resolved.values()}
+
+
 def historical_capture_contract_resolver(
     provider: HistoricalArtifactProvider | None,
     at: AcceptedCoordinate,
     *,
     indexed: bool = False,
+    staged: Mapping[str, AcceptedCaptureContract] | None = None,
 ) -> "CaptureContractVersions":
     """Resolve exact CaptureContract versions accepted within the prefix ending at ``at``.
 
@@ -3345,6 +3360,14 @@ def historical_capture_contract_resolver(
     resolves and only live contracts verify. The answer is authoritative (a
     None means no such version was accepted) only with a provider over an
     index of every accepted generation, genesis included (``indexed``).
+
+    ``staged`` is this same change's own not-yet-accepted CaptureContracts
+    (digest-keyed, e.g. a foreign-source contract a Claim's first citation of
+    a source installs as its own dependency): a keyed lookup checked before
+    the accepted-history provider, never a catalog walk, so a contract this
+    change installs counts as accepted-state membership on the same write
+    that installs it. Anything neither staged here nor accepted at ``at``
+    still resolves to None -- fail closed, unchanged.
     """
     from cruxible_core.evidence.attestation_verification import CaptureContractVersions
 
@@ -3353,6 +3376,10 @@ def historical_capture_contract_resolver(
     def resolve(digest: str) -> AcceptedCaptureContract | None:
         if digest in cache:
             return cache[digest]
+        staged_contract = None if staged is None else staged.get(digest)
+        if staged_contract is not None:
+            cache[digest] = staged_contract
+            return staged_contract
         found = None if provider is None else provider(at, digest, family="capture-contracts/")
         accepted = None
         if found is not None:
@@ -3434,7 +3461,9 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         evaluation_time=datetime.fromisoformat(context.timestamp.replace("Z", "+00:00")),
         allow_claim_type_retirement_shape_exemption=retiring,
         historical_capture_contract=historical_capture_contract_resolver(
-            context.historical_artifact_provider, context.accepted_coordinate()
+            context.historical_artifact_provider,
+            context.accepted_coordinate(),
+            staged=_staged_capture_contracts_by_digest(context.resolved.capture_contracts),
         ),
         claim_type_v7_semantics=True,
         # An attributed retirement alone: a Claim retired with its Subject, or
