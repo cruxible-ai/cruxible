@@ -7,6 +7,7 @@ other runs or accepted state.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -123,7 +124,7 @@ def test_an_empty_list_the_provider_says_is_incomplete_is_flagged_with_no_member
     nodes = [GetRunNode(node="doc", kind="provider", sequence=1)]
     reason = CompletenessReason(node="doc", kind="incomplete_input", inputs=("doc.pages",))
     completeness = RunCompleteness(complete=False, reasons=(reason,))
-    (doc,) = _with_members(nodes, {}, None, completeness)
+    (doc,) = _with_members(nodes, {}, frozenset(), completeness)
     assert doc.members == ()
     assert doc.members_truncated is False
     assert doc.incomplete_captures == ("pages",)
@@ -147,37 +148,181 @@ def test_a_named_incomplete_field_is_flagged_despite_other_visible_lists() -> No
     members = {"doc": [_member("pages", 0)]}
     reason = CompletenessReason(node="doc", kind="incomplete_input", inputs=("doc.empty",))
     completeness = RunCompleteness(complete=False, reasons=(reason,))
-    (doc,) = _with_members(nodes, members, None, completeness)
+    (doc,) = _with_members(nodes, members, frozenset(), completeness)
     assert [m.field for m in doc.members] == ["pages"]
     assert doc.incomplete_captures == ("empty",)
 
 
-def test_only_the_node_whose_members_fell_beyond_the_window_is_marked_truncated() -> None:
-    """F2a: the truncation flag names one call, never the whole run.
+@dataclass
+class _FakeRecord:
+    sequence: int
+    payload_digest: str
 
-    "first"'s 64 members are all on the page; "second" acquired members too,
-    but the range's one overflow record named "second", so only that call is
-    known to have lost members to the cut. "shape" is an extract step with no
-    list members of its own and must never be flagged either.
+
+@dataclass
+class _FakeStored:
+    record: _FakeRecord
+
+
+class _FakeIndex:
+    """A minimal stand-in for ``LocalJournalBackend.index``, in memory.
+
+    Filters an in-memory list the same way the real index's ``select``
+    does (sequence range and limit; ``run_id``/``event_kind`` are accepted
+    but every fake record already belongs to the one run and kind under
+    test). Counts calls and rows returned, so a test can assert the work
+    stays bounded by the number of probes issued, not by how many records
+    exist.
     """
 
-    from cruxible_client.contracts.operational_reads import GetRunNode
-    from cruxible_core.service.discovery.runs import _with_members
+    def __init__(self, records: list[_FakeStored]) -> None:
+        self.records = records
+        self.calls = 0
+        self.rows_returned = 0
 
-    nodes = [
-        GetRunNode(node="first", kind="provider", sequence=1),
-        GetRunNode(node="second", kind="provider", sequence=2),
-        GetRunNode(node="shape", kind="extract", sequence=3),
+    def select(
+        self,
+        _stream: object,
+        *,
+        run_id: str | None = None,
+        event_kind: str | None = None,
+        first_sequence: int | None = None,
+        last_sequence: int | None = None,
+        limit: int | None = None,
+        descending: bool = False,
+        **_ignored: object,
+    ) -> tuple[_FakeStored, ...]:
+        self.calls += 1
+        rows = [
+            item
+            for item in self.records
+            if (first_sequence is None or item.record.sequence >= first_sequence)
+            and (last_sequence is None or item.record.sequence <= last_sequence)
+        ]
+        rows.sort(key=lambda item: item.record.sequence, reverse=descending)
+        if limit is not None:
+            rows = rows[:limit]
+        self.rows_returned += len(rows)
+        return tuple(rows)
+
+
+@dataclass
+class _FakeJournal:
+    index: _FakeIndex
+
+
+def _stored_acquisition(
+    instance: Any, *, node_id: str, field: str, index: int, sequence: int
+) -> _FakeStored:
+    """One real, body-store-backed ``source_acquisition`` payload at ``sequence``."""
+
+    from cruxible_core.exhaust.records import journal_payload_bytes
+
+    payload = {
+        "field": f"{field}/{index}",
+        "decision": {"disposition": "selected", "selected_capture_digests": []},
+        "node_id": node_id,
+    }
+    content = journal_payload_bytes(payload)
+    metadata = instance.body_store().store(content, journal_payload=True)
+    return _FakeStored(record=_FakeRecord(sequence=sequence, payload_digest=metadata.digest))
+
+
+def _three_call_world(instance: Any, *, second_members: int, third_members: int) -> Any:
+    """Three calls in firing order: "first" fills the page; "second" and "third" don't.
+
+    "first" fires right after its own ``RUN_CARD_LIST_MEMBERS_MAX`` members
+    (exactly filling the page, none of its own left over); "second" and
+    "third" each fire after their own ``second_members``/``third_members``,
+    every one of which falls past the page for the run as a whole.
+    """
+
+    from cruxible_client.contracts.operational_reads import (
+        RUN_CARD_LIST_MEMBERS_MAX,
+        GetRunNode,
+    )
+
+    records = [
+        _stored_acquisition(instance, node_id="first", field="pages", index=i, sequence=i + 1)
+        for i in range(RUN_CARD_LIST_MEMBERS_MAX)
     ]
-    members = {"first": [_member("pages", index) for index in range(64)]}
-    out = {node.node: node for node in _with_members(nodes, members, "second", None)}
-    assert len(out["first"].members) == 64
+    sequence = RUN_CARD_LIST_MEMBERS_MAX + 1
+    first_node = GetRunNode(node="first", kind="provider", sequence=sequence)
+    sequence += 1
+    for i in range(second_members):
+        records.append(
+            _stored_acquisition(
+                instance, node_id="second", field="pages", index=i, sequence=sequence
+            )
+        )
+        sequence += 1
+    second_node = GetRunNode(node="second", kind="provider", sequence=sequence)
+    sequence += 1
+    for i in range(third_members):
+        records.append(
+            _stored_acquisition(
+                instance, node_id="third", field="pages", index=i, sequence=sequence
+            )
+        )
+        sequence += 1
+    third_node = GetRunNode(node="third", kind="provider", sequence=sequence)
+    return [first_node, second_node, third_node], records
+
+
+def test_every_call_past_the_window_is_flagged_not_only_the_first(tmp_path: Path) -> None:
+    """F2a: every displayed call with unserved members is found, not only the first.
+
+    "first" fires after exactly ``RUN_CARD_LIST_MEMBERS_MAX`` members (filling
+    the page, none left over); "second" and "third" each fire after one
+    member, both past the page. All three must be told apart: the earlier
+    fix only ever named the overflow record's own node ("second"), leaving
+    "third" unmarked despite its own member never reaching the page either.
+    """
+
+    from cruxible_client.contracts.operational_reads import RUN_CARD_LIST_MEMBERS_MAX
+    from cruxible_core.service.discovery.runs import _list_members, _with_members
+    from tests.core_support._support import initialize_local
+
+    instance, _owner = initialize_local(tmp_path)
+    nodes, records = _three_call_world(instance, second_members=1, third_members=1)
+    journal = _FakeJournal(_FakeIndex(records))
+    found, truncated = _list_members(instance, journal, object(), "run-1", nodes)
+    assert len(found["first"]) == RUN_CARD_LIST_MEMBERS_MAX
+    assert truncated == frozenset({"second", "third"})
+    out = {node.node: node for node in _with_members(nodes, found, truncated, None)}
+    assert len(out["first"].members) == RUN_CARD_LIST_MEMBERS_MAX
     assert out["first"].members_truncated is False
     assert out["second"].members == ()
     assert out["second"].members_truncated is True
-    assert out["second"].incomplete_captures == ()
-    assert out["shape"].members == ()
-    assert out["shape"].members_truncated is False
+    assert out["third"].members == ()
+    assert out["third"].members_truncated is True
+
+
+def test_the_truncation_checks_are_flat_in_unrelated_member_growth(tmp_path: Path) -> None:
+    """F2a: the per-node checks stay bounded by the displayed calls, not by records.
+
+    "second" and "third" grow from one member each to a hundred each (a
+    hundred-fold growth in unrelated record count, the same three displayed
+    calls); the number of indexed queries ``_list_members`` issues, and the
+    total rows they return, stay the same -- one bounded range for the page
+    plus one bounded existence probe per call, each capped at ``limit=1``.
+    """
+
+    from cruxible_core.service.discovery.runs import _list_members
+    from tests.core_support._support import initialize_local
+
+    counts: dict[int, tuple[int, int]] = {}
+    for size in (1, 100):
+        root = tmp_path / str(size)
+        root.mkdir()
+        instance, _owner = initialize_local(root)
+        nodes, records = _three_call_world(instance, second_members=size, third_members=size)
+        journal = _FakeJournal(_FakeIndex(records))
+        _found, truncated = _list_members(instance, journal, object(), "run-1", nodes)
+        assert truncated == frozenset({"second", "third"})
+        counts[size] = (journal.index.calls, journal.index.rows_returned)
+    print("F2a truncation checks at 1/100 unrelated members per call", counts)
+    assert counts[1] == counts[100]
 
 
 def test_the_members_read_is_flat_in_other_runs(tmp_path: Path, traced: None) -> None:

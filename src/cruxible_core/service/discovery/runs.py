@@ -11,7 +11,7 @@ first, in an order a run's status never changes; a filter keeps running runs.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, get_args
@@ -404,7 +404,7 @@ def procedure_run_card(
         )
         for stored in reversed(fired)
     ]
-    members, truncated_node = _list_members(instance, journal, stream, run_id)
+    members, truncated_nodes = _list_members(instance, journal, stream, run_id, nodes)
     status: RunStatus = "running"
     current: GetRunCurrentNode | None = None
     receipt_digest: str | None = None
@@ -448,7 +448,7 @@ def procedure_run_card(
     if locator.final_payload_digest is None:
         # A running run: what its fired nodes derive from, as journaled so far.
         withheld = run_values_withheld(instance, run_id, access)
-    nodes = _with_members(nodes, members, truncated_node, completeness)
+    nodes = _with_members(nodes, members, truncated_nodes, completeness)
     if withheld is not None:
         # C14: values extracted from restricted Captures stay withheld, while
         # it runs and after: node summaries, the result, refusal details.
@@ -501,17 +501,24 @@ def _list_members(
     journal: LocalJournalBackend,
     stream: JournalStreamIdentityV1,
     run_id: str,
-) -> tuple[dict[str, list[GetRunListMember]], str | None]:
+    nodes: Sequence[GetRunNode],
+) -> tuple[dict[str, list[GetRunListMember]], frozenset[str]]:
     """Each call node's list members, from the run's ``source_acquisition`` records.
 
     One journal-index range of this run's acquisition records, bounded by the
-    card's member limit; one payload read per record on it, plus the single
-    overflow record past the limit (if any). A list member's record names its
-    field ``<field>/<index>``; a whole capture field has none. The second
-    value is the one call whose own members the range cut off -- the
-    overflow record's ``node_id`` -- not a run-wide flag: the range reads
-    exactly one record past the limit, never more, so only that one call is
-    known to have lost members to it.
+    card's member limit; one payload read per record on it. A list member's
+    record names its field ``<field>/<index>``; a whole capture field has
+    none.
+
+    The second value is every displayed call with members past that range,
+    found with one bounded indexed existence probe (``limit=1``) per
+    displayed node whose own firing sequence falls after the range's last
+    served record -- never a scan of all records, and never a query at all
+    for a node fully inside it. Each probe's range is exactly that node's own
+    span: after the previous displayed node's firing sequence (nodes run one
+    at a time, so no other node's records fall in between) and no later than
+    this node's own, which is why it can tell one call's own overflow from
+    another's without reading node ids out of the overflow region.
     """
 
     stored = journal.index.select(
@@ -550,18 +557,31 @@ def _list_members(
                 reason=reason if isinstance(reason, str) else None,
             )
         )
-    truncated_node: str | None = None
+    truncated_nodes: set[str] = set()
     if len(stored) > RUN_CARD_LIST_MEMBERS_MAX:
-        overflow = run_payload(instance, stored[RUN_CARD_LIST_MEMBERS_MAX].record.payload_digest)
-        if isinstance(overflow, Mapping):
-            truncated_node = str(overflow.get("node_id", "?"))
-    return found, truncated_node
+        served_through = stored[RUN_CARD_LIST_MEMBERS_MAX - 1].record.sequence
+        previous_sequence = 0
+        for node in nodes:
+            lower = max(served_through, previous_sequence) + 1
+            if lower <= node.sequence:
+                overflow = journal.index.select(
+                    stream,
+                    run_id=run_id,
+                    event_kind="source_acquisition",
+                    first_sequence=lower,
+                    last_sequence=node.sequence,
+                    limit=1,
+                )
+                if overflow:
+                    truncated_nodes.add(node.node)
+            previous_sequence = node.sequence
+    return found, frozenset(truncated_nodes)
 
 
 def _with_members(
     nodes: list[GetRunNode],
     members: Mapping[str, list[GetRunListMember]],
-    truncated_node: str | None,
+    truncated_nodes: frozenset[str],
     completeness: object,
 ) -> list[GetRunNode]:
     """Attach each call's list members and the list fields it ended incomplete.
@@ -577,11 +597,11 @@ def _with_members(
     declared incomplete carries what the run recorded rather than being
     silently dropped.
 
-    ``members_truncated`` names only ``truncated_node`` -- the one call the
-    page's range cut off -- never every node: an extract step or any other
-    call with no list members of its own never gets it, and a call whose own
-    members were all served (even one that exhausted the page) does not
-    either.
+    ``members_truncated`` names only the calls in ``truncated_nodes`` -- each
+    one a call the page's range cut off -- never every node: an extract step
+    or any other call with no list members of its own never gets it, and a
+    call whose own members were all served (even one that exhausted the
+    page) does not either.
     """
 
     flagged: dict[str, set[str] | None] = {}
@@ -602,7 +622,7 @@ def _with_members(
         # page's own field names, since there is nothing else to name it by.
         declared = fields if said is None else said
         incomplete = omitted | declared
-        node_truncated = truncated_node is not None and node.node == truncated_node
+        node_truncated = node.node in truncated_nodes
         if not listed and not incomplete and not node_truncated:
             # Nothing recorded against this call: leave it untouched.
             out.append(node)
