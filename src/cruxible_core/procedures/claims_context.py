@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, parse_claim_type
 from cruxible_client.contracts.claims import ClaimArtifact
@@ -13,8 +13,17 @@ from cruxible_client.contracts.subject_kinds import SubjectKind, live_subject_ki
 from cruxible_core.indexes.subject_identity import (
     IdentityView,
     KeyTuple,
+    PendingKey,
+    SubjectKeyInvalid,
     canonical_key,
+    canonical_key_value,
     tree_key_reader,
+)
+from cruxible_core.procedures.claims_units import (
+    ClaimUnitUnresolved,
+    NamedSubject,
+    ValueTarget,
+    unit_key,
 )
 
 if TYPE_CHECKING:
@@ -24,12 +33,18 @@ if TYPE_CHECKING:
     from cruxible_core.runtime.instance import PlaybillInstance
 
 
+class KeyPartUnresolved(ValueError):
+    """A pair's key part names nothing: an end that is ambiguous, invalid or malformed,
+    or a part whose field is absent. Only that row's Subject is unresolved."""
+
+
 class ClaimsContext(Protocol):
     def logical_source(self, capture: str) -> str | None: ...
     def slots(self, subject: SemanticAddress, predicate: str) -> tuple[ClaimArtifact, ...]: ...
     def claim_type(self, predicate: str) -> ClaimType | None: ...
     def subject(self, kind: str, key: Mapping[str, object]) -> SemanticAddress | None: ...
-    def canonical(self, kind: str, key: Mapping[str, object]) -> KeyTuple: ...
+    def named(self, kind: str, key: object) -> NamedSubject: ...
+    def canonical(self, kind: str, key: Mapping[str, object]) -> PendingKey: ...
     def reference(self, kind: str, value: str) -> SemanticAddress | None: ...
     def slot(
         self, subject: SemanticAddress, predicate: str, qualifier: str | None
@@ -55,6 +70,12 @@ class AcceptedClaimsContext:
         self._subjects: dict[tuple[str, KeyTuple], SemanticAddress | None] = {}
         self._references: dict[tuple[str, str], SemanticAddress | None] = {}
         self._slots: dict[tuple[SemanticAddress, str, str | None], tuple[ClaimArtifact, ...]] = {}
+        self._named: dict[tuple[str, bytes], NamedSubject] = {}
+        self._ends: dict[str, dict[str, str]] = {}
+        self._units: dict[
+            tuple[SemanticAddress, str, str | None],
+            dict[bytes, tuple[ClaimArtifact, ...]] | ClaimUnitUnresolved,
+        ] = {}
 
     def claim_type(self, predicate: str) -> ClaimType | None:
         if predicate not in self._types:
@@ -66,17 +87,228 @@ class AcceptedClaimsContext:
         return self._types[predicate]
 
     def subject(self, kind: str, key: Mapping[str, object]) -> SemanticAddress | None:
-        return self._subject(kind, self.canonical(kind, key))
+        return self.named(kind, key).address
 
-    def canonical(self, kind: str, key: Mapping[str, object]) -> KeyTuple:
-        """``key``'s canonical form under ``kind`` (its key ClaimTypes' forms, then R12)."""
+    def canonical(self, kind: str, key: Mapping[str, object]) -> PendingKey:
+        """``key``'s canonical form under ``kind`` (its key ClaimTypes' forms, then R12).
 
+        A pair kind's ends are their paths, or pending ends the run creates.
+        """
+
+        target = self.named(kind, key).target
+        if target is None:
+            raise KeyPartUnresolved(f"{kind}: an end is absent and is not created here")
+        return target.key
+
+    def _declared(self, kind: str) -> SubjectKind:
         if kind not in self._kinds:
             self._kinds[kind] = live_subject_kind(self.tree, kind)
         declared = self._kinds[kind]
         if declared is None:
             raise ValueError(f"SubjectKind {kind} is not live")
-        return canonical_key(declared, key, claim_type=self.claim_type)
+        return declared
+
+    def _end_kinds(self, declared: SubjectKind) -> dict[str, str]:
+        """Each Subject-valued key part of a kind and its end kind (none: a literal kind)."""
+
+        from cruxible_client.contracts.shapes import SubjectType
+
+        kind = declared.subject_kind
+        if kind not in self._ends:
+            ends: dict[str, str] = {}
+            for predicate in declared.keys:
+                found = self.claim_type(predicate)
+                value = None if found is None else found.value
+                if isinstance(value, SubjectType) and len(value.subject_kinds) == 1:
+                    ends[predicate] = value.subject_kinds[0]
+            self._ends[kind] = ends
+        return self._ends[kind]
+
+    def named(self, kind: str, key: object) -> NamedSubject:
+        """The Subject ``kind`` and ``key`` name, and how this run would create it (V1, V5).
+
+        A literal kind's key is canonicalized as before. A pair kind's
+        Subject-valued part names its end as a nested ``{kind, key, create}``
+        template, resolved the same way, recursively: an existing end is its
+        path; an absent end with ``create: if_absent`` is a pending end the run
+        creates first (its token is its kind and canonical key, so ends and pairs
+        dedupe by final key); an absent end without it means the pair can be
+        neither found nor created (``target`` None). A malformed, ambiguous or
+        invalid end, or an absent literal part, raises ``KeyPartUnresolved``:
+        that row alone, never a guess. Indexed seeks only, once per key.
+        """
+
+        from cruxible_client.contracts.canonical import canonical_bytes
+
+        try:
+            memo: tuple[str, bytes] | None = (kind, canonical_bytes(key))
+        except (TypeError, ValueError):
+            memo = None
+        if memo is not None and memo in self._named:
+            return self._named[memo]
+        found = self._resolve_named(kind, key)
+        if memo is not None:
+            self._named[memo] = found
+        return found
+
+    def _resolve_named(self, kind: str, key: object) -> NamedSubject:
+        from cruxible_client.contracts.subject_kinds import SubjectEnd, key_predicate
+        from cruxible_core.procedures.claims_units import _present_key
+
+        declared = self._declared(kind)
+        ends = self._end_kinds(declared)
+        if not ends:
+            if not isinstance(key, Mapping):
+                raise ValueError(f"key must map each key part of {kind}")
+            literal = canonical_key(declared, key, claim_type=self.claim_type)
+            return NamedSubject(self._subject(kind, literal), ValueTarget(kind=kind, key=literal))
+        if not isinstance(key, Mapping):
+            raise KeyPartUnresolved(f"key must map each key part of {kind}")
+        given: dict[str, object] = {}
+        present = _present_key(dict(key))
+        assert isinstance(present, dict)
+        for name, value in present.items():
+            predicate = key_predicate(declared, str(name))
+            if predicate is None or predicate in given:
+                raise KeyPartUnresolved(
+                    f"{name!r} is not a key of {kind}, or is given twice; its keys are "
+                    + ", ".join(declared.keys)
+                )
+            given[predicate] = value
+        missing = [predicate for predicate in declared.keys if predicate not in given]
+        if missing:
+            raise KeyPartUnresolved(f"a {kind} is named by its ends; missing " + ", ".join(missing))
+        canonical: list[tuple[str, object]] = []
+        parts: list[tuple[str, object]] = []
+        pending = False
+        for predicate in declared.keys:
+            raw = given[predicate]
+            end_kind = ends.get(predicate)
+            if end_kind is None:
+                definition = self.claim_type(predicate)
+                if definition is None:
+                    raise KeyPartUnresolved(f"key ClaimType {predicate!r} is not accepted")
+                try:
+                    value = canonical_key_value(
+                        raw, definition, declared.normalizer(predicate), predicate=predicate
+                    )
+                except SubjectKeyInvalid as exc:
+                    raise KeyPartUnresolved(str(exc)) from exc
+                canonical.append((predicate, value))
+                parts.append((predicate, value))
+                continue
+            if (
+                not isinstance(raw, Mapping)
+                or raw.get("kind") != end_kind
+                or set(raw) - {"kind", "key", "create"}
+            ):
+                raise KeyPartUnresolved(
+                    f"{predicate}: a pair's end is named {{kind: {end_kind}, key, create}}"
+                )
+            try:
+                end = self.named(end_kind, _present_key(raw.get("key")))
+            except KeyPartUnresolved:
+                raise
+            except (ValueError, KeyError, TypeError) as exc:
+                raise KeyPartUnresolved(f"{predicate}: {exc}") from exc
+            if end.address is not None:
+                canonical.append((predicate, SubjectEnd(path=end.address.artifact_path)))
+                parts.append((predicate, end.address))
+            elif end.target is not None and raw.get("create", "never") == "if_absent":
+                canonical.append((predicate, end.target.token))
+                parts.append((predicate, end.target))
+                pending = True
+            else:
+                # The end is absent and the template does not create it: no such pair.
+                return NamedSubject(None, None)
+        final = tuple(canonical)
+        target = ValueTarget(kind=kind, key=final, parts=tuple(parts))  # type: ignore[arg-type]
+        # A pending end is new, so no pair of it exists yet (no seek).
+        address = None if pending else self._subject(kind, final)  # type: ignore[arg-type]
+        return NamedSubject(address, target)
+
+    def created_subject(self, kind: str, wire: Mapping[str, object]) -> SemanticAddress | None:
+        """The live Subject a terminal's created-Subject reference names now, if any.
+
+        ``wire`` is a Subject item's key (``CoreCreatedSubject.key``): literals,
+        existing ends (Subject Claim objects) and ends the terminal creates.
+        """
+
+        from cruxible_client.contracts.subject_kinds import SubjectEnd, key_predicate
+
+        declared = self._declared(kind)
+        found: dict[str, object] = {}
+        for name, value in wire.items():
+            predicate = key_predicate(declared, str(name))
+            if predicate is None:
+                return None
+            if isinstance(value, Mapping) and value.get("kind") == "subject":
+                address = SemanticAddress.model_validate(value.get("address"))
+                found[predicate] = SubjectEnd(path=address.artifact_path)
+            elif isinstance(value, Mapping) and value.get("kind") == "created":
+                end = self.created_subject(
+                    str(value.get("subject_kind")),
+                    value.get("key") if isinstance(value.get("key"), Mapping) else {},  # type: ignore[arg-type]
+                )
+                if end is None:
+                    return None
+                found[predicate] = SubjectEnd(path=end.artifact_path)
+            else:
+                definition = self.claim_type(predicate)
+                if definition is None:
+                    return None
+                found[predicate] = canonical_key_value(
+                    value, definition, declared.normalizer(predicate), predicate=predicate
+                )
+        if set(found) != set(declared.keys):
+            return None
+        final = cast("KeyTuple", tuple((p, found[p]) for p in declared.keys))
+        return self._subject(kind, final)
+
+    def pair_candidates(
+        self, end: SemanticAddress, part: str, predicates: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        """The pairs whose ``part`` is ``end`` and that hold a live fact of ``predicates``.
+
+        One seek on ``pair_units`` (R12): candidates only, never authority -- a
+        historical shell holds no row and costs nothing; every caller judges a
+        proposed pair from its own Claims.
+        """
+
+        if not predicates:
+            return ()
+        marks = ",".join("?" for _ in predicates)
+        with self.instance.bind_accepted_projection(self.coordinate) as projection:
+            rows = projection.typed.connection.execute(
+                "SELECT DISTINCT pair_path FROM main.pair_units WHERE end_path=? AND part=? "
+                f"AND predicate IN ({marks}) ORDER BY pair_path",
+                (end.artifact_path, part, *predicates),
+            ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
+    def slot_units(
+        self, subject: SemanticAddress, claim_type: ClaimType, qualifier: str | None
+    ) -> dict[bytes, tuple[ClaimArtifact, ...]]:
+        """A slot's held Claims grouped by their D-R30 unit, derived once per run.
+
+        Raises ``ClaimUnitUnresolved`` (every time) when a held unit cannot be read.
+        """
+
+        key = (subject, claim_type.predicate, qualifier)
+        if key not in self._units:
+            try:
+                grouped: dict[bytes, list[ClaimArtifact]] = {}
+                for held in self.slot(subject, claim_type.predicate, qualifier):
+                    grouped.setdefault(
+                        unit_key(held.statement.object, claim_type, self), []
+                    ).append(held)
+                self._units[key] = {unit: tuple(found) for unit, found in grouped.items()}
+            except ClaimUnitUnresolved as exc:
+                self._units[key] = exc
+        found = self._units[key]
+        if isinstance(found, ClaimUnitUnresolved):
+            raise found
+        return found
 
     def _subject(self, kind: str, key: KeyTuple) -> SemanticAddress | None:
         if (kind, key) in self._subjects:
@@ -177,6 +409,7 @@ def reselect_retained_claims(
     from cruxible_client.contracts.procedures.claims import ClaimsNode
     from cruxible_core.procedures.claims_changes import (
         CoreClaimChange,
+        CoreCreatedSubject,
         CoreReobservationChange,
         CoreRetirementChange,
     )
@@ -277,6 +510,11 @@ def reselect_retained_claims(
         subject: SemanticAddress | None = (
             reference
             if isinstance(reference, SemanticAddress)
+            # A pair the run creates: held now only if it exists by now.
+            else context.created_subject(
+                reference.subject_kind, reference.model_dump(mode="json")["key"]
+            )
+            if isinstance(reference, CoreCreatedSubject)
             else context.subject(
                 reference.subject_kind,
                 reference.key if isinstance(reference.key, dict) else {"slug": reference.key},

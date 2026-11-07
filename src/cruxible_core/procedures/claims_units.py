@@ -28,7 +28,7 @@ from cruxible_client.contracts.shapes import (
 )
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.errors import CoreError
-from cruxible_core.indexes.subject_identity import KeyTuple, key_encoding
+from cruxible_core.indexes.subject_identity import PendingEnd, PendingKey, key_encoding
 
 _OBJECT: TypeAdapter[ClaimObject] = TypeAdapter(ClaimObject)
 # The statement's own field type: the same lax datetime parse, then UTC.
@@ -67,6 +67,13 @@ def _unit_value(obj: Any, claim_type: Any, context: Any) -> Any:
             else None
         )
 
+    if isinstance(obj, Mapping) and obj.get("kind") == "created":
+        # A pair this run creates (V1) holds no Claim yet: under an object unit
+        # it is its own unit; no other unit kind reads it.
+        inverse = getattr(claim_type, "inverse", None)
+        if inverse is None or inverse.key.kind == "object":
+            return {"kind": "object", "value": dict(obj)}
+        raise ClaimUnitUnresolved("A pair the run creates has no key value to unit by.")
     value = _OBJECT.validate_python(obj) if isinstance(obj, dict) else obj
     key = claim_unit_key(
         cast(ClaimStatement, SimpleNamespace(object=value)),
@@ -284,6 +291,31 @@ def unit_holders(
     return tuple(c for c, u in zip(held, units, strict=True) if u == unit)
 
 
+def slot_unit_holders(
+    context: Any,
+    subject: SemanticAddress,
+    obj: Mapping[str, Any],
+    claim_type: Any,
+    qualifier: str | None,
+) -> tuple[ClaimArtifact, ...]:
+    """``unit_holders`` over a slot's units, each held Claim's unit derived once per run.
+
+    Under an inverse a held Claim's unit is read through its object's key; the
+    context groups the slot's held Claims by unit once (``slot_units``), so N
+    writes into one slot derive N + |held| units, never N x |held|.
+    """
+
+    held = context.slot(subject, claim_type.predicate, qualifier)
+    units = getattr(context, "slot_units", None)
+    if claim_type.inverse is None or units is None:
+        return unit_holders(held, obj, claim_type, context)
+    grouped = units(subject, claim_type, qualifier)
+    unit = unit_key(dict(obj), claim_type, context)
+    if claim_type.cardinality != "many":
+        return tuple(held)
+    return tuple(grouped.get(unit, ()))
+
+
 def same_value(held: ClaimStatement, obj: Mapping[str, Any]) -> bool:
     """The held object equals the incoming one in canonical object form.
 
@@ -312,14 +344,20 @@ def same_content(
 
 @dataclass(frozen=True)
 class ValueTarget:
-    """A Subject a Subject-valued template names by key and creates when absent (V1).
+    """A Subject a template names by key and the run creates when absent (V1).
 
     ``key`` is canonical (each part's ClaimType form, then its R12 normalizer),
-    so two spellings of one key are one target and one Subject item (V5).
+    so two spellings of one key are one target and one Subject item (V5). A
+    pair kind's ``key`` holds its ends: an existing end's path (``SubjectEnd``)
+    or, for an end the run creates first, that end's token (``PendingEnd``,
+    its own kind and canonical key); ``parts`` then holds, per key part, the
+    literal, the existing end's address, or the pending end's own target.
     """
 
     kind: str
-    key: KeyTuple
+    key: PendingKey
+    #: A pair kind's parts in key order (empty for a kind with literal keys only).
+    parts: tuple[tuple[str, object], ...] = ()
 
     @property
     def slot(self) -> tuple[str, str]:
@@ -327,11 +365,78 @@ class ValueTarget:
 
         return self.kind, key_encoding(self.key)
 
-    def key_mapping(self) -> dict[str, Any]:
-        return {predicate: value for predicate, value in self.key}
+    @property
+    def token(self) -> PendingEnd:
+        """This target as a pending end of a pair: its kind and canonical key."""
+
+        return PendingEnd(member=self.kind + "\x00" + key_encoding(self.key))
+
+    def ends(self) -> tuple[ValueTarget, ...]:
+        """The ends the run creates before this target: deepest first, each once."""
+
+        found: dict[tuple[str, str], ValueTarget] = {}
+        for _predicate, value in self.parts:
+            if isinstance(value, ValueTarget):
+                for end in (*value.ends(), value):
+                    found.setdefault(end.slot, end)
+        return tuple(found.values())
+
+    def key_mapping(self, wires: Mapping[tuple[str, str], Any] | None = None) -> dict[str, Any]:
+        """The key a Subject item creating this target carries.
+
+        A pending end is named by the key its own Subject item carries
+        (``wires``, by slot; its canonical mapping when absent), so delivery
+        finds that item by its exact key.
+        """
+
+        if not self.parts:
+            return {predicate: value for predicate, value in self.key}
+        mapping: dict[str, Any] = {}
+        for predicate, value in self.parts:
+            if isinstance(value, ValueTarget):
+                mapping[predicate] = value.created(wires)
+            elif isinstance(value, SemanticAddress):
+                mapping[predicate] = {
+                    "kind": "subject",
+                    "address": value.model_dump(mode="json"),
+                }
+            else:
+                mapping[predicate] = value
+        return mapping
+
+    def created(self, wires: Mapping[tuple[str, str], Any] | None = None) -> dict[str, Any]:
+        """This target named as the Subject the terminal creates (``CoreCreatedSubject``)."""
+
+        key = None if wires is None else wires.get(self.slot)
+        return {
+            "kind": "created",
+            "subject_kind": self.kind,
+            "key": self.key_mapping(wires) if key is None else key,
+        }
+
+    def object(self, wires: Mapping[tuple[str, str], Any] | None = None) -> dict[str, Any]:
+        """The Claim object naming this target until lowering lands it."""
+
+        if self.parts:
+            return self.created(wires)
+        return {"kind": "subject", "address": self.address().model_dump(mode="json")}
 
     def address(self) -> SemanticAddress:
+        if self.parts:
+            raise ValueError(f"{self.kind} is a pair kind: no key reference names it")
         return SemanticAddress.subject_key(self.kind, self.key_mapping())
+
+
+@dataclass(frozen=True)
+class NamedSubject:
+    """What a template's kind and key name: the live holder, and how the run would create it.
+
+    ``target`` is None when the Subject cannot be created here: an end is
+    absent and its template does not say ``create: if_absent``.
+    """
+
+    address: SemanticAddress | None
+    target: ValueTarget | None
 
 
 def _present_key(key: object) -> object:
@@ -377,9 +482,10 @@ def resolve_value(
         try:
             if isinstance(value, dict) and value.get("kind") in claim_type.value.subject_kinds:
                 kind, key = value["kind"], _present_key(value.get("key", {}))
-                address = context.subject(kind, key)
+                named = context.named(kind, key)
+                address = named.address
                 if address is None and value.get("create") == "if_absent":
-                    target = ValueTarget(kind=kind, key=context.canonical(kind, key))
+                    target = named.target
             elif isinstance(value, str):
                 found = [context.reference(kind, value) for kind in claim_type.value.subject_kinds]
                 found = [a for a in found if a is not None]
@@ -391,7 +497,7 @@ def resolve_value(
         if address is not None:
             return {"kind": "subject", "address": address.model_dump(mode="json")}, None
         if target is not None:
-            return {"kind": "subject", "address": target.address().model_dump(mode="json")}, target
+            return target.object(), target
         return None, None
     checked = (
         None

@@ -45,6 +45,30 @@ class ClaimsSubject(_StrictProcedureModel):
     _templates = field_validator("key", "within", mode="before")(normalize_canonical)
 
 
+CLAIMS_ON_DEFERRED = (
+    "claims_on_deferred: a claims template writes Claims about its row's Subject only; "
+    "a pair row acting on one of its ends' Claims (on:) is not supported in v1. Write the "
+    "end's Claim from a claims step whose row is that end, or have an agent write it"
+)
+
+
+class ClaimsExpectByEnd(_StrictProcedureModel):
+    """``expect: {by, ends}``: the run is complete for these ends of the pair part ``by``.
+
+    The row Subject is a pair kind; ``by`` names one of its Subject-valued key
+    parts (by predicate or short name) and ``ends`` references the list of
+    those ends (text references or structured rows, as ``expect`` names
+    Subjects). The pairs judged are those of each end that hold a live fact
+    of a template's ClaimType, found through the pair index; each is then
+    judged from its own Claims by the ordinary absence gates.
+    """
+
+    by: str = Field(min_length=1)
+    ends: object
+
+    _ends = field_validator("ends", mode="before")(normalize_canonical)
+
+
 class ClaimTemplate(_StrictProcedureModel):
     claim_type: ArtifactNameRef = Field(alias="type")
     value: object
@@ -64,6 +88,13 @@ class ClaimTemplate(_StrictProcedureModel):
     _templates = field_validator(
         "value", "qualifier", "effective_from", "effective_until", mode="before"
     )(normalize_canonical)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _on_deferred(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "on" in value:
+            raise ValueError(CLAIMS_ON_DEFERRED)
+        return value
 
     @field_validator("inputs", mode="before")
     @classmethod
@@ -90,12 +121,23 @@ class ClaimsNode(_StrictProcedureModel):
     where: Predicate | None = None
     #: The Subjects whose absence this run judges; the enumeration is never
     #: authored: it is the extract at the root of ``for_each``'s filter/dedupe chain.
-    expect: object | None = Field(default=None, exclude_if=lambda value: value is None)
+    expect: ClaimsExpectByEnd | object | None = Field(
+        default=None, exclude_if=lambda value: value is None, union_mode="left_to_right"
+    )
     subject: ClaimsSubject
     claims: tuple[ClaimTemplate, ...] = Field(min_length=1, max_length=256)
 
     _where = field_validator("where", mode="before")(_record_predicate)
-    _templates = field_validator("for_each", "expect", mode="before")(normalize_canonical)
+    _templates = field_validator("for_each", mode="before")(normalize_canonical)
+
+    @field_validator("expect", mode="before")
+    @classmethod
+    def _expect(cls, value: Any) -> Any:
+        if isinstance(value, ClaimsExpectByEnd):
+            return value
+        if isinstance(value, dict) and "by" in value:
+            return ClaimsExpectByEnd.model_validate(value)
+        return normalize_canonical(value)
 
     @model_validator(mode="after")
     def _absence_rails(self) -> ClaimsNode:
@@ -106,4 +148,10 @@ class ClaimsNode(_StrictProcedureModel):
         return self
 
 
-__all__ = ["ClaimTemplate", "ClaimsNode", "ClaimsSubject"]
+__all__ = [
+    "CLAIMS_ON_DEFERRED",
+    "ClaimTemplate",
+    "ClaimsExpectByEnd",
+    "ClaimsNode",
+    "ClaimsSubject",
+]

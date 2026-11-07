@@ -18,6 +18,7 @@ from cruxible_client.contracts.procedures.authored import (
     _template_aliases,
     generated_contract_name,
 )
+from cruxible_client.contracts.procedures.claims import ClaimsExpectByEnd
 from cruxible_client.contracts.procedures.graph import (
     analyze_procedure,
     procedure_guard_halt_targets,
@@ -308,7 +309,18 @@ def decompile_procedure(
         elif isinstance(node, ClaimsNode):
             step = dict(
                 for_each=typed_template(node.for_each),
-                **({"expect": typed_template(node.expect)} if node.expect is not None else {}),
+                **(
+                    {}
+                    if node.expect is None
+                    else {
+                        "expect": {
+                            "by": node.expect.by,
+                            "ends": typed_template(node.expect.ends),
+                        }
+                    }
+                    if isinstance(node.expect, ClaimsExpectByEnd)
+                    else {"expect": typed_template(node.expect)}
+                ),
                 subject={
                     **node.subject.model_dump(mode="json"),
                     "key": typed_template(node.subject.key),

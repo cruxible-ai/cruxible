@@ -29,6 +29,7 @@ from cruxible_client.contracts.procedures.artifacts import (
 from cruxible_client.contracts.procedures.authored import (
     OPEN_TRANSFORM_KINDS,
     CallStep,
+    ClaimsExpectBySpec,
     ClaimsStep,
     ClaimsSubjectSpec,
     ClaimTemplateSpec,
@@ -490,7 +491,7 @@ class Sequence:
         for_each: Ref,
         subject: ClaimsSubjectSpec,
         where: Predicate | None = None,
-        expect: Ref | None = None,
+        expect: Ref | ClaimsExpectBySpec | None = None,
         id: str | None = None,
     ) -> None:
         """Map typed records to Claims; the run's Mandate chooses proposal or settlement."""
