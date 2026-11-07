@@ -123,18 +123,42 @@ def test_an_empty_list_the_provider_says_is_incomplete_is_flagged_with_no_member
     nodes = [GetRunNode(node="doc", kind="provider", sequence=1)]
     reason = CompletenessReason(node="doc", kind="incomplete_input", inputs=("doc.pages",))
     completeness = RunCompleteness(complete=False, reasons=(reason,))
-    (doc,) = _with_members(nodes, {}, False, completeness)
+    (doc,) = _with_members(nodes, {}, None, completeness)
     assert doc.members == ()
     assert doc.members_truncated is False
     assert doc.incomplete_captures == ("pages",)
 
 
-def test_a_node_whose_members_all_fall_beyond_the_window_is_marked_truncated() -> None:
-    """F2: when the member page is truncated, a node absent from it is marked too.
+def test_a_named_incomplete_field_is_flagged_despite_other_visible_lists() -> None:
+    """F2b: a CompletenessReason's named field stays incomplete whatever else is visible.
 
-    Its own members all fell beyond the 64-record window, so none of them
-    reached the page; it still gets ``members_truncated``, not a silent
-    report of completeness.
+    One call has two list fields: ``pages`` (one member served, on the page)
+    and ``empty`` (no member at all, so nothing of it is ever on the page).
+    The provider's own ``incomplete_captures`` names only ``empty``; it must
+    not be dropped just because ``empty`` has no visible members of its own
+    to intersect against.
+    """
+
+    from cruxible_client.contracts.claim_evidence import CompletenessReason, RunCompleteness
+    from cruxible_client.contracts.operational_reads import GetRunNode
+    from cruxible_core.service.discovery.runs import _with_members
+
+    nodes = [GetRunNode(node="doc", kind="provider", sequence=1)]
+    members = {"doc": [_member("pages", 0)]}
+    reason = CompletenessReason(node="doc", kind="incomplete_input", inputs=("doc.empty",))
+    completeness = RunCompleteness(complete=False, reasons=(reason,))
+    (doc,) = _with_members(nodes, members, None, completeness)
+    assert [m.field for m in doc.members] == ["pages"]
+    assert doc.incomplete_captures == ("empty",)
+
+
+def test_only_the_node_whose_members_fell_beyond_the_window_is_marked_truncated() -> None:
+    """F2a: the truncation flag names one call, never the whole run.
+
+    "first"'s 64 members are all on the page; "second" acquired members too,
+    but the range's one overflow record named "second", so only that call is
+    known to have lost members to the cut. "shape" is an extract step with no
+    list members of its own and must never be flagged either.
     """
 
     from cruxible_client.contracts.operational_reads import GetRunNode
@@ -143,16 +167,17 @@ def test_a_node_whose_members_all_fall_beyond_the_window_is_marked_truncated() -
     nodes = [
         GetRunNode(node="first", kind="provider", sequence=1),
         GetRunNode(node="second", kind="provider", sequence=2),
+        GetRunNode(node="shape", kind="extract", sequence=3),
     ]
-    # "first"'s members are on the page; "second" acquired members too, but
-    # the run-wide range query hit its cap before reaching them, so they
-    # never appear in ``members`` at all.
-    members = {"first": [_member("pages", 0)]}
-    out = {node.node: node for node in _with_members(nodes, members, True, None)}
-    assert out["first"].members_truncated is True
+    members = {"first": [_member("pages", index) for index in range(64)]}
+    out = {node.node: node for node in _with_members(nodes, members, "second", None)}
+    assert len(out["first"].members) == 64
+    assert out["first"].members_truncated is False
     assert out["second"].members == ()
     assert out["second"].members_truncated is True
     assert out["second"].incomplete_captures == ()
+    assert out["shape"].members == ()
+    assert out["shape"].members_truncated is False
 
 
 def test_the_members_read_is_flat_in_other_runs(tmp_path: Path, traced: None) -> None:

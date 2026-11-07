@@ -404,7 +404,7 @@ def procedure_run_card(
         )
         for stored in reversed(fired)
     ]
-    members, members_cut = _list_members(instance, journal, stream, run_id)
+    members, truncated_node = _list_members(instance, journal, stream, run_id)
     status: RunStatus = "running"
     current: GetRunCurrentNode | None = None
     receipt_digest: str | None = None
@@ -448,7 +448,7 @@ def procedure_run_card(
     if locator.final_payload_digest is None:
         # A running run: what its fired nodes derive from, as journaled so far.
         withheld = run_values_withheld(instance, run_id, access)
-    nodes = _with_members(nodes, members, members_cut, completeness)
+    nodes = _with_members(nodes, members, truncated_node, completeness)
     if withheld is not None:
         # C14: values extracted from restricted Captures stay withheld, while
         # it runs and after: node summaries, the result, refusal details.
@@ -501,12 +501,17 @@ def _list_members(
     journal: LocalJournalBackend,
     stream: JournalStreamIdentityV1,
     run_id: str,
-) -> tuple[dict[str, list[GetRunListMember]], bool]:
+) -> tuple[dict[str, list[GetRunListMember]], str | None]:
     """Each call node's list members, from the run's ``source_acquisition`` records.
 
     One journal-index range of this run's acquisition records, bounded by the
-    card's member limit; one payload read per record on it. A list member's
-    record names its field ``<field>/<index>``; a whole capture field has none.
+    card's member limit; one payload read per record on it, plus the single
+    overflow record past the limit (if any). A list member's record names its
+    field ``<field>/<index>``; a whole capture field has none. The second
+    value is the one call whose own members the range cut off -- the
+    overflow record's ``node_id`` -- not a run-wide flag: the range reads
+    exactly one record past the limit, never more, so only that one call is
+    known to have lost members to it.
     """
 
     stored = journal.index.select(
@@ -545,13 +550,18 @@ def _list_members(
                 reason=reason if isinstance(reason, str) else None,
             )
         )
-    return found, len(stored) > RUN_CARD_LIST_MEMBERS_MAX
+    truncated_node: str | None = None
+    if len(stored) > RUN_CARD_LIST_MEMBERS_MAX:
+        overflow = run_payload(instance, stored[RUN_CARD_LIST_MEMBERS_MAX].record.payload_digest)
+        if isinstance(overflow, Mapping):
+            truncated_node = str(overflow.get("node_id", "?"))
+    return found, truncated_node
 
 
 def _with_members(
     nodes: list[GetRunNode],
     members: Mapping[str, list[GetRunListMember]],
-    truncated: bool,
+    truncated_node: str | None,
     completeness: object,
 ) -> list[GetRunNode]:
     """Attach each call's list members and the list fields it ended incomplete.
@@ -559,11 +569,19 @@ def _with_members(
     A list is incomplete when a member was dropped (``omitted``), or when the
     finished run's completeness records the call's own ``incomplete_input``
     (the provider's ``incomplete_captures`` word): naming fields when it does,
-    else every list the call returned. Both are derived from the run's own
-    record independently of whether any member of this call made it onto the
-    member page: an empty list the provider still declared incomplete, and a
-    list every member of which fell beyond the page's window, both carry what
-    the run recorded rather than being silently dropped.
+    else every list the call returned. A named field stays incomplete
+    whatever other lists of the same call are visible on the page (one list
+    can be fully served while a sibling the reason names is not). Both are
+    derived from the run's own record independently of whether any member of
+    this call made it onto the member page: an empty list the provider still
+    declared incomplete carries what the run recorded rather than being
+    silently dropped.
+
+    ``members_truncated`` names only ``truncated_node`` -- the one call the
+    page's range cut off -- never every node: an extract step or any other
+    call with no list members of its own never gets it, and a call whose own
+    members were all served (even one that exhausted the page) does not
+    either.
     """
 
     flagged: dict[str, set[str] | None] = {}
@@ -579,17 +597,13 @@ def _with_members(
         fields = {item.field for item in listed}
         omitted = {item.field for item in listed if item.status == "omitted"}
         said = flagged.get(node.node, set())
-        if said is None:
-            declared = fields
-        elif listed:
-            declared = said & fields
-        else:
-            # No member of this call reached the page (an empty list, or one
-            # wholly beyond the window): the reason's own field names are all
-            # there is to report.
-            declared = said
+        # A named field stays incomplete regardless of what else is visible;
+        # only the unnamed case ("every list the call returned") needs the
+        # page's own field names, since there is nothing else to name it by.
+        declared = fields if said is None else said
         incomplete = omitted | declared
-        if not listed and not incomplete and not truncated:
+        node_truncated = truncated_node is not None and node.node == truncated_node
+        if not listed and not incomplete and not node_truncated:
             # Nothing recorded against this call: leave it untouched.
             out.append(node)
             continue
@@ -597,7 +611,7 @@ def _with_members(
             node.model_copy(
                 update={
                     "members": tuple(sorted(listed, key=lambda item: (item.field, item.index))),
-                    "members_truncated": truncated,
+                    "members_truncated": node_truncated,
                     "incomplete_captures": tuple(sorted(incomplete)),
                 }
             )
