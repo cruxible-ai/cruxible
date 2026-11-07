@@ -44,6 +44,7 @@ FIELD_ROLES = {
     "capture_contracts": "capture-contract",
     "captures": "capture-contract",
     "line": "line",
+    "runbook": "runbook",
     "coordinate_schemas": "coordinate-schema",
     "selector_schemas": "selector-schema",
     "commitment_canonicalizer": "commitment-canonicalizer",

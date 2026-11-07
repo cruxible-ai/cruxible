@@ -138,7 +138,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:962d051daee5d801c09a50429cb427a35c4be7635ace251c8b03e066a3daf606"
+    "sha256:6ced58eafd6869106f97c891dcbaf3dacabe8fc0eb14f5e0870f15c77fe0e325"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -1118,8 +1118,11 @@ class TriggerAuthoringPayload(_StrictAuthoringModel):
     line_name: str | None = None
     action: InternalActionName | None = None
     retire: bool = False
+    #: A Runbook target (D-R36): absent from the canonical bytes when unset, so a
+    #: Line or action Trigger payload digests exactly as before.
+    runbook_name: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
-    @field_validator("name", "line_name")
+    @field_validator("name", "line_name", "runbook_name")
     @classmethod
     def _names(cls, value: str | None) -> str | None:
         if value is not None and (not value or value.strip() != value):
@@ -1128,8 +1131,59 @@ class TriggerAuthoringPayload(_StrictAuthoringModel):
 
     @model_validator(mode="after")
     def _one_target(self) -> "TriggerAuthoringPayload":
-        if (self.line_name is None) == (self.action is None):
-            raise ValueError("a Trigger names exactly one target: line_name or action")
+        if sum(item is not None for item in (self.line_name, self.action, self.runbook_name)) != 1:
+            raise ValueError(
+                "a Trigger names exactly one target: line_name, action or runbook_name"
+            )
+        return self
+
+
+class RunbookStepAuthoring(_StrictAuthoringModel):
+    """One Runbook step: exactly one of an accepted Line (by name) or a registered action."""
+
+    line: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    action: InternalActionName | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @field_validator("line")
+    @classmethod
+    def _line(cls, value: str | None) -> str | None:
+        if value is not None:
+            ArtifactIdentity(kind="Line", name=value)
+        return value
+
+    @model_validator(mode="after")
+    def _one(self) -> "RunbookStepAuthoring":
+        if (self.line is None) == (self.action is None):
+            raise ValueError("a Runbook step names exactly one of line or action")
+        return self
+
+
+class RunbookAuthoringPayload(_StrictAuthoringModel):
+    """One Runbook decision (D-R36): an ordered list of Lines and internal actions.
+
+    No branching, no parameters of its own and no new action kinds: each Line
+    step runs as that Line's manual occurrence, on its own parameters and
+    authority. ``retire`` retires the accepted Runbook (``steps`` then unused).
+    """
+
+    tag: Literal["cruxible-runbook-authoring-payload-v1"] = "cruxible-runbook-authoring-payload-v1"
+    name: str
+    description: str | None = Field(
+        default=None, max_length=1024, exclude_if=lambda value: value is None
+    )
+    steps: tuple[RunbookStepAuthoring, ...] = Field(default=(), max_length=64)
+    retire: bool = Field(default=False, exclude_if=lambda value: not value)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        ArtifactIdentity(kind="Runbook", name=value)
+        return value
+
+    @model_validator(mode="after")
+    def _steps(self) -> "RunbookAuthoringPayload":
+        if not self.retire and not self.steps:
+            raise ValueError("a Runbook lists at least one step")
         return self
 
 
@@ -1585,7 +1639,7 @@ def _authored_statement_identity_digest(statement: AuthoringClaimStatement) -> s
 
 
 @sealed_memo
-def authoring_member_identity(payload: AuthoringChangeSetMember) -> str:
+def authoring_member_identity(payload: AuthoringChangeSetMember | RunbookAuthoringPayload) -> str:
     if isinstance(payload, ResolutionContractAuthoringPayload):
         return payload.resolution_contract.identity.qualified
     if isinstance(payload, AttestationAuthoringPayload):
@@ -1623,6 +1677,8 @@ def authoring_member_identity(payload: AuthoringChangeSetMember) -> str:
         return f"Line:{payload.name}"
     if isinstance(payload, TriggerAuthoringPayload):
         return f"Trigger:{payload.name}"
+    if isinstance(payload, RunbookAuthoringPayload):
+        return f"Runbook:{payload.name}"
     if isinstance(payload, SubjectKindAuthoringPayload):
         return f"SubjectKind:{payload.name}"
     if isinstance(payload, ContractAuthoringPayload):
@@ -1712,6 +1768,7 @@ AuthoringPayload = Annotated[
     | CaptureContractAuthoringPayload
     | LineAuthoringPayload
     | TriggerAuthoringPayload
+    | RunbookAuthoringPayload
     | SubjectKindAuthoringPayload
     | ContractAuthoringPayload
     | ChangeSetAuthoringPayload,
@@ -2657,6 +2714,8 @@ __all__ = [
     "MandateScopeAuthoring",
     "ProcedureMandateAuthoringPayload",
     "TriggerAuthoringPayload",
+    "RunbookAuthoringPayload",
+    "RunbookStepAuthoring",
     "CaptureLandingByNameSchedule",
     "CaptureEventByNameWindow",
     "WindowCloseAuthoringSchedule",

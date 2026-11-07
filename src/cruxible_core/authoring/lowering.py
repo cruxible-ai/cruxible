@@ -55,6 +55,7 @@ from cruxible_client.contracts.authoring.models import (
     QueryDefinitionAuthoringPayload,
     RepairAlternative,
     ResolutionContractAuthoringPayload,
+    RunbookAuthoringPayload,
     SelfSourceBody,
     SubjectAuthoringPayload,
     SubjectCreationAuthoringPayload,
@@ -3311,6 +3312,10 @@ def _render_trigger_member(
             }
         )
         return path, render_trigger(retired), trigger_digest(retired).tagged
+    if payload.runbook_name is not None:
+        from cruxible_core.authoring.runbook_lowering import render_runbook_trigger
+
+        return render_runbook_trigger(payload, tree=tree)
     if payload.line_name is not None:
         if line_spec_path(payload.line_name) not in tree:
             _refuse(
@@ -6262,6 +6267,10 @@ def _lower_authoring(
     base_tree = instance.immutable_tree_at(base.git_oid)
     if captures is None:
         captures = instance.capture_verification_context()
+    if isinstance(intent.payload, RunbookAuthoringPayload):
+        from cruxible_core.authoring.runbook_lowering import lower_runbook
+
+        return lower_runbook(instance, payload=intent.payload, base=base, base_tree=base_tree)
     if isinstance(intent.payload, ClaimAuthoringPayload):
         return _lower_claim(
             instance,

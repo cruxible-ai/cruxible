@@ -408,6 +408,7 @@ _PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.json$")
 _LINE_PATH_RE = re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.json$")
 _TRIGGER_PATH_RE = re.compile(r"^triggers/[a-z][a-z0-9_.-]{0,255}\.json$")
 _NOTE_PATH_RE = NOTE_PATH_RE
+_RUNBOOK_PATH_RE = re.compile(r"^runbooks/[a-z][a-z0-9_.-]{0,255}\.json$")
 _SUBJECT_KIND_PATH_RE = re.compile(
     r"^subject-kinds/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*\.json$"
 )
@@ -427,6 +428,7 @@ _DEPENDENCY_CLOSED_PATTERNS: Final = (
     _LINE_PATH_RE,
     _TRIGGER_PATH_RE,
     _NOTE_PATH_RE,
+    _RUNBOOK_PATH_RE,
     _SUBJECT_KIND_PATH_RE,
     _QUERY_DEFINITION_PATH_RE,
     _EXHAUST_PROMOTION_PATH_RE,
@@ -2315,12 +2317,18 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
         )
         if target is not None and isinstance(target.line, LineSpec):
             line_input = _line_trigger_input(target.line)
+    runbook_live: bool | None = None
+    if trigger.runbook is not None:
+        from cruxible_core.runbooks.law import candidate_runbook_live
+
+        runbook_live = candidate_runbook_live(context.candidate_tree, trigger.runbook.name)
     law = evaluate_trigger_law(
         trigger,
         path=context.path,
         predecessor=predecessor,
         target_line_live=line_live,
         target_line_input=line_input,
+        target_runbook_live=runbook_live,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -2336,6 +2344,34 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
         activation_policy="snapshot",
         result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
         retired=trigger.lifecycle.state == "retired",
+    )
+
+
+def _runbook_member(context: _MemberContext) -> _MemberVerdict:
+    """Judge one Runbook: its succession, and the Lines and actions it names (O(steps))."""
+
+    from cruxible_core.runbooks.law import judge_runbook_member
+
+    verdict = judge_runbook_member(
+        context.content,
+        path=context.path,
+        parent_content=context.parent_content,
+        lines=context.resolved.lines,
+    )
+    if verdict.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(verdict.diagnostics))
+    if verdict.artifact_digest is None or verdict.required_tier is None:
+        raise ProposalIntegrityError("accepted Runbook law result is incomplete")
+    return _accepted(
+        context,
+        _installed(context, "cruxible-runbook-v1"),
+        predecessor_artifact_digest=verdict.predecessor_digest,
+        candidate_artifact_digest=verdict.artifact_digest,
+        required_tier=verdict.required_tier,
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={"artifact_digest": verdict.artifact_digest, "verdict": "accepted"},
+        retired=verdict.retired,
     )
 
 
@@ -4072,6 +4108,14 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
         format_code="cruxible.note.format_invalid",
     ),
     _MemberKind(
+        name="runbook",
+        pattern=_RUNBOOK_PATH_RE,
+        removal_code="cruxible.runbook.removal_unsupported",
+        removal_message="Runbooks are retired by successor, never removed.",
+        evaluate=_runbook_member,
+        format_code="cruxible.runbook.format_invalid",
+    ),
+    _MemberKind(
         name="subject-kind",
         pattern=_SUBJECT_KIND_PATH_RE,
         removal_code="cruxible.subject_kind.removal_unsupported",
@@ -4165,6 +4209,7 @@ ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
     "line",
     "trigger",
     "note",
+    "runbook",
     "subject-kind",
     "contract",
     "query-definition",
@@ -4517,7 +4562,7 @@ def _evaluate_scoped_members(
             )
 
         except FormatError as exc:
-            if kind.name not in {"attestation", "resolution-contract", "trigger"}:
+            if kind.name not in {"attestation", "resolution-contract", "trigger", "runbook"}:
                 raise
             return CandidateEvaluation(
                 candidate_tree,
