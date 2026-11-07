@@ -93,6 +93,7 @@ from cruxible_client.contracts.provider_installation import (
     ProviderRetireResult,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+from cruxible_client.contracts.runbooks import RunbookPreview, RunbookRunResult
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.validation_messages import validation_lines
@@ -1649,6 +1650,20 @@ def handle_playbill_line_run(
             ),
         ),
         operation_name="cruxible_line_run",
+    )
+
+
+def handle_playbill_runbook_run(instance_id: str, runbook: str) -> RunbookRunResult:
+    return _daemon_call(
+        lambda client: client.run_runbook(instance_id, runbook),
+        operation_name="cruxible_runbook_run",
+    )
+
+
+def handle_playbill_runbook_preview(instance_id: str, runbook: str) -> RunbookPreview:
+    return _daemon_call(
+        lambda client: client.preview_runbook(instance_id, runbook),
+        operation_name="cruxible_runbook_preview",
     )
 
 
