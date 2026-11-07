@@ -6518,6 +6518,18 @@
                 "title": "Inputs",
                 "type": "array"
               },
+              "on": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "On"
+              },
               "qualifier": {
                 "$ref": "#/$defs/Template",
                 "default": null
@@ -7150,6 +7162,26 @@
             "title": "ClaimTypeSuccessionInput",
             "type": "object"
           },
+          "ClaimsExpectBySpec": {
+            "additionalProperties": false,
+            "description": "Absence by one end of a pair row: the run is complete for ``ends`` of part ``by``.",
+            "properties": {
+              "by": {
+                "minLength": 1,
+                "title": "By",
+                "type": "string"
+              },
+              "ends": {
+                "$ref": "#/$defs/Template"
+              }
+            },
+            "required": [
+              "by",
+              "ends"
+            ],
+            "title": "ClaimsExpectBySpec",
+            "type": "object"
+          },
           "ClaimsStep": {
             "additionalProperties": false,
             "properties": {
@@ -7164,13 +7196,17 @@
               "expect": {
                 "anyOf": [
                   {
+                    "$ref": "#/$defs/ClaimsExpectBySpec"
+                  },
+                  {
                     "$ref": "#/$defs/Ref"
                   },
                   {
                     "type": "null"
                   }
                 ],
-                "default": null
+                "default": null,
+                "title": "Expect"
               },
               "for_each": {
                 "$ref": "#/$defs/Ref"
@@ -54474,6 +54510,26 @@
             "title": "ClaimTemplate",
             "type": "object"
           },
+          "ClaimsExpectByEnd": {
+            "additionalProperties": false,
+            "description": "``expect: {by, ends}``: the run is complete for these ends of the pair part ``by``.\n\nThe row Subject is a pair kind; ``by`` names one of its Subject-valued key\nparts (by predicate or short name) and ``ends`` references the list of\nthose ends (text references or structured rows, as ``expect`` names\nSubjects). The pairs judged are those of each end that hold a live fact\nof a template's ClaimType, found through the pair index; each is then\njudged from its own Claims by the ordinary absence gates.",
+            "properties": {
+              "by": {
+                "minLength": 1,
+                "title": "By",
+                "type": "string"
+              },
+              "ends": {
+                "title": "Ends"
+              }
+            },
+            "required": [
+              "by",
+              "ends"
+            ],
+            "title": "ClaimsExpectByEnd",
+            "type": "object"
+          },
           "ClaimsNode": {
             "additionalProperties": false,
             "properties": {
@@ -54488,6 +54544,9 @@
               },
               "expect": {
                 "anyOf": [
+                  {
+                    "$ref": "#/$defs/ClaimsExpectByEnd"
+                  },
                   {},
                   {
                     "type": "null"
@@ -83401,6 +83460,26 @@
             "title": "ClaimTypeMemberDescription",
             "type": "object"
           },
+          "ClaimsExpectByEnd": {
+            "additionalProperties": false,
+            "description": "``expect: {by, ends}``: the run is complete for these ends of the pair part ``by``.\n\nThe row Subject is a pair kind; ``by`` names one of its Subject-valued key\nparts (by predicate or short name) and ``ends`` references the list of\nthose ends (text references or structured rows, as ``expect`` names\nSubjects). The pairs judged are those of each end that hold a live fact\nof a template's ClaimType, found through the pair index; each is then\njudged from its own Claims by the ordinary absence gates.",
+            "properties": {
+              "by": {
+                "minLength": 1,
+                "title": "By",
+                "type": "string"
+              },
+              "ends": {
+                "title": "Ends"
+              }
+            },
+            "required": [
+              "by",
+              "ends"
+            ],
+            "title": "ClaimsExpectByEnd",
+            "type": "object"
+          },
           "ClaimsNode": {
             "additionalProperties": false,
             "properties": {
@@ -83415,6 +83494,9 @@
               },
               "expect": {
                 "anyOf": [
+                  {
+                    "$ref": "#/$defs/ClaimsExpectByEnd"
+                  },
                   {},
                   {
                     "type": "null"
@@ -92024,6 +92106,26 @@
             "title": "ClaimTypeMemberDescription",
             "type": "object"
           },
+          "ClaimsExpectByEnd": {
+            "additionalProperties": false,
+            "description": "``expect: {by, ends}``: the run is complete for these ends of the pair part ``by``.\n\nThe row Subject is a pair kind; ``by`` names one of its Subject-valued key\nparts (by predicate or short name) and ``ends`` references the list of\nthose ends (text references or structured rows, as ``expect`` names\nSubjects). The pairs judged are those of each end that hold a live fact\nof a template's ClaimType, found through the pair index; each is then\njudged from its own Claims by the ordinary absence gates.",
+            "properties": {
+              "by": {
+                "minLength": 1,
+                "title": "By",
+                "type": "string"
+              },
+              "ends": {
+                "title": "Ends"
+              }
+            },
+            "required": [
+              "by",
+              "ends"
+            ],
+            "title": "ClaimsExpectByEnd",
+            "type": "object"
+          },
           "ClaimsNode": {
             "additionalProperties": false,
             "properties": {
@@ -92038,6 +92140,9 @@
               },
               "expect": {
                 "anyOf": [
+                  {
+                    "$ref": "#/$defs/ClaimsExpectByEnd"
+                  },
                   {},
                   {
                     "type": "null"
