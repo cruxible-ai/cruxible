@@ -3,8 +3,11 @@
 A live Trigger aimed at a Runbook fires into the trigger journal under the
 Runbook's fire key, on a time schedule or generation acceptance, exactly as an
 internal action's Trigger does. This kind follows those fires: every pending
-fire of one Runbook folds into one run at the head (a burst is one run), and
-its cursor moves only once that run is recorded.
+fire of one Runbook folds into one run of the newest (a burst is one run).
+Its progress is retained in the trigger journal, never in rebuildable state:
+the fire a run serves is claimed before any step runs and covered once it
+finishes, and every step has a stable occurrence identity, so a crash or a
+rebuild replays the same fire and never runs a step twice.
 
 A Trigger-fired run has no caller. Each Line step runs under that Line's own
 enablement, as a Trigger aimed at the Line would: the arming credential is
@@ -60,25 +63,32 @@ def run_fired_runbook(
     instance_id: str,
     *,
     name: str,
+    fire: int,
     trigger: str | None,
     now: datetime,
 ) -> Any:
-    """One Trigger-fired run: every Line step under its own Line's enablement."""
+    """One Trigger-fired run of fire ``fire``: every Line step under its own enablement.
+
+    Every step has a stable identity (the Runbook, the fire, the step). A Line
+    step's is its Line occurrence, so a step the run journal already admitted
+    is read back and never run again; an action step's is its journal
+    occurrence, so it fires once. A replay of the same fire therefore
+    reconstructs what ran and runs only what did not.
+
+    """
 
     from cruxible_core.documents.workspace_file import WorkspaceFileReadRefused
     from cruxible_core.runtime.line_arms import arm_authority
+    from cruxible_core.service.procedures import procedure_runs
     from cruxible_core.service.procedures.line_dispatch import LineArmAuthorityLost
-    from cruxible_core.service.procedures.procedure_runs import (
-        LineRunRequest,
-        service_run_playbill_line,
-    )
     from cruxible_core.service.runbooks import (
         LineStepNotRun,
         accepted_runbook,
         execute_runbook,
+        fired_run_id,
         record_runbook_run,
     )
-    from cruxible_core.triggers.journal import fire_manual
+    from cruxible_core.triggers.journal import fire_runbook_action
 
     instance = manager.get(instance_id)
     accepted = accepted_runbook(instance, name)
@@ -87,7 +97,11 @@ def run_fired_runbook(
     except WorkspaceFileReadRefused:
         reader = None
 
-    def run_line(line: str) -> Any:
+    def run_line(line: str, step: int) -> Any:
+        occurrence = procedure_runs.RunbookStepOccurrence(runbook=name, fire=fire, step=step)
+        admitted = procedure_runs.admitted_runbook_step(instance, line, occurrence)
+        if admitted is not None:
+            return admitted
         arm = _active_arm(instance, line)
         if arm is None:
             return LineStepNotRun(
@@ -101,20 +115,27 @@ def run_fired_runbook(
             actor, rung = arm_authority(instance, principal, now=now)
         except LineArmAuthorityLost as lost:
             return LineStepNotRun("not_enabled", lost.reason, lost.detail)
-        return service_run_playbill_line(
+        return procedure_runs.service_run_playbill_line(
             instance,
             path_identity_digest=line,
-            request=LineRunRequest(line=line),
+            request=procedure_runs.LineRunRequest(line=line),
             actor_context=actor,
             caller_rung=rung,
             provider_runtime_operator=manager.provider_runtime_operator(),
             workspace_file_reader=reader,
             evaluation_instant_skew=manager.procedure_run_config().evaluation_instant_skew,
             expected_line_artifact_digest=arm["line_artifact_digest"],
+            runbook_step=occurrence,
         )
 
-    def fire_action(action: str) -> int:
-        return fire_manual(instance, action=action, principal=f"Runbook:{name}", now=now).sequence
+    def fire_action(action: str, step: int) -> int:
+        return fire_runbook_action(
+            instance,
+            action=action,
+            trigger=trigger or f"Runbook:{name}",
+            occurrence=f"runbook:{name}:{fire}:{step}",
+            now=now,
+        )
 
     result = execute_runbook(
         accepted,
@@ -123,6 +144,7 @@ def run_fired_runbook(
         run_line=run_line,
         fire_action=fire_action,
         clock=lambda: now,
+        run_id=fired_run_id(name, fire),
     )
     record_runbook_run(instance, result)
     return result
@@ -148,31 +170,36 @@ class RunbookConsumers:
         keys = _fire_keys(instance)
         for progress in pending_runbook_fires(instance):
             if progress.fire_key in keys:
-                yield ConsumerWork(
-                    key=progress.fire_key,
-                    item={"fire_key": progress.fire_key, "through": progress.latest},
-                )
+                yield ConsumerWork(key=progress.fire_key, item={"fire_key": progress.fire_key})
 
     def run(self, manager: Any, instance_id: str, work: ConsumerWork, *, now: datetime) -> None:
         from cruxible_core.service.runbooks import RunbookNotFoundError
-        from cruxible_core.triggers.journal import finish_runbook_fire, trigger_events
+        from cruxible_core.triggers.journal import (
+            claim_runbook_fire,
+            finish_runbook_fire,
+            trigger_events,
+        )
 
         instance = manager.get(instance_id)
         key = str(work.item["fire_key"])
-        through = int(work.item["through"])
-        fired = trigger_events(instance, after=through - 1, action=key, limit=1)
+        # Claimed durably before any step runs: a crash resumes this same fire.
+        claimed = claim_runbook_fire(instance, key)
+        if claimed is None:
+            return
+        fired = trigger_events(instance, after=claimed.started - 1, action=key, limit=1)
         trigger = fired[0].trigger if fired else None
         try:
             run_fired_runbook(
                 manager,
                 instance_id,
                 name=key.removeprefix(RUNBOOK_FIRE_PREFIX),
+                fire=claimed.started,
                 trigger=trigger,
                 now=now,
             )
         except RunbookNotFoundError:
             pass  # retired since it fired: nothing runs, the fires are covered
-        finish_runbook_fire(instance, key, through)
+        finish_runbook_fire(instance, key, claimed.started)
 
     def health(self, instance: Any, *, now: datetime) -> tuple[ConsumerHealth, ...]:
         from cruxible_core.service.runbooks import latest_runbook_run

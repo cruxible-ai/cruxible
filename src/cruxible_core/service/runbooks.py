@@ -60,7 +60,8 @@ class RunbookNotFoundError(ProcedureSurfaceError):
 
 
 #: Retained run records: derived bookkeeping, never authority. Every Line run is
-#: on its Line's history; a Trigger-fired run's progress is in the trigger journal.
+#: on its Line's history, and a Trigger-fired run's progress is in the trigger
+#: journal, so a lost record is rebuilt by replaying its fire (nothing reruns).
 RUNBOOK_STATE = DisposableState(
     "runbooks",
     "CREATE TABLE runs (run_id TEXT PRIMARY KEY, runbook TEXT NOT NULL, "
@@ -78,8 +79,20 @@ class LineStepNotRun:
     message: str
 
 
-LineStepRunner = Callable[[str], "ProcedureRunStateV2 | LineStepNotRun"]
-ActionStepFirer = Callable[[str], int]
+#: Each runner takes the target and the step's 1-based position.
+LineStepRunner = Callable[[str, int], "ProcedureRunStateV2 | LineStepNotRun"]
+ActionStepFirer = Callable[[str, int], int]
+
+
+def fired_run_id(name: str, fire: int) -> str:
+    """A Trigger-fired run's id: the Runbook and the fire it serves, stable on replay."""
+
+    from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+
+    digest = typed_digest(
+        Sha256Value, "cruxible-runbook-fired-run-v1", {"fire": fire, "runbook": name}
+    ).tagged.removeprefix("sha256:")
+    return f"RBR-{digest[:32]}"
 
 
 def accepted_runbook(instance: PlaybillInstance, name: str) -> AcceptedRunbook:
@@ -187,7 +200,7 @@ def execute_runbook(
             continue
         if isinstance(target, ActionTarget):
             try:
-                event = fire_action(target.action)
+                event = fire_action(target.action, step)
             except (CoreError, CruxibleError) as exc:
                 outcome = RunbookStepOutcome(
                     step=step,
@@ -202,7 +215,7 @@ def execute_runbook(
                 )
         else:
             try:
-                state = run_line(target.line.target.name)
+                state = run_line(target.line.target.name, step)
             except (CoreError, CruxibleError) as exc:
                 outcome = RunbookStepOutcome(
                     step=step,
@@ -311,7 +324,7 @@ def service_run_runbook(
     clock = _DaemonClock(daemon_clock)
     action_rung = RUNTIME_OPERATION_PERMISSIONS["cruxible_action_run"].value - 1
 
-    def run_line(line: str) -> ProcedureRunStateV2:
+    def run_line(line: str, _step: int) -> ProcedureRunStateV2:
         return service_run_playbill_line(
             instance,
             path_identity_digest=line,
@@ -324,7 +337,7 @@ def service_run_runbook(
             evaluation_instant_skew=evaluation_instant_skew,
         )
 
-    def fire_action(action: str) -> int:
+    def fire_action(action: str, _step: int) -> int:
         if caller_rung < action_rung:
             from cruxible_core.errors import PermissionDeniedError
             from cruxible_core.runtime.permissions import PermissionMode

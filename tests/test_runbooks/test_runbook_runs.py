@@ -265,55 +265,131 @@ def test_a_trigger_fired_run_stops_on_a_line_that_is_not_enabled(
     assert health.detail["last_stop_reason"] == "line_not_enabled"
 
 
-def test_a_trigger_fired_run_runs_each_line_under_its_own_enablement(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, counted_line_runs: Counter[str]
-) -> None:
-    from cruxible_client.contracts.procedures.line_specs import (
-        line_spec_digest,
-        line_spec_path,
-        parse_line_spec,
-    )
-    from cruxible_core.consumers import runbooks as consumer
-    from cruxible_core.runtime import line_arms
+#: Enabled as the fixture's registered principal, rechecked before every admission.
+OWNER_CLAIM = {"kind": "principal_claim", "label": "owner"}
+
+
+def _enable(instance: Any, line: str, *, now: datetime) -> None:
+    from cruxible_client.contracts.line_dispatch import LineEnablementPrincipal
+    from cruxible_core.service.procedures.line_dispatch import service_enable_line
     from tests.support.operation_world import actor
 
+    service_enable_line(
+        instance,
+        line,
+        principal=LineEnablementPrincipal.model_validate(OWNER_CLAIM),
+        actor=actor(),
+        now=now,
+        daemon_id="runbook-tests",
+    )
+
+
+def _fired_world(tmp_path: Path, steps: list[dict[str, str]]) -> tuple[Any, Path, datetime]:
+    """A Runbook with a cadence Trigger, its Lines enabled, and one fire in the journal."""
+
+    from cruxible_core.triggers.journal import internal_triggers
+
     instance, root = runbook_world(tmp_path)
-    author_runbook(instance, "test.rb", line_steps(SETTLE, PROPOSE))
+    author_runbook(instance, "test.rb", steps)
     author_runbook_trigger(
-        instance, "test.rb-on-accept", runbook="test.rb", schedule={"kind": "generation_accepted"}
+        instance,
+        "test.rb-tick",
+        runbook="test.rb",
+        schedule={"kind": "cadence", "interval_seconds": 60},
     )
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    digests = {
-        name: line_spec_digest(
-            parse_line_spec(tree[line_spec_path(name)], path=line_spec_path(name))
-        ).tagged
-        for name in (SETTLE, PROPOSE)
-    }
-    principals: list[str] = []
-
-    def arm(instance: Any, line: str) -> dict[str, Any]:
-        return {
-            "armed_by": {"kind": "local_operator", "label": "operator"},
-            "line_artifact_digest": digests[line],
-        }
-
-    def authority(instance: Any, principal: Any, *, now: datetime) -> Any:
-        principals.append(principal.label)
-        return actor(), 3
-
-    monkeypatch.setattr(consumer, "_active_arm", arm)
-    monkeypatch.setattr(line_arms, "arm_authority", authority)
     now = datetime.now(UTC)
-    from cruxible_core.consumers.runbooks import run_fired_runbook
+    for step in steps:
+        if "line" in step:
+            _enable(instance, step["line"], now=now)
+    (item,) = (t for t in internal_triggers(instance) if t.trigger == "Trigger:test.rb-tick")
+    _fire(instance, since=item.accepted_at, now=item.accepted_at + timedelta(seconds=61))
+    return instance, root, now
 
-    result = run_fired_runbook(
-        FakeManager(instance, root), "fixture", name="test.rb", trigger=None, now=now
+
+def _action_fires(instance: Any) -> int:
+    from cruxible_core.triggers.journal import trigger_events
+
+    # Only the Runbook's own fires: a seeded Trigger fires the same action too.
+    return sum(
+        event.trigger == "Trigger:test.rb-tick"
+        for event in trigger_events(instance, action="evidence.sweep")
     )
-    assert result.mode == "trigger"
-    assert _statuses(result) == ["succeeded", "proposed"]
-    assert result.stop_reason == "step_proposed"
+
+
+def test_a_trigger_fired_run_runs_each_line_under_its_own_enablement(
+    tmp_path: Path, counted_line_runs: Counter[str]
+) -> None:
+    instance, root, now = _fired_world(
+        tmp_path, [{"line": SETTLE}, {"action": "evidence.sweep"}, {"line": PROPOSE}]
+    )
+    (work,) = _drain(instance, root, now=now)
+    last = runbook_service.latest_runbook_run(instance, "test.rb")
+    assert last is not None and last.mode == "trigger"
+    assert _statuses(last) == ["succeeded", "fired", "proposed"]
     assert counted_line_runs == {SETTLE: 1, PROPOSE: 1}
-    assert principals == ["operator", "operator"]
+    assert _action_fires(instance) == 1
+
+
+def test_a_replayed_fire_never_runs_a_step_again(
+    tmp_path: Path, counted_line_runs: Counter[str]
+) -> None:
+    """F1: progress lost after the run (crash before it was covered, or any rebuild of
+    the disposable records) replays the same fire, which reads every step back."""
+
+    from cruxible_core.consumers.runbooks import RUNBOOKS
+    from cruxible_core.triggers.journal import retained_records
+
+    instance, root, now = _fired_world(tmp_path, [{"line": SETTLE}, {"action": "evidence.sweep"}])
+    _drain(instance, root, now=now)
+    first = runbook_service.latest_runbook_run(instance, "test.rb")
+    assert first is not None and _statuses(first) == ["succeeded", "fired"]
+    head = instance.accepted_coordinate()
+    # Lose everything rebuildable and un-finish the fire, as a crash before its
+    # finish would leave it.
+    runbook_service.RUNBOOK_STATE.reset(instance)
+    with retained_records(instance, write=True) as connection:
+        assert connection is not None
+        connection.execute("UPDATE runbook_fires SET covered=0")
+    assert [work.key for work in RUNBOOKS.due(instance, now=now)] == ["runbook:test.rb"]
+    _drain(instance, root, now=now + timedelta(seconds=5))
+    replay = runbook_service.latest_runbook_run(instance, "test.rb")
+    assert replay is not None and replay.run_id == first.run_id
+    assert _statuses(replay) == ["succeeded", "fired"]
+    assert replay.steps[0].run_id == first.steps[0].run_id
+    assert replay.steps[1].event_id == first.steps[1].event_id
+    # Nothing ran again: no second Line occurrence, no second fire, no new head.
+    assert counted_line_runs == {SETTLE: 1}
+    assert _action_fires(instance) == 1
+    assert instance.accepted_coordinate() == head
+    assert list(RUNBOOKS.due(instance, now=now)) == []
+
+
+def test_a_crash_mid_run_resumes_the_same_fire(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, counted_line_runs: Counter[str]
+) -> None:
+    """F1: a run that dies after step 1 resumes the fire it claimed: step 1 is read back."""
+
+    from cruxible_core.triggers import journal
+
+    instance, root, now = _fired_world(tmp_path, [{"line": SETTLE}, {"action": "evidence.sweep"}])
+    real = journal.fire_runbook_action
+
+    def crash(*args: Any, **kwargs: Any) -> int:
+        raise RuntimeError("the daemon died here")
+
+    monkeypatch.setattr(journal, "fire_runbook_action", crash)
+    with pytest.raises(RuntimeError):
+        _drain(instance, root, now=now)
+    monkeypatch.setattr(journal, "fire_runbook_action", real)
+    # The fire stays claimed and unfinished, so it is the one resumed.
+    (claimed,) = journal.pending_runbook_fires(instance)
+    assert claimed.started > claimed.covered
+    _drain(instance, root, now=now + timedelta(seconds=5))
+    last = runbook_service.latest_runbook_run(instance, "test.rb")
+    assert last is not None and _statuses(last) == ["succeeded", "fired"]
+    assert last.run_id == runbook_service.fired_run_id("test.rb", claimed.started)
+    assert counted_line_runs == {SETTLE: 1}
+    assert _action_fires(instance) == 1
 
 
 # -- an idle poll reads no fire history (F3) ------------------------------------------

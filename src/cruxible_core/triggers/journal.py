@@ -343,6 +343,30 @@ def pending_runbook_fires(instance: Any) -> tuple[RunbookFireProgress, ...]:
     return tuple(RunbookFireProgress(str(a), int(b), int(c), int(d)) for a, b, c, d in rows)
 
 
+def claim_runbook_fire(instance: Any, fire_key: str) -> RunbookFireProgress | None:
+    """Claim the fire a run serves, durably, before any of its steps runs.
+
+    A fire claimed and never finished (a crash mid-run) is returned as that
+    same fire, so its replay derives the same step occurrences; otherwise the
+    newest fire is claimed, folding every fire since the last finished run.
+    """
+
+    with _open(instance, create=True) as connection:
+        assert connection is not None
+        row = connection.execute(
+            "SELECT latest,started,covered FROM runbook_fires WHERE fire_key=?", (fire_key,)
+        ).fetchone()
+        if row is None or int(row[0]) <= int(row[2]):
+            return None
+        latest, started, covered = (int(item) for item in row)
+        if started <= covered:
+            started = latest
+            connection.execute(
+                "UPDATE runbook_fires SET started=? WHERE fire_key=?", (started, fire_key)
+            )
+        return RunbookFireProgress(fire_key, latest, started, covered)
+
+
 def finish_runbook_fire(instance: Any, fire_key: str, fire: int) -> None:
     """Record that the run serving ``fire`` finished: its fire and every one before it."""
 
@@ -351,6 +375,29 @@ def finish_runbook_fire(instance: Any, fire_key: str, fire: int) -> None:
         connection.execute(
             "UPDATE runbook_fires SET covered=max(covered,?) WHERE fire_key=?", (fire, fire_key)
         )
+
+
+def fire_runbook_action(
+    instance: Any, *, action: str, trigger: str, occurrence: str, now: datetime
+) -> int:
+    """Fire one Runbook action step once per occurrence: a replay returns the first fire."""
+
+    if action not in INTERNAL_ACTIONS:
+        raise ValueError(f"{action!r} is not a registered internal action")
+    with _open(instance, create=True) as connection:
+        assert connection is not None
+        row = connection.execute(
+            "SELECT sequence FROM events WHERE trigger_id=? AND occurrence=?",
+            (trigger, occurrence),
+        ).fetchone()
+        if row is not None:
+            return int(row[0])
+        cursor = connection.execute(
+            "INSERT INTO events(action,trigger_id,due_at,fired_at,occurrence) VALUES (?,?,?,?,?)",
+            (action, trigger, format_datetime(now), format_datetime(now), occurrence),
+        )
+        assert cursor.lastrowid is not None
+        return int(cursor.lastrowid)
 
 
 def fire_manual(instance: Any, *, action: str, principal: str, now: datetime) -> TriggerEvent:
