@@ -209,6 +209,7 @@ from cruxible_client.contracts.workspace_file import (
     source_read_receipt_digest,
 )
 from cruxible_core.documents.workspace_file import (
+    DirectoryEntryCache,
     WorkspaceFileReader,
     WorkspaceFileReadRefused,
 )
@@ -3949,6 +3950,9 @@ class ProcedureExecutor:
             state=state,
         )
         keys = tuple(f"{field}/{index}" for index in range(len(matches)))
+        # Shared across every member below (D-R41): sibling files in the same
+        # directory reuse one real-name listing instead of relisting it each.
+        directory_cache: DirectoryEntryCache = {}
         for key, relative_path in zip(keys, matches, strict=True):
             into.members[key] = field
 
@@ -3989,6 +3993,7 @@ class ProcedureExecutor:
                     resolved_max_bytes=contract.selection_budget.max_bytes,
                     derived_request_digest=derived.request_digest,
                     read_at=self.clock.now(),
+                    directory_cache=directory_cache,
                 )
             except (ValidationError, WorkspaceFileReadRefused) as exc:
                 drop(f"{relative_path!r} cannot be read: {exc}")

@@ -101,6 +101,13 @@ class WorkspaceFileReadResultV1:
     receipt: SourceReadReceipt
 
 
+#: One glob operation's shared directory-entry cache (D-R41): a real
+#: directory's ``(listing, name-set)``, keyed by its ``(device, inode)`` so
+#: every matched member under it reuses one listing instead of relisting it.
+#: Callers create a fresh cache per glob operation; it is never kept longer.
+DirectoryEntryCache = dict[tuple[int, int], tuple[tuple[str, ...], frozenset[str]]]
+
+
 class WorkspaceFileReader:
     """Read one regular file under an exact authorized root without following links."""
 
@@ -321,16 +328,52 @@ class WorkspaceFileReader:
             )
 
     @staticmethod
-    def _actual_component(parent_fd: int, requested: str) -> str:
-        """Resolve one component using the directory's real spelling."""
+    def _directory_entries(
+        parent_fd: int, *, cache: DirectoryEntryCache | None = None
+    ) -> tuple[tuple[str, ...], frozenset[str]]:
+        """List a directory once, reusing the result for sibling files in one glob.
 
+        ``cache`` is keyed by the parent descriptor's ``(device, inode)``,
+        never by the fd number itself (each file read reopens the directory,
+        so the same real directory gets a fresh, numerically different fd):
+        this is what lets sibling members of a glob share one listing.
+        """
+
+        key: tuple[int, int] | None = None
+        if cache is not None:
+            try:
+                parent_stat = os.fstat(parent_fd)
+            except OSError:
+                parent_stat = None
+            if parent_stat is not None:
+                key = (parent_stat.st_dev, parent_stat.st_ino)
+                cached = cache.get(key)
+                if cached is not None:
+                    return cached
         try:
-            entries = os.listdir(parent_fd)
+            entries = tuple(os.listdir(parent_fd))
         except PermissionError as exc:
             raise WorkspaceFileReadRefused(
                 "unreadable", "workspace source directory cannot be listed"
             ) from exc
-        if requested in entries:
+        indexed = (entries, frozenset(entries))
+        if cache is not None and key is not None:
+            cache[key] = indexed
+        return indexed
+
+    @staticmethod
+    def _actual_component(
+        parent_fd: int, requested: str, *, cache: DirectoryEntryCache | None = None
+    ) -> str:
+        """Resolve one component using the directory's real spelling.
+
+        ``cache``, scoped to one glob operation (D-R41), reuses a directory's
+        entries across sibling reads instead of relisting it per file; every
+        descriptor, no-follow and real-name check below still runs per file.
+        """
+
+        entries, by_name = WorkspaceFileReader._directory_entries(parent_fd, cache=cache)
+        if requested in by_name:
             return requested
         try:
             os.stat(requested, dir_fd=parent_fd, follow_symlinks=False)
@@ -380,7 +423,16 @@ class WorkspaceFileReader:
         resolved_max_bytes: int,
         derived_request_digest: str,
         read_at: datetime,
+        directory_cache: DirectoryEntryCache | None = None,
     ) -> WorkspaceFileReadResultV1:
+        """Read one file, with every containment and no-follow check strict.
+
+        ``directory_cache``, scoped to one glob operation (D-R41), reuses a
+        directory's entries across sibling reads instead of relisting it per
+        file; omitted (the default), every call lists its own directory, as
+        before.
+        """
+
         if self.operating_profile == "cloud" and not self.daemon_owned:
             raise WorkspaceFileReadRefused(
                 "cloud_no_mounts", "cloud profile has no daemon-local workspace mounts"
@@ -405,7 +457,7 @@ class WorkspaceFileReader:
             root_real = self._fd_path(descriptors[0])
             self._check_managed_root(root_real)
             for component in parts[:-1]:
-                actual = self._actual_component(descriptors[-1], component)
+                actual = self._actual_component(descriptors[-1], component, cache=directory_cache)
                 before = os.stat(actual, dir_fd=descriptors[-1], follow_symlinks=False)
                 if stat.S_ISLNK(before.st_mode):
                     raise WorkspaceFileReadRefused(
@@ -416,7 +468,7 @@ class WorkspaceFileReader:
                         "non_regular", "workspace source parent must be a directory"
                     )
                 descriptors.append(os.open(actual, flags_directory, dir_fd=descriptors[-1]))
-            actual_leaf = self._actual_component(descriptors[-1], parts[-1])
+            actual_leaf = self._actual_component(descriptors[-1], parts[-1], cache=directory_cache)
             before = os.stat(actual_leaf, dir_fd=descriptors[-1], follow_symlinks=False)
             if stat.S_ISLNK(before.st_mode):
                 raise WorkspaceFileReadRefused(

@@ -240,8 +240,36 @@ def test_an_empty_glob_reads_nothing_and_writes_nothing(tmp_path: Path) -> None:
 # -- work counts: linear in the files matched ----------------------------------------
 
 
-def _counted(tmp_path: Path, files: int) -> dict[str, int]:
+def _counted(tmp_path: Path, files: int, monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """One measured glob read of ``files`` members, counting SQL, opens, and the
+    run-state reconstruction's own work: run-value hashing (F1) and directory
+    enumeration (F2), both of which stay outside ``sql_statements``/``file_opens``.
+    """
+
+    from cruxible_core.service.procedures import procedure_runs
     from tests.test_scale._counters import counting, trace_sqlite
+
+    held: dict[str, Any] = {"window": None, "hash_calls": 0}
+    original_digest = procedure_runs.run_value_digest
+
+    def counted_digest(domain: str, value: object) -> str:
+        if held["window"] is not None:
+            held["hash_calls"] += 1
+        return original_digest(domain, value)
+
+    monkeypatch.setattr(procedure_runs, "run_value_digest", counted_digest)
+
+    original_listdir = os.listdir
+    listing: dict[str, int] = {"calls": 0, "entries": 0}
+
+    def counted_listdir(path: Any = ".", *args: Any, **kwargs: Any) -> list[str]:
+        names = original_listdir(path, *args, **kwargs)
+        if held["window"] is not None:
+            listing["calls"] += 1
+            listing["entries"] += len(names)
+        return names
+
+    monkeypatch.setattr(os, "listdir", counted_listdir)
 
     with trace_sqlite(tmp_path):
         instance, root = glob_world(tmp_path)
@@ -251,27 +279,41 @@ def _counted(tmp_path: Path, files: int) -> dict[str, int]:
         with instance.bind_accepted_projection(instance.accepted_coordinate()):
             pass
         with counting(tmp_path) as window:
+            held["window"] = window
             state = _glob_run(instance, root, minute=1)
+        held["window"] = None
     assert state.status == "succeeded", state.terminal
     assert not window.unexplained, window.unexplained
     return {
         "provider_calls": state.receipt.budget.observed.provider_calls,
         "sql_statements": window.counts["sql_statements"],
         "file_opens": window.counts["file_opens"],
+        "hash_calls": held["hash_calls"],
+        "dir_listings": listing["calls"],
+        "dir_entries": listing["entries"],
     }
 
 
 @pytest.mark.parametrize("sizes", [(10, 25, 40)])
 def test_a_glob_costs_the_same_per_file_at_any_count(
-    tmp_path: Path, sizes: tuple[int, int, int]
+    tmp_path: Path, sizes: tuple[int, int, int], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     measured = {}
     for size in sizes:
         (tmp_path / f"n{size}").mkdir()
-        measured[size] = _counted(tmp_path / f"n{size}", size)
+        measured[size] = _counted(tmp_path / f"n{size}", size, monkeypatch)
     small, middle, large = (measured[size] for size in sizes)
     assert [measured[size]["provider_calls"] for size in sizes] == list(sizes), measured
-    for counter in ("sql_statements", "file_opens"):
+    # One run-value hash per matched file (F1): the run-state reconstruction
+    # folds each derived request's digest in once, never re-hashing the
+    # others at every later invocation start.
+    assert [measured[size]["hash_calls"] for size in sizes] == list(sizes), measured
+    for counter in (
+        "sql_statements",
+        "file_opens",
+        "dir_listings",
+        "dir_entries",
+    ):
         low = (middle[counter] - small[counter]) / (sizes[1] - sizes[0])
         high = (large[counter] - middle[counter]) / (sizes[2] - sizes[1])
         assert high <= low * 1.15 + 2.0, (counter, measured)

@@ -2314,20 +2314,32 @@ def _source_observation_rows(
     An occurrence derives one Source request (and one read) per file it read: a
     glob read (D-R41) has one per member, matched to a Capture by the input its
     invocation consumed. An occurrence that bound no Capture shows each read.
+
+    Both joins are index lookups, built once per occurrence rather than
+    rescanned per member: a glob with N matches stays linear in N instead of
+    rescanning ``derived``/``reads`` once per association.
     """
+
+    by_request_digest: dict[str, ProcedureDerivedSourceRequest] = {}
+    for one_derived in derived:
+        by_request_digest.setdefault(one_derived.request_digest, one_derived)
+    by_provider_input: dict[str, SourceReadReceipt] = {}
+    if len(reads) > 1:
+        for one_read in reads:
+            by_provider_input.setdefault(one_read.provider_input_digest, one_read)
 
     def request_for(read: SourceReadReceipt | None) -> ProcedureDerivedSourceRequest | None:
         if read is not None:
-            for item in derived:
-                if item.request_digest == read.derived_request_digest:
-                    return item
+            found = by_request_digest.get(read.derived_request_digest)
+            if found is not None:
+                return found
         return derived[0] if derived else None
 
     def read_for(association: ProcedureSourceCaptureAssociation) -> SourceReadReceipt | None:
         if len(reads) <= 1:
             return reads[0] if reads else None
         consumed = completed_inputs.get(association.invocation_receipt_digest)
-        return next((read for read in reads if read.provider_input_digest == consumed), None)
+        return by_provider_input.get(consumed) if consumed is not None else None
 
     if associations:
         return [
@@ -2372,6 +2384,18 @@ def _state_from_records(
     # order: a glob read (D-R41) derives and reads one per matched file.
     derived_source_requests: dict[str, list[ProcedureDerivedSourceRequest]] = {}
     source_reads: dict[str, list[SourceReadReceipt]] = {}
+    #: Each occurrence path's derived request digests seen so far: backs the
+    #: duplicate check and the provider-start validation without rescanning
+    #: ``derived_source_requests[path]``, which grows with a glob's members.
+    derived_request_digests: dict[str, set[str]] = {}
+    #: Each occurrence path's read derived-request digests seen so far: backs
+    #: the read duplicate check without rescanning ``source_reads[path]``.
+    source_read_digests: dict[str, set[str]] = {}
+    #: Each occurrence path's provider-input digests a started invocation may
+    #: present: one ``run_value_digest`` per derived request and one
+    #: ``provider_input_digest`` per read, folded in as each is seen rather
+    #: than rebuilt (and re-hashed) at every invocation start.
+    expected_provider_inputs: dict[str, set[str]] = {}
     #: Each completed invocation's input digest, by its receipt digest.
     completed_inputs: dict[str, str] = {}
     produced_source_associations: list[ProcedureSourceCaptureAssociation] = []
@@ -2448,19 +2472,23 @@ def _state_from_records(
                 raise ProcedureRunRecoveryRequired(
                     f"{ProcedureRunRecoveryRequired.code}: derived Source request is invalid"
                 ) from exc
+            path_derived_digests = derived_request_digests.setdefault(
+                derived.occurrence_path, set()
+            )
             if (
                 derived.run_id != run_id
                 or derived.admission_binding_digest != stored.record.admission_binding_digest
-                or any(
-                    item.request_digest == derived.request_digest
-                    for item in derived_source_requests.get(derived.occurrence_path, ())
-                )
+                or derived.request_digest in path_derived_digests
             ):
                 raise ProcedureRunRecoveryRequired(
                     f"{ProcedureRunRecoveryRequired.code}: derived Source request does not bind "
                     "this run exactly"
                 )
             derived_source_requests.setdefault(derived.occurrence_path, []).append(derived)
+            path_derived_digests.add(derived.request_digest)
+            expected_provider_inputs.setdefault(derived.occurrence_path, set()).add(
+                run_value_digest("provider-input", derived.request)
+            )
         if stored.record.event_kind == "source_read" and isinstance(payload, dict):
             try:
                 read_receipt = SourceReadReceipt.model_validate(payload.get("receipt"))
@@ -2468,20 +2496,34 @@ def _state_from_records(
                 raise ProcedureRunRecoveryRequired(
                     f"{ProcedureRunRecoveryRequired.code}: Source read receipt is invalid"
                 ) from exc
+            path_read_digests = source_read_digests.setdefault(read_receipt.occurrence_path, set())
             if (
                 read_receipt.run_id != run_id
                 or read_receipt.admission_binding_digest != stored.record.admission_binding_digest
                 or payload.get("receipt_digest") != source_read_receipt_digest(read_receipt)
-                or any(
-                    item.derived_request_digest == read_receipt.derived_request_digest
-                    for item in source_reads.get(read_receipt.occurrence_path, ())
-                )
+                or read_receipt.derived_request_digest in path_read_digests
             ):
                 raise ProcedureRunRecoveryRequired(
                     f"{ProcedureRunRecoveryRequired.code}: Source read receipt does not bind "
                     "this run exactly"
                 )
+            # A governed workspace read hands the Provider the bytes the
+            # daemon really read, not the request that named them. The read
+            # receipt is what binds the two, so the reconstruction requires
+            # that binding before it accepts the substitution -- checked here,
+            # once per read, rather than rescanned per invocation start.
+            if read_receipt.derived_request_digest not in derived_request_digests.get(
+                read_receipt.occurrence_path, ()
+            ):
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Source read receipt names "
+                    "another derived request"
+                )
             source_reads.setdefault(read_receipt.occurrence_path, []).append(read_receipt)
+            path_read_digests.add(read_receipt.derived_request_digest)
+            expected_provider_inputs.setdefault(read_receipt.occurrence_path, set()).add(
+                read_receipt.provider_input_digest
+            )
         if stored.record.event_kind == "provider_invocation_started":
             try:
                 started = ProviderInvocationStarted.model_validate(payload)
@@ -2507,27 +2549,18 @@ def _state_from_records(
                     f"{ProcedureRunRecoveryRequired.code}: Provider start is not admitted exactly"
                 )
             if planned[0].occurrence_kind == "source":
-                derived_for_path = derived_source_requests.get(started.occurrence_path, [])
-                if not derived_for_path:
+                # Every derived request's provider-input digest, and every
+                # read's binding to one, were folded into
+                # ``expected_provider_inputs`` above as each was seen (and the
+                # read's binding already validated there), so this is a set
+                # lookup: never a rescan of a glob's growing member lists, and
+                # never a re-hash of requests already seen.
+                if started.occurrence_path not in derived_request_digests:
                     raise ProcedureRunRecoveryRequired(
                         f"{ProcedureRunRecoveryRequired.code}: Source spawn lacks its exact "
                         "pre-spawn derived request result"
                     )
-                derived_digests = {item.request_digest for item in derived_for_path}
-                expected_inputs = {
-                    run_value_digest("provider-input", item.request) for item in derived_for_path
-                }
-                for read_for_start in source_reads.get(started.occurrence_path, ()):
-                    # A governed workspace read hands the Provider the bytes the
-                    # daemon really read, not the request that named them. The
-                    # read receipt is what binds the two, so the reconstruction
-                    # requires that binding before it accepts the substitution.
-                    if read_for_start.derived_request_digest not in derived_digests:
-                        raise ProcedureRunRecoveryRequired(
-                            f"{ProcedureRunRecoveryRequired.code}: Source read receipt names "
-                            "another derived request"
-                        )
-                    expected_inputs.add(read_for_start.provider_input_digest)
+                expected_inputs = expected_provider_inputs.get(started.occurrence_path, set())
                 if started.input_digest not in expected_inputs:
                     raise ProcedureRunRecoveryRequired(
                         f"{ProcedureRunRecoveryRequired.code}: Source spawn lacks its exact "
