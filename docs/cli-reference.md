@@ -1367,7 +1367,9 @@ each live Claim whose subject-valued object is this Subject, naming the
 asserting Subject, the predicate and the Claim id, in Claim id order (`--limit`,
 default 20; `--cursor` continues). A relation is stored once, on the asserting
 Subject, so this is what answers "what touches this package" from the object
-side; each page reads only its own rows of the object index.
+side; each page reads only its own rows of the object index. A pair Subject's
+card lists its `ends`, and an end's card the pairs naming it (`pairs`, paged by
+`--detail pairs`); see Pair Subjects.
 `--detail history` reads the Subject's revisions.
 
 ## claim-type
@@ -2079,6 +2081,78 @@ accepted history verifies at that Subject's path. A Claim retired this way
 keeps naming the Subject version it was accepted about; the Claim acceptance law that admits that is `playbill.claim.v3`
 (revision 11), and every accepted generation is verified by the exact law it
 recorded.
+
+### Pair Subjects
+
+A plain relationship is a link: a Subject-valued ClaimType. A relationship
+with typed facts of its own gets a **pair Subject**, keyed by its ends: a key
+ClaimType may be Subject-valued (`subject<K>`, exactly one kind `K` other than
+the pair kind itself, one-valued, normalizer `none`), and a SubjectKind keyed by
+such parts is a **pair kind**. `security.exposure` keyed by `(component,
+vulnerability)` holds a package-level justification; `security.app_exposure`
+keyed by `(occurrence, vulnerability)` is a pair of a pair. A pair's existence
+and facts never imply the link: authority stays on the link.
+
+- A pair kind is `unique`. Its key Claims are links to the ends: each stores
+  the end's Subject, so an alias or a re-key of an end never moves a pair. Its
+  id joins its ends' ids with `--`. Literal and Subject-valued parts may mix.
+- A Subject-valued part that is not one-valued, names no live SubjectKind or
+  several kinds, takes a normalizer, or sits on a `hint` kind refuses
+  `cruxible.subject_kind.key_claim_type_invalid`, as do pair kinds nested more
+  than four deep. Kinds keyed into a cycle through Subject-valued parts refuse
+  `cruxible.subject_kind.key_cycle`. Repair: key the kind by other ends, or by a
+  literal part.
+- `get SubjectKind:<kind>` says `pair: true` and lists each end's key ClaimType
+  and kind (`ends`); `orient` lists the same per SubjectKind and spells a
+  Subject-valued part as `<key>: subject<end kind>` in the kind's `identity`.
+- `get` of a pair lists its `ends` (part, end `kind/id`, endpoint Claim) in key
+  order, then its facts; a retired pair still names its ends. `get` of an end
+  lists the pairs naming it per pair kind and part (`pairs`, five each, `more`
+  when cut); `--detail pairs` pages them all. Only pairs holding a live fact
+  are listed: a pair whose facts are all retired is a historical shell, which
+  `--detail incoming` still reaches through its key Claims.
+
+Creating. A write's `create` names each end as `kind/id` (an id, an alias or a
+single key) or `{"created": label}` for an end the same write creates; ends are
+created before their pairs, in one order shared with authoring and the
+admission check. Create-by-key lands on the live pair holding the key.
+`{"created": label}` naming its own create, directly or through other
+creates, refuses `cruxible.write.key_part_self`. Repair: name another Subject,
+or another create of the write. A pair kind is never named by bare key text:
+name a pair by its id, by `{created}`, or by its structured key. An end named
+by key text that several Subjects hold refuses `cruxible.subject.key_ambiguous`.
+Repair: name the end by id.
+
+Fixed for life. These refuse on every route (writes, authoring, Procedures,
+raw proposals):
+
+| code | refuses | repair |
+|---|---|---|
+| `cruxible.subject.key_endpoint_fixed` | an endpoint key Claim written after its pair's creation, revised, revived, or retired while its pair stays live | to move a judgment to other ends, retire the pair with its Claims and create the pair of the new ends |
+| `cruxible.subject_kind.endpoint_declaration_fixed` | a pair kind's successor (a retiring one too) whose identity rule differs in parts, order, normalizers or uniqueness; a first Subject-valued part added to a kind that has any Subject, live or retired | declare a new kind (for example `security.exposure_v2`) and move each pair by an explicit retire and create |
+| `cruxible.subject_kind.key_claim_type_broken` | a successor or retirement of a Subject-valued key ClaimType that changes its value type, cardinality or end kind while a kind it keys exists | keep the ClaimType's `subject<K>`, or key a new kind by a new ClaimType |
+| `cruxible.subject.key_endpoint_retired` | a pair created over a retired end; an end retired while a live pair names it, unless the same change retires that pair | retire the pair with its Claims in the same change, or name a live end |
+
+`cruxible retire END --with-claims` on an end of live pairs refuses
+`cruxible.write.subject_referenced`, listing the pairs. Its repair is `retire
+<pair> --with-claims` for each, in the same write (a pair of a pair before its
+end); a pair's end is never re-pointed. Retiring an inventory is then one write
+listing its app exposures, its occurrences and the inventory.
+
+Procedures. A Procedure's claims step writes Claims about its row's Subject
+only. A template with `on:` (a pair row acting on one of its ends' Claims) is
+not supported in v1: authoring refuses it `cruxible.procedure.claims_on_deferred`
+before any typing. Repair: drop `on:`, and write the end's Claim from a claims
+step whose row is that end, or have an agent write it.
+
+Queries. A hop names a pair by its ends: `{"e": "security.exposure{component:
+c, vulnerability: v}"}` binds the one live pair of those ends, and `{"o":
+"security.occurrence{component: c} with scope"}` binds every live pair of `c`
+holding a visible `scope` (`!` makes either required; by default a missing
+pair keeps the row). A whole-key hop names every key part; a `with` hop binds
+exactly one Subject-valued part and a fact that is not a key part. Anything
+else refuses `cruxible.query.pair_hop_invalid`, naming the parts the key
+allows.
 
 Kits carry SubjectKinds (`subject-kinds/`) like the other definitions: `kit
 add`, `kit upgrade` and `kit status` plan them, and a SubjectKind brings its key
@@ -3903,7 +3977,7 @@ catalogued here). Pages are bounded by `--limit`; `--cursor` continues one.
 ## get
 
 ~~~text
-cruxible get REF [--detail summary|evidence|why|history|incoming|runs|proof|body]
+cruxible get REF [--detail summary|evidence|why|history|incoming|pairs|runs|proof|body]
   [--range START:END] [--output FILE] [--limit N] [--cursor C] [--field FIELD]
   [--at GIT_OID] [--evaluation-time TS] [--json]
 ~~~
@@ -3949,7 +4023,9 @@ CaptureContract name and version, its attestations and rationale, `why` and
 `proof` print today's explanation and full envelope, `history` lists revisions
 newest first with values, who changed them and why (`--limit`, default 20, per
 page; a cut page prints the `--cursor` command that continues it), `incoming`
-pages the live Claims that point at a Subject the same way, and `body`
+pages the live Claims that point at a Subject the same way, `pairs` pages the
+pair Subjects it is an end of (by pair kind and key part; see Pair Subjects),
+and `body`
 prints a Document's bytes. A Claim's revision says what it did -- `stated` (its
 first), `changed`, `reobserved` (the same value on new backing) or `retired`
 (with `was-rescinded`, `was-wrong` or `superseded`) -- and every revision its

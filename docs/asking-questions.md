@@ -95,6 +95,7 @@ first, and `--detail` goes deeper:
 | `evidence` | What each value rests on, and whether it counts |
 | `history` | Every change, with who made it, when and why (`--field` narrows to one field) |
 | `incoming` | The Claims elsewhere that point at this Subject |
+| `pairs` | The pair Subjects this Subject is an end of, by pair kind |
 | `why` | The full structured account of a Claim's standing |
 | `runs` | A Line's or Procedure's runs |
 | `proof` | A definition's accepted inventory entry |
@@ -169,6 +170,11 @@ Its target kind follows from the relation when there is one; state
 `: kind_a|kind_b` to select kinds explicitly. An include attaches up to 500
 predicate values without expanding the primary rows. Numeric text can be
 ordered as decimal with `{field: binding.predicate, type: decimal}`.
+
+A pair hop binds a pair Subject by its ends: `e: security.exposure{component:
+c, vulnerability: v}` binds the one live pair of those ends, and `o:
+security.occurrence{component: c} with scope` every live pair of `c` holding a
+visible `scope`. `!` makes either required.
 
 Queries with hops return paths; those without return Subjects. Both default
 to supported, current values and 200 results. `visible: held` also admits
