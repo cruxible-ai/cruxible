@@ -187,6 +187,77 @@ def test_no_evidence_attests_the_claims_own_citations(tmp_path: Path) -> None:
     assert set(cited) <= cited_captures(instance, claim)
 
 
+def test_a_pinned_referent_survives_evidence_prep_then_refuses_once_stale(
+    tmp_path: Path,
+) -> None:
+    """F1: evidence preparation must not silently move a pinned referent.
+
+    A caller who names an exact Claim revision (e.g. from a ClaimRef read
+    earlier) keeps that revision through evidence preparation and signing,
+    whether or not evidence is supplied. Once the Claim is revised, evidence
+    can only be prepared at the new head, so attesting under the old pinned
+    referent would cite evidence made against a different revision than the
+    one the statement names: the client refuses before signing instead.
+    """
+
+    from cruxible_client.authoring.attestations import ClaimAttestationReferentStaleError
+    from cruxible_client.contracts.projection import AcceptedCoordinate
+
+    instance, claim, signer, workspace = _world(tmp_path)
+    pinned = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+
+    # Without evidence, a pinned referent is signed as named.
+    _attest(instance, claim, signer, workspace, referent_coordinate=pinned)
+    statement = instance.claim_attestation_evidence_store().events()[-1][1].attestation.statement
+    assert statement.referent_coordinate == pinned
+
+    # With evidence, while the pinned referent is still current, it must
+    # also still be signed as named rather than overwritten by the evidence
+    # head (the two happen to be the same coordinate here).
+    _attest(instance, claim, signer, workspace, referent_coordinate=pinned, because="Still three.")
+    statement = instance.claim_attestation_evidence_store().events()[-1][1].attestation.statement
+    assert statement.referent_coordinate == pinned
+
+    # Revise the same Claim: same identity, new content, a new head.
+    written = service_playbill_write(
+        instance,
+        request=WriteRequest.model_validate(
+            {
+                "because": "Re-measured from the report.",
+                "changes": [
+                    {
+                        "op": "set",
+                        "subject": f"{KIND}/wi-1",
+                        "field": "measured",
+                        "value": 4,
+                        "evidence": report_evidence(workspace, "four"),
+                    }
+                ],
+            }
+        ),
+        caller=caller(),
+    )
+    assert written.status == "accepted", written
+    revised = next(change.claim for change in written.changes if change.field.endswith("measured"))
+    assert revised == claim  # same Claim identity, revised in place
+
+    # Without evidence, the now-stale pinned referent is still honored: no
+    # evidence step touches the head, so there's nothing to contradict it.
+    _attest(instance, claim, signer, workspace, referent_coordinate=pinned)
+    statement = instance.claim_attestation_evidence_store().events()[-1][1].attestation.statement
+    assert statement.referent_coordinate == pinned
+    events_before_refusal = len(instance.claim_attestation_evidence_store().events())
+
+    # With evidence, it can only be prepared at the new head, where the
+    # pinned revision is no longer current: refuse before signing.
+    with pytest.raises(ClaimAttestationReferentStaleError) as refused:
+        _attest(
+            instance, claim, signer, workspace, referent_coordinate=pinned, because="Still three."
+        )
+    assert refused.value.error_code == "cruxible.claim_attestation.referent_not_current"
+    assert len(instance.claim_attestation_evidence_store().events()) == events_before_refusal
+
+
 def test_unobserved_workspace_evidence_refuses(tmp_path: Path) -> None:
     instance, claim, _signer, _workspace = _world(tmp_path)
     for evidence in (

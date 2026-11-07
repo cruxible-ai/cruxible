@@ -32,7 +32,7 @@ from cruxible_client.contracts.claims import (
     claim_citation_references,
     claim_statement_digest,
 )
-from cruxible_client.contracts.errors import SigningKeyError
+from cruxible_client.contracts.errors import FormatError, SigningKeyError
 from cruxible_client.contracts.principals import PRINCIPAL_KEY_ENV
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.types import PrincipalRecord
@@ -42,6 +42,13 @@ from cruxible_client.errors import InstanceScopeError
 
 class LocalClaimAttestationKeyUnavailable(SigningKeyError):
     error_code = "cruxible.claim_attestation.local_signing_key_unavailable"
+
+
+class ClaimAttestationReferentStaleError(FormatError):
+    """The caller pinned a Claim revision that is no longer current at the
+    head where evidence was prepared."""
+
+    error_code = "cruxible.claim_attestation.referent_not_current"
 
 
 class ClaimAttestationSigner(Protocol):
@@ -302,6 +309,19 @@ def _claim_from_public_view(view: Any) -> ClaimArtifact:
     )
 
 
+def _claim_artifact_digest_at(
+    client: Any, instance_id: str, claim_id: str, coordinate: AcceptedCoordinate
+) -> str:
+    """The Claim's exact accepted artifact digest at ``coordinate``."""
+
+    from cruxible_client.contracts import ClaimViewRecord
+
+    view = ClaimViewRecord.model_validate(
+        accepted_proof(client, instance_id, claim_id, at=coordinate)
+    )
+    return claim_artifact_digest(_claim_from_public_view(view)).tagged
+
+
 def prepare_claim_attestation(
     client: Any,
     instance_id: str,
@@ -431,6 +451,7 @@ def attest_claim(
     """
 
     claim = claim_id.removeprefix("Claim:")
+    pinned_referent = referent_coordinate
     captures: tuple[ClaimAttestationCaptureReference, ...] = ()
     if because is not None or evidence is not None:
         from cruxible_client.authoring.write_evidence import observe_evidence
@@ -447,7 +468,25 @@ def attest_claim(
             ClaimAttestationCaptureReference(capture_digest=digest)
             for digest in made.capture_digests
         )
-        referent_coordinate = made.referent_coordinate
+        if pinned_referent is None:
+            # No explicit selection: the evidence head becomes the referent,
+            # as before.
+            referent_coordinate = made.referent_coordinate
+        elif pinned_referent != made.referent_coordinate:
+            # The caller named an exact revision. Evidence can only be made
+            # at the live head, so confirm that revision is still the one
+            # standing there before signing it; otherwise the statement
+            # would cite evidence prepared against a different revision
+            # than the one it claims to attest.
+            if _claim_artifact_digest_at(
+                client, instance_id, claim, pinned_referent
+            ) != _claim_artifact_digest_at(client, instance_id, claim, made.referent_coordinate):
+                raise ClaimAttestationReferentStaleError(
+                    f"{ClaimAttestationReferentStaleError.error_code}: Claim {claim_id} was "
+                    "revised between the pinned referent and the evidence head; re-select the "
+                    "Claim's current revision before attesting"
+                )
+            referent_coordinate = pinned_referent
     return append_prepared_claim_attestation(
         client,
         instance_id,
@@ -464,6 +503,7 @@ def attest_claim(
 
 
 __all__ = [
+    "ClaimAttestationReferentStaleError",
     "ClaimAttestationSigner",
     "LocalClaimAttestationKeyUnavailable",
     "LocalEd25519ClaimAttestationSigner",
