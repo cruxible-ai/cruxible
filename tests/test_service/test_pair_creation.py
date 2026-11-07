@@ -770,3 +770,68 @@ def test_a_write_names_one_of_two_new_holders_by_its_label(instance: PlaybillIns
     t2, pair = outcome.changes[1].subject, outcome.changes[2].subject
     assert t2 != outcome.changes[0].subject
     assert ends_of(instance, pair)[f"{TAGGING}.tag"] == t2
+
+
+# -- an end named by key text never silently picks one reading (review F2) ---------------
+
+
+def _pair_naming(component: SubjectClaimObject) -> Any:
+    return _authored(
+        _creation(EXPOSURE, {"component": component, "vulnerability": _whole(V1)}),
+    )
+
+
+def test_a_key_text_naming_one_subject_by_id_and_another_by_key_refuses(
+    instance: PlaybillInstance,
+) -> None:
+    """After literal re-keys, id ``shared`` holds ``alpha`` and ``beta`` holds ``shared``."""
+
+    accepted(
+        write(
+            instance,
+            create("s", COMPONENT, "shared"),
+            create("b", COMPONENT, "beta"),
+            create("v", VULN, "CVE-2024-35195"),
+        )
+    )
+    shared, beta = f"{COMPONENT}/shared", f"{COMPONENT}/beta"
+    accepted(write(instance, {"op": "set", "subject": shared, "field": "purl", "value": "alpha"}))
+    accepted(write(instance, {"op": "set", "subject": beta, "field": "purl", "value": "shared"}))
+    by_text = SubjectClaimObject(address=SemanticAddress.subject_key(COMPONENT, "shared"))
+    codes = _refused_codes(instance, _pair_naming(by_text))
+    assert "cruxible.subject.key_ambiguous" in codes, codes
+    assert live_subjects(instance, EXPOSURE) == []
+    # A structured key reads only the key; a whole-Subject address only the id.
+    by_key = SubjectClaimObject(address=SemanticAddress.subject_key(COMPONENT, {"purl": "shared"}))
+    accept(instance, _pair_naming(by_key))
+    accept(instance, _pair_naming(_whole(shared)))
+    pairs = live_subjects(instance, EXPOSURE)
+    assert {ends_of(instance, pair)[f"{EXPOSURE}.component"] for pair in pairs} == {shared, beta}
+
+
+def test_an_end_creation_landing_through_an_alias_holds_no_requested_key(
+    instance: PlaybillInstance,
+) -> None:
+    _ends(instance)
+    accepted(
+        write(
+            instance, {"op": "add", "subject": C1, "field": "semantic.alias", "value": "requests"}
+        )
+    )
+    # The creation lands on C1 through its alias: no Subject holds key "requests".
+    end = _creation(COMPONENT, {"purl": "requests"})
+    by_key = SubjectClaimObject(
+        address=SemanticAddress.subject_key(COMPONENT, {"purl": "requests"})
+    )
+    payload = _authored(
+        end, _creation(EXPOSURE, {"component": by_key, "vulnerability": _whole(V1)})
+    )
+    assert "cruxible.subject.key_missing" in _refused_codes(instance, payload)
+    # Named by the creation member, the pair lands on the Subject the alias names.
+    accept(
+        instance,
+        _authored(
+            end, _creation(EXPOSURE, {"component": _member_of(end), "vulnerability": _whole(V1)})
+        ),
+    )
+    assert ends_of(instance, E11)[f"{EXPOSURE}.component"] == C1
