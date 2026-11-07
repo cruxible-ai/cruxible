@@ -8,6 +8,7 @@ import secrets
 from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -1212,6 +1213,44 @@ def _capture_is_explicitly_eligible(
     return any(item.role == "evidence" and item.origin == "independent" for item in associations)
 
 
+@lru_cache(maxsize=4096)
+def _expected_catalog_bound_contract(logical_source: str) -> tuple[str, str] | None:
+    """The (identity, digest) core's deterministic workspace-file builder makes
+    for ``logical_source``, memoized once per process.
+
+    ``foreign_source_capture_contract`` is a pure function of the source id
+    alone, so every Capture ever cited under the same source reuses this one
+    build-and-digest rather than repeating it (a settle-cost guard: without
+    this, per-item admission cost grew with every foreign-sourced Capture it
+    touched, family rule or not).
+    """
+
+    try:
+        expected = foreign_source_capture_contract(logical_source)
+    except FormatError:
+        return None
+    return expected.identity.qualified, capture_contract_digest(expected).tagged
+
+
+def _policy_needs_verified_shape(
+    policy: ClaimEvidenceAdmissionPolicy, *, identity: str | None
+) -> bool:
+    """Whether any rule's ``capture_contract_families`` could still matter.
+
+    A cheap, build-free check: a rule with no family entries never needs a
+    verified shape, and a rule whose exact ``capture_contracts`` already name
+    this identity resolves on that alone (shape is consulted only once the
+    exact match misses). Only when some rule has a family AND its exact
+    names miss is the shape verification below ever worth its one
+    (memoized) contract recomputation.
+    """
+
+    return any(
+        bool(rule.capture_contract_families) and not rule.names_capture_contract(identity=identity)
+        for rule in policy.rules
+    )
+
+
 def _verified_catalog_bound_shape(
     capture_contract: AcceptedCaptureContract, *, envelope: CaptureEnvelopeAny | None
 ) -> CaptureShape | Literal["coordinator_self_source"] | None:
@@ -1231,8 +1270,13 @@ def _verified_catalog_bound_shape(
     ``foreign_source_capture_contract``, makes for that exact logical
     source: an independently authored or hand-asserted contract fails the
     digest check and never reaches ``shape`` at all. This recomputes one
-    contract for the one Capture under evaluation; it never reads or walks
-    the workspace catalog, so admission cost stays independent of its size.
+    contract for the one Capture under evaluation (memoized per source id,
+    see ``_expected_catalog_bound_contract``); it never reads or walks the
+    workspace catalog, so admission cost stays independent of its size.
+
+    A caller should only reach this once ``_policy_needs_verified_shape``
+    says the recomputation could change the answer; this function itself
+    does not re-check that, so it stays the one place the digest law lives.
     """
 
     contract = capture_contract.contract
@@ -1246,16 +1290,37 @@ def _verified_catalog_bound_shape(
     )
     if logical_source is None:
         return None
-    try:
-        expected = foreign_source_capture_contract(logical_source)
-    except FormatError:
+    expected = _expected_catalog_bound_contract(logical_source)
+    if expected is None:
         return None
+    expected_identity, expected_digest = expected
     if (
-        expected.identity.qualified != contract.identity.qualified
-        or capture_contract_digest(expected).tagged != capture_contract.artifact_digest
+        expected_identity != contract.identity.qualified
+        or expected_digest != capture_contract.artifact_digest
     ):
         return None
     return shape
+
+
+def _lazily_verified_shape(
+    policy: ClaimEvidenceAdmissionPolicy,
+    capture_contract: AcceptedCaptureContract,
+    *,
+    envelope: CaptureEnvelopeAny | None,
+) -> CaptureShape | Literal["coordinator_self_source"] | None:
+    """``_verified_catalog_bound_shape``, skipped unless some rule could need it.
+
+    The guard (``_policy_needs_verified_shape``) is a build-free scan of
+    ``policy.rules``; it is what makes this call safe to make unconditionally
+    at every admission and eligibility site without paying a contract
+    recomputation for a policy that names no family at all.
+    """
+
+    if not _policy_needs_verified_shape(
+        policy, identity=capture_contract.contract.identity.qualified
+    ):
+        return None
+    return _verified_catalog_bound_shape(capture_contract, envelope=envelope)
 
 
 def _self_source_capture_admitted_by_rule(
@@ -1283,7 +1348,9 @@ def _self_source_capture_admitted_by_rule(
     )
     if not associations or any(item.origin != "self_source" for item in associations):
         return False
-    verified_shape = _verified_catalog_bound_shape(capture_contract, envelope=envelope)
+    verified_shape = _lazily_verified_shape(
+        claim_type.evidence_admission_policy, capture_contract, envelope=envelope
+    )
     return any(
         claim.statement.role in rule.claim_roles
         and rule.names_capture_contract(
@@ -1348,7 +1415,9 @@ def _copy_capture_admitted_by_rule(
         return False
     if any(item.role != "copy" or item.origin != "independent" for item in associations):
         return False
-    verified_shape = _verified_catalog_bound_shape(capture_contract, envelope=envelope)
+    verified_shape = _lazily_verified_shape(
+        claim_type.evidence_admission_policy, capture_contract, envelope=envelope
+    )
     return any(
         claim.statement.role in rule.claim_roles
         and rule.names_capture_contract(
@@ -1468,7 +1537,12 @@ def evaluate_capture_evidence_admissions(
     # The contract's own declared shape, never its name -- and never trusted
     # alone: verified catalog-bound against this Capture's own logical source
     # before a capture_contract_families entry may match it (D1 review F1).
-    contract_shape = _verified_catalog_bound_shape(capture_contract, envelope=envelope)
+    # Skipped entirely (no contract recomputation at all) unless some rule in
+    # this policy actually declares a family the exact names did not already
+    # satisfy (D1 review settle-cost follow-up).
+    contract_shape = _lazily_verified_shape(
+        claim_type.evidence_admission_policy, capture_contract, envelope=envelope
+    )
     has_extracted_inputs = (
         claim.backing.procedure_evidence is not None
         and claim.backing.procedure_evidence.value.basis == "derived"
