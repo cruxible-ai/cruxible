@@ -414,30 +414,61 @@ def test_version_three_journal_gains_the_kit_resume_tables_in_place(tmp_path: Pa
     assert trigger_events(world) == events
 
 
-def test_version_four_journal_gains_runbook_heads_backfilled_once(tmp_path: Path) -> None:
-    """D-R36 review F3: Runbook fire heads are kept as fires land; a v4 journal backfills."""
+def test_version_four_journal_without_runbook_fires_migrates_with_empty_runbook_progress(
+    tmp_path: Path,
+) -> None:
+    """D-R36: Runbook progress starts with v5; a v4 journal gains it, empty."""
 
     from cruxible_core.triggers.journal import pending_runbook_fires
 
     world = instance(tmp_path)
     fire(world, NOW + timedelta(hours=1))
+    events = trigger_events(world)
     with sqlite3.connect(journal_path(world)) as connection:
-        for index in range(3):
-            connection.execute(
-                "INSERT INTO events(action,trigger_id,due_at,fired_at,occurrence) "
-                "VALUES ('runbook:test.rb','Trigger:t',?,?,?)",
-                (NOW.isoformat(), NOW.isoformat(), f"tick:{index}"),
-            )
-        latest = connection.execute("SELECT max(sequence) FROM events").fetchone()[0]
         connection.execute("DROP TABLE runbook_fires")
         connection.execute("PRAGMA user_version=4")
-    # A reader of the v4 journal sees no Runbook progress; the next writer upgrades it.
+    # A reader of the v4 journal still reads it and sees no Runbook progress.
+    assert trigger_events(world) == events
     assert pending_runbook_fires(world) == ()
     schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
     with sqlite3.connect(journal_path(world)) as connection:
         assert connection.execute("PRAGMA user_version").fetchone() == (5,)
-    (pending,) = pending_runbook_fires(world)
-    assert (pending.fire_key, pending.latest, pending.covered) == ("runbook:test.rb", latest, 0)
+        assert connection.execute("SELECT count(*) FROM runbook_fires").fetchone() == (0,)
+    assert trigger_events(world) == events
+    assert pending_runbook_fires(world) == ()
+
+
+def test_version_four_journal_holding_runbook_fires_refuses_to_migrate(tmp_path: Path) -> None:
+    """No released journal before v5 can hold a Runbook fire; one that does is refused.
+
+    Its progress was never recorded by a v5 journal, so migrating could only guess
+    whether its fires completed: the writer refuses typed, and the journal is left
+    exactly as it was (still v4, still readable).
+    """
+
+    from cruxible_core.triggers.journal import TriggerJournalMigrationRefused
+
+    world = instance(tmp_path)
+    fire(world, NOW + timedelta(hours=1))
+    with sqlite3.connect(journal_path(world)) as connection:
+        connection.execute(
+            "INSERT INTO events(action,trigger_id,due_at,fired_at,occurrence) "
+            "VALUES ('runbook:test.rb','Trigger:t',?,?,'tick:0')",
+            (NOW.isoformat(), NOW.isoformat()),
+        )
+        connection.execute("DROP TABLE runbook_fires")
+        connection.execute("PRAGMA user_version=4")
+    events = trigger_events(world)
+    with pytest.raises(TriggerJournalMigrationRefused) as refused:
+        schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
+    assert refused.value.code == "cruxible.trigger_journal.migration_refused"
+    with sqlite3.connect(journal_path(world)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (4,)
+        assert connection.execute(
+            "SELECT count(*) FROM sqlite_master WHERE name='runbook_fires'"
+        ).fetchone() == (0,)
+        assert connection.execute("SELECT count(*) FROM deadlines").fetchone() == (0,)
+    assert trigger_events(world) == events
 
 
 @pytest.mark.parametrize("second,expected", [(-1, 0), (0, 1), (12345, 24691), (2**18, 2**18)])

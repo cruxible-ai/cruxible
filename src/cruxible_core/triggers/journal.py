@@ -246,15 +246,20 @@ def _open(instance: Any, *, create: bool = False) -> Iterator[sqlite3.Connection
                         "version TEXT NOT NULL, listening_since TEXT NOT NULL, "
                         "covered INTEGER NOT NULL) STRICT"
                     )
+                # No released journal before v5 holds a Runbook fire: Runbooks
+                # arrive with v5. One that does is unreleased data whose
+                # progress v4 never recorded, so it is refused, never guessed.
+                if connection.execute(
+                    "SELECT 1 FROM events WHERE action>=? AND action<? LIMIT 1",
+                    _RUNBOOK_KEY_RANGE,
+                ).fetchone():
+                    raise TriggerJournalMigrationRefused(
+                        f"A version {version} trigger journal holds Runbook fires, which no "
+                        "released journal before version 5 can: their progress is unknown. "
+                        "Retain it for operator repair; the journal is left as it is."
+                    )
                 for table in (*_KIT_RESUME_SCHEMA, *_RUNBOOK_FIRES_SCHEMA):
                     connection.execute(table)
-                # Backfill each Runbook's newest fire once; afterwards it is kept.
-                connection.execute(
-                    "INSERT OR IGNORE INTO runbook_fires(fire_key,latest) "
-                    "SELECT action,max(sequence) FROM events WHERE action>=? AND action<? "
-                    "GROUP BY action",
-                    _RUNBOOK_KEY_RANGE,
-                )
                 connection.execute(f"PRAGMA user_version={_VERSION}")
         elif version != _VERSION:
             raise ValueError("Unsupported trigger journal; retain it for operator repair")
@@ -316,6 +321,13 @@ _RUNBOOK_KEY_RANGE = (
     RUNBOOK_FIRE_PREFIX,
     RUNBOOK_FIRE_PREFIX[:-1] + chr(ord(RUNBOOK_FIRE_PREFIX[-1]) + 1),
 )
+
+
+class TriggerJournalMigrationRefused(ValueError):
+    """An older trigger journal holds what its version cannot have recorded."""
+
+    code = "cruxible.trigger_journal.migration_refused"
+    error_code = "trigger_journal_migration_refused"
 
 
 @dataclass(frozen=True)
