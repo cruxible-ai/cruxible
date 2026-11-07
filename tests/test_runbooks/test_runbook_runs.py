@@ -314,3 +314,77 @@ def test_a_trigger_fired_run_runs_each_line_under_its_own_enablement(
     assert result.stop_reason == "step_proposed"
     assert counted_line_runs == {SETTLE: 1, PROPOSE: 1}
     assert principals == ["operator", "operator"]
+
+
+# -- an idle poll reads no fire history (F3) ------------------------------------------
+
+
+def _due_vm_steps(instance: Any, monkeypatch: pytest.MonkeyPatch) -> int:
+    """SQLite VM steps one idle ``due()`` poll runs on the trigger journal."""
+
+    import sqlite3
+
+    from cruxible_core.consumers.runbooks import RUNBOOKS
+    from cruxible_core.triggers import journal
+
+    steps = 0
+    real_connect = sqlite3.connect
+
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        connection = real_connect(*args, **kwargs)
+
+        def step() -> int:
+            nonlocal steps
+            steps += 1
+            return 0
+
+        connection.set_progress_handler(step, 1)
+        return connection
+
+    monkeypatch.setattr(journal.sqlite3, "connect", counting)
+    try:
+        assert list(RUNBOOKS.due(instance, now=datetime.now(UTC))) == []
+    finally:
+        monkeypatch.setattr(journal.sqlite3, "connect", real_connect)
+    return steps
+
+
+def test_an_idle_poll_is_constant_in_retained_fires(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.triggers.journal import (
+        _Fire,
+        _open,
+        _record,
+        finish_runbook_fire,
+        pending_runbook_fires,
+    )
+
+    instance, _root = runbook_world(tmp_path)
+    author_runbook(instance, "test.rb", [{"action": "evidence.sweep"}])
+    author_runbook_trigger(
+        instance,
+        "test.rb-tick",
+        runbook="test.rb",
+        schedule={"kind": "cadence", "interval_seconds": 60},
+    )
+    counts: dict[int, int] = {}
+    fired = 0
+    start = datetime(2026, 11, 1, tzinfo=UTC)
+    for history in (100, 1000):
+        with _open(instance, create=True) as connection:
+            assert connection is not None
+            _record(
+                connection,
+                [
+                    _Fire("runbook:test.rb", "Trigger:test.rb-tick", start, f"tick:{index}")
+                    for index in range(fired, history)
+                ],
+                now=start,
+            )
+        fired = history
+        (pending,) = pending_runbook_fires(instance)
+        finish_runbook_fire(instance, "runbook:test.rb", pending.latest)
+        _due_vm_steps(instance, monkeypatch)  # warm: the Trigger set is read once per head
+        counts[history] = _due_vm_steps(instance, monkeypatch)
+    assert counts[1000] == counts[100], counts

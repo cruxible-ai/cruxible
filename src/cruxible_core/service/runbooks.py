@@ -59,14 +59,13 @@ class RunbookNotFoundError(ProcedureSurfaceError):
     http_status = 404
 
 
-#: Retained run records and the Trigger-fire cursor: derived bookkeeping, never
-#: authority (every Line run is recorded on its own Line's history).
+#: Retained run records: derived bookkeeping, never authority. Every Line run is
+#: on its Line's history; a Trigger-fired run's progress is in the trigger journal.
 RUNBOOK_STATE = DisposableState(
     "runbooks",
     "CREATE TABLE runs (run_id TEXT PRIMARY KEY, runbook TEXT NOT NULL, "
     "finished_at TEXT NOT NULL, payload TEXT NOT NULL) STRICT;"
-    "CREATE INDEX runs_by_runbook ON runs(runbook, finished_at);"
-    "CREATE TABLE progress (fire_key TEXT PRIMARY KEY, covered INTEGER NOT NULL) STRICT;",
+    "CREATE INDEX runs_by_runbook ON runs(runbook, finished_at);",
 )
 
 

@@ -42,18 +42,6 @@ def _fire_keys(instance: Any) -> frozenset[str]:
     )
 
 
-def _covered(instance: Any) -> dict[str, int]:
-    from cruxible_core.service.runbooks import RUNBOOK_STATE
-
-    with RUNBOOK_STATE.open(instance, create=False) as connection:
-        if connection is None:
-            return {}
-        return {
-            str(key): int(value)
-            for key, value in connection.execute("SELECT fire_key,covered FROM progress")
-        }
-
-
 def _active_arm(instance: Any, line: str) -> dict[str, Any] | None:
     """The Line's active enablement segment, or None: one keyed read."""
 
@@ -155,17 +143,19 @@ class RunbookConsumers:
         return None
 
     def due(self, instance: Any, *, now: datetime) -> Iterable[ConsumerWork]:
-        from cruxible_core.triggers.journal import latest_runbook_fires
+        from cruxible_core.triggers.journal import pending_runbook_fires
 
         keys = _fire_keys(instance)
-        covered = _covered(instance)
-        for key, latest in sorted(latest_runbook_fires(instance).items()):
-            if key in keys and latest > covered.get(key, 0):
-                yield ConsumerWork(key=key, item={"fire_key": key, "through": latest})
+        for progress in pending_runbook_fires(instance):
+            if progress.fire_key in keys:
+                yield ConsumerWork(
+                    key=progress.fire_key,
+                    item={"fire_key": progress.fire_key, "through": progress.latest},
+                )
 
     def run(self, manager: Any, instance_id: str, work: ConsumerWork, *, now: datetime) -> None:
-        from cruxible_core.service.runbooks import RUNBOOK_STATE, RunbookNotFoundError
-        from cruxible_core.triggers.journal import trigger_events
+        from cruxible_core.service.runbooks import RunbookNotFoundError
+        from cruxible_core.triggers.journal import finish_runbook_fire, trigger_events
 
         instance = manager.get(instance_id)
         key = str(work.item["fire_key"])
@@ -182,13 +172,7 @@ class RunbookConsumers:
             )
         except RunbookNotFoundError:
             pass  # retired since it fired: nothing runs, the fires are covered
-        with RUNBOOK_STATE.open(instance) as connection:
-            assert connection is not None
-            connection.execute(
-                "INSERT INTO progress VALUES (?,?) ON CONFLICT(fire_key) DO UPDATE SET "
-                "covered=max(covered, excluded.covered)",
-                (key, through),
-            )
+        finish_runbook_fire(instance, key, through)
 
     def health(self, instance: Any, *, now: datetime) -> tuple[ConsumerHealth, ...]:
         from cruxible_core.service.runbooks import latest_runbook_run

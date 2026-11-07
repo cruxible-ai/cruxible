@@ -186,7 +186,7 @@ def test_a_journal_its_creator_has_not_committed_reads_as_none(tmp_path: Path) -
     # A writer still creates the schema in it.
     fire(world, NOW + timedelta(days=1), since=NOW + timedelta(days=1))
     with sqlite3.connect(path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (4,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (5,)
 
 
 def test_timer_state_follows_the_accepted_trigger_set(tmp_path: Path) -> None:
@@ -392,7 +392,7 @@ def test_version_two_journal_migrates_in_place_without_losing_fires(tmp_path: Pa
     assert trigger_events(world) == events
     schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
     with sqlite3.connect(journal_path(world)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (4,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (5,)
         assert connection.execute("SELECT * FROM timers").fetchall() == timers
     assert trigger_events(world) == events
 
@@ -409,9 +409,35 @@ def test_version_three_journal_gains_the_kit_resume_tables_in_place(tmp_path: Pa
     assert trigger_events(world) == events
     schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
     with sqlite3.connect(journal_path(world)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (4,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (5,)
         assert connection.execute("SELECT count(*) FROM kit_resumes").fetchone() == (0,)
     assert trigger_events(world) == events
+
+
+def test_version_four_journal_gains_runbook_heads_backfilled_once(tmp_path: Path) -> None:
+    """D-R36 review F3: Runbook fire heads are kept as fires land; a v4 journal backfills."""
+
+    from cruxible_core.triggers.journal import pending_runbook_fires
+
+    world = instance(tmp_path)
+    fire(world, NOW + timedelta(hours=1))
+    with sqlite3.connect(journal_path(world)) as connection:
+        for index in range(3):
+            connection.execute(
+                "INSERT INTO events(action,trigger_id,due_at,fired_at,occurrence) "
+                "VALUES ('runbook:test.rb','Trigger:t',?,?,?)",
+                (NOW.isoformat(), NOW.isoformat(), f"tick:{index}"),
+            )
+        latest = connection.execute("SELECT max(sequence) FROM events").fetchone()[0]
+        connection.execute("DROP TABLE runbook_fires")
+        connection.execute("PRAGMA user_version=4")
+    # A reader of the v4 journal sees no Runbook progress; the next writer upgrades it.
+    assert pending_runbook_fires(world) == ()
+    schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
+    with sqlite3.connect(journal_path(world)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (5,)
+    (pending,) = pending_runbook_fires(world)
+    assert (pending.fire_key, pending.latest, pending.covered) == ("runbook:test.rb", latest, 0)
 
 
 @pytest.mark.parametrize("second,expected", [(-1, 0), (0, 1), (12345, 24691), (2**18, 2**18)])
