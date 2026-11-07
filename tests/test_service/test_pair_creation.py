@@ -680,3 +680,93 @@ def test_the_sdk_sends_a_pair_end_as_a_subject_object() -> None:
         SubjectClaimObject(address=SemanticAddress.subject_key(COMPONENT, PURL))
     )
     assert _key_part_value("plain") == "plain"
+
+
+# -- an end named by key is the key's one holder (review F1) ----------------------------
+
+
+def _tag_holder(why: str) -> Any:
+    return _creation(TAG, {"name": "triage"}, why=why).model_copy(update={"create_new": True})
+
+
+def _pair_by_tag_key(pair_kind: str) -> Any:
+    return _creation(
+        pair_kind,
+        {
+            "tag": SubjectClaimObject(address=SemanticAddress.subject_key(TAG, "triage")),
+            "component": _whole(C1),
+        },
+    )
+
+
+def _refused_codes(instance: PlaybillInstance, payload: Any) -> set[str]:
+    from tests.core_support._pair_world import submit
+
+    submitted = submit(instance, payload)
+    assert submitted.status.proposal_id is None
+    return {item.code for item in submitted.intent.last_preflight.frontier.diagnostics}
+
+
+@pytest.mark.parametrize("pair_kind", [LABEL, TAGGING])
+def test_an_end_named_by_a_key_two_new_holders_hold_refuses(
+    instance: PlaybillInstance, pair_kind: str
+) -> None:
+    _ends(instance)
+    payload = _authored(_tag_holder(" (one)"), _tag_holder(" (two)"), _pair_by_tag_key(pair_kind))
+    assert "cruxible.subject.key_ambiguous" in _refused_codes(instance, payload)
+    assert live_subjects(instance, TAG) == [] and live_subjects(instance, pair_kind) == []
+
+
+@pytest.mark.parametrize("pair_kind", [LABEL, TAGGING])
+def test_an_end_named_by_a_key_an_old_and_a_new_holder_hold_refuses(
+    instance: PlaybillInstance, pair_kind: str
+) -> None:
+    _ends(instance)
+    accepted(write(instance, create("t", TAG, "triage")))
+    (held,) = live_subjects(instance, TAG)
+    payload = _authored(_tag_holder(" (new)"), _pair_by_tag_key(pair_kind))
+    assert "cruxible.subject.key_ambiguous" in _refused_codes(instance, payload)
+    assert live_subjects(instance, TAG) == [held]
+    # Two accepted holders, and no creation: still ambiguous, never the first.
+    accepted(write(instance, create("t", TAG, "triage", create_new=True)))
+    assert "cruxible.subject.key_ambiguous" in _refused_codes(
+        instance, _authored(_pair_by_tag_key(pair_kind))
+    )
+
+
+@pytest.mark.parametrize("pair_kind", [LABEL, TAGGING])
+def test_an_end_named_by_its_creation_member_picks_one_of_two_new_holders(
+    instance: PlaybillInstance, pair_kind: str
+) -> None:
+    _ends(instance)
+    first, second = _tag_holder(" (one)"), _tag_holder(" (two)")
+    payload = _authored(
+        first,
+        second,
+        _creation(pair_kind, {"tag": _member_of(second), "component": _whole(C1)}),
+    )
+    accept(instance, payload)
+    held = live_subjects(instance, TAG)
+    assert len(held) == 2
+    (pair,) = live_subjects(instance, pair_kind)
+    # The member's own Subject: the first holder (in member order) takes the
+    # key's rendering, the other is a further holder named from its member.
+    second_is_first = second.member_identity < first.member_identity
+    chosen = ends_of(instance, pair)[f"{pair_kind}.tag"]
+    assert (chosen == f"{TAG}/triage") is second_is_first
+    assert chosen in held
+
+
+def test_a_write_names_one_of_two_new_holders_by_its_label(instance: PlaybillInstance) -> None:
+    _ends(instance)
+    outcome = accepted(
+        write(
+            instance,
+            create("t1", TAG, "triage", create_new=True),
+            create("t2", TAG, "triage", create_new=True),
+            create("p", TAGGING, {"tag": {"created": "t2"}, "component": C1}),
+        )
+    )
+    t2, pair = outcome.changes[1].subject, outcome.changes[2].subject
+    assert t2 != outcome.changes[0].subject
+    assert ends_of(instance, pair)[f"{TAGGING}.tag"] == t2

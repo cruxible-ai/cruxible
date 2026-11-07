@@ -4089,8 +4089,8 @@ def _assign_creations(
             key_reader=tree_key_reader(base_tree),
         )
         base_view = IdentityView(connection, key_reader=tree_key_reader(base_tree))
-        # Ends the change creates, by canonical key, for an end named by key.
-        created_keys: dict[tuple[str, str], str] = {}
+        # The keys a creation of this change holds, for an end named by key.
+        created_keys: set[tuple[str, str]] = set()
         for layer in sorted(by_layer):
             ordered: list[
                 tuple[
@@ -4151,7 +4151,7 @@ def _assign_creations(
                     layer=layer,
                 )
                 creations[member.member_identity] = creation
-                created_keys.setdefault((creation.kind, key_encoding(key)), creation.path)
+                created_keys.add((creation.kind, key_encoding(key)))
     return creations
 
 
@@ -4163,7 +4163,7 @@ def _key_part_end(
     element: str,
     creators: Mapping[str, SubjectCreationAuthoringPayload],
     creations: Mapping[str, _Creation],
-    created_keys: Mapping[tuple[str, str], str],
+    created_keys: set[tuple[str, str]],
     declared_of: Callable[[str], SubjectKind | None],
     claim_type_of: Callable[[str], ClaimType | None],
 ) -> SubjectEnd:
@@ -4171,9 +4171,11 @@ def _key_part_end(
 
     The forms a Claim object lands through: the Subject itself (or the one live
     Subject its alias or single key names), the Subject a creation member of
-    the same change lands on, or the Subject its kind's key names (the one a
-    creation of this change holds, else the live holder). An end's layer is
-    named before its pair's, so a creation it names already has its path.
+    the same change lands on, or the Subject its kind's key names: the one
+    holder of the key among the accepted Subjects and this change's creations
+    (several refuse ``key_ambiguous``; a creation member reference picks one).
+    An end's layer is named before its pair's, so a creation it names already
+    has its path.
     """
 
     address = value.address
@@ -4232,18 +4234,39 @@ def _key_part_end(
                 repair_description=f"Give each key of {kind}: " + ", ".join(declared.keys),
                 replacement={"keys": list(declared.keys)},
             )
-        path = created_keys.get((kind, key_encoding(key)))
-        single = raw if isinstance(raw, str) and len(key) == 1 else None
-        if path is None:
+        # An end named by key is the one Subject holding that key, read by its
+        # holders only (never as id or alias text): every distinct holder counts,
+        # accepted ones and each creation of this change (two further holders of a
+        # hint key are two), while creations that land on one Subject are one.
+        # Several refuse key_ambiguous; a creation member reference picks one.
+        now = view.resolve_key_reference(kind, key, single_text=None)
+        if now.ambiguous:
+            _refuse(
+                "cruxible.subject.key_ambiguous",
+                element,
+                key_ambiguous_message(kind, [f"subjects/{item}.json" for item in now.candidates]),
+                repair_kind="replace_subject",
+                repair_description=(
+                    "Name one of the listed Subjects as kind/id, or the creation member that "
+                    "creates the one you mean."
+                ),
+                replacement={"candidates": list(now.candidates)},
+            )
+        if (kind, key_encoding(key)) in created_keys:
+            # A creation of this change holds the key: its layer is named.
+            assert now.path is not None
+            path = now.path
+        else:
             # Frozen at the base, as a Claim's key reference is; the change's own
             # identity changes must not move it (``identity_reference_unstable``).
-            resolution = base_view.resolve_key_reference(kind, key, single_text=single)
+            resolution = base_view.resolve_key_reference(kind, key, single_text=None)
             if resolution.ambiguous:
                 _refuse(
                     "cruxible.subject.key_ambiguous",
                     element,
-                    f"{kind} key reference names several Subjects: "
-                    + ", ".join(resolution.candidates),
+                    key_ambiguous_message(
+                        kind, [f"subjects/{item}.json" for item in resolution.candidates]
+                    ),
                     repair_kind="replace_subject",
                     repair_description="Name one of the listed Subjects as kind/id.",
                     replacement={"candidates": list(resolution.candidates)},
@@ -4261,14 +4284,13 @@ def _key_part_end(
                     ),
                 )
             path = resolution.path
-            now = view.resolve_key_reference(kind, key, single_text=single)
-            if now.path != path or now.ambiguous:
+            if now.path != path:
                 _refuse(
                     IDENTITY_REFERENCE_UNSTABLE,
                     element,
                     f"The {kind} key {raw!r} names {path} at the base, and "
-                    f"{now.path or list(now.candidates) or 'no Subject'} once this change's own "
-                    "identity changes (key or alias Claims) apply.",
+                    f"{now.path or 'no Subject'} once this change's own identity changes "
+                    "(key or alias Claims) apply.",
                     repair_kind="split_change_set",
                     repair_description=(
                         "Put the identity change (an alias or key Claim) and the pair that names "
