@@ -24,8 +24,14 @@ from typing import Any
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
-from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
-from cruxible_client.contracts.claims import parse_claim, render_claim
+from cruxible_client.contracts.claim_types import (
+    ClaimInverse,
+    ClaimInverseSlotKey,
+    ClaimType,
+    claim_type_path,
+    render_claim_type,
+)
+from cruxible_client.contracts.claims import NoneClaimObject, parse_claim, render_claim
 from cruxible_client.contracts.identity_normalizers import NO_NORMALIZER
 from cruxible_client.contracts.subject_kinds import (
     SubjectEnd,
@@ -80,7 +86,15 @@ PAST = OBSERVED_AT - timedelta(days=30)
 FUTURE = OBSERVED_AT + timedelta(days=30)
 
 
-def _type(predicate: str, value: Any = None, *, many: bool = False) -> ClaimType:
+def _type(
+    predicate: str, value: Any = None, *, many: bool = False, inverse: bool = False
+) -> ClaimType:
+    extra: dict[str, Any] = {}
+    if inverse:
+        # A none says the whole one-valued slot holds nothing.
+        extra["inverse"] = ClaimInverse(
+            key=ClaimInverseSlotKey(kind="slot"), evidence_rules=("self",)
+        )
     return build_claim_type(
         predicate,
         value_type={"type": "string"} if value is None else value,
@@ -88,6 +102,7 @@ def _type(predicate: str, value: Any = None, *, many: bool = False) -> ClaimType
         evidence_admission_policy=_self_evidence(),
         revision_evidence="replace",
         cardinality="many" if many else "one",
+        **extra,
     )
 
 
@@ -106,7 +121,7 @@ TYPES: dict[str, ClaimType] = {
         _type(IID),
         _type(O_INVENTORY, (INVENTORY,)),
         _type(O_COMPONENT, (COMPONENT,)),
-        _type(SCOPE),
+        _type(SCOPE, inverse=True),
         _type(E_COMPONENT, (COMPONENT,)),
         _type(E_VULN, (VULN,)),
         _type(JUSTIFICATION),
@@ -179,15 +194,22 @@ class ReachWorld:
     def claim(
         self,
         predicate: str,
-        value: str,
+        value: str | None,
         at: str,
         *,
         effective_from: datetime | None = None,
         effective_until: datetime | None = None,
     ) -> str:
-        """A Claim of ``predicate`` about ``at``: a Subject path names a Subject object."""
+        """A Claim of ``predicate`` about ``at``: a Subject path names a Subject object.
 
-        obj = to(value) if value.startswith("subjects/") else literal(value)
+        ``None`` is an inverse (``none``): the slot holds nothing.
+        """
+
+        obj: Any
+        if value is None:
+            obj = NoneClaimObject()
+        else:
+            obj = to(value) if value.startswith("subjects/") else literal(value)
         path, content = real_claim(
             self.instance,
             self._tree,

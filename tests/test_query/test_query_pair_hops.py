@@ -148,6 +148,9 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> ReachWorld:
             # One visible and one hidden scope: the pair binds through the visible one.
             built.claim(SCOPE, "required", first)
             built.claim(SCOPE, "optional", first, effective_until=PAST)
+        elif index == 5:
+            # Only an inverse: the slot holds nothing, so the pair never binds.
+            built.claim(SCOPE, None, first)
         second = built.subject(OCCURRENCE, inventories[1], component)
         built.claim(SCOPE, "required", second)
         if index % 3 == 0:
@@ -195,7 +198,8 @@ def test_a_hidden_retired_or_missing_fact_never_binds_its_pair(world: ReachWorld
         ("i0--c0", "required"),
         ("i0--c4", "required"),
     ]
-    # c1 (stale) and c2 (not yet effective) still have their pair index rows:
+    # c1 (stale), c2 (not yet effective) and c5 (a none only) still have their
+    # pair index rows:
     # the index proposed them, and their own Claims decided.
     with world.instance.bind_accepted_projection(
         world.instance.accepted_coordinate()
@@ -207,7 +211,13 @@ def test_a_hidden_retired_or_missing_fact_never_binds_its_pair(world: ReachWorld
                 ("subjects/qr.inventory/i0.json", SCOPE),
             )
         }
-    assert proposed == {"i0--c0.json", "i0--c1.json", "i0--c2.json", "i0--c4.json"}
+    assert proposed == {
+        "i0--c0.json",
+        "i0--c1.json",
+        "i0--c2.json",
+        "i0--c4.json",
+        "i0--c5.json",
+    }
     assert result.verdict_visibility is not None
     assert result.verdict_visibility.excluded_claim_count == 3
     held = run(world, definition(world, sbom_spec("held")), {"inventory": f"{INVENTORY}/i0"})
@@ -412,3 +422,44 @@ def test_pair_hops_are_flat_in_unrelated_pairs_and_shells(
     for counter in COUNTED:
         assert small[counter] > 0
         assert large[counter] <= small[counter] * RATIO + SLACK[counter], (read, counter, measured)
+
+
+def test_a_contradicted_fact_never_binds_its_pair(
+    world: ReachWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A contradicted scope hides at the shared visibility boundary, on both paths."""
+
+    from cruxible_client.contracts.claims import claim_statement_digest, parse_claim
+    from cruxible_core.query import backends
+
+    tree = world.instance.tree_at(world.instance.accepted_coordinate().git_oid)
+    target = next(
+        claim_statement_digest(claim.statement).tagged
+        for path, content in tree.items()
+        if path.startswith("claims/")
+        for claim in (parse_claim(content, path=path),)
+        if claim.statement.predicate == SCOPE
+        and claim.statement.subject.artifact_path.endswith("/i0--c0.json")
+        and claim.lifecycle.state == "live"
+    )
+    verdict = backends.evaluate_claim_verdict
+
+    def contradicted(**kwargs: Any) -> Any:
+        found = verdict(**kwargs)
+        if kwargs["claim_statement_digest"] == target:
+            return found.model_copy(update={"verdict": "contradicted"})
+        return found
+
+    monkeypatch.setattr(backends, "evaluate_claim_verdict", contradicted)
+    whole = served.build_accepted_query_facts(
+        world.instance, coordinate=world.instance.accepted_coordinate()
+    )
+    parameters = {"inventory": f"{INVENTORY}/i0"}
+    current = compare(world, definition(world, sbom_spec()), parameters, whole=whole)
+    assert [row.fields[1].value for row in current.rows] == ["i0--c4"]
+    assert current.verdict_visibility is not None
+    assert "contradicted" in {
+        item.verdict for item in current.verdict_visibility.excluded_by_verdict
+    }
+    held = compare(world, definition(world, sbom_spec("held")), parameters, whole=whole)
+    assert [row.fields[1].value for row in held.rows] == ["i0--c1", "i0--c4"]
