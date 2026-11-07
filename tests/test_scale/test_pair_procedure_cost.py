@@ -17,14 +17,22 @@ Routes, each measured once per world (the run and its activation):
   (a shell holds no row, so it costs nothing);
 - ``line.sbom_10`` / ``line.sbom_40``: a first import of an SBOM with 10 (40)
   new components into a new inventory, beside the unrelated inventories;
-- ``line.sbom_repeat``: the same SBOM again: nothing changes.
+- ``line.sbom_repeat``: the same SBOM again: nothing changes;
+- ``line.retire_10`` / ``line.retire_40``: a complete import of a seeded inventory
+  that keeps one of its 11 (41) occurrences: 10 (40) retirements in one change.
 
 Rules: for every route and counter ``LARGE <= SMALL * RATIO + SLACK`` (the
-per-change guard's), and, in each world, ``sbom_40 <= LINEAR * sbom_10 + SLACK``.
+per-change guard's), and, in each world, ``sbom_40 <= LINEAR * sbom_10 + SLACK``
+and ``retire_40 <= LINEAR * retire_10 + SLACK``. Counters are the guard's plus
+its auxiliary ones (``claim_parses_uncached`` beside ``claim_parses``,
+``members_enumerated``, ``overlay_edits_loaded``), with the whole-tree
+enumerations of a route's activation counted apart from its run's. Known growth
+is a strict xfail naming its owner (``KNOWN``, and the retirement rule).
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -44,21 +52,60 @@ from tests.core_support._pair_procedure_support import (
     write_doc,
 )
 from tests.test_scale import _counters
-from tests.test_scale._counters import COUNTERS, counting, trace_sqlite
-from tests.test_scale.test_per_change_cost import RATIO, SLACK
+from tests.test_scale._counters import (
+    AUXILIARY,
+    COUNTERS,
+    counting,
+    enumerations_counted_as,
+    trace_sqlite,
+)
+from tests.test_scale.test_per_change_cost import RATIO
+from tests.test_scale.test_per_change_cost import SLACK as _PER_CHANGE_SLACK
 
 #: The worlds are seeded through Line runs (about 15 per world): allow the build its time.
 pytestmark = pytest.mark.timeout(3600)
 
-SMALL, LARGE = 100, 1_000
+SMALL, LARGE = (
+    tuple(int(size) for size in os.environ["CRUXIBLE_PAIR_PROCEDURE_SIZES"].split(","))
+    if os.environ.get("CRUXIBLE_PAIR_PROCEDURE_SIZES")
+    else (100, 1_000)
+)
 LINEAR = 1 + 3 * 1.25
 CURRENT = 10
 BATCH = 200
 HUB = "pkg:pypi/hub@1"
 _DESCRIPTOR_ALIASES = ("/dev/fd", "/proc/self/fd")
-COUNTED = tuple(
-    name for name in COUNTERS if name not in {"git_spawns", "other_spawns", "file_opens"}
+#: Whole-tree enumerations inside a route's activation, held apart from its run's.
+ACTIVATION_ENUMERATED = "activation_members_enumerated"
+COUNTED = (
+    *(name for name in COUNTERS if name not in {"git_spawns", "other_spawns", "file_opens"}),
+    *AUXILIARY,
+    ACTIVATION_ENUMERATED,
 )
+SLACK = {
+    **_PER_CHANGE_SLACK,
+    "claim_parses_uncached": 2,
+    "members_enumerated": 64,
+    "overlay_edits_loaded": 64,
+    ACTIVATION_ENUMERATED: 64,
+}
+#: Known growth, each a strict xfail naming its owner: it fails until fixed.
+KNOWN: dict[tuple[str, str], str] = {
+    (route, ACTIVATION_ENUMERATED): (
+        "Owner: activation handoff. prepared_generation_for_handoff "
+        "(ledger/recovery.py) walks every generation member for byte-held Claims, "
+        "and principal_registry_from_tree sorts every member path: O(the instance) "
+        "per activation."
+    )
+    for route in (
+        "line.absence_1_end.inventory",
+        "line.absence_1_end.component",
+        "line.sbom_10",
+        "line.sbom_40",
+        "line.retire_10",
+        "line.retire_40",
+    )
+}
 LINES = {
     "inventory": ("test.by-inventory", "inv"),
     "component": ("test.by-component", "comp"),
@@ -84,7 +131,8 @@ class _World:
     def apply(self, line: str) -> Any:
         state = self.run(line)
         if state.terminal_egress[0].proposal_id is not None:
-            activate(self.instance, state)
+            with enumerations_counted_as(ACTIVATION_ENUMERATED):
+                activate(self.instance, state)
         return state
 
 
@@ -181,6 +229,36 @@ def _sbom(count: int) -> Callable[[_World], object]:
     return route
 
 
+def _retire_seed(count: int) -> Callable[[_World], object]:
+    """Before the window: an inventory of ``count + 1`` occurrences."""
+
+    def setup(world: _World) -> object:
+        inventory = f"drop-{count}"
+        write_doc(
+            world.workspace,
+            "inv",
+            rows(inventory, _purls(inventory, count + 1)),
+            inventory=inventory,
+        )
+        return world.apply("inventory")
+
+    return setup
+
+
+def _retire(count: int) -> Callable[[_World], object]:
+    def route(world: _World) -> object:
+        inventory = f"drop-{count}"
+        write_doc(
+            world.workspace, "inv", rows(inventory, _purls(inventory, 1)), inventory=inventory
+        )
+        state = world.apply("inventory")
+        changes = sorted(c.change_kind for c in state.terminal_egress[0].children if c.change_kind)
+        assert changes == ["reobservation"] + ["retirement"] * count, changes
+        return state
+
+    return route
+
+
 def _repeat(world: _World) -> object:
     state = world.run("sbom")
     assert state.terminal_egress[0].proposal_id is None
@@ -193,6 +271,14 @@ ROUTES: dict[str, Callable[[_World], object]] = {
     "line.sbom_10": _sbom(10),
     "line.sbom_40": _sbom(40),
     "line.sbom_repeat": _repeat,
+    "line.retire_10": _retire(10),
+    "line.retire_40": _retire(40),
+}
+
+#: Before the warm-up and outside the window: the state a route changes.
+SETUP: dict[str, Callable[[_World], object]] = {
+    "line.retire_10": _retire_seed(10),
+    "line.retire_40": _retire_seed(40),
 }
 
 
@@ -206,15 +292,22 @@ WARM = {
     "line.sbom_10": "sbom",
     "line.sbom_40": "sbom",
     "line.sbom_repeat": "sbom",
+    "line.retire_10": "inventory",
+    "line.retire_40": "inventory",
 }
 
 
 def _measure(
-    session: _Session, route: Callable[[_World], object], line: str
+    session: _Session,
+    route: Callable[[_World], object],
+    line: str,
+    setup: Callable[[_World], object] | None = None,
 ) -> dict[str, dict[str, int]]:
     found: dict[str, dict[str, int]] = {}
     for name, world in session.worlds.items():
         print(f"measuring {name}", file=sys.stderr, flush=True)
+        if setup is not None:
+            setup(world)
         world.apply(line)
         # The projection catches up on the last activation before the window.
         with world.instance.bind_accepted_projection(world.instance.accepted_coordinate()):
@@ -245,7 +338,7 @@ def session(tmp_path_factory: pytest.TempPathFactory) -> Iterator[_Session]:
             for name, route in ROUTES.items():
                 print(f"route {name}", file=sys.stderr, flush=True)
                 try:
-                    built.measured[name] = _measure(built, route, WARM[name])
+                    built.measured[name] = _measure(built, route, WARM[name], SETUP.get(name))
                 except Exception as exc:  # noqa: BLE001 - reported by the route's cases
                     built.failed[name] = exc
             yield built
@@ -254,8 +347,11 @@ def session(tmp_path_factory: pytest.TempPathFactory) -> Iterator[_Session]:
 @pytest.mark.parametrize("counter", COUNTED)
 @pytest.mark.parametrize("route", tuple(ROUTES))
 def test_a_pair_row_run_costs_the_same_beside_ten_times_the_history(
-    session: _Session, route: str, counter: str
+    session: _Session, route: str, counter: str, request: pytest.FixtureRequest
 ) -> None:
+    owner = KNOWN.get((route, counter))
+    if owner is not None:
+        request.applymarker(pytest.mark.xfail(strict=True, reason=owner))
     if route in session.failed:
         raise session.failed[route]
     small = session.measured[route]["small"][counter]
@@ -274,6 +370,32 @@ def test_an_sbom_import_grows_linearly_with_its_components(
     ten = session.measured["line.sbom_10"][world][counter]
     forty = session.measured["line.sbom_40"][world][counter]
     assert forty <= LINEAR * ten + SLACK[counter], (counter, ten, forty)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Owner: apply-cost Cause 2. Each retirement member's closure "
+        "(reverse_pin_closure via claim_retirement_inventory) builds its own "
+        "EvaluationRows.overlay of the whole staged change, so a change's "
+        "retirements cost O(retirements x change edits)."
+    ),
+)
+@pytest.mark.parametrize("world", ["small", "large"])
+def test_a_retirement_change_grows_linearly_with_its_retirements(
+    session: _Session, world: str
+) -> None:
+    for route in ("line.retire_10", "line.retire_40"):
+        if route in session.failed:
+            raise session.failed[route]
+    ten = session.measured["line.retire_10"][world]
+    forty = session.measured["line.retire_40"][world]
+    over = {
+        counter: (ten[counter], forty[counter])
+        for counter in COUNTED
+        if forty[counter] > LINEAR * ten[counter] + SLACK[counter]
+    }
+    assert not over, over
 
 
 def test_the_measurements_report(session: _Session) -> None:
