@@ -597,8 +597,42 @@ def _live(connection: Any, selected: set[str], live_only: bool) -> tuple[str, ..
     )
 
 
+def _filter_reads(filter_: QueryFilter | None) -> dict[str, set[str]]:
+    """Each binding's predicates one filter reads."""
+
+    reads: dict[str, set[str]] = {}
+    _walk_reads(filter_, reads)
+    return reads
+
+
+def _walk_reads(filter_: QueryFilter | None, reads: dict[str, set[str]]) -> None:
+    def ref(value: QueryValueRef) -> None:
+        if isinstance(value, QueryClaimValueRef | QueryClaimFieldRef):
+            reads.setdefault(value.binding, set()).add(value.predicate)
+
+    if filter_ is None:
+        return
+    if isinstance(filter_, QueryConjunctionFilter | QueryDisjunctionFilter):
+        for item in filter_.filters:
+            _walk_reads(item, reads)
+    elif isinstance(filter_, QueryNegationFilter):
+        _walk_reads(filter_.operand, reads)
+    elif isinstance(filter_, QueryClaimPresenceFilter):
+        reads.setdefault(filter_.binding, set()).add(filter_.predicate)
+    elif isinstance(filter_, QueryComparisonFilter):
+        ref(filter_.left)
+        ref(filter_.right)
+    else:
+        ref(filter_.left)
+        for value in filter_.values:
+            ref(value)
+
+
 def _binding_reads(query: QueryDefinition) -> dict[str, set[str]]:
-    """Each binding's predicates the evaluator reads on its Subjects (filters, fields, orders)."""
+    """Each binding's predicates read on the final rows (where, fields, orders, includes).
+
+    A hop's own filter is read where that hop evaluates (``query_reach``).
+    """
 
     reads: dict[str, set[str]] = {}
 
@@ -607,25 +641,8 @@ def _binding_reads(query: QueryDefinition) -> dict[str, set[str]]:
             reads.setdefault(value.binding, set()).add(value.predicate)
 
     def walk(filter_: QueryFilter | None) -> None:
-        if filter_ is None:
-            return
-        if isinstance(filter_, QueryConjunctionFilter | QueryDisjunctionFilter):
-            for item in filter_.filters:
-                walk(item)
-        elif isinstance(filter_, QueryNegationFilter):
-            walk(filter_.operand)
-        elif isinstance(filter_, QueryClaimPresenceFilter):
-            reads.setdefault(filter_.binding, set()).add(filter_.predicate)
-        elif isinstance(filter_, QueryComparisonFilter):
-            ref(filter_.left)
-            ref(filter_.right)
-        else:
-            ref(filter_.left)
-            for value in filter_.values:
-                ref(value)
+        _walk_reads(filter_, reads)
 
-    for step in query.traversal:
-        walk(step.where)
     walk(query.where)
     for field in () if query.projection is None else query.projection.fields:
         ref(field.value)
@@ -715,6 +732,14 @@ def query_reach(
     def extend(row: Row, binding: str, value: str | None) -> Row:
         return (*row, (binding, value))
 
+    def step_reads(where: QueryFilter | None, candidates: set[Row]) -> None:
+        # A hop's filter runs on every candidate row of that hop, including
+        # rows a later required hop removes: its buckets load for those rows.
+        for binding, predicates in _filter_reads(where).items():
+            subjects = {path for row in candidates if (path := bound(row, binding)) is not None}
+            for predicate in sorted(predicates):
+                forward(subjects, predicate)
+
     for step in query.traversal:
         produced: set[Row] = set()
         if isinstance(step, QueryTraversalStep):
@@ -734,6 +759,7 @@ def query_reach(
                         produced.add(extend(row, step.binding, target))
                 if not step.required:
                     produced.add(extend(row, step.binding, None))
+            step_reads(step.where, produced)
             rows = produced
             continue
         assert isinstance(step, QueryPairStep)
@@ -749,6 +775,7 @@ def query_reach(
                 produced.add(extend(row, step.binding, pair))
             if not step.required:
                 produced.add(extend(row, step.binding, None))
+        step_reads(step.where, produced)
         rows = produced
     reached: dict[str, set[str]] = {}
     for row in rows:

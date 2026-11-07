@@ -206,6 +206,12 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> ReachWorld:
         stray = built.subject(FINDING, f"g{index}")
         built.claim(FOUND_IN, side, stray, effective_until=PAST if index == 2 else None)
         built.claim(SEVERITY, "high", stray)
+    # One finding with competing one-valued severities (a conflict to surface or refuse).
+    contested = built.subject(UNIT, "other", "contested")
+    disputed = built.subject(FINDING, "fc")
+    built.claim(FOUND_IN, contested, disputed)
+    built.claim(SEVERITY, "high", disputed)
+    built.claim(SEVERITY, "low", disputed)
     vulns = [built.subject(VULN, f"v{index}") for index in range(3)]
     for index in range(4):
         component = built.subject(COMPONENT, f"c{index}")
@@ -473,3 +479,76 @@ def test_a_row_dependent_operand_refusal_survives_a_seek(world: ReachWorld) -> N
         assert result.verdict == "refused", result
         assert result.refusal is not None
         assert result.refusal.code == "cruxible.query.value_type_mismatch"
+
+
+def _dead_end(world: ReachWorld, where: Any, *, refuse_on_conflict: bool) -> Any:
+    """``by_unit`` whose hop 1 filters on ``where``, then a required hop with no edge."""
+
+    spec = by_unit_spec()
+    spec["hops"] = [*spec["hops"], {"x": f"f.{FOUND_IN}!: {UNIT}"}]
+    query = definition(world, spec).query
+    first, second = query.traversal
+    # No finding holds an ``affected_by``: the second hop removes every row.
+    second = second.model_copy(update={"predicate": AFFECTED_BY, "target_subject_kinds": (VULN,)})
+    update: dict[str, Any] = {"traversal": (first.model_copy(update={"where": where}), second)}
+    if refuse_on_conflict:
+        one = query.default_budgets.model_copy(update={"max_results": 1})
+        update.update(
+            result_cardinality="one",
+            default_budgets=one,
+            maximum_budgets=query.maximum_budgets.model_copy(update={"max_results": 1}),
+            evaluation_policy=query.evaluation_policy.model_copy(
+                update={"conflict_behavior": "refuse_on_conflict"}
+            ),
+        )
+    return _accepted(query.model_copy(update=update))
+
+
+def test_a_hop_filter_refuses_before_a_later_hop_empties_the_rows(world: ReachWorld) -> None:
+    """A hop's filter reads every candidate row of that hop: its conflict or type
+    refusal stands even when a later required hop removes every row."""
+
+    from cruxible_client.contracts.query.grammar import (
+        QueryClaimValueRef,
+        QueryComparisonFilter,
+        QueryLiteralRef,
+    )
+
+    whole = served.build_accepted_query_facts(
+        world.instance, coordinate=world.instance.accepted_coordinate()
+    )
+    severity = QueryClaimValueRef(binding="f", predicate=SEVERITY)
+    cases = [
+        (
+            _dead_end(
+                world,
+                QueryComparisonFilter(
+                    left=severity,
+                    operator="eq",
+                    right=QueryLiteralRef(value="high"),
+                    value_type="string",
+                ),
+                refuse_on_conflict=True,
+            ),
+            "other--contested",
+            "cruxible.query.claim_conflict",
+        ),
+        (
+            _dead_end(
+                world,
+                QueryComparisonFilter(
+                    left=severity,
+                    operator="eq",
+                    right=QueryLiteralRef(value=1),
+                    value_type="integer",
+                ),
+                refuse_on_conflict=False,
+            ),
+            "acme--hub",
+            "cruxible.query.value_type_mismatch",
+        ),
+    ]
+    for query, unit, code in cases:
+        result = compare(world, query, {"unit": _reference(world, UNIT, unit)}, whole=whole)
+        assert result.verdict == "refused", result
+        assert result.refusal is not None and result.refusal.code == code
