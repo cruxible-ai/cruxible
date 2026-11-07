@@ -949,7 +949,12 @@ def snapshot_against(tree: Mapping[str, bytes], parent: SnapshotTree) -> Snapsho
 
     This compatibility boundary intentionally enumerates external full input.
     Once complete, downstream indexes need only the sealed changed paths.
+    An internal staging cursor forked from ``parent`` already holds its exact
+    edits, so it is sealed rather than enumerated: one retirement per Claim in
+    a change set would otherwise walk the whole tree once per member.
     """
+    if isinstance(tree, CandidateTree):
+        tree = tree.snapshot()
     if isinstance(tree, SnapshotTree) and tree.edits_from(parent) is not None:
         return tree
     builder = parent.fork()
