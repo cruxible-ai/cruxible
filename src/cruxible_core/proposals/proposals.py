@@ -1822,6 +1822,10 @@ class _MemberContext:
     candidate_dependencies: DependencyIndexV1
     candidate_identities: Mapping[str, tuple[ArtifactIdentity, str]]
     resolved: _ResolvedArtifacts
+    #: This change's own newly-proposed CaptureContract members, by exact
+    #: digest -- computed once per change (``_changed_capture_contracts_by_digest``
+    #: over ``scope``), never per Claim and never a walk of ``resolved``.
+    staged_capture_contracts: Mapping[str, AcceptedCaptureContract]
     claim_admission_by_path: Mapping[str, tuple[dict[str, object], ...]]
     claim_admission_digests_by_path: Mapping[str, tuple[str, ...]]
     claim_admission_query_digests_by_path: Mapping[str, tuple[str, ...]]
@@ -3332,18 +3336,35 @@ def _subject_versions(
     )
 
 
-def _staged_capture_contracts_by_digest(
-    resolved: Mapping[str, AcceptedCaptureContract],
+def _changed_capture_contracts_by_digest(
+    scope: Iterable[str], candidate_tree: Mapping[str, bytes]
 ) -> dict[str, AcceptedCaptureContract]:
-    """This change's own resolved CaptureContracts, re-keyed by exact digest.
+    """This change's own newly-proposed CaptureContract members, by exact digest.
 
-    ``resolved`` is identity-keyed and already bounded to the members this
-    one change touches (never a catalog or instance-wide walk), so re-keying
-    it by digest is one small, fixed-size dict build per law evaluation, not
-    an enumeration of accepted history.
+    ``scope`` is the change set's own changed paths -- never the full
+    candidate or accepted CaptureContract table -- so this parses at most a
+    handful of members once per change (review F1, round 2): the first cut
+    re-keyed ``_ResolvedArtifacts.capture_contracts``, a mapping lazily
+    backed by every CaptureContract the candidate can resolve (named-rule
+    lookups need that reach); calling ``.values()`` on it forced a full
+    accepted-state enumeration -- O(every contract in the instance) -- for
+    every Claim, family rule or not. Walking ``scope`` instead touches only
+    the paths this exact change proposes.
     """
 
-    return {accepted.artifact_digest: accepted for accepted in resolved.values()}
+    staged: dict[str, AcceptedCaptureContract] = {}
+    for path in scope:
+        if not _CAPTURE_CONTRACT_PATH_RE.match(path):
+            continue
+        content = candidate_tree.get(path)
+        if content is None:
+            continue
+        contract = parse_capture_contract(content, path=path)
+        digest = capture_contract_digest(contract).tagged
+        staged[digest] = AcceptedCaptureContract(
+            path=path, contract=contract, artifact_digest=digest
+        )
+    return staged
 
 
 def historical_capture_contract_resolver(
@@ -3463,7 +3484,7 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         historical_capture_contract=historical_capture_contract_resolver(
             context.historical_artifact_provider,
             context.accepted_coordinate(),
-            staged=_staged_capture_contracts_by_digest(context.resolved.capture_contracts),
+            staged=context.staged_capture_contracts,
         ),
         claim_type_v7_semantics=True,
         # An attributed retirement alone: a Claim retired with its Subject, or
@@ -4764,6 +4785,7 @@ def _evaluate_scoped_members(
             )
     candidate_states = candidate_dependencies.states
     resolved = _resolved_artifacts(candidate_tree, candidate_states)
+    staged_capture_contracts = _changed_capture_contracts_by_digest(scope, candidate_tree)
     claim_admission_by_path: dict[str, tuple[dict[str, object], ...]] = {}
     claim_admission_digests_by_path: dict[str, tuple[str, ...]] = {}
     claim_admission_query_digests_by_path: dict[str, tuple[str, ...]] = {}
@@ -4905,6 +4927,7 @@ def _evaluate_scoped_members(
             candidate_dependencies=candidate_dependencies,
             candidate_identities=candidate_identities,
             resolved=resolved,
+            staged_capture_contracts=staged_capture_contracts,
             claim_admission_by_path=claim_admission_by_path,
             claim_admission_digests_by_path=claim_admission_digests_by_path,
             claim_admission_query_digests_by_path=(claim_admission_query_digests_by_path),
