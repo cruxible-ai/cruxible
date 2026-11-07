@@ -221,6 +221,7 @@ from cruxible_client.contracts.query.definitions import (
     parse_query_definition,
     query_definition_digest,
 )
+from cruxible_client.contracts.query.grammar import QueryPairStep
 from cruxible_client.contracts.resolution_contracts import (
     ResolutionContract,
     parse_resolution_contract,
@@ -2537,6 +2538,8 @@ def _literal_object_traversal(
     so this is the one place that can name it.
     """
     for step in query.traversal:
+        if isinstance(step, QueryPairStep):
+            continue
         accepted = claim_types.get(f"ClaimType:{step.predicate}")
         if accepted is None:
             # The pin law resolves every referenced ClaimType before this runs, so
@@ -2558,6 +2561,54 @@ def _literal_object_traversal(
             ),
             subject=SemanticAddress.whole_artifact(accepted.path),
         )
+    return None
+
+
+def _pair_hop_issue(
+    query: QueryDefinition,
+    *,
+    path: str,
+    tree: Mapping[str, bytes],
+    claim_types: Mapping[str, AcceptedClaimType],
+) -> CompilerDiagnostic | None:
+    """Refuse a pair hop that does not name its pair kind's key as the law requires.
+
+    Each part is a Subject-valued key part of a live keyed kind; a hop without
+    a fact names the whole key, one with a fact names one part and a fact
+    that is not a key part. A pair kind's key is frozen for life (R13), so
+    what is checked here holds for as long as the definition does.
+    """
+
+    from cruxible_client.contracts.subject_kinds import live_subject_kind
+
+    for step in query.traversal:
+        if not isinstance(step, QueryPairStep):
+            continue
+        declared = live_subject_kind(tree, step.subject_kind)
+        keys = () if declared is None else declared.keys
+        parts = tuple(item.part for item in step.parts)
+        problem: str | None = None
+        if not keys:
+            problem = f"{step.subject_kind!r} is not a live keyed Subject kind"
+        elif not set(parts).issubset(keys):
+            problem = f"parts {list(parts)} are not all key parts of {step.subject_kind}"
+        elif step.fact is None and set(parts) != set(keys):
+            problem = f"a whole-key hop names every key part of {step.subject_kind}"
+        elif step.fact is not None and step.fact in keys:
+            problem = f"fact {step.fact!r} is a key part of {step.subject_kind}"
+        else:
+            for part in parts:
+                accepted = claim_types.get(f"ClaimType:{part}")
+                if accepted is None or claim_value_kind(accepted.claim_type.value) != "subject":
+                    problem = f"key part {part!r} is not Subject-valued"
+                    break
+        if problem is not None:
+            return CompilerDiagnostic(
+                code="cruxible.query.pair_hop_invalid",
+                severity="error",
+                message=f"Pair hop {step.binding!r}: {problem}.",
+                subject=SemanticAddress.whole_artifact(path),
+            )
     return None
 
 
@@ -2620,6 +2671,14 @@ def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
     literal_traversal = _literal_object_traversal(query, claim_types=context.resolved.claim_types)
     if literal_traversal is not None:
         return _MemberVerdict(diagnostics=(literal_traversal,))
+    pair_hop = _pair_hop_issue(
+        query,
+        path=context.path,
+        tree=context.candidate_tree,
+        claim_types=context.resolved.claim_types,
+    )
+    if pair_hop is not None:
+        return _MemberVerdict(diagnostics=(pair_hop,))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted QueryDefinition law result is incomplete")
     if predecessor is not None and predecessor.artifact_digest != law.artifact_digest:

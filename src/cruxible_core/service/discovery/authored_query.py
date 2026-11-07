@@ -137,6 +137,67 @@ class AuthoredQueryResolver:
             )
         return outgoing.predicate, outgoing.object_kinds
 
+    def pair(
+        self,
+        kind: str,
+        parts: tuple[tuple[str, tuple[str, ...]], ...],
+        fact: str | None,
+        *,
+        path: str,
+    ) -> tuple[tuple[str, ...], str | None]:
+        """Resolve a pair hop's parts and fact against the pair kind's key (R8).
+
+        Each part is a Subject-valued key part of ``kind`` whose end kind
+        admits the binding's kinds. Without a fact the parts are the whole key;
+        with one, exactly one part and a fact that is not a key part.
+        """
+
+        def refuse(message: str, repair: str) -> ReadRefusalError:
+            return query_refusal(
+                "cruxible.query.pair_hop_invalid", message, field_path=path, repair=repair
+            )
+
+        keys = self.vocabulary.kind_keys.get(kind)
+        if not keys:
+            raise refuse(f"{kind!r} is not a keyed Subject kind", "hop to a pair kind")
+        predicates: list[str] = []
+        for name, kinds in parts:
+            info = self.vocabulary.resolve_field((kind,), name, field_path=path)
+            if isinstance(info, str) or info.predicate not in keys:
+                raise refuse(
+                    f"{name!r} is not a key part of {kind}",
+                    "name the pair kind's key parts: " + ", ".join(keys),
+                )
+            if info.value_type != "subject":
+                raise refuse(
+                    f"key part {info.predicate!r} is a literal, not a Subject end",
+                    "bind only Subject-valued key parts",
+                )
+            if not set(kinds).issubset(info.object_kinds):
+                raise refuse(
+                    f"key part {info.predicate!r} names a {' or '.join(info.object_kinds)}",
+                    "bind the part to a binding of its end kind",
+                )
+            if info.predicate in predicates:
+                raise refuse(f"key part {info.predicate!r} is named twice", "name it once")
+            predicates.append(info.predicate)
+        if fact is None:
+            if set(predicates) != set(keys):
+                raise refuse(
+                    f"a whole-key hop names every key part of {kind}",
+                    "name all of " + ", ".join(keys) + ", or one part with `with <fact>`",
+                )
+            return tuple(predicates), None
+        if len(predicates) != 1:
+            raise refuse(
+                "a hop `with <fact>` binds exactly one key part",
+                "bind one end, or every part without `with`",
+            )
+        info = self.vocabulary.resolve_field((kind,), fact, field_path=path)
+        if isinstance(info, str) or info.predicate in keys:
+            raise refuse(f"{fact!r} is not a fact of {kind}", "name a non-key predicate")
+        return tuple(predicates), info.predicate
+
     def operator(self, predicate: str, operator: str, *, path: str) -> None:
         check_operator(
             self.vocabulary.predicates[predicate], operator, field_path=path, label=predicate
@@ -176,9 +237,9 @@ def _predicate_info(path: str, content: bytes) -> PredicateInfo | None:
 
 
 @lru_cache(maxsize=4096)
-def _declared_kind(path: str, content: bytes) -> str | None:
+def _declared_kind(path: str, content: bytes) -> tuple[str, tuple[str, ...]] | None:
     value = parse_subject_kind(content, path=path)
-    return value.identity.name if value.lifecycle.state == "live" else None
+    return (value.identity.name, value.keys) if value.lifecycle.state == "live" else None
 
 
 def candidate_query_vocabulary(
@@ -191,13 +252,16 @@ def candidate_query_vocabulary(
     """
     predicates = {}
     kinds: set[str] = set()
+    kind_keys: dict[str, tuple[str, ...]] = {}
     declared_kinds = tree_subject_kind_reader(tree)
     for path in tree if paths is None else paths:
         if path.startswith("subject-kinds/") and path.endswith(".json"):
             content = tree.get(path)
             declared = None if content is None else _declared_kind(path, content)
             if declared is not None:
-                kinds.add(declared)
+                kinds.add(declared[0])
+                if declared[1]:
+                    kind_keys[declared[0]] = declared[1]
             continue
         if not path.startswith("claim-types/") or not path.endswith(".json"):
             continue
@@ -214,7 +278,7 @@ def candidate_query_vocabulary(
         predicates[info.predicate] = info
         kinds.update(concrete_subject_kinds(info.subject_kinds))
         kinds.update(info.object_kinds)
-    return QueryVocabulary(predicates=predicates, kinds=tuple(sorted(kinds)))
+    return QueryVocabulary(predicates=predicates, kinds=tuple(sorted(kinds)), kind_keys=kind_keys)
 
 
 def candidate_vocabulary_paths(

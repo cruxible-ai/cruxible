@@ -126,10 +126,16 @@ def real_claim(
     obj: Any,
     *,
     subject: str,
+    claim_type: ClaimType | None = None,
+    effective_from: datetime | None = None,
+    effective_until: datetime | None = None,
 ) -> tuple[str, bytes]:
-    """One Claim citing its own self-source Capture, about a Subject in ``tree``."""
+    """One Claim citing its own self-source Capture, about a Subject in ``tree``.
 
-    claim_type = REAL_TYPES[predicate]
+    ``claim_type`` defaults to the pair world's ``REAL_TYPES[predicate]``.
+    """
+
+    claim_type = REAL_TYPES[predicate] if claim_type is None else claim_type
     claim_id = f"CLM-{number:032x}"
     path = claim_path(claim_id)
     shell_artifact: SubjectShell = parse_subject(tree[subject], path=subject)
@@ -189,6 +195,8 @@ def real_claim(
             predicate=predicate,
             object=obj,
             role="observation",
+            effective_from=effective_from,
+            effective_until=effective_until,
         ),
         backing=ClaimBacking(
             referent_context=ClaimReferentContext(

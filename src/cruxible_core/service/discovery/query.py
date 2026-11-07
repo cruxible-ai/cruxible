@@ -9,6 +9,7 @@ queried Claim and an explained Claim can never disagree about their verdict.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from datetime import datetime
 from typing import Any, Literal
 
@@ -65,11 +66,14 @@ from cruxible_core.indexes.subject_aliases import projection_connection, referen
 from cruxible_core.indexes.subject_identity import key_normalizer_of, tree_subject_kind_reader
 from cruxible_core.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
 from cruxible_core.query.engine import (
+    OperandProbe,
+    _RefusalSignal,
     bind_reference_forms,
     evaluate_artifact_query,
     evaluate_claim_query,
     procedure_read_budgets,
     query_execution_receipt,
+    resolve_query_parameters,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.query_definitions import accepted_query_definition
@@ -325,9 +329,14 @@ class _AcceptedQueryFactsRead:
         subject_kinds: tuple[str, ...] | None = None,
         consulted_bodies: dict[str, Any] | None = None,
         entry_subject_paths: tuple[str, ...] | None = None,
+        claim_paths: tuple[str, ...] | None = None,
     ) -> None:
         self._instance = instance
         self._entry_subject_paths = entry_subject_paths
+        # A served query's reach (``query_pushdown.query_reach``): exactly the
+        # live Claims its evaluation can read, instead of its predicates' all.
+        self._reached_claim_paths = claim_paths
+        self._narrowed = entry_subject_paths is not None or claim_paths is not None
         self._consulted_bodies = consulted_bodies
         # A served query names every predicate and entry Subject kind it can
         # read; with both, only the Subjects it can reach are read and parsed.
@@ -422,12 +431,16 @@ class _AcceptedQueryFactsRead:
                 self._context = context
                 self._tree = self._source_tree if self._source_tree is not None else context.tree
                 with self._instance.bind_accepted_projection(self._coordinate) as projection:
-                    self._claim_paths = _claim_paths(
-                        projection.typed.connection,
-                        predicates=self._predicates,
-                        live_only=not include_retired,
-                        subject_paths=self._entry_subject_paths,
-                    )
+                    if self._reached_claim_paths is not None:
+                        assert not include_retired, "a reached read holds live Claims only"
+                        self._claim_paths = self._reached_claim_paths
+                    else:
+                        self._claim_paths = _claim_paths(
+                            projection.typed.connection,
+                            predicates=self._predicates,
+                            live_only=not include_retired,
+                            subject_paths=self._entry_subject_paths,
+                        )
                     self._claim_paths_live_only = not include_retired
                     # A scoped query over accepted bytes reaches Subjects by its
                     # entry kinds (plus those its Claims name): select those
@@ -445,10 +458,8 @@ class _AcceptedQueryFactsRead:
                         else tuple(row.path for row in projection.typed.envelopes(kind="subject"))
                     )
                     for value in projection.typed.claim_attestations(
-                        current_claims_only=self._entry_subject_paths is None,
-                        claim_predicates=self._predicates
-                        if self._entry_subject_paths is None
-                        else None,
+                        current_claims_only=not self._narrowed,
+                        claim_predicates=self._predicates if not self._narrowed else None,
                         claim_versions=(
                             tuple(
                                 (str(row[0]), str(row[1]))
@@ -459,7 +470,7 @@ class _AcceptedQueryFactsRead:
                                     self._claim_paths,
                                 )
                             )
-                            if self._entry_subject_paths is not None
+                            if self._narrowed
                             else None
                         ),
                     ):
@@ -470,7 +481,7 @@ class _AcceptedQueryFactsRead:
                             ),
                             [],
                         ).append(value)
-                    if self._entry_subject_paths is not None:
+                    if self._narrowed:
                         type_paths = tuple(
                             claim_type_path(predicate) for predicate in self._predicates or ()
                         )
@@ -524,6 +535,7 @@ class _AcceptedQueryFactsRead:
         elif include_retired and self._claim_paths_live_only:
             # The first build read live Claims only; this one needs the retired.
             assert isinstance(self._instance, PlaybillInstance)
+            assert self._reached_claim_paths is None, "a reached read holds live Claims only"
             with self._instance.bind_accepted_projection(self._coordinate) as projection:
                 self._claim_paths = _claim_paths(
                     projection.typed.connection,
@@ -705,6 +717,7 @@ def build_accepted_query_facts(
     subject_kinds: tuple[str, ...] | None = None,
     consulted_bodies: dict[str, Any] | None = None,
     entry_subject_paths: tuple[str, ...] | None = None,
+    claim_paths: tuple[str, ...] | None = None,
 ) -> ClaimQueryFactsV1:
     """Project accepted ledger state into the facts one evaluation may read.
 
@@ -718,6 +731,7 @@ def build_accepted_query_facts(
     answers consulted, with the file identity each had. ``entry_subject_paths``
     narrows both entry shells and Claim subjects to a proven indexed selection;
     the selected Claims' Subject referents remain available to the evaluator.
+    ``claim_paths`` (a served query's reach) is exactly the live Claims to read.
     """
 
     return _AcceptedQueryFactsRead(
@@ -728,6 +742,7 @@ def build_accepted_query_facts(
         subject_kinds=subject_kinds,
         consulted_bodies=consulted_bodies,
         entry_subject_paths=entry_subject_paths,
+        claim_paths=claim_paths,
     ).build(include_retired=include_retired)
 
 
@@ -856,6 +871,31 @@ def parameters_through_aliases(
     return resolved
 
 
+def _operand_probe(
+    definition: AcceptedQueryDefinition,
+    *,
+    parameters: Mapping[str, object] | None,
+    evaluation_time: datetime,
+    canonical_forms: Mapping[str, tuple[str, ...]],
+    key_normalizers: Mapping[str, KeyNormalizer],
+    connection: Any,
+) -> OperandProbe | None:
+    """The evaluator's operand coercion for planning, over the bound projection."""
+
+    try:
+        bindings = resolve_query_parameters(definition.query, parameters)
+    except _RefusalSignal:
+        return None
+    return OperandProbe(
+        definition.query,
+        parameters={item.name: item.value for item in bindings if item.value is not None},
+        evaluation_time=evaluation_time,
+        canonical_forms=canonical_forms,
+        key_normalizers=key_normalizers,
+        resolve_reference=reference_resolver(lambda: nullcontext(connection)),
+    )
+
+
 @positioned_read
 def evaluate_accepted_query(
     instance: PlaybillInstance,
@@ -922,39 +962,50 @@ def evaluate_accepted_query(
     key_normalizers: dict[str, KeyNormalizer] | None = None
     if facts is None:
         with instance.bind_accepted_projection(coordinate) as projection:
+            connection = projection.typed.connection
+            tree = instance.immutable_tree_at(coordinate.git_oid)
+            # Operand normalization historically comes from every live
+            # predicate row, even if this entry has no Claim of that type.
+            # Preserve that metadata with one indexed existence seek per
+            # declared predicate, without loading those rows' facts.
+            forms: dict[str, tuple[str, ...]] = {}
+            normalizers: dict[str, KeyNormalizer] = {}
+            kinds = tree_subject_kind_reader(tree)
+            for predicate in definition.query.referenced_predicates:
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM claims WHERE predicate=? AND lifecycle='live' LIMIT 1",
+                        (predicate,),
+                    ).fetchone()
+                    is not None
+                ):
+                    path = claim_type_path(predicate)
+                    claim_type = parse_claim_type(tree[path], path=path)
+                    form = effective_canonical_form(claim_type)
+                    if form:
+                        forms[predicate] = form
+                    rule = key_normalizer_of(claim_type, kinds)
+                    if rule is not None:
+                        normalizers[predicate] = rule
             selection = select_query_facts(
-                projection.typed.connection,
+                connection,
                 definition.query,
                 parameters=parameters,
                 budgets=budgets,
-                source=instance.immutable_tree_at(coordinate.git_oid),
+                source=tree,
                 live_subjects_only=live_subjects_only,
+                operands=_operand_probe(
+                    definition,
+                    parameters=parameters,
+                    evaluation_time=evaluation_time,
+                    canonical_forms=forms,
+                    key_normalizers=normalizers,
+                    connection=connection,
+                ),
             )
             if selection is not None:
-                # Operand normalization historically comes from every live
-                # predicate row, even if this entry has no Claim of that type.
-                # Preserve that metadata with one indexed existence seek per
-                # declared predicate, without loading those rows' facts.
-                canonical_forms = {}
-                key_normalizers = {}
-                tree = instance.immutable_tree_at(coordinate.git_oid)
-                kinds = tree_subject_kind_reader(tree)
-                for predicate in definition.query.referenced_predicates:
-                    if (
-                        projection.typed.connection.execute(
-                            "SELECT 1 FROM claims WHERE predicate=? AND lifecycle='live' LIMIT 1",
-                            (predicate,),
-                        ).fetchone()
-                        is not None
-                    ):
-                        path = claim_type_path(predicate)
-                        claim_type = parse_claim_type(tree[path], path=path)
-                        form = effective_canonical_form(claim_type)
-                        if form:
-                            canonical_forms[predicate] = form
-                        rule = key_normalizer_of(claim_type, kinds)
-                        if rule is not None:
-                            key_normalizers[predicate] = rule
+                canonical_forms = forms
+                key_normalizers = normalizers
     accepted_facts = (
         facts()
         if facts
@@ -965,6 +1016,7 @@ def evaluate_accepted_query(
             predicates=definition.query.referenced_predicates,
             subject_kinds=definition.query.entry.subject_kinds,
             entry_subject_paths=None if selection is None else selection.paths,
+            claim_paths=None if selection is None else selection.claim_paths,
         )
     )
     if live_subjects_only:
