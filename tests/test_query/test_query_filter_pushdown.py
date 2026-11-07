@@ -251,8 +251,10 @@ def test_selection_retains_all_competitors_and_falls_back_for_whole_set_filters(
             )
 
         status = QueryClaimValueRef(binding="item", predicate=PREDICATE)
-        # The default named policy hides verdicts: its advisory reads cannot be pruned.
-        assert selection(base.model_copy(update={"where": _eq(status, "ready")})) is None
+        # A policy hiding verdicts still seeks: a Subject the value seek
+        # eliminates cannot match whatever its Claims' verdicts, so the
+        # advisory counts hidden Claims among the candidates only.
+        assert selection(base.model_copy(update={"where": _eq(status, "ready")})) is not None
         for where in (
             QueryClaimPresenceFilter(binding="item", predicate=PREDICATE, negated=True),
             QueryNegationFilter(operand=_eq(status, "ready")),

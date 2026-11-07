@@ -31,7 +31,13 @@ def _scoped_facts_answer_as_whole_facts(monkeypatch: pytest.MonkeyPatch) -> None
         facts = build(*args, **kwargs)
         if kwargs.get("subject_kinds") is not None:
             whole[id(facts)] = build(
-                *args, **{**kwargs, "subject_kinds": None, "entry_subject_paths": None}
+                *args,
+                **{
+                    **kwargs,
+                    "subject_kinds": None,
+                    "entry_subject_paths": None,
+                    "claim_paths": None,
+                },
             )
         return facts
 
@@ -39,7 +45,7 @@ def _scoped_facts_answer_as_whole_facts(monkeypatch: pytest.MonkeyPatch) -> None
         scoped = _outcome(lambda: evaluate(definition, facts=facts, **kwargs))
         reference = whole.pop(id(facts), None)
         if reference is not None:
-            assert scoped == _outcome(
+            expected = _outcome(
                 lambda: evaluate(
                     definition,
                     facts=reference,
@@ -51,6 +57,32 @@ def _scoped_facts_answer_as_whole_facts(monkeypatch: pytest.MonkeyPatch) -> None
                     },
                 )
             )
+            query = definition.query
+            if (
+                scoped[0] == expected[0] == "result"
+                and kwargs.get("entry_paths") is not None
+                and query.where is not None
+                and not query.traversal
+            ):
+                # An entry seek eliminates Subjects that cannot match whatever
+                # their verdicts: its advisory (outside the result digest)
+                # counts hidden Claims among the candidates only.
+                got, want = scoped[1], expected[1]
+                assert got.model_copy(update={"verdict_visibility": None}) == want.model_copy(
+                    update={"verdict_visibility": None}
+                )
+                hidden = (
+                    0
+                    if got.verdict_visibility is None
+                    else got.verdict_visibility.excluded_claim_count
+                )
+                assert hidden <= (
+                    0
+                    if want.verdict_visibility is None
+                    else want.verdict_visibility.excluded_claim_count
+                )
+            else:
+                assert scoped == expected
         if scoped[0] == "refused":
             return evaluate(definition, facts=facts, **kwargs)  # re-raise the same refusal
         return scoped[1]

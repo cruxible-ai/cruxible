@@ -38,6 +38,8 @@ from cruxible_client.contracts.query.grammar import (
     QueryMembershipFilter,
     QueryNegationFilter,
     QueryOrdering,
+    QueryPairPart,
+    QueryPairStep,
     QueryParameterDeclaration,
     QueryParameterRef,
     QueryProjection,
@@ -138,6 +140,11 @@ class FilterExpression:
 
 
 _RESERVED_BINDINGS = frozenset({"now", "and", "or", "not", "exists", "in", "true", "false", "null"})
+
+#: ``KIND{parts}`` with an optional ``!`` (required) and ``with FACT`` (R8).
+_PAIR_HOP = re.compile(
+    r"\s*([a-z][a-z0-9_.]*)\s*\{([^{}]*)\}\s*(!?)\s*(?:with\s+([a-z][a-z0-9_.]*))?\s*"
+)
 
 
 _TOKEN = re.compile(
@@ -295,6 +302,14 @@ class QuerySpecResolver(Protocol):
     def relation(
         self, kinds: tuple[str, ...], name: str, reverse: bool, *, path: str
     ) -> tuple[str, tuple[str, ...]]: ...
+    def pair(
+        self,
+        kind: str,
+        parts: tuple[tuple[str, tuple[str, ...]], ...],
+        fact: str | None,
+        *,
+        path: str,
+    ) -> tuple[tuple[str, ...], str | None]: ...
     def operator(self, predicate: str, operator: str, *, path: str) -> None: ...
     def literal(self, predicate: str, operator: str, value: object, *, path: str) -> object: ...
 
@@ -470,6 +485,61 @@ class _LowerQuery:
 
         return lower(parse_filter(text, path=path, column_offset=column_offset))
 
+    def pair_hop(
+        self,
+        target: str,
+        text: str,
+        path: str,
+        *,
+        condition: str | None,
+        column_offset: int,
+    ) -> QueryPairStep:
+        """``KIND{part: binding, ...}[!]`` or ``KIND{part: binding}[!] with FACT`` (R8)."""
+
+        matched = _PAIR_HOP.fullmatch(text)
+        if matched is None:
+            raise QuerySpecError(
+                "cruxible.query.pair_hop_invalid",
+                "expected KIND{part: binding, ...} or KIND{part: binding} with FACT",
+                path=path,
+            )
+        kind, body, required, fact = matched.groups()
+        self.resolver.require_kind(kind, path=path)
+        named: list[tuple[str, str]] = []
+        for item in body.split(","):
+            part, colon, binding = (piece.strip() for piece in item.partition(":"))
+            if not colon or not part or binding not in self.bindings:
+                raise QuerySpecError(
+                    "cruxible.query.pair_hop_invalid",
+                    f"each key part names an earlier binding as `part: binding`; got {item!r}",
+                    path=path,
+                )
+            named.append((part, binding))
+        predicates, fact_predicate = self.resolver.pair(
+            kind,
+            tuple((part, self.bindings[binding]) for part, binding in named),
+            fact,
+            path=path,
+        )
+        parts = sorted(
+            (
+                QueryPairPart(part=predicate, binding=binding)
+                for predicate, (_part, binding) in zip(predicates, named, strict=True)
+            ),
+            key=lambda item: item.part.encode("utf-8"),
+        )
+        self.bindings[target] = (kind,)
+        return QueryPairStep(
+            binding=target,
+            subject_kind=kind,
+            parts=tuple(parts),
+            fact=fact_predicate,
+            required=required == "!",
+            where=None
+            if condition is None
+            else self.filter(condition, path, column_offset=column_offset),
+        )
+
     def lower(self) -> QueryDefinition:
         binding, entry_text = next(iter(self.spec.from_.items()))
         self.require_binding(binding, "$.from")
@@ -500,7 +570,7 @@ class _LowerQuery:
                 )
             subject_id = QueryParameterRef(parameter=parameter)
         entry = QueryEntry(binding=binding, subject_kinds=(kind,), subject_id=subject_id)
-        traversal = []
+        traversal: list[QueryTraversalStep | QueryPairStep] = []
         for index, hop in enumerate(self.spec.hops):
             target, expression = next(iter(hop.items()))
             path = f"$.hops[{index}]"
@@ -508,6 +578,17 @@ class _LowerQuery:
             filtered = re.split(r"\s+where(?:\s+|$)", expression, maxsplit=1)
             filter_separator = len(filtered) == 2
             condition = filtered[1] if filter_separator else ""
+            if "{" in filtered[0]:
+                traversal.append(
+                    self.pair_hop(
+                        target,
+                        filtered[0],
+                        path,
+                        condition=condition if filter_separator else None,
+                        column_offset=len(expression) - len(condition),
+                    )
+                )
+                continue
             relation_and_kind = re.split(r"\s*:\s*", filtered[0].strip(), maxsplit=1)
             relation = relation_and_kind[0]
             target_kind = relation_and_kind[1] if len(relation_and_kind) == 2 else ""
@@ -772,6 +853,19 @@ def query_spec_from_definition(query: QueryDefinition) -> QuerySpecInput:
     )
     hops = []
     for step in query.traversal:
+        if isinstance(step, QueryPairStep):
+            text = (
+                step.subject_kind
+                + "{"
+                + ", ".join(f"{item.part}: {item.binding}" for item in step.parts)
+                + "}"
+                + ("!" if step.required else "")
+                + ("" if step.fact is None else f" with {step.fact}")
+            )
+            if step.where:
+                text += " where " + condition(step.where)
+            hops.append({step.binding: text})
+            continue
         if not step.target_subject_kinds:
             raise ValueError("unconstrained hop targets require the explicit typed definition")
         text = (

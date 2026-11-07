@@ -42,6 +42,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryFilter,
     QueryInclude,
     QueryOrdering,
+    QueryPairStep,
     QueryParameterDeclaration,
     QueryProjection,
     QueryReferenceInventory,
@@ -122,7 +123,7 @@ class QueryDefinition(_StrictQueryDefinitionModel):
     identity: ArtifactIdentity
     description: str | None = None
     entry: QueryEntry | QueryArtifactsEntry
-    traversal: tuple[QueryTraversalStep, ...] = ()
+    traversal: tuple[QueryTraversalStep | QueryPairStep, ...] = ()
     where: QueryFilter | None = None
     result_binding: str
     result_shape: QueryResultShape
@@ -278,7 +279,7 @@ class QueryDefinition(_StrictQueryDefinitionModel):
     def _validate_bindings(self) -> None:
         seen = [self.entry.binding]
         for step in self.traversal:
-            if step.from_binding not in seen:
+            if any(source not in seen for source in step.source_bindings):
                 raise ValueError(
                     "a QueryDefinition traversal step must extend an earlier declared binding"
                 )

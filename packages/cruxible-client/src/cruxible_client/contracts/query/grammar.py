@@ -712,6 +712,102 @@ class QueryTraversalStep(_StrictQueryModel):
             inventory = inventory.merged(self.where.references)
         return inventory
 
+    @property
+    def source_bindings(self) -> tuple[str, ...]:
+        """The earlier bindings this step extends."""
+
+        return (self.from_binding,)
+
+
+class QueryPairPart(_StrictQueryModel):
+    """One Subject-valued key part of a pair hop and the earlier binding that names its end."""
+
+    tag: Literal["playbill-query-pair-part-v1"] = "playbill-query-pair-part-v1"
+    part: str
+    binding: str
+
+    @field_validator("part")
+    @classmethod
+    def _part(cls, value: str) -> str:
+        return predicate_name(value, label="query pair key part")
+
+    @field_validator("binding")
+    @classmethod
+    def _binding(cls, value: str) -> str:
+        return binding_name(value)
+
+
+class QueryPairStep(_StrictQueryModel):
+    """One pair-Subject hop: the pair of ``subject_kind`` whose ends are bound Subjects.
+
+    Without ``fact``, ``parts`` name the pair's whole key: the hop binds the
+    live pair whose key Claims name exactly those ends. With ``fact``, one part
+    is bound: the hop binds every live pair of that end holding a visible,
+    positive ``fact`` Claim. Either way the edge is the pair's visible key Claim;
+    candidates come from the Subject key index or the pair index, never from a
+    scan of the end's pairs.
+    """
+
+    tag: Literal["playbill-query-pair-step-v1"] = "playbill-query-pair-step-v1"
+    binding: str
+    subject_kind: str
+    parts: tuple[QueryPairPart, ...]
+    fact: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    required: bool = True
+    where: QueryFilter | None = None
+
+    @field_validator("binding")
+    @classmethod
+    def _binding(cls, value: str) -> str:
+        return binding_name(value)
+
+    @field_validator("subject_kind")
+    @classmethod
+    def _subject_kind(cls, value: str) -> str:
+        return subject_kind_name(value)
+
+    @field_validator("fact")
+    @classmethod
+    def _fact(cls, value: str | None) -> str | None:
+        return None if value is None else predicate_name(value, label="query pair fact")
+
+    @model_validator(mode="after")
+    def _shape(self) -> "QueryPairStep":
+        if not self.parts:
+            raise ValueError("a pair hop names at least one key part")
+        sorted_unique(tuple(item.part for item in self.parts), label="query pair key parts")
+        if any(item.binding == self.binding for item in self.parts):
+            raise ValueError("a pair hop cannot bind one of its own ends")
+        if self.fact is not None:
+            if len(self.parts) != 1:
+                raise ValueError("a pair hop with a fact binds exactly one key part")
+            if self.fact == self.parts[0].part:
+                raise ValueError("a pair hop's fact is not one of its key parts")
+        return self
+
+    @property
+    def source_bindings(self) -> tuple[str, ...]:
+        """The earlier bindings this step extends: each part's end."""
+
+        return tuple(item.binding for item in self.parts)
+
+    @property
+    def target_subject_kinds(self) -> tuple[str, ...]:
+        return (self.subject_kind,)
+
+    @property
+    def references(self) -> QueryReferenceInventory:
+        predicates = {item.part for item in self.parts}
+        if self.fact is not None:
+            predicates.add(self.fact)
+        inventory = QueryReferenceInventory(predicates=frozenset(predicates))
+        if self.where is not None:
+            inventory = inventory.merged(self.where.references)
+        return inventory
+
+
+QueryStep = QueryTraversalStep | QueryPairStep
+
 
 class QueryOrdering(_StrictQueryModel):
     """One typed ordering key; canonical address bytes remain the final tiebreak."""
@@ -895,6 +991,9 @@ __all__ = [
     "QuerySubjectFieldRef",
     "QuerySubjectField",
     "QueryTraversalDirection",
+    "QueryPairPart",
+    "QueryPairStep",
+    "QueryStep",
     "QueryTraversalStep",
     "QueryValueRef",
     "QueryValueType",

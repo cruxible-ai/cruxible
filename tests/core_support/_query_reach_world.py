@@ -1,0 +1,258 @@
+"""A query world of links, keyed Subjects and pair Subjects, accepted raw.
+
+Every Claim cites its own coordinator self-source Capture (``_pair_real``), so
+verdicts are real: a fact with ``effective_until`` in the past is ``stale`` and
+one with ``effective_from`` in the future is ``uncovered``, both hidden from a
+``current`` read.
+
+Kinds (prefix ``qr.``) mirror the security kit's shapes:
+
+- ``unit`` (repo, surface) with ``status``; ``finding`` (locus) with
+  ``found_in`` (many, a unit) and ``severity``: the audit reads;
+- ``component`` (purl) with ``affected_by`` (many, a vuln); ``vuln`` (vid);
+  ``inventory`` (iid);
+- ``occurrence`` (inventory, component) with ``scope``, and ``exposure``
+  (component, vulnerability) with ``justification``: pair Subjects.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
+from cruxible_client.contracts.claims import parse_claim, render_claim
+from cruxible_client.contracts.identity_normalizers import NO_NORMALIZER
+from cruxible_client.contracts.subject_kinds import (
+    SubjectEnd,
+    SubjectKeyRule,
+    SubjectKind,
+    SubjectKindKeys,
+    render_key_slug,
+    render_subject_kind,
+    subject_kind_path,
+)
+from cruxible_client.contracts.subjects import render_subject, subject_path
+from cruxible_core.runtime.instance import PlaybillInstance
+from tests.core_support._pair_real import (
+    OBSERVED_AT,
+    SELF_SOURCE,
+    _self_evidence,
+    accept_raw,
+    real_claim,
+)
+from tests.core_support._pair_support import literal, shell, to
+from tests.core_support._support import initialize_local
+from tests.support.claim_types import claim_type as build_claim_type
+
+UNIT = "qr.unit"
+FINDING = "qr.finding"
+COMPONENT = "qr.component"
+VULN = "qr.vuln"
+INVENTORY = "qr.inventory"
+OCCURRENCE = "qr.occurrence"
+EXPOSURE = "qr.exposure"
+
+REPO = f"{UNIT}.repo"
+SURFACE = f"{UNIT}.surface"
+STATUS = f"{UNIT}.status"
+LOCUS = f"{FINDING}.locus"
+FOUND_IN = f"{FINDING}.found_in"
+SEVERITY = f"{FINDING}.severity"
+PURL = f"{COMPONENT}.purl"
+AFFECTED_BY = f"{COMPONENT}.affected_by"
+VID = f"{VULN}.vid"
+IID = f"{INVENTORY}.iid"
+O_INVENTORY = f"{OCCURRENCE}.inventory"
+O_COMPONENT = f"{OCCURRENCE}.component"
+SCOPE = f"{OCCURRENCE}.scope"
+E_COMPONENT = f"{EXPOSURE}.component"
+E_VULN = f"{EXPOSURE}.vulnerability"
+JUSTIFICATION = f"{EXPOSURE}.justification"
+
+#: Evaluation instant of every read: after every observation.
+WHEN = OBSERVED_AT + timedelta(days=1)
+PAST = OBSERVED_AT - timedelta(days=30)
+FUTURE = OBSERVED_AT + timedelta(days=30)
+
+
+def _type(predicate: str, value: Any = None, *, many: bool = False) -> ClaimType:
+    return build_claim_type(
+        predicate,
+        value_type={"type": "string"} if value is None else value,
+        permitted_roles=("observation",),
+        evidence_admission_policy=_self_evidence(),
+        revision_evidence="replace",
+        cardinality="many" if many else "one",
+    )
+
+
+TYPES: dict[str, ClaimType] = {
+    item.predicate: item
+    for item in (
+        _type(REPO),
+        _type(SURFACE),
+        _type(STATUS),
+        _type(LOCUS),
+        _type(FOUND_IN, (UNIT,), many=True),
+        _type(SEVERITY),
+        _type(PURL),
+        _type(AFFECTED_BY, (VULN,), many=True),
+        _type(VID),
+        _type(IID),
+        _type(O_INVENTORY, (INVENTORY,)),
+        _type(O_COMPONENT, (COMPONENT,)),
+        _type(SCOPE),
+        _type(E_COMPONENT, (COMPONENT,)),
+        _type(E_VULN, (VULN,)),
+        _type(JUSTIFICATION),
+    )
+}
+
+KEYS: dict[str, tuple[str, ...]] = {
+    UNIT: (REPO, SURFACE),
+    FINDING: (LOCUS,),
+    COMPONENT: (PURL,),
+    VULN: (VID,),
+    INVENTORY: (IID,),
+    OCCURRENCE: (O_INVENTORY, O_COMPONENT),
+    EXPOSURE: (E_COMPONENT, E_VULN),
+}
+
+
+def _kind(kind: str) -> SubjectKind:
+    return SubjectKind(
+        identity=ArtifactIdentity(kind="SubjectKind", name=kind),
+        identity_rule=SubjectKindKeys(
+            parts=tuple(
+                SubjectKeyRule(claim_type=key, normalizer=NO_NORMALIZER) for key in KEYS[kind]
+            ),
+            uniqueness="unique",
+        ),
+    )
+
+
+_FLUSH_AT = 4000
+
+
+class ReachWorld:
+    """One instance plus a pending change; ``accept`` lands it as one raw proposal."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.instance: PlaybillInstance
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        self.instance, _owner = initialize_local(tmp_path)
+        vocabulary: dict[str, bytes] = {
+            capture_contract_path(SELF_SOURCE.identity.name): render_capture_contract(SELF_SOURCE)
+        }
+        for item in TYPES.values():
+            vocabulary[claim_type_path(item.predicate)] = render_claim_type(item)
+        for kind in KEYS:
+            vocabulary[subject_kind_path(kind)] = render_subject_kind(_kind(kind))
+        accepted = accept_raw(self.instance, vocabulary, name="reach-vocabulary")
+        assert accepted.candidate is not None, accepted.evaluation.diagnostics
+        self._tree = dict(self.instance.tree_at(self.instance.accepted_coordinate().git_oid))
+        self._changes: dict[str, bytes] = {}
+        self._number = 1
+        self._proposals = 0
+
+    def subject(self, kind: str, *parts: str) -> str:
+        """A keyed Subject: a literal part is its text, a Subject part an end's path."""
+
+        if len(self._changes) > _FLUSH_AT:
+            # A proposal carries at most 5,000 changed members.
+            self.accept()
+        values = [SubjectEnd(path=part) if part.startswith("subjects/") else part for part in parts]
+        identifier = render_key_slug(values)
+        at = subject_path(kind, identifier)
+        if at in self._tree:
+            return at
+        self._changes[at] = self._tree[at] = render_subject(shell(kind, identifier))
+        for predicate, part in zip(KEYS[kind], parts, strict=True):
+            self.claim(predicate, part, at)
+        return at
+
+    def claim(
+        self,
+        predicate: str,
+        value: str,
+        at: str,
+        *,
+        effective_from: datetime | None = None,
+        effective_until: datetime | None = None,
+    ) -> str:
+        """A Claim of ``predicate`` about ``at``: a Subject path names a Subject object."""
+
+        obj = to(value) if value.startswith("subjects/") else literal(value)
+        path, content = real_claim(
+            self.instance,
+            self._tree,
+            10_000_000 + self._number,
+            predicate,
+            obj,
+            subject=at,
+            claim_type=TYPES[predicate],
+            effective_from=effective_from,
+            effective_until=effective_until,
+        )
+        self._number += 1
+        self._changes[path] = self._tree[path] = content
+        return path
+
+    def retire(self, claim: str) -> None:
+        """Retire ``claim`` lifecycle-only."""
+
+        from cruxible_core.claims.key_claims import retired_key_claim
+
+        self._changes[claim] = self._tree[claim] = render_claim(
+            retired_key_claim(parse_claim(self._tree[claim], path=claim))
+        )
+
+    def accept(self) -> None:
+        if not self._changes:
+            return
+        self._proposals += 1
+        accepted = accept_raw(self.instance, self._changes, name=f"reach-{self._proposals}")
+        assert accepted.candidate is not None, accepted.evaluation.diagnostics
+        self._changes = {}
+        self._tree = dict(self.instance.tree_at(self.instance.accepted_coordinate().git_oid))
+
+
+def kinds_of(paths: Sequence[str]) -> list[str]:
+    return [path.split("/", 2)[1] for path in paths]
+
+
+__all__ = [
+    "AFFECTED_BY",
+    "COMPONENT",
+    "EXPOSURE",
+    "E_COMPONENT",
+    "E_VULN",
+    "FINDING",
+    "FOUND_IN",
+    "FUTURE",
+    "IID",
+    "INVENTORY",
+    "JUSTIFICATION",
+    "LOCUS",
+    "OCCURRENCE",
+    "O_COMPONENT",
+    "O_INVENTORY",
+    "PAST",
+    "PURL",
+    "REPO",
+    "SCOPE",
+    "SEVERITY",
+    "STATUS",
+    "SURFACE",
+    "TYPES",
+    "UNIT",
+    "VID",
+    "VULN",
+    "WHEN",
+    "ReachWorld",
+]

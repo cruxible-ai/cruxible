@@ -12,12 +12,12 @@ never re-implements adjudication. Every budget that clips a result is named in
 the result's truncation accounting, so a silently narrowed answer is
 unrepresentable.
 
-The evaluator reads accepted state only through the five primitives of
+The evaluator reads accepted state only through the primitives of
 :class:`~cruxible_core.query.backends.ClaimQueryBackendV1`, and it
 binds the coordinate the backend was materialized at rather than trusting the
 one the caller names. Relation traversal is derived here from those primitives,
 so a backend can never contribute an edge the Claim facts do not carry, and a
-backend that reproduces the five in the same canonical order under the same
+backend that reproduces them in the same canonical order under the same
 verdict computation reproduces these results byte for byte.
 """
 
@@ -75,6 +75,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryMembershipFilter,
     QueryNegationFilter,
     QueryOrdering,
+    QueryPairStep,
     QueryParameterRef,
     QuerySubjectFieldRef,
     QueryTraversalDirection,
@@ -308,6 +309,69 @@ def relation_edges(
                 statement_digests=(claim.visibility.statement_digest,),
             )
     return tuple(edges)
+
+
+def pair_edges(
+    backend: ClaimQueryBackendV1,
+    step: QueryPairStep,
+    bindings: Mapping[str, str | None],
+) -> tuple[tuple[QueryClaimVisibility, str, tuple[QueryClaimVisibility, ...]], ...]:
+    """The pairs one pair hop binds from a row: ``(edge, pair path, Claims it read)``.
+
+    The backend proposes candidates only (a superset, read from its indexes,
+    never recorded as reads); eligibility is decided here, from each
+    candidate's own visible Claims, identically for every backend:
+
+    - the pair is a live Subject of the step's kind;
+    - each named part holds a visible key Claim naming that row's end (the
+      edge is the first part's);
+    - with a ``fact``, the pair holds a visible positive Claim of it (a none
+      holds nothing).
+
+    An unbound end binds nothing.
+    """
+
+    ends: list[tuple[str, str]] = []
+    for item in step.parts:
+        end = bindings.get(item.binding)
+        if end is None:
+            return ()
+        ends.append((item.part, end))
+    if step.fact is None:
+        candidates = backend.pairs_with_key(step.subject_kind, tuple(ends))
+    else:
+        candidates = backend.pairs_with_fact(step.subject_kind, ends[0][0], ends[0][1], step.fact)
+    found: list[tuple[QueryClaimVisibility, str, tuple[QueryClaimVisibility, ...]]] = []
+    for pair in byte_sorted(candidates):
+        subject = backend.subject(pair)
+        if (
+            subject is None
+            or subject.shell.subject_kind != step.subject_kind
+            or subject.shell.lifecycle.state != "live"
+        ):
+            continue
+        reads: list[QueryClaimVisibility] = []
+        for part, end in ends:
+            keys = [
+                claim.visibility
+                for claim in backend.claims_on(pair, part)
+                if not _is_none(claim) and claim.object_subject_path == end
+            ]
+            if not keys:
+                break
+            reads.extend(keys)
+        else:
+            if step.fact is not None:
+                held = [
+                    claim.visibility
+                    for claim in backend.claims_on(pair, step.fact)
+                    if not _is_none(claim)
+                ]
+                if not held:
+                    continue
+                reads.extend(held)
+            found.append((reads[0], pair, tuple(reads)))
+    return tuple(found)
 
 
 # -- evaluation state -----------------------------------------------------
@@ -820,6 +884,83 @@ class _Evaluator:
         return sorted(range(len(rows)), key=cmp_to_key(compare))
 
 
+class OperandProbe:
+    """The evaluator's own coercion of a filter's row-independent operands.
+
+    A literal or a parameter coerces the same way on every row (the predicate's
+    canonical form, its key normalizer, a Claim field's vocabulary, a Subject
+    reference's alias resolution), so planning can ask, before any row is read,
+    what an operand compares as and whether coercing it refuses. Nothing here
+    reads a Claim.
+    """
+
+    def __init__(
+        self,
+        definition: QueryDefinition,
+        *,
+        parameters: Mapping[str, object],
+        evaluation_time: datetime,
+        canonical_forms: Mapping[str, tuple[str, ...]],
+        key_normalizers: Mapping[str, KeyNormalizer],
+        resolve_reference: SubjectReferenceResolver | None,
+    ) -> None:
+        self._evaluator = _Evaluator(
+            definition,
+            backend=cast(ClaimQueryBackendV1, None),
+            parameters=parameters,
+            evaluation_time=evaluation_time,
+            canonical_forms=canonical_forms,
+            resolve_reference=resolve_reference,
+            key_normalizers=key_normalizers,
+        )
+
+    def values(
+        self, ref: QueryValueRef, value_type: QueryValueType, *others: QueryValueRef
+    ) -> tuple[QueryTypedValue, ...] | None:
+        """What a literal or parameter compares as against ``others``; raises its refusal."""
+
+        assert isinstance(ref, QueryLiteralRef | QueryParameterRef)
+        evaluator = self._evaluator
+        return evaluator.typed_values(
+            _Row(bindings={}),
+            ref,
+            value_type,
+            form=evaluator._operand_form(ref, *others),
+            vocabulary=evaluator._operand_vocabulary(ref, *others),
+            key_rule=evaluator._operand_key_rule(ref, *others),
+        )
+
+    def refuses(self, filter_: QueryFilter) -> bool:
+        """Whether coercing any literal or parameter operand of ``filter_`` refuses."""
+
+        def pairs(
+            item: QueryFilter,
+        ) -> list[tuple[QueryValueRef, QueryValueType, tuple[QueryValueRef, ...]]]:
+            if isinstance(item, QueryConjunctionFilter | QueryDisjunctionFilter):
+                return [pair for child in item.filters for pair in pairs(child)]
+            if isinstance(item, QueryNegationFilter):
+                return pairs(item.operand)
+            if isinstance(item, QueryComparisonFilter):
+                return [
+                    (item.left, item.value_type, (item.right,)),
+                    (item.right, item.value_type, (item.left,)),
+                ]
+            if isinstance(item, QueryMembershipFilter):
+                return [
+                    (item.left, item.value_type, item.values),
+                    *((value, item.value_type, (item.left,)) for value in item.values),
+                ]
+            return []
+
+        try:
+            for ref, value_type, others in pairs(filter_):
+                if isinstance(ref, QueryLiteralRef | QueryParameterRef):
+                    self.values(ref, value_type, *others)
+        except _RefusalSignal:
+            return True
+        return False
+
+
 # -- the direct evaluator -------------------------------------------------
 
 
@@ -1242,6 +1383,23 @@ def _traverse(
     for step in query.traversal:
         produced: list[_Row] = []
         for row in rows:
+            if isinstance(step, QueryPairStep):
+                matched = False
+                for edge, pair, reads in pair_edges(backend, step, row.bindings):
+                    candidate = row.copy()
+                    candidate.bindings[step.binding] = pair
+                    candidate.edges = (*candidate.edges, (step.binding, edge))
+                    for visibility in reads:
+                        candidate.record(visibility)
+                    if step.where is not None and not evaluator.matches(candidate, step.where):
+                        continue
+                    matched = True
+                    produced.append(candidate)
+                if not matched and not step.required:
+                    relaxed = row.copy()
+                    relaxed.bindings[step.binding] = None
+                    produced.append(relaxed)
+                continue
             source = row.bindings.get(step.from_binding)
             matched = False
             if source is not None:
@@ -1595,6 +1753,7 @@ __all__ = [
     "VisibleClaimRow",
     "claim_query_result_digest",
     "evaluate_claim_query",
+    "pair_edges",
     "relation_edges",
     "query_attempted_parameter_digest",
     "query_execution_receipt",

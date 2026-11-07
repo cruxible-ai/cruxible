@@ -7,7 +7,7 @@ touching the ledger, and every answer it gives is reproducible byte for byte
 from the same facts. Nothing here reads a wall clock or resolves a conflict.
 
 The evaluator in :mod:`cruxible_core.query.engine` runs over exactly
-five primitives plus the coordinate the backend was materialized at:
+these primitives plus the coordinate the backend was materialized at:
 
 ``subjects(kinds, subject_id=...)``
     the accepted Subject paths of the declared kinds, in ledger-path byte order.
@@ -21,6 +21,9 @@ five primitives plus the coordinate the backend was materialized at:
     same claim-path byte order.
 ``visibility(row)``
     one Claim row's verdict and currency at the explicit evaluation time.
+``pairs_with_key(kind, ends)`` / ``pairs_with_fact(kind, part, end, fact)``
+    candidate pair Subjects for a pair hop (a superset, never a read): the
+    evaluator decides each candidate from its visible Claims.
 
 Relation traversal is derived from those primitives, never stored separately, so
 a backend cannot invent an edge the Claim facts do not carry. Verdicts are
@@ -490,6 +493,22 @@ class ClaimQueryBackendV1(Protocol):
     def visibility(self, row: ClaimFactRowV1) -> VisibleClaimRow | None:
         """Return the Claim row's visibility, or None when the policy hides it."""
 
+    def pairs_with_key(
+        self, subject_kind: str, ends: tuple[tuple[str, str], ...]
+    ) -> tuple[str, ...]:
+        """Propose the pairs of a kind whose live key Claims name these ``(part, end)``.
+
+        Candidates only, a superset of the pairs the hop binds, never recorded
+        as reads: the evaluator decides each from its visible Claims.
+        """
+
+    def pairs_with_fact(self, subject_kind: str, part: str, end: str, fact: str) -> tuple[str, ...]:
+        """Propose the pairs of a kind with ``end`` at ``part`` holding a live ``fact`` Claim.
+
+        Any polarity, verdict or source counts: candidates only, never recorded
+        as reads (the pair index's semantics, ``indexes.pair_units``).
+        """
+
     @property
     def excluded_by_verdict(self) -> tuple[tuple[str, int], ...]:
         """Return how many Claims each out-of-policy verdict hid, verdict-sorted.
@@ -544,7 +563,18 @@ class DirectClaimFactIndex:
         self._hidden_by_subject: dict[tuple[str, str], list[str]] = {}
         self._hidden_by_object: dict[tuple[str, str], list[str]] = {}
         self._touched: set[tuple[str, tuple[str, str]]] = set()
+        # Every live Claim, whatever its verdict: what the pair candidates read
+        # (``pairs_with_key`` / ``pairs_with_fact``), as the pair index does.
+        self._live_by_object: dict[tuple[str, str], set[str]] = {}
+        self._live_slots: set[tuple[str, str]] = set()
         for row in facts.claims:
+            if row.accepted.claim.lifecycle.state == "live":
+                predicate = row.accepted.claim.statement.predicate
+                self._live_slots.add((row.subject_path, predicate))
+                if row.object_subject_path is not None:
+                    self._live_by_object.setdefault(
+                        (row.object_subject_path, predicate), set()
+                    ).add(row.subject_path)
             outcome = self._outcome(row)
             visible = outcome.visible
             if visible is None:
@@ -627,6 +657,35 @@ class DirectClaimFactIndex:
 
         self._touched.add(("to", (artifact_path, predicate)))
         return tuple(self._by_object.get((artifact_path, predicate), ()))
+
+    def _holders(self, subject_kind: str, part: str, end: str) -> set[str]:
+        prefix = f"subjects/{subject_kind}/"
+        return {
+            path for path in self._live_by_object.get((end, part), ()) if path.startswith(prefix)
+        }
+
+    def pairs_with_key(
+        self, subject_kind: str, ends: tuple[tuple[str, str], ...]
+    ) -> tuple[str, ...]:
+        """Propose the pairs whose live key Claims name every ``(part, end)``."""
+
+        if not ends:
+            return ()
+        found = self._holders(subject_kind, *ends[0])
+        for part, end in ends[1:]:
+            found &= self._holders(subject_kind, part, end)
+        return byte_sorted(tuple(found))
+
+    def pairs_with_fact(self, subject_kind: str, part: str, end: str, fact: str) -> tuple[str, ...]:
+        """Propose the pairs with ``end`` at ``part`` holding any live ``fact`` Claim."""
+
+        return byte_sorted(
+            tuple(
+                path
+                for path in self._holders(subject_kind, part, end)
+                if (path, fact) in self._live_slots
+            )
+        )
 
 
 __all__ = [

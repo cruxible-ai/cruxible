@@ -11533,7 +11533,14 @@
               "traversal": {
                 "default": [],
                 "items": {
-                  "$ref": "#/$defs/QueryTraversalStep"
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/QueryTraversalStep"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryPairStep"
+                    }
+                  ]
                 },
                 "title": "Traversal",
                 "type": "array"
@@ -11769,7 +11776,14 @@
               "traversal": {
                 "default": [],
                 "items": {
-                  "$ref": "#/$defs/QueryTraversalStep"
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/QueryTraversalStep"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryPairStep"
+                    }
+                  ]
                 },
                 "title": "Traversal",
                 "type": "array"
@@ -12438,6 +12452,125 @@
               "value_type"
             ],
             "title": "QueryOrdering",
+            "type": "object"
+          },
+          "QueryPairPart": {
+            "additionalProperties": false,
+            "description": "One Subject-valued key part of a pair hop and the earlier binding that names its end.",
+            "properties": {
+              "binding": {
+                "title": "Binding",
+                "type": "string"
+              },
+              "part": {
+                "title": "Part",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-pair-part-v1",
+                "default": "playbill-query-pair-part-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "part",
+              "binding"
+            ],
+            "title": "QueryPairPart",
+            "type": "object"
+          },
+          "QueryPairStep": {
+            "additionalProperties": false,
+            "description": "One pair-Subject hop: the pair of ``subject_kind`` whose ends are bound Subjects.\n\nWithout ``fact``, ``parts`` name the pair's whole key: the hop binds the\nlive pair whose key Claims name exactly those ends. With ``fact``, one part\nis bound: the hop binds every live pair of that end holding a visible,\npositive ``fact`` Claim. Either way the edge is the pair's visible key Claim;\ncandidates come from the Subject key index or the pair index, never from a\nscan of the end's pairs.",
+            "properties": {
+              "binding": {
+                "title": "Binding",
+                "type": "string"
+              },
+              "fact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Fact"
+              },
+              "parts": {
+                "items": {
+                  "$ref": "#/$defs/QueryPairPart"
+                },
+                "title": "Parts",
+                "type": "array"
+              },
+              "required": {
+                "default": true,
+                "title": "Required",
+                "type": "boolean"
+              },
+              "subject_kind": {
+                "title": "Subject Kind",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-pair-step-v1",
+                "default": "playbill-query-pair-step-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "where": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "all_of": "#/$defs/QueryConjunctionFilter",
+                        "any_of": "#/$defs/QueryDisjunctionFilter",
+                        "claim_presence": "#/$defs/QueryClaimPresenceFilter",
+                        "comparison": "#/$defs/QueryComparisonFilter",
+                        "membership": "#/$defs/QueryMembershipFilter",
+                        "not": "#/$defs/QueryNegationFilter"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/QueryComparisonFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryMembershipFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryClaimPresenceFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryConjunctionFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryDisjunctionFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryNegationFilter"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Where"
+              }
+            },
+            "required": [
+              "binding",
+              "subject_kind",
+              "parts"
+            ],
+            "title": "QueryPairStep",
             "type": "object"
           },
           "QueryParameterDeclaration": {
@@ -88296,7 +88429,14 @@
               "traversal": {
                 "default": [],
                 "items": {
-                  "$ref": "#/$defs/QueryTraversalStep"
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/QueryTraversalStep"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryPairStep"
+                    }
+                  ]
                 },
                 "title": "Traversal",
                 "type": "array"
@@ -89235,6 +89375,125 @@
               "value_type"
             ],
             "title": "QueryOrdering",
+            "type": "object"
+          },
+          "QueryPairPart": {
+            "additionalProperties": false,
+            "description": "One Subject-valued key part of a pair hop and the earlier binding that names its end.",
+            "properties": {
+              "binding": {
+                "title": "Binding",
+                "type": "string"
+              },
+              "part": {
+                "title": "Part",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-pair-part-v1",
+                "default": "playbill-query-pair-part-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "part",
+              "binding"
+            ],
+            "title": "QueryPairPart",
+            "type": "object"
+          },
+          "QueryPairStep": {
+            "additionalProperties": false,
+            "description": "One pair-Subject hop: the pair of ``subject_kind`` whose ends are bound Subjects.\n\nWithout ``fact``, ``parts`` name the pair's whole key: the hop binds the\nlive pair whose key Claims name exactly those ends. With ``fact``, one part\nis bound: the hop binds every live pair of that end holding a visible,\npositive ``fact`` Claim. Either way the edge is the pair's visible key Claim;\ncandidates come from the Subject key index or the pair index, never from a\nscan of the end's pairs.",
+            "properties": {
+              "binding": {
+                "title": "Binding",
+                "type": "string"
+              },
+              "fact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Fact"
+              },
+              "parts": {
+                "items": {
+                  "$ref": "#/$defs/QueryPairPart"
+                },
+                "title": "Parts",
+                "type": "array"
+              },
+              "required": {
+                "default": true,
+                "title": "Required",
+                "type": "boolean"
+              },
+              "subject_kind": {
+                "title": "Subject Kind",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-pair-step-v1",
+                "default": "playbill-query-pair-step-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "where": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "all_of": "#/$defs/QueryConjunctionFilter",
+                        "any_of": "#/$defs/QueryDisjunctionFilter",
+                        "claim_presence": "#/$defs/QueryClaimPresenceFilter",
+                        "comparison": "#/$defs/QueryComparisonFilter",
+                        "membership": "#/$defs/QueryMembershipFilter",
+                        "not": "#/$defs/QueryNegationFilter"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/QueryComparisonFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryMembershipFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryClaimPresenceFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryConjunctionFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryDisjunctionFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryNegationFilter"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Where"
+              }
+            },
+            "required": [
+              "binding",
+              "subject_kind",
+              "parts"
+            ],
+            "title": "QueryPairStep",
             "type": "object"
           },
           "QueryParameterDeclaration": {

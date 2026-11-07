@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from typing import Any, Literal, cast
 
@@ -180,6 +180,8 @@ class QueryVocabulary:
 
     predicates: Mapping[str, PredicateInfo]
     kinds: tuple[str, ...]
+    #: Each live keyed kind's key predicates in key order (a pair hop's parts).
+    kind_keys: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def predicates_of(self, kind: str) -> tuple[PredicateInfo, ...]:
         return tuple(
