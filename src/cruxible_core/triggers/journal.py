@@ -406,6 +406,39 @@ def claim_runbook_fire(
         )
 
 
+def runbook_step_record(
+    instance: Any, fire_key: str, fire: int, step: int
+) -> tuple[str, str] | None:
+    """The (target, Line occurrence id) a claimed fire's step was recorded as, or None."""
+
+    with _open(instance) as connection:
+        if connection is None or connection.execute("PRAGMA user_version").fetchone()[0] < 6:
+            return None
+        row = connection.execute(
+            "SELECT target,occurrence_id FROM runbook_steps WHERE fire_key=? AND fire=? AND step=?",
+            (fire_key, fire, step),
+        ).fetchone()
+    return None if row is None else (str(row[0]), str(row[1]))
+
+
+def record_runbook_step(
+    instance: Any, fire_key: str, fire: int, step: int, *, target: str, occurrence_id: str
+) -> None:
+    """Record, before it runs, the exact Line occurrence a claimed step is admitted as.
+
+    Replaced only by the caller when no admission exists under the recorded one
+    (nothing ran), so a replay always finds the occurrence that may have run.
+    """
+
+    with _open(instance, create=True) as connection:
+        assert connection is not None
+        connection.execute(
+            "INSERT INTO runbook_steps VALUES (?,?,?,?,?) ON CONFLICT(fire_key,fire,step) "
+            "DO UPDATE SET target=excluded.target,occurrence_id=excluded.occurrence_id",
+            (fire_key, fire, step, target, occurrence_id),
+        )
+
+
 def finish_runbook_fire(instance: Any, fire_key: str, fire: int) -> None:
     """Record that the run serving ``fire`` finished: its fire and every one before it."""
 

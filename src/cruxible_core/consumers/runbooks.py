@@ -27,7 +27,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.line_dispatch import LineEnablementPrincipal
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.runbooks import AcceptedRunbook
-from cruxible_client.contracts.triggers import RUNBOOK_FIRE_PREFIX
+from cruxible_client.contracts.triggers import RUNBOOK_FIRE_PREFIX, runbook_fire_key
 from cruxible_core.consumers.protocol import (
     ConsumerHealth,
     ConsumerWork,
@@ -107,10 +107,15 @@ def run_fired_runbook(
         fired_run_id,
         record_runbook_run,
     )
-    from cruxible_core.triggers.journal import fire_runbook_action
+    from cruxible_core.triggers.journal import (
+        fire_runbook_action,
+        record_runbook_step,
+        runbook_step_record,
+    )
 
     instance = manager.get(instance_id)
     accepted = plan
+    fire_key = runbook_fire_key(name)
     try:
         reader = manager.workspace_file_reader(instance_id)
     except WorkspaceFileReadRefused:
@@ -129,7 +134,18 @@ def run_fired_runbook(
         if not isinstance(current, LineSpec) or current.lifecycle.state != "live":
             return unavailable(f"Line:{line}")
         occurrence = procedure_runs.RunbookStepOccurrence(runbook=name, fire=fire, step=step)
-        admitted = procedure_runs.admitted_runbook_step(instance, line, occurrence)
+        target = f"Line:{line}"
+        recorded = runbook_step_record(instance, fire_key, fire, step)
+        if recorded is not None:
+            if recorded[0] != target:
+                raise ValueError(f"step {step} of fire {fire} was recorded for {recorded[0]!r}")
+            # Found by the occurrence it was recorded as, whatever the Line's
+            # epoch has become since: a step that ran is read back, never rerun.
+            admitted = procedure_runs.admitted_runbook_step(instance, line, recorded[1])
+            if admitted is not None:
+                return admitted
+        occurrence_id = procedure_runs.runbook_step_occurrence_id(instance, line, occurrence)
+        admitted = procedure_runs.admitted_runbook_step(instance, line, occurrence_id)
         if admitted is not None:
             return admitted
         arm = _active_arm(instance, line)
@@ -150,6 +166,11 @@ def run_fired_runbook(
             return LineStepNotRun(
                 "not_enabled", getattr(lost, "reason", "enablement_ended"), str(lost)
             )
+        # Recorded before any effect: nothing was admitted under an earlier record
+        # (checked above), so this occurrence is the only one that may run.
+        record_runbook_step(
+            instance, fire_key, fire, step, target=target, occurrence_id=occurrence_id
+        )
         gate = LINE_ARM_ADMISSION_GATE.set(
             partial(arm_admission_gate, instance, line_id, arm["session_id"])
         )
@@ -157,7 +178,9 @@ def run_fired_runbook(
             return procedure_runs.service_run_playbill_line(
                 instance,
                 path_identity_digest=line,
-                request=procedure_runs.LineRunRequest(line=line),
+                # The run asserts the recorded occurrence: a Line changed since
+                # it was recorded refuses (occurrence_id_mismatch), never runs.
+                request=procedure_runs.LineRunRequest(line=line, occurrence_id=occurrence_id),
                 actor_context=actor,
                 caller_rung=rung,
                 provider_runtime_operator=manager.provider_runtime_operator(),

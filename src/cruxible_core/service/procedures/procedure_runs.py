@@ -1604,15 +1604,10 @@ def _line_occurrence(
     return occurrence_id, next_due
 
 
-def admitted_runbook_step(
+def runbook_step_occurrence_id(
     instance: PlaybillInstance, line: str, step: RunbookStepOccurrence
-) -> ProcedureRunStateV2 | None:
-    """The run a Runbook step already admitted, from the run journal, or None.
-
-    Durable: the admission record of the step's stable occurrence, so a
-    replayed fire reconstructs every step it ran without starting any again.
-    One Line read and one indexed admission lookup.
-    """
+) -> str:
+    """The Line occurrence a Runbook step is admitted as, at the Line's current version."""
 
     accepted_line = _accepted_line_by_reference(
         instance, coordinate=instance.accepted_coordinate(), reference=line
@@ -1620,6 +1615,23 @@ def admitted_runbook_step(
     # A step's identity names no instant: the evaluation time is unused.
     occurrence_id, _due = _line_occurrence(
         accepted_line, evaluation_time=datetime(1970, 1, 1, tzinfo=UTC), runbook_step=step
+    )
+    return occurrence_id
+
+
+def admitted_runbook_step(
+    instance: PlaybillInstance, line: str, occurrence_id: str
+) -> ProcedureRunStateV2 | None:
+    """The run a Runbook step's recorded occurrence admitted, from the run journal, or None.
+
+    Durable and epoch-independent: admissions are partitioned by the Line's
+    identity and found by the exact occurrence id the step recorded before it
+    ran, whatever the Line's occurrence epoch has become since. One Line read
+    and one indexed admission lookup.
+    """
+
+    accepted_line = _accepted_line_by_reference(
+        instance, coordinate=instance.accepted_coordinate(), reference=line
     )
     existing = next(
         iter(_line_admissions(instance, accepted_line, occurrence_id=occurrence_id)), None

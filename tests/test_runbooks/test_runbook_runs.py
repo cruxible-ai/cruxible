@@ -499,6 +499,61 @@ def test_a_claimed_step_whose_target_is_gone_stops_the_replay(
     assert list(journal.pending_runbook_fires(instance)) == []
 
 
+def test_a_replay_finds_a_completed_step_across_line_epochs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, counted_line_runs: Counter[str]
+) -> None:
+    """F1c: a Line step completes, the daemon dies, the Line is succeeded through
+    epochs 2 and 3; the replay finds the epoch-1 admission and never runs it again."""
+
+    from cruxible_client.contracts.authoring.inputs import LineInput
+    from cruxible_client.contracts.procedures.line_specs import line_spec_path, parse_line_spec
+    from cruxible_core.triggers import journal
+    from cruxible_core.triggers.journal import runbook_step_record
+    from tests.support.runbooks import author
+
+    instance, root, now = _fired_world(tmp_path, [{"line": SETTLE}, {"action": "evidence.sweep"}])
+    real = journal.fire_runbook_action
+
+    def crash(*args: Any, **kwargs: Any) -> int:
+        raise RuntimeError("the daemon died here")
+
+    monkeypatch.setattr(journal, "fire_runbook_action", crash)
+    with pytest.raises(RuntimeError):
+        _drain(instance, root, now=now)
+    monkeypatch.setattr(journal, "fire_runbook_action", real)
+    assert counted_line_runs == {SETTLE: 1}
+    recorded = runbook_step_record(instance, "runbook:test.rb", _fire_of(instance), 1)
+    assert recorded is not None
+    # Legal successors: binding the triggering Capture moves the epoch to 2, and
+    # returning to manual runs moves it to 3.
+    for epoch, trigger_input in ((2, "doc.capture"), (3, None)):
+        author(
+            instance,
+            LineInput.model_validate(
+                {
+                    "kind": "line",
+                    "name": SETTLE,
+                    "procedure_name": "test.override",
+                    "parameters": {"path": "data/doc.json"},
+                    "max_authority": "settle",
+                    "trigger_input": trigger_input,
+                    "occurrence_epoch": epoch,
+                }
+            ),
+            name=f"settle-epoch-{epoch}",
+        )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    line = parse_line_spec(tree[line_spec_path(SETTLE)], path=line_spec_path(SETTLE))
+    assert line.occurrence_epoch == 3
+    _drain(instance, root, now=now + timedelta(seconds=5))
+    last = runbook_service.latest_runbook_run(instance, "test.rb")
+    assert last is not None and _statuses(last) == ["succeeded", "fired"]
+    # The step was read back from its epoch-1 admission, not run under epoch 3.
+    assert counted_line_runs == {SETTLE: 1}
+    assert runbook_step_record(instance, "runbook:test.rb", _fire_of(instance), 1) == recorded
+    assert _action_fires(instance) == 1
+
+
 def test_a_line_disabled_before_its_admission_never_runs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, counted_line_runs: Counter[str]
 ) -> None:
@@ -530,17 +585,11 @@ def test_a_line_disabled_before_its_admission_never_runs(
     assert instance.accepted_coordinate() == head
     # Nothing was admitted for the step: a replay would find no run to read back.
     from cruxible_core.service.procedures import procedure_runs
+    from cruxible_core.triggers.journal import runbook_step_record
 
-    assert (
-        procedure_runs.admitted_runbook_step(
-            instance,
-            SETTLE,
-            procedure_runs.RunbookStepOccurrence(
-                runbook="test.rb", fire=_fire_of(instance), step=1
-            ),
-        )
-        is None
-    )
+    recorded = runbook_step_record(instance, "runbook:test.rb", _fire_of(instance), 1)
+    assert recorded is not None and recorded[0] == f"Line:{SETTLE}"
+    assert procedure_runs.admitted_runbook_step(instance, SETTLE, recorded[1]) is None
 
 
 def _fire_of(instance: Any) -> int:
