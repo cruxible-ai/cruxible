@@ -301,6 +301,88 @@ def test_a_cycle_of_pair_kinds_refuses() -> None:
     assert "pt.k0 -> pt.k2 -> pt.k1 -> pt.k0" in result.diagnostics[0].message
 
 
+def _chain_tree(depth: int) -> dict[str, bytes]:
+    """Kinds pt.k0 (literal) <- pt.k1 <- ... <- pt.k{depth}, no Subjects, as a tree."""
+
+    tree = definitions()
+    types = [claim_type("pt.k0.slug")]
+    kinds = [keyed("pt.k0", "pt.k0.slug")]
+    for level in range(1, depth + 1):
+        types.append(claim_type(f"pt.k{level}.down", value_type=(f"pt.k{level - 1}",)))
+        kinds.append(keyed(f"pt.k{level}", f"pt.k{level}.down"))
+    for item in types:
+        tree[claim_type_path(item.predicate)] = render_claim_type(item)
+    for kind in kinds:
+        tree[subject_kind_path(kind.subject_kind)] = render_subject_kind(kind)
+    return tree
+
+
+def _k0_made_a_pair() -> dict[str, bytes]:
+    """A new plain kind pt.kb, and pt.k0 succeeded to be keyed also by a pt.kb."""
+
+    changes: dict[str, bytes] = {}
+    for item in (claim_type("pt.kb.slug"), claim_type("pt.k0.below", value_type=("pt.kb",))):
+        changes[claim_type_path(item.predicate)] = render_claim_type(item)
+    changes[subject_kind_path("pt.kb")] = render_subject_kind(keyed("pt.kb", "pt.kb.slug"))
+    previous = keyed("pt.k0", "pt.k0.slug")
+    changes[subject_kind_path("pt.k0")] = render_subject_kind(
+        successor_kind(
+            previous, identity_rule=keyed("pt.k0", "pt.k0.slug", "pt.k0.below").identity_rule
+        )
+    )
+    return changes
+
+
+@pytest.mark.parametrize("on_projection", [False, True], ids=["tree-index", "projection"])
+def test_a_conversion_that_deepens_an_unchanged_ancestor_refuses(on_projection: bool) -> None:
+    """Review F2: k4 -> k3 -> k2 -> k1 -> k0 is depth four; making k0 a pair makes it five."""
+
+    from cruxible_core.indexes.subject_identity import candidate_identity_issues
+    from tests.core_support._pair_support import held
+
+    def issues(depth: int) -> list[Any]:
+        tree = _chain_tree(depth)
+        parent: Any = held(tree) if on_projection else tree
+        changes = _k0_made_a_pair()
+        return list(
+            candidate_identity_issues(
+                current_tree=parent,
+                candidate_tree={**tree, **changes},
+                scope=tuple(sorted(changes)),
+            )
+        )
+
+    (issue,) = issues(MAX_KEY_DEPTH)
+    assert issue.code == "cruxible.subject_kind.key_claim_type_invalid"
+    assert issue.existing == (f"pt.k{MAX_KEY_DEPTH}",)
+    assert "pt.k4 -> pt.k3 -> pt.k2 -> pt.k1 -> pt.k0" in issue.message
+    # One level shallower, the deepest ancestor reaches exactly MAX_KEY_DEPTH.
+    assert issues(MAX_KEY_DEPTH - 1) == []
+    # The converted kind's own law accepts it: only the ancestor is too deep.
+    from cruxible_client.contracts.subject_kinds import AcceptedSubjectKind, parse_subject_kind
+    from cruxible_core.indexes.subject_identity import (
+        key_claim_type_shape,
+        tree_subject_kind_reader,
+    )
+
+    candidate = {**_chain_tree(MAX_KEY_DEPTH), **_k0_made_a_pair()}
+    k0 = parse_subject_kind(candidate[subject_kind_path("pt.k0")], path=subject_kind_path("pt.k0"))
+    previous = keyed("pt.k0", "pt.k0.slug")
+    law = evaluate_subject_kind_law(
+        k0,
+        path=subject_kind_path("pt.k0"),
+        predecessor=AcceptedSubjectKind(
+            path=subject_kind_path("pt.k0"),
+            subject_kind=previous,
+            artifact_digest=subject_kind_digest(previous).tagged,
+        ),
+        key_claim_types={p: key_claim_type_shape(candidate, p) for p in k0.keys},
+        subject_kind_of=tree_subject_kind_reader(candidate),
+        key_shape_of=lambda predicate: key_claim_type_shape(candidate, predicate),
+    )
+    assert law.verdict == "accepted", law.diagnostics
+
+
 def test_a_one_key_pair_kind_has_no_single_key_reading() -> None:
     tree = definitions()
     solo = keyed("pt.solo", "pt.solo.end")

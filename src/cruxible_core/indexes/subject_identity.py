@@ -1386,6 +1386,125 @@ def _parent_kind_keys(connection: sqlite3.Connection, kind: str) -> tuple[str, .
     return () if row is None else tuple(str(item) for item in json.loads(str(row[0])))
 
 
+_REFERRING_TYPES_SQL = (
+    "SELECT n.source_identity FROM claim_type_names n JOIN claim_types t "
+    "ON t.identity=n.source_identity WHERE n.name=? AND n.kind='subject_kind' "
+    "AND t.object_kind='subject' ORDER BY n.source_identity"
+)
+
+
+def _ancestor_depth_issues(
+    connection: sqlite3.Connection,
+    *,
+    current_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+    changed_kinds: set[str],
+    declared: Callable[[str], SubjectKind | None],
+) -> list[SubjectIdentityIssue]:
+    """A kind made a pair kind deepens every pair kind keyed through it (review F2).
+
+    The SubjectKind law walks the judged kind's ends only, and an unchanged
+    pair kind keyed through it pins nothing that would judge it again. So when
+    a change gives a kind its first Subject-valued part (the only way a kind's
+    height moves: a pair kind's rule is frozen), every live ancestor the change
+    leaves as it was is measured again over the candidate: none may nest more
+    than ``MAX_KEY_DEPTH`` deep. The climb seeks the parent's live ClaimTypes
+    naming each kind as a Subject (one indexed seek per kind) and stops at the
+    first ancestor too deep, so it is bounded by the depth: a governance
+    event's cost, paid only by such a conversion.
+    """
+
+    from cruxible_client.contracts.subject_kinds import MAX_KEY_DEPTH, subject_kind_path
+
+    shapes: dict[str, KeyClaimTypeShape | None] = {}
+
+    def shape(predicate: str) -> KeyClaimTypeShape | None:
+        if predicate not in shapes:
+            shapes[predicate] = key_claim_type_shape(candidate_tree, predicate)
+        return shapes[predicate]
+
+    converted: list[str] = []
+    for kind in sorted(changed_kinds):
+        new = declared(kind)
+        if new is None or not subject_key_ends(new, {p: shape(p) for p in new.keys}):
+            continue
+        previous = _any_subject_kind(current_tree, kind)
+        if previous is not None and subject_key_ends(
+            previous, {p: key_claim_type_shape(current_tree, p) for p in previous.keys}
+        ):
+            continue
+        converted.append(kind)
+    if not converted:
+        return []
+    heights: dict[str, int] = {}
+
+    def height(kind: str, chain: tuple[str, ...]) -> int:
+        # Exact up to MAX_KEY_DEPTH; anything deeper reads as MAX_KEY_DEPTH + 1
+        # or more (the walk stops there).
+        if kind in heights:
+            return heights[kind]
+        if len(chain) > MAX_KEY_DEPTH + 1:
+            return MAX_KEY_DEPTH + 1
+        rule = declared(kind)
+        found = 0
+        if rule is not None:
+            for end in subject_key_ends(rule, {p: shape(p) for p in rule.keys}).values():
+                if end not in chain:  # a cycle is the law's refusal
+                    found = max(found, 1 + height(end, (*chain, end)))
+        heights[kind] = found
+        return found
+
+    def referrers(kind: str) -> list[str]:
+        """The live kinds keyed by a Subject-valued part naming ``kind``."""
+
+        found: list[str] = []
+        for (identity,) in connection.execute(_REFERRING_TYPES_SQL, (kind,)):
+            predicate = str(identity).removeprefix("ClaimType:")
+            part = shape(predicate)
+            if (
+                part is None
+                or part.object_kind != "subject"
+                or kind not in part.object_subject_kinds
+                or len(part.allowed_subject_kinds) != 1
+            ):
+                continue
+            owner = part.allowed_subject_kinds[0]
+            rule = declared(owner)
+            if rule is not None and predicate in rule.keys:
+                found.append(owner)
+        return found
+
+    issues: list[SubjectIdentityIssue] = []
+    reported: set[str] = set()
+    for kind in converted:
+        frontier: list[tuple[str, tuple[str, ...]]] = [(kind, (kind,))]
+        climbed: set[str] = {kind}
+        while frontier:
+            below, chain = frontier.pop()
+            for ancestor in referrers(below):
+                if ancestor in climbed:
+                    continue
+                climbed.add(ancestor)
+                path = (ancestor, *chain)
+                if ancestor not in changed_kinds and height(ancestor, (ancestor,)) > MAX_KEY_DEPTH:
+                    if ancestor not in reported:
+                        reported.add(ancestor)
+                        issues.append(
+                            SubjectIdentityIssue(
+                                "cruxible.subject_kind.key_claim_type_invalid",
+                                subject_kind_path(kind),
+                                f"Making {kind} a pair kind nests the pair kind {ancestor} more "
+                                f"than {MAX_KEY_DEPTH} deep through Subject-valued key parts "
+                                f"({' -> '.join(path)} -> ...). Declare the deeper pair as a new "
+                                "kind, or keep the key literal.",
+                                (ancestor,),
+                            )
+                        )
+                    continue
+                frontier.append((ancestor, path))
+    return issues
+
+
 def _kind_has_subjects(connection: sqlite3.Connection, kind: str) -> bool:
     """Whether the parent holds any Subject of ``kind``, live or retired (one range probe)."""
 
@@ -1706,6 +1825,15 @@ def candidate_identity_issues(
                 current_tree=current_tree,
                 candidate_tree=candidate_tree,
                 changed_kinds=changed_kinds,
+            )
+        )
+        issues.extend(
+            _ancestor_depth_issues(
+                connection,
+                current_tree=current_tree,
+                candidate_tree=candidate_tree,
+                changed_kinds=changed_kinds,
+                declared=declared,
             )
         )
 

@@ -278,6 +278,35 @@ def publish(connection: Any, sources: Mapping[str, bytes], *, changed: Any) -> N
     )
 
 
+class HeldTree(dict):  # type: ignore[type-arg]
+    """An accepted tree standing on its projection, as the candidate boundary reads one.
+
+    ``tree_index_connection`` then reads the projection's indexes instead of
+    deriving an index from the tree's members.
+    """
+
+    _parent = None
+
+    def __init__(self, sources: Mapping[str, bytes], connection: Any) -> None:
+        super().__init__(sources)
+        self._connection = connection
+
+    def _accepted_reader(self) -> Any:
+        from contextlib import contextmanager
+
+        @contextmanager
+        def bind() -> Any:
+            yield SimpleNamespace(typed=SimpleNamespace(connection=self._connection))
+
+        return bind()
+
+
+def held(sources: Mapping[str, bytes], *, path: Any = None) -> HeldTree:
+    """``sources`` as an accepted tree on a fresh projection of it (in memory or at ``path``)."""
+
+    return HeldTree(sources, projection(sources, path=path))
+
+
 PAIR_TABLES = ("pair_ends", "pair_slot_live", "pair_units")
 
 
@@ -315,6 +344,7 @@ __all__ = [
     "definitions",
     "end",
     "exposure",
+    "held",
     "judge",
     "keyed",
     "literal",

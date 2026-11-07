@@ -445,6 +445,14 @@ def _tree_alias_index(tree: Mapping[str, bytes]) -> sqlite3.Connection:
         "object_path TEXT, object_selector_scheme TEXT)"
     )
     connection.execute("CREATE INDEX claims_by_object_subject ON claims(object_path,identity)")
+    # The live Subject-valued ClaimTypes by the kinds they name, as the
+    # projection's claim_type_names/claim_types rows hold them: a pair kind's
+    # ancestors are found by the kinds its key parts name.
+    connection.execute("CREATE TABLE claim_types (identity TEXT PRIMARY KEY, object_kind TEXT)")
+    connection.execute("CREATE TABLE claim_type_names (source_identity TEXT, kind TEXT, name TEXT)")
+    connection.execute(
+        "CREATE INDEX claim_type_names_by_name ON claim_type_names(name,kind,source_identity)"
+    )
     connection.execute(
         "CREATE TABLE subject_kinds (identity TEXT, rule TEXT, uniqueness TEXT, "
         "key_predicates TEXT, lifecycle TEXT)"
@@ -455,6 +463,21 @@ def _tree_alias_index(tree: Mapping[str, bytes]) -> sqlite3.Connection:
     connection.execute("CREATE INDEX subject_keys_by_key ON subject_keys(kind,key_encoding)")
     key_predicates: set[str] = set()
     for path in tree:
+        if path.startswith("claim-types/") and b'"subject_kinds"' in tree[path]:
+            from cruxible_client.contracts.claim_types import parse_claim_type
+            from cruxible_client.contracts.shapes import claim_value_kind
+            from cruxible_core.indexes.typed_state import claim_type_names
+
+            claim_type = parse_claim_type(tree[path], path=path)
+            if claim_value_kind(claim_type.value) == "subject":
+                connection.execute(
+                    "INSERT INTO claim_types VALUES (?,?)",
+                    (claim_type.identity.qualified, "subject"),
+                )
+                connection.executemany(
+                    "INSERT INTO claim_type_names VALUES (?,?,?)",
+                    [row[:3] for row in claim_type_names(claim_type)],
+                )
         if path.startswith("subject-kinds/") and path.endswith(".json"):
             declared = parse_subject_kind(tree[path], path=path)
             rule = declared.identity_rule
