@@ -78,10 +78,17 @@ def subject_kind_of(path: str) -> tuple[str, str]:
     return kind, rest.removesuffix(".json")
 
 
-KeyTuple = tuple[tuple[str, SubjectKeyPartValue], ...]
+PartKeyTuple = tuple[tuple[str, SubjectKeyPartValue], ...]
 """A canonical key: each key predicate and its canonical value, in the kind's key order.
 
 A Subject-valued part's value is the end Subject (``SubjectEnd``, its path).
+"""
+
+KeyTuple = tuple[tuple[str, SubjectKeyValue], ...]
+"""A canonical key of literal parts, as the creation routes (authoring, write) still type it.
+
+Every reader accepts a ``PartKeyTuple``; the routes widen to it when they
+create pairs (slice S2).
 """
 
 
@@ -173,7 +180,9 @@ def canonical_key(
             predicate=predicate,
         )
         found.append((predicate, value))
-    return tuple(found)
+    # A pair kind's key holds ``SubjectEnd`` parts; the creation routes that
+    # consume this type it as ``KeyTuple`` until they create pairs (slice S2).
+    return tuple(found)  # type: ignore[arg-type]
 
 
 def key_normalizer_of(
@@ -313,11 +322,11 @@ def tree_key_rules(tree: Mapping[str, bytes]) -> KeyRules:
     return KeyRules(subject_kind, claim_type)
 
 
-def key_values(key: KeyTuple) -> tuple[SubjectKeyPartValue, ...]:
+def key_values(key: PartKeyTuple) -> tuple[SubjectKeyPartValue, ...]:
     return tuple(value for _predicate, value in key)
 
 
-def key_encoding(key: KeyTuple | PendingKey) -> str:
+def key_encoding(key: PartKeyTuple | PendingKey) -> str:
     """A canonical key's one comparable spelling: typed, with its predicates, in key order.
 
     Canonical JSON keeps literal types apart (``true`` is not ``1``), so two keys
@@ -335,7 +344,7 @@ def key_encoding(key: KeyTuple | PendingKey) -> str:
     )
 
 
-def key_order(key: KeyTuple) -> bytes:
+def key_order(key: PartKeyTuple) -> bytes:
     """The order core assigns ids in when one change creates several Subjects of a kind."""
 
     from cruxible_client.contracts.canonical import canonical_bytes
@@ -382,7 +391,7 @@ def kind_depths(
 
 
 def creation_order(
-    depth: int, kind: str, key: KeyTuple, member: str
+    depth: int, kind: str, key: PartKeyTuple, member: str
 ) -> tuple[int, str, bytes, str]:
     """The one order every route assigns creation ids in: layer, kind, canonical key, member.
 
@@ -429,7 +438,9 @@ def _kind_range(kind: str) -> tuple[str, str]:
     return prefix, prefix[:-1] + chr(ord("/") + 1)
 
 
-def subjects_with_key(connection: sqlite3.Connection, kind: str, key: KeyTuple) -> tuple[str, ...]:
+def subjects_with_key(
+    connection: sqlite3.Connection, kind: str, key: PartKeyTuple
+) -> tuple[str, ...]:
     """The live Subjects of ``kind`` whose live key Claims hold exactly ``key``, by path.
 
     One seek on the whole-key index (``subject_keys``): a composite key costs what
@@ -450,7 +461,7 @@ def subjects_with_key(connection: sqlite3.Connection, kind: str, key: KeyTuple) 
 
 def subject_key_of(
     connection: sqlite3.Connection, path: str, keys: Sequence[str]
-) -> KeyTuple | None:
+) -> PartKeyTuple | None:
     """The whole canonical key one Subject holds in ``connection``, or None.
 
     None when a key part has no live value, several, or one that is not a
@@ -662,7 +673,7 @@ class IdentityOverlay:
     subjects: dict[str, bool] = field(default_factory=dict)
     #: Subject path -> its whole canonical key after the change (None: none), for
     #: every Subject whose key the change may move.
-    keys: dict[str, KeyTuple | None] = field(default_factory=dict)
+    keys: dict[str, PartKeyTuple | None] = field(default_factory=dict)
     #: Alias rows the change ends and adds: (target path, discovery-normalized term).
     aliases_removed: set[tuple[str, str]] = field(default_factory=set)
     aliases_added: set[tuple[str, str]] = field(default_factory=set)
@@ -737,7 +748,7 @@ class IdentityView:
         )
         return tuple(sorted(path for path in found if self.live(path)))
 
-    def holders(self, kind: str, key: KeyTuple) -> tuple[str, ...]:
+    def holders(self, kind: str, key: PartKeyTuple) -> tuple[str, ...]:
         """The live Subjects of ``kind`` holding exactly the canonical ``key``.
 
         One seek on the parent's whole-key index, less the Subjects the change
@@ -759,7 +770,7 @@ class IdentityView:
         found.update(self._overlay_holders.get((kind, key_encoding(key)), ()))
         return tuple(sorted(path for path in found if self.live(path)))
 
-    def add_creation(self, path: str, key: KeyTuple | None) -> None:
+    def add_creation(self, path: str, key: PartKeyTuple | None) -> None:
         """Lay one Subject the change creates over the view (it holds ``key``).
 
         The holder map already built is extended in place, so a batch of N
@@ -823,7 +834,7 @@ class IdentityView:
         return SubjectRefResolution(kind=kind, subject_id=text, path=None, via=None)
 
     def resolve_key_reference(
-        self, kind: str, key: KeyTuple, *, single_text: str | None
+        self, kind: str, key: PartKeyTuple, *, single_text: str | None
     ) -> SubjectRefResolution:
         """A reference to an existing Subject by its key, through the one resolver order.
 
@@ -869,7 +880,7 @@ class IdentityView:
         return SubjectRefResolution(kind=kind, subject_id=text, path=None, via=None)
 
     def resolve_creation(
-        self, kind: str, key: KeyTuple, *, single_text: str | None, create_new: bool
+        self, kind: str, key: PartKeyTuple, *, single_text: str | None, create_new: bool
     ) -> CreationResolution:
         """Where a creation by ``key`` lands: an existing Subject, several, or a new one.
 
@@ -917,7 +928,7 @@ class CreationResolution:
 def assign_creation_id(
     view: IdentityView,
     kind: str,
-    key: KeyTuple,
+    key: PartKeyTuple,
     *,
     names: set[str],
 ) -> str:
@@ -959,7 +970,7 @@ def key_ambiguous_message(kind: str, holders: Sequence[str]) -> str:
     )
 
 
-def spell_key(key: KeyTuple) -> str:
+def spell_key(key: PartKeyTuple) -> str:
     """A canonical key as a refusal names it: ``predicate=value``, an end as ``kind/id``."""
 
     return ", ".join(
@@ -968,7 +979,7 @@ def spell_key(key: KeyTuple) -> str:
     )
 
 
-def subject_key_message(created: str, kind: str, key: KeyTuple, others: Sequence[str]) -> str:
+def subject_key_message(created: str, kind: str, key: PartKeyTuple, others: Sequence[str]) -> str:
     """The one refusal text for a Subject whose canonical key another live Subject holds."""
 
     spelled = spell_key(key)
@@ -1691,7 +1702,7 @@ def candidate_identity_issues(
             found.extend(touched_values.get((subject, predicate), ()))
             return found
 
-        keys_now: dict[str, KeyTuple] = {}
+        keys_now: dict[str, PartKeyTuple] = {}
         for subject in sorted(affected):
             kind = affected[subject]
             declared_kind = declared(kind)
@@ -1801,7 +1812,7 @@ def candidate_identity_issues(
             ),
         )
 
-        def holders(kind: str, key: KeyTuple) -> set[str]:
+        def holders(kind: str, key: PartKeyTuple) -> set[str]:
             return set(view.holders(kind, key))
 
         # Created keyed Subjects carry core's binding and take exactly the id it
@@ -2293,7 +2304,7 @@ def _kind_wide_conflicts(
     connection: sqlite3.Connection,
     kind: str,
     declared_kind: SubjectKind,
-    keys_now: Mapping[str, KeyTuple],
+    keys_now: Mapping[str, PartKeyTuple],
     affected: Mapping[str, str],
 ) -> list[SubjectIdentityIssue]:
     """Every pair of live Subjects of ``kind`` that hold one key, once the kind is unique.
@@ -2304,7 +2315,7 @@ def _kind_wide_conflicts(
     """
 
     low, high = _kind_range(kind)
-    tuples: dict[str, KeyTuple] = {}
+    tuples: dict[str, PartKeyTuple] = {}
     for (subject,) in connection.execute(
         "SELECT path FROM subjects WHERE path>=? AND path<? AND lifecycle='live'", (low, high)
     ):
@@ -2355,6 +2366,12 @@ __all__ = [
     "SUBJECT_KEY_INVALID",
     "SUBJECT_KEY_MISSING",
     "KeyTuple",
+    "PartKeyTuple",
+    "PendingEnd",
+    "PendingKey",
+    "creation_order",
+    "kind_depths",
+    "spell_key",
     "SubjectKeyInvalid",
     "canonical_key",
     "key_encoding",
