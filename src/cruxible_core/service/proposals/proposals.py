@@ -91,9 +91,14 @@ class PlaybillProposalListEntryV1(_StrictOperationalReadModel):
     #: ``awaiting_readmit`` only: the paths changed since its base that its change
     #: set touches or is judged under, sorted.
     stale_paths: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: ``settled`` + ``accepted`` only: the accepted generation its change set
+    #: settled in (the proposal index's maintained settlement record).
+    accepted_generation: int | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def _status_shape(self) -> "PlaybillProposalListEntryV1":
+        if (self.accepted_generation is not None) != (self.terminal_reason == "accepted"):
+            raise ValueError("exactly an accepted proposal names its accepted generation")
         if bool(self.stale_paths) != (self.status == "awaiting_readmit"):
             raise ValueError("exactly a proposal awaiting readmit names its stale paths")
         if self.status == "incomplete":
@@ -469,6 +474,9 @@ def _proposal_entries(
                 incomplete_reasons=tuple(missing),
                 withdrawal_present=row["withdrawal_path"] is not None,
                 stale_paths=stale_paths if awaiting_readmit else (),
+                accepted_generation=(
+                    int(row["accepted_sequence"]) if not missing and reason == "accepted" else None
+                ),
             )
         )
     return tuple(entries)

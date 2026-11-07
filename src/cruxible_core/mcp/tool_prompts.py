@@ -158,7 +158,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_claim_attest": (
         "Use when you examined a Claim and want to sign support, contradict, or unsure on it, "
-        "optionally citing new Captures you examined."
+        "optionally citing your own words (because) or one write evidence option (evidence)."
     ),
     "cruxible_authoring_example": (
         "Use when you need a model-constructed Claim, Procedure, Line, acquisition policy, "
@@ -236,8 +236,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Provider:NAME[/BUILD]/Contract:<name>/v<N>, "
         "ApprovalPolicy:instance, "
         "ProcedureRuntimePolicy:instance, or a proposal id -- and want its values. detail: summary "
-        "(default card), evidence, why, history, proof (full envelope), body (Document bytes "
-        "by range). A wrong name refuses with the nearest names."
+        "(default card), evidence, why, history, incoming, runs, backlinks (notes, "
+        "Documents and cited sections pointing at a Subject; guidance Documents of a "
+        "ClaimType or Procedure), proof (full envelope), body (Document bytes by range). "
+        "A wrong name refuses with the nearest names."
     ),
     "cruxible_query": (
         "Use to answer any question over accepted state in one call. Compact: kind "

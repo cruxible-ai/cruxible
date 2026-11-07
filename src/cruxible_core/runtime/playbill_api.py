@@ -18,6 +18,10 @@ from typing import TYPE_CHECKING, TypeVar, cast
 from pydantic import TypeAdapter, ValidationError
 
 from cruxible_client import contracts
+from cruxible_client.contracts.attestation_evidence import (
+    ClaimAttestationEvidenceRequest,
+    ClaimAttestationEvidenceResult,
+)
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.inputs import AuthoringInput
 from cruxible_client.contracts.authoring.models import (
@@ -247,7 +251,10 @@ from cruxible_core.service.discovery.since import (
 from cruxible_core.service.evidence.capture_contracts import service_propose_capture_contract
 from cruxible_core.service.evidence.capture_erasure import service_erase_capture
 from cruxible_core.service.evidence.capture_reads import service_read_playbill_capture
-from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
+from cruxible_core.service.evidence.claim_attestations import (
+    service_append_claim_attestation,
+    service_prepare_claim_attestation_evidence,
+)
 from cruxible_core.service.evidence.file_catalog import (
     service_check_playbill_file_bundle,
     service_playbill_file_context,
@@ -1736,6 +1743,21 @@ def playbill_write(instance_id: str, *, request: WriteRequest) -> WriteOutcome:
 
     check_permission("cruxible_write", instance_id=instance_id)
     return _write_outcome(instance_id, request)
+
+
+def playbill_prepare_claim_attestation_evidence(
+    instance_id: str,
+    *,
+    request: ClaimAttestationEvidenceRequest,
+) -> ClaimAttestationEvidenceResult:
+    """Make or resolve the Captures an attestation will cite (D-R42)."""
+
+    check_permission("cruxible_claim_attest", instance_id=instance_id)
+    return service_prepare_claim_attestation_evidence(
+        get_playbill_manager().get(instance_id),
+        request=request,
+        actor_id=_actor_id(instance_id),
+    )
 
 
 def playbill_append_claim_attestation(

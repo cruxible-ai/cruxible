@@ -250,7 +250,7 @@ The principal registry is `orient(section="principals")`; one record is
 | `cruxible_claim_type_propose` | Propose a governed predicate interface, or adopt a builtin (`builtin: semantic.alias` or `semantic.distinct_from`) | `GOVERNED_WRITE` |
 | `cruxible_capture_contract_propose` | Propose authored evidence: `input: {name, shape}` with optional grade, replay, retention, erasable, max_bytes, selector_privacy and body_access (`open` or `restricted`, fixed with the name); omitted edit fields keep accepted values; lands when allowed (`accept: never` keeps the proposal) | `GOVERNED_WRITE` |
 | `cruxible_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
-| `cruxible_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; pass `capture_digests` (and optionally `referent_coordinate`) to attest on new Captures you examined instead of the Claim's own citations | `GOVERNED_WRITE` |
+| `cruxible_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; `because` cites your own words and `evidence` takes one of write's evidence options (self, section with `own_words`, file, capture, contract), made into Captures before signing; with neither, it cites the Claim's own evidence. Never a proposal | `GOVERNED_WRITE` |
 | `cruxible_set` | Put one value in one field of one Subject (`kind/id`), replacing the live value without its Claim ID; a missing Subject of a known kind is added; `evidence` defaults to `because` as self evidence (an exact-content value is its own evidence); accepts in the same call when policy and tier allow it, else answers `awaiting_approval` with the eligible approvers and the approve call; `dry_run` writes nothing; `at` refuses `cruxible.write.slot_changed` if the field moved since; each change carries its `verdict`, and a verdict other than `supported` comes with a warning and its repair | `GOVERNED_WRITE` |
 | `cruxible_retire` | End one live Claim, by Claim ID or by Subject and single-value field, with its dependent Claims, in one change set | `GOVERNED_WRITE` |
 | `cruxible_write` | Apply `create`, `set`, `add` (one more value in a many-valued field) and `retire` changes as one change set, accepted or refused together. A `create` (`label`, `subject_kind`, `key`: a one-key value, each composite part as `{predicate, value}`, or none for a minted kind) makes a Subject the other changes name `{"created": label}` in any order; a key one live Subject holds lands on it (`resolved: existing`) unless `expect_new` | `GOVERNED_WRITE` |
@@ -309,10 +309,10 @@ its whole reverse-pin closure in the same generation, so vocabulary evolution
 needs no second tool and no second generation either.
 `cruxible_authoring_example` serves `change-set` and
 `claim-type-succession` as starting points, and `procedure`, `line`,
-`acquisition-policy` and `procedure-mandate` templates that are accepted
+`trigger` and `procedure-mandate` templates that are accepted
 together. A `line` input's `parameters` is checked against its Procedure's input
-contract at authoring; its `acquisition_policy_name` is needed only when the
-Procedure has Source nodes.
+contract at authoring; its optional `acquisition` map sets per-capture-output
+rules (`<call>.<field>` to `max_age`, `on_unavailable`, `on_stale`, ...).
 
 ## Procedures
 

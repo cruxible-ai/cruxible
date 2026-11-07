@@ -40,7 +40,7 @@ class _StubClient:
             columns=(
                 contracts.QueryColumn(name="task_title", type="string"),
                 contracts.QueryColumn(
-                    name="refines", type="subject:dev.roadmap_item", cardinality="many"
+                    name="refines", type="subject<dev.roadmap_item>", cardinality="many"
                 ),
             ),
             rows=(

@@ -39,7 +39,7 @@ def test_cli_claim_attest_uses_the_real_local_key_path(
             "attest",
             claim_id,
             "--support",
-            "--note",
+            "--because",
             "examined through CLI",
             "--json",
         ],

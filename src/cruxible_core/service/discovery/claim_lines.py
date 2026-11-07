@@ -31,6 +31,30 @@ def subject_ref(path: str) -> str:
     return path
 
 
+def served_none(obj: NoneClaimObject) -> dict[str, object]:
+    """An inverse Claim's value as every read serves it (W4): ``{"none": of}``.
+
+    ``of`` is the unit the field does not hold: a Subject as ``kind/id``, a key
+    value as its literal, or None for a one-valued field's whole slot -- the
+    form the Subject card, query cells and write outcomes already show.
+    """
+
+    of = obj.of
+    if isinstance(of, SubjectClaimObject):
+        return {"none": subject_ref(of.address.artifact_path)}
+    return {"none": None if of is None else of.value}
+
+
+def served_claim_value(obj: object) -> object:
+    """A Claim object as reads serve it: a Subject as ``kind/id``, a none as ``served_none``."""
+
+    if isinstance(obj, SubjectClaimObject):
+        return subject_ref(obj.address.artifact_path)
+    if isinstance(obj, NoneClaimObject):
+        return served_none(obj)
+    return getattr(obj, "value")
+
+
 def live_predicates(projection: Any) -> frozenset[str]:
     """Every live accepted predicate: the vocabulary field names are shortened against."""
 
@@ -48,15 +72,7 @@ def claim_line(claim: ClaimArtifact, *, accepted_predicates: Collection[str]) ->
     statement = claim.statement
     subject = subject_ref(statement.subject.artifact_path)
     kind = subject.split("/", 1)[0]
-    obj = statement.object
-    value: object
-    if isinstance(obj, SubjectClaimObject):
-        value = subject_ref(obj.address.artifact_path)
-    elif isinstance(obj, NoneClaimObject):
-        # An inverse shows its object as stored, never as a value.
-        value = obj.model_dump(mode="json")
-    else:
-        value = obj.value
+    value = served_claim_value(statement.object)
     return ClaimLine(
         claim=claim.identity.name,
         subject=subject,

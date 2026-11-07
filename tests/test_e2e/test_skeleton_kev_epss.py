@@ -1254,6 +1254,10 @@ def test_get_on_a_derived_capture_serves_its_sources_reads_and_reducer(tmp_path:
     assert card.derivation.reads == manifest.input_accepted_state_digests
     assert card.derivation.reducer is not None
     assert card.derivation.reducer.digest == _envelope(instance, root).reducer_digest
+    # Item 7: the reducer's build and operation are named beside their digests.
+    assert card.derivation.reducer.operation == "derive"
+    assert card.derivation.reducer.provider is not None
+    assert card.derivation.reducer.provider.startswith(f"Provider:{DERIVE_PROVIDER}")
     (source,) = manifest.input_capture_digests
     assert _get_card(instance, "Capture:" + source).derivation is None
 

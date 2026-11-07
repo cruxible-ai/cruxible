@@ -594,7 +594,8 @@ def check_operator(
 
 def object_label(info: PredicateInfo) -> str:
     if info.value_type == "subject":
-        return "subject:" + "|".join(info.object_kinds) if info.object_kinds else "subject"
+        # The type grammar's spelling (``subject<K1 | K2>``), as orient serves it.
+        return "subject<" + " | ".join(info.object_kinds) + ">" if info.object_kinds else "subject"
     return info.value_type
 
 

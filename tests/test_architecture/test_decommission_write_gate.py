@@ -132,8 +132,10 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
     "cruxible_core/service/authoring/documents.py": frozenset(
         {"service_submit_playbill_approval", "service_propose_compiler_upgrade"}
     ),
+    # The attestation evidence step stores the Captures an attestation will
+    # cite (D-R42); the append publishes the signed event.
     "cruxible_core/service/evidence/claim_attestations.py": frozenset(
-        {"service_append_claim_attestation"}
+        {"service_append_claim_attestation", "service_prepare_claim_attestation_evidence"}
     ),
     "cruxible_core/service/discovery/curation.py": frozenset(
         {

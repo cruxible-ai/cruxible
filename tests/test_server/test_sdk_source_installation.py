@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from cruxible_client import Cruxible
-from cruxible_client.authoring.procedures import Handle, ProcedureLimits, Sequence, eq, halt
+from cruxible_client.authoring.procedures import Handle, ProcedureLimits, Sequence, eq
 from cruxible_client.contracts.authoring.inputs import ProcedureMandateInput
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
@@ -26,6 +26,7 @@ from tests.core_support._light_capture_support import (
     procedure_contract,
 )
 from tests.core_support._subject_kind_support import declare_by_slug
+from tests.support.procedures import emit, guard, halt, invoke
 from tests.test_procedures.test_procedure_proposal_delivery import (
     SUBJECT_ID,
     SUBJECT_KIND,
@@ -162,7 +163,8 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         output=result,
         hard_caps=limits,
     )
-    observer.emit(
+    emit(
+        observer,
         "test.web-output",
         input=observer.input.whole,
         result={
@@ -235,11 +237,13 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
             row="fetch.document@1",
             fields={"unit": {"at": "/unit"}, "station": {"at": "/station"}},
         )
-        parent.guard(
-            eq(document.ref("rows", "0", "unit"), "metres"), else_=halt("Observation failed")
+        guard(
+            parent,
+            eq(document.ref("rows", "0", "unit"), "metres"),
+            else_=halt("Observation failed"),
         )
-        observed = parent.invoke(
-            "observe-web", input=observed_result_from(document), as_="observed"
+        observed = invoke(
+            parent, "observe-web", input=observed_result_from(document), as_="observed"
         )
         parent.returns(ReturnFields(fields=observed_result(observed)))
         return document

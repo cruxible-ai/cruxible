@@ -350,17 +350,27 @@ class ClaimAttestationCaptureReference(_StrictClaimAttestationModel):
 
 
 class PreparedClaimAttestationRequest(_StrictClaimAttestationModel):
+    """What the caller signs, before the exact Claim is read.
+
+    The signed basis follows from the evidence (D-R42): Capture references (the
+    Captures the attestation evidence step made or resolved) sign
+    ``new_capture``; none sign ``examined_existing`` over the Claim's own
+    evidence citations.
+    """
+
     tag: Literal["playbill-prepared-claim-attestation-request-v1"] = (
         "playbill-prepared-claim-attestation-request-v1"
     )
     claim_id: str
-    attestation_basis: ClaimAttestationBasis
     stance: ClaimStance
     capture_references: tuple[ClaimAttestationCaptureReference, ...] = ()
     referent_coordinate: AcceptedCoordinate | None = None
     attested_at: datetime = Field(description="Reads ASSERTION TIME.")
     valid_until: datetime | None = Field(default=None, description="Reads VALIDITY WINDOW.")
-    note: str | None = None
+
+    @property
+    def attestation_basis(self) -> ClaimAttestationBasis:
+        return "new_capture" if self.capture_references else "examined_existing"
 
     @field_validator("capture_references")
     @classmethod
@@ -379,24 +389,11 @@ class PreparedClaimAttestationRequest(_StrictClaimAttestationModel):
             raise ValueError("prepared attestation times must be timezone-aware")
         return None if value is None else ensure_utc(value)
 
-    @field_validator("note")
-    @classmethod
-    def _note(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if not value or "\x00" in value or len(value.encode("utf-8")) > 4096:
-            raise ValueError("attestation note must contain 1..4096 UTF-8 bytes and no NUL")
-        return value
-
     @model_validator(mode="after")
     def _prepared_shape(self) -> "PreparedClaimAttestationRequest":
         """ASSERTION TIME must belong to the declared VALIDITY WINDOW."""
         if self.valid_until is not None and self.valid_until <= self.attested_at:
             raise ValueError("prepared attestation validity interval must be increasing")
-        if self.attestation_basis == "new_capture" and not self.capture_references:
-            raise ValueError("new_capture requests require Capture references")
-        if self.attestation_basis == "examined_existing" and self.capture_references:
-            raise ValueError("examined_existing derives backing and accepts no Capture references")
         return self
 
 
@@ -477,7 +474,6 @@ class ClaimAttestationAppendRequest(_StrictClaimAttestationModel):
     )
     attestation: ClaimAttestation
     capture_references: tuple[ClaimAttestationCaptureReference, ...] = ()
-    note: str | None = None
 
     @field_validator("capture_references")
     @classmethod
@@ -487,15 +483,6 @@ class ClaimAttestationAppendRequest(_StrictClaimAttestationModel):
         digests = tuple(item.capture_digest for item in value)
         if digests != tuple(sorted(set(digests), key=lambda item: item.encode("ascii"))):
             raise ValueError("attestation Capture references must be ASCII-sorted and unique")
-        return value
-
-    @field_validator("note")
-    @classmethod
-    def _append_note(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if not value or "\x00" in value or len(value.encode("utf-8")) > 4096:
-            raise ValueError("attestation note must contain 1..4096 UTF-8 bytes and no NUL")
         return value
 
     @model_validator(mode="after")

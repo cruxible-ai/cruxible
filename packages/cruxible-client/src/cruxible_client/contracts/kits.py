@@ -15,6 +15,7 @@ import base64
 import binascii
 import hashlib
 import re
+from collections.abc import Mapping
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
@@ -52,10 +53,17 @@ KIT_ARTIFACT_PREFIXES: tuple[str, ...] = (
     "capture-contracts/",
     "claim-types/",
     "contracts/",
+    "documents/",
     "procedures/",
     "query-definitions/",
     "subject-kinds/",
 )
+#: Where a kit directory (and a kit artifact's layer) holds its governed
+#: Documents' body bytes, each at ``bodies/<sha256 hex>``.
+KIT_DOCUMENT_BODY_DIRECTORY = "bodies"
+#: The kit receipt Documents live at ``documents/kit-<id>.json``: no kit
+#: Document may take that path.
+_RECEIPT_DOCUMENT_RE = re.compile(r"^documents/kit-[^/]*\.json$")
 
 _KIT_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 _VERSION_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
@@ -75,6 +83,7 @@ def kit_artifact_path_allowed(path: str) -> bool:
     return (
         path.endswith(".json")
         and path.startswith(KIT_ARTIFACT_PREFIXES)
+        and not _RECEIPT_DOCUMENT_RE.fullmatch(path)
         and "\\" not in path
         and all(part not in {"", ".", ".."} for part in parts)
         and all(part.isprintable() for part in parts)
@@ -559,6 +568,53 @@ def kit_file_entry(path: str, content: bytes) -> KitFile:
     )
 
 
+class KitDocumentBody(_Strict):
+    """One governed Document body a kit carries, named by its CAS digest."""
+
+    digest: str
+    content_base64: str
+
+    @field_validator("digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        return _digest(value)
+
+    @field_validator("content_base64")
+    @classmethod
+    def _content(cls, value: str) -> str:
+        try:
+            base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("kit Document body must be canonical base64") from exc
+        return value
+
+    @property
+    def content(self) -> bytes:
+        return base64.b64decode(self.content_base64, validate=True)
+
+    @classmethod
+    def of(cls, content: bytes) -> KitDocumentBody:
+        return cls(
+            digest=Sha256Value(hashlib.sha256(content).hexdigest()).tagged,
+            content_base64=base64.b64encode(content).decode("ascii"),
+        )
+
+
+def kit_document_body_digests(artifacts: Mapping[str, bytes]) -> dict[str, str]:
+    """Every kit Document path -> the body digest its shell names."""
+
+    import json
+
+    found = {}
+    for path, content in artifacts.items():
+        if path.startswith("documents/"):
+            digest = json.loads(content).get("body_digest")
+            if not isinstance(digest, str):
+                raise ValueError(f"kit Document {path} names no body digest")
+            found[path] = digest
+    return found
+
+
 class KitBundle(_Strict):
     """A manifest and the exact bytes of every artifact it names.
 
@@ -575,6 +631,11 @@ class KitBundle(_Strict):
     )
     #: The inert files' bytes, or nothing (a bundle on its way to ``kit add``).
     files: tuple[KitFileBytes, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: The governed Documents' body bytes, by digest, or nothing: a bundle sent
+    #: to ``kit add`` carries none, the adapter stages each body first.
+    document_bodies: tuple[KitDocumentBody, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
     @field_validator("artifacts")
     @classmethod
@@ -617,6 +678,24 @@ class KitBundle(_Strict):
             if actual != expected[item.path]:
                 raise ValueError(f"kit file {item.path} differs from its sha256")
         return self
+
+    @model_validator(mode="after")
+    def _document_bodies(self) -> KitBundle:
+        if not self.document_bodies:
+            return self
+        digests = tuple(item.digest for item in self.document_bodies)
+        _sorted_unique(digests, label="kit Document bodies")
+        if set(digests) != set(self.document_body_digests().values()):
+            raise ValueError("kit Document bodies must cover exactly the Documents' bodies")
+        for item in self.document_bodies:
+            if Sha256Value(hashlib.sha256(item.content).hexdigest()).tagged != item.digest:
+                raise ValueError(f"kit Document body {item.digest} differs from its digest")
+        return self
+
+    def document_body_digests(self) -> dict[str, str]:
+        """Every kit Document path -> its body digest."""
+
+        return kit_document_body_digests(self.contents())
 
     def contents(self) -> dict[str, bytes]:
         return {item.path: item.content for item in self.artifacts}
@@ -661,13 +740,25 @@ class KitInstalledArtifact(_Strict):
         return None if value is None else _digest(value)
 
 
+def kit_lineage_keys(payload: Mapping[str, object]) -> frozenset[str]:
+    """The keys holding an artifact's lineage: ``lifecycle``, and a Document's
+    top-level ``predecessor_digest`` (its lifecycle holds its revision)."""
+
+    if payload.get("kind") == "document":
+        return frozenset({"lifecycle", "predecessor_digest"})
+    return frozenset({"lifecycle"})
+
+
 def kit_content_digest(payload: dict[str, object]) -> str:
     """One artifact's content apart from its lifecycle (lineage and live/retired)."""
 
+    # A Document names its format in ``tag``, a key canonical digests reserve;
+    # its format is fixed by its path family, so the content leaves it out.
+    lineage = kit_lineage_keys(payload) | ({"tag"} if payload.get("kind") == "document" else set())
     return Sha256Value(
         canonical_digest(
             "playbill-kit-artifact-content-v1",
-            {key: value for key, value in payload.items() if key != "lifecycle"},
+            {key: value for key, value in payload.items() if key not in lineage},
         )
     ).tagged
 

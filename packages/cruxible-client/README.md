@@ -953,45 +953,24 @@ attest(
     *,
     stance: ClaimStance,
     signer: ClaimAttestationSigner,
-    note: str | None = None,
+    because: str | None = None,
+    evidence: Evidence | None = None,
     valid_until: datetime | None = None,
 ) -> ClaimAttestationAppendResult
 ```
 
-Prepares the exact examined-existing Claim statement, signs locally, and appends it through the attestation service.
+Signs that the caller examined the exact Claim and appends it once. With neither `because` nor `evidence` it cites the Claim's own evidence; otherwise the daemon first makes or resolves the cited Captures from write's evidence options, at its head, and the statement signs them.
 
-**Conditions and effects:** Does not change the Claim’s statement or sign a proposal approval. Checks signer/key/ref bindings and current service authority.
+**Conditions and effects:** A signed append, never a proposal or generation; does not change the Claim's statement or sign a proposal approval. File and section evidence are read from this context's workspace; unobserved workspace evidence, or a workspace source with no accepted CaptureContract, refuses before signing.
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `claim` | Required | Claim ID or typed ClaimRef; typed refs also assert their observed coordinate. |
 | `stance` | Required | Signed attestation stance admitted by ClaimStance. |
 | `signer` | Required | Caller-provisioned signing capability of the protocol required by this method. |
-| `note` | `None` | Optional note carried by the prepared attestation request. |
+| `because` | `None` | Your own words, cited as a self-source Capture bound to the Claim. |
+| `evidence` | `None` | One write evidence option: `SelfEvidence`, `SectionEvidence` (with `own_words`), `FileEvidence`, `CaptureEvidence` or `ContractEvidence`. |
 | `valid_until` | `None` | Optional attestation expiry instant. |
-
-<a id="api-cruxible-attest-new-capture"></a>
-
-### `Cruxible.attest_new_capture`
-
-[Source](src/cruxible_client/authoring/sdk.py)
-
-```text
-attest_new_capture(
-    request: PreparedClaimAttestationRequest,
-    *,
-    signer: ClaimAttestationSigner,
-) -> ClaimAttestationAppendResult
-```
-
-Signs and appends an already-staged new-capture attestation request.
-
-**Conditions and effects:** attestation_basis must be new_capture; capture registration/acquisition is not invented by this method.
-
-| Parameter | Default | Meaning |
-|---|---|---|
-| `request` | Required | Typed request specified by the signature; new-capture attestation requires that basis. |
-| `signer` | Required | Caller-provisioned signing capability of the protocol required by this method. |
 
 <a id="api-cruxible-next"></a>
 
@@ -3511,9 +3490,10 @@ each value step returns a `Handle`, and `handle["field"]` is the typed `Ref` to
 one of its fields, checked against the fields the step is known to produce
 (its declared output, a query read's view, or a supplied slot Contract).
 `eq`, `gt`, `present`, `all_of`, `count`, ... build typed predicates for
-filter and claims `where`/`when`. Its builders for the closed step kinds still
-exist, and a spec that uses one refuses `procedure_step_closed` in `preview()`
-and at authoring. `spec()` is the spec;
+filter and claims `where`/`when`. It has builders for the open step kinds only
+(no `project`, `guard`, `halt`, `invoke`, `select`, `repeat` or `emit`, and
+`transform` takes `filter` or `dedupe`); a spec carrying a closed step refuses
+`procedure_step_closed` in `preview()` and at authoring. `spec()` is the spec;
 `preview()` lowers it locally through the same shared lowering (structural
 only: it does not verify runtime values, availability or authority); `build()`
 returns `ProcedureInput(kind="procedure", spec=...)` or raises
@@ -3546,254 +3526,37 @@ does not invent one. `readings` is read-only and carries its snapshot in cursors
 
 Import: `cruxible_client.authoring.procedures.Sequence`. [Source](src/cruxible_client/authoring/procedures.py)
 
-| Field | Type | Default / construction |
-|---|---|---|
-| `steps` | `tuple[Step, ...] \| list[Step]` | `Required` |
-| `name` | `str` | `Required` |
-| `contract_in` | `Contract` | `Required` |
-| `contract_out` | `Contract` | `Required` |
-| `budget` | `ProcedureBudget` | `Required` |
-| `hard_caps` | `ProcedureHardCaps` | `Required` |
-| `returns` | `str \| None` | `None` |
-| `activation_policy` | `Literal['drain', 'abort', 'snapshot', 'epoch-check']` | `'snapshot'` |
-| `acquisition_policy` | `str \| None` | `None` |
-| `description` | `str \| None` | `None` |
-
-<a id="api-sequence-bind"></a>
-
-### `Sequence.bind`
-
-[Source](src/cruxible_client/authoring/procedures.py)
-
 ```text
-bind(**providers: ProviderBinding) -> Sequence
+Sequence(
+    procedure: str,
+    *,
+    input: Mapping[str, FieldType | str] | None = None,
+    params: Mapping[str, FieldType | str] | None = None,
+    output: Mapping[str, FieldType | str] | None = None,
+    slots: Mapping[str, ProcedureSlot | Mapping[str, object]] | None = None,
+    contracts: Mapping[str, Contract] | None = None,
+    description: str | None = None,
+    activation: Literal['drain', 'abort', 'snapshot', 'epoch-check'] = 'snapshot',
+    hard_caps: ProcedureLimits | None = None,
+)
 ```
 
-<a id="api-sequence-preview"></a>
+`input` and `params` are `Handle`s on the Procedure's input and parameters.
+Each value step returns a `Handle`; `handle["field"]` is its typed `Ref`.
 
-### `Sequence.preview`
-
-[Source](src/cruxible_client/authoring/procedures.py)
-
-```text
-preview() -> ProcedurePreview
-```
-
-<a id="api-sequence-build"></a>
-
-### `Sequence.build`
-
-[Source](src/cruxible_client/authoring/procedures.py)
-
-```text
-build() -> ProcedureInput
-```
-
-<a id="api-statetap"></a>
-
-## `StateTap`
-
-Import: `cruxible_client.authoring.procedures.StateTap`. [Source](src/cruxible_client/authoring/procedures.py)
-
-| Field | Type | Default / construction |
+| Method | Step | Returns |
 |---|---|---|
-| `name` | `str` | `Required` |
-| `next` | `str \| None` | `None` |
-| `node_id` | `str \| None` | `dataclass_field(default=None, kw_only=True)` |
-| `query` | `str` | `''` |
-| `parameters` | `object` | `None` |
-
-<a id="api-source"></a>
-
-## `Source`
-
-Import: `cruxible_client.authoring.procedures.Source`. [Source](src/cruxible_client/authoring/procedures.py)
-
-| Field | Type | Default / construction |
-|---|---|---|
-| `name` | `str` | `Required` |
-| `next` | `str \| None` | `None` |
-| `node_id` | `str \| None` | `dataclass_field(default=None, kw_only=True)` |
-| `capture_contract` | `str` | `''` |
-| `request` | `object` | `Previous()` |
-| `provider` | `ProviderBinding \| None` | `None` |
-
-<a id="api-call"></a>
-
-## `Call`
-
-Import: `cruxible_client.authoring.procedures.Call`. [Source](src/cruxible_client/authoring/procedures.py)
-
-| Field | Type | Default / construction |
-|---|---|---|
-| `name` | `str` | `Required` |
-| `next` | `str \| None` | `None` |
-| `node_id` | `str \| None` | `dataclass_field(default=None, kw_only=True)` |
-| `input` | `object` | `Previous()` |
-| `provider` | `ProviderBinding \| None` | `None` |
-| `effect_policy` | `str \| None` | `None` |
-
-<a id="api-transform"></a>
-
-## `Transform`
-
-Import: `cruxible_client.authoring.procedures.Transform`. [Source](src/cruxible_client/authoring/procedures.py)
-
-| Field | Type | Default / construction |
-|---|---|---|
-| `name` | `str` | `Required` |
-| `next` | `str \| None` | `None` |
-| `node_id` | `str \| None` | `dataclass_field(default=None, kw_only=True)` |
-| `transform_kind` | `TransformKind` | `Required` |
-| `contract_in` | `Contract` | `Required` |
-| `contract_out` | `Contract` | `Required` |
-| `spec` | `ProcedureTransformSpec` | `Required` |
-
-<a id="api-project"></a>
-
-## `Project`
-
-Import: `cruxible_client.authoring.procedures.Project`. [Source](src/cruxible_client/authoring/procedures.py)
-
-| Field | Type | Default / construction |
-|---|---|---|
-| `name` | `str` | `Required` |
-| `next` | `str \| None` | `None` |
-| `node_id` | `str \| None` | `dataclass_field(default=None, kw_only=True)` |
-| `fields` | `object` | `Required` |
-| `contract_out` | `Contract` | `Required` |
-
-<a id="api-guard"></a>
-
-## `Guard`
-
-Import: `cruxible_client.authoring.procedures.Guard`. [Source](src/cruxible_client/authoring/procedures.py)
-
-| Field | Type | Default / construction |
-|---|---|---|
-| `name` | `str` | `Required` |
-| `next` | `str \| None` | `None` |
-| `node_id` | `str \| None` | `dataclass_field(default=None, kw_only=True)` |
-| `predicate` | `Predicate` | `Required` |
-| `on_true` | `str \| None` | `None` |
-| `on_false` | `str` | `'$abort'` |
-| `refusal_code` | `str` | `'guard_refused'` |
-| `message` | `str` | `'Procedure guard refused.'` |
-
-<a id="api-emitcapture"></a>
-
-## `EmitCapture`
-
-Import: `cruxible_client.authoring.procedures.EmitCapture`. [Source](src/cruxible_client/authoring/procedures.py)
-
-| Field | Type | Default / construction |
-|---|---|---|
-| `name` | `str` | `Required` |
-| `next` | `str \| None` | `None` |
-| `node_id` | `str \| None` | `None` |
-| `capture_contract` | `str` | `''` |
-| `input` | `object` | `Previous(path='')` |
-| `result` | `object` | `Previous(path='')` |
-
-<a id="api-postinbox"></a>
-
-## `PostInbox`
-
-Import: `cruxible_client.authoring.procedures.PostInbox`. [Source](src/cruxible_client/authoring/procedures.py)
-
-| Field | Type | Default / construction |
-|---|---|---|
-| `name` | `str` | `Required` |
-| `next` | `str \| None` | `None` |
-| `node_id` | `str \| None` | `None` |
-| `input` | `object` | `Previous(path='')` |
-| `max_items` | `int \| None` | `None` |
-
-<a id="api-proposechangeset"></a>
-
-## `ProposeChangeSet`
-
-Import: `cruxible_client.authoring.procedures.ProposeChangeSet`. [Source](src/cruxible_client/authoring/procedures.py)
-
-| Field | Type | Default / construction |
-|---|---|---|
-| `name` | `str` | `Required` |
-| `next` | `str \| None` | `None` |
-| `node_id` | `str \| None` | `None` |
-| `candidate_templates` | `tuple[object, ...] \| dict[str, object]` | `Required` |
-| `result` | `object` | `Previous(path='')` |
-
-<a id="api-settlechangeset"></a>
-
-## `SettleChangeSet`
-
-Import: `cruxible_client.authoring.procedures.SettleChangeSet`. [Source](src/cruxible_client/authoring/procedures.py)
-
-| Field | Type | Default / construction |
-|---|---|---|
-| `name` | `str` | `Required` |
-| `next` | `str \| None` | `None` |
-| `node_id` | `str \| None` | `None` |
-| `candidate_templates` | `tuple[object, ...] \| dict[str, object]` | `Required` |
-| `result` | `object` | `Previous(path='')` |
-
-<a id="api-halt"></a>
-
-## `Halt`
-
-Import: `cruxible_client.authoring.procedures.Halt`. [Source](src/cruxible_client/authoring/procedures.py)
-
-| Field | Type | Default / construction |
-|---|---|---|
-| `name` | `str` | `Required` |
-| `next` | `str \| None` | `None` |
-| `node_id` | `str \| None` | `dataclass_field(default=None, kw_only=True)` |
-| `reason` | `str \| None` | `None` |
-
-<a id="api-output"></a>
-
-## `Output`
-
-Import: `cruxible_client.authoring.procedures.Output`. [Source](src/cruxible_client/authoring/procedures.py)
-
-| Field | Type | Default / construction |
-|---|---|---|
-| `step` | `str` | `Required` |
-| `path` | `str` | `''` |
-
-<a id="api-previous"></a>
-
-## `Previous`
-
-Import: `cruxible_client.authoring.procedures.Previous`. [Source](src/cruxible_client/authoring/procedures.py)
-
-| Field | Type | Default / construction |
-|---|---|---|
-| `path` | `str` | `''` |
-
-<a id="api-providerbinding"></a>
-
-## `ProviderBinding`
-
-Import: `cruxible_client.authoring.procedures.ProviderBinding`. [Source](src/cruxible_client/authoring/procedures.py)
-
-| Field | Type | Default / construction |
-|---|---|---|
-| `provider` | `str` | `Required` |
-| `interface` | `str` | `Required` |
-| `effect_class` | `Literal['pure', 'external_read', 'external_mutation'] \| None` | `None` |
-| `operation_contract` | `ProviderOperationContract \| None` | `None` |
-| `coordinate` | `AcceptedCoordinate \| None` | `None` |
-
-<a id="api-providerbinding-from-interface"></a>
-
-### `ProviderBinding.from_interface`
-
-[Source](src/cruxible_client/authoring/procedures.py)
-
-```text
-from_interface(entry: ProviderInterfaceEntry, *, provider: str | None=None) -> ProviderBinding
-```
+| `read(name, *, query, params=None, id=None, next=None)` | a saved Query's rows | `Handle` |
+| `read_claims(name, *, claim_type, subject, subject_kind=None, all=None, id=None, next=None)` | one ClaimType's Claims about a Subject | `Handle` |
+| `call(name, *, slot, input, captures=None, effect_policy=None, id=None, next=None)` | a provider call through a declared slot (fetch, or a pure derive) | `Handle` |
+| `extract(name, *, capture, records, row, fields, key=None, header=None, complete_when=None, duplicates='refuse_key', only_keys=None, id=None, next=None)` | one Capture's records, typed by a row Contract | `Handle` |
+| `transform(name, *, kind, spec, id=None, next=None)` | `filter` or `dedupe` narrowing | `Handle` |
+| `inbox(contract, *, fields, for_each=None, dedupe_key=(), max_items=None, id=None)` | typed items to the Line inbox | `None` |
+| `claims(templates, *, for_each, subject, where=None, expect=None, id=None)` | typed records to Claims | `None` |
+| `returns(value)` | the Procedure's return: a step, its `Handle`, `ReturnFrom` or `ReturnFields` | `None` |
+| `spec()` | the `ProcedureSpec` this builder states | `ProcedureSpec` |
+| `preview()` | the shared lowering, locally | `ProcedurePreview` |
+| `build()` | `ProcedureInput(kind="procedure", spec=...)`, or `ProcedureCompositionError` | `ProcedureInput` |
 
 <a id="api-procedurepreview"></a>
 

@@ -197,8 +197,19 @@ def service_get_playbill_subject(
         subject = projection.subject(identity)
         if subject is None:
             raise SubjectNotFoundError(identity)
+        # The live Claims whose object is this Subject: one seek of the object
+        # index, never a materialization of every Claim.
+        pointing = tuple(
+            str(row[0])
+            for row in projection.typed.connection.execute(
+                "SELECT identity FROM claims INDEXED BY claims_by_object_subject "
+                "WHERE object_kind='subject' AND object_path=? AND lifecycle='live' "
+                "ORDER BY identity",
+                (subject.envelope.path,),
+            )
+        )
         incoming = _incoming_groups(
-            projection.list_claims(),
+            projection.claims(pointing),
             subject_path_value=subject.envelope.path,
         )
     return _public_subject(subject, incoming=incoming)

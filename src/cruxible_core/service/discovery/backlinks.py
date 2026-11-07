@@ -397,23 +397,14 @@ def _not_backlinkable(ref: str, kind: str) -> ReadRefusalError:
     )
 
 
-def service_playbill_backlinks(
+def resolve_backlink_target(
     instance: PlaybillInstance,
-    *,
     request: BacklinksRequest,
+    *,
     access: BodyAccessContext | None = None,
-) -> BacklinksResult:
-    """Resolve the target the way ``get`` resolves a reference, then read its backlinks."""
+) -> tuple[Any, AcceptedProjectionCoordinate]:
+    """Resolve ``request.ref`` the way ``get`` resolves a reference, at the page's coordinate."""
 
-    if request.file is not None:
-        assert request.section is not None
-        return service_section_backlinks(
-            instance,
-            source_id=request.file,
-            section=request.section,
-            request=request,
-            access=access,
-        )
     from cruxible_core.service.discovery.get import resolve_get_ref
     from cruxible_core.service.evidence.body_access import NO_RESTRICTED_ACCESS
 
@@ -431,6 +422,18 @@ def service_playbill_backlinks(
         surface=request.surface,
         access=access or NO_RESTRICTED_ACCESS,
     )
+    return resolved, coordinate
+
+
+def backlinks_of_resolved(
+    instance: PlaybillInstance,
+    resolved: Any,
+    *,
+    request: BacklinksRequest,
+    access: BodyAccessContext | None = None,
+) -> BacklinksResult:
+    """One backlinks page of a resolved Subject, ClaimType or Procedure reference."""
+
     if resolved.kind == "subject":
         return service_subject_backlinks(
             instance,
@@ -442,11 +445,34 @@ def service_playbill_backlinks(
         return service_definition_guidance(
             instance, definition=resolved.identity, request=request, access=access
         )
-    raise _not_backlinkable(request.ref, resolved.kind)
+    raise _not_backlinkable(str(request.ref), resolved.kind)
+
+
+def service_playbill_backlinks(
+    instance: PlaybillInstance,
+    *,
+    request: BacklinksRequest,
+    access: BodyAccessContext | None = None,
+) -> BacklinksResult:
+    """Resolve the target the way ``get`` resolves a reference, then read its backlinks."""
+
+    if request.file is not None:
+        assert request.section is not None
+        return service_section_backlinks(
+            instance,
+            source_id=request.file,
+            section=request.section,
+            request=request,
+            access=access,
+        )
+    resolved, _coordinate = resolve_backlink_target(instance, request, access=access)
+    return backlinks_of_resolved(instance, resolved, request=request, access=access)
 
 
 __all__ = [
+    "backlinks_of_resolved",
     "claim_type_identity",
+    "resolve_backlink_target",
     "review_guidance",
     "service_definition_guidance",
     "service_playbill_backlinks",

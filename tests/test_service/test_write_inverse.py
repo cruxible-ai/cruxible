@@ -393,3 +393,30 @@ def test_the_query_table_shows_a_held_none_as_get_names_it_never_as_no_claim(
     assert first.split()[1] == "none"
     # wi-2 holds no Claim for these fields: unknown, never a none.
     assert second.split()[1:4] == ["-", "-", "-"]
+
+
+def test_every_read_serves_a_subject_none_as_its_ref(
+    instance: PlaybillInstance, tmp_path: Path
+) -> None:
+    """W4: the inverse's ``of`` is ``kind/id`` on the Claim card, history and evidence."""
+
+    import json
+
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    written = _write(
+        instance, _change("add", "blocks", {"none": WI2}, report_evidence(tmp_path, "free"))
+    )
+    assert written.status == "accepted", written
+    none_claim = written.changes[0].claim
+    access = BodyAccessContext(principal_id="reader", can_read_body=True)
+    served = {
+        detail: service_playbill_get(
+            instance, request=GetRequest(ref=none_claim, detail=detail), access=access
+        ).model_dump(mode="json")
+        for detail in ("summary", "history", "evidence")
+    }
+    text = json.dumps(served)
+    assert "artifact_path" not in text, text
+    assert '{"none": "' + WI2 + '"}' in text
+    assert _row(_card(instance), "blocks").nones[0].of == WI2

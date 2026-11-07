@@ -26,12 +26,16 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from cruxible_client.contracts import AcceptedCoordinate
 from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.doc_sections import SectionPath
-from cruxible_client.contracts.get_reads import GetCoordinate, ReadSurface
+from cruxible_client.contracts.get_reads import (
+    Backlink,
+    BacklinkRelation,
+    BacklinkSourceKind,
+    GetCoordinate,
+    ReadSurface,
+    SectionDrift,
+)
 
 BACKLINKS_MAX_LIMIT = 100
-BacklinkRelation = Literal["cites", "about", "guides"]
-BacklinkSourceKind = Literal["Claim", "Note", "Document"]
-SectionDrift = Literal["changed_since_cited", "unchanged", "unknown"]
 
 
 class _StrictBacklinkModel(BaseModel):
@@ -65,24 +69,6 @@ class BacklinksRequest(_StrictBacklinkModel):
         if (self.file is None) != (self.section is None):
             raise ValueError("a section target names both file and section")
         return self
-
-
-class Backlink(_StrictBacklinkModel):
-    """One pointer into the target."""
-
-    relation: BacklinkRelation
-    source_kind: BacklinkSourceKind
-    source: str = Field(description="CLM-…, NOTE-… or the Document's identity.")
-    title: str | None = Field(default=None, description="A Document's title.")
-    subject: str | None = Field(default=None, description="A citing Claim's Subject (kind/id).")
-    field: str | None = Field(default=None, description="A citing Claim's predicate.")
-    role: str | None = Field(default=None, description="A citation's role: evidence or copy.")
-    file: str | None = Field(default=None, description="The workspace source (files.yaml name).")
-    section: SectionPath | None = None
-    cited_digest: str | None = Field(default=None, description="The section's bytes when cited.")
-    drift: SectionDrift | None = Field(
-        default=None, description="Section rows: has the section moved since it was cited?"
-    )
 
 
 class BacklinksResult(_StrictBacklinkModel):

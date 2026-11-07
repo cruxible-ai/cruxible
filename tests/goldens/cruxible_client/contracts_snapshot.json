@@ -28405,6 +28405,22 @@
             "title": "Duration Us"
           }
         },
+        "incomplete_captures": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "incomplete_captures",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Incomplete Captures",
+            "type": "array"
+          }
+        },
         "kind": {
           "default": null,
           "default_json_serializable": true,
@@ -28423,6 +28439,35 @@
             ],
             "default": null,
             "title": "Kind"
+          }
+        },
+        "members": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "members",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/GetRunListMember"
+            },
+            "title": "Members",
+            "type": "array"
+          }
+        },
+        "members_truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "members_truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Members Truncated",
+            "type": "boolean"
           }
         },
         "node": {
@@ -28828,6 +28873,74 @@
             "title": "ExtractRunSummary",
             "type": "object"
           },
+          "GetRunListMember": {
+            "additionalProperties": false,
+            "description": "One member of a call's ``list<capture>`` output, as the run journaled it (D-R37 a).\n\n``index`` orders the list; ``request`` is the member's identity (the request\ndigest its coordinate carries). ``status`` is core's acquisition decision:\n``selected`` (committed), ``omitted`` (dropped; the list is then\nincomplete) or ``refused``; ``reason`` is its first reason code.",
+            "properties": {
+              "capture": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Capture"
+              },
+              "field": {
+                "title": "Field",
+                "type": "string"
+              },
+              "index": {
+                "minimum": 0,
+                "title": "Index",
+                "type": "integer"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "request": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request"
+              },
+              "status": {
+                "enum": [
+                  "selected",
+                  "omitted",
+                  "defaulted",
+                  "refused"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "field",
+              "index",
+              "status"
+            ],
+            "title": "GetRunListMember",
+            "type": "object"
+          },
           "GuardOperand": {
             "additionalProperties": false,
             "description": "One comparison a guard evaluated: its operator, and its numeric or bool operands.\n\nAn operand that is anything else (a string, a list, a record) is left out;\nso is the whole comparison when neither operand is a number or a boolean.\nA number past ``NODE_SUMMARY_INT_MAX`` is left out too, and ``out_of_range``\nsays so. ``present`` and ``absent`` carry whether the reference resolved as\n``left``.",
@@ -29097,6 +29210,14 @@
             "default": null,
             "title": "Duration Us"
           },
+          "incomplete_captures": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Incomplete Captures",
+            "type": "array"
+          },
           "kind": {
             "anyOf": [
               {
@@ -29108,6 +29229,19 @@
             ],
             "default": null,
             "title": "Kind"
+          },
+          "members": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/GetRunListMember"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "members_truncated": {
+            "default": false,
+            "title": "Members Truncated",
+            "type": "boolean"
           },
           "node": {
             "title": "Node",
@@ -43539,6 +43673,27 @@
             "title": "Queries"
           }
         },
+        "retention_generations": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "retention_generations",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retention Generations"
+          }
+        },
         "runs": {
           "default": null,
           "default_json_serializable": true,
@@ -45264,6 +45419,34 @@
             "title": "OrientEnablements",
             "type": "object"
           },
+          "OrientEvidenceCounts": {
+            "additionalProperties": false,
+            "description": "How the live Claims of one ClaimType are backed (W8).\n\n``admitted``: they cite a Capture admitted under the ClaimType's evidence\nrule (independent evidence, not the author's own words). ``own_word``: no\ncaptured evidence, and the type's rule permits a Claim on its own words.\n``unmet``: the type requires captured evidence and none was admitted.",
+            "properties": {
+              "admitted": {
+                "minimum": 0,
+                "title": "Admitted",
+                "type": "integer"
+              },
+              "own_word": {
+                "minimum": 0,
+                "title": "Own Word",
+                "type": "integer"
+              },
+              "unmet": {
+                "minimum": 0,
+                "title": "Unmet",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "admitted",
+              "own_word",
+              "unmet"
+            ],
+            "title": "OrientEvidenceCounts",
+            "type": "object"
+          },
           "OrientFloor": {
             "additionalProperties": false,
             "description": "The workspace's greppable floor: the coordinate it is at, and how stale.\n\nOnly a client that sees the workspace (CLI, MCP, SDK) fills this in, from\nthe floor's own manifest; a daemon answer never carries it.\n``generations_behind`` counts accepted generations from the floor to this\nanswer's coordinate; ``None`` when the floor predates generation stamps.",
@@ -45851,7 +46034,7 @@
           },
           "OrientPredicate": {
             "additionalProperties": false,
-            "description": "One predicate of a kind: compact by default, in full under ``orient(kind=...)``.\n\n``name`` is the short name a query field uses against this kind; ``predicate``\nis the full ClaimType predicate. ``type`` is the native Contract type spelling,\nincluding enum members and\n``subject<K1 | K2>`` for a Subject-valued predicate.\n``evidence`` names the CaptureContracts the ClaimType admits; a digest that\nnames no accepted contract shows as ``unresolved:<short digest>``.\n``None`` (omitted on the wire) inherits the kind's evidence set; an empty\ntuple (``[]`` on the wire) explicitly admits no contracts. Standalone\ndescriptors always carry an explicit set.\n\n``description`` is the ClaimType's (v7) description: its first sentence, at\nmost 160 characters, in a compact descriptor; all of it in full.\n``evidence_requirement`` appears only when it is not ``self`` (``none``: the\nClaim's own origin supports it; ``captured``: a Capture under a declared\ncontract is required). A full descriptor also carries each described enum\nmember, the role a write defaults to, and ``revision_evidence``: what a\nstatement-changing revision keeps.\nA full descriptor also names how the ClaimType settles rival Claims\n(``contention``), its format version (``format``: 10 for\n``cruxible-claim-type-v11``), its accepted ``revision`` and its ledger\n``path``, which a kit's drifted paths name. Under ``orient(kind=K)`` a\ndescriptor counts the kind's ``live_claims`` of the predicate and\n``subjects_with_value``: its live Subjects with at least one, both read\nfrom counters Claim writes maintain.\n``kit`` (claim_types section only) is the installed kit that owns the\nClaimType: its receipt records the definition. Absent when no kit owns it.",
+            "description": "One predicate of a kind: compact by default, in full under ``orient(kind=...)``.\n\n``name`` is the short name a query field uses against this kind; ``predicate``\nis the full ClaimType predicate. ``type`` is the native Contract type spelling,\nincluding enum members and\n``subject<K1 | K2>`` for a Subject-valued predicate.\n``evidence`` names the CaptureContracts the ClaimType admits; a digest that\nnames no accepted contract shows as ``unresolved:<short digest>``.\n``None`` (omitted on the wire) inherits the kind's evidence set; an empty\ntuple (``[]`` on the wire) explicitly admits no contracts. Standalone\ndescriptors always carry an explicit set.\n\n``description`` is the ClaimType's (v7) description: its first sentence, at\nmost 160 characters, in a compact descriptor; all of it in full.\n``evidence_requirement`` appears only when it is not ``self`` (``none``: the\nClaim's own origin supports it; ``captured``: a Capture under a declared\ncontract is required). A full descriptor also carries each described enum\nmember, the role a write defaults to, and ``revision_evidence``: what a\nstatement-changing revision keeps.\nA full descriptor also names how the ClaimType settles rival Claims\n(``contention``), its format version (``format``: 10 for\n``cruxible-claim-type-v11``), its accepted ``revision`` and its ledger\n``path``, which a kit's drifted paths name. Under ``orient(kind=K)`` a\ndescriptor counts the kind's ``live_claims`` of the predicate and\n``subjects_with_value``: its live Subjects with at least one, both read\nfrom counters Claim writes maintain. A full descriptor's\n``evidence_counts`` splits the ClaimType's live Claims (every kind) by how\nthey are backed: admitted captured evidence, own words, or unmet.\n``kit`` (claim_types section only) is the installed kit that owns the\nClaimType: its receipt records the definition. Absent when no kit owns it.",
             "properties": {
               "cardinality": {
                 "enum": [
@@ -45916,6 +46099,17 @@
                 ],
                 "default": null,
                 "title": "Evidence"
+              },
+              "evidence_counts": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/OrientEvidenceCounts"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "evidence_requirement": {
                 "anyOf": [
@@ -47229,6 +47423,19 @@
             ],
             "default": null,
             "title": "Queries"
+          },
+          "retention_generations": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retention Generations"
           },
           "runs": {
             "anyOf": [
@@ -64619,6 +64826,74 @@
             "title": "ExtractRunSummary",
             "type": "object"
           },
+          "GetRunListMember": {
+            "additionalProperties": false,
+            "description": "One member of a call's ``list<capture>`` output, as the run journaled it (D-R37 a).\n\n``index`` orders the list; ``request`` is the member's identity (the request\ndigest its coordinate carries). ``status`` is core's acquisition decision:\n``selected`` (committed), ``omitted`` (dropped; the list is then\nincomplete) or ``refused``; ``reason`` is its first reason code.",
+            "properties": {
+              "capture": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Capture"
+              },
+              "field": {
+                "title": "Field",
+                "type": "string"
+              },
+              "index": {
+                "minimum": 0,
+                "title": "Index",
+                "type": "integer"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "request": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request"
+              },
+              "status": {
+                "enum": [
+                  "selected",
+                  "omitted",
+                  "defaulted",
+                  "refused"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "field",
+              "index",
+              "status"
+            ],
+            "title": "GetRunListMember",
+            "type": "object"
+          },
           "GetRunNode": {
             "additionalProperties": false,
             "description": "One node that finished, in journal order.\n\n``duration_us`` is absent: the journal records every event of a run at the\nrun's evaluation instant (the deterministic clock), so per-node durations\nare not derivable from it. ``summary`` is what flowed through a node that\nsucceeded (its records, rows, Captures, branch or Claim counts), by kind;\nit is absent for a node that refused or failed, and for a kind that keeps\nnone (``project``, ``select``, ``invoke``).",
@@ -64636,6 +64911,14 @@
                 "default": null,
                 "title": "Duration Us"
               },
+              "incomplete_captures": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Incomplete Captures",
+                "type": "array"
+              },
               "kind": {
                 "anyOf": [
                   {
@@ -64647,6 +64930,19 @@
                 ],
                 "default": null,
                 "title": "Kind"
+              },
+              "members": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/GetRunListMember"
+                },
+                "title": "Members",
+                "type": "array"
+              },
+              "members_truncated": {
+                "default": false,
+                "title": "Members Truncated",
+                "type": "boolean"
               },
               "node": {
                 "title": "Node",
@@ -72593,6 +72889,18 @@
           "ProposalListEntry": {
             "additionalProperties": false,
             "properties": {
+              "accepted_generation": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Accepted Generation"
+              },
               "actor_id": {
                 "anyOf": [
                   {
@@ -72798,6 +73106,26 @@
     },
     "ProposalListEntry": {
       "fields": {
+        "accepted_generation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "accepted_generation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Accepted Generation"
+          }
+        },
         "actor_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -73010,6 +73338,18 @@
       "json_schema": {
         "additionalProperties": false,
         "properties": {
+          "accepted_generation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Accepted Generation"
+          },
           "actor_id": {
             "anyOf": [
               {

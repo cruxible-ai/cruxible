@@ -7,6 +7,7 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.documents import render_document
+from cruxible_client.contracts.procedures.authored import ReadStep, ReturnFields
 from cruxible_client.contracts.query.definitions import (
     query_definition_path,
     render_query_definition,
@@ -14,11 +15,12 @@ from cruxible_client.contracts.query.definitions import (
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.authoring.lowering import _lower_procedure
 from cruxible_core.derived.derived_state import SnapshotTree
-from tests.support.procedures import spec_payload
+from tests.support.procedures import procedure_spec_data, ref, spec_payload
 from tests.test_authoring.test_authoring_history_reuse import _intent
 from tests.test_authoring.test_authoring_procedures import (
+    LIMITS,
+    ROWS,
     _change_set_query,
-    _triage_definition,
     _world_holding_a_document,
 )
 from tests.test_claims.test_claims import _claim, _subject
@@ -30,6 +32,40 @@ from tests.test_scale.test_scale_guard import RATIO, SLACK
 def traced_sqlite(tmp_path):
     with trace_sqlite(tmp_path):
         yield
+
+
+def _triage_definition(*, query: str | None = None) -> dict[str, object]:
+    """The triage Procedure, authored with only template-open step kinds.
+
+    ``tests.test_authoring.test_authoring_procedures._triage_definition`` uses
+    a ``project`` step: that module is marked ``executor_only`` and suspends
+    the template refusal (D-R37 h1) to cover the step's executor handler.
+    Lowering here goes through the ordinary authoring path
+    (``_lower_procedure`` -> ``resolve_procedure_spec``), which enforces that
+    refusal, so a ``project`` step would be refused as
+    ``procedure_step_closed``. This spells the same Procedure (the spec names
+    its Query; the run's own value answers "complete") with the template's
+    own return form (``returns: {fields: ...}``) instead of an intermediate
+    ``project`` step, proving the same thing: resolving the named Query is
+    flat, independent of unrelated state.
+    """
+
+    steps: list[dict[str, object]] = []
+    if query is not None:
+        steps.append(ReadStep(read="rows", id="read", query=query))
+    return procedure_spec_data(
+        procedure="triage",
+        description="Read accepted claims and shape a bounded result.",
+        input={},
+        output=ROWS,
+        activation="drain",
+        steps=steps,
+        returns=ReturnFields(
+            fields={"complete": ref("$steps.rows.completed") if query is not None else True},
+            id="result",
+        ),
+        hard_caps=LIMITS,
+    )
 
 
 class ObservedTree(SnapshotTree):

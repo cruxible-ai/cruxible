@@ -5,6 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from cruxible_client import contracts
+from cruxible_client.contracts.attestation_evidence import (
+    ClaimAttestationEvidenceRequest,
+    ClaimAttestationEvidenceResult,
+)
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequest,
     ClaimAttestationAppendResult,
@@ -16,6 +20,7 @@ from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.service.discovery.orient import service_playbill_orient
 from cruxible_core.service.evidence.claim_attestations import (
     service_append_claim_attestation,
+    service_prepare_claim_attestation_evidence,
 )
 from cruxible_core.service.proposals.proposals import service_playbill_whoami
 from cruxible_core.storage.cas import BodyAccessContext
@@ -60,6 +65,17 @@ class ServiceAttestationClient:
             self.instance,
             request=request,
             access=BodyAccessContext(principal_id=self.actor_id, can_read_body=False),
+        )
+
+    def prepare_claim_attestation_evidence(
+        self,
+        instance_id: str,
+        *,
+        request: ClaimAttestationEvidenceRequest,
+    ) -> ClaimAttestationEvidenceResult:
+        assert instance_id == self.instance.descriptor.instance_id
+        return service_prepare_claim_attestation_evidence(
+            self.instance, request=request, actor_id=self.actor_id
         )
 
     def append_claim_attestation(

@@ -65,14 +65,12 @@ def test_appends_after_migration_write_deltas_and_old_heads_still_resolve(
 ) -> None:
     store = _legacy(tmp_path)
     duplicate = _attestation()  # the fixture's first append, byte for byte
-    receipt = store.append(
-        attestation=duplicate, verification_account=_account(duplicate), note=None
-    )
+    receipt = store.append(attestation=duplicate, verification_account=_account(duplicate))
     assert receipt.recorded_head == LEGACY_HEADS[0]
     assert receipt.current_head == LEGACY_HEADS[-1]
 
     fresh = _attestation(stance="unsure", attested_at=NOW + timedelta(seconds=10))
-    appended = store.append(attestation=fresh, verification_account=_account(fresh), note=None)
+    appended = store.append(attestation=fresh, verification_account=_account(fresh))
     assert appended.partition_sequence == 3
 
     maps = _maps(store)
@@ -86,7 +84,7 @@ def test_appends_after_migration_write_deltas_and_old_heads_still_resolve(
     for count, head in enumerate(LEGACY_HEADS, start=1):
         assert len(reopened.events(at_head=head)) == count
     assert reopened.append(
-        attestation=fresh, verification_account=_account(fresh), note=None
+        attestation=fresh, verification_account=_account(fresh)
     ) == appended.model_copy(update={"current_head": appended.current_head})
 
 
@@ -118,7 +116,7 @@ def test_a_delta_chained_to_another_map_is_refused(tmp_path: Path) -> None:
 
     store = _legacy(tmp_path)
     fresh = _attestation(stance="unsure", attested_at=NOW + timedelta(seconds=10))
-    store.append(attestation=fresh, verification_account=_account(fresh), note=None)
+    store.append(attestation=fresh, verification_account=_account(fresh))
     tip = store._validated_chain(store._load_pointer().root_digest).tip
     delta = store._load_map(tip.partition_map_digest)
     assert isinstance(delta, ClaimAttestationHeadMapDelta)

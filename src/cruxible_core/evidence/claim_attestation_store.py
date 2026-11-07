@@ -919,7 +919,6 @@ class ClaimAttestationEvidenceStore:
         *,
         attestation: ClaimAttestation,
         verification_account: VerifiedClaimAttestation,
-        note: str | None,
     ) -> ClaimAttestationAppendResult:
         statement = attestation.statement
         statement_digest = claim_attestation_v2_statement_digest(statement)
@@ -965,7 +964,8 @@ class ClaimAttestationEvidenceStore:
                 verification_account_digest=account_digest,
                 attestation=attestation,
                 verification_account=verification_account,
-                note=note,
+                # Retired (D-R42): own words are a cited self-source Capture now.
+                note=None,
                 recorded_coordinate=verification_account.append_coordinate,
                 current_at_append=verification_account.current_at_append,
                 attesting_principal_id=statement.attesting_principal_id,

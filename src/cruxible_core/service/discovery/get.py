@@ -45,7 +45,6 @@ from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimRetirementReason,
     NoneClaimObject,
-    SubjectClaimObject,
     claim_artifact_digest,
     claim_path,
     claim_statement_digest,
@@ -65,6 +64,7 @@ from cruxible_client.contracts.get_reads import (
     ByteRange,
     GetApprovalPolicyCard,
     GetAttestationEvidence,
+    GetBacklinks,
     GetBody,
     GetCaptureContractCard,
     GetCaptureErasure,
@@ -147,6 +147,7 @@ from cruxible_core.indexes.query_selection import LIVE_SUBJECT_COUNT_SQL, PREDIC
 from cruxible_core.indexes.subject_identity import KeyReader, KeyTuple
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.change_reasons import ChangeReasons
+from cruxible_core.service.discovery.claim_lines import served_claim_value, served_none
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.kit_owners import kit_owners, owned_by
@@ -1089,7 +1090,8 @@ def _render_proposal_step(surface: ReadSurface, step: str, proposal_id: str) -> 
 def _claim_value(row: ClaimValueRecord) -> object:
     if row.object_kind == "none":
         # A none contending in a one-valued slot is shown as the none it states.
-        return {"none": _none_of(row.object)}
+        assert isinstance(row.object, NoneClaimObject)
+        return served_none(row.object)
     if row.object_kind == "subject" and isinstance(row.value, str):
         return _subject_ref(row.value)
     return row.value
@@ -1099,10 +1101,7 @@ def _none_of(obj: object) -> object:
     """The unit a none says is empty, as a read shows it: None for a whole slot."""
 
     assert isinstance(obj, NoneClaimObject)
-    of = obj.of
-    if isinstance(of, SubjectClaimObject):
-        return _subject_ref(of.address.artifact_path)
-    return None if of is None else of.value
+    return served_none(obj)["none"]
 
 
 def _value_key(row: ClaimValueRecord) -> str:
@@ -1112,12 +1111,7 @@ def _value_key(row: ClaimValueRecord) -> str:
 
 
 def _artifact_value(claim: ClaimArtifact) -> object:
-    obj = claim.statement.object
-    if isinstance(obj, SubjectClaimObject):
-        return _subject_ref(obj.address.artifact_path)
-    if isinstance(obj, NoneClaimObject):
-        return obj.model_dump(mode="json")
-    return obj.value
+    return served_claim_value(claim.statement.object)
 
 
 def _slot_values(
@@ -1955,6 +1949,7 @@ def _proposal_card(
         admitted_at=entry.admitted_at,
         rationale=None if admission is None else admission.rationale,
         originating_line=None if admission is None else admission.originating_line,
+        generation=entry.accepted_generation,
         changes=tuple(changes),
         refusal=refusal,
         next=() if step is None else (_render_proposal_step(surface, step, resolved.identity),),
@@ -3110,6 +3105,8 @@ def service_playbill_get(
     ordinary public get always keeps its nearest-name repair suggestions.
     """
 
+    if request.detail == "backlinks":
+        return _get_backlinks(instance, request, access=access)
     continuation, at = _history_continuation(instance, request)
     coordinate = resolve_read_coordinate(instance, at)
     evaluation_time = request.evaluation_time or utc_now()
@@ -3333,6 +3330,63 @@ def service_playbill_get(
         detail=request.detail,
         coordinate=GetCoordinate(git_oid=served.git_oid[:12], generation=generation),
         evaluation_time=evaluation_time,
+        **fields,
+    )
+
+
+def _get_backlinks(
+    instance: PlaybillInstance,
+    request: GetRequest,
+    *,
+    access: BodyAccessContext,
+) -> GetResult:
+    """``detail="backlinks"`` (D-R32): one page of the backlinks read, as a ``get`` answer.
+
+    The page is the ``backlinks`` read's own keyset page (and cursor), so it
+    costs the page's rows, never the target's whole link set.
+    """
+
+    from cruxible_client.contracts.backlinks import BACKLINKS_MAX_LIMIT, BacklinksRequest
+    from cruxible_core.service.discovery.backlinks import (
+        backlinks_of_resolved,
+        resolve_backlink_target,
+    )
+
+    backlinks_request = BacklinksRequest(
+        ref=request.ref,
+        limit=min(request.limit or GET_HISTORY_DEFAULT_LIMIT, BACKLINKS_MAX_LIMIT),
+        cursor=request.cursor,
+        at=request.at,
+        surface=request.surface,
+    )
+    resolved, coordinate = resolve_backlink_target(instance, backlinks_request, access=access)
+    allowed = GET_DETAILS_BY_KIND[resolved.kind]
+    if request.detail not in allowed:
+        raise ReadRefusalError(
+            "cruxible.get.detail_unsupported",
+            f'detail="{request.detail}" does not apply to a {resolved.kind.replace("_", " ")}; '
+            f"it takes {', '.join(allowed)}",
+            repair=RepairOperation(
+                operation="cruxible.get", arguments={"ref": resolved.display, "detail": "summary"}
+            ),
+            repair_line=f"Run {_render_get(request.surface, resolved.display)}",
+            context={"ref": resolved.display, "kind": resolved.kind, "allowed": list(allowed)},
+        )
+    page = backlinks_of_resolved(instance, resolved, request=backlinks_request, access=access)
+    fields: dict[str, Any] = {}
+    if request.full_coordinate:
+        fields["accepted_coordinate"] = ClientCoordinate.model_validate(
+            AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
+        )
+    return GetResult(
+        ref=resolved.display,
+        kind=resolved.kind,
+        detail="backlinks",
+        backlinks=GetBacklinks(target=page.target, links=page.links, withheld=page.withheld),
+        truncated=page.truncated,
+        next_cursor=page.next_cursor,
+        coordinate=page.coordinate,
+        evaluation_time=request.evaluation_time or utc_now(),
         **fields,
     )
 

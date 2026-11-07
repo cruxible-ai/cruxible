@@ -378,7 +378,7 @@ def test_a_v31_projection_recovers_to_v32_rows_equal_to_a_fresh_build(tmp_path: 
     from cruxible_core.runtime.instance import PlaybillInstance
     from tests.core_support._pair_real import pair_instance
 
-    assert PROJECTION_STORAGE_SCHEMA_VERSION == 32
+    assert PROJECTION_STORAGE_SCHEMA_VERSION == 33
     instance, facts = pair_instance(tmp_path, pairs=2)
     head = instance.accepted_coordinate()
     with instance.bind_accepted_projection(head) as published:
@@ -413,6 +413,6 @@ def test_a_v31_projection_recovers_to_v32_rows_equal_to_a_fresh_build(tmp_path: 
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert reopened.accepted_coordinate() == head
     with reopened.bind_accepted_projection(head) as rebuilt:
-        assert rebuilt.manifest.storage_schema_version == 32
+        assert rebuilt.manifest.storage_schema_version == 33
         assert _pair_tables(rebuilt.typed.connection) == maintained
     assert set(facts) == {row[0] for row in maintained["pair_slot_live"]}

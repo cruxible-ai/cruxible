@@ -84,9 +84,10 @@ from cruxible_client.authoring.procedures import Sequence, item
 procedure = Sequence(
     "catalog.acme-discontinued",
     input={"path": "string"},
-    # The slot's signature; a Line binds it to the built-in workspace.file read.
+    # The slot's signature; a Line binds it to the built-in workspace.file read,
+    # which core recognizes by this exact (pure) signature.
     slots={"read": {"in": "workspace.file.request@1", "out": "workspace.file.result@1",
-                    "effect": "external_read"}},
+                    "effect": "pure"}},
 )
 listing = procedure.call(
     "listing", slot="read", captures={"capture": "catalog.supplier-file-v1"},
@@ -138,7 +139,7 @@ go in through authoring as one change set, saved here as `automation.json`:
       "kind": "line",
       "name": "catalog.acme-discontinued",
       "procedure_name": "catalog.acme-discontinued",
-      "acquisition_policy_name": "catalog.acquisition",
+      "acquisition": {"listing.capture": {"max_age": "P1D"}},
       "max_authority": "propose",
       "parameters": {"path": "supplier/acme-discontinued.txt"}
     },
@@ -151,7 +152,7 @@ go in through authoring as one change set, saved here as `automation.json`:
     {
       "kind": "procedure_mandate",
       "name": "catalog.acme-discontinued-propose",
-      "procedure_name": "catalog.acme-discontinued",
+      "line_name": "catalog.acme-discontinued",
       "grants": "propose",
       "namespace": ["claims"],
       "valid_from": "2026-10-21T00:00:00Z",
@@ -167,9 +168,11 @@ outcome: accepted
 ...
 ~~~
 
-The `parameters` are the Procedure's input, and `acquisition_policy_name`
-names the rules for its sources (how old a reading may be, and what to do when
-one is missing). Cron schedules are always UTC: 06:00 UTC, here. `cruxible
+The `parameters` are the Procedure's input. `acquisition` sets the rules for
+each capture output, keyed `<call>.<field>` (how old a reading may be, and what
+to do when one is unavailable, stale or oversized); an output left out runs
+under the core default: any age, refuse when unavailable, stale or oversized.
+A mandate's `line_name` names the Line it authorizes. Cron schedules are always UTC: 06:00 UTC, here. `cruxible
 authoring example line`, `trigger` and `procedure-mandate` print templates.
 
 ### Run it once
@@ -314,7 +317,7 @@ category:
     {
       "kind": "procedure_mandate",
       "name": "catalog.acme-discontinued-settle",
-      "procedure_name": "catalog.acme-discontinued",
+      "line_name": "catalog.acme-discontinued",
       "grants": "settle",
       "namespace": ["claims"],
       "valid_from": "2026-10-21T00:00:00Z",
@@ -339,7 +342,7 @@ category:
       "kind": "line",
       "name": "catalog.acme-discontinued",
       "procedure_name": "catalog.acme-discontinued",
-      "acquisition_policy_name": "catalog.acquisition",
+      "acquisition": {"listing.capture": {"max_age": "P1D"}},
       "max_authority": "settle",
       "parameters": {"path": "supplier/acme-discontinued.txt"}
     }

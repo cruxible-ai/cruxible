@@ -13,12 +13,14 @@ from typing import Any, Protocol
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from cruxible_client.contracts.attestation_evidence import ClaimAttestationEvidenceRequest
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestation,
     ClaimAttestationAppendRequest,
     ClaimAttestationAppendResult,
     ClaimAttestationCaptureReference,
     ClaimAttestationStatement,
+    ClaimStance,
     PreparedClaimAttestationRequest,
     claim_attestation_v2_statement_bytes,
 )
@@ -30,15 +32,23 @@ from cruxible_client.contracts.claims import (
     claim_citation_references,
     claim_statement_digest,
 )
-from cruxible_client.contracts.errors import SigningKeyError
+from cruxible_client.contracts.errors import FormatError, SigningKeyError
 from cruxible_client.contracts.principals import PRINCIPAL_KEY_ENV
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.contracts.write import Evidence
 from cruxible_client.errors import InstanceScopeError
 
 
 class LocalClaimAttestationKeyUnavailable(SigningKeyError):
     error_code = "cruxible.claim_attestation.local_signing_key_unavailable"
+
+
+class ClaimAttestationReferentStaleError(FormatError):
+    """The caller pinned a Claim revision that is no longer current at the
+    head where evidence was prepared."""
+
+    error_code = "cruxible.claim_attestation.referent_not_current"
 
 
 class ClaimAttestationSigner(Protocol):
@@ -299,6 +309,19 @@ def _claim_from_public_view(view: Any) -> ClaimArtifact:
     )
 
 
+def _claim_artifact_digest_at(
+    client: Any, instance_id: str, claim_id: str, coordinate: AcceptedCoordinate
+) -> str:
+    """The Claim's exact accepted artifact digest at ``coordinate``."""
+
+    from cruxible_client.contracts import ClaimViewRecord
+
+    view = ClaimViewRecord.model_validate(
+        accepted_proof(client, instance_id, claim_id, at=coordinate)
+    )
+    return claim_artifact_digest(_claim_from_public_view(view)).tagged
+
+
 def prepare_claim_attestation(
     client: Any,
     instance_id: str,
@@ -394,26 +417,105 @@ def append_prepared_claim_attestation(
         instance_id,
         request=ClaimAttestationAppendRequest(
             attestation=attestation,
-            capture_references=(
-                tuple(
-                    ClaimAttestationCaptureReference(capture_digest=item.capture_digest)
-                    for item in prepared.capture_references
-                )
-                if prepared.attestation_basis == "new_capture"
-                else ()
+            capture_references=tuple(
+                ClaimAttestationCaptureReference(capture_digest=item.capture_digest)
+                for item in prepared.capture_references
             ),
-            note=prepared.note,
         ),
     )
     return ClaimAttestationAppendResult.model_validate(result)
 
 
+def attest_claim(
+    client: Any,
+    instance_id: str,
+    *,
+    claim_id: str,
+    stance: ClaimStance,
+    signer: ClaimAttestationSigner,
+    attested_at: datetime,
+    because: str | None = None,
+    evidence: Evidence | None = None,
+    workspace: Path | None = None,
+    valid_until: datetime | None = None,
+    referent_coordinate: AcceptedCoordinate | None = None,
+) -> ClaimAttestationAppendResult:
+    """Attest one Claim on write's evidence options, then sign and append it once (D-R42).
+
+    ``because`` is the caller's own words, cited as a self-source Capture;
+    ``evidence`` is one write evidence option (``self``, ``section`` with
+    ``own_words``, ``file``, ``capture``, ``contract``), file and section
+    evidence observed here from ``workspace``. The daemon makes or resolves
+    those Captures at its head. With no ``referent_coordinate``, that head
+    becomes the signed referent. A caller who names one (a pinned
+    ``ClaimRef``) keeps it, whether or not evidence is supplied; if the Claim
+    was revised since, so that pinned revision is no longer the one standing
+    at the evidence head, this refuses (``ClaimAttestationReferentStaleError``)
+    rather than sign the old revision over evidence prepared for the new one.
+    With neither ``because`` nor ``evidence``, the attestation cites the
+    Claim's own evidence.
+    """
+
+    claim = claim_id.removeprefix("Claim:")
+    pinned_referent = referent_coordinate
+    captures: tuple[ClaimAttestationCaptureReference, ...] = ()
+    if because is not None or evidence is not None:
+        from cruxible_client.authoring.write_evidence import observe_evidence
+
+        if evidence is not None and workspace is not None:
+            evidence = observe_evidence(evidence, workspace=workspace)
+        made = client.prepare_claim_attestation_evidence(
+            instance_id,
+            request=ClaimAttestationEvidenceRequest(
+                claim_id=claim, because=because, evidence=evidence
+            ),
+        )
+        captures = tuple(
+            ClaimAttestationCaptureReference(capture_digest=digest)
+            for digest in made.capture_digests
+        )
+        if pinned_referent is None:
+            # No explicit selection: the evidence head becomes the referent,
+            # as before.
+            referent_coordinate = made.referent_coordinate
+        elif pinned_referent != made.referent_coordinate:
+            # The caller named an exact revision. Evidence can only be made
+            # at the live head, so confirm that revision is still the one
+            # standing there before signing it; otherwise the statement
+            # would cite evidence prepared against a different revision
+            # than the one it claims to attest.
+            if _claim_artifact_digest_at(
+                client, instance_id, claim, pinned_referent
+            ) != _claim_artifact_digest_at(client, instance_id, claim, made.referent_coordinate):
+                raise ClaimAttestationReferentStaleError(
+                    f"{ClaimAttestationReferentStaleError.error_code}: Claim {claim_id} was "
+                    "revised between the pinned referent and the evidence head; re-select the "
+                    "Claim's current revision before attesting"
+                )
+            referent_coordinate = pinned_referent
+    return append_prepared_claim_attestation(
+        client,
+        instance_id,
+        prepared=PreparedClaimAttestationRequest(
+            claim_id=claim,
+            stance=stance,
+            capture_references=captures,
+            referent_coordinate=referent_coordinate,
+            attested_at=attested_at,
+            valid_until=valid_until,
+        ),
+        signer=signer,
+    )
+
+
 __all__ = [
+    "ClaimAttestationReferentStaleError",
     "ClaimAttestationSigner",
     "LocalClaimAttestationKeyUnavailable",
     "LocalEd25519ClaimAttestationSigner",
     "PRINCIPAL_KEY_ENV",
     "prepare_claim_attestation",
     "append_prepared_claim_attestation",
+    "attest_claim",
     "local_attestation_signer_from_environment",
 ]

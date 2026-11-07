@@ -847,6 +847,8 @@ class ProposalListEntry(BaseModel):
     #: ``awaiting_readmit`` only: the paths changed since its base that it touches
     #: or is judged under, sorted.
     stale_paths: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: An accepted proposal: the accepted generation its change set settled in.
+    accepted_generation: int | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ProposalList(BaseModel):

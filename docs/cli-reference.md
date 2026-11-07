@@ -1629,9 +1629,18 @@ when policy and your tier allow; `--no-accept` keeps it for review.
 ## claim
 
 ~~~text
-cruxible claim attest CLAIM_ID --support|--contradict|--unsure [--note TEXT]
+cruxible claim attest CLAIM_ID --support|--contradict|--unsure [--because TEXT]
+  [--evidence-file PATH#ANCHOR | --section FILE#Heading/Path [--own-words] |
+   --capture CAP-… | --evidence-contract NAME] [--workspace-root DIR]
   [--valid-until TS] [--json]
 ~~~
+
+The evidence options are `cruxible set`'s: `--because` cites your own words
+as a self-source Capture, and one of `--evidence-file`, `--section` (with
+`--own-words`, the section's text is your own words), `--capture` or
+`--evidence-contract` cites evidence. The daemon makes or resolves those
+Captures at its head and the attestation signs them; with none, it cites the
+Claim's own evidence. It stays a signed append: nothing is proposed.
 
 `claim attest` prints what it recorded (stance, Claim, time and event) and
 whether it counts toward the verdict, for example `counts toward verdict: no
@@ -2074,6 +2083,18 @@ recorded.
 Kits carry SubjectKinds (`subject-kinds/`) like the other definitions: `kit
 add`, `kit upgrade` and `kit status` plan them, and a SubjectKind brings its key
 ClaimTypes with it.
+
+Kits also carry governed Documents (`documents/`), such as the review
+guidance that `guides` the kit's own ClaimTypes and Procedures: an owned
+Document travels like any definition (digest, receipt, `--keep` and
+`--keep-local-edits`), its `guides` links resolve in the same change set, and
+its body sits in the kit directory at `bodies/<sha256 hex>`. `kit add` stages
+each body in the daemon's body store first (as it stages bundled provider
+files); a body that is not staged refuses
+(`cruxible.kit.document_bodies_not_staged`) before anything is written. No kit
+Document may take a receipt's path (`documents/kit-<id>.json`). Documents have
+no retired state, so `kit remove` and a release that drops one leave it
+accepted, as an immutable Contract version is.
 
 ## query
 

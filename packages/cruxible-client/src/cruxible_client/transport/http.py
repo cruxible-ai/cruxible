@@ -10,6 +10,10 @@ import httpx
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from cruxible_client import contracts
+from cruxible_client.contracts.attestation_evidence import (
+    ClaimAttestationEvidenceRequest,
+    ClaimAttestationEvidenceResult,
+)
 from cruxible_client.contracts.authoring.models import (
     AuthoringCompileSubmitRequest,
     AuthoringIntentCompileRequest,
@@ -1259,6 +1263,21 @@ class CruxibleClient:
         )
         self._check_error(response)
         return _CLAIM_TYPE_MIGRATION_RESPONSE.validate_python(response.json())
+
+    def prepare_claim_attestation_evidence(
+        self,
+        instance_id: str,
+        *,
+        request: ClaimAttestationEvidenceRequest,
+    ) -> ClaimAttestationEvidenceResult:
+        """The Captures an attestation will cite, made from write's evidence options."""
+
+        response = self._client.post(
+            f"/api/v1/{instance_id}/claim-attestations/evidence",
+            json=request.model_dump(mode="json"),
+        )
+        self._check_error(response)
+        return ClaimAttestationEvidenceResult.model_validate(response.json())
 
     def append_claim_attestation(
         self,

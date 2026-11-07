@@ -22,7 +22,6 @@ from cruxible_client import contracts as api
 from cruxible_client.authoring.approval import ReviewedProposal, approve_reviewed, review_proposal
 from cruxible_client.authoring.attestations import (
     ClaimAttestationSigner,
-    append_prepared_claim_attestation,
     prepare_claim_attestation,
 )
 from cruxible_client.authoring.blocks import (
@@ -1033,7 +1032,6 @@ class ChangeSetDraft:
         identity = claim.address if isinstance(claim, ClaimRef) else claim
         prepared = PreparedClaimAttestationRequest(
             claim_id=identity.removeprefix("Claim:"),
-            attestation_basis="examined_existing",
             stance=stance,
             valid_until=valid_until,
             referent_coordinate=claim.coordinate
@@ -4349,6 +4347,10 @@ class Cruxible:
         asserting Subject, predicate and Claim of each edge pointing at it.
         ``detail="runs"`` on a Line answers its Procedure runs newest
         admission first (``GetLineRuns``), every page read.
+        ``detail="backlinks"`` on a Subject, ClaimType or Procedure answers
+        what points into it (``GetBacklinks``), every page read: notes and
+        Documents ``about`` a Subject and the sections its live Claims cite,
+        or the Documents that ``guides`` a definition.
 
         Next: ``detail="evidence"`` for what backs a Claim, ``detail="history"`` for its
         revisions, ``detail="proof"`` for the full envelope; ``card.ref`` passes the thing
@@ -4411,6 +4413,7 @@ class Cruxible:
                     result.history,
                     result.incoming,
                     result.runs,
+                    result.backlinks,
                     result.body,
                     result.why,
                     result.proof,
@@ -4640,6 +4643,24 @@ class Cruxible:
                     "next_cursor": None,
                 }
             )
+        if result.backlinks is not None:
+            # Every page, pinned to the first page's coordinate by the cursor.
+            links = list(result.backlinks.links)
+            page = result
+            while page.truncated and page.next_cursor is not None:
+                page = self._client.get(
+                    self._instance_id,
+                    request=request.model_copy(update={"at": None, "cursor": page.next_cursor}),
+                )
+                assert page.backlinks is not None
+                links.extend(page.backlinks.links)
+            result = result.model_copy(
+                update={
+                    "backlinks": result.backlinks.model_copy(update={"links": tuple(links)}),
+                    "truncated": False,
+                    "next_cursor": None,
+                }
+            )
         return result
 
     def _source_card(self, ref: SourceRef) -> KnowledgeCard:
@@ -4725,68 +4746,52 @@ class Cruxible:
             return result
         return workspace_floor_freshness(self._workspace, result)
 
-    def _append_attestation(
-        self,
-        *,
-        prepared: PreparedClaimAttestationRequest,
-        signer: ClaimAttestationSigner,
-    ) -> ClaimAttestationAppendResult:
-        return append_prepared_claim_attestation(
-            self._client,
-            self._instance_id,
-            prepared=prepared,
-            signer=signer,
-        )
-
     def attest(
         self,
         claim: ClaimRef | str,
         *,
         stance: ClaimStance,
         signer: ClaimAttestationSigner,
-        note: str | None = None,
+        because: str | None = None,
+        evidence: Evidence | None = None,
         valid_until: datetime | None = None,
     ) -> ClaimAttestationAppendResult:
         """Sign that the caller examined the current exact Claim and append it once.
+
+        With neither ``because`` nor ``evidence`` it cites the Claim's own
+        evidence. ``because`` cites your own words (a self-source Capture);
+        ``evidence`` takes one of write's evidence options (``SelfEvidence``,
+        ``SectionEvidence`` with ``own_words``, ``FileEvidence``,
+        ``CaptureEvidence``, ``ContractEvidence``), file and section evidence
+        read from this context's workspace. It stays a signed append: nothing is
+        proposed.
 
         Next: ``cx.get(claim)`` shows the attestation among the Claim's flags;
         ``detail="evidence"`` lists it.
         """
 
+        from cruxible_client.authoring.attestations import attest_claim
+
         identity = claim.address if isinstance(claim, ClaimRef) else claim
-        return self._append_attestation(
-            prepared=PreparedClaimAttestationRequest(
-                claim_id=identity.removeprefix("Claim:"),
-                attestation_basis="examined_existing",
-                stance=stance,
-                referent_coordinate=(
-                    claim.coordinate
-                    if isinstance(claim, ClaimRef)
-                    else self.coordinate
-                    if self._pinned
-                    else None
-                ),
-                attested_at=datetime.fromisoformat(self._evaluation_time()),
-                valid_until=valid_until,
-                note=note,
-            ),
+        return attest_claim(
+            self._client,
+            self._instance_id,
+            claim_id=identity,
+            stance=stance,
             signer=signer,
+            attested_at=datetime.fromisoformat(self._evaluation_time()),
+            because=because,
+            evidence=evidence,
+            workspace=self._workspace,
+            valid_until=valid_until,
+            referent_coordinate=(
+                claim.coordinate
+                if isinstance(claim, ClaimRef)
+                else self.coordinate
+                if self._pinned
+                else None
+            ),
         )
-
-    def attest_new_capture(
-        self,
-        request: PreparedClaimAttestationRequest,
-        *,
-        signer: ClaimAttestationSigner,
-    ) -> ClaimAttestationAppendResult:
-        """Append a pre-staged new-Capture observation after exact client signing.
-
-        Next: ``cx.get(claim, detail="evidence")`` to see it among the Claim's attestations.
-        """
-
-        if request.attestation_basis != "new_capture":
-            raise ValueError("attest_new_capture requires attestation_basis='new_capture'")
-        return self._append_attestation(prepared=request, signer=signer)
 
     def next(self, *, expiring_within: Duration) -> NextPage:
         """Read the whole queue of work that needs this caller.

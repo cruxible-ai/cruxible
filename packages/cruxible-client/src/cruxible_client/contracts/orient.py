@@ -107,6 +107,20 @@ class OrientYou(_StrictOrientModel):
     authoring_refusal: AuthoringRefusal | None = Field(default=None, exclude_if=_is_none)
 
 
+class OrientEvidenceCounts(_StrictOrientModel):
+    """How the live Claims of one ClaimType are backed (W8).
+
+    ``admitted``: they cite a Capture admitted under the ClaimType's evidence
+    rule (independent evidence, not the author's own words). ``own_word``: no
+    captured evidence, and the type's rule permits a Claim on its own words.
+    ``unmet``: the type requires captured evidence and none was admitted.
+    """
+
+    admitted: int = Field(ge=0)
+    own_word: int = Field(ge=0)
+    unmet: int = Field(ge=0)
+
+
 class OrientPredicate(_StrictOrientModel):
     """One predicate of a kind: compact by default, in full under ``orient(kind=...)``.
 
@@ -133,7 +147,9 @@ class OrientPredicate(_StrictOrientModel):
     ``path``, which a kit's drifted paths name. Under ``orient(kind=K)`` a
     descriptor counts the kind's ``live_claims`` of the predicate and
     ``subjects_with_value``: its live Subjects with at least one, both read
-    from counters Claim writes maintain.
+    from counters Claim writes maintain. A full descriptor's
+    ``evidence_counts`` splits the ClaimType's live Claims (every kind) by how
+    they are backed: admitted captured evidence, own words, or unmet.
     ``kit`` (claim_types section only) is the installed kit that owns the
     ClaimType: its receipt records the definition. Absent when no kit owns it.
     """
@@ -163,6 +179,9 @@ class OrientPredicate(_StrictOrientModel):
     path: str | None = Field(default=None, exclude_if=_is_none)
     live_claims: int | None = Field(default=None, ge=0, exclude_if=_is_none)
     subjects_with_value: int | None = Field(default=None, ge=0, exclude_if=_is_none)
+    #: Full descriptors: the live Claims of this ClaimType by how they are backed,
+    #: from counters Claim and citation writes maintain (no read-time scan).
+    evidence_counts: OrientEvidenceCounts | None = Field(default=None, exclude_if=_is_none)
     kit: str | None = Field(default=None, exclude_if=_is_none)
 
 
@@ -742,6 +761,9 @@ class OrientResult(_StrictOrientModel):
     accepted_at: datetime
     evaluation_time: datetime
     mirror_url: str | None = Field(default=None, exclude_if=_is_none)
+    #: How many accepted generations before the head keep a ready projection
+    #: (the instance's retention setting); a read at an older one rebuilds it.
+    retention_generations: int | None = Field(default=None, ge=1, exclude_if=_is_none)
     floor: OrientFloor | None = Field(default=None, exclude_if=_is_none)
     you: OrientYou | None = Field(default=None, exclude_if=_is_none)
     kinds: tuple[OrientKindSummary, ...] | None = Field(default=None, exclude_if=_is_none)

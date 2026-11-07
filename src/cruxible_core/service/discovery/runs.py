@@ -11,7 +11,7 @@ first, in an order a run's status never changes; a filter keeps running runs.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, get_args
@@ -23,8 +23,10 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.operational_reads import (
     OPERATIONAL_CARD_LIST_LIMIT,
+    RUN_CARD_LIST_MEMBERS_MAX,
     GetProcedureRunCard,
     GetRunCurrentNode,
+    GetRunListMember,
     GetRunNode,
     GetRunOutcome,
     GetRunTrigger,
@@ -402,6 +404,7 @@ def procedure_run_card(
         )
         for stored in reversed(fired)
     ]
+    members, truncated_nodes = _list_members(instance, journal, stream, run_id, nodes)
     status: RunStatus = "running"
     current: GetRunCurrentNode | None = None
     receipt_digest: str | None = None
@@ -445,6 +448,7 @@ def procedure_run_card(
     if locator.final_payload_digest is None:
         # A running run: what its fired nodes derive from, as journaled so far.
         withheld = run_values_withheld(instance, run_id, access)
+    nodes = _with_members(nodes, members, truncated_nodes, completeness)
     if withheld is not None:
         # C14: values extracted from restricted Captures stay withheld, while
         # it runs and after: node summaries, the result, refusal details.
@@ -490,6 +494,185 @@ def procedure_run_card(
         withheld=withheld,
         next=tuple(next_steps),
     )
+
+
+def _list_member_field(payload: Mapping[str, object]) -> tuple[str, int] | None:
+    """``(field, index)`` when ``payload`` names a list member, else ``None``.
+
+    A list member's record names its field ``<field>/<index>``; a whole
+    (scalar) capture field has none, so it never answers here.
+    """
+
+    field, slash, index = str(payload.get("field", "")).rpartition("/")
+    if not slash or not index.isdigit():
+        return None
+    return field, int(index)
+
+
+def _list_members(
+    instance: PlaybillInstance,
+    journal: LocalJournalBackend,
+    stream: JournalStreamIdentityV1,
+    run_id: str,
+    nodes: Sequence[GetRunNode],
+) -> tuple[dict[str, list[GetRunListMember]], frozenset[str]]:
+    """Each call node's list members, from the run's ``source_acquisition`` records.
+
+    One journal-index range of this run's acquisition records, bounded by the
+    card's member limit; one payload read per record on it. A list member's
+    record names its field ``<field>/<index>``; a whole capture field has
+    none.
+
+    The second value is every displayed call with list members past that
+    range, found with one bounded indexed existence probe (``limit=1``) per
+    displayed node whose own firing sequence falls after the range's last
+    served record -- never a scan of all records, and never a query at all
+    for a node fully inside it. Each probe's range is exactly that node's own
+    span: after the previous *fired* node's firing sequence -- the run's
+    actual predecessor, read once up front even when it is outside the
+    card's displayed window, never the displayed list's own first entry --
+    through this node's own (nodes run one at a time, so no other node's
+    records fall in between). A probe that lands on a record checks that one
+    record's own field: a scalar (whole-capture) acquisition answers no list
+    member and does not flag the call, so a probe whose one matched record
+    happens to be scalar while a later list member of the same call also
+    went unserved can still read as complete; the bound stays one query.
+    """
+
+    stored = journal.index.select(
+        stream,
+        run_id=run_id,
+        event_kind="source_acquisition",
+        limit=RUN_CARD_LIST_MEMBERS_MAX + 1,
+    )
+    found: dict[str, list[GetRunListMember]] = {}
+    for item in stored[:RUN_CARD_LIST_MEMBERS_MAX]:
+        payload = run_payload(instance, item.record.payload_digest)
+        if not isinstance(payload, Mapping):
+            continue
+        member = _list_member_field(payload)
+        if member is None:
+            continue
+        field, index = member
+        decision = payload.get("decision")
+        result = payload.get("result")
+        decision = decision if isinstance(decision, Mapping) else {}
+        result = result if isinstance(result, Mapping) else {}
+        selected = list(decision.get("selected_capture_digests") or ())
+        considered = list(decision.get("considered_capture_digests") or ())
+        reasons = list(decision.get("reason_codes") or ())
+        status = decision.get("disposition")
+        if status not in ("selected", "omitted", "defaulted", "refused"):
+            continue
+        reason = reasons[0] if reasons else result.get("reason_code")
+        request = payload.get("member_request_digest")
+        found.setdefault(str(payload.get("node_id", "?")), []).append(
+            GetRunListMember(
+                field=field,
+                index=index,
+                capture=(selected or considered or [None])[0],
+                request=request if isinstance(request, str) else None,
+                status=status,
+                reason=reason if isinstance(reason, str) else None,
+            )
+        )
+    truncated_nodes: set[str] = set()
+    if len(stored) > RUN_CARD_LIST_MEMBERS_MAX and nodes:
+        served_through = stored[RUN_CARD_LIST_MEMBERS_MAX - 1].record.sequence
+        # The displayed list's own first entry is not necessarily the run's
+        # first fired node: the card shows only the latest ones. Anchor the
+        # first interval on the actual preceding node_fired record (one
+        # lookup, done once), so an earlier, undisplayed call's own overflow
+        # is never attributed to the first displayed node.
+        previous_sequence = 0
+        preceding = journal.index.select(
+            stream,
+            run_id=run_id,
+            event_kind="node_fired",
+            last_sequence=nodes[0].sequence - 1,
+            descending=True,
+            limit=1,
+        )
+        if preceding:
+            previous_sequence = preceding[0].record.sequence
+        for node in nodes:
+            lower = max(served_through, previous_sequence) + 1
+            if lower <= node.sequence:
+                overflow = journal.index.select(
+                    stream,
+                    run_id=run_id,
+                    event_kind="source_acquisition",
+                    first_sequence=lower,
+                    last_sequence=node.sequence,
+                    limit=1,
+                )
+                if overflow:
+                    payload = run_payload(instance, overflow[0].record.payload_digest)
+                    if isinstance(payload, Mapping) and _list_member_field(payload) is not None:
+                        truncated_nodes.add(node.node)
+            previous_sequence = node.sequence
+    return found, frozenset(truncated_nodes)
+
+
+def _with_members(
+    nodes: list[GetRunNode],
+    members: Mapping[str, list[GetRunListMember]],
+    truncated_nodes: frozenset[str],
+    completeness: object,
+) -> list[GetRunNode]:
+    """Attach each call's list members and the list fields it ended incomplete.
+
+    A list is incomplete when a member was dropped (``omitted``), or when the
+    finished run's completeness records the call's own ``incomplete_input``
+    (the provider's ``incomplete_captures`` word): naming fields when it does,
+    else every list the call returned. A named field stays incomplete
+    whatever other lists of the same call are visible on the page (one list
+    can be fully served while a sibling the reason names is not). Both are
+    derived from the run's own record independently of whether any member of
+    this call made it onto the member page: an empty list the provider still
+    declared incomplete carries what the run recorded rather than being
+    silently dropped.
+
+    ``members_truncated`` names only the calls in ``truncated_nodes`` -- each
+    one a call the page's range cut off -- never every node: an extract step
+    or any other call with no list members of its own never gets it, and a
+    call whose own members were all served (even one that exhausted the
+    page) does not either.
+    """
+
+    flagged: dict[str, set[str] | None] = {}
+    for reason in getattr(completeness, "reasons", ()) or ():
+        if reason.kind != "incomplete_input":
+            continue
+        named = {name.partition(".")[2] for name in reason.inputs if "." in name}
+        held = flagged.get(reason.node, set())
+        flagged[reason.node] = None if not named or held is None else held | named
+    out = []
+    for node in nodes:
+        listed = members.get(node.node, [])
+        fields = {item.field for item in listed}
+        omitted = {item.field for item in listed if item.status == "omitted"}
+        said = flagged.get(node.node, set())
+        # A named field stays incomplete regardless of what else is visible;
+        # only the unnamed case ("every list the call returned") needs the
+        # page's own field names, since there is nothing else to name it by.
+        declared = fields if said is None else said
+        incomplete = omitted | declared
+        node_truncated = node.node in truncated_nodes
+        if not listed and not incomplete and not node_truncated:
+            # Nothing recorded against this call: leave it untouched.
+            out.append(node)
+            continue
+        out.append(
+            node.model_copy(
+                update={
+                    "members": tuple(sorted(listed, key=lambda item: (item.field, item.index))),
+                    "members_truncated": node_truncated,
+                    "incomplete_captures": tuple(sorted(incomplete)),
+                }
+            )
+        )
+    return out
 
 
 def run_arming_withheld(

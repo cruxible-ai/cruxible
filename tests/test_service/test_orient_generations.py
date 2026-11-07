@@ -187,3 +187,16 @@ def test_a_generation_number_at_resolves_by_index_not_by_walking_history(
         resolve_read_coordinate(instance, str(head + 1))
     assert refused.value.error_code == "cruxible.read.coordinate_not_accepted"
     assert refused.value.candidates[0] == str(head)
+
+
+def test_orient_serves_the_retention_window_the_instance_uses(
+    instance: PlaybillInstance,
+) -> None:
+    """Item 7: the window of generations kept ready is served, not copied as a constant."""
+
+    from cruxible_core.runtime.retention import DEFAULT_RETENTION
+
+    assert instance.retention == DEFAULT_RETENTION
+    for section in (None, "generations"):
+        result = service_playbill_orient(instance, section=section)
+        assert result.retention_generations == instance.retention.generations == 64

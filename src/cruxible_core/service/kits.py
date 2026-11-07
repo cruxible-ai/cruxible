@@ -46,6 +46,7 @@ from cruxible_client.contracts.kits import (
     KitBundle,
     KitChangeResult,
     KitConsequence,
+    KitDocumentBody,
     KitIdReusedRefusal,
     KitInstalledArtifact,
     KitKeptDivergence,
@@ -63,6 +64,8 @@ from cruxible_client.contracts.kits import (
     KitTransition,
     kit_artifact_path_allowed,
     kit_content_digest,
+    kit_document_body_digests,
+    kit_lineage_keys,
     kit_receipt_document_id,
     kit_version_key,
 )
@@ -198,7 +201,30 @@ def _builtin_refusals(
 
 
 def _without_lifecycle(value: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: item for key, item in value.items() if key != "lifecycle"}
+    lineage = kit_lineage_keys(value)
+    return {key: item for key, item in value.items() if key not in lineage}
+
+
+#: Why a kit never retires a governed Document it installed: Documents have no
+#: retired state and accepted state refuses their removal
+#: (``cruxible.document.removal_unsupported``), so one stays accepted, as an
+#: immutable Contract version does.
+_DOCUMENT_KEPT = "Documents have no retired state and remain accepted"
+
+
+def _is_document(path: str) -> bool:
+    return path.startswith("documents/")
+
+
+def _snapshot(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """A release's lineage-free snapshot of one definition (Contracts keep their bytes)."""
+
+    if _is_document(path):
+        payload["predecessor_digest"] = None
+        payload["lifecycle"] = {**payload["lifecycle"], "revision": 1}
+    elif not path.startswith("contracts/"):
+        payload["lifecycle"] = dict(_SNAPSHOT_LIFECYCLE)
+    return payload
 
 
 def _references(path: str, payload: dict[str, Any]) -> Iterator[str]:
@@ -361,6 +387,24 @@ def _require_staged(instance: PlaybillInstance, files: Mapping[str, str], operat
         )
 
 
+def _require_document_bodies(instance: PlaybillInstance, contents: Mapping[str, bytes]) -> None:
+    """Refuse unless every kit Document's body is in the body store (staged by the adapter)."""
+
+    store = instance.body_store()
+    missing = sorted(
+        f"{path} ({digest})"
+        for path, digest in kit_document_body_digests(contents).items()
+        if store.availability(digest) != "present"
+    )
+    if missing:
+        raise RequestRefusedError(
+            "cruxible.kit.document_bodies_not_staged",
+            f"{', '.join(missing)}: the Document body is not in this instance's body store; "
+            "stage each body first (the CLI and MCP kit add adapters stage what they send)",
+            repair=RepairOperation(operation="cruxible.kit.add"),
+        )
+
+
 def _staged(instance: PlaybillInstance, digest: str, name: str) -> bytes:
     _require_staged(instance, {name: digest}, "cruxible.kit.build")
     return instance.body_store().read(digest, access=_PROVIDER_FILE_ACCESS)
@@ -418,6 +462,16 @@ def service_build_kit(
         files[inspected.provider.lock.filename] = lock
         files.update(dependencies)
     bundle = build_kit(tree, request, provenance=provenance, providers=tuple(packages))
+    bodies = sorted(set(bundle.document_body_digests().values()))
+    if bodies:
+        bundle = bundle.model_copy(
+            update={
+                "document_bodies": tuple(
+                    KitDocumentBody.of(_staged(instance, digest, f"the Document body {digest}"))
+                    for digest in bodies
+                )
+            }
+        )
     return KitBuildResult(
         bundle=bundle.model_copy(
             update={
@@ -577,9 +631,7 @@ def build_kit(
             if states[dependency].lifecycle.state != "live":
                 raise DataValidationError(f"{path} pins retired {dependency}")
         _bundled_provider_pins(path, states[path], tree_providers, tree, bundled)
-        payload = _substitute(path, payloads[path], remap)
-        if not path.startswith("contracts/"):
-            payload["lifecycle"] = dict(_SNAPSHOT_LIFECYCLE)
+        payload = _snapshot(path, _substitute(path, payloads[path], remap))
         content, digest = _render(path, payload)
         if digest != states[path].artifact_digest:
             remap[states[path].artifact_digest] = digest
@@ -657,12 +709,25 @@ def _receipts(instance: PlaybillInstance, tree: Mapping[str, bytes]) -> Iterator
 
 
 def _successor_payload(
-    payload: Mapping[str, Any], *, predecessor: str, state: str
+    payload: Mapping[str, Any],
+    *,
+    predecessor: str,
+    state: str,
+    current: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if payload.get("artifact_format") == "cruxible-contract-v1":
         contract = Contract.model_validate(payload)
         raise immutable_contract_error(contract_path_for_identity(contract.identity.name))
     successor = dict(payload)
+    if payload.get("kind") == "document":
+        # A Document's lineage: its predecessor digest and the next revision.
+        assert current is not None and state == "live"
+        successor["predecessor_digest"] = predecessor
+        successor["lifecycle"] = {
+            **payload["lifecycle"],
+            "revision": int(current["lifecycle"]["revision"]) + 1,
+        }
+        return successor
     successor["lifecycle"] = {"predecessor_digest": predecessor, "state": state}
     return successor
 
@@ -851,7 +916,12 @@ def _diff_release(
             continue
         content, digest = _render(
             path,
-            _successor_payload(payload, predecessor=current_state.artifact_digest, state="live"),
+            _successor_payload(
+                payload,
+                predecessor=current_state.artifact_digest,
+                state="live",
+                current=current_payload,
+            ),
         )
         diff.plan.append(
             KitPathPlan(path=path, action="replace", identity=identity, consequence=consequence)
@@ -863,6 +933,7 @@ def _diff_release(
 
 
 def _retirement(path: str, current: bytes, *, by_name: bool = False) -> bytes:
+    assert not _is_document(path), _DOCUMENT_KEPT
     state = _artifact_state(path, current)
     content, _digest = _render(
         path,
@@ -997,7 +1068,7 @@ def _settle_dropped(
         # Counted against the post-diff tree, including semantic consumers.
         diff.semantic_counts[identity] = dependents
         named_retire = identity in retire_dependents
-        immutable = state.artifact_kind == "contract"
+        immutable = state.artifact_kind in ("contract", "document")
         if (
             immutable
             or identity in keep
@@ -1013,7 +1084,11 @@ def _settle_dropped(
                     identity=identity,
                     consequence="release_dropped",
                     dependent_count=dependents,
-                    detail="Contract versions are immutable and remain accepted"
+                    detail=(
+                        _DOCUMENT_KEPT
+                        if state.artifact_kind == "document"
+                        else "Contract versions are immutable and remain accepted"
+                    )
                     if immutable
                     else None
                     if identity in keep
@@ -1858,6 +1933,8 @@ def _add_kit(
     bundle = request.bundle
     manifest = bundle.manifest
     contents = _verify_bundle(bundle)
+    # Every governed Document's body is staged before anything is planned.
+    _require_document_bodies(instance, contents)
     tree = instance.immutable_tree_at(mode.head.git_oid)
     found = _read_receipt(instance, tree, manifest.kit_id)
     shell, receipt = (None, None) if found is None else found
@@ -2286,13 +2363,15 @@ def _remove_kit(
         state = _artifact_state(entry.path, current)
         if state.lifecycle.state != "live":
             continue
-        if state.artifact_kind == "contract":
+        if state.artifact_kind in ("contract", "document"):
             diff.plan.append(
                 KitPathPlan(
                     path=entry.path,
                     action="keep",
                     identity=state.identity.qualified,
-                    detail="Contract versions are immutable and remain accepted",
+                    detail=_DOCUMENT_KEPT
+                    if state.artifact_kind == "document"
+                    else "Contract versions are immutable and remain accepted",
                 )
             )
             continue

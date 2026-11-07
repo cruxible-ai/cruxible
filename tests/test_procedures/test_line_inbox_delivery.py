@@ -439,6 +439,7 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
     from cruxible_client.contracts.procedures.artifacts import parse_procedure
     from cruxible_client.contracts.shapes import contract_digest, contract_path, render_contract
     from tests.core_support._light_capture_support import record_contract as capture_contract
+    from tests.support.procedures import project
     from tests.test_procedures.test_procedure_source_runs import _source_request
 
     instance, owner, procedure, root, policy = _world(
@@ -474,7 +475,7 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
         row=f"{row.name}@{row.version}",
         fields={"cve": {"at": "cve"}},
     )
-    plan.project("result", fields={"severity": source.ref("content", "text")})
+    project(plan, "result", fields={"severity": source.ref("content", "text")})
     plan.inbox(
         f"{row.name}@{row.version}",
         for_each=rows["records"],

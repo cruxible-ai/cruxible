@@ -25,8 +25,6 @@ from typing import Any, Literal, cast
 from cruxible_client.contracts.capture_erasure import CaptureErasureRecord
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
-    NoneClaimObject,
-    SubjectClaimObject,
 )
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.operational_reads import (
@@ -92,6 +90,7 @@ from cruxible_core.evidence.capture_erasures import erased_body
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.claim_lines import served_claim_value
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.operational_viewer import (
     OperationalViewer,
@@ -688,8 +687,14 @@ def capture_availability(
     return "unavailable", "retained evidence unavailable at the read position", None
 
 
-def _capture_derivation(instance: PlaybillInstance, digest: str) -> GetCaptureDerivation | None:
-    """A derived Capture's manifest and reducer, read from the store; None if unreadable."""
+def _capture_derivation(
+    instance: PlaybillInstance, digest: str, *, provider_named: Callable[[str], str | None]
+) -> GetCaptureDerivation | None:
+    """A derived Capture's manifest and reducer, read from the store; None if unreadable.
+
+    ``provider_named`` names the accepted Provider build of an artifact digest
+    (one keyed lookup); the operation is the invocation's own, from the envelope.
+    """
 
     from cruxible_client.contracts.captures import (
         CaptureEnvelope,
@@ -715,6 +720,8 @@ def _capture_derivation(instance: PlaybillInstance, digest: str) -> GetCaptureDe
             stored = read_derive_reducer(store, envelope.reducer_digest)
             reducer = GetCaptureReducer(
                 digest=envelope.reducer_digest,
+                provider=provider_named(stored.provider_artifact_digest),
+                operation=envelope.production_evidence.operation,
                 provider_build=stored.provider_artifact_digest,
                 operation_signature=stored.operation_signature_digest,
                 implementation=stored.implementation_digest,
@@ -727,6 +734,20 @@ def _capture_derivation(instance: PlaybillInstance, digest: str) -> GetCaptureDe
         reads=manifest.input_accepted_state_digests,
         reducer=reducer,
     )
+
+
+def _provider_named(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, artifact_digest: str
+) -> str | None:
+    """The accepted Provider build whose artifact is ``artifact_digest``: one keyed seek."""
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        row = projection.typed.connection.execute(
+            "SELECT identity FROM providers INDEXED BY providers_by_digest "
+            "WHERE artifact_digest=? ORDER BY identity LIMIT 1",
+            (artifact_digest,),
+        ).fetchone()
+    return None if row is None else str(row[0])
 
 
 def capture_card(
@@ -820,7 +841,11 @@ def capture_card(
     else:
         status, status_detail, erasure = capture_availability(instance, digest)
     derivation = (
-        _capture_derivation(instance, digest)
+        _capture_derivation(
+            instance,
+            digest,
+            provider_named=lambda artifact: _provider_named(instance, coordinate, artifact),
+        )
         if not withheld and kind.kind is not None and kind.kind.epistemic_grade == "derived"
         else None
     )
@@ -943,12 +968,7 @@ def capture_contract_rows(
 
 
 def _claim_value(claim: ClaimArtifact) -> object:
-    obj = claim.statement.object
-    if isinstance(obj, SubjectClaimObject):
-        return _subject_ref(obj.address.artifact_path)
-    if isinstance(obj, NoneClaimObject):
-        return obj.model_dump(mode="json")
-    return obj.value
+    return served_claim_value(claim.statement.object)
 
 
 def _prediction_state(

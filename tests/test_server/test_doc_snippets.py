@@ -410,7 +410,7 @@ PAGES: dict[str, WorldBuilder] = {
 
 #: (doc, block line) -> why that block is not run.
 NOT_RUN: dict[tuple[str, int], str] = {
-    ("lines-and-automation.md", 69): (
+    ("lines-and-automation.md", 81): (
         "the Procedure's shape: its slot, CaptureContract and row Contract are not accepted "
         "in the page world"
     ),
@@ -492,3 +492,23 @@ def test_page_python_blocks_run_in_order(doc: str, world: Callable[[WorldBuilder
         assert _comparable(request) in sent, (
             f"{doc}:{block.line}: the MCP example writes what no SDK snippet on the page wrote"
         )
+
+
+@pytest.mark.parametrize("doc", sorted(PAGES))
+def test_every_change_set_json_block_parses_as_authoring_input(doc: str) -> None:
+    """W6: a worked page's change-set example names only fields the authoring inputs take."""
+
+    from pydantic import TypeAdapter
+
+    from cruxible_client.contracts.authoring.inputs import AuthoringInput
+
+    adapter: TypeAdapter[Any] = TypeAdapter(AuthoringInput)
+    for block in _blocks(DOCS / doc):
+        if block.lang != "json":
+            continue
+        try:
+            value = json.loads(block.source)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and value.get("kind") == "change_set":
+            adapter.validate_python(value)

@@ -2898,7 +2898,6 @@ def _contradicting_attestation_rows(
                     "attesting_principal": principal_id,
                     "attested_at": format_datetime(statement.attested_at),
                     "current_at_append": payload.current_at_append,
-                    **({"note": payload.note} if payload.note is not None else {}),
                 },
                 # Restate it if it stands, else state what holds or retire it:
                 # no Capture to cite, so the authoring door is a plain revision.

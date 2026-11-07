@@ -804,10 +804,11 @@ caller names the source (`web.fetch`, `workspace.file`) omit it. The
 declaration is not yet checked against what a run stamps.
 
 A Procedure is authored in one typed form, the `ProcedureSpec`: references are
-typed (`{"$ref": "step", "step": "parse", "path": ["items"]}`), guards and a
-repeat's `until` are the same typed closed predicate the transforms use, and a
-guard's arms are typed actions (`abort`, `halt`, `goto`). In Python, `Sequence`
-from `cruxible_client.authoring.procedures` is a thin builder over that spec.
+typed (`{"$ref": "step", "step": "parse", "path": ["items"]}`), and filters and
+a claims step's `where` use one typed closed predicate. In Python, `Sequence`
+from `cruxible_client.authoring.procedures` is a thin builder over that spec,
+with builders for the open step kinds only (read, call, extract, filter/dedupe,
+inbox, claims).
 
 ### Lines, Triggers and mandates
 

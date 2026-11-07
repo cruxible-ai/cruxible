@@ -60,6 +60,8 @@ class ClaimAttestationEventPayload(_StrictStoreModel):
     verification_account_digest: str
     attestation: ClaimAttestation
     verification_account: VerifiedClaimAttestation
+    #: Retired (D-R42): always None; own words are a cited self-source Capture.
+    #: The field goes with the release-cut format collapse (D-R5).
     note: str | None = None
     recorded_coordinate: AcceptedCoordinate
     current_at_append: bool

@@ -195,9 +195,16 @@ class GetCaptureErasure(_StrictOperationalModel):
 
 
 class GetCaptureReducer(_StrictOperationalModel):
-    """What computed a derived Capture: the provider build, operation and its node's input."""
+    """What computed a derived Capture: the provider build, operation and its node's input.
+
+    ``provider`` and ``operation`` name what the digests pin: the build's
+    ``Provider:NAME/BUILD`` reference (absent when no accepted Provider has
+    that artifact) and the operation the Capture's invocation called.
+    """
 
     digest: str
+    provider: str | None = Field(default=None, exclude_if=_omit_none)
+    operation: str | None = Field(default=None, exclude_if=_omit_none)
     provider_build: str
     operation_signature: str
     implementation: str
@@ -335,6 +342,27 @@ class GetMandateCard(_StrictOperationalModel):
     next: tuple[str, ...] = ()
 
 
+#: List members a run card shows across its call nodes, at most.
+RUN_CARD_LIST_MEMBERS_MAX = 64
+
+
+class GetRunListMember(_StrictOperationalModel):
+    """One member of a call's ``list<capture>`` output, as the run journaled it (D-R37 a).
+
+    ``index`` orders the list; ``request`` is the member's identity (the request
+    digest its coordinate carries). ``status`` is core's acquisition decision:
+    ``selected`` (committed), ``omitted`` (dropped; the list is then
+    incomplete) or ``refused``; ``reason`` is its first reason code.
+    """
+
+    field: str
+    index: int = Field(ge=0)
+    capture: str | None = Field(default=None, exclude_if=_omit_none)
+    request: str | None = Field(default=None, exclude_if=_omit_none)
+    status: Literal["selected", "omitted", "defaulted", "refused"]
+    reason: str | None = Field(default=None, exclude_if=_omit_none)
+
+
 class GetRunNode(_StrictOperationalModel):
     """One node that finished, in journal order.
 
@@ -352,6 +380,14 @@ class GetRunNode(_StrictOperationalModel):
     sequence: int = Field(ge=1)
     duration_us: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
     summary: NodeRunSummary | None = Field(default=None, exclude_if=_omit_none)
+    #: A call with a ``list<capture>`` output: its members in order (the card's
+    #: first ``RUN_CARD_LIST_MEMBERS_MAX`` across nodes; ``members_truncated``
+    #: when more were journaled).
+    members: tuple[GetRunListMember, ...] = Field(default=(), exclude_if=lambda value: not value)
+    members_truncated: bool = Field(default=False, exclude_if=lambda value: not value)
+    #: The list fields this call ended incomplete: a member was dropped, or the
+    #: provider said so (``incomplete_captures``).
+    incomplete_captures: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
 
 class GetRunCurrentNode(_StrictOperationalModel):
@@ -551,7 +587,9 @@ __all__ = [
     "GetProcedureRunCard",
     "GetResolutionContractCard",
     "GetRunCurrentNode",
+    "GetRunListMember",
     "GetRunNode",
+    "RUN_CARD_LIST_MEMBERS_MAX",
     "GetRunTrigger",
     "LineEnablementState",
     "LineTriggersInactive",

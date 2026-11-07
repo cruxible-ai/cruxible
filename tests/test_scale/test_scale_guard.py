@@ -721,6 +721,19 @@ _COVERAGE = (
     "id (indexes/evidence/citation_coverage.py:103-174 via "
     "service/discovery/coverage.py:143; coverage/contracts.py:518)"
 )
+_COVERAGE_SQL = (
+    "owner coverage-read-bound: coverage_rows (indexes/evidence/citation_coverage.py:97-103) "
+    "groups the whole accepted citation set unconditionally, then re-queries per group "
+    "(:136) and per Capture (:150-159), for every served coverage request, however narrow "
+    "its own requested sources are. A Capture that is cited but CAS-unavailable still "
+    "costs its group's and citation_uses' SELECTs (the envelope read is what the "
+    "'except CasError: continue' at :157-159 skips, not those), so growing unavailable "
+    "Captures grows this read's SQL linearly. coverage_rows documents itself as "
+    "reproducing the full retained export, whose digest commits every citation row "
+    "(module docstring); scoping its query to the request's own sources, so an "
+    "unrelated Capture's availability stops costing a served read, changes what that "
+    "export covers and needs a ruling, not a local fix here."
+)
 _AUDIT = (
     "audit#4: audit page 1 reads and parses every current Claim at every generation "
     "(service/discovery/audit.py:315-319 _history_index), plus unscoped facts (:725) and "
@@ -792,7 +805,10 @@ GROWS: dict[str, dict[str, str]] = {
     # Keep that case under the ordinary guard, without changing ratio or slack.
     # Its encodes no longer grow after the encode-once batch (measured XPASS).
     # Named self-source fixture bytes now make digest work flat (strict XPASS).
-    "read.coverage.workspace_sources": _grows(_COVERAGE, "file_opens", "cas_body_reads"),
+    "read.coverage.workspace_sources": {
+        **_grows(_COVERAGE, "file_opens", "cas_body_reads"),
+        **_grows(_COVERAGE_SQL, "sql_statements", "sql_vm_steps"),
+    },
     "read.audit.first_page": {
         **_grows(
             _AUDIT,
