@@ -39,6 +39,7 @@ from tests.core_support._query_reach_world import (
     SEVERITY,
     STATUS,
     SURFACE,
+    TAG,
     UNIT,
     VULN,
     WHEN,
@@ -224,6 +225,13 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> ReachWorld:
         stray = built.subject(FINDING, f"g{index}")
         built.claim(FOUND_IN, side, stray, effective_until=PAST if index == 2 else None)
         built.claim(SEVERITY, "high", stray)
+    # Competing one-valued statuses; a many-valued tag on two units.
+    disputed_unit = built.subject(UNIT, "other", "disputed")
+    built.claim(STATUS, "checked", disputed_unit)
+    built.claim(STATUS, "deferred", disputed_unit)
+    for name, tags in (("a0", ("x", "y")), ("a1", ("x",))):
+        for tag in tags:
+            built.claim(TAG, tag, built.subject(UNIT, "acme", name))
     # One finding with competing one-valued severities (a conflict to surface or refuse).
     contested = built.subject(UNIT, "other", "contested")
     disputed = built.subject(FINDING, "fc")
@@ -319,8 +327,10 @@ def test_a_served_read_takes_its_reach_and_seeks(
         "acme--a3",
         "acme--a5",
     ]
-    # Its disjunction compares a Claim value: not on the allowlist, so the full load.
-    assert observed[-1]["entry_subject_paths"] is None
+    assert observed[-1]["entry_subject_paths"] is not None
+    assert all(
+        path.split("/")[2].startswith("acme--") for path in observed[-1]["entry_subject_paths"]
+    )
     absent = run(world, definition(world, absent_spec()), {"repo": "acme"})
     assert sorted(row.fields[0].value for row in absent.rows) == [
         "acme--a0",
@@ -452,16 +462,7 @@ def measured(tmp_path_factory: pytest.TempPathFactory) -> Iterator[list[dict[str
     ("read", "rows"),
     [
         ("conjunction_not_exists", OUTPUT // 2),
-        pytest.param(
-            "kit_coverage_plan",
-            OUTPUT,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="owner: coordinator ruling (S4 r3). The kit's open-status test "
-                "`u.status in (...)` compares a Claim value, which the strict leftover "
-                "allowlist keeps off the seek, so coverage_plan takes the full load.",
-            ),
-        ),
+        ("kit_coverage_plan", OUTPUT),
         ("reverse_hop_bound_unit", OUTPUT),
         ("subject_valued_equality", OUTPUT),
     ],
@@ -712,7 +713,7 @@ def test_randomized_where_clauses_agree_on_rows_and_refusals(
     monkeypatch.setattr(served, "build_accepted_query_facts", spy)
     rng = random.Random(1107)
     worlds = {
-        "u": (UNIT, (REPO, SURFACE, STATUS)),
+        "u": (UNIT, (REPO, SURFACE, STATUS, TAG)),
         "p": (PACKAGE, (P_PURL, P_TIER)),
     }
     literals: list[object] = [
@@ -720,6 +721,8 @@ def test_randomized_where_clauses_agree_on_rows_and_refusals(
         "other",
         "checked",
         "deferred",
+        "blocked",
+        "x",
         "hub",
         "observation",
         "supported",
@@ -802,7 +805,24 @@ def test_randomized_where_clauses_agree_on_rows_and_refusals(
         binding = rng.choice(["u", "p"])
         kind, predicates = worlds[binding]
         try:
-            query = _query_over(world, kind, binding, tree(binding, predicates, 2))
+            where = tree(binding, predicates, 2)
+            if binding == "u" and rng.random() < 0.4:
+                # A seek beside a random part: the leftover allowlist decides, and
+                # Claim-value-against-literal parts exercise its scalar entry.
+                seek = QueryComparisonFilter(
+                    left=QueryClaimValueRef(binding="u", predicate=REPO),
+                    operator="eq",
+                    right=QueryLiteralRef(value=rng.choice(["acme", "other"])),
+                    value_type="string",
+                )
+                part = QueryComparisonFilter(
+                    left=QueryClaimValueRef(binding="u", predicate=rng.choice(predicates)),
+                    operator=rng.choice(["eq", "ne", "lt"]),
+                    right=constant(),
+                    value_type=rng.choice(value_types),
+                )
+                where = _all_of(seek, rng.choice([part, where]))
+            query = _query_over(world, kind, binding, where)
         except (ValidationError, ValueError):
             continue
         parameters = {}
@@ -815,3 +835,119 @@ def test_randomized_where_clauses_agree_on_rows_and_refusals(
         refused += result.verdict == "refused"
     # The generator reaches both seeks and refusals.
     assert any(narrowed) and refused > 0, (sum(narrowed), refused)
+
+
+def test_a_scalar_claim_leftover_and_its_excluded_variants(
+    world: ReachWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The one Claim-value allowlist entry (one-valued, literal, non-key, same type,
+    conflicts surfaced) narrows; each excluded variant keeps the full load; every
+    case answers, or refuses, exactly as the full load."""
+
+    observed: list[Any] = []
+    build = served.build_accepted_query_facts
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        observed.append(kwargs.get("entry_subject_paths"))
+        return build(*args, **kwargs)
+
+    whole = served.build_accepted_query_facts(
+        world.instance, coordinate=world.instance.accepted_coordinate()
+    )
+    monkeypatch.setattr(served, "build_accepted_query_facts", spy)
+
+    def spec(kind: str, binding: str, where: str) -> Any:
+        return definition(
+            world,
+            {
+                "query": "qr.leftover",
+                "params": {"repo": "string"},
+                "from": {binding: kind},
+                "where": where,
+                "fields": [f"{binding}.subject_id"],
+            },
+        )
+
+    cases = [
+        # On the allowlist: a one-valued enum Claim against a literal.
+        (
+            spec(UNIT, "u", 'u.repo == $repo and u.status == "checked"'),
+            True,
+            ["acme--a4", "acme--hub", "acme--side"],
+        ),
+        (spec(UNIT, "u", 'u.repo == $repo and u.status != "deferred"'), True, None),
+        # Many-valued, left out (``!=`` does not seek): excluded, the full load.
+        (spec(UNIT, "u", 'u.repo == $repo and u.tag != "y"'), False, ["acme--a1"]),
+    ]
+    for query, narrowed, rows in cases:
+        result = compare(world, query, {"repo": "acme"}, whole=whole)
+        assert result.verdict == "completed", result
+        assert (observed[-1] is not None) is narrowed, query.query.where
+        if rows is not None:
+            assert [row.fields[0].value for row in result.rows] == rows
+
+    from cruxible_client.contracts.query.grammar import (
+        QueryClaimValueRef,
+        QueryComparisonFilter,
+        QueryLiteralRef,
+        QuerySubjectFieldRef,
+    )
+
+    def compared(binding: str, predicate: str, value: object, operator: str = "eq") -> Any:
+        return QueryComparisonFilter(
+            left=QueryClaimValueRef(binding=binding, predicate=predicate),
+            operator=operator,
+            right=QueryLiteralRef(value=value),
+            value_type="string",
+        )
+
+    def kind_is(binding: str, kind: str) -> Any:
+        return QueryComparisonFilter(
+            left=QuerySubjectFieldRef(binding=binding, field="subject_kind"),
+            operator="eq",
+            right=QueryLiteralRef(value=kind),
+            value_type="string",
+        )
+
+    # An enum literal outside the members: the engine compares it as text (the
+    # authoring path refuses it), so the entry still narrows and both complete.
+    off_enum = _query_over(
+        world, UNIT, "u", _all_of(compared("u", STATUS, "nonmember"), kind_is("u", UNIT))
+    )
+    result = compare(world, off_enum, {}, whole=whole)
+    assert result.verdict == "completed" and result.rows == ()
+    assert observed[-1] is not None
+    # A key with a normalizer: excluded, the full load answers.
+    keyed = _query_over(
+        world,
+        PACKAGE,
+        "p",
+        _all_of(compared("p", P_PURL, "pkg:npm/left-pad@1.3.0", "ne"), kind_is("p", PACKAGE)),
+    )
+    result = compare(world, keyed, {}, whole=whole)
+    assert [row.fields[0].value for row in result.rows] == ["pkg-pypi-requests-2.31.0"]
+    assert observed[-1] is None
+    # A refusing conflict policy: excluded; the status part sorts before the empty
+    # surface seek, so the full load refuses on the disputed unit, as does the read.
+    one = _query_over(
+        world,
+        UNIT,
+        "u",
+        _all_of(compared("u", STATUS, "checked"), compared("u", SURFACE, "nosuch")),
+    ).query
+    refusing = _accepted(
+        one.model_copy(
+            update={
+                "result_cardinality": "one",
+                "default_budgets": one.default_budgets.model_copy(update={"max_results": 1}),
+                "maximum_budgets": one.maximum_budgets.model_copy(update={"max_results": 1}),
+                "evaluation_policy": one.evaluation_policy.model_copy(
+                    update={"conflict_behavior": "refuse_on_conflict"}
+                ),
+            }
+        )
+    )
+    result = compare(world, refusing, {}, whole=whole)
+    assert result.verdict == "refused" and result.refusal is not None
+    assert result.refusal.code == "cruxible.query.claim_conflict"
+    assert observed[-1] is None

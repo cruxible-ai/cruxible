@@ -7,7 +7,7 @@ one with ``effective_from`` in the future is ``uncovered``, both hidden from a
 
 Kinds (prefix ``qr.``) mirror the security kit's shapes:
 
-- ``unit`` (repo, surface) with ``status``; ``finding`` (locus) with
+- ``unit`` (repo, surface) with ``status`` (an enum) and ``tag`` (many); ``finding`` (locus) with
   ``found_in`` (many, a unit) and ``severity``: the audit reads;
 - ``component`` (purl) with ``affected_by`` (many, a vuln); ``vuln`` (vid);
   ``inventory`` (iid);
@@ -69,6 +69,7 @@ PACKAGE = "qr.package"
 REPO = f"{UNIT}.repo"
 SURFACE = f"{UNIT}.surface"
 STATUS = f"{UNIT}.status"
+TAG = f"{UNIT}.tag"
 LOCUS = f"{FINDING}.locus"
 FOUND_IN = f"{FINDING}.found_in"
 SEVERITY = f"{FINDING}.severity"
@@ -116,7 +117,8 @@ TYPES: dict[str, ClaimType] = {
     for item in (
         _type(REPO),
         _type(SURFACE),
-        _type(STATUS),
+        _type(STATUS, {"type": "string", "enum": ["blocked", "checked", "deferred"]}),
+        _type(TAG, many=True),
         _type(LOCUS),
         _type(FOUND_IN, (UNIT,), many=True),
         _type(SEVERITY),
@@ -286,6 +288,7 @@ __all__ = [
     "SEVERITY",
     "STATUS",
     "SURFACE",
+    "TAG",
     "TYPES",
     "UNIT",
     "VID",

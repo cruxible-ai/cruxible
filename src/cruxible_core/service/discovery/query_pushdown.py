@@ -200,12 +200,16 @@ def select_query_facts(
             as ``string`` or ``subject_reference`` with a literal or parameter:
             a field is always a string and takes no Claim's form or normalizer,
             or
-          - ``now`` compared as ``string`` or ``timestamp`` with a literal;
+          - ``now`` compared as ``string`` or ``timestamp`` with a literal, or
+          - a scalar Claim value of the entry (``scalar_claim``: one-valued,
+            literal, not a key part, declared type equal to the comparison
+            type, conflicts surfaced) with a literal or parameter;
         - an and/or/not of allowed parts.
 
-        Every other shape keeps the full evaluation: anything with a Claim
-        value, role or verdict on either side, ``now`` against anything but a
-        literal, or two row-dependent operands.
+        Every other shape keeps the full evaluation: a Claim role or verdict,
+        any other Claim value (many-valued, a key, Subject-valued, another
+        type), ``now`` against anything but a literal, or two row-dependent
+        operands.
         """
 
         if isinstance(filter_, QueryConjunctionFilter | QueryDisjunctionFilter):
@@ -236,8 +240,31 @@ def select_query_facts(
                 and value_type in {"string", "timestamp"}
             ):
                 continue
+            if isinstance(one, QueryClaimValueRef) and scalar_claim(one, value_type):
+                continue
             return False
         return True
+
+    def scalar_claim(ref: QueryClaimValueRef, value_type: str) -> bool:
+        """A one-valued, literal, non-key Claim value of the filter's own scalar type.
+
+        Its stored value takes no form and no normalizer (only the compared
+        literal or parameter is transformed, and ``OperandProbe`` checks that
+        under this predicate's form and normalizer), it coerces to its declared
+        type, and conflicts surface on its row (a refusing policy is excluded).
+        """
+
+        if not surfaces or ref.binding != entry.binding:
+            return False
+        claim_type = claim_type_of(ref.predicate)
+        return (
+            claim_type is not None
+            and claim_type.cardinality == "one"
+            and claim_value_kind(claim_type.value) == "literal"
+            and value_type in {"string", "integer", "boolean"}
+            and value_type_name(claim_type.value) == value_type
+            and key_normalizer_of(claim_type, tree_subject_kind_reader(source)) is None
+        )
 
     absorbed = False
 
