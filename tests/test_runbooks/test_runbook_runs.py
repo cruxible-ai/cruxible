@@ -392,6 +392,61 @@ def test_a_crash_mid_run_resumes_the_same_fire(
     assert _action_fires(instance) == 1
 
 
+def test_a_line_disabled_before_its_admission_never_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, counted_line_runs: Counter[str]
+) -> None:
+    """F2: the step is admitted inside the arm boundary only while the arm stands."""
+
+    from cruxible_core.runtime import line_arms
+    from cruxible_core.service.procedures.line_dispatch import service_disable_line
+    from tests.support.operation_world import actor
+
+    instance, root, now = _fired_world(tmp_path, line_steps(SETTLE, PROPOSE))
+    real = line_arms.arm_authority
+
+    def disabled_meanwhile(instance: Any, principal: Any, *, now: datetime) -> Any:
+        # The arm snapshot and its recheck both held; the Line is disabled
+        # between them and the admission.
+        resolved = real(instance, principal, now=now)
+        service_disable_line(instance, SETTLE, actor=actor(), now=now)
+        return resolved
+
+    monkeypatch.setattr(line_arms, "arm_authority", disabled_meanwhile)
+    head = instance.accepted_coordinate()
+    _drain(instance, root, now=now)
+    last = runbook_service.latest_runbook_run(instance, "test.rb")
+    assert last is not None
+    assert (last.stop_reason, last.stopped_at_step) == ("line_not_enabled", 1)
+    assert last.steps[0].code == "enablement_ended"
+    assert _statuses(last) == ["not_enabled", "not_run"]
+    assert last.steps[0].run_id is None
+    assert instance.accepted_coordinate() == head
+    # Nothing was admitted for the step: a replay would find no run to read back.
+    from cruxible_core.service.procedures import procedure_runs
+
+    assert (
+        procedure_runs.admitted_runbook_step(
+            instance,
+            SETTLE,
+            procedure_runs.RunbookStepOccurrence(
+                runbook="test.rb", fire=_fire_of(instance), step=1
+            ),
+        )
+        is None
+    )
+
+
+def _fire_of(instance: Any) -> int:
+    from cruxible_core.triggers.journal import retained_records
+
+    with retained_records(instance, write=False) as connection:
+        assert connection is not None
+        (started,) = connection.execute(
+            "SELECT started FROM runbook_fires WHERE fire_key='runbook:test.rb'"
+        ).fetchone()
+    return int(started)
+
+
 # -- an idle poll reads no fire history (F3) ------------------------------------------
 
 

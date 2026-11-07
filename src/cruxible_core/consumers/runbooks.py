@@ -48,14 +48,9 @@ def _fire_keys(instance: Any) -> frozenset[str]:
 def _active_arm(instance: Any, line: str) -> dict[str, Any] | None:
     """The Line's active enablement segment, or None: one keyed read."""
 
-    from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
-    from cruxible_core.service.procedures.line_dispatch import _active_session
+    from cruxible_core.service.procedures.line_dispatch import active_line_arm
 
-    if not dispatch_root(instance).exists():
-        return None
-    store = LineDispatchStore(instance)
-    with store.locked() as conn:
-        return _active_session(conn, line_identity_digest(ArtifactIdentity(kind="Line", name=line)))
+    return active_line_arm(instance, line_identity_digest(ArtifactIdentity(kind="Line", name=line)))
 
 
 def run_fired_runbook(
@@ -75,12 +70,26 @@ def run_fired_runbook(
     occurrence, so it fires once. A replay of the same fire therefore
     reconstructs what ran and runs only what did not.
 
+    A Line step not yet admitted runs through the automatic-admission boundary
+    an armed Line's own dispatch uses: the enablement's authority is rechecked
+    immediately before admission, the armed Line version and Trigger set are
+    pinned, and the admission is recorded inside the arm boundary only while
+    that enablement is still the active one. A Line disabled at any point
+    before its admission never runs.
     """
 
+    from functools import partial
+
     from cruxible_core.documents.workspace_file import WorkspaceFileReadRefused
+    from cruxible_core.procedures.line_admission import LINE_ARM_ADMISSION_GATE
     from cruxible_core.runtime.line_arms import arm_authority
     from cruxible_core.service.procedures import procedure_runs
-    from cruxible_core.service.procedures.line_dispatch import LineArmAuthorityLost
+    from cruxible_core.service.procedures.line_dispatch import (
+        LineArmAuthorityLost,
+        LineArmSegmentEnded,
+        arm_admission_gate,
+        require_active_segment,
+    )
     from cruxible_core.service.runbooks import (
         LineStepNotRun,
         accepted_runbook,
@@ -111,22 +120,38 @@ def run_fired_runbook(
                 "under its own enablement.",
             )
         principal = LineEnablementPrincipal.model_validate(arm["armed_by"])
+        line_id = line_identity_digest(ArtifactIdentity(kind="Line", name=line))
         try:
+            # Rechecked immediately before admission, as an armed dispatch does.
+            require_active_segment(instance, arm["session_id"])
             actor, rung = arm_authority(instance, principal, now=now)
-        except LineArmAuthorityLost as lost:
-            return LineStepNotRun("not_enabled", lost.reason, lost.detail)
-        return procedure_runs.service_run_playbill_line(
-            instance,
-            path_identity_digest=line,
-            request=procedure_runs.LineRunRequest(line=line),
-            actor_context=actor,
-            caller_rung=rung,
-            provider_runtime_operator=manager.provider_runtime_operator(),
-            workspace_file_reader=reader,
-            evaluation_instant_skew=manager.procedure_run_config().evaluation_instant_skew,
-            expected_line_artifact_digest=arm["line_artifact_digest"],
-            runbook_step=occurrence,
+        except (LineArmAuthorityLost, LineArmSegmentEnded) as lost:
+            return LineStepNotRun(
+                "not_enabled", getattr(lost, "reason", "enablement_ended"), str(lost)
+            )
+        gate = LINE_ARM_ADMISSION_GATE.set(
+            partial(arm_admission_gate, instance, line_id, arm["session_id"])
         )
+        try:
+            return procedure_runs.service_run_playbill_line(
+                instance,
+                path_identity_digest=line,
+                request=procedure_runs.LineRunRequest(line=line),
+                actor_context=actor,
+                caller_rung=rung,
+                provider_runtime_operator=manager.provider_runtime_operator(),
+                workspace_file_reader=reader,
+                evaluation_instant_skew=manager.procedure_run_config().evaluation_instant_skew,
+                expected_line_artifact_digest=arm["line_artifact_digest"],
+                expected_trigger_pins=arm.get("trigger_pins"),
+                runbook_step=occurrence,
+            )
+        except LineArmSegmentEnded as ended:
+            return LineStepNotRun("not_enabled", "enablement_ended", str(ended))
+        except (procedure_runs.LineTriggersChanged, procedure_runs.LineVersionChanged) as moved:
+            return LineStepNotRun("not_enabled", "enablement_stale", str(moved))
+        finally:
+            LINE_ARM_ADMISSION_GATE.reset(gate)
 
     def fire_action(action: str, step: int) -> int:
         return fire_runbook_action(
