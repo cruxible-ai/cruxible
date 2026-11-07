@@ -277,7 +277,7 @@ def pair_spec(
             }
         },
         hard_caps=procedure_limits(
-            provider_calls=1, capture_bytes=4_194_304, items=items or 20_000
+            provider_calls=1, capture_bytes=4_194_304, items=items or 20_000, wall_clock="PT10M"
         ),
         steps=[
             {
