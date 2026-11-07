@@ -9,7 +9,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, get_args
@@ -1506,6 +1506,24 @@ def trigger_binding_for(
     raise ExecutionError(f"unsupported Trigger schedule kind {schedule.kind!r}")
 
 
+@dataclass(frozen=True)
+class RunbookStepOccurrence:
+    """One step of one Trigger-fired Runbook fire (D-R36): a stable Line occurrence.
+
+    ``fire`` is the trigger-journal sequence of the fire the run serves. The
+    same Runbook, fire and step derive the same occurrence id however often
+    the run is replayed, so a step already admitted is read back, never run
+    again.
+    """
+
+    runbook: str
+    fire: int
+    step: int
+
+    def basis(self) -> dict[str, object]:
+        return {"fire": self.fire, "runbook": self.runbook, "step": self.step}
+
+
 def _line_occurrence(
     accepted_line: AcceptedLineSpec,
     *,
@@ -1516,6 +1534,7 @@ def _line_occurrence(
     exact_basis: datetime | None = None,
     accepted_at: datetime | None = None,
     manual_event: TriggerEventReference | None = None,
+    runbook_step: RunbookStepOccurrence | None = None,
 ) -> tuple[str, datetime | None]:
     """Derive one occurrence's identity and its next due instant.
 
@@ -1531,9 +1550,15 @@ def _line_occurrence(
     """
 
     next_due = None
-    if trigger is None:
+    occurrence_basis: object
+    if trigger is None and runbook_step is not None:
+        # One step of one Trigger-fired Runbook fire: its identity is the fire
+        # and the step, never the instant it runs, so a replay finds it admitted.
+        kind = "runbook_step"
+        occurrence_basis = runbook_step.basis()
+    elif trigger is None:
         kind = "manual"
-        occurrence_basis: object = (
+        occurrence_basis = (
             format_datetime(evaluation_time)
             if manual_event is None
             else {"at": format_datetime(evaluation_time), "event": manual_event.record_digest}
@@ -1577,6 +1602,45 @@ def _line_occurrence(
         },
     ).tagged
     return occurrence_id, next_due
+
+
+def runbook_step_occurrence_id(
+    instance: PlaybillInstance, line: str, step: RunbookStepOccurrence
+) -> str:
+    """The Line occurrence a Runbook step is admitted as, at the Line's current version."""
+
+    accepted_line = _accepted_line_by_reference(
+        instance, coordinate=instance.accepted_coordinate(), reference=line
+    )
+    # A step's identity names no instant: the evaluation time is unused.
+    occurrence_id, _due = _line_occurrence(
+        accepted_line, evaluation_time=datetime(1970, 1, 1, tzinfo=UTC), runbook_step=step
+    )
+    return occurrence_id
+
+
+def admitted_runbook_step(
+    instance: PlaybillInstance, line: str, occurrence_id: str
+) -> ProcedureRunStateV2 | None:
+    """The run a Runbook step's recorded occurrence admitted, from the run journal, or None.
+
+    Durable and epoch-independent: admissions are partitioned by the Line's
+    identity and found by the exact occurrence id the step recorded before it
+    ran, whatever the Line's occurrence epoch has become since. One Line read
+    and one indexed admission lookup.
+    """
+
+    accepted_line = _accepted_line_by_reference(
+        instance, coordinate=instance.accepted_coordinate(), reference=line
+    )
+    existing = next(
+        iter(_line_admissions(instance, accepted_line, occurrence_id=occurrence_id)), None
+    )
+    if existing is None:
+        return None
+    if isinstance(existing, _UnavailableLineAdmission):
+        return _unavailable_run_state(existing.stored)
+    return _state_from_records(instance, run_id=existing.run_id)
 
 
 def _line_budget(
@@ -3863,6 +3927,7 @@ def service_run_playbill_line(
     expected_trigger_artifact_digest: str | None = None,
     expected_trigger_pins: dict[str, str] | None = None,
     trigger_fire: TriggerFire | None = None,
+    runbook_step: RunbookStepOccurrence | None = None,
 ) -> ProcedureRunStateV2:
     instance.require_writable()
     if request.line != path_identity_digest:
@@ -3887,6 +3952,7 @@ def service_run_playbill_line(
             expected_trigger_artifact_digest=expected_trigger_artifact_digest,
             expected_trigger_pins=expected_trigger_pins,
             trigger_fire=trigger_fire,
+            runbook_step=runbook_step,
         )
 
 
@@ -3906,6 +3972,7 @@ def _run_playbill_line(
     expected_trigger_artifact_digest: str | None = None,
     expected_trigger_pins: dict[str, str] | None = None,
     trigger_fire: TriggerFire | None = None,
+    runbook_step: RunbookStepOccurrence | None = None,
 ) -> ProcedureRunStateV2:
     """Derive, admit, and execute one occurrence of an accepted Line.
 
@@ -4300,6 +4367,7 @@ def _run_playbill_line(
         trigger=trigger,
         binding=trigger_binding,
         manual_event=event if trigger is None else None,
+        runbook_step=runbook_step if trigger_fire is None else None,
         # A retained tick is admitted as exactly the tick it names, automatically
         # or explicitly: its identity is its scheduled instant, so when it is
         # dispatched never moves which later ticks are due.
@@ -4350,6 +4418,9 @@ def _run_playbill_line(
     if isinstance(existing, _UnavailableLineAdmission):
         return _unavailable_run_state(existing.stored)
     if existing is not None:
+        if runbook_step is not None and trigger_fire is None:
+            # A Runbook step already admitted is read back, never run again.
+            return _state_from_records(instance, run_id=existing.run_id)
         # An occurrence admitted with an investigation or trigger binding
         # retries as itself; any other is done.
         if existing.investigation is None and existing.trigger_binding is None:

@@ -274,10 +274,37 @@ class ActionTarget(_StrictTriggerModel):
     action: InternalActionName
 
 
+class RunbookTarget(_StrictTriggerModel):
+    """Run one Runbook, whatever version of it is accepted when the Trigger fires.
+
+    Each Line step of a Trigger-fired Runbook runs under that Line's own
+    enablement, exactly as a Trigger aimed at the Line would: a Line that is not
+    enabled stops the run, so a Runbook never widens anyone's authority.
+    """
+
+    kind: Literal["runbook"] = "runbook"
+    runbook: ArtifactNameRef
+
+    @model_validator(mode="after")
+    def _runbook(self) -> RunbookTarget:
+        if self.runbook.target.kind != "Runbook":
+            raise ValueError("a Runbook target names a Runbook")
+        return self
+
+
 TriggerTarget: TypeAlias = Annotated[
-    LineTarget | ActionTarget,
+    LineTarget | ActionTarget | RunbookTarget,
     Field(discriminator="kind"),
 ]
+
+#: The journal key a Runbook-aimed Trigger fires under. It is not an internal
+#: action: no worker but the Runbook consumer follows it, and the registry
+#: pattern (dotted lowercase) can never spell it.
+RUNBOOK_FIRE_PREFIX: Final = "runbook:"
+
+
+def runbook_fire_key(name: str) -> str:
+    return RUNBOOK_FIRE_PREFIX + name
 
 
 def schedule_capture_selector(schedule: TriggerSchedule) -> CaptureEventNameSelector | None:
@@ -332,6 +359,10 @@ class Trigger(_StrictTriggerModel):
     @property
     def action(self) -> str | None:
         return self.target.action if isinstance(self.target, ActionTarget) else None
+
+    @property
+    def runbook(self) -> ArtifactIdentity | None:
+        return self.target.runbook.target if isinstance(self.target, RunbookTarget) else None
 
 
 def trigger_path(name: str) -> str:
@@ -412,6 +443,7 @@ def evaluate_trigger_law(
     target_line_live: bool | None = None,
     target_line_input: TriggerInputRecord | None = None,
     actions: Mapping[str, InternalActionSpec] = INTERNAL_ACTIONS,
+    target_runbook_live: bool | None = None,
 ) -> TriggerLawResult:
     """Judge one Trigger against its predecessor and what it aims at.
 
@@ -420,7 +452,10 @@ def evaluate_trigger_law(
     ``target_line_input`` the event that Line accepts: a Line that binds its
     triggering Capture to a Source input accepts exactly its declared event.
     An internal action must be registered in ``actions`` and takes the input its
-    entry declares. Either way the schedule must supply the target's input. A
+    entry declares. A Runbook (``target_runbook_live``) must be live in the
+    final candidate and, like an internal action, takes a time schedule or
+    generation acceptance: its steps run as manual occurrences, never on an
+    event. Either way the schedule must supply the target's input. A
     retiring Trigger is judged only for its succession: it sets off nothing, so
     what it named no longer matters.
     """
@@ -488,6 +523,27 @@ def evaluate_trigger_law(
                     path=path,
                 )
             target, required = f"Internal action {spec.name!r}", spec.input
+        elif isinstance(trigger.target, RunbookTarget):
+            qualified = trigger.target.runbook.target.qualified
+            if not target_runbook_live:
+                return _refusal(
+                    "cruxible.trigger.target_runbook_unavailable",
+                    f"Trigger target {qualified!r} is not a live accepted Runbook in this "
+                    "candidate; accept the Runbook first.",
+                    path=path,
+                )
+            if not (
+                schedule_is_timed(trigger.schedule)
+                or isinstance(trigger.schedule, GenerationAcceptedSchedule)
+            ):
+                return _refusal(
+                    "cruxible.trigger.schedule_unsupported_for_runbook",
+                    f"Runbook {qualified!r} takes cadence, cron or generation_accepted; its "
+                    f"steps run as manual occurrences, so a {trigger.schedule.kind} schedule "
+                    "has no event to give them.",
+                    path=path,
+                )
+            target, required = f"Runbook {qualified!r}", NoTriggerInput()
         else:
             if not target_line_live:
                 return _refusal(
@@ -533,6 +589,8 @@ __all__ = [
     "InternalActionSpec",
     "LineTarget",
     "NoTriggerInput",
+    "RUNBOOK_FIRE_PREFIX",
+    "RunbookTarget",
     "TriggerFormatError",
     "TriggerInputRecord",
     "TriggerLawResult",
@@ -549,4 +607,5 @@ __all__ = [
     "schedule_satisfies_input",
     "trigger_digest",
     "trigger_path",
+    "runbook_fire_key",
 ]

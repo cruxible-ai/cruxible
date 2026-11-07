@@ -328,6 +328,7 @@ def test_http_authoring_openapi_exposes_frozen_union_and_rejects_removed_brief_i
             "subject_succession",
             "line",
             "trigger",
+            "runbook",
             "contract",
         }
     assert "BriefInput" not in schemas

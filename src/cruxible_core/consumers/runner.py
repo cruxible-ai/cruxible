@@ -32,8 +32,9 @@ def consumer_kinds() -> tuple[ConsumerKind, ...]:
     from cruxible_core.consumers.floor import FLOOR
     from cruxible_core.consumers.lines import LINE_ARMS
     from cruxible_core.consumers.next import NEXT_QUEUE
+    from cruxible_core.consumers.runbooks import RUNBOOKS
 
-    return (LINE_ARMS, NEXT_QUEUE, FLOOR)
+    return (LINE_ARMS, NEXT_QUEUE, FLOOR, RUNBOOKS)
 
 
 def consumer_health(instance: Any, *, now: datetime) -> tuple[ConsumerHealth, ...]:

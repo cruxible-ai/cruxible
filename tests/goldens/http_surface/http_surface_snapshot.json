@@ -282,6 +282,12 @@
   "/api/v1/{instance_id}/retire": {
     "POST": "WriteOutcome"
   },
+  "/api/v1/{instance_id}/runbooks/{name}/preview": {
+    "GET": "RunbookPreview"
+  },
+  "/api/v1/{instance_id}/runbooks/{name}/runs": {
+    "POST": "RunbookRunResult"
+  },
   "/api/v1/{instance_id}/runtime/bootstrap/claim": {
     "POST": "RuntimeCredentialBootstrapResult"
   },

@@ -108,6 +108,7 @@ ARTIFACT_KINDS = ArtifactKindRegistry(
             ("provider", rf"^providers/{_NAME}(?:/[0-9a-f]{{64}})?\.json$"),
             ("query-definition", rf"^query-definitions/{_NAME}\.json$"),
             ("resolution-contract", rf"^resolution-contracts/{_NAME}\.json$"),
+            ("runbook", rf"^runbooks/{_NAME}\.json$"),
             ("subject", rf"^subjects/{_DOTTED}/{_NAME}\.json$"),
             ("subject-kind", rf"^subject-kinds/{_DOTTED}\.json$"),
             ("trigger", rf"^triggers/{_NAME}\.json$"),
@@ -140,6 +141,7 @@ RegisteredPathKind = Literal[
     "procedure-mandate",
     "provider",
     "query-definition",
+    "runbook",
     "subject",
     "subject-kind",
     "trigger",
@@ -798,6 +800,35 @@ def parse_projection_tree(
                     )
                     for pin in dependency_pins(trigger, by_name=by_name)
                 )
+                continue
+            if kind == "runbook":
+                from cruxible_client.contracts.runbooks import parse_runbook, runbook_digest
+
+                runbook = parse_runbook(content, path=path)
+                identity = runbook.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                digest = runbook_digest(runbook).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity,
+                        kind,
+                        runbook.artifact_format,
+                        path,
+                        digest,
+                        runbook.lifecycle.predecessor_digest,
+                        projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            artifact_digest=digest,
+                        ),
+                    )
+                )
+                if runbook.lifecycle.state == "retired":
+                    retired_identities.append(identity)
+                # A Runbook pins nothing: it names its Lines by identity, and its
+                # own law and every run judge them live.
                 continue
             if kind == "note":
                 from cruxible_client.contracts.notes import note_digest, parse_note

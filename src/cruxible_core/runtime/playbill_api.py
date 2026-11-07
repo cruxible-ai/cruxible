@@ -101,6 +101,7 @@ from cruxible_client.contracts.provider_installation import (
 )
 from cruxible_client.contracts.query.definitions import query_definition_path
 from cruxible_client.contracts.repairs import RepairOperation
+from cruxible_client.contracts.runbooks import RunbookPreview, RunbookRunRequest, RunbookRunResult
 from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_client.contracts.types import (
     CompilerCoordinate,
@@ -2795,6 +2796,55 @@ def playbill_line_run(
     )
     return _withhold_run_values(
         instance_id, contracts.ProcedureRunState.model_validate(result.model_dump(mode="json"))
+    )
+
+
+def playbill_runbook_run(instance_id: str, name: str) -> RunbookRunResult:
+    """Run one accepted Runbook now, step by step, under the caller's authority (D-R36).
+
+    Each Line step is the caller's manual Line run, gated per step as ``line
+    run`` gates it; the run stops on the first failure or review.
+    """
+
+    from cruxible_core.service.runbooks import service_run_runbook
+
+    check_permission("cruxible_runbook_run", instance_id=instance_id, audit_success=False)
+    enforce_customer_code_execution_supported()
+    if get_capability_ceiling() < PermissionMode.GOVERNED_WRITE:
+        # Every step is a run that retains its journal (or a journal fire), so a
+        # read-only daemon refuses a Runbook run before reading any definition.
+        check_permission(
+            "cruxible_runbook_run",
+            instance_id=instance_id,
+            required_override=PermissionMode.GOVERNED_WRITE,
+        )
+    actor = _write_actor_context(instance_id)
+    if actor is None:
+        raise AuthenticationError("Runbook run requires an authenticated actor identity")
+    manager = get_playbill_manager()
+    try:
+        workspace_file_reader = manager.workspace_file_reader(instance_id)
+    except WorkspaceFileReadRefused:
+        workspace_file_reader = None
+    return service_run_runbook(
+        manager.get(instance_id),
+        name=RunbookRunRequest(runbook=name).runbook,
+        actor_context=actor,
+        caller_rung=get_current_mode().value - 1,
+        provider_runtime_operator=manager.provider_runtime_operator(),
+        workspace_file_reader=workspace_file_reader,
+        evaluation_instant_skew=manager.procedure_run_config().evaluation_instant_skew,
+    )
+
+
+def playbill_runbook_preview(instance_id: str, name: str) -> RunbookPreview:
+    """The Runbook's static preview: definitions only, nothing executed (D-R36)."""
+
+    from cruxible_core.service.runbook_preview import service_preview_runbook
+
+    check_permission("cruxible_runbook_preview", instance_id=instance_id)
+    return service_preview_runbook(
+        get_playbill_manager().get(instance_id), name=RunbookRunRequest(runbook=name).runbook
     )
 
 

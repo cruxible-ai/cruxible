@@ -58,6 +58,7 @@ from cruxible_client.contracts.provider_installation import (
     ProviderRetireRequest,
     ProviderRetireResult,
 )
+from cruxible_client.contracts.runbooks import RunbookPreview, RunbookRunResult
 from cruxible_client.contracts.uploads import (
     CaptureUploadCompleteRequest,
     CaptureUploadCompleteResult,
@@ -1221,6 +1222,16 @@ def run_line(
         line,
         request=req,
     )
+
+
+@router.post("/{instance_id}/runbooks/{name}/runs", response_model=RunbookRunResult)
+def run_runbook(instance_id: str, name: str) -> RunbookRunResult:
+    return playbill_api.playbill_runbook_run(resolve_server_instance_id(instance_id), name)
+
+
+@router.get("/{instance_id}/runbooks/{name}/preview", response_model=RunbookPreview)
+def preview_runbook(instance_id: str, name: str) -> RunbookPreview:
+    return playbill_api.playbill_runbook_preview(resolve_server_instance_id(instance_id), name)
 
 
 @router.get(

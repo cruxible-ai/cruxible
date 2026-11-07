@@ -4715,6 +4715,7 @@
                 "procedure_mandate": "#/$defs/ProcedureMandateInput",
                 "procedure_runtime_policy": "#/$defs/ProcedureRuntimePolicyInput",
                 "query_definition": "#/$defs/QueryDefinitionInput",
+                "runbook": "#/$defs/RunbookInput",
                 "subject": "#/$defs/SubjectInput",
                 "subject_kind": "#/$defs/SubjectKindInput",
                 "subject_succession": "#/$defs/SubjectSuccessionInput",
@@ -4752,6 +4753,9 @@
               },
               {
                 "$ref": "#/$defs/TriggerInput"
+              },
+              {
+                "$ref": "#/$defs/RunbookInput"
               },
               {
                 "$ref": "#/$defs/SubjectKindInput"
@@ -13514,6 +13518,95 @@
             "title": "ReturnFrom",
             "type": "object"
           },
+          "RunbookInput": {
+            "additionalProperties": false,
+            "description": "An ordered list of Lines and internal actions, run in order (D-R36).\n\nEach step names exactly one accepted Line (``line``) or registered internal\naction (``action``). No branching, no parameters of its own: a Line step runs\nas that Line's manual occurrence, on its own parameters, budgets and authority.\nA run stops at the first step that fails or whose writes go to review.\n``retire`` retires the accepted Runbook.",
+            "properties": {
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "kind": {
+                "const": "runbook",
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "description": "The Runbook name, e.g. 'security.catch-up'.",
+                "title": "Name",
+                "type": "string"
+              },
+              "retire": {
+                "default": false,
+                "title": "Retire",
+                "type": "boolean"
+              },
+              "steps": {
+                "default": [],
+                "description": "In run order: {line: <Line name>} or {action: <internal action>}.",
+                "items": {
+                  "$ref": "#/$defs/RunbookStepAuthoring"
+                },
+                "title": "Steps",
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "RunbookInput",
+            "type": "object"
+          },
+          "RunbookStepAuthoring": {
+            "additionalProperties": false,
+            "description": "One Runbook step: exactly one of an accepted Line (by name) or a registered action.",
+            "properties": {
+              "action": {
+                "anyOf": [
+                  {
+                    "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry, curation.detect.",
+                    "examples": [
+                      "floor.refresh",
+                      "evidence.sweep",
+                      "prediction.anchor_retry",
+                      "curation.detect"
+                    ],
+                    "maxLength": 128,
+                    "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Action"
+              },
+              "line": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Line"
+              }
+            },
+            "title": "RunbookStepAuthoring",
+            "type": "object"
+          },
           "SelectStep": {
             "additionalProperties": false,
             "properties": {
@@ -14318,6 +14411,19 @@
                 "title": "Retire",
                 "type": "boolean"
               },
+              "runbook_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The Runbook this Trigger runs (cadence, cron or generation_accepted); each Line step runs under that Line's own enablement.",
+                "title": "Runbook Name"
+              },
               "schedule": {
                 "discriminator": {
                   "mapping": {
@@ -14511,6 +14617,7 @@
                 "procedure_mandate": "#/$defs/ProcedureMandateInput",
                 "procedure_runtime_policy": "#/$defs/ProcedureRuntimePolicyInput",
                 "query_definition": "#/$defs/QueryDefinitionInput",
+                "runbook": "#/$defs/RunbookInput",
                 "subject": "#/$defs/SubjectInput",
                 "subject_kind": "#/$defs/SubjectKindInput",
                 "subject_succession": "#/$defs/SubjectSuccessionInput",
@@ -14548,6 +14655,9 @@
               },
               {
                 "$ref": "#/$defs/TriggerInput"
+              },
+              {
+                "$ref": "#/$defs/RunbookInput"
               },
               {
                 "$ref": "#/$defs/SubjectKindInput"
@@ -104184,7 +104294,8 @@
             "discriminator": {
               "mapping": {
                 "action": "#/$defs/ActionTarget",
-                "line": "#/$defs/LineTarget"
+                "line": "#/$defs/LineTarget",
+                "runbook": "#/$defs/RunbookTarget"
               },
               "propertyName": "kind"
             },
@@ -104194,6 +104305,9 @@
               },
               {
                 "$ref": "#/$defs/ActionTarget"
+              },
+              {
+                "$ref": "#/$defs/RunbookTarget"
               }
             ],
             "title": "Target"
@@ -104476,6 +104590,26 @@
             "title": "LineTarget",
             "type": "object"
           },
+          "RunbookTarget": {
+            "additionalProperties": false,
+            "description": "Run one Runbook, whatever version of it is accepted when the Trigger fires.\n\nEach Line step of a Trigger-fired Runbook runs under that Line's own\nenablement, exactly as a Trigger aimed at the Line would: a Line that is not\nenabled stops the run, so a Runbook never widens anyone's authority.",
+            "properties": {
+              "kind": {
+                "const": "runbook",
+                "default": "runbook",
+                "title": "Kind",
+                "type": "string"
+              },
+              "runbook": {
+                "$ref": "#/$defs/ArtifactNameRef"
+              }
+            },
+            "required": [
+              "runbook"
+            ],
+            "title": "RunbookTarget",
+            "type": "object"
+          },
           "WindowCloseSchedule": {
             "additionalProperties": false,
             "description": "Fire when a fixed window, or a window anchored on a Capture landing, closes.",
@@ -104565,7 +104699,8 @@
             "discriminator": {
               "mapping": {
                 "action": "#/$defs/ActionTarget",
-                "line": "#/$defs/LineTarget"
+                "line": "#/$defs/LineTarget",
+                "runbook": "#/$defs/RunbookTarget"
               },
               "propertyName": "kind"
             },
@@ -104575,6 +104710,9 @@
               },
               {
                 "$ref": "#/$defs/ActionTarget"
+              },
+              {
+                "$ref": "#/$defs/RunbookTarget"
               }
             ],
             "title": "Target"

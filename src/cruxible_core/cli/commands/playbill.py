@@ -4568,7 +4568,7 @@ def authoring_example_command(
     Input kind family: claim | procedure |
     subject | subject_kind | subject_succession | query_definition |
     approval_policy | procedure_runtime_policy | procedure_mandate |
-    line | trigger | contract | change_set (tagless).
+    line | trigger | runbook | contract | change_set (tagless).
 
     \b
     Change-set member kind family: claim | claim_type | claim_type_succession |
@@ -8529,6 +8529,141 @@ def run_line(
     _echo_run_outcome(result, result.run_id or line)
     _echo_source_observations(result)
     _exit_for_run(result)
+
+
+@playbill_group.group("runbook")
+def runbook_group() -> None:
+    """Run or preview an accepted Runbook: an ordered list of Lines and actions.
+
+    `run` runs the steps in order and stops at the first one that fails or
+    sends writes to review; `preview` (or `run --dry-run`) shows what each step
+    can read, write, settle, propose and set off, from definitions only.
+    """
+
+
+def _target_text(target: Any) -> str:
+    return f"Line:{target.line.target.name}" if target.kind == "line" else f"action:{target.action}"
+
+
+def _echo_runbook_run(result: Any) -> None:
+    stopped = (
+        f"stopped at step {result.stopped_at_step} ({result.stop_reason})"
+        if result.status == "stopped"
+        else "completed"
+    )
+    click.echo(f"Runbook {result.runbook}: {stopped}  [{result.run_id}]")
+    for step in result.steps:
+        extra = [
+            *([step.run_id] if step.run_id else []),
+            *(f"proposal {item}" for item in step.proposal_ids),
+            *([f"event {step.event_id}"] if step.event_id is not None else []),
+            *([step.code] if step.code else []),
+        ]
+        click.echo(
+            f"  {step.step:>2}  {step.status:<11} {_target_text(step.target)}"
+            + (f"  ({', '.join(extra)})" if extra else "")
+        )
+
+
+def _echo_runbook_preview(preview: Any) -> None:
+    click.echo(f"Runbook {preview.runbook} (preview: definitions only; nothing ran)")
+    for step in preview.steps:
+        head = f"  {step.step:>2}  {_target_text(step.target)}"
+        if step.unavailable:
+            click.echo(head + "  unavailable: the run would stop here")
+            continue
+        if step.action_effect is not None:
+            click.echo(head + f"  effect {step.action_effect}")
+            continue
+        click.echo(head + (f"  {step.procedure}" if step.procedure else ""))
+        for read in step.reads:
+            source = f"query {read.query}" if read.query else "claims"
+            late = " (late)" if read.late else ""
+            click.echo(f"      reads  {source}{late}: {', '.join(read.claim_types)}")
+        for write in step.writes:
+            click.echo(f"      writes {write.subject_kind}: {', '.join(write.claim_types)}")
+        for call in step.calls:
+            bound = f" -> {call.build} {call.operation}" if call.build else ""
+            click.echo(f"      calls  {call.slot}{bound}")
+        if step.authority is not None:
+            authority = step.authority
+            settles = ", ".join(item.claim_type for item in authority.settles) or "nothing"
+            proposes = ", ".join((*authority.proposes, *authority.proposes_creation)) or "nothing"
+            click.echo(f"      settles {settles}; proposes {proposes}")
+            if authority.may_stop_run:
+                click.echo("      may stop the run: writes can go to review")
+        for cascade in step.cascades:
+            where = "in runbook" if cascade.in_runbook else "outside"
+            click.echo(
+                f"      fires  {cascade.trigger} ({cascade.schedule}) -> {cascade.target} [{where}]"
+            )
+    for problem in preview.order_problems:
+        detail = (
+            f"written only by later step(s) {', '.join(map(str, problem.written_by_steps))}"
+            if problem.kind == "reads_later_write"
+            else "written by no Line (direct entry only)"
+        )
+        click.echo(f"  order: step {problem.step} reads {problem.claim_type}: {detail}")
+
+
+@runbook_group.command("run")
+@click.argument("runbook")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show the static preview instead of running: definitions only, nothing executes.",
+)
+@json_option
+@handle_errors
+def run_runbook(runbook: str, dry_run: bool, output_json: bool) -> None:
+    """Run RUNBOOK now: its steps in order, each Line as your manual run.
+
+    Stops at the first step that fails or sends writes to review. Exits 1
+    after its output (`--json` too) when a step failed; a stop for review
+    exits 0.
+    """
+
+    if dry_run:
+        preview = _server_call(
+            lambda client, instance_id: client.preview_runbook(instance_id, runbook),
+            command_name="cruxible runbook run --dry-run",
+        )
+        if output_json:
+            _emit_json(preview.model_dump(mode="json"))
+            return
+        _echo_runbook_preview(preview)
+        return
+    result = _server_call(
+        lambda client, instance_id: client.run_runbook(instance_id, runbook),
+        command_name="cruxible runbook run",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        _echo_runbook_run(result)
+    if result.stop_reason in ("step_failed", "line_not_enabled"):
+        raise SystemExit(1)
+
+
+@runbook_group.command("preview")
+@click.argument("runbook")
+@json_option
+@handle_errors
+def preview_runbook(runbook: str, output_json: bool) -> None:
+    """Show what RUNBOOK's steps can read, write, settle, propose and set off.
+
+    Composed from accepted definitions only: nothing runs, and no outcome is
+    predicted.
+    """
+
+    preview = _server_call(
+        lambda client, instance_id: client.preview_runbook(instance_id, runbook),
+        command_name="cruxible runbook preview",
+    )
+    if output_json:
+        _emit_json(preview.model_dump(mode="json"))
+        return
+    _echo_runbook_preview(preview)
 
 
 @playbill_group.command("next")

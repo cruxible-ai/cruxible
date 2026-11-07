@@ -64,6 +64,7 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.providers import parse_provider
 from cruxible_client.contracts.query.definitions import parse_query_definition
 from cruxible_client.contracts.resolution_contracts import parse_resolution_contract
+from cruxible_client.contracts.runbooks import parse_runbook
 from cruxible_client.contracts.shapes import claim_value_kind, parse_contract, subject_value_kinds
 from cruxible_client.contracts.subject_kinds import parse_subject_kind
 from cruxible_client.contracts.subjects import parse_subject
@@ -231,13 +232,21 @@ OWNER_CODECS = (
         "triggers",
         parse_trigger,
         (
-            ("target_kind", "TEXT NOT NULL CHECK(target_kind IN ('line','action'))"),
+            ("target_kind", "TEXT NOT NULL CHECK(target_kind IN ('line','action','runbook'))"),
             ("target", "TEXT NOT NULL"),
             # Open: the Trigger artifact's own union admits the kinds; an index
             # constraint repeating them would make every new kind a schema change.
             ("schedule_kind", "TEXT NOT NULL"),
             ("interval_seconds", "INTEGER CHECK(interval_seconds IS NULL OR interval_seconds>0)"),
         ),
+    ),
+    # An ordered list of Trigger targets (D-R36); its steps are read from the source.
+    OwnerCodec(
+        "runbook",
+        "Runbook",
+        "runbooks",
+        parse_runbook,
+        (("step_count", "INTEGER NOT NULL CHECK(step_count>=1)"),),
     ),
     OwnerCodec(
         "subject",
@@ -556,6 +565,8 @@ def schema_sql() -> str:
             "CREATE INDEX lines_by_identity_digest ON lines(identity_digest,identity)",
             "CREATE INDEX lines_by_procedure ON lines(procedure_identity,identity) WHERE lifecycle='live'",
             "CREATE INDEX triggers_by_target ON triggers(target_kind,target,identity) WHERE lifecycle='live'",
+            # A Runbook preview's generation_accepted cascades: one seek, never a scan.
+            "CREATE INDEX triggers_by_schedule ON triggers(schedule_kind,identity) WHERE lifecycle='live'",
             "CREATE INDEX procedure_mandates_by_line ON procedure_mandates(line_identity,line_digest,valid_from_us,identity) WHERE lifecycle='live'",
             """CREATE TABLE promotion_subjects (
             promotion_identity TEXT NOT NULL REFERENCES exhaust_promotions(identity), subject_identity TEXT NOT NULL,
@@ -707,10 +718,18 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
     if owner.kind == "trigger":
         return {
             "target_kind": source.target.kind,
-            "target": source.line.qualified if source.line is not None else source.action,
+            "target": (
+                source.line.qualified
+                if source.line is not None
+                else source.runbook.qualified
+                if source.runbook is not None
+                else source.action
+            ),
             "schedule_kind": source.schedule.kind,
             "interval_seconds": getattr(source.schedule, "interval_seconds", None),
         }
+    if owner.kind == "runbook":
+        return {"step_count": len(source.steps)}
     if owner.kind == "note":
         return {
             "source_id": source.source_id,

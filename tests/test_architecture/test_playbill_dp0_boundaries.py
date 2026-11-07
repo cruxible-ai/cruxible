@@ -334,6 +334,8 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         if callable(value) and not name.startswith("_")
     }
     assert public_client_methods == {
+        "run_runbook",
+        "preview_runbook",
         "list_predictions",
         "close",
         "version",

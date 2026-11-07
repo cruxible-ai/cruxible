@@ -300,6 +300,28 @@ def _segment_gate(instance: PlaybillInstance, line_id: str, session_id: str) -> 
         yield
 
 
+def active_line_arm(instance: PlaybillInstance, line_id: str) -> dict[str, Any] | None:
+    """The Line's active enablement segment, or None: one keyed read."""
+
+    if not dispatch_root(instance).exists():
+        return None
+    store = LineDispatchStore(instance)
+    with store.locked() as conn:
+        return _active_session(conn, line_id)
+
+
+def arm_admission_gate(
+    instance: PlaybillInstance, line_id: str, session_id: str
+) -> AbstractContextManager[None]:
+    """The arm boundary an automatic admission is recorded inside (``LINE_ARM_ADMISSION_GATE``).
+
+    Raises :class:`LineArmSegmentEnded` at admission when the segment is no
+    longer the Line's active enablement.
+    """
+
+    return _segment_gate(instance, line_id, session_id)
+
+
 def _open_segment(
     store: LineDispatchStore,
     conn: Any,

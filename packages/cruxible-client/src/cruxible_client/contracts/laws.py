@@ -387,6 +387,16 @@ NOTE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-note-v1",
 )
 
+#: An ordered list of Trigger targets (contracts/runbooks.py, D-R36): every
+#: Line it names live and event-free, every action registered.
+RUNBOOK_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.runbook.v1", "cruxible-runbook-v1", semantic_revision=1
+    ),
+    artifact_kind="runbook",
+    artifact_tag="cruxible-runbook-v1",
+)
+
 
 # A Line with no embedded trigger. Retiring it, or changing the event it
 # accepts, cannot strand live Triggers aimed at it: they move in the same set.
@@ -488,6 +498,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         CAPTURE_CONTRACT_ACCEPTANCE_LAW,
         ATTESTATION_ACCEPTANCE_LAW,
         NOTE_ACCEPTANCE_LAW,
+        RUNBOOK_ACCEPTANCE_LAW,
         RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
         CLAIM_ACCEPTANCE_LAW,
         CLAIM_TYPE_ACCEPTANCE_LAW,

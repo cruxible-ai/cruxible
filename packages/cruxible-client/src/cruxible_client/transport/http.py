@@ -68,6 +68,7 @@ from cruxible_client.contracts.provider_installation import (
     ProviderRetireRequest,
     ProviderRetireResult,
 )
+from cruxible_client.contracts.runbooks import RunbookPreview, RunbookRunResult
 from cruxible_client.contracts.runtime_credentials import RuntimeCredentialPrincipalProof
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_client.contracts.uploads import (
@@ -1815,6 +1816,18 @@ class CruxibleClient:
             },
         )
         return self._parse_model(response, contracts.ProcedureRunState)
+
+    def run_runbook(self, instance_id: str, runbook: str) -> RunbookRunResult:
+        """Run an accepted Runbook now; the result lists every step's outcome."""
+
+        response = self._client.post(f"/api/v1/{instance_id}/runbooks/{runbook}/runs")
+        return self._parse_model(response, RunbookRunResult)
+
+    def preview_runbook(self, instance_id: str, runbook: str) -> RunbookPreview:
+        """A Runbook's static preview, from accepted definitions only."""
+
+        response = self._client.get(f"/api/v1/{instance_id}/runbooks/{runbook}/preview")
+        return self._parse_model(response, RunbookPreview)
 
     def next(
         self,

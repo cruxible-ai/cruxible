@@ -3018,6 +3018,31 @@ queued and still runs on the daemon's next tick), or `not_supported` (that
 part exposes no completion cursor the wait path can observe; the fire is
 still recorded and still runs normally).
 
+## runbook
+
+A Runbook is an ordered list of Lines and registered internal actions (D-R36):
+no branching and no parameters of its own. Author one with a `runbook` input
+(`{kind: runbook, name, steps: [{line: NAME} | {action: NAME}, ...]}`); a
+Trigger may aim at it with `runbook_name` on a cadence, cron or
+generation_accepted schedule, and each Line step then runs under that Line's
+own enablement.
+
+`cruxible runbook run NAME` runs the steps in order, each Line as your manual
+`line run` and each action fired as `action run` fires it. It stops at the
+first step that fails or sends writes to review (a proposal, or the Line's
+open proposal kept current); later steps report `not_run`. Exits 1 when a
+step failed; a stop for review exits 0. `--dry-run` prints the preview
+instead.
+
+`cruxible runbook preview NAME` shows what each step can read (Queries, and
+the ClaimTypes, kinds and keys behind them, late reads marked), write and
+create, which provider slots it calls and their bindings, what its Mandate
+settles and what would go to a proposal (and stop the run), and which
+capture_landing and generation_accepted Triggers its writes can set off, in
+or outside the Runbook. Order problems name a read of what only a later step
+writes, or of what no Line writes. It is composed from accepted definitions
+only: nothing runs and no outcome is predicted.
+
 ## inbox
 
 ~~~text

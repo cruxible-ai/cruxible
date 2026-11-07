@@ -21,7 +21,7 @@ from cruxible_client.contracts.primitives import canonical_json
 
 AUTHORING_WIRE_CATALOG_VERSION = 1
 AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST = (
-    "sha256:2281727daac31064d94c5d1153452c64e607401993fcb11ce7adddf5c359a4f7"
+    "sha256:04c7e5753b55899b1ceda49d3b2dd15d11090755571aa1064404690b1058fb51"
 )
 
 AUTHORING_WIRE_MODEL_NAMES = (
@@ -89,6 +89,8 @@ AUTHORING_WIRE_MODEL_NAMES = (
     "RepairAlternative",
     "ResolutionContractAuthoringPayload",
     "ResolvedTriggerCaptureContract",
+    "RunbookAuthoringPayload",
+    "RunbookStepAuthoring",
     "SectionSelector",
     "SelfSourceBody",
     "SubjectAuthoringPayload",

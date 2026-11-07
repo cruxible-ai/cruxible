@@ -107,6 +107,9 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     # decided per target at the served boundary and in the service.
     "cruxible_line_dispatch": PermissionMode.READ_ONLY,
     "cruxible_line_run": PermissionMode.READ_ONLY,
+    # A Runbook run gates each step as its own Line run or action fire does.
+    "cruxible_runbook_run": PermissionMode.READ_ONLY,
+    "cruxible_runbook_preview": PermissionMode.READ_ONLY,
     # The Line inbox: reading is open; an agent's dispositions are governed writes.
     "cruxible_inbox_list": PermissionMode.READ_ONLY,
     "cruxible_inbox_get": PermissionMode.READ_ONLY,

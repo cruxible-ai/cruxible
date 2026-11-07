@@ -54,6 +54,7 @@ _LOCAL_KINDS = frozenset(
         "subject-kind",
         "trigger",
         "note",
+        "runbook",
         "document",
         "capture-contract",
         "claim",

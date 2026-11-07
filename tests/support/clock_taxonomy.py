@@ -126,6 +126,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     # The instant the manual fire was appended to the trigger journal (the
     # writer's own evaluation instant), not an author's assertion.
     ("ActionRunResult", "fired_at"): "EVALUATION INSTANT",
+    ("RunbookRunResult", "started_at"): "EVALUATION INSTANT",
+    ("RunbookRunResult", "finished_at"): "EVALUATION INSTANT",
     # A bound on how long --wait runs the owning consumer inline, not a point
     # on any clock; a duration, like a process outcome's own.
     ("ActionRunRequest", "wait_timeout_seconds"): "VALIDITY WINDOW",

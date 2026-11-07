@@ -46,6 +46,8 @@ from cruxible_client.contracts.authoring.models import (
     ProcedureMandateAuthoringPayload,
     ProcedureRuntimePolicyAuthoringPayload,
     QueryDefinitionAuthoringPayload,
+    RunbookAuthoringPayload,
+    RunbookStepAuthoring,
     SelfSourceBody,
     SubjectAuthoringPayload,
     SubjectCreationAuthoringPayload,
@@ -483,6 +485,33 @@ class TriggerInput(_StrictInputModel):
     action: InternalActionName | None = Field(
         default=None, description="The internal action this Trigger fires; omit for a Line."
     )
+    runbook_name: str | None = Field(
+        default=None,
+        description=(
+            "The Runbook this Trigger runs (cadence, cron or generation_accepted); each Line "
+            "step runs under that Line's own enablement."
+        ),
+    )
+    retire: bool = False
+
+
+class RunbookInput(_StrictInputModel):
+    """An ordered list of Lines and internal actions, run in order (D-R36).
+
+    Each step names exactly one accepted Line (``line``) or registered internal
+    action (``action``). No branching, no parameters of its own: a Line step runs
+    as that Line's manual occurrence, on its own parameters, budgets and authority.
+    A run stops at the first step that fails or whose writes go to review.
+    ``retire`` retires the accepted Runbook.
+    """
+
+    kind: Literal["runbook"]
+    name: str = Field(description="The Runbook name, e.g. 'security.catch-up'.")
+    description: str | None = None
+    steps: tuple[RunbookStepAuthoring, ...] = Field(
+        default=(),
+        description="In run order: {line: <Line name>} or {action: <internal action>}.",
+    )
     retire: bool = False
 
 
@@ -605,6 +634,7 @@ AuthoringInput: TypeAlias = Annotated[
     | ProcedureMandateInput
     | LineInput
     | TriggerInput
+    | RunbookInput
     | SubjectKindInput
     | ContractInput
     | ChangeSetInput,
@@ -1069,6 +1099,10 @@ def _lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
         return _line_payload(value)
     if isinstance(value, TriggerInput):
         return _trigger_payload(value)
+    if isinstance(value, RunbookInput):
+        return RunbookAuthoringPayload(
+            name=value.name, description=value.description, steps=value.steps, retire=value.retire
+        )
     if isinstance(value, SubjectKindInput):
         return _subject_kind_payload(value)
     if isinstance(value, ContractInput):
@@ -1134,6 +1168,7 @@ __all__ = [
     "ExactContentObjectInput",
     "LineInput",
     "TriggerInput",
+    "RunbookInput",
     "LiteralObjectInput",
     "ProcedureInput",
     "lowered_procedure_payload",

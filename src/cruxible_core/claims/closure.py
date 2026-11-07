@@ -132,6 +132,7 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
         "line",
         "trigger",
         "note",
+        "runbook",
         "subject-kind",
         "query-definition",
         "exhaust-promotion",
@@ -245,6 +246,27 @@ def _parse_dependency_artifact(
                 artifact_digest=note_digest(note).tagged,
                 pins=(),
                 lifecycle=note.lifecycle,
+            )
+        if path.startswith("runbooks/"):
+            from cruxible_client.contracts.runbooks import (
+                RUNBOOK_PATH_RE,
+                parse_runbook,
+                runbook_digest,
+            )
+
+            if not RUNBOOK_PATH_RE.fullmatch(path):
+                return None
+            runbook = parse_runbook(content, path=path)
+            # A Runbook pins nothing: its Lines are names its law and every run
+            # judge live, never dependencies a Line's change moves.
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="runbook",
+                artifact_tag=runbook.artifact_format,
+                identity=runbook.identity,
+                artifact_digest=runbook_digest(runbook).tagged,
+                pins=(),
+                lifecycle=runbook.lifecycle,
             )
         if path.startswith("triggers/"):
             from cruxible_client.contracts.triggers import parse_trigger, trigger_digest

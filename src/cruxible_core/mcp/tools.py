@@ -67,6 +67,7 @@ from cruxible_client.contracts.provider_installation import (
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_client.contracts.query.grammar import QueryBudgets
+from cruxible_client.contracts.runbooks import RunbookPreview, RunbookRunResult
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.write import (
     _EXPECT_DESCRIPTION,
@@ -1704,6 +1705,26 @@ def register_tools(
             repeat=repeat,
             parameters=parameters,
         )
+
+    @_tool
+    def cruxible_runbook_run(instance_id: InstanceId = None, *, runbook: str) -> RunbookRunResult:
+        """Run an accepted Runbook now: its steps in order, each Line as your manual run.
+
+        The run stops at the first step that fails or sends writes to review
+        (a proposal); later steps report not_run. Preview it first with
+        cruxible_runbook_preview.
+        """
+        return handlers.handle_playbill_runbook_run(require_instance_id(instance_id), runbook)
+
+    @_tool
+    def cruxible_runbook_preview(instance_id: InstanceId = None, *, runbook: str) -> RunbookPreview:
+        """What each step of a Runbook can read, write, call, settle, propose and set off.
+
+        Composed from accepted definitions only: nothing runs and no outcome is
+        predicted. order_problems names reads of what only a later step, or no
+        Line, writes.
+        """
+        return handlers.handle_playbill_runbook_preview(require_instance_id(instance_id), runbook)
 
     @_tool
     def cruxible_prediction_list(

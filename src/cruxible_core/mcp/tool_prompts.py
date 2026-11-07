@@ -321,6 +321,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Run a Line once now as a manual occurrence under its inputs, budgets, authority and "
         "mandate; it never consumes a Trigger. Pass event when its Procedure takes one."
     ),
+    "cruxible_runbook_run": (
+        "Run a Runbook's steps in order, each Line as your manual run; it stops at the first "
+        "step that fails or sends writes to review. Preview it first."
+    ),
+    "cruxible_runbook_preview": (
+        "Read what each Runbook step can read, write, settle, propose and set off, and its "
+        "order problems, from definitions only; nothing runs."
+    ),
     "cruxible_prediction_list": (
         "Find accepted resolution contracts testing a Claim, by Claim ID. Returns their "
         "definitions and version references, including retired contracts."

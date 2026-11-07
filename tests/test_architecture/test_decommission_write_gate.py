@@ -158,6 +158,8 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
             "service_run_playbill_line",
         }
     ),
+    # A Runbook run is a sequence of Line runs and action fires.
+    "cruxible_core/service/runbooks.py": frozenset({"service_run_runbook"}),
 }
 
 

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections import OrderedDict
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -37,10 +37,12 @@ from uuid import uuid4
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (
     INTERNAL_ACTIONS,
+    RUNBOOK_FIRE_PREFIX,
     AcceptedTrigger,
     GenerationAcceptedSchedule,
     Trigger,
     TriggerSchedule,
+    runbook_fire_key,
     schedule_is_timed,
     trigger_digest,
     trigger_path,
@@ -65,7 +67,26 @@ CREATE TRIGGER events_no_delete BEFORE DELETE ON events
 CREATE TABLE generations (trigger_id TEXT PRIMARY KEY, version TEXT NOT NULL,
  listening_since TEXT NOT NULL, covered INTEGER NOT NULL) STRICT;
 """
-_VERSION = 4
+_VERSION = 6
+# Each Runbook fire key's progress, retained beside its fires and never rebuilt
+# (D-R36): ``latest`` is the newest fire, kept as fires are recorded so a poll
+# reads one row per Runbook instead of the fire history; ``started`` is the fire
+# a run is serving, claimed before any step runs; ``covered`` the fire whose run
+# finished. A fire claimed and never finished is resumed as that same fire.
+_RUNBOOK_FIRES_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS runbook_fires (fire_key TEXT PRIMARY KEY, "
+    "latest INTEGER NOT NULL, started INTEGER NOT NULL DEFAULT 0, "
+    "covered INTEGER NOT NULL DEFAULT 0, plan_digest TEXT, plan BLOB, "
+    "CHECK((plan IS NULL) = (plan_digest IS NULL))) STRICT",
+    "CREATE INDEX IF NOT EXISTS runbook_fires_pending ON runbook_fires(fire_key) "
+    "WHERE latest>covered",
+    # Each Line step of a claimed fire, recorded before it runs: the exact Line
+    # occurrence it is admitted as, so a replay finds that admission whatever the
+    # Line's occurrence epoch has become since (D-R36).
+    "CREATE TABLE IF NOT EXISTS runbook_steps (fire_key TEXT NOT NULL, fire INTEGER NOT NULL, "
+    "step INTEGER NOT NULL, target TEXT NOT NULL, occurrence_id TEXT NOT NULL, "
+    "PRIMARY KEY(fire_key, fire, step)) STRICT",
+)
 # A kit add waiting on provider installs fires on the acceptance that lands the
 # last of them: one row per kit, one wait per Provider path still to activate.
 # Retained operational authority beside the fires, never rebuilt. The state
@@ -100,9 +121,13 @@ class InternalTrigger:
     def of(
         cls, trigger: Trigger, *, accepted_at: datetime, accepted_generation: int | None = None
     ) -> InternalTrigger:
+        # A Runbook-aimed Trigger fires into the same log under its Runbook's
+        # fire key; the Runbook consumer, not an action worker, follows it.
         action = trigger.action
+        if action is None and trigger.runbook is not None:
+            action = runbook_fire_key(trigger.runbook.name)
         if action is None:
-            raise ValueError("an internal Trigger fires an internal action")
+            raise ValueError("an internal Trigger fires an internal action or a Runbook")
         return cls(
             trigger.identity.qualified,
             action,
@@ -141,7 +166,7 @@ _TRIGGERS_CAPACITY = 64
 
 
 def internal_triggers(instance: Any) -> tuple[InternalTrigger, ...]:
-    """Every live Trigger aimed at an internal action at the accepted head.
+    """Every live Trigger aimed at an internal action or a Runbook at the accepted head.
 
     Read once per accepted generation: the Trigger set only changes when a new
     generation is accepted, so an idle tick never opens the projection.
@@ -156,8 +181,8 @@ def internal_triggers(instance: Any) -> tuple[InternalTrigger, ...]:
 
     with instance.bind_accepted_projection(coordinate) as projection:
         identities = projection.typed.connection.execute(
-            "SELECT identity FROM triggers WHERE target_kind='action' AND lifecycle='live' "
-            "ORDER BY identity"
+            "SELECT identity FROM triggers WHERE target_kind IN ('action','runbook') "
+            "AND lifecycle='live' ORDER BY identity"
         ).fetchall()
         accepted = [projection.typed.source(identity) for (identity,) in identities]
     triggers = tuple(
@@ -215,10 +240,10 @@ def _open(instance: Any, *, create: bool = False) -> Iterator[sqlite3.Connection
                 if sqlite3.complete_statement(statement):
                     connection.execute(statement)
                     statement = ""
-            for table in _KIT_RESUME_SCHEMA:
+            for table in (*_KIT_RESUME_SCHEMA, *_RUNBOOK_FIRES_SCHEMA):
                 connection.execute(table)
             connection.execute(f"PRAGMA user_version={_VERSION}")
-        elif version in (2, 3):
+        elif version in (2, 3, 4, 5):
             # A reader of an older journal sees what it holds; the next writer
             # brings it forward one step at a time.
             if create:
@@ -228,7 +253,24 @@ def _open(instance: Any, *, create: bool = False) -> Iterator[sqlite3.Connection
                         "version TEXT NOT NULL, listening_since TEXT NOT NULL, "
                         "covered INTEGER NOT NULL) STRICT"
                     )
-                for table in _KIT_RESUME_SCHEMA:
+                # No released journal before v6 holds a Runbook fire: Runbook
+                # progress arrives whole with v6 (a v5 journal is unreleased
+                # development data, whose runbook_fires may lack the claimed plan
+                # and every step record). One that does hold a fire is refused,
+                # never guessed at.
+                if connection.execute(
+                    "SELECT 1 FROM events WHERE action>=? AND action<? LIMIT 1",
+                    _RUNBOOK_KEY_RANGE,
+                ).fetchone():
+                    raise TriggerJournalMigrationRefused(
+                        f"A version {version} trigger journal holds Runbook fires, which no "
+                        "released journal before version 6 can: their progress is unknown. "
+                        "Retain it for operator repair; the journal is left as it is."
+                    )
+                # A v5 runbook_fires holds no row here (no Runbook fire exists), so
+                # it is replaced by the current shape rather than altered.
+                connection.execute("DROP TABLE IF EXISTS runbook_fires")
+                for table in (*_KIT_RESUME_SCHEMA, *_RUNBOOK_FIRES_SCHEMA):
                     connection.execute(table)
                 connection.execute(f"PRAGMA user_version={_VERSION}")
         elif version != _VERSION:
@@ -285,6 +327,157 @@ def latest_sequence(instance: Any, *, action: str) -> int:
                 "SELECT coalesce(max(sequence),0) FROM events WHERE action=?", (action,)
             ).fetchone()[0]
         )
+
+
+_RUNBOOK_KEY_RANGE = (
+    RUNBOOK_FIRE_PREFIX,
+    RUNBOOK_FIRE_PREFIX[:-1] + chr(ord(RUNBOOK_FIRE_PREFIX[-1]) + 1),
+)
+
+
+class TriggerJournalMigrationRefused(ValueError):
+    """An older trigger journal holds what its version cannot have recorded."""
+
+    code = "cruxible.trigger_journal.migration_refused"
+    error_code = "trigger_journal_migration_refused"
+
+
+@dataclass(frozen=True)
+class RunbookFireProgress:
+    fire_key: str
+    latest: int
+    started: int
+    covered: int
+    #: The claimed fire's exact Runbook (its canonical artifact bytes and digest),
+    #: recorded with the claim before any step runs; a replay runs this plan.
+    plan_digest: str | None = None
+    plan: bytes | None = None
+
+
+def pending_runbook_fires(instance: Any) -> tuple[RunbookFireProgress, ...]:
+    """Every Runbook fire key with a fire its runs have not finished.
+
+    One seek of the partial pending index: an idle poll reads no row, and never
+    the fire history, however many fires the journal retains.
+    """
+
+    with _open(instance) as connection:
+        if connection is None or connection.execute("PRAGMA user_version").fetchone()[0] < 6:
+            return ()
+        rows = connection.execute(
+            "SELECT fire_key,latest,started,covered FROM runbook_fires "
+            "INDEXED BY runbook_fires_pending WHERE latest>covered ORDER BY fire_key"
+        ).fetchall()
+    return tuple(RunbookFireProgress(str(a), int(b), int(c), int(d)) for a, b, c, d in rows)
+
+
+def claim_runbook_fire(
+    instance: Any, fire_key: str, *, plan: Callable[[], tuple[str, bytes]]
+) -> RunbookFireProgress | None:
+    """Claim the fire a run serves, with its exact plan, durably, before any step runs.
+
+    A fire claimed and never finished (a crash mid-run) is returned as that
+    same fire WITH the plan recorded when it was claimed, so its replay runs
+    the same ordered steps whatever the Runbook has become since. Otherwise
+    the newest fire is claimed, folding every fire since the last finished
+    run, and ``plan()`` (the current Runbook's digest and canonical bytes) is
+    recorded with it in the same transaction.
+    """
+
+    with _open(instance, create=True) as connection:
+        assert connection is not None
+        row = connection.execute(
+            "SELECT latest,started,covered,plan_digest,plan FROM runbook_fires WHERE fire_key=?",
+            (fire_key,),
+        ).fetchone()
+        if row is None or int(row[0]) <= int(row[2]):
+            return None
+        latest, started, covered = (int(item) for item in row[:3])
+        plan_digest, plan_bytes = row[3], row[4]
+        if started <= covered or plan_bytes is None:
+            started = latest if started <= covered else started
+            plan_digest, plan_bytes = plan()
+            connection.execute(
+                "UPDATE runbook_fires SET started=?,plan_digest=?,plan=? WHERE fire_key=?",
+                (started, plan_digest, plan_bytes, fire_key),
+            )
+        return RunbookFireProgress(
+            fire_key, latest, started, covered, str(plan_digest), bytes(plan_bytes)
+        )
+
+
+def runbook_step_record(
+    instance: Any, fire_key: str, fire: int, step: int
+) -> tuple[str, str] | None:
+    """The (target, Line occurrence id) a claimed fire's step was recorded as, or None."""
+
+    with _open(instance) as connection:
+        if connection is None or connection.execute("PRAGMA user_version").fetchone()[0] < 6:
+            return None
+        row = connection.execute(
+            "SELECT target,occurrence_id FROM runbook_steps WHERE fire_key=? AND fire=? AND step=?",
+            (fire_key, fire, step),
+        ).fetchone()
+    return None if row is None else (str(row[0]), str(row[1]))
+
+
+def record_runbook_step(
+    instance: Any, fire_key: str, fire: int, step: int, *, target: str, occurrence_id: str
+) -> None:
+    """Record, before it runs, the exact Line occurrence a claimed step is admitted as.
+
+    Replaced only by the caller when no admission exists under the recorded one
+    (nothing ran), so a replay always finds the occurrence that may have run.
+    """
+
+    with _open(instance, create=True) as connection:
+        assert connection is not None
+        connection.execute(
+            "INSERT INTO runbook_steps VALUES (?,?,?,?,?) ON CONFLICT(fire_key,fire,step) "
+            "DO UPDATE SET target=excluded.target,occurrence_id=excluded.occurrence_id",
+            (fire_key, fire, step, target, occurrence_id),
+        )
+
+
+def finish_runbook_fire(instance: Any, fire_key: str, fire: int) -> None:
+    """Record that the run serving ``fire`` finished: its fire and every one before it."""
+
+    with _open(instance, create=True) as connection:
+        assert connection is not None
+        connection.execute(
+            "UPDATE runbook_fires SET covered=max(covered,?) WHERE fire_key=?", (fire, fire_key)
+        )
+
+
+def fire_runbook_action(
+    instance: Any, *, action: str, trigger: str, occurrence: str, now: datetime
+) -> int:
+    """Fire one Runbook action step once per occurrence: a replay returns the first fire.
+
+    The occurrence names the fire, the step position and the action; a receipt
+    is reused only for exactly that action, never for another at the position.
+    """
+
+    if action not in INTERNAL_ACTIONS:
+        raise ValueError(f"{action!r} is not a registered internal action")
+    with _open(instance, create=True) as connection:
+        assert connection is not None
+        row = connection.execute(
+            "SELECT sequence,action FROM events WHERE trigger_id=? AND occurrence=?",
+            (trigger, occurrence),
+        ).fetchone()
+        if row is not None:
+            if str(row[1]) != action:
+                raise ValueError(
+                    f"Runbook occurrence {occurrence!r} fired {row[1]!r}, not {action!r}"
+                )
+            return int(row[0])
+        cursor = connection.execute(
+            "INSERT INTO events(action,trigger_id,due_at,fired_at,occurrence) VALUES (?,?,?,?,?)",
+            (action, trigger, format_datetime(now), format_datetime(now), occurrence),
+        )
+        assert cursor.lastrowid is not None
+        return int(cursor.lastrowid)
 
 
 def fire_manual(instance: Any, *, action: str, principal: str, now: datetime) -> TriggerEvent:
@@ -420,6 +613,12 @@ def _record(
             ),
         )
         assert cursor.lastrowid is not None
+        if fire.action.startswith(RUNBOOK_FIRE_PREFIX):
+            connection.execute(
+                "INSERT INTO runbook_fires(fire_key,latest) VALUES (?,?) "
+                "ON CONFLICT(fire_key) DO UPDATE SET latest=excluded.latest",
+                (fire.action, cursor.lastrowid),
+            )
         fired.append(TriggerEvent(cursor.lastrowid, fire.action, fire.trigger, fire.due, now))
     return fired
 
