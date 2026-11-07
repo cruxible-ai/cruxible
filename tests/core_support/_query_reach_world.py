@@ -32,7 +32,7 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.claims import NoneClaimObject, parse_claim, render_claim
-from cruxible_client.contracts.identity_normalizers import NO_NORMALIZER
+from cruxible_client.contracts.identity_normalizers import NO_NORMALIZER, PurlTypeNormalizer
 from cruxible_client.contracts.subject_kinds import (
     SubjectEnd,
     SubjectKeyRule,
@@ -62,6 +62,9 @@ VULN = "qr.vuln"
 INVENTORY = "qr.inventory"
 OCCURRENCE = "qr.occurrence"
 EXPOSURE = "qr.exposure"
+#: A kind keyed by a purl under the ``purl-type`` normalizer: an operand compared
+#: with its key takes that normalizer, which refuses text that is no purl.
+PACKAGE = "qr.package"
 
 REPO = f"{UNIT}.repo"
 SURFACE = f"{UNIT}.surface"
@@ -79,6 +82,8 @@ SCOPE = f"{OCCURRENCE}.scope"
 E_COMPONENT = f"{EXPOSURE}.component"
 E_VULN = f"{EXPOSURE}.vulnerability"
 JUSTIFICATION = f"{EXPOSURE}.justification"
+P_PURL = f"{PACKAGE}.purl"
+P_TIER = f"{PACKAGE}.tier"
 
 #: Evaluation instant of every read: after every observation.
 WHEN = OBSERVED_AT + timedelta(days=1)
@@ -125,6 +130,8 @@ TYPES: dict[str, ClaimType] = {
         _type(E_COMPONENT, (COMPONENT,)),
         _type(E_VULN, (VULN,)),
         _type(JUSTIFICATION),
+        _type(P_PURL),
+        _type(P_TIER),
     )
 }
 
@@ -136,6 +143,10 @@ KEYS: dict[str, tuple[str, ...]] = {
     INVENTORY: (IID,),
     OCCURRENCE: (O_INVENTORY, O_COMPONENT),
     EXPOSURE: (E_COMPONENT, E_VULN),
+    PACKAGE: (P_PURL,),
+}
+NORMALIZERS: dict[str, Any] = {
+    P_PURL: PurlTypeNormalizer(version=1, identity="package"),
 }
 
 
@@ -144,7 +155,8 @@ def _kind(kind: str) -> SubjectKind:
         identity=ArtifactIdentity(kind="SubjectKind", name=kind),
         identity_rule=SubjectKindKeys(
             parts=tuple(
-                SubjectKeyRule(claim_type=key, normalizer=NO_NORMALIZER) for key in KEYS[kind]
+                SubjectKeyRule(claim_type=key, normalizer=NORMALIZERS.get(key, NO_NORMALIZER))
+                for key in KEYS[kind]
             ),
             uniqueness="unique",
         ),
@@ -249,6 +261,9 @@ def kinds_of(paths: Sequence[str]) -> list[str]:
 
 
 __all__ = [
+    "PACKAGE",
+    "P_PURL",
+    "P_TIER",
     "AFFECTED_BY",
     "COMPONENT",
     "EXPOSURE",

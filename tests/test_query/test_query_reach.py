@@ -31,9 +31,14 @@ from tests.core_support._query_reach_world import (
     FINDING,
     FOUND_IN,
     FUTURE,
+    P_PURL,
+    P_TIER,
+    PACKAGE,
     PAST,
+    REPO,
     SEVERITY,
     STATUS,
+    SURFACE,
     UNIT,
     VULN,
     WHEN,
@@ -64,6 +69,19 @@ def plan_spec(visible: str = "current") -> dict[str, Any]:
         "from": {"u": UNIT},
         "where": f"u.repo == $repo and (not exists u.status or u.status in {OPEN})",
         "fields": ["u.subject_id", "u.surface", "u.status"],
+        "visible": visible,
+    }
+
+
+def absent_spec(visible: str = "current") -> dict[str, Any]:
+    """A seekable key equality beside an absence: the absence stays in memory."""
+
+    return {
+        "query": "qr.absent",
+        "params": {"repo": "string"},
+        "from": {"u": UNIT},
+        "where": "u.repo == $repo and not exists u.status",
+        "fields": ["u.subject_id", "u.surface"],
         "visible": visible,
     }
 
@@ -212,6 +230,8 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> ReachWorld:
     built.claim(FOUND_IN, contested, disputed)
     built.claim(SEVERITY, "high", disputed)
     built.claim(SEVERITY, "low", disputed)
+    for purl, tier in (("pkg:pypi/requests@2.31.0", "core"), ("pkg:npm/left-pad@1.3.0", "edge")):
+        built.claim(P_TIER, tier, built.subject(PACKAGE, purl))
     vulns = [built.subject(VULN, f"v{index}") for index in range(3)]
     for index in range(4):
         component = built.subject(COMPONENT, f"c{index}")
@@ -262,6 +282,10 @@ def test_randomized_reads_match_the_full_load(world: ReachWorld) -> None:
         ),
         (definition(world, affected_spec()), lambda r: None),
         (
+            definition(world, absent_spec()),
+            lambda r: {"repo": r.choice(["acme", "other", "x"])},
+        ),
+        (
             definition(world, include_spec()),
             lambda r: {"severity": r.choice(["high", "low", "none"])},
         ),
@@ -291,6 +315,15 @@ def test_a_served_read_takes_its_reach_and_seeks(
     assert sorted(row.fields[1].value for row in plan.rows) == [
         "acme--a0",
         "acme--a1",
+        "acme--a2",
+        "acme--a3",
+        "acme--a5",
+    ]
+    # Its disjunction compares a Claim value: not on the allowlist, so the full load.
+    assert observed[-1]["entry_subject_paths"] is None
+    absent = run(world, definition(world, absent_spec()), {"repo": "acme"})
+    assert sorted(row.fields[0].value for row in absent.rows) == [
+        "acme--a0",
         "acme--a2",
         "acme--a3",
         "acme--a5",
@@ -396,7 +429,8 @@ def measured(tmp_path_factory: pytest.TempPathFactory) -> Iterator[list[dict[str
         for size in SIZES:
             built, hub = _audit_world(root / f"u{size}", size)
             reads = {
-                "conjunction_not_exists": (definition(built, plan_spec()), {"repo": "acme"}),
+                "conjunction_not_exists": (definition(built, absent_spec()), {"repo": "acme"}),
+                "kit_coverage_plan": (definition(built, plan_spec()), {"repo": "acme"}),
                 "reverse_hop_bound_unit": (definition(built, by_unit_spec()), {"unit": hub}),
                 "subject_valued_equality": (definition(built, found_in_spec()), {"unit": hub}),
             }
@@ -415,11 +449,28 @@ def measured(tmp_path_factory: pytest.TempPathFactory) -> Iterator[list[dict[str
 
 
 @pytest.mark.parametrize(
-    "read", ["conjunction_not_exists", "reverse_hop_bound_unit", "subject_valued_equality"]
+    ("read", "rows"),
+    [
+        ("conjunction_not_exists", OUTPUT // 2),
+        pytest.param(
+            "kit_coverage_plan",
+            OUTPUT,
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="owner: coordinator ruling (S4 r3). The kit's open-status test "
+                "`u.status in (...)` compares a Claim value, which the strict leftover "
+                "allowlist keeps off the seek, so coverage_plan takes the full load.",
+            ),
+        ),
+        ("reverse_hop_bound_unit", OUTPUT),
+        ("subject_valued_equality", OUTPUT),
+    ],
 )
-def test_reads_are_flat_in_unrelated_subjects(measured: list[dict[str, Any]], read: str) -> None:
+def test_reads_are_flat_in_unrelated_subjects(
+    measured: list[dict[str, Any]], read: str, rows: int
+) -> None:
     small, large = (sized[read] for sized in measured)
-    assert small["rows"] == large["rows"] == OUTPUT, (small, large)
+    assert small["rows"] == large["rows"] == rows, (small, large)
     for counter in COUNTED:
         assert small[counter] > 0
         assert large[counter] <= small[counter] * RATIO + SLACK[counter], (read, counter, measured)
@@ -552,3 +603,215 @@ def test_a_hop_filter_refuses_before_a_later_hop_empties_the_rows(world: ReachWo
         result = compare(world, query, {"unit": _reference(world, UNIT, unit)}, whole=whole)
         assert result.verdict == "refused", result
         assert result.refusal is not None and result.refusal.code == code
+
+
+def _query_over(world: ReachWorld, kind: str, binding: str, where: Any) -> Any:
+    """A Subject read of ``kind`` filtered by ``where``, with ``$s``/``$i`` declared."""
+
+    from cruxible_client.contracts.query.grammar import QueryEntry, QueryParameterDeclaration
+
+    base = definition(world, plan_spec()).query
+    projection = definition(
+        world,
+        {
+            "query": "qr.any",
+            "from": {binding: kind},
+            "fields": [f"{binding}.subject_id"],
+        },
+    ).query.projection
+    return _accepted(
+        base.model_copy(
+            update={
+                "entry": QueryEntry(binding=binding, subject_kinds=(kind,)),
+                "result_binding": binding,
+                "projection": projection,
+                "where": where,
+                "parameters": (
+                    QueryParameterDeclaration(name="i", value_type="integer", required=False),
+                    QueryParameterDeclaration(name="s", value_type="string", required=False),
+                ),
+            }
+        )
+    )
+
+
+def test_a_claim_field_against_a_normalized_key_refuses_on_both_paths(world: ReachWorld) -> None:
+    """``role(p.purl) == p.purl`` normalizes "observation" as a purl and refuses on the
+    first package the full load reads; beside a kind seek that selects nothing it must
+    still refuse (round-2 F1)."""
+
+    from cruxible_client.contracts.query.grammar import (
+        QueryClaimFieldRef,
+        QueryClaimValueRef,
+        QueryComparisonFilter,
+        QueryLiteralRef,
+        QuerySubjectFieldRef,
+    )
+
+    whole = served.build_accepted_query_facts(
+        world.instance, coordinate=world.instance.accepted_coordinate()
+    )
+    for field in ("role", "verdict"):
+        where = _all_of(
+            QueryComparisonFilter(
+                left=QueryClaimFieldRef(binding="p", predicate=P_PURL, field=field),
+                operator="eq",
+                right=QueryClaimValueRef(binding="p", predicate=P_PURL),
+                value_type="string",
+            ),
+            QueryComparisonFilter(
+                left=QuerySubjectFieldRef(binding="p", field="subject_kind"),
+                operator="eq",
+                right=QueryLiteralRef(value="qr.other"),
+                value_type="string",
+            ),
+        )
+        result = compare(world, _query_over(world, PACKAGE, "p", where), {}, whole=whole)
+        if field == "role":
+            # Canonical order reads the role part first, so the full load refuses.
+            assert result.verdict == "refused", result
+            assert result.refusal is not None
+            assert result.refusal.code == "cruxible.query.value_type_mismatch"
+        else:
+            # The kind part sorts first and short-circuits: both paths complete.
+            assert result.verdict == "completed", result
+
+
+def test_randomized_where_clauses_agree_on_rows_and_refusals(
+    world: ReachWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Random filters over the fixture world: pushed and full evaluation agree on
+    rows and refusals (the advisory aside, for a narrowed entry)."""
+
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.query.grammar import (
+        QueryClaimFieldRef,
+        QueryClaimPresenceFilter,
+        QueryClaimValueRef,
+        QueryComparisonFilter,
+        QueryDisjunctionFilter,
+        QueryEvaluationTimeRef,
+        QueryLiteralRef,
+        QueryMembershipFilter,
+        QueryNegationFilter,
+        QueryParameterRef,
+        QuerySubjectFieldRef,
+    )
+
+    whole = served.build_accepted_query_facts(
+        world.instance, coordinate=world.instance.accepted_coordinate()
+    )
+    narrowed: list[bool] = []
+    build = served.build_accepted_query_facts
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        narrowed.append(kwargs.get("entry_subject_paths") is not None)
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(served, "build_accepted_query_facts", spy)
+    rng = random.Random(1107)
+    worlds = {
+        "u": (UNIT, (REPO, SURFACE, STATUS)),
+        "p": (PACKAGE, (P_PURL, P_TIER)),
+    }
+    literals: list[object] = [
+        "acme",
+        "other",
+        "checked",
+        "deferred",
+        "hub",
+        "observation",
+        "supported",
+        "qr.unit",
+        "qr.package",
+        "acme--a1",
+        "pkg:pypi/requests@2.31.0",
+        "2026-11-07T00:00:00Z",
+        1,
+        True,
+    ]
+    value_types = ["string", "string", "string", "integer", "boolean", "timestamp"]
+
+    def row_ref(binding: str, predicates: tuple[str, ...]) -> Any:
+        choice = rng.randrange(6)
+        if choice == 0:
+            return QuerySubjectFieldRef(binding=binding, field="subject_id")
+        if choice == 1:
+            return QuerySubjectFieldRef(binding=binding, field="subject_kind")
+        if choice == 2:
+            return QueryEvaluationTimeRef()
+        if choice == 3:
+            return QueryClaimFieldRef(
+                binding=binding,
+                predicate=rng.choice(predicates),
+                field=rng.choice(["role", "verdict"]),
+            )
+        return QueryClaimValueRef(binding=binding, predicate=rng.choice(predicates))
+
+    def constant() -> Any:
+        if rng.random() < 0.2:
+            return QueryParameterRef(parameter=rng.choice(["i", "s"]))
+        return QueryLiteralRef(value=rng.choice(literals))
+
+    def operand(binding: str, predicates: tuple[str, ...]) -> Any:
+        return row_ref(binding, predicates) if rng.random() < 0.3 else constant()
+
+    def leaf(binding: str, predicates: tuple[str, ...]) -> Any:
+        shape = rng.randrange(5)
+        if shape == 0:
+            return QueryClaimPresenceFilter(
+                binding=binding, predicate=rng.choice(predicates), negated=rng.random() < 0.5
+            )
+        value_type = rng.choice(value_types)
+        if shape == 1:
+            values = {
+                canonical_bytes(item.model_dump(mode="json")): item
+                for item in (constant(), constant())
+            }
+            return QueryMembershipFilter(
+                left=row_ref(binding, predicates),
+                values=tuple(values[key] for key in sorted(values)),
+                value_type=value_type,
+                negated=rng.random() < 0.3,
+            )
+        return QueryComparisonFilter(
+            left=row_ref(binding, predicates),
+            operator=rng.choice(["eq", "eq", "ne", "lt"]),
+            right=operand(binding, predicates),
+            value_type=value_type,
+        )
+
+    def tree(binding: str, predicates: tuple[str, ...], depth: int) -> Any:
+        if depth == 0 or rng.random() < 0.35:
+            return leaf(binding, predicates)
+        if rng.random() < 0.15:
+            return QueryNegationFilter(operand=tree(binding, predicates, depth - 1))
+        children = {
+            canonical_bytes(item.model_dump(mode="json")): item
+            for item in (tree(binding, predicates, depth - 1) for _ in range(rng.choice([2, 3])))
+        }
+        if len(children) < 2:
+            return next(iter(children.values()))
+        model = _all_of if rng.random() < 0.6 else None
+        ordered = tuple(children[key] for key in sorted(children))
+        return model(*ordered) if model else QueryDisjunctionFilter(filters=ordered)
+
+    compared = refused = 0
+    while compared < 160:
+        binding = rng.choice(["u", "p"])
+        kind, predicates = worlds[binding]
+        try:
+            query = _query_over(world, kind, binding, tree(binding, predicates, 2))
+        except (ValidationError, ValueError):
+            continue
+        parameters = {}
+        if rng.random() < 0.5:
+            parameters["s"] = rng.choice(["acme", "checked", "observation", "x"])
+        if rng.random() < 0.3:
+            parameters["i"] = rng.choice([1, 2])
+        result = compare(world, query, parameters, whole=whole)
+        compared += 1
+        refused += result.verdict == "refused"
+    # The generator reaches both seeks and refusals.
+    assert any(narrowed) and refused > 0, (sum(narrowed), refused)

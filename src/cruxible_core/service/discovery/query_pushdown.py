@@ -7,11 +7,12 @@ Existing entry restrictions flow through each filter; conjunctions start with
 identity seeks, then value seeks, then kind selections.
 
 A conjunction seeks with the parts an index can answer and leaves the rest to
-the evaluator (superset-safe): that is admitted only when no left-out part can
-refuse on a Subject the seek eliminated, so an eliminated Subject changes
-nothing the result commits to. (The verdict advisory, which sits outside the
-result digest, then counts hidden Claims among the seek's candidates: a Subject
-the seek eliminated cannot match whatever its Claims' verdicts.)
+the evaluator (superset-safe): that is admitted only for left-out parts on a
+strict allowlist of shapes proven never to refuse on any row (``allowed``), so a
+Subject the seek eliminated changes nothing the result commits to. (The verdict
+advisory, which sits outside the result digest, then counts hidden Claims among
+the seek's candidates: a Subject the seek eliminated cannot match whatever its
+Claims' verdicts.)
 
 A query with hops or includes reads only what it can reach (``query_reach``):
 from its entry rows, each hop expands through the forward (subject) or reverse
@@ -51,6 +52,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryComparisonFilter,
     QueryConjunctionFilter,
     QueryDisjunctionFilter,
+    QueryEvaluationTimeRef,
     QueryFilter,
     QueryLiteralRef,
     QueryMembershipFilter,
@@ -99,9 +101,6 @@ class _Residual:
 
 
 _RESIDUAL = _Residual()
-
-#: (filter value type, ClaimType value type) pairs whose stored values always coerce.
-_SCALAR_READS = frozenset({("string", "string"), ("integer", "integer"), ("boolean", "boolean")})
 
 
 def _kind_of(path: str) -> str:
@@ -183,59 +182,62 @@ def select_query_facts(
             )
         }
 
-    def safe_ref(ref: QueryValueRef, value_type: str, others: tuple[QueryValueRef, ...]) -> bool:
-        """Reading ``ref`` on any entry Subject cannot refuse (literals are probed apart).
+    def constant_ref(ref: QueryValueRef) -> bool:
+        return isinstance(ref, QueryLiteralRef | QueryParameterRef)
 
-        Every row-dependent operand must provably coerce: a Subject field is a
-        string (and takes a compared Claim predicate's canonical form and key
-        normalizer, which can refuse); ``now`` renders as a timestamp string.
+    def allowed(filter_: QueryFilter) -> bool:
+        """Whether ``filter_`` may stay in memory beside a seek: a strict allowlist.
+
+        The evaluator runs a left-out part on every row of the full load,
+        including the rows the seek eliminated, so the part must provably never
+        refuse on any row. Only these shapes are proven:
+
+        - a presence test (``exists x.p``): it reads Claims, compares nothing;
+        - a comparison or membership each of whose operand pairs is
+          - two literals or parameters (their coercion is probed by
+            ``OperandProbe`` over the whole filter), or
+          - an entry Subject field (``subject_id``, ``subject_kind``) compared
+            as ``string`` or ``subject_reference`` with a literal or parameter:
+            a field is always a string and takes no Claim's form or normalizer,
+            or
+          - ``now`` compared as ``string`` or ``timestamp`` with a literal;
+        - an and/or/not of allowed parts.
+
+        Every other shape keeps the full evaluation: anything with a Claim
+        value, role or verdict on either side, ``now`` against anything but a
+        literal, or two row-dependent operands.
         """
 
-        if isinstance(ref, QueryLiteralRef | QueryParameterRef):
-            return True
-        compared_with_claim = any(isinstance(item, QueryClaimValueRef) for item in others)
-        if isinstance(ref, QuerySubjectFieldRef):
-            return (
-                ref.binding == entry.binding
-                and value_type in {"string", "subject_reference"}
-                and not compared_with_claim
-            )
-        if not isinstance(ref, QueryClaimValueRef | QueryClaimFieldRef):
-            # ``now``: a rendered UTC timestamp string.
-            return (
-                value_type in {"string", "subject_reference", "timestamp"}
-                and not compared_with_claim
-            )
-        if not surfaces or ref.binding != entry.binding:
-            return False
-        claim_type = claim_type_of(ref.predicate)
-        if claim_type is None:
-            return False
-        if claim_value_kind(claim_type.value) == "subject":
-            # A read Subject object resolves its target; only live-only reads
-            # can lose it (a retired target is then absent).
-            return not live_subjects_only and (
-                isinstance(ref, QueryClaimFieldRef) or value_type == "subject_reference"
-            )
-        if isinstance(ref, QueryClaimFieldRef):
-            return True
-        return (value_type, value_type_name(claim_type.value)) in _SCALAR_READS
-
-    def safe(filter_: QueryFilter) -> bool:
         if isinstance(filter_, QueryConjunctionFilter | QueryDisjunctionFilter):
-            return all(safe(item) for item in filter_.filters)
+            return all(allowed(item) for item in filter_.filters)
         if isinstance(filter_, QueryNegationFilter):
-            return safe(filter_.operand)
+            return allowed(filter_.operand)
         if isinstance(filter_, QueryClaimPresenceFilter):
             return filter_.binding == entry.binding
         if isinstance(filter_, QueryComparisonFilter):
-            refs: tuple[QueryValueRef, ...] = (filter_.left, filter_.right)
+            pairs = [(filter_.left, filter_.right)]
         else:
-            refs = (filter_.left, *filter_.values)
-        return all(
-            safe_ref(ref, filter_.value_type, refs[:index] + refs[index + 1 :])
-            for index, ref in enumerate(refs)
-        )
+            pairs = [(filter_.left, value) for value in filter_.values]
+        value_type = filter_.value_type
+        for one, other in pairs:
+            if constant_ref(one) and constant_ref(other):
+                continue
+            if constant_ref(one):
+                one, other = other, one
+            if not constant_ref(other):
+                return False
+            if isinstance(one, QuerySubjectFieldRef):
+                if one.binding == entry.binding and value_type in {"string", "subject_reference"}:
+                    continue
+                return False
+            if (
+                isinstance(one, QueryEvaluationTimeRef)
+                and isinstance(other, QueryLiteralRef)
+                and value_type in {"string", "timestamp"}
+            ):
+                continue
+            return False
+        return True
 
     absorbed = False
 
@@ -248,7 +250,7 @@ def select_query_facts(
             complete = [item for item in plans if isinstance(item, _FilterSelection)]
             if isinstance(filter_, QueryConjunctionFilter):
                 if not complete:
-                    return _RESIDUAL
+                    return _RESIDUAL if allowed(filter_) else None
                 if len(complete) < len(plans):
                     # The left-out parts are evaluated on the candidates only.
                     if operands is None:
@@ -267,7 +269,8 @@ def select_query_facts(
 
                 return _FilterSelection(conjunction, min(item.priority for item in complete))
             if len(complete) < len(plans):
-                return _RESIDUAL
+                # A seekable sibling is left out too: the whole part must be allowed.
+                return _RESIDUAL if allowed(filter_) else None
 
             def disjunction(admissible: set[str] | None) -> set[str]:
                 # Siblings share the incoming restriction, never each other's
@@ -275,12 +278,14 @@ def select_query_facts(
                 return set.union(*(item.apply(admissible) for item in complete))
 
             return _FilterSelection(disjunction, max(item.priority for item in complete))
-        if not safe(filter_):
-            return None
         if isinstance(filter_, QueryNegationFilter | QueryClaimPresenceFilter):
-            return _RESIDUAL
+            return _RESIDUAL if allowed(filter_) else None
+        # A seek's own part runs on eliminated rows too; each seek proves it
+        # cannot refuse there (surfaced conflicts, typed scalar or Subject reads).
         seek = seek_filter(filter_)
-        return _RESIDUAL if seek is None else seek
+        if seek is not None:
+            return seek
+        return _RESIDUAL if allowed(filter_) else None
 
     def seek_filter(
         filter_: QueryComparisonFilter | QueryMembershipFilter,
@@ -378,6 +383,8 @@ def select_query_facts(
         if claim_type is None:
             return None
         if claim_value_kind(claim_type.value) == "subject":
+            if filter_.value_type != "subject_reference":
+                return None
             return subject_value_seek(ref, operand_refs)
         # Eliminated subjects must not contribute a refusal: scalar schemas
         # prove comparisons cannot refuse for type; surface_conflicts preserves
