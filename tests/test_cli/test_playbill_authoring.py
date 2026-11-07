@@ -638,6 +638,7 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
         "procedure_mandate",
         "line",
         "trigger",
+        "runbook",
         "contract",
         "procedure",
     ]
