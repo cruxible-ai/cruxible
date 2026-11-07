@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-02:core-runbook",
-    "surface_digest": "sha256:0f3638a4c6d70c7d4d303bf8894f8630bf12509c28b8a176e114500a7a7c490b"
+    "surface_digest": "sha256:233b72584bd016d4e5d4b7a5a6d934a8ec1839a04f185f62c46c33beab21931d"
   },
   "surface": {
     "cli_leaves": [
@@ -1983,7 +1983,7 @@
         "request_model": null,
         "request_schema_digest": null,
         "response_model": "cruxible_client.contracts.runbooks.RunbookPreview",
-        "response_schema_digest": "sha256:38b329446a249a127e7372ae92f27c23b9d5c867d0a67b7c8692897ee028f216"
+        "response_schema_digest": "sha256:f0f7e83f912f976511dfe89ae107db6c850b6e8ec672caf690d2d75f80a90b5a"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.run_runbook",
@@ -2885,7 +2885,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_runbook_preview",
         "input_schema_digest": "sha256:969fc97a23094626699e0fde63cd83c89cd48337f2f1a02a33e985c056993d85",
         "name": "cruxible_runbook_preview",
-        "output_schema_digest": "sha256:6b71de7cf69d13e93eb5dc969c34ba7a4858a8152ee5b92c89386f7c686d1886",
+        "output_schema_digest": "sha256:ab5717c06787ed9fe900a0a94b8be60366aabee83fe47baff19c45d349034d63",
         "permission": "READ_ONLY"
       },
       {

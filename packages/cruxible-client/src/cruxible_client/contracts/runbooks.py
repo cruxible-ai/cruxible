@@ -43,6 +43,7 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
+from cruxible_client.contracts.mandate_scope import MandateBasis, MandateChangeKind, SettleScopeGap
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.triggers import (
@@ -380,27 +381,64 @@ class RunbookPreviewCall(_StrictRunbookModel):
     captures: tuple[str, ...] = ()
 
 
+class RunbookSettleChange(_StrictRunbookModel):
+    """One change kind a settle grant covers, and the evidence bases it settles on."""
+
+    change: MandateChangeKind
+    basis: tuple[MandateBasis, ...]
+
+
 class RunbookSettleScope(_StrictRunbookModel):
-    """One ClaimType a settle grant covers, and the change kinds it settles."""
+    """One ClaimType a settle grant covers, with every restriction the grant states."""
 
     claim_type: str
-    changes: tuple[str, ...]
+    changes: tuple[RunbookSettleChange, ...]
+    binding_subject_role: Literal["subject", "object"] = "subject"
+    #: Enum/bool value restrictions: the held values a change may replace and write.
+    value_from: tuple[str | bool, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    value_to: tuple[str | bool, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class RunbookPreviewAuthority(_StrictRunbookModel):
-    """What the step's Line may do with its writes, from its Mandate scope."""
+    """What the step's Line may do with its writes, from its Mandate scope.
+
+    Static: a write is shown as settling only when every restriction of the
+    grant can be proven from definitions (ClaimType, change kind, the value's
+    evidence basis, no value or Subject restriction). Anything that cannot be
+    proven is listed in ``review_gaps`` and may go to review.
+    """
 
     max_authority: Literal["observe", "propose", "settle"]
     mandates: tuple[str, ...] = ()
     grants: Literal["propose", "settle"] | None = None
-    #: The settle grant's scope: each ClaimType and the change kinds it settles.
+    #: The settle grant's scope, restrictions included.
     settles: tuple[RunbookSettleScope, ...] = ()
     #: Subject kinds whose creation settles with the change.
     settles_creation: tuple[str, ...] = ()
-    #: The settle grant checks a condition Query and falls back to a proposal.
+    #: The settle grant's Subject fence: an explicit Subject scope (artifact
+    #: paths), and/or ``expected`` (targets fenced by the claims ``within``).
+    subject_scope: tuple[str, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    subjects: Literal["expected"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    #: The settle grant checks a condition Query (``condition_query``) and, when
+    #: it does not hold, falls back as ``condition_fallback`` says.
     conditional: bool = False
-    #: ClaimTypes the step can write (or retire) that the settle scope does not
-    #: cover: those writes go to a proposal, which would stop the run.
+    condition_query: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    condition_fallback: Literal["refuse", "propose"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    #: Why a write cannot be proven to settle: each (ClaimType, change, basis)
+    #: and the scope term that leaves it out.
+    review_gaps: tuple[SettleScopeGap, ...] = ()
+    #: ClaimTypes the step can write (or retire) that may go to a proposal,
+    #: which would stop the run.
     proposes: tuple[str, ...] = ()
     #: Subject kinds the step can create outside the grant's creation scope.
     proposes_creation: tuple[str, ...] = ()
@@ -486,6 +524,7 @@ __all__ = [
     "RunbookPreviewWrite",
     "RunbookRunRequest",
     "RunbookRunResult",
+    "RunbookSettleChange",
     "RunbookSettleScope",
     "RunbookStep",
     "RunbookStepOutcome",

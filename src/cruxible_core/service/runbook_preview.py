@@ -43,6 +43,7 @@ from cruxible_client.contracts.runbooks import (
     RunbookPreviewRead,
     RunbookPreviewStep,
     RunbookPreviewWrite,
+    RunbookSettleChange,
     RunbookSettleScope,
     runbook_digest,
 )
@@ -228,48 +229,133 @@ def _calls(definition: Any, line: LineSpec) -> tuple[RunbookPreviewCall, ...]:
     return tuple(calls)
 
 
+_VALUE_BASES: frozenset[str] = frozenset({"extracted", "measured", "derived"})
+
+
+def _record_reference(value: object) -> bool:
+    """A value read straight off the extracted record: ``$item.fields.*`` / ``$item.key.*``."""
+
+    if isinstance(value, str):
+        return value.startswith(("$item.fields.", "$item.key."))
+    if isinstance(value, dict) and set(value) <= {"kind", "key", "create"}:
+        key = value.get("key")
+        return isinstance(key, dict) and bool(key) and all(map(_record_reference, key.values()))
+    return False
+
+
+def _value_bases(template: Any) -> frozenset[str]:
+    """The evidence bases a template's value can carry, as far as definitions prove.
+
+    A derivation is ``derived``. A value read straight off the extract's record
+    is ``extracted``. Anything else may be any value basis: the preview never
+    claims more than the definitions say.
+    """
+
+    if template.role == "derivation" or template.inputs:
+        return frozenset({"derived"})
+    if _record_reference(template.value):
+        return frozenset({"extracted"})
+    return _VALUE_BASES
+
+
+def _needed_changes(node: ClaimsNode) -> dict[str, set[tuple[str, str | None]]]:
+    """Per ClaimType, every (change kind, basis) the node can produce."""
+
+    needed: dict[str, set[tuple[str, str | None]]] = {}
+    for template in node.claims:
+        name = template.claim_type.target.name
+        bases = _value_bases(template)
+        changes = needed.setdefault(name, set())
+        for change in ("create", "revise"):
+            changes.update(
+                (change, basis) if bases != _VALUE_BASES else (change, None) for basis in bases
+            )
+        if node.expect is not None and template.when_absent in ("mirror", "inverse"):
+            changes.add(("retire", "absence"))
+        if node.expect is not None and template.when_absent == "inverse":
+            changes.update({("create", "absence"), ("revise", "absence")})
+    return needed
+
+
 def _authority(
-    line: LineSpec, mandates: tuple[ProcedureMandate, ...], writes: tuple[RunbookPreviewWrite, ...]
+    line: LineSpec, mandates: tuple[ProcedureMandate, ...], definition: Any
 ) -> RunbookPreviewAuthority:
+    from cruxible_client.contracts.mandate_scope import SettleScopeGap, settle_scope_gap_key
+
     live = tuple(item for item in mandates if not item.suspended)
     settle = next((item for item in live if item.grants == "settle"), None)
     observe = line.max_authority == "observe"
-    can_settle = settle is not None and line.max_authority == "settle"
-    scope = (
-        {item.claim_type.target.name: frozenset(item.change_kinds) for item in settle.scope}
-        if can_settle and settle is not None
-        else {}
-    )
-    proposes: set[str] = set()
+    grant = settle if settle is not None and line.max_authority == "settle" else None
+    nodes = [node for node in definition.nodes if isinstance(node, ClaimsNode)]
+    needed: dict[str, set[tuple[str, str | None]]] = {}
     created: set[str] = set()
-    for write in writes:
-        needed = {"create", "revise", *(("retire",) if write.judges_absence else ())}
-        for claim_type in write.claim_types:
-            if not needed <= scope.get(claim_type, frozenset()):
+    for node in nodes:
+        for claim_type, changes in _needed_changes(node).items():
+            needed.setdefault(claim_type, set()).update(changes)
+        if node.subject.create == "if_absent":
+            created.add(node.subject.kind)
+        created.update(_created_object_kinds(node))
+    scope = {} if grant is None else {item.claim_type.target.name: item for item in grant.scope}
+    gaps: dict[bytes, SettleScopeGap] = {}
+    proposes: set[str] = set()
+    if not observe:
+        for claim_type, changes in sorted(needed.items()):
+            item = scope.get(claim_type)
+            for change, basis in sorted(changes, key=lambda pair: (pair[0], pair[1] or "")):
+                term: str | None = None
+                if item is None:
+                    term = "claim_type"
+                else:
+                    covered = item.changes.of(change)  # type: ignore[arg-type]
+                    if covered is None:
+                        term = "change_kind"
+                    elif basis is None or basis not in covered.basis:
+                        term = "basis"
+                    elif item.value is not None:
+                        term = "value"
+                    elif grant is not None and grant.subject_scope is not None:
+                        term = "subject"
+                if term is None:
+                    continue
                 proposes.add(claim_type)
-        if write.creates_subjects:
-            created.add(write.subject_kind)
-        created.update(write.creates_object_kinds)
-    creation_scope = set(settle.subject_creation) if can_settle and settle is not None else set()
-    conditional = (
-        can_settle
-        and settle is not None
-        and settle.condition is not None
-        and settle.condition.fallback == "propose"
-    )
+                if grant is not None:
+                    gap = SettleScopeGap(
+                        claim_type=claim_type,
+                        change=change,  # type: ignore[arg-type]
+                        basis=basis,  # type: ignore[arg-type]
+                        term=term,  # type: ignore[arg-type]
+                    )
+                    gaps[settle_scope_gap_key(gap)] = gap
+    creation_scope = set() if grant is None else set(grant.subject_creation)
+    condition = None if grant is None else grant.condition
     proposes_creation = set() if observe else created - creation_scope
-    if observe:
-        proposes = set()
+    conditional = condition is not None and not observe
     return RunbookPreviewAuthority(
         max_authority=line.max_authority,
         mandates=_sorted(item.identity.qualified for item in live),
         grants=None if not live else ("settle" if settle is not None else "propose"),
         settles=tuple(
-            RunbookSettleScope(claim_type=claim_type, changes=_sorted(changes))
-            for claim_type, changes in sorted(scope.items())
+            RunbookSettleScope(
+                claim_type=name,
+                changes=tuple(
+                    RunbookSettleChange(change=kind, basis=scoped.changes.of(kind).basis)  # type: ignore[union-attr]
+                    for kind in scoped.change_kinds
+                ),
+                binding_subject_role=scoped.binding_subject_role,
+                value_from=None if scoped.value is None else scoped.value.from_,
+                value_to=None if scoped.value is None else scoped.value.to,
+            )
+            for name, scoped in sorted(scope.items())
         ),
         settles_creation=_sorted(creation_scope),
+        subject_scope=None
+        if grant is None or grant.subject_scope is None
+        else tuple(item.artifact_path for item in grant.subject_scope),
+        subjects=None if grant is None else grant.subjects,
         conditional=conditional,
+        condition_query=None if condition is None else condition.query.target.qualified,
+        condition_fallback=None if condition is None else condition.fallback,
+        review_gaps=tuple(gaps[key] for key in sorted(gaps)),
         proposes=_sorted(proposes),
         proposes_creation=_sorted(proposes_creation),
         may_stop_run=bool(proposes or proposes_creation or conditional),
@@ -374,7 +460,7 @@ def compose_runbook_preview(
         reads = _reads(reader, definition)
         writes = _writes(definition)
         calls = _calls(definition, line)
-        authority = _authority(line, reader.mandates(line), writes)
+        authority = _authority(line, reader.mandates(line), definition)
         captures = _sorted(
             [contract for call in calls for contract in call.captures]
             + [

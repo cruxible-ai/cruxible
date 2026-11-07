@@ -213,12 +213,16 @@ def test_the_preview_composes_what_each_step_can_do(tmp_path: Path) -> None:
     assert write.creates_object_kinds == (KIND,)
     authority = settle.authority
     assert authority is not None and authority.grants == "settle"
-    assert [(item.claim_type, item.changes) for item in authority.settles] == [
-        (AFFECTED, ("create",))
-    ]
+    assert [
+        (item.claim_type, [(change.change, change.basis) for change in item.changes])
+        for item in authority.settles
+    ] == [(AFFECTED, [("create", ("extracted",))])]
     assert authority.settles_creation == (KIND,)
     # The grant settles creates only: a revise of a held unit would go to review.
     assert authority.proposes == (AFFECTED,)
+    assert [(gap.change, gap.basis, gap.term) for gap in authority.review_gaps] == [
+        ("revise", "extracted", "change_kind")
+    ]
     assert authority.may_stop_run is True
     cascades = {item.trigger: item for item in settle.cascades}
     landing = cascades["Trigger:test.on-orders"]
@@ -387,3 +391,89 @@ def test_preview_work_is_linear_in_steps_and_constant_in_unrelated_definitions(
     _unrelated(instance, 16, 100)
     assert _work(instance, "test.rb-5") == five
     assert _work(instance, "test.rb-20") == twenty
+
+
+# -- Mandate scope: every restriction, and review whenever settling is unproven (F4) --
+
+
+def _scoped_grant(line: Any, claim_type: Any, **overrides: Any) -> Any:
+    from datetime import UTC, datetime
+
+    from cruxible_client.contracts.artifacts import ArtifactPin
+    from cruxible_client.contracts.claim_types import claim_type_digest
+    from cruxible_client.contracts.procedure_mandates import MandateClaimScope
+    from cruxible_client.contracts.procedures.line_specs import line_spec_digest
+    from tests.support.mandates import procedure_mandate, scope_changes
+
+    scope_fields = {
+        "changes": scope_changes("create", "revise", basis=("extracted",)),
+        **overrides.pop("scope", {}),
+    }
+    return procedure_mandate(
+        "scoped",
+        line=ArtifactPin(
+            role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
+        ),
+        grants="settle",
+        valid_from=datetime(2020, 1, 1, tzinfo=UTC),
+        expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+        scope=(
+            MandateClaimScope(
+                claim_type=ArtifactPin(
+                    role="claim-type",
+                    target=claim_type.identity,
+                    artifact_digest=claim_type_digest(claim_type).tagged,
+                ),
+                **scope_fields,
+            ),
+        ),
+        subject_creation=("security.vulnerability",),
+        **overrides,
+    )
+
+
+def test_a_scope_restriction_the_preview_cannot_prove_shows_possible_review(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.mandate_scope import MandateValueCondition
+    from cruxible_client.contracts.semantic import SemanticAddress
+    from cruxible_core.service.runbook_preview import _authority
+    from tests.support.mandates import scope_changes
+    from tests.test_procedures.test_claims_value_upsert import AFFECTED
+
+    instance, _root = runbook_world(tmp_path)
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        line = projection.typed.source(f"Line:{SETTLE}")
+        definition = projection.typed.source(f"Procedure:{line.procedure.target.name}").definition
+        claim_type = projection.typed.source(f"ClaimType:{AFFECTED}")
+
+    def gaps(grant: Any) -> list[tuple[str, str | None, str]]:
+        authority = _authority(line, (grant,), definition)
+        assert authority.may_stop_run == bool(authority.review_gaps)
+        assert authority.proposes == ((AFFECTED,) if authority.review_gaps else ())
+        return [(gap.change, gap.basis, gap.term) for gap in authority.review_gaps]
+
+    # Create and revise on extracted evidence: the extract-fed writer is proven to settle.
+    assert gaps(_scoped_grant(line, claim_type)) == []
+    # A grant on derived evidence only does not cover a direct extraction.
+    derived = _scoped_grant(
+        line, claim_type, scope={"changes": scope_changes("create", "revise", basis=("derived",))}
+    )
+    assert gaps(derived) == [("create", "extracted", "basis"), ("revise", "extracted", "basis")]
+    # A value restriction cannot be proven from definitions.
+    valued = _scoped_grant(
+        line, claim_type, scope={"value": MandateValueCondition.model_validate({"to": ["x"]})}
+    )
+    assert {term for _change, _basis, term in gaps(valued)} == {"value"}
+    authority = _authority(line, (valued,), definition)
+    assert authority.settles[0].value_to == ("x",)
+    # Nor can an explicit Subject scope.
+    fenced = _scoped_grant(
+        line,
+        claim_type,
+        subject_scope=(SemanticAddress.whole_artifact("subjects/security.component/a.json"),),
+    )
+    assert {term for _change, _basis, term in gaps(fenced)} == {"subject"}
+    assert _authority(line, (fenced,), definition).subject_scope == (
+        "subjects/security.component/a.json",
+    )
