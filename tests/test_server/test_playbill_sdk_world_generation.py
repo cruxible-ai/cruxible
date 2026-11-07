@@ -348,7 +348,7 @@ def test_the_cli_leaf_writes_a_vocabulary_stub_the_daemon_renders_identically(
     held = advance_floor_index(instance).inputs.types
     # ... and the SubjectKinds of the head's projection, which type define().
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        kinds = accepted_subject_kinds(projection.typed.connection)
+        kinds = accepted_subject_kinds(projection.typed)
     assert kinds, "the vocabulary declares SubjectKinds, so the parity covers define()"
     assert (
         render_vocabulary_stub(
