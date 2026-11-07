@@ -300,10 +300,12 @@ def retired_claim_names_subject_version(
     The Claim (``source_path``) is retired in the candidate and keeps the pin it
     was accepted with: on the Subject version it was accepted about, which the
     Subject has since succeeded (a carried key Claim) or which the change
-    retires (a key Claim retired with its Subject).
+    retires (a key Claim retired with its Subject). Its object Subject's pin
+    likewise: a pair's endpoint Claim, retired with the pair in the change that
+    also retires the end (R5), names the end version it was accepted with.
     """
 
-    if pin_role != "subject" or not source_path.startswith(_CLAIMS):
+    if pin_role not in {"subject", "object-subject"} or not source_path.startswith(_CLAIMS):
         return False  # a non-Claim source's pin closes as usual
     claim_content = candidate_tree.get(source_path)
     subject_file = f"{_SUBJECTS}{target_name}.json"

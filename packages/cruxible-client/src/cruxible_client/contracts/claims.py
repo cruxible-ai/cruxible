@@ -2480,7 +2480,36 @@ def evaluate_claim_law(
                 path=path,
                 field="object",
             )
-        if claim.backing.referent_context.object_content_digest != object_subject.artifact_digest:
+        # The object side of revision 11: an attributed retirement whose object
+        # Subject the same change retires (a pair's endpoint Claim, retired with
+        # the pair and its end, R5) names the object version it was accepted with.
+        observed_object_digest = object_subject.artifact_digest
+        accepted_object = claim.backing.referent_context.object_content_digest
+        held_object = subjects.get(judged_object.address.artifact_path)
+        if (
+            subject_lifecycle_retirement
+            and accepted_object is not None
+            and accepted_object != observed_object_digest
+            and held_object is not None
+            and predecessor is not None
+            and predecessor.path == path
+            and claim.lifecycle.predecessor_digest == predecessor.artifact_digest
+            and _is_attributed_retirement(claim, predecessor=predecessor.claim)
+            and (
+                (
+                    held_object.shell.lifecycle.state == "retired"
+                    and held_object.shell.lifecycle.predecessor_digest == accepted_object
+                )
+                or (
+                    accepted_subject_version is not None
+                    and accepted_subject_version(
+                        judged_object.address.artifact_path, accepted_object
+                    )
+                )
+            )
+        ):
+            observed_object_digest = accepted_object
+        if claim.backing.referent_context.object_content_digest != observed_object_digest:
             return _diagnostic(
                 "cruxible.claim.object_context_mismatch",
                 "The proposer-observed object Subject shell digest does not resolve.",
@@ -2490,7 +2519,7 @@ def evaluate_claim_law(
             claim,
             role="object-subject",
             identity=object_subject.identity,
-            digest=object_subject.artifact_digest,
+            digest=observed_object_digest,
         ):
             return _diagnostic(
                 "cruxible.claim.object_subject_pin_missing",
