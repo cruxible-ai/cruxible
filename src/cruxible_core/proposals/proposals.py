@@ -314,6 +314,7 @@ from cruxible_core.indexes.subject_identity import (
     SubjectAssignmentAuthority,
     candidate_identity_issues,
     key_claim_type_shape,
+    tree_subject_kind_reader,
 )
 from cruxible_core.proposals.candidate_cards import (
     CARD_RENDERER_DIGEST,
@@ -2437,6 +2438,9 @@ def _subject_kind_member(context: _MemberContext) -> _MemberVerdict:
             predicate: key_claim_type_shape(context.candidate_tree, predicate)
             for predicate in subject_kind.keys
         },
+        # A pair kind's end kinds and their keys, as the candidate holds them.
+        subject_kind_of=tree_subject_kind_reader(context.candidate_tree),
+        key_shape_of=lambda predicate: key_claim_type_shape(context.candidate_tree, predicate),
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))

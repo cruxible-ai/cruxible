@@ -23,6 +23,16 @@ rendering of its canonical key values (``render_key_slug``); a minted Subject's
 id is ``sub-`` and 32 hex digits. The id is a stable handle: it is never
 re-derived when a key Claim later changes.
 
+A key part may instead name a Subject of exactly one other kind (``subject<K>``):
+the kind is then a *pair kind*, keyed by its ends. Such a part's key Claim is an
+ordinary link Claim from the pair to the end, its canonical value the end's
+Subject path (``SubjectEnd``), so an end's aliases and re-keys never move a
+pair. A pair kind is ``unique``, its parts take normalizer ``none``, and the
+kinds linked through Subject-valued parts form a DAG at most
+``MAX_KEY_DEPTH`` deep. Its identity is frozen for life: every successor keeps
+its ``identity_rule`` byte-equal, and a kind becomes a pair kind only while it
+has no Subject at all.
+
 A SubjectKind changes through the usual definition succession: changing its keys,
 a key part's normalizer (or its version) or its uniqueness is a governed
 successor, never a silent re-keying: a changed normalizer re-keys the kind, and
@@ -67,6 +77,9 @@ SUBJECT_KIND_DIGEST_DOMAIN: Final = "cruxible-subject-kind-artifact-v2"
 SUBJECT_KIND_PREFIX: Final = "subject-kinds/"
 #: The most key ClaimTypes one composite key may name.
 MAX_KEY_PARTS: Final = 8
+#: How deep pair kinds may nest through Subject-valued key parts (a pair of
+#: plain ends is depth 1).
+MAX_KEY_DEPTH: Final = 4
 #: Subject kinds a SubjectKind may never declare: the descriptor pseudo-kinds.
 RESERVED_SUBJECT_KINDS: Final = frozenset({"semantic.subject", "semantic.claim_type"})
 
@@ -86,7 +99,52 @@ class _StrictSubjectKindModel(BaseModel):
 
 
 SubjectKeyValue: TypeAlias = str | int | bool
-"""A key part's value: a string, an integer or a boolean, as its Claim stores it."""
+"""A literal key part's value: a string, an integer or a boolean, as its Claim stores it."""
+
+_SUBJECT_PATH_RE = re.compile(
+    r"^subjects/([a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*)/([a-z][a-z0-9_.-]{0,255})\.json$"
+)
+
+
+class SubjectEnd(_StrictSubjectKindModel):
+    """A Subject-valued key part's canonical value: the end Subject's ledger path.
+
+    The path is what the key Claim's object already stores, and a Subject's id
+    never moves, so a pair keyed by its ends is immune to the ends' aliases,
+    re-keys and normalizer changes. Its canonical JSON form inside a key is
+    ``{"subject": path}``, which never equals a literal's.
+    """
+
+    path: str
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        if not _SUBJECT_PATH_RE.fullmatch(value):
+            raise ValueError(f"{value!r} is not a Subject's ledger path")
+        return value
+
+    @property
+    def subject_kind(self) -> str:
+        match = _SUBJECT_PATH_RE.fullmatch(self.path)
+        assert match is not None
+        return match.group(1)
+
+    @property
+    def subject_id(self) -> str:
+        match = _SUBJECT_PATH_RE.fullmatch(self.path)
+        assert match is not None
+        return match.group(2)
+
+
+SubjectKeyPartValue: TypeAlias = SubjectKeyValue | SubjectEnd
+"""A canonical key part: a literal, or (for a Subject-valued part) the end Subject."""
+
+
+def key_part_json(value: SubjectKeyPartValue) -> object:
+    """One canonical key part as canonical JSON reads it: a literal, or ``{"subject": path}``."""
+
+    return {"subject": value.path} if isinstance(value, SubjectEnd) else value
 
 
 class SubjectKeyRule(_StrictSubjectKindModel):
@@ -280,6 +338,8 @@ class KeyClaimTypeShape(_StrictSubjectKindModel):
     literal_type: str | None = None
     #: Its effective canonical form (the transforms applied before the normalizer).
     canonical_form: tuple[str, ...] = ()
+    #: The kinds a Subject-valued ClaimType's object may be (empty for a literal).
+    object_subject_kinds: tuple[str, ...] = ()
 
 
 def _refusal(code: str, message: str, *, path: str) -> SubjectKindLawResult:
@@ -304,9 +364,11 @@ def key_claim_type_problem(
 ) -> str | None:
     """Why one ClaimType cannot be a key of ``kind`` under ``normalizer``, or None when it can.
 
-    A normalizer other than ``none`` reads text, so its key ClaimType states
-    strings; a lowercasing normalizer cannot follow an ``upper`` canonical form
-    (the two rules would never agree on one value).
+    A key ClaimType is literal, or Subject-valued naming exactly one other kind
+    (a pair kind's end). A normalizer other than ``none`` reads text, so its key
+    ClaimType states strings; a lowercasing normalizer cannot follow an
+    ``upper`` canonical form (the two rules would never agree on one value). A
+    Subject-valued part takes ``none``: its value is a Subject path.
     """
 
     if shape is None or not shape.live:
@@ -314,8 +376,21 @@ def key_claim_type_problem(
             f"key ClaimType {predicate!r} is not a live accepted ClaimType; accept it in this "
             "change or an earlier one"
         )
-    if shape.object_kind != "literal":
-        return f"key ClaimType {predicate!r} must take a literal value"
+    if shape.object_kind == "subject":
+        ends = shape.object_subject_kinds
+        if len(ends) != 1:
+            return (
+                f"key ClaimType {predicate!r} names Subjects of "
+                + (", ".join(ends) or "no kind")
+                + "; a Subject-valued key part names exactly one kind, not a union"
+            )
+        if ends[0] == kind:
+            return (
+                f"key ClaimType {predicate!r} names a Subject of {kind} itself; a pair's "
+                "ends are of other kinds"
+            )
+    elif shape.object_kind != "literal":
+        return f"key ClaimType {predicate!r} must take a literal value or one kind of Subject"
     if shape.cardinality != "one":
         return f"key ClaimType {predicate!r} must be one-valued (cardinality one)"
     if shape.allowed_subject_kinds != (kind,):
@@ -324,6 +399,11 @@ def key_claim_type_problem(
         )
     if normalizer is not None and not isinstance(normalizer, NoneNormalizer):
         spelled = normalizer_spelling(normalizer)
+        if shape.object_kind == "subject":
+            return (
+                f"key ClaimType {predicate!r} names a Subject, whose path {spelled} cannot "
+                "normalize; give it normalizer none"
+            )
         if shape.literal_type != "string":
             return (
                 f"key ClaimType {predicate!r} states {shape.literal_type or 'untyped'} values, "
@@ -338,12 +418,109 @@ def key_claim_type_problem(
     return None
 
 
+def subject_key_ends(
+    subject_kind: SubjectKind, key_claim_types: Mapping[str, KeyClaimTypeShape | None]
+) -> dict[str, str]:
+    """Each Subject-valued key part of ``subject_kind``: its predicate and its end kind."""
+
+    ends: dict[str, str] = {}
+    for predicate in subject_kind.keys:
+        shape = key_claim_types.get(predicate)
+        if shape is not None and shape.object_kind == "subject" and shape.object_subject_kinds:
+            ends[predicate] = shape.object_subject_kinds[0]
+    return ends
+
+
+def _pair_kind_problem(
+    subject_kind: SubjectKind,
+    ends: Mapping[str, str],
+    *,
+    subject_kind_of: Callable[[str], SubjectKind | None] | None,
+    key_shape_of: Callable[[str], KeyClaimTypeShape | None] | None,
+) -> tuple[str, str] | None:
+    """Why a pair kind's ends cannot key it: ``(code, message)``, or None.
+
+    Every end kind has a live SubjectKind; the kinds linked through
+    Subject-valued key parts are acyclic and at most ``MAX_KEY_DEPTH`` deep. The
+    walk reads each reachable kind once (at most ``MAX_KEY_PARTS`` parts each).
+    """
+
+    kind = subject_kind.subject_kind
+    invalid = "cruxible.subject_kind.key_claim_type_invalid"
+    if not subject_kind.unique:
+        return (
+            invalid,
+            f"SubjectKind {kind} has a Subject-valued key part, so it is a pair kind, and a "
+            "pair kind is unique: one pair per set of ends (uniqueness unique).",
+        )
+    heights: dict[str, int] = {}
+
+    def ends_of(current: str) -> dict[str, str] | tuple[str, str]:
+        if current == kind:
+            return dict(ends)
+        declared = None if subject_kind_of is None else subject_kind_of(current)
+        if declared is None or declared.lifecycle.state != "live":
+            return (
+                invalid,
+                f"SubjectKind {kind}: its key reaches Subjects of {current}, which no live "
+                "SubjectKind declares; accept one in this change or an earlier one.",
+            )
+        if key_shape_of is None:
+            return {}
+        return subject_key_ends(
+            declared, {predicate: key_shape_of(predicate) for predicate in declared.keys}
+        )
+
+    def height(current: str, chain: tuple[str, ...]) -> int | tuple[str, str]:
+        # ``chain`` is the kinds from the judged kind down to ``current``; a
+        # kind's height (the longest chain of ends below it) is its own, so it
+        # is computed once.
+        if current in heights:
+            return heights[current]
+        found = ends_of(current)
+        if isinstance(found, tuple):
+            return found
+        tallest = 0
+        for end in found.values():
+            if end in chain:
+                cycle = " -> ".join((*chain[chain.index(end) :], end))
+                return (
+                    "cruxible.subject_kind.key_cycle",
+                    f"SubjectKind {kind}: kinds keyed through Subject-valued key parts form a "
+                    f"cycle ({cycle}); a pair's ends are never, through any chain, the pair "
+                    "kind itself.",
+                )
+            if len(chain) > MAX_KEY_DEPTH:
+                # Already deeper than any pair kind may nest: refused below,
+                # without walking further.
+                return MAX_KEY_DEPTH + 1
+            below = height(end, (*chain, end))
+            if isinstance(below, tuple):
+                return below
+            tallest = max(tallest, below + 1)
+        heights[current] = tallest
+        return tallest
+
+    result = height(kind, (kind,))
+    if isinstance(result, tuple):
+        return result
+    if result > MAX_KEY_DEPTH:
+        return (
+            invalid,
+            f"SubjectKind {kind}: pair kinds nest more than {MAX_KEY_DEPTH} deep through "
+            "Subject-valued key parts.",
+        )
+    return None
+
+
 def evaluate_subject_kind_law(
     subject_kind: SubjectKind,
     *,
     path: str,
     predecessor: AcceptedSubjectKind | None,
     key_claim_types: Mapping[str, KeyClaimTypeShape | None],
+    subject_kind_of: Callable[[str], SubjectKind | None] | None = None,
+    key_shape_of: Callable[[str], KeyClaimTypeShape | None] | None = None,
 ) -> SubjectKindLawResult:
     """Judge one SubjectKind against its predecessor and the key ClaimTypes it names.
 
@@ -351,6 +528,14 @@ def evaluate_subject_kind_law(
     candidate holds it (None when absent). A retiring SubjectKind is judged only
     for its succession: it declares nothing any longer, and every Subject of its
     kind is grandfathered (readable, claimable, retirable, never re-created).
+
+    A Subject-valued key part makes the kind a pair kind: ``subject_kind_of``
+    and ``key_shape_of`` read other kinds' SubjectKinds and key ClaimTypes in
+    the candidate, so the law can see that every end kind is declared and that
+    the kinds are acyclic and shallow (``key_cycle``). Without them a pair kind
+    refuses. Freezing a pair kind's identity across succession needs the
+    parent's Subjects and is judged at the candidate boundary
+    (``endpoint_declaration_fixed``).
     """
 
     kind = subject_kind.identity.name
@@ -409,6 +594,13 @@ def evaluate_subject_kind_law(
                     f"SubjectKind {kind}: {problem}.",
                     path=path,
                 )
+        ends = subject_key_ends(subject_kind, key_claim_types)
+        if ends:
+            pair_problem = _pair_kind_problem(
+                subject_kind, ends, subject_kind_of=subject_kind_of, key_shape_of=key_shape_of
+            )
+            if pair_problem is not None:
+                return _refusal(pair_problem[0], pair_problem[1], path=path)
     return SubjectKindLawResult(
         verdict="accepted",
         artifact_digest=subject_kind_digest(subject_kind).tagged,
@@ -426,7 +618,9 @@ _SUFFIX_HEX = 8
 MAX_ID_ATTEMPTS: Final = 64
 
 
-def _part_text(value: SubjectKeyValue) -> str:
+def _part_text(value: SubjectKeyPartValue) -> str:
+    if isinstance(value, SubjectEnd):
+        return value.subject_id
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int):
@@ -434,20 +628,25 @@ def _part_text(value: SubjectKeyValue) -> str:
     return value
 
 
-def render_key_part(value: SubjectKeyValue) -> str:
-    """One canonical key value as an id part: NFKC, lowercase, runs to ``-``, trimmed."""
+def render_key_part(value: SubjectKeyPartValue) -> str:
+    """One canonical key value as an id part: NFKC, lowercase, runs to ``-``, trimmed.
 
+    A Subject-valued part renders as the end's id, which is already a slug.
+    """
+
+    if isinstance(value, SubjectEnd):
+        return value.subject_id
     text = unicodedata.normalize("NFKC", _part_text(value)).lower()
     return _SLUG_RUN_RE.sub("-", text).strip("-")
 
 
-def key_digest_hex(values: Sequence[SubjectKeyValue]) -> str:
+def key_digest_hex(values: Sequence[SubjectKeyPartValue]) -> str:
     """The SHA-256 hex digest of a canonical key tuple's canonical JSON bytes."""
 
-    return hashlib.sha256(canonical_bytes(list(values))).hexdigest()
+    return hashlib.sha256(canonical_bytes([key_part_json(value) for value in values])).hexdigest()
 
 
-def render_key_slug(values: Sequence[SubjectKeyValue]) -> str:
+def render_key_slug(values: Sequence[SubjectKeyPartValue]) -> str:
     """The readable rendering of a canonical key tuple, a valid Subject id.
 
     Each part is rendered by ``render_key_part``; composite parts are joined
@@ -472,7 +671,7 @@ def render_key_slug(values: Sequence[SubjectKeyValue]) -> str:
     return slug
 
 
-def subject_id_candidates(values: Sequence[SubjectKeyValue]) -> Iterator[str]:
+def subject_id_candidates(values: Sequence[SubjectKeyPartValue]) -> Iterator[str]:
     """The ids a key may take, in order: the rendering, then it suffixed.
 
     When two different canonical keys render to the same slug, the later one
@@ -495,21 +694,26 @@ class SubjectIdUnassignable(ValueError):
     """Every spelling a key may take is already a Subject's id."""
 
 
-def assign_subject_id(values: Sequence[SubjectKeyValue], *, taken: Callable[[str], bool]) -> str:
+def assign_subject_id(
+    values: Sequence[SubjectKeyPartValue], *, taken: Callable[[str], bool]
+) -> str:
     """The first id a key may take that names no Subject yet (``taken``)."""
 
     for candidate in subject_id_candidates(values):
         if not taken(candidate):
             return candidate
     raise SubjectIdUnassignable(
-        f"every id the key {list(values)!r} may take already names a Subject"
+        f"every id the key {[key_part_json(value) for value in values]!r} may take already "
+        "names a Subject"
     )
 
 
 DISTINCT_HOLDER_DOMAIN: Final = "cruxible-distinct-key-holder-v1"
 
 
-def distinct_holder_id(values: Sequence[SubjectKeyValue], *, operation: str, member: str) -> str:
+def distinct_holder_id(
+    values: Sequence[SubjectKeyPartValue], *, operation: str, member: str
+) -> str:
     """The id of a further Subject holding a key another Subject of a ``hint`` kind holds.
 
     Only an explicit "create new" makes one; it cannot reuse the key's rendering,
@@ -525,7 +729,7 @@ def distinct_holder_id(values: Sequence[SubjectKeyValue], *, operation: str, mem
     return f"{base.rstrip('-')}-{digest[:_SUFFIX_HEX]}"
 
 
-def is_distinct_holder_id(subject_id: str, values: Sequence[SubjectKeyValue]) -> bool:
+def is_distinct_holder_id(subject_id: str, values: Sequence[SubjectKeyPartValue]) -> bool:
     """Whether ``subject_id`` has the form of a further holder of this key."""
 
     slug = render_key_slug(values)
@@ -642,8 +846,8 @@ def key_predicate(subject_kind: SubjectKind, name: str) -> str | None:
 
 
 def ordered_key_values(
-    subject_kind: SubjectKind, key: Mapping[str, SubjectKeyValue]
-) -> tuple[tuple[str, SubjectKeyValue], ...]:
+    subject_kind: SubjectKind, key: Mapping[str, SubjectKeyPartValue]
+) -> tuple[tuple[str, SubjectKeyPartValue], ...]:
     """The key in the kind's key order; a missing, unknown or repeated part refuses.
 
     Raises ``ValueError`` naming the problem; the caller types it to its surface.
@@ -656,9 +860,9 @@ def ordered_key_values(
                 "creation supplies no key"
             )
         return ()
-    found: dict[str, SubjectKeyValue] = {}
+    found: dict[str, SubjectKeyPartValue] = {}
     for name, value in key.items():
-        problem = key_value_problem(value)
+        problem = None if isinstance(value, SubjectEnd) else key_value_problem(value)
         if problem is not None:
             raise ValueError(problem)
         predicate = key_predicate(subject_kind, name)
@@ -686,13 +890,14 @@ def ordered_key_parts(
 ) -> tuple[SubjectKeyPart, ...]:
     """The public typed parts, over the same canonical key validation."""
     return tuple(
-        SubjectKeyPart(predicate=predicate, value=value)
+        SubjectKeyPart(predicate=predicate, value=value)  # type: ignore[arg-type]
         for predicate, value in ordered_key_values(subject_kind, key)
     )
 
 
 __all__ = [
     "MAX_ID_ATTEMPTS",
+    "MAX_KEY_DEPTH",
     "MAX_KEY_PARTS",
     "MINTED_SUBJECT_ID_DOMAIN",
     "MINTED_SUBJECT_ID_RE",
@@ -706,6 +911,8 @@ __all__ = [
     "SubjectKeyRule",
     "SubjectKeyReference",
     "key_reference_mapping",
+    "SubjectEnd",
+    "SubjectKeyPartValue",
     "SubjectKeyValue",
     "SubjectKind",
     "SubjectKindFormatError",
@@ -719,6 +926,7 @@ __all__ = [
     "evaluate_subject_kind_law",
     "key_claim_type_problem",
     "key_digest_hex",
+    "key_part_json",
     "key_predicate",
     "key_value_problem",
     "live_subject_kind",
@@ -731,4 +939,5 @@ __all__ = [
     "subject_id_candidates",
     "subject_kind_digest",
     "subject_kind_path",
+    "subject_key_ends",
 ]

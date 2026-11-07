@@ -253,6 +253,9 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
         from cruxible_core.indexes.claim_units import refresh_claim_units
 
         refresh_claim_units(expected)
+        from cruxible_core.indexes.pair_units import refresh_pair_index
+
+        refresh_pair_index(expected)
         for table in (
             "members",
             "principals",
@@ -261,6 +264,9 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
             "vocabulary_terms",
             "subject_keys",
             "claim_units",
+            "pair_ends",
+            "pair_slot_live",
+            "pair_units",
             "provider_registration_order",
             "provider_heads",
             "provider_control_domains",
@@ -396,6 +402,7 @@ def replace_rows(
     historical_provider_source: Callable[[str, int], bytes | None] | None = None,
 ) -> None:
     from cruxible_core.indexes.claim_units import refresh_claim_units
+    from cruxible_core.indexes.pair_units import ClaimState, refresh_pair_index
     from cruxible_core.indexes.subject_identity import refresh_subject_keys
 
     changed = tuple(sorted(set(changed_paths)))
@@ -423,13 +430,19 @@ def replace_rows(
     # The unit index follows the Claims and ClaimTypes the change writes (the
     # rows they leave and the rows they become) and the key Claims among them.
     claim_paths = [path for path in changed if path.startswith("claims/")]
-    unit_claims = {
-        (str(identity), str(subject_path), str(predicate))
-        for identity, subject_path, predicate in select_in(
+    # The same read is the pair index's before-state: each replaced Claim's
+    # lifecycle, subject and predicate as the parent held it.
+    pair_before: dict[str, ClaimState] = {
+        str(identity): (str(lifecycle), str(subject_path), str(predicate))
+        for identity, subject_path, predicate, lifecycle in select_in(
             connection,
-            "SELECT identity,subject_path,predicate FROM claims WHERE path IN ({})",
+            "SELECT identity,subject_path,predicate,lifecycle FROM claims WHERE path IN ({})",
             claim_paths,
         )
+    }
+    unit_claims = {
+        (identity, subject_path, predicate)
+        for identity, (_lifecycle, subject_path, predicate) in pair_before.items()
     }
     type_inverses_before = {
         str(identity): (kind, predicate)
@@ -520,6 +533,7 @@ def replace_rows(
     if not changed:
         refresh_subject_keys(connection)
         refresh_claim_units(connection)
+        refresh_pair_index(connection)
     else:
         for row in parsed.envelopes:
             if row.kind == "subject":
@@ -535,13 +549,18 @@ def replace_rows(
             )
         )
         refresh_subject_keys(connection, subjects=key_subjects, kinds=key_kinds)
-        unit_claims.update(
-            (str(identity), str(subject_path), str(predicate))
-            for identity, subject_path, predicate in select_in(
+        pair_after: dict[str, ClaimState] = {
+            str(identity): (str(lifecycle), str(subject_path), str(predicate))
+            for identity, subject_path, predicate, lifecycle in select_in(
                 connection,
-                "SELECT identity,subject_path,predicate FROM claims WHERE identity IN ({})",
+                "SELECT identity,subject_path,predicate,lifecycle FROM claims "
+                "WHERE identity IN ({})",
                 [row.identity for row in parsed.envelopes if row.kind == "claim"],
             )
+        }
+        unit_claims.update(
+            (identity, subject_path, predicate)
+            for identity, (_lifecycle, subject_path, predicate) in pair_after.items()
         )
         type_inverses_after = {
             str(identity): (kind, predicate)
@@ -562,6 +581,18 @@ def replace_rows(
                 if type_inverses_before.get(identity, (None, None))
                 != type_inverses_after.get(identity, (None, None))
             },
+        )
+        # Subjects absent from the parent (``replaced`` lists what it held).
+        held_subjects = {path for path, _identity, kind in replaced if kind == "subject"}
+        refresh_pair_index(
+            connection,
+            before=pair_before,
+            after=pair_after,
+            created=[
+                row.path
+                for row in parsed.envelopes
+                if row.kind == "subject" and row.path not in held_subjects
+            ],
         )
     if bodies is not None:
         published = {
