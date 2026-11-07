@@ -45990,6 +45990,26 @@
             "title": "OrientKindDetail",
             "type": "object"
           },
+          "OrientKindEnd": {
+            "additionalProperties": false,
+            "description": "One Subject-valued key part of a pair kind: its key ClaimType and the end's kind.",
+            "properties": {
+              "key": {
+                "title": "Key",
+                "type": "string"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "kind"
+            ],
+            "title": "OrientKindEnd",
+            "type": "object"
+          },
           "OrientKindSummary": {
             "additionalProperties": false,
             "description": "One Subject kind in the default map: its live Subjects and first fields.\n\n``fields`` names its first predicates by short name (byte order), at most\n``ORIENT_KIND_FIELDS``; ``more_fields`` counts the rest. ``identity`` is\nas on ``OrientKind``. ``orient(kind=...)`` reads every predicate in full.",
@@ -46897,8 +46917,16 @@
           },
           "OrientSubjectKind": {
             "additionalProperties": false,
-            "description": "One live SubjectKind: how core names a new Subject of the kind.\n\n``rule`` is ``keys`` (named by its key ClaimTypes, in key order, ``unique``\nor ``hint``) or ``minted`` (core mints the id). A kind with no live\nSubjectKind has no row: no new Subject of it can be created. ``kit`` is\nthe installed kit that owns the SubjectKind, absent when no kit owns it.",
+            "description": "One live SubjectKind: how core names a new Subject of the kind.\n\n``rule`` is ``keys`` (named by its key ClaimTypes, in key order, ``unique``\nor ``hint``) or ``minted`` (core mints the id). A kind with no live\nSubjectKind has no row: no new Subject of it can be created. ``ends``\nlists a pair kind's Subject-valued key parts, in key order: a pair kind is\nkeyed by its ends. ``kit`` is the installed kit that owns the SubjectKind,\nabsent when no kit owns it.",
             "properties": {
+              "ends": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/OrientKindEnd"
+                },
+                "title": "Ends",
+                "type": "array"
+              },
               "keys": {
                 "default": [],
                 "items": {
