@@ -245,6 +245,7 @@ _TYPED_PREFIXES: Mapping[str, GetRefKind] = {
     "ApprovalPolicy": "approval_policy",
     "ProcedureRuntimePolicy": "procedure_runtime_policy",
     "Provider": "provider",
+    "Runbook": "runbook",
 }
 # The projection's artifact kind for each reference kind, and back.
 _PROJECTION_KIND: Mapping[GetRefKind, str] = {
@@ -264,6 +265,7 @@ _PROJECTION_KIND: Mapping[GetRefKind, str] = {
     "procedure_runtime_policy": "procedure-runtime-policy",
     "provider": "provider",
     "contract": "contract",
+    "runbook": "runbook",
 }
 _REF_KIND = {value: key for key, value in _PROJECTION_KIND.items()}
 _QUALIFIER: Mapping[GetRefKind, str] = {
@@ -283,6 +285,7 @@ _QUALIFIER: Mapping[GetRefKind, str] = {
     "procedure_runtime_policy": "ProcedureRuntimePolicy",
     "provider": "Provider",
     "contract": "Contract",
+    "runbook": "Runbook",
 }
 _NAMED_KINDS: tuple[GetRefKind, ...] = (
     "document",
@@ -294,6 +297,7 @@ _NAMED_KINDS: tuple[GetRefKind, ...] = (
     "line",
     "resolution_contract",
     "mandate",
+    "runbook",
 )
 _DISPLAY_PREFIX: Mapping[GetRefKind, str] = {
     "claim_type": "ClaimType",
@@ -314,11 +318,13 @@ _DISPLAY_PREFIX: Mapping[GetRefKind, str] = {
     "procedure_runtime_policy": "ProcedureRuntimePolicy",
     "provider": "Provider",
     "contract": "Contract",
+    "runbook": "Runbook",
 }
 # The orient section that lists each operational kind, named by a refusal
 # that has no nearer candidate to offer.
 _ORIENT_SECTION: Mapping[GetRefKind, str] = {
     "line": "lines",
+    "runbook": "runbooks",
     "capture": "captures",
     "resolution_contract": "predictions",
     "mandate": "mandates",
@@ -748,6 +754,7 @@ def _resolve_typed(
         "mandate": "ProcedureMandate",
         "approval_policy": "ApprovalPolicy",
         "procedure_runtime_policy": "ProcedureRuntimePolicy",
+        "runbook": "Runbook",
     }[kind]
     candidates = tuple(
         item if kind == "subject" else f"{_DISPLAY_PREFIX[kind]}:{item}"
@@ -3222,6 +3229,7 @@ def _proof(
         "procedure_runtime_policy",
         "provider",
         "contract",
+        "runbook",
     }:
         with instance.bind_accepted_projection(coordinate) as projection:
             source = projection.typed.source(resolved.identity)
@@ -3425,6 +3433,10 @@ def service_playbill_get(
                 render=render,
                 viewer=viewer,
             )
+        elif resolved.kind == "runbook":
+            from cruxible_core.service.discovery.runbook_reads import runbook_card
+
+            card = runbook_card(instance, coordinate, resolved.identity, render=render)
         elif resolved.kind == "capture":
             card = capture_card(
                 instance,

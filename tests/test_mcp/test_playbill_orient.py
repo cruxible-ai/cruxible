@@ -89,6 +89,7 @@ def test_orient_tool_declares_every_parameter(monkeypatch: pytest.MonkeyPatch) -
         "runs",
         "running",
         "lines",
+        "runbooks",
         "captures",
         "capture_contracts",
         "predictions",

@@ -240,6 +240,7 @@
         "runs",
         "running",
         "lines",
+        "runbooks",
         "captures",
         "capture_contracts",
         "predictions",
@@ -5552,6 +5553,7 @@
                       "procedure_mandate": "#/$defs/ProcedureMandateInput",
                       "procedure_runtime_policy": "#/$defs/ProcedureRuntimePolicyInput",
                       "query_definition": "#/$defs/QueryDefinitionInput",
+                      "runbook": "#/$defs/RunbookInput",
                       "subject": "#/$defs/SubjectInput",
                       "subject_kind": "#/$defs/SubjectKindInput",
                       "subject_succession": "#/$defs/SubjectSuccessionInput",
@@ -5595,6 +5597,9 @@
                     },
                     {
                       "$ref": "#/$defs/TriggerInput"
+                    },
+                    {
+                      "$ref": "#/$defs/RunbookInput"
                     },
                     {
                       "$ref": "#/$defs/SubjectKindInput"
@@ -43985,6 +43990,29 @@
             "title": "Retention Generations"
           }
         },
+        "runbooks": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "runbooks",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/OrientRunbook"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runbooks"
+          }
+        },
         "runs": {
           "default": null,
           "default_json_serializable": true,
@@ -44028,6 +44056,7 @@
                   "runs",
                   "running",
                   "lines",
+                  "runbooks",
                   "captures",
                   "capture_contracts",
                   "predictions",
@@ -45355,7 +45384,7 @@
           },
           "OrientArtifactCounts": {
             "additionalProperties": false,
-            "description": "How many of each family exist; each operational family is its own section.\n\n``lines``, ``capture_contracts``, ``resolution_contracts`` and ``mandates``\ncount accepted artifacts, ``captures`` the Captures accepted Claims cite,\nand ``runs`` / ``running`` the Procedure runs admitted and still running.",
+            "description": "How many of each family exist; each operational family is its own section.\n\n``lines``, ``runbooks``, ``capture_contracts``, ``resolution_contracts`` and\n``mandates`` count live accepted artifacts, ``captures`` the Captures accepted Claims cite,\nand ``runs`` / ``running`` the Procedure runs admitted and still running.",
             "properties": {
               "capture_contracts": {
                 "default": 0,
@@ -45421,6 +45450,12 @@
                 "default": 0,
                 "minimum": 0,
                 "title": "Resolution Contracts",
+                "type": "integer"
+              },
+              "runbooks": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Runbooks",
                 "type": "integer"
               },
               "running": {
@@ -46757,6 +46792,83 @@
             "title": "OrientQuery",
             "type": "object"
           },
+          "OrientRunbook": {
+            "additionalProperties": false,
+            "description": "One Runbook row: its steps, Triggers aimed at it, and its latest run (read live).",
+            "properties": {
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "last_run": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "completed",
+                      "stopped"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Last Run"
+              },
+              "last_run_at": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Last Run At"
+              },
+              "lifecycle": {
+                "enum": [
+                  "live",
+                  "retired"
+                ],
+                "title": "Lifecycle",
+                "type": "string"
+              },
+              "runbook": {
+                "title": "Runbook",
+                "type": "string"
+              },
+              "steps": {
+                "minimum": 1,
+                "title": "Steps",
+                "type": "integer"
+              },
+              "triggers_total": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Triggers Total",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "runbook",
+              "lifecycle",
+              "steps"
+            ],
+            "title": "OrientRunbook",
+            "type": "object"
+          },
           "OrientSource": {
             "additionalProperties": false,
             "description": "One logical source runs have landed Captures from, cited or not.\n\n``landings`` counts its landings (the ``capture_landed`` events the\nactivity feed lists), ``latest`` is the most recent, and ``contracts`` the\ncontract versions they were landed under, each with its count.",
@@ -47316,7 +47428,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``subject_kinds``, ``queries``, ``operations``, or an\n  operational family:\n  ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,\n  ``predictions``, ``mandates``), the logical sources runs landed\n  Captures from (``sources``), the principal registry (``principals``),\n  the governed policies in force (``policies``), the accepted generations\n  newest first (``generations``), the Subject graph (``graph``), the\n  pins between live definitions (``pins``) or what just happened, newest\n  first (``activity``), paged.\n  The default map counts the operational families under ``artifacts`` and\n  never inlines their rows.\n\n``next`` is rendered for the requesting surface.",
+        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``subject_kinds``, ``queries``, ``operations``, or an\n  operational family:\n  ``runs``, ``running``, ``lines``, ``runbooks``, ``captures``,\n  ``capture_contracts``,\n  ``predictions``, ``mandates``), the logical sources runs landed\n  Captures from (``sources``), the principal registry (``principals``),\n  the governed policies in force (``policies``), the accepted generations\n  newest first (``generations``), the Subject graph (``graph``), the\n  pins between live definitions (``pins``) or what just happened, newest\n  first (``activity``), paged.\n  The default map counts the operational families under ``artifacts`` and\n  never inlines their rows.\n\n``next`` is rendered for the requesting surface.",
         "properties": {
           "accepted_at": {
             "format": "date-time",
@@ -47756,6 +47868,21 @@
             "default": null,
             "title": "Retention Generations"
           },
+          "runbooks": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/OrientRunbook"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runbooks"
+          },
           "runs": {
             "anyOf": [
               {
@@ -47784,6 +47911,7 @@
                   "runs",
                   "running",
                   "lines",
+                  "runbooks",
                   "captures",
                   "capture_contracts",
                   "predictions",

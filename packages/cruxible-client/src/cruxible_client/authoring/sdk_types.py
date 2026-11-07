@@ -43,6 +43,7 @@ class RefKind(str, Enum):
     PROVIDER = "provider"
     SUBJECT_KIND = "subject_kind"
     CONTRACT = "contract"
+    RUNBOOK = "runbook"
 
 
 @runtime_checkable

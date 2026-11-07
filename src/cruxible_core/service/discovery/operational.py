@@ -139,6 +139,7 @@ LIVE_CARD_FIELDS: dict[str, tuple[str, ...]] = {
         "runs_total",
     ),
     "resolution_contract": ("state", "windows", "windows_total"),
+    "runbook": ("recent_runs", "runs_more"),
     "capture": ("status", "status_detail"),
     "procedure_run": ("card",),
 }
@@ -246,9 +247,14 @@ class AimedTriggers:
 
 
 def aimed_trigger_page(
-    projection: Any, lines: Sequence[str], *, limit: int
+    projection: Any,
+    lines: Sequence[str],
+    *,
+    limit: int,
+    target_kind: Literal["line", "runbook"] = "line",
 ) -> dict[str, AimedTriggers]:
-    """Per Line, its live Triggers counted and listed up to ``limit``, from the index alone."""
+    """Per Line (or Runbook), its live Triggers counted and listed up to ``limit``,
+    from the index alone."""
 
     if not lines:
         return {}
@@ -257,9 +263,9 @@ def aimed_trigger_page(
     totals: dict[str, int] = {}
     kinds: dict[str, set[str]] = {}
     for target, kind, count in connection.execute(
-        "SELECT target, schedule_kind, count(*) FROM triggers WHERE target_kind='line' "
+        "SELECT target, schedule_kind, count(*) FROM triggers WHERE target_kind=? "
         f"AND lifecycle='live' AND target IN ({marks}) GROUP BY target, schedule_kind",
-        tuple(lines),
+        (target_kind, *lines),
     ):
         totals[str(target)] = totals.get(str(target), 0) + int(count)
         kinds.setdefault(str(target), set()).add(str(kind))
@@ -268,9 +274,9 @@ def aimed_trigger_page(
         for target, identity in connection.execute(
             "SELECT target, identity FROM (SELECT target, identity, row_number() OVER "
             "(PARTITION BY target ORDER BY identity) AS position FROM triggers "
-            f"WHERE target_kind='line' AND lifecycle='live' AND target IN ({marks})) "
+            f"WHERE target_kind=? AND lifecycle='live' AND target IN ({marks})) "
             "WHERE position <= ? ORDER BY target, identity",
-            (*lines, limit),
+            (target_kind, *lines, limit),
         ):
             named.setdefault(str(target), []).append(str(identity))
     return {

@@ -420,6 +420,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("GetMandateCard", "valid_from"): "VALIDITY WINDOW",
     ("GetMandateCard", "expires_at"): "VALIDITY WINDOW",
     ("OrientMandate", "expires_at"): "VALIDITY WINDOW",
+    # A Runbook row's latest run: when that run finished (its RunbookRunResult.finished_at).
+    ("OrientRunbook", "last_run_at"): "EVALUATION INSTANT",
     ("ReobservationRecord", "observed_at"): "ASSERTION TIME",
     ("ReobservationRecord", "recorded_at"): "ASSERTION TIME",
     ("RunRow", "started_at"): "EVALUATION INSTANT",

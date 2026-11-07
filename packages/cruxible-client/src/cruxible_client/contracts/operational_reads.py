@@ -1,10 +1,10 @@
-"""Operational reads: Lines, Captures, predictions, mandates and Procedure runs.
+"""Operational reads: Lines, Runbooks, Captures, predictions, mandates and Procedure runs.
 
 ``get`` resolves each of these by a stable reference -- ``Line:<name>`` (or the
-Line identity digest ``next`` names a due Line by), ``CAP-<12+ hex>`` or
-``Capture:<digest>``, ``ResolutionContract:<name>``, ``Mandate:<name>`` (or the
-``ProcedureMandate:<name>`` form ``next`` emits) and ``ProcedureRun:<run_id>``
--- and answers a values-first card. ``orient(section=...)`` pages the same
+Line identity digest ``next`` names a due Line by), ``Runbook:<name>``,
+``CAP-<12+ hex>`` or ``Capture:<digest>``, ``ResolutionContract:<name>``,
+``Mandate:<name>`` (or the ``ProcedureMandate:<name>`` form ``next`` emits) and
+``ProcedureRun:<run_id>`` -- and answers a values-first card. ``orient(section=...)`` pages the same
 families as compact rows.
 
 An accepted artifact (a Line, a ResolutionContract, a mandate) is read at the
@@ -33,6 +33,7 @@ from cruxible_client.contracts.procedures.results import (
 )
 from cruxible_client.contracts.procedures.windows import TriggerEventReference
 from cruxible_client.contracts.read_values import ShownValue
+from cruxible_client.contracts.runbooks import RunbookRunResult
 
 #: A Capture handle is ``CAP-`` plus at least this many hex digits of its digest.
 CAPTURE_HANDLE_HEX = 12
@@ -41,6 +42,8 @@ OPERATIONAL_CARD_LIST_LIMIT = 10
 #: Arms and recent runs a Line card lists at most.
 LINE_CARD_ARMS = 5
 LINE_CARD_RUNS = 5
+#: Recent runs a Runbook card lists at most (newest first).
+RUNBOOK_CARD_RUNS = 5
 
 RunStatus: TypeAlias = Literal[
     "running",
@@ -183,6 +186,43 @@ class GetLineCard(_StrictOperationalModel):
     occurrences: tuple[GetLineOccurrence, ...] = ()
     recent_runs: tuple[RunRow, ...] = ()
     runs_total: int = Field(default=0, ge=0)
+    next: tuple[str, ...] = ()
+
+
+#: Whether a Runbook step can run now: its Line is live and runs without an
+#: event, or its action is registered (D-R36). Read from definitions only.
+RunbookStepAvailability: TypeAlias = Literal[
+    "available", "line_missing", "line_retired", "line_takes_event", "action_unregistered"
+]
+
+
+class GetRunbookStep(_StrictOperationalModel):
+    """One step of a Runbook: its target and whether it can run now."""
+
+    step: int = Field(ge=1)
+    #: ``Line:<name>``, or ``action:<name>`` for a registered internal action.
+    target: str
+    availability: RunbookStepAvailability
+
+
+class GetRunbookCard(_StrictOperationalModel):
+    """One Runbook (D-R36): its steps, the Triggers aimed at it and its recent runs.
+
+    Steps and Triggers are definitions at the read coordinate; the runs are its
+    retained run records, read live, newest first, each with every step's outcome.
+    """
+
+    #: ``Runbook:<name>``
+    runbook: str
+    description: str | None = Field(default=None, exclude_if=_omit_none)
+    lifecycle: str
+    steps: tuple[GetRunbookStep, ...]
+    #: The first live Triggers aimed at this Runbook, in identity order.
+    triggers: tuple[GetLineTrigger, ...] = ()
+    triggers_total: int = Field(default=0, ge=0)
+    recent_runs: tuple[RunbookRunResult, ...] = ()
+    #: Older runs are retained beyond the ones listed.
+    runs_more: bool = False
     next: tuple[str, ...] = ()
 
 
@@ -473,6 +513,18 @@ class OrientLine(_StrictOperationalModel):
     waiting: int = Field(default=0, ge=0)
 
 
+class OrientRunbook(_StrictOperationalModel):
+    """One Runbook row: its steps, Triggers aimed at it, and its latest run (read live)."""
+
+    runbook: str
+    lifecycle: Literal["live", "retired"]
+    description: str | None = Field(default=None, exclude_if=_omit_none)
+    steps: int = Field(ge=1)
+    triggers_total: int = Field(default=0, ge=0)
+    last_run: Literal["completed", "stopped"] | None = Field(default=None, exclude_if=_omit_none)
+    last_run_at: datetime | None = Field(default=None, exclude_if=_omit_none)
+
+
 class OrientCapture(_StrictOperationalModel):
     capture: str
     contract: str
@@ -572,6 +624,7 @@ __all__ = [
     "LINE_CARD_ARMS",
     "LINE_CARD_RUNS",
     "OPERATIONAL_CARD_LIST_LIMIT",
+    "RUNBOOK_CARD_RUNS",
     "EnablementPrincipalKind",
     "GetCaptureCard",
     "GetCaptureDerivation",
@@ -589,6 +642,8 @@ __all__ = [
     "GetRunCurrentNode",
     "GetRunListMember",
     "GetRunNode",
+    "GetRunbookCard",
+    "GetRunbookStep",
     "RUN_CARD_LIST_MEMBERS_MAX",
     "GetRunTrigger",
     "LineEnablementState",
@@ -603,11 +658,13 @@ __all__ = [
     "OrientLine",
     "OrientMandate",
     "OrientPrediction",
+    "OrientRunbook",
     "OrientSource",
     "OrientSourceContract",
     "OrientSourceLanding",
     "PredictionWindowStatus",
     "RunRow",
     "RunStatus",
+    "RunbookStepAvailability",
     "capture_handle",
 ]

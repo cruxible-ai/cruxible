@@ -96,7 +96,7 @@ def refs(world, credential_world, prediction_world, run_world):  # type: ignore[
 
 
 # Read over its own world below.
-_OWN_WORLD = frozenset({"subject_kind", "contract"})
+_OWN_WORLD = frozenset({"subject_kind", "contract", "runbook"})
 
 
 def test_every_get_kind_has_a_reference_in_the_matrix(refs) -> None:  # type: ignore[no-untyped-def]
@@ -148,6 +148,28 @@ def test_every_contract_detail_answers_or_refuses_coded(  # type: ignore[no-unty
         except (CoreError, ClientCoreError):
             continue
         assert (result.kind, result.detail) == ("contract", detail)
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_every_runbook_detail_answers_or_refuses_coded(  # type: ignore[no-untyped-def]
+    tmp_path, historical
+) -> None:
+    from tests.support.runbooks import SETTLE, author_runbook, runbook_world
+
+    instance, _root = runbook_world(tmp_path)
+    author_runbook(instance, "test.rb", [{"line": SETTLE}, {"action": "evidence.sweep"}])
+    history = instance.accepted_history()
+    at = history[-2].oid if historical else None
+    for detail in GET_DETAILS_BY_KIND["runbook"]:
+        try:
+            result = service_playbill_get(
+                instance,
+                request=GetRequest(ref="Runbook:test.rb", detail=detail, at=at),
+                access=_ACCESS,
+            )
+        except (CoreError, ClientCoreError):
+            continue
+        assert (result.kind, result.detail) == ("runbook", detail)
 
 
 @pytest.mark.parametrize(

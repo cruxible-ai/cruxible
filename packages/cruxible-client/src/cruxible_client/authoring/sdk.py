@@ -467,6 +467,7 @@ _GET_REF_KINDS: Mapping[str, RefKind] = {
     "provider": RefKind.PROVIDER,
     "subject_kind": RefKind.SUBJECT_KIND,
     "contract": RefKind.CONTRACT,
+    "runbook": RefKind.RUNBOOK,
 }
 
 _REFERENCE_KINDS: Mapping[RefKind, str] = {
