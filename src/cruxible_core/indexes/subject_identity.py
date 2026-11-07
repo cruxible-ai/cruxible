@@ -1398,20 +1398,25 @@ def _ancestor_depth_issues(
     *,
     current_tree: Mapping[str, bytes],
     candidate_tree: Mapping[str, bytes],
+    scope: tuple[str, ...],
     changed_kinds: set[str],
     declared: Callable[[str], SubjectKind | None],
 ) -> list[SubjectIdentityIssue]:
-    """A kind made a pair kind deepens every pair kind keyed through it (review F2).
+    """A kind that gains a Subject-valued end deepens every pair kind keyed through it (F2).
 
     The SubjectKind law walks the judged kind's ends only, and an unchanged
-    pair kind keyed through it pins nothing that would judge it again. So when
-    a change gives a kind its first Subject-valued part (the only way a kind's
-    height moves: a pair kind's rule is frozen), every live ancestor the change
-    leaves as it was is measured again over the candidate: none may nest more
-    than ``MAX_KEY_DEPTH`` deep. The climb seeks the parent's live ClaimTypes
-    naming each kind as a Subject (one indexed seek per kind) and stops at the
-    first ancestor too deep, so it is bounded by the depth: a governance
-    event's cost, paid only by such a conversion.
+    pair kind keyed through it pins nothing that would judge it again. A
+    kind's height grows only when some kind at or below it gains an end: a
+    SubjectKind successor or a key ClaimType turning Subject-valued (a first
+    part, or another part of a mixed key), changed in this very change. So
+    every kind the change declares or whose key ClaimType it changes is
+    compared, ends before and after; one that gains an end is measured itself
+    (unless its own law judged it), and every live ancestor the change leaves
+    as it was is measured again over the candidate: none may nest more than
+    ``MAX_KEY_DEPTH`` deep. The climb seeks the parent's live ClaimTypes naming
+    each kind as a Subject (one indexed seek per kind) and stops at the first
+    ancestor too deep, so it is bounded by the depth: a governance event's
+    cost, paid only by such a change.
     """
 
     from cruxible_client.contracts.subject_kinds import MAX_KEY_DEPTH, subject_kind_path
@@ -1423,17 +1428,33 @@ def _ancestor_depth_issues(
             shapes[predicate] = key_claim_type_shape(candidate_tree, predicate)
         return shapes[predicate]
 
+    from cruxible_client.contracts.claim_types import parse_claim_type
+
+    seeds = set(changed_kinds)
+    for path in scope:
+        if not path.startswith("claim-types/"):
+            continue
+        for tree in (candidate_tree, current_tree):
+            content = tree.get(path)
+            if content is not None:
+                seeds.update(parse_claim_type(content, path=path).allowed_subject_kinds)
     converted: list[str] = []
-    for kind in sorted(changed_kinds):
+    for kind in sorted(seeds):
         new = declared(kind)
-        if new is None or not subject_key_ends(new, {p: shape(p) for p in new.keys}):
+        if new is None:
+            continue
+        gained = set(subject_key_ends(new, {p: shape(p) for p in new.keys}).items())
+        if not gained:
             continue
         previous = _any_subject_kind(current_tree, kind)
-        if previous is not None and subject_key_ends(
-            previous, {p: key_claim_type_shape(current_tree, p) for p in previous.keys}
-        ):
-            continue
-        converted.append(kind)
+        if previous is not None:
+            gained -= set(
+                subject_key_ends(
+                    previous, {p: key_claim_type_shape(current_tree, p) for p in previous.keys}
+                ).items()
+            )
+        if gained:
+            converted.append(kind)
     if not converted:
         return []
     heights: dict[str, int] = {}
@@ -1476,7 +1497,27 @@ def _ancestor_depth_issues(
 
     issues: list[SubjectIdentityIssue] = []
     reported: set[str] = set()
+
+    def too_deep(kind: str, ancestor: str, chain: tuple[str, ...]) -> None:
+        if ancestor in reported:
+            return
+        reported.add(ancestor)
+        issues.append(
+            SubjectIdentityIssue(
+                "cruxible.subject_kind.key_claim_type_invalid",
+                subject_kind_path(kind),
+                f"This change gives {kind} a Subject-valued end, which nests the pair kind "
+                f"{ancestor} more than {MAX_KEY_DEPTH} deep through Subject-valued key parts "
+                f"({' -> '.join(chain)} -> ...). Declare the deeper pair as a new kind, or keep "
+                "the key literal.",
+                (ancestor,),
+            )
+        )
+
     for kind in converted:
+        if kind not in changed_kinds and height(kind, (kind,)) > MAX_KEY_DEPTH:
+            too_deep(kind, kind, (kind,))
+            continue
         frontier: list[tuple[str, tuple[str, ...]]] = [(kind, (kind,))]
         climbed: set[str] = {kind}
         while frontier:
@@ -1485,23 +1526,11 @@ def _ancestor_depth_issues(
                 if ancestor in climbed:
                     continue
                 climbed.add(ancestor)
-                path = (ancestor, *chain)
+                upward = (ancestor, *chain)
                 if ancestor not in changed_kinds and height(ancestor, (ancestor,)) > MAX_KEY_DEPTH:
-                    if ancestor not in reported:
-                        reported.add(ancestor)
-                        issues.append(
-                            SubjectIdentityIssue(
-                                "cruxible.subject_kind.key_claim_type_invalid",
-                                subject_kind_path(kind),
-                                f"Making {kind} a pair kind nests the pair kind {ancestor} more "
-                                f"than {MAX_KEY_DEPTH} deep through Subject-valued key parts "
-                                f"({' -> '.join(path)} -> ...). Declare the deeper pair as a new "
-                                "kind, or keep the key literal.",
-                                (ancestor,),
-                            )
-                        )
+                    too_deep(kind, ancestor, upward)
                     continue
-                frontier.append((ancestor, path))
+                frontier.append((ancestor, upward))
     return issues
 
 
@@ -1857,6 +1886,7 @@ def candidate_identity_issues(
                 connection,
                 current_tree=current_tree,
                 candidate_tree=candidate_tree,
+                scope=scope,
                 changed_kinds=changed_kinds,
                 declared=declared,
             )

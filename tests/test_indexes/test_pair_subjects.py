@@ -383,6 +383,79 @@ def test_a_conversion_that_deepens_an_unchanged_ancestor_refuses(on_projection: 
     assert law.verdict == "accepted", law.diagnostics
 
 
+def _mixed_chain() -> dict[str, bytes]:
+    """pt.a3 -> pt.a2 -> pt.a1 -> pt.m, where pt.m(owner: subject<pt.base>, serial: string),
+    and pt.deep (a pair over pt.base) beside them: pt.a3 at depth four, no Subjects."""
+
+    tree = definitions()
+    types = [
+        claim_type("pt.base.slug"),
+        claim_type("pt.deep.end", value_type=("pt.base",)),
+        claim_type("pt.m.owner", value_type=("pt.base",)),
+        claim_type("pt.m.serial"),
+    ]
+    kinds = [
+        keyed("pt.base", "pt.base.slug"),
+        keyed("pt.deep", "pt.deep.end"),
+        keyed("pt.m", "pt.m.owner", "pt.m.serial"),
+    ]
+    below = "pt.m"
+    for level in (1, 2, 3):
+        types.append(claim_type(f"pt.a{level}.down", value_type=(below,)))
+        kinds.append(keyed(f"pt.a{level}", f"pt.a{level}.down"))
+        below = f"pt.a{level}"
+    for item in types:
+        tree[claim_type_path(item.predicate)] = render_claim_type(item)
+    for kind in kinds:
+        tree[subject_kind_path(kind.subject_kind)] = render_subject_kind(kind)
+    return tree
+
+
+@pytest.mark.parametrize("on_projection", [False, True], ids=["tree-index", "projection"])
+def test_a_mixed_key_part_turned_subject_valued_rechecks_its_ancestors(on_projection: bool) -> None:
+    """Review F2 remainder: pt.m's serial becomes subject<pt.deep> (rule unchanged), pt.m
+    goes 1 -> 2 deep and the unchanged pt.a3 4 -> 5: refused."""
+
+    from cruxible_client.contracts.shapes import coerce_field_type
+    from cruxible_core.indexes.subject_identity import candidate_identity_issues
+    from tests.core_support._pair_support import held
+
+    tree = _mixed_chain()
+    serial = claim_type("pt.m.serial")
+    deepened = serial.model_copy(
+        update={
+            "value": coerce_field_type({"kind": "subject", "subject_kinds": ("pt.deep",)}),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(serial).tagged),
+        }
+    )
+    same_rule = successor_kind(keyed("pt.m", "pt.m.owner", "pt.m.serial"))
+    changes = {
+        claim_type_path("pt.m.serial"): render_claim_type(deepened),
+        subject_kind_path("pt.m"): render_subject_kind(same_rule),
+    }
+    parent: Any = held(tree) if on_projection else tree
+    issues = candidate_identity_issues(
+        current_tree=parent, candidate_tree={**tree, **changes}, scope=tuple(sorted(changes))
+    )
+    assert [(item.code, item.existing) for item in issues] == [
+        ("cruxible.subject_kind.key_claim_type_invalid", ("pt.a3",))
+    ]
+    # Turned to subject<pt.base> (a plain end), pt.m stays depth one: accepted.
+    level = serial.model_copy(
+        update={
+            "value": coerce_field_type({"kind": "subject", "subject_kinds": ("pt.base",)}),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(serial).tagged),
+        }
+    )
+    flat = {**changes, claim_type_path("pt.m.serial"): render_claim_type(level)}
+    assert (
+        candidate_identity_issues(
+            current_tree=parent, candidate_tree={**tree, **flat}, scope=tuple(sorted(flat))
+        )
+        == ()
+    )
+
+
 def test_a_one_key_pair_kind_has_no_single_key_reading() -> None:
     tree = definitions()
     solo = keyed("pt.solo", "pt.solo.end")
