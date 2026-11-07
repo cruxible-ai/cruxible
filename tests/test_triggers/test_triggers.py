@@ -186,7 +186,7 @@ def test_a_journal_its_creator_has_not_committed_reads_as_none(tmp_path: Path) -
     # A writer still creates the schema in it.
     fire(world, NOW + timedelta(days=1), since=NOW + timedelta(days=1))
     with sqlite3.connect(path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (5,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (6,)
 
 
 def test_timer_state_follows_the_accepted_trigger_set(tmp_path: Path) -> None:
@@ -392,7 +392,7 @@ def test_version_two_journal_migrates_in_place_without_losing_fires(tmp_path: Pa
     assert trigger_events(world) == events
     schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
     with sqlite3.connect(journal_path(world)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (5,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (6,)
         assert connection.execute("SELECT * FROM timers").fetchall() == timers
     assert trigger_events(world) == events
 
@@ -409,7 +409,7 @@ def test_version_three_journal_gains_the_kit_resume_tables_in_place(tmp_path: Pa
     assert trigger_events(world) == events
     schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
     with sqlite3.connect(journal_path(world)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (5,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (6,)
         assert connection.execute("SELECT count(*) FROM kit_resumes").fetchone() == (0,)
     assert trigger_events(world) == events
 
@@ -417,7 +417,7 @@ def test_version_three_journal_gains_the_kit_resume_tables_in_place(tmp_path: Pa
 def test_version_four_journal_without_runbook_fires_migrates_with_empty_runbook_progress(
     tmp_path: Path,
 ) -> None:
-    """D-R36: Runbook progress starts with v5; a v4 journal gains it, empty."""
+    """D-R36: Runbook progress starts with v6; a v4 journal gains it, empty."""
 
     from cruxible_core.triggers.journal import pending_runbook_fires
 
@@ -432,16 +432,16 @@ def test_version_four_journal_without_runbook_fires_migrates_with_empty_runbook_
     assert pending_runbook_fires(world) == ()
     schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
     with sqlite3.connect(journal_path(world)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (5,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (6,)
         assert connection.execute("SELECT count(*) FROM runbook_fires").fetchone() == (0,)
     assert trigger_events(world) == events
     assert pending_runbook_fires(world) == ()
 
 
 def test_version_four_journal_holding_runbook_fires_refuses_to_migrate(tmp_path: Path) -> None:
-    """No released journal before v5 can hold a Runbook fire; one that does is refused.
+    """No released journal before v6 can hold a Runbook fire; one that does is refused.
 
-    Its progress was never recorded by a v5 journal, so migrating could only guess
+    Its progress was never recorded by a v6 journal, so migrating could only guess
     whether its fires completed: the writer refuses typed, and the journal is left
     exactly as it was (still v4, still readable).
     """
@@ -468,6 +468,72 @@ def test_version_four_journal_holding_runbook_fires_refuses_to_migrate(tmp_path:
             "SELECT count(*) FROM sqlite_master WHERE name='runbook_fires'"
         ).fetchone() == (0,)
         assert connection.execute("SELECT count(*) FROM deadlines").fetchone() == (0,)
+    assert trigger_events(world) == events
+
+
+#: The runbook_fires shape a version-5 journal had before the claimed plan (02ba1aa12).
+_V5_RUNBOOK_FIRES = (
+    "CREATE TABLE runbook_fires (fire_key TEXT PRIMARY KEY, latest INTEGER NOT NULL, "
+    "started INTEGER NOT NULL DEFAULT 0, covered INTEGER NOT NULL DEFAULT 0) STRICT"
+)
+
+
+def _as_v5_without_plans(world: object, *, with_runbook_fire: bool) -> None:
+    with sqlite3.connect(journal_path(world)) as connection:
+        if with_runbook_fire:
+            connection.execute(
+                "INSERT INTO events(action,trigger_id,due_at,fired_at,occurrence) "
+                "VALUES ('runbook:test.rb','Trigger:t',?,?,'tick:0')",
+                (NOW.isoformat(), NOW.isoformat()),
+            )
+        connection.execute("DROP TABLE runbook_fires")
+        connection.execute("DROP TABLE runbook_steps")
+        connection.execute(_V5_RUNBOOK_FIRES)
+        if with_runbook_fire:
+            connection.execute(
+                "INSERT INTO runbook_fires(fire_key,latest) VALUES ('runbook:test.rb',2)"
+            )
+        connection.execute("PRAGMA user_version=5")
+
+
+def test_a_v5_journal_without_plan_columns_gains_them_when_it_holds_no_runbook_fire(
+    tmp_path: Path,
+) -> None:
+    """A journal an earlier v5 build wrote migrates to the claimed-plan shape, typed."""
+
+    from cruxible_core.triggers.journal import claim_runbook_fire, pending_runbook_fires
+
+    world = instance(tmp_path)
+    fire(world, NOW + timedelta(hours=1))
+    events = trigger_events(world)
+    _as_v5_without_plans(world, with_runbook_fire=False)
+    assert pending_runbook_fires(world) == ()
+    schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
+    with sqlite3.connect(journal_path(world)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (6,)
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(runbook_fires)")}
+        assert {"plan_digest", "plan"} <= columns
+        assert connection.execute("SELECT count(*) FROM runbook_steps").fetchone() == (0,)
+    assert trigger_events(world) == events
+    # The claim path the earlier shape failed on (no such column) now just finds nothing.
+    assert claim_runbook_fire(world, "runbook:test.rb", plan=lambda: ("d", b"p")) is None
+
+
+def test_a_v5_journal_without_plan_columns_holding_a_runbook_fire_refuses_typed(
+    tmp_path: Path,
+) -> None:
+    from cruxible_core.triggers.journal import TriggerJournalMigrationRefused
+
+    world = instance(tmp_path)
+    fire(world, NOW + timedelta(hours=1))
+    _as_v5_without_plans(world, with_runbook_fire=True)
+    events = trigger_events(world)
+    with pytest.raises(TriggerJournalMigrationRefused):
+        schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
+    with sqlite3.connect(journal_path(world)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (5,)
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(runbook_fires)")}
+        assert "plan" not in columns
     assert trigger_events(world) == events
 
 

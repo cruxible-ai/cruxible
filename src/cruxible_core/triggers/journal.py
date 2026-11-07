@@ -67,7 +67,7 @@ CREATE TRIGGER events_no_delete BEFORE DELETE ON events
 CREATE TABLE generations (trigger_id TEXT PRIMARY KEY, version TEXT NOT NULL,
  listening_since TEXT NOT NULL, covered INTEGER NOT NULL) STRICT;
 """
-_VERSION = 5
+_VERSION = 6
 # Each Runbook fire key's progress, retained beside its fires and never rebuilt
 # (D-R36): ``latest`` is the newest fire, kept as fires are recorded so a poll
 # reads one row per Runbook instead of the fire history; ``started`` is the fire
@@ -80,6 +80,12 @@ _RUNBOOK_FIRES_SCHEMA = (
     "CHECK((plan IS NULL) = (plan_digest IS NULL))) STRICT",
     "CREATE INDEX IF NOT EXISTS runbook_fires_pending ON runbook_fires(fire_key) "
     "WHERE latest>covered",
+    # Each Line step of a claimed fire, recorded before it runs: the exact Line
+    # occurrence it is admitted as, so a replay finds that admission whatever the
+    # Line's occurrence epoch has become since (D-R36).
+    "CREATE TABLE IF NOT EXISTS runbook_steps (fire_key TEXT NOT NULL, fire INTEGER NOT NULL, "
+    "step INTEGER NOT NULL, target TEXT NOT NULL, occurrence_id TEXT NOT NULL, "
+    "PRIMARY KEY(fire_key, fire, step)) STRICT",
 )
 # A kit add waiting on provider installs fires on the acceptance that lands the
 # last of them: one row per kit, one wait per Provider path still to activate.
@@ -237,7 +243,7 @@ def _open(instance: Any, *, create: bool = False) -> Iterator[sqlite3.Connection
             for table in (*_KIT_RESUME_SCHEMA, *_RUNBOOK_FIRES_SCHEMA):
                 connection.execute(table)
             connection.execute(f"PRAGMA user_version={_VERSION}")
-        elif version in (2, 3, 4):
+        elif version in (2, 3, 4, 5):
             # A reader of an older journal sees what it holds; the next writer
             # brings it forward one step at a time.
             if create:
@@ -247,18 +253,23 @@ def _open(instance: Any, *, create: bool = False) -> Iterator[sqlite3.Connection
                         "version TEXT NOT NULL, listening_since TEXT NOT NULL, "
                         "covered INTEGER NOT NULL) STRICT"
                     )
-                # No released journal before v5 holds a Runbook fire: Runbooks
-                # arrive with v5. One that does is unreleased data whose
-                # progress v4 never recorded, so it is refused, never guessed.
+                # No released journal before v6 holds a Runbook fire: Runbook
+                # progress arrives whole with v6 (a v5 journal is unreleased
+                # development data, whose runbook_fires may lack the claimed plan
+                # and every step record). One that does hold a fire is refused,
+                # never guessed at.
                 if connection.execute(
                     "SELECT 1 FROM events WHERE action>=? AND action<? LIMIT 1",
                     _RUNBOOK_KEY_RANGE,
                 ).fetchone():
                     raise TriggerJournalMigrationRefused(
                         f"A version {version} trigger journal holds Runbook fires, which no "
-                        "released journal before version 5 can: their progress is unknown. "
+                        "released journal before version 6 can: their progress is unknown. "
                         "Retain it for operator repair; the journal is left as it is."
                     )
+                # A v5 runbook_fires holds no row here (no Runbook fire exists), so
+                # it is replaced by the current shape rather than altered.
+                connection.execute("DROP TABLE IF EXISTS runbook_fires")
                 for table in (*_KIT_RESUME_SCHEMA, *_RUNBOOK_FIRES_SCHEMA):
                     connection.execute(table)
                 connection.execute(f"PRAGMA user_version={_VERSION}")
@@ -351,7 +362,7 @@ def pending_runbook_fires(instance: Any) -> tuple[RunbookFireProgress, ...]:
     """
 
     with _open(instance) as connection:
-        if connection is None or connection.execute("PRAGMA user_version").fetchone()[0] < 5:
+        if connection is None or connection.execute("PRAGMA user_version").fetchone()[0] < 6:
             return ()
         rows = connection.execute(
             "SELECT fire_key,latest,started,covered FROM runbook_fires "
