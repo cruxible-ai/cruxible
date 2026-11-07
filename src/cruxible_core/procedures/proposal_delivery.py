@@ -61,7 +61,7 @@ from cruxible_client.contracts.authoring.models import (
     authoring_payload_digest,
 )
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
-from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
     classify_capture_reuse,
@@ -130,6 +130,7 @@ from cruxible_core.indexes.subject_identity import (
 from cruxible_core.procedures.claims_changes import (
     CoreClaimChange,
     CoreClaimsChange,
+    CoreCreatedSubject,
     CoreReobservationChange,
     CoreRetirementChange,
     CoreSubjectChange,
@@ -569,20 +570,62 @@ def _claim_members(
     return tuple(members), claim_ids, identity_to_item
 
 
+def _created_key(subject_kind: str, key: object) -> bytes:
+    """The one spelling of a terminal Subject item's kind and key, to find it by."""
+
+    return canonical_bytes({"subject_kind": subject_kind, "key": key})
+
+
+def _created_address(
+    reference: CoreCreatedSubject, created: Mapping[bytes, str]
+) -> SemanticAddress:
+    """The Subject a created-Subject reference names: its Subject item's creation member.
+
+    A pair this run creates (or an end of one) is named by the exact key of the
+    terminal's Subject item creating it; shared lowering lands that member on
+    the path it assigns or reuses (``subject-creation-v1``).
+    """
+
+    wire = reference.model_dump(mode="json")
+    member = created.get(_created_key(wire["subject_kind"], wire["key"]))
+    if member is None:
+        raise ProposalDeliveryRefused(
+            "proposal_item_invalid",
+            "An item names a Subject the terminal creates, but no earlier Subject item "
+            "of the terminal carries that kind and key.",
+            details={"subject_kind": reference.subject_kind},
+        )
+    return SemanticAddress.subject_creation(reference.subject_kind, member.rpartition("@")[2])
+
+
 def _subject_creation(
-    item: CoreSubjectChange, *, capture: str | None
+    item: CoreSubjectChange,
+    *,
+    capture: str | None,
+    created: Mapping[bytes, str] | None = None,
 ) -> SubjectCreationAuthoringPayload:
     """The creation member one Subject item lowers into: its kind and key, never an id.
 
     Key parts are named by predicate (a short name is read under the kind) and
-    sorted, so one key is one member identity however the run spelled it. The
-    key Claims cite the one verified Capture in their record's closure.
+    sorted, so one key is one member identity however the run spelled it. A
+    pair's end is the existing end's address, or the creation member of the
+    earlier Subject item creating it (``created``: ends before their pairs).
+    The key Claims cite the one verified Capture in their record's closure.
     """
 
     kind = item.subject_kind
+
+    def part_value(value: object) -> object:
+        if isinstance(value, CoreCreatedSubject):
+            return SubjectClaimObject(address=_created_address(value, created or {}))
+        return value
+
     parts = sorted(
         (
-            SubjectKeyPart(predicate=name if "." in name else f"{kind}.{name}", value=value)
+            SubjectKeyPart(
+                predicate=name if "." in name else f"{kind}.{name}",
+                value=part_value(value),  # type: ignore[arg-type]
+            )
             for name, value in item.key.items()
         ),
         key=lambda part: part.predicate.encode("utf-8"),
@@ -605,8 +648,16 @@ def _subject_members(
     *,
     items: tuple[CoreClaimsChange, ...],
     evidence: Mapping[str, str],
+    created: dict[bytes, str] | None = None,
 ) -> tuple[tuple[SubjectCreationAuthoringPayload, ...], dict[str, str]]:
-    """One creation member per Subject item; return the members and identity->item."""
+    """One creation member per Subject item; return the members and identity->item.
+
+    ``created`` collects each Subject item's kind and key -> its member
+    identity, in item order, so a later pair item (or a Claim item) naming it
+    as a created Subject finds its creation member.
+    """
+
+    created = {} if created is None else created
 
     members: list[SubjectCreationAuthoringPayload] = []
     identity_to_item: dict[str, str] = {}
@@ -614,7 +665,9 @@ def _subject_members(
         if not isinstance(item, CoreSubjectChange):
             continue
         try:
-            member = _subject_creation(item, capture=evidence.get(egress_item.item_key))
+            member = _subject_creation(
+                item, capture=evidence.get(egress_item.item_key), created=created
+            )
         except ValidationError as exc:
             raise ProposalDeliveryRefused(
                 "proposal_item_invalid",
@@ -632,6 +685,9 @@ def _subject_members(
                 },
             )
         identity_to_item[identity] = egress_item.item_key
+        created.setdefault(
+            _created_key(item.subject_kind, item.model_dump(mode="json")["key"]), identity
+        )
         members.append(member)
     return tuple(members), identity_to_item
 
@@ -707,6 +763,8 @@ class _SubjectKeys:
         self.creating_new: set[str] = set()
         self.view: IdentityView | None = None
         self.references: list[_KeyedReference] = []
+        #: Each Subject item's kind and key -> its creation member (``_subject_members``).
+        self.created_members: dict[bytes, str] = {}
 
     def add_created(self, members: tuple[SubjectCreationAuthoringPayload, ...]) -> None:
         """Index each Subject item of the terminal by its kind and canonical key encoding."""
@@ -726,6 +784,17 @@ class _SubjectKeys:
             self.created[slot] = identity if held in {None, identity} else self._SEVERAL
             if member.create_new:
                 self.creating_new.add(identity)
+
+    def literal_key(self, member: SubjectCreationAuthoringPayload) -> KeyTuple:
+        """A creation member's canonical key when it names it by literals only, else ()."""
+
+        try:
+            return (
+                self.key(member.subject_kind, {part.predicate: part.value for part in member.key})
+                or ()
+            )
+        except SubjectKeyInvalid:
+            return ()  # a pair's ends land in lowering; lowering refuses a bad key
 
     def bind(self, view: IdentityView) -> None:
         """Freeze references against ``view`` (the admitted base)."""
@@ -912,14 +981,21 @@ class _SubjectKeys:
 
     def statement(self, item: CoreClaimChange) -> AuthoringClaimStatement:
         statement = item.statement
-        if isinstance(statement.subject, SemanticAddress):
+        value = statement.object
+        if isinstance(statement.subject, SemanticAddress) and not isinstance(
+            value, CoreCreatedSubject
+        ):
             return statement
         subject = (
             statement.subject
             if isinstance(statement.subject, SemanticAddress)
+            else _created_address(statement.subject, self.created_members)
+            if isinstance(statement.subject, CoreCreatedSubject)
             else self.address(statement.subject)
         )
-        value = statement.object
+        if isinstance(value, CoreCreatedSubject):
+            # A pair the run creates (V1), named by its Subject item's creation member.
+            value = SubjectClaimObject(address=_created_address(value, self.created_members))
         return AuthoringClaimStatement(
             subject=subject,
             predicate=statement.predicate,
@@ -1519,8 +1595,10 @@ class ProposalTerminalEgressSink:
                     },
                 ) from exc
 
-        subject_members, subject_items = _subject_members(request, items=items, evidence=evidence)
         keys = _SubjectKeys(self.instance, base=base, base_tree=base_tree)
+        subject_members, subject_items = _subject_members(
+            request, items=items, evidence=evidence, created=keys.created_members
+        )
         keys.add_created(subject_members)
 
         # Accepted input Claims may cite Claim-bound self sources. Those remain
@@ -1586,11 +1664,7 @@ class ProposalTerminalEgressSink:
                     creations={
                         member.member_identity: (
                             assigned[member.member_identity][0],
-                            keys.key(
-                                member.subject_kind,
-                                {part.predicate: part.value for part in member.key},
-                            )
-                            or (),
+                            keys.literal_key(member),
                             not assigned[member.member_identity][1],
                         )
                         for member in subject_members

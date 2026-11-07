@@ -39,23 +39,24 @@ from cruxible_client.contracts.shapes import (
     claim_rationale,
     requires_complete_input,
 )
-from cruxible_core.indexes.subject_identity import key_encoding
 from cruxible_core.procedures.claims_changes import (
     CoreClaimChange,
     CoreClaimsChange,
     CoreReobservationChange,
     CoreSubjectChange,
 )
-from cruxible_core.procedures.claims_context import ClaimsContext
+from cruxible_core.procedures.claims_context import ClaimsContext, KeyPartUnresolved
 from cruxible_core.procedures.claims_diagnostics import ClaimsDiagnostics
 from cruxible_core.procedures.claims_units import (
     ClaimUnitUnresolved,
     CreationIdentity,
+    ValueTarget,
     claim_time,
     claims_item_identity_digest,
     resolve_value,
     same_content,
     same_value,
+    slot_unit_holders,
     unit_holders,
 )
 from cruxible_core.procedures.terminal_dependencies import DependencyToken
@@ -188,6 +189,8 @@ def expand_claims(
         tuple[int, tuple[str, str] | None, tuple[str, str] | None, Any, dict[str, Any]]
     ] = []
     subject_items: dict[tuple[str, str], int] = {}
+    #: The key each Subject item carries, by slot: a pair names a pending end by it.
+    slot_keys: dict[tuple[str, str], Any] = {}
 
     def identify(
         subject_wire: Any,
@@ -214,11 +217,54 @@ def expand_claims(
 
         created.add(slot)
         subject_items[slot] = len(values)
+        slot_keys[slot] = key
         changes.append(CoreSubjectChange(subject_kind=kind, key=key, rationale=rationale))
         identify({"subject_kind": kind, "key": key}, slot)
         values.append(value)
         tokens.append(closure)
         evidence.append(None)
+
+    def create_target(
+        target: ValueTarget,
+        *,
+        rationale: str,
+        closure: frozenset[DependencyToken],
+        row_key: Any = None,
+    ) -> None:
+        """The run's Subject items for ``target``: its pending ends first (deepest first).
+
+        Each (kind, canonical key) is one item (V5), whoever names it first: a
+        row, a value, or an end of a pair. ``row_key`` is a row Subject's key as
+        the template spelled it (a literal kind's item keeps those bytes).
+        """
+
+        for end in target.ends():
+            if end.slot not in created:
+                key = end.key_mapping(slot_keys)
+                create_subject(
+                    end.slot,
+                    kind=end.kind,
+                    key=key,
+                    rationale=rationale,
+                    value=cast(CanonicalValue, {"key": key, "subject_kind": end.kind}),
+                    closure=closure,
+                )
+        if target.slot in created:
+            return
+        if row_key is not None:
+            key = row_key if not target.parts else target.key_mapping(slot_keys)
+            value: Any = {"key": key}
+        else:
+            key = target.key_mapping(slot_keys)
+            value = {"key": key, "subject_kind": target.kind}
+        create_subject(
+            target.slot,
+            kind=target.kind,
+            key=key,
+            rationale=rationale,
+            value=cast(CanonicalValue, value),
+            closure=closure,
+        )
 
     nodes = (
         {}
@@ -349,31 +395,45 @@ def expand_claims(
             continue
         key = resolve(node.subject.key, row)
         try:
-            subject = context.subject(node.subject.kind, key)
+            named = context.named(node.subject.kind, key)
+        except KeyPartUnresolved as exc:
+            # A pair's end (or key part) names nothing here: this row alone,
+            # never a guess; the read is incomplete, so absence retires nothing.
+            state.completeness.note(node.node_id, "invalid_field")
+            report(
+                "extract_refused",
+                f"{node.subject.kind}:{row_index}",
+                field="subject.key",
+                problem="key_part_unresolved",
+                lexeme=str(exc)[:512],
+            )
+            continue
         except ValueError as exc:
             raise _RunRefusal("proposal_item_invalid", str(exc), node_id=node.node_id) from exc
-        if subject is None and node.subject.create == "never":
+        subject = named.address
+        row_target = named.target
+        if subject is None and (node.subject.create == "never" or row_target is None):
             continue
         if within_paths is not None and (
             subject is None or subject.artifact_path not in within_paths
         ):
             continue
-        subject_wire = (
+        assert subject is not None or row_target is not None
+        subject_wire: Any = (
             subject.model_dump(mode="json")
             if subject is not None
             else {
                 "subject_kind": node.subject.kind,
                 "key": key,
             }
+            if row_target is None or not row_target.parts
+            # A pair this run creates is named by its Subject item's key.
+            else row_target.created(slot_keys)
         )
         # D-R37 g fix: an existing Subject's identity is its resolved
         # whole-artifact address (``subject_wire``); a Subject this run creates
         # is finalized from the address delivery's lowering assigns it.
-        created_key = (
-            None
-            if subject is not None
-            else (node.subject.kind, key_encoding(context.canonical(node.subject.kind, key)))
-        )
+        created_key = None if subject is not None or row_target is None else row_target.slot
         for template_index, mapping in enumerate(node.claims):
             reserve()
             target = (
@@ -507,7 +567,11 @@ def expand_claims(
             period = (times[0], times[1])
             try:
                 # D-R30: a many-valued slot's unit is the object; one-valued, the slot.
-                holders = unit_holders(held, obj, ct, context)
+                holders = (
+                    unit_holders((), obj, ct, context)
+                    if subject is None
+                    else slot_unit_holders(context, subject, obj, ct, qualifier)
+                )
             except ClaimUnitUnresolved:
                 report(
                     "extract_refused",
@@ -815,30 +879,18 @@ def expand_claims(
             except ValueError:
                 report("extract_refused", target, field="rationale", problem="rationale_invalid")
                 continue
-            if created_key is not None and created_key not in created:
-                create_subject(
-                    created_key,
-                    kind=node.subject.kind,
-                    key=key,
-                    rationale=rationale,
-                    value=cast(CanonicalValue, {"key": key}),
-                    closure=own,
-                )
+            if created_key is not None and row_target is not None:
+                create_target(row_target, rationale=rationale, closure=own, row_key=key)
+                if row_target.parts:
+                    subject_wire = row_target.created(slot_keys)
             target_key = None if value_target is None else value_target.slot
-            if value_target is not None and value_target.slot not in created:
+            if value_target is not None:
                 # The value's target is created in the same change (V1), by the
-                # one Subject item a row naming it would also use (V5).
-                create_subject(
-                    value_target.slot,
-                    kind=value_target.kind,
-                    key=value_target.key_mapping(),
-                    rationale=rationale,
-                    value=cast(
-                        CanonicalValue,
-                        {"key": value_target.key_mapping(), "subject_kind": value_target.kind},
-                    ),
-                    closure=own,
-                )
+                # one Subject item a row naming it would also use (V5); a pair
+                # target's ends first.
+                create_target(value_target, rationale=rationale, closure=own)
+                if value_target.parts:
+                    obj = value_target.object(slot_keys)
             changes.append(
                 CoreClaimChange.model_validate(
                     {
@@ -907,21 +959,12 @@ def expand_claims(
                 diagnostics=diagnostics,
                 reserve=reserve,
                 within=within_paths,
-                create_target=lambda found, closure: (
-                    None
-                    if found.slot in created
-                    else create_subject(
-                        found.slot,
-                        kind=found.kind,
-                        key=found.key_mapping(),
-                        rationale="Complete source establishes the declared inverse.",
-                        value=cast(
-                            CanonicalValue,
-                            {"key": found.key_mapping(), "subject_kind": found.kind},
-                        ),
-                        closure=closure,
-                    )
+                create_target=lambda found, closure: create_target(
+                    found,
+                    rationale="Complete source establishes the declared inverse.",
+                    closure=closure,
                 ),
+                creates=lambda slot: slot in created,
                 pend_object=lambda index, found, subject_wire, parts: pending.append(
                     (index, None, found.slot, subject_wire, parts)
                 ),

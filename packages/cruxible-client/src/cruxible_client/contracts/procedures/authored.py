@@ -43,6 +43,7 @@ from typing_extensions import TypeAliasType
 
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.captures import CanonicalDuration
+from cruxible_client.contracts.procedures.claims import CLAIMS_ON_DEFERRED
 from cruxible_client.contracts.procedures.extract import CompleteWhen, ExtractField
 from cruxible_client.contracts.procedures.measurements import ProcedureMeasurementDeclaration
 from cruxible_client.contracts.procedures.models import (
@@ -513,10 +514,20 @@ class ClaimTemplateSpec(_Model):
     when_absent: Literal["keep", "surface", "mirror", "inverse"] = Field(
         default="surface", exclude_if=lambda value: value == "surface"
     )
+    #: Deferred post-v1: a pair row writing a Claim about one of its ends.
+    #: Authoring refuses it (``claims_on_deferred``) before any typing.
+    on: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     _when = field_validator("when", mode="before")(_record_predicate)
 
     _rationale_line = field_validator("rationale")(claim_rationale)
+
+
+class ClaimsExpectBySpec(_Model):
+    """Absence by one end of a pair row: the run is complete for ``ends`` of part ``by``."""
+
+    by: str = Field(min_length=1)
+    ends: Template
 
 
 class ClaimsStep(StepOptions):
@@ -524,7 +535,7 @@ class ClaimsStep(StepOptions):
     for_each: Ref
     where: Predicate | None = None
     subject: ClaimsSubjectSpec
-    expect: Ref | None = None
+    expect: ClaimsExpectBySpec | Ref | None = None
 
     _where = field_validator("where", mode="before")(_record_predicate)
 
@@ -1596,12 +1607,28 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             if step.max_items is not None:
                 node["max_items"] = step.max_items
         elif isinstance(step, ClaimsStep):
+            for position, claim in enumerate(step.claims):
+                if claim.on is not None:
+                    raise ProcedureSpecError(
+                        "claims_on_deferred",
+                        f"{path}.claims[{position}].on",
+                        CLAIMS_ON_DEFERRED.split(": ", 1)[1] + ".",
+                        repair="Drop on: and write the end's Claim from a claims step whose "
+                        "row is that end, or have an agent write it.",
+                    )
             node.update(
                 kind="claims",
                 **(
-                    {"expect": template(step.expect, path + ".expect")}
-                    if step.expect is not None
-                    else {}
+                    {}
+                    if step.expect is None
+                    else {
+                        "expect": {
+                            "by": step.expect.by,
+                            "ends": template(step.expect.ends, path + ".expect.ends"),
+                        }
+                    }
+                    if isinstance(step.expect, ClaimsExpectBySpec)
+                    else {"expect": template(step.expect, path + ".expect")}
                 ),
                 for_each=template(step.for_each, path + ".for_each"),
                 subject={
@@ -2092,6 +2119,7 @@ __all__ = [
     "HaltAction",
     "HaltStep",
     "InboxStep",
+    "ClaimsExpectBySpec",
     "ClaimsStep",
     "InvokeStep",
     "JoinSpec",

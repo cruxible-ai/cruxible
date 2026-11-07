@@ -14,6 +14,7 @@ from cruxible_client.contracts.claim_evidence import (
 from cruxible_client.contracts.claims import NoneClaimObject, claim_artifact_digest
 from cruxible_client.contracts.content_memo import seal
 from cruxible_client.contracts.errors import ExecutionError
+from cruxible_client.contracts.procedures.claims import ClaimsExpectByEnd
 from cruxible_client.contracts.procedures.models import ExtractNode
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import SubjectType
@@ -51,6 +52,7 @@ def append_absence(
     within: set[object] | None = None,
     create_target: Callable[[ValueTarget, Any], None] | None = None,
     pend_object: Callable[[int, ValueTarget, Any, dict[str, Any]], None] | None = None,
+    creates: Callable[[tuple[str, str]], bool] = lambda _slot: False,
 ) -> None:
     """One pass over the enumeration and ``expect``; every Claim read is an indexed slot read.
 
@@ -80,7 +82,9 @@ def append_absence(
 
     extracting = enumeration
     reference = f"$steps.{extracting.as_}"
-    expected = resolve(node.expect)
+    by_end = node.expect if isinstance(node.expect, ClaimsExpectByEnd) else None
+    expect_template = node.expect if by_end is None else by_end.ends
+    expected = resolve(expect_template)
     # A header field result (V4): present names its value; absent or invalid
     # leaves the Subjects expected unknown, so the source is incomplete.
     expect_unknown = False
@@ -89,6 +93,17 @@ def append_absence(
             expected = expected.get("value")
         else:
             expected, expect_unknown = [], True
+    if by_end is not None and isinstance(expected, list):
+        # Each end may be a field result too (``[$steps.listed.header.inventory]``).
+        ends_named: list[object] = []
+        for row in expected:
+            if isinstance(row, dict) and row.get("tag") in {"present", "absent", "invalid"}:
+                if row["tag"] != "present":
+                    expect_unknown = True
+                    continue
+                row = row.get("value")
+            ends_named.append(row)
+        expected = ends_named
     listed = resolve(reference)
     if not isinstance(expected, list):
         refuse("claims_absence_invalid: expect must be a Subject list")
@@ -106,7 +121,7 @@ def append_absence(
             for index, item in enumerate(selected_records)
         ]
     own = _exact_evidence(
-        [reference, node.expect], state=state, node_id=node.node_id, field="absence"
+        [reference, expect_template], state=state, node_id=node.node_id, field="absence"
     )
     # The root must be proven over the SAME closure the item's manifest records
     # (``own``: reference and ``expect`` both), not a narrower one -- otherwise
@@ -207,7 +222,11 @@ def append_absence(
         return None
 
     expects: dict[str, tuple[Any, Any]] = {}
-    for row in expected:
+    if by_end is not None:
+        expects = _pairs_by_end(
+            node, by_end, expected, context=context, creates=creates, refuse=refuse
+        )
+    for row in expected if by_end is None else ():
         try:
             subject = expected_subject(row)
         except ValueError as exc:
@@ -235,7 +254,7 @@ def append_absence(
         and extracting.capture_alias not in state.glob_lists
         and (listed.get("complete", True) if isinstance(listed, dict) else True)
         and (
-            state.completeness.at_sink(_referenced_reads(node.expect))
+            state.completeness.at_sink(_referenced_reads(expect_template))
             and state.completeness.reads_complete(_referenced_reads(reference), records_kept=True)
         )
     )
@@ -573,6 +592,12 @@ def append_absence(
                                         )
                                     )
                                     continue
+                                if value_target is not None and value_target.parts:
+                                    # A pair the run would create holds no unit yet.
+                                    refuse(
+                                        "claims_absence_invalid: an inverse names a pair "
+                                        "Subject that does not exist; create it first"
+                                    )
                                 if value_target is not None:
                                     created_target = value_target
                                     inverse["of"] = (
@@ -686,6 +711,81 @@ def append_absence(
                                 "context": context,
                             },
                         )
+
+
+def _pairs_by_end(
+    node: Any,
+    by_end: ClaimsExpectByEnd,
+    ends: Sequence[object],
+    *,
+    context: Any,
+    creates: Callable[[tuple[str, str]], bool],
+    refuse: Callable[[str], NoReturn],
+) -> dict[str, tuple[Any, Any]]:
+    """The pairs absence judges for ``expect: {by, ends}``: each end's current units.
+
+    Each end resolves by the one text order (V4) under the ``by`` part's kind,
+    or by a structured row's path or key. One ``pair_units`` seek per end
+    proposes the pairs whose ``by`` end it is and that hold a live fact of a
+    template's ClaimType (``keep`` excluded): a historical shell holds no row
+    and costs nothing. A proposed pair is only a candidate; the caller judges
+    it from its own Claims. An end that names no Subject refuses, as ``expect``
+    does, unless this run creates it (a first import): it holds no pair yet.
+    An ambiguous end refuses.
+    """
+
+    from cruxible_client.contracts.subject_kinds import key_predicate
+
+    declared = context._declared(node.subject.kind)
+    part = key_predicate(declared, by_end.by)
+    end_kind = None if part is None else context._end_kinds(declared).get(part)
+    if part is None or end_kind is None:
+        refuse(
+            "claims_absence_invalid: expect.by must name a Subject-valued key part of "
+            + node.subject.kind
+        )
+    predicates = tuple(
+        sorted(
+            {mapping.claim_type.target.name for mapping in node.claims}
+            - {
+                mapping.claim_type.target.name
+                for mapping in node.claims
+                if mapping.when_absent == "keep"
+            }
+        )
+    )
+    end_keys = context._declared(end_kind).keys
+    found: dict[str, tuple[Any, Any]] = {}
+    for row in ends:
+        try:
+            if isinstance(row, str):
+                end = context.reference(end_kind, row)
+                spelled: object = {end_keys[0]: row} if len(end_keys) == 1 else None
+            elif isinstance(row, dict) and isinstance(
+                row.get("path", row.get("subject_path")), str
+            ):
+                end = context.reference(end_kind, row.get("path", row.get("subject_path")))
+                spelled = None
+            elif isinstance(row, dict):
+                spelled = row.get("key", row)
+                end = context.subject(end_kind, spelled)
+            else:
+                refuse("claims_absence_invalid: expect.ends names a Subject by text or row")
+        except ValueError as exc:
+            refuse(f"claims_absence_invalid: {exc}")
+        if end is None:
+            target = None
+            if isinstance(spelled, dict):
+                try:
+                    target = context.named(end_kind, spelled).target
+                except ValueError:
+                    target = None
+            if target is not None and creates(target.slot):
+                continue  # created by this run: no pair of it exists yet
+            refuse("claims_absence_invalid: expect.ends names an unresolved Subject")
+        for pair in context.pair_candidates(end, part, predicates):
+            found.setdefault(pair, (SemanticAddress.whole_artifact(pair), row))
+    return found
 
 
 def _list_members(

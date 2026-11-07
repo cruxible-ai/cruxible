@@ -7,7 +7,7 @@ from typing import Any, cast
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claim_types import ClaimType
-from cruxible_client.contracts.procedures.claims import ClaimsNode
+from cruxible_client.contracts.procedures.claims import ClaimsExpectByEnd, ClaimsNode
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     ExtractNode,
@@ -73,6 +73,12 @@ class ClaimsTypingRefused(ValueError):
             self.code = code
         self.node_id = node_id
         self.element = element
+
+
+_END_FORM = (
+    "a pair's end {part!r} is named by a nested Subject template "
+    "{{kind: {kinds}, key: {{...}}, create: never | if_absent}}"
+)
 
 
 def absence_enumeration(node: ClaimsNode, aliases: Mapping[str | None, object]) -> ExtractNode:
@@ -365,9 +371,12 @@ def validate_claims_templates(
         for name, part in key.items():
             predicate = key_predicate(kind, str(name))
             assert predicate is not None
+            part_type = source("ClaimType", predicate).value
+            if isinstance(part_type, SubjectType) and not isinstance(part, dict):
+                raise refused(_END_FORM.format(part=name, kinds=", ".join(part_type.subject_kinds)))
             check(
                 part,
-                source("ClaimType", predicate).value,
+                part_type,
                 each,
                 f"{label} key {name}",
                 f"key ClaimType {predicate}",
@@ -404,7 +413,25 @@ def _validate_claims_node(
         assert predicate is not None
         ct = source("ClaimType", predicate)
         element = f"subject.key.{name}"
+        if isinstance(ct.value, SubjectType) and not isinstance(value, dict):
+            # A pair row names each end as a nested Subject template (V1), never by text.
+            raise ClaimsTypingRefused(
+                f"{element}: "
+                + _END_FORM.format(part=name, kinds=", ".join(ct.value.subject_kinds)),
+                element=element,
+            )
         check(value, ct.value, node.for_each, element, f"key ClaimType {predicate}", element)
+    if isinstance(node.expect, ClaimsExpectByEnd):
+        by = key_predicate(kind, node.expect.by)
+        by_type = None if by is None else source("ClaimType", by).value
+        if not isinstance(by_type, SubjectType):
+            raise ClaimsTypingRefused(
+                f"claims_expect_by_invalid: expect.by {node.expect.by!r} must name a "
+                f"Subject-valued key part (an end) of {node.subject.kind}; its key parts are "
+                + ", ".join(kind.keys),
+                code="cruxible.procedure.claims_expect_by_invalid",
+                element="expect.by",
+            )
     for position, mapping in enumerate(node.claims):
         at = f"claims[{position}]"
         ct = source("ClaimType", mapping.claim_type.target.name)

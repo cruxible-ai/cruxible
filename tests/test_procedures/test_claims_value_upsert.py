@@ -593,6 +593,14 @@ class _Context:
             raise self.answer
         return self.answer
 
+    def named(self, kind: str, key: Any) -> Any:
+        from cruxible_core.procedures.claims_units import NamedSubject, ValueTarget
+
+        address = self.subject(kind, key)
+        if address is not None:
+            return NamedSubject(address, None)
+        return NamedSubject(None, ValueTarget(kind=kind, key=self.canonical(kind, key)))
+
     def canonical(self, kind: str, key: Any) -> Any:
         self.canonicals += 1
         if any(not isinstance(value, str) for value in key.values()):
