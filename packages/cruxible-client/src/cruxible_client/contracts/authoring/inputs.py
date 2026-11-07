@@ -278,19 +278,22 @@ class SubjectInput(_StrictInputModel):
     """Create one Subject: name its kind and its key; core assigns the id.
 
     ``key`` maps each key ClaimType of the kind's SubjectKind (by predicate, or by
-    its last name under the kind) to its value; omit it for a minted kind. The
-    id is the readable rendering of the canonical key (or a minted id), reported
-    in the result; the key parts become Claims citing ``rationale`` as your own
-    words.
+    its last name under the kind) to its value; omit it for a minted kind. A
+    pair kind's end (a Subject-valued key part) is a Subject object: an existing
+    Subject, or ``{subject_kind, key}`` naming one by key -- the live holder, or
+    the one a subject member of the same change set creates. The id is the
+    readable rendering of the canonical key (or a minted id), reported in the
+    result; the key parts become Claims citing ``rationale`` as your own words.
     """
 
     kind: Literal["subject"]
     subject_kind: str = Field(description="The kind to create, e.g. 'dev.decision'.")
-    key: dict[str, str | int | bool] | str | int | bool = Field(
+    key: dict[str, str | int | bool | SubjectObjectInput] | str | int | bool = Field(
         default_factory=dict,
         description=(
             "Key ClaimType (predicate or short name) -> value, or just the value when the "
-            "kind has one key; omit for a minted kind."
+            "kind has one key; omit for a minted kind. A pair's end is "
+            '{"kind": "subject", "subject": ...}.'
         ),
     )
     rationale: str | None = Field(
@@ -885,7 +888,15 @@ def _subject_creation_payload(value: SubjectInput) -> SubjectCreationAuthoringPa
             key=tuple(
                 SubjectKeyPart(
                     predicate=name if "." in name else f"{value.subject_kind}.{name}",
-                    value=item,
+                    value=(
+                        SubjectClaimObject(
+                            address=_subject_address(
+                                item.subject, field_path=f"input.key.{name}.subject"
+                            )
+                        )
+                        if isinstance(item, SubjectObjectInput)
+                        else item
+                    ),
                 )
                 for name, item in value.key.items()
             ),

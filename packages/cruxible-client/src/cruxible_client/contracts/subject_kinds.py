@@ -58,6 +58,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
+from cruxible_client.contracts.claims import SubjectClaimObject
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -758,11 +759,23 @@ def minted_subject_id(*, operation: str, member: str) -> str:
 # -- key values and references -------------------------------------------------------
 
 
+_KEY_PART_SCHEMES: Final = frozenset({"artifact-v1", "subject-creation-v1", "subject-key-v1"})
+
+
 class SubjectKeyPart(_StrictSubjectKindModel):
-    """One key part: the key ClaimType and its value."""
+    """One key part: the key ClaimType and its value.
+
+    A literal part's value is a string, an integer or a boolean. A
+    Subject-valued part (a pair kind's end) names the end as a Subject Claim
+    object, by one of the existing address forms: the Subject itself
+    (``artifact-v1``), the Subject a creation member of the same change lands on
+    (``subject-creation-v1``), or the Subject its kind's key names
+    (``subject-key-v1``). Lowering lands it on the end's path, which is the
+    part's canonical value.
+    """
 
     predicate: str
-    value: SubjectKeyValue
+    value: SubjectKeyValue | SubjectClaimObject
 
     @field_validator("predicate")
     @classmethod
@@ -773,7 +786,22 @@ class SubjectKeyPart(_StrictSubjectKindModel):
 
     @field_validator("value")
     @classmethod
-    def _value(cls, value: SubjectKeyValue) -> SubjectKeyValue:
+    def _value(
+        cls, value: SubjectKeyValue | SubjectClaimObject
+    ) -> SubjectKeyValue | SubjectClaimObject:
+        if isinstance(value, SubjectClaimObject):
+            address = value.address
+            if address.selector.scheme not in _KEY_PART_SCHEMES or (
+                address.selector.scheme == "artifact-v1"
+                and not (
+                    address.artifact_path.startswith("subjects/") and not address.selector.value
+                )
+            ):
+                raise ValueError(
+                    "a Subject-valued key part names a whole Subject, the Subject a creation "
+                    "member of the same change lands on, or the Subject a key names"
+                )
+            return value
         problem = key_value_problem(value)
         if problem is not None:
             raise ValueError(problem)
