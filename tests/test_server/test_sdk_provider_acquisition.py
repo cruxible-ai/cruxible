@@ -124,10 +124,34 @@ def web_provider(
     return name_provider(as_build(build))
 
 
+def _pinned_nested(contract: Contract) -> dict[str, object]:
+    return {
+        "kind": "contract",
+        "contract": {
+            "name": contract.name,
+            "version": contract.version,
+            "digest": contract_digest(contract).tagged,
+        },
+    }
+
+
 # F02: every operation output is checked against its own pinned Contract, so
 # this file's fetch operation declares a Contract mirroring
 # ProviderResultToExternalCapture's own fields exactly (closed), the same way
 # a real external-read provider's operation would.
+_FETCH_HEADERS = Contract.model_validate(
+    {
+        "name": "test.sdk-fetch-headers",
+        "version": 1,
+        "fields": {
+            # cruxible-provider-web's KEPT_HEADERS (coordinate.py): the freshness
+            # headers it keeps from a response, each absent rather than null.
+            "etag": {"type": "string", "optional": True},
+            "last_modified": {"type": "string", "optional": True},
+            "content_length": {"type": "string", "optional": True},
+        },
+    }
+)
 _FETCH_COORDINATE = Contract.model_validate(
     {
         "name": "test.sdk-fetch-coordinate",
@@ -141,6 +165,9 @@ _FETCH_COORDINATE = Contract.model_validate(
             "content_type": {"type": "string"},
             "request_digest": {"type": "string", "optional": True},
             "source": {"type": "string", "optional": True},
+            # Present only when the origin sent a kept freshness header
+            # (coordinate.py's ``http_coordinate``: an absent key, never null).
+            "headers": {"type": _pinned_nested(_FETCH_HEADERS), "optional": True},
         },
     }
 )
@@ -159,17 +186,6 @@ _FETCH_EFFECTIVE = Contract.model_validate(
         },
     }
 )
-
-
-def _pinned_nested(contract: Contract) -> dict[str, object]:
-    return {
-        "kind": "contract",
-        "contract": {
-            "name": contract.name,
-            "version": contract.version,
-            "digest": contract_digest(contract).tagged,
-        },
-    }
 
 
 _FETCH_INPUT = Contract.model_validate(
@@ -201,6 +217,7 @@ _FETCH_OUTPUT = Contract.model_validate(
 )
 _FETCH_CONTRACTS = (
     _FETCH_INPUT,
+    _FETCH_HEADERS,
     _FETCH_COORDINATE,
     _FETCH_SELECTOR,
     _FETCH_EFFECTIVE,
