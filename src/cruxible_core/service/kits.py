@@ -47,6 +47,7 @@ from cruxible_client.contracts.kits import (
     KitChangeResult,
     KitConsequence,
     KitDocumentBody,
+    KitFileBytes,
     KitIdReusedRefusal,
     KitInstalledArtifact,
     KitKeptDivergence,
@@ -65,6 +66,7 @@ from cruxible_client.contracts.kits import (
     kit_artifact_path_allowed,
     kit_content_digest,
     kit_document_body_digests,
+    kit_file_entry,
     kit_lineage_keys,
     kit_receipt_document_id,
     kit_version_key,
@@ -411,15 +413,32 @@ def _staged(instance: PlaybillInstance, digest: str, name: str) -> bytes:
 
 
 def service_build_kit(
-    instance: PlaybillInstance, request: KitBuildRequest, *, principal_id: str | None = None
+    instance: PlaybillInstance,
+    request: KitBuildRequest,
+    *,
+    principal_id: str | None = None,
+    template_actor_id: str | None = None,
 ) -> KitBuildResult:
     """Export owned definitions at the accepted head as one release of ``kit_id``.
 
     The manifest records where it was built (this instance, the accepted
     coordinate, the building principal): claimed, not proven. Each provider
     package named in ``request.providers`` is read from the body store, recorded
-    in the manifest and carried as bytes in the returned bundle.
+    in the manifest and carried as bytes in the returned bundle. The
+    ``automation_template`` is checked first, as ``template_actor_id``'s
+    authoring preview against the accepted head (nothing is stored), and refuses
+    the build ``cruxible.kit.automation_template_invalid`` unless it authors cleanly.
     """
+
+    template = request.automation_template
+    if template is not None:
+        from cruxible_core.service.kit_template import check_automation_template
+
+        if template_actor_id is None:
+            raise DataValidationError(
+                "checking an automation template needs an authoring principal"
+            )
+        check_automation_template(instance, template, actor_id=template_actor_id)
 
     coordinate = instance.accepted_coordinate()
     tree = instance.immutable_tree_at(coordinate.git_oid)
@@ -461,7 +480,15 @@ def service_build_kit(
         files[inspected.provider.wheel.filename] = wheel
         files[inspected.provider.lock.filename] = lock
         files.update(dependencies)
-    bundle = build_kit(tree, request, provenance=provenance, providers=tuple(packages))
+    bundle = build_kit(
+        tree,
+        request,
+        provenance=provenance,
+        providers=tuple(packages),
+        automation_template=None
+        if template is None
+        else (template.path, template.content.encode("utf-8")),
+    )
     bodies = sorted(set(bundle.document_body_digests().values()))
     if bodies:
         bundle = bundle.model_copy(
@@ -578,13 +605,15 @@ def build_kit(
     *,
     provenance: KitProvenance | None = None,
     providers: tuple[InspectedProviderPackage, ...] = (),
+    automation_template: tuple[str, bytes] | None = None,
 ) -> KitBundle:
     """Export the owned definitions of one accepted tree as a self-contained release.
 
     Mutable definitions become lineage-free snapshots; their pins move to the
     snapshot digests. Immutable Contract versions retain exact bytes and carry
     their nested closure and predecessor chain. A Provider pin names a bundled
-    package instead.
+    package instead. An ``automation_template`` (its kit path and bytes, already
+    checked) is named in the manifest and carried as the release's kit file.
     """
 
     bundled: dict[str, InspectedProviderPackage] = {}
@@ -648,10 +677,17 @@ def build_kit(
         ),
         providers=tuple(bundled[name].provider for name in sorted(bundled)),
         provenance=provenance,
+        files=()
+        if automation_template is None
+        else (kit_file_entry(automation_template[0], automation_template[1]),),
+        automation_template=None if automation_template is None else automation_template[0],
     )
     return KitBundle(
         manifest=manifest,
         artifacts=tuple(KitArtifactBytes.of(path, built[path]) for path in sorted(built)),
+        files=()
+        if automation_template is None
+        else (KitFileBytes.of(automation_template[0], automation_template[1]),),
     )
 
 
@@ -1893,6 +1929,10 @@ def service_add_kit(
             install_provider=install_provider,
         )
         previewing = mode.previewing
+    template = request.bundle.manifest.automation_template
+    if template is not None:
+        # Named, never installed: the adopter tailors and submits it (D-R48).
+        result = result.model_copy(update={"automation_template": template})
     if previewing or kit_resume.resuming():
         return result
     if result.status == "awaiting_providers":

@@ -426,6 +426,32 @@ def kit_version_key(version: str) -> tuple[int, int, int]:
     return int(major), int(minor), int(patch)
 
 
+#: The largest automation template a build checks (a change set of Lines,
+#: Triggers, Mandates and Runbooks; the security kit's is ~10 KiB).
+KIT_AUTOMATION_TEMPLATE_MAX_BYTES = 1024 * 1024
+
+
+class KitAutomationTemplate(_Strict):
+    """The kit's automation template, as ``kit build`` checks and carries it (D-R48).
+
+    One authoring change set of Lines, Triggers, Mandates and Runbooks, at
+    ``path`` inside the kit. It is an inert file: never installed, never
+    submitted by ``kit add`` or an upgrade. The adopter tailors it (Line names,
+    sources, cron times, Mandate expiries) and submits it as their own change.
+    """
+
+    path: str
+    #: The template's bytes as UTF-8 text: one ``change_set`` authoring input in JSON.
+    content: str = Field(max_length=KIT_AUTOMATION_TEMPLATE_MAX_BYTES)
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        if not kit_file_path_allowed(value):
+            raise ValueError(f"{value!r} is not a kit file path")
+        return value
+
+
 class KitManifest(_Strict):
     tag: Literal["playbill-kit-manifest-v1"] = "playbill-kit-manifest-v1"
     kit_id: str
@@ -440,6 +466,10 @@ class KitManifest(_Strict):
     #: Inert files for the kit's reader, sorted by path: not part of
     #: ``content_digest``, never sent to ``kit add``.
     files: tuple[KitFile, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: The path of the kit's automation template (D-R48), one of ``files``: a
+    #: change set the adopter tailors and submits. Never installed or submitted by
+    #: ``kit add``; like ``files``, not part of ``content_digest``.
+    automation_template: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("kit_id")
     @classmethod
@@ -450,6 +480,13 @@ class KitManifest(_Strict):
     @classmethod
     def _version(cls, value: str) -> str:
         return _version(value)
+
+    @model_validator(mode="after")
+    def _template_is_a_file(self) -> KitManifest:
+        template = self.automation_template
+        if template is not None and template not in {item.path for item in self.files}:
+            raise ValueError(f"the automation template {template} is not one of the kit's files")
+        return self
 
     @field_validator("owns")
     @classmethod
@@ -482,12 +519,15 @@ class KitManifest(_Strict):
     @property
     def content_digest(self) -> str:
         """The release identity: every manifest field, including each artifact digest,
-        apart from where it was built and its inert files."""
+        apart from where it was built and its inert files (the automation template
+        among them)."""
 
         return Sha256Value(
             canonical_digest(
                 "playbill-kit-content-v1",
-                self.model_dump(mode="json", exclude={"tag", "provenance", "files"}),
+                self.model_dump(
+                    mode="json", exclude={"tag", "provenance", "files", "automation_template"}
+                ),
             )
         ).tagged
 
@@ -860,6 +900,12 @@ class KitBuildRequest(_Strict):
     version: str
     owns: tuple[str, ...]
     providers: tuple[KitBuildProvider, ...] = ()
+    #: The kit's automation template: the build checks it authors cleanly
+    #: against this instance's accepted definitions (a preview: nothing is
+    #: installed or stored), names it in the manifest and carries it as a kit file.
+    automation_template: KitAutomationTemplate | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("kit_id")
     @classmethod
@@ -1078,6 +1124,9 @@ class KitChangeResult(_Strict):
     detail: str | None = None
     #: The accepted coordinate this change was evaluated at.
     coordinate: GetCoordinate | None = None
+    #: The release's automation template (its path in the kit), never installed:
+    #: tailor it and submit it as your own change (D-R48).
+    automation_template: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 #: Whether the adapter looked for a newer release of a registry-sourced kit:

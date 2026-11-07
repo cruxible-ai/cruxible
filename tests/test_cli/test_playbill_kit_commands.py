@@ -551,3 +551,65 @@ def test_kit_pull_from_a_bad_path_refuses_with_the_kit_forms(tmp_path: Path) -> 
     assert empty.exit_code != 0
     assert "holds no cruxible-kit.json" in empty.stderr
     assert not (tmp_path / "out").exists()
+
+
+def test_kit_build_sends_the_automation_template_and_names_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from cruxible_client.contracts.kits import KitFileBytes, kit_file_entry
+
+    template = tmp_path / "automation.json"
+    content = '{"kind": "change_set", "members": []}\n'
+    template.write_text(content)
+    plain = _bundle()
+    built = KitBundle(
+        manifest=plain.manifest.model_copy(
+            update={
+                "files": (kit_file_entry("automation.json", content.encode()),),
+                "automation_template": "automation.json",
+            }
+        ),
+        artifacts=plain.artifacts,
+        files=(KitFileBytes.of("automation.json", content.encode()),),
+    )
+
+    class StubClient(_StagingClient):
+        def build_kit(self, instance_id: str, request: KitBuildRequest) -> KitBuildResult:
+            self.sent.append(request)
+            return KitBuildResult(bundle=built)
+
+    client = StubClient()
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+    out = tmp_path / "kit"
+    result = CliRunner().invoke(
+        cli,
+        [
+            *BASE,
+            "build",
+            "--id",
+            "acme",
+            "--version",
+            "1.0.0",
+            "--owns",
+            "acme.",
+            "--out",
+            str(out),
+            "--automation-template",
+            str(template),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    (request,) = client.sent
+    assert request.automation_template is not None
+    assert (request.automation_template.path, request.automation_template.content) == (
+        "automation.json",
+        content,
+    )
+    assert "automation template: automation.json (never installed" in result.output
+    assert (out / "automation.json").read_text() == content
+
+    pulled = CliRunner().invoke(cli, [*BASE, "pull", str(out), "--out", str(tmp_path / "pull")])
+    assert pulled.exit_code == 0, pulled.output
+    assert "automation template: automation.json" in pulled.output
+    assert (tmp_path / "pull" / "automation.json").read_text() == content

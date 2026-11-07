@@ -28,6 +28,7 @@ ARTIFACT_FILES: dict[tuple[tuple[str, ...], str], str] = {
     (("server", "start"), "bootstrap_secret_file"): "secret material",
     (("get",), "output_path"): "output written by the command",
     (("kit", "build"), "out"): "output kit directory",
+    (("kit", "build"), "automation_template"): "the kit's automation template file",
     (("kit", "pull"), "out"): "output kit directory",
     (("files", "compile"), "output"): "output bundle written by the command",
     (("files", "propose"), "bundle_path"): "signed source bundle",

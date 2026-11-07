@@ -1693,3 +1693,163 @@ def test_a_release_with_inert_files_installs_as_the_same_release(
 # the named-reference form it tested (Procedure.acquisition_policy = <name>,
 # no pin) is gone along with SourceAcquisitionPolicy -- acquisition is now
 # inline LineAcquisitionRule data on the Procedure/Line itself (ruling C12).
+
+
+# -- the kit's automation template (D-R48) ---------------------------------------------
+
+
+def _template(*members: dict[str, object]) -> str:
+    return json.dumps({"kind": "change_set", "members": list(members)}, indent=1) + "\n"
+
+
+_START = {"kind": "runbook", "name": "acme.start", "steps": [{"action": "evidence.sweep"}]}
+_START_DAILY = {
+    "kind": "trigger",
+    "name": "acme.start-daily",
+    "runbook_name": "acme.start",
+    "schedule": {"kind": "cron", "expression": "0 6 * * *"},
+}
+
+
+def _build_with_template(world: _World, content: str, path: str = "automation.json") -> KitBundle:
+    from cruxible_client.contracts.kits import KitAutomationTemplate
+
+    return playbill_api.playbill_kit_build(
+        world.instance_id,
+        KitBuildRequest(
+            kit_id="acme",
+            version="1.0.0",
+            owns=("acme.",),
+            automation_template=KitAutomationTemplate(path=path, content=content),
+        ),
+    ).bundle
+
+
+def test_a_checked_automation_template_is_named_and_carried_never_installed(
+    worlds: tuple[_World, _World], tmp_path: Path
+) -> None:
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    plain = publisher.build("1.0.0")
+    head = get_playbill_manager().get(publisher.instance_id).accepted_coordinate()
+    content = _template(_START, _START_DAILY)
+
+    bundle = _build_with_template(publisher, content)
+
+    # The check is a preview: nothing landed or waits on the publisher.
+    instance = get_playbill_manager().get(publisher.instance_id)
+    assert instance.accepted_coordinate() == head
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+
+    pending = AuthoringIntentCoordinator.for_instance(instance).list_pending(
+        actor=AuthenticatedActor(actor_id="operator")
+    )
+    assert pending.intents == ()
+    manifest = bundle.manifest
+    assert manifest.automation_template == "automation.json"
+    assert [(item.path, item.role) for item in manifest.files] == [("automation.json", "reference")]
+    assert bundle.file_contents() == {"automation.json": content.encode()}
+    # An inert file: the release identity is the template-free build's.
+    assert manifest.content_digest == plain.manifest.content_digest
+    assert bundle.contents() == plain.contents()
+
+    directory = tmp_path / "acme-1.0.0"
+    write_kit_directory(bundle, directory)
+    assert (directory / "automation.json").read_text() == content
+    read_back = read_kit_directory(directory)
+    assert read_back.manifest.automation_template == "automation.json"
+
+    preview = _kit_preview(consumer, KitAddRequest(bundle=read_back, source="test"))
+    assert preview.automation_template == "automation.json"
+    installed = consumer.add(read_back)
+    assert installed.automation_template == "automation.json"
+    paths = set(consumer.tree())
+    assert "runbooks/acme.start.json" not in paths
+    assert not any(
+        path.startswith(("triggers/", "lines/", "runbooks/")) and "acme." in path for path in paths
+    )
+    assert not any("acme.start" in item.path for item in installed.plan)
+
+
+@pytest.mark.parametrize(
+    ("members", "first"),
+    [
+        # Drift: the start Runbook names a Line the kit's instance does not hold.
+        (
+            ({"kind": "runbook", "name": "acme.start", "steps": [{"line": "acme.gone"}]},),
+            "cruxible.authoring.runbook_line_missing",
+        ),
+        # A shape the current core no longer accepts.
+        (
+            (
+                {
+                    "kind": "procedure_mandate",
+                    "name": "acme.old",
+                    "procedure_name": "acme.triage",
+                    "grants": "propose",
+                    "namespace": ["claims"],
+                    "valid_from": "NOW",
+                    "expires_at": "EXPIRES",
+                },
+            ),
+            "cruxible.authoring.input_invalid",
+        ),
+    ],
+)
+def test_a_template_that_does_not_author_refuses_the_build_naming_it(
+    worlds: tuple[_World, _World], members: tuple[dict[str, object], ...], first: str
+) -> None:
+    from cruxible_core.errors import RequestRefusedError
+
+    publisher, _consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    head = get_playbill_manager().get(publisher.instance_id).accepted_coordinate()
+
+    with pytest.raises(RequestRefusedError) as refused:
+        _build_with_template(publisher, _template(*members), path="automation/start.json")
+
+    assert refused.value.error_code == "cruxible.kit.automation_template_invalid"
+    assert "automation/start.json" in str(refused.value)
+    assert first in str(refused.value)
+    assert get_playbill_manager().get(publisher.instance_id).accepted_coordinate() == head
+
+
+def test_a_template_that_is_not_one_change_set_refuses_the_build(
+    worlds: tuple[_World, _World],
+) -> None:
+    from cruxible_core.errors import RequestRefusedError
+
+    publisher, _consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    for content, said in (
+        ("{not json", "not JSON"),
+        (json.dumps(_START), "one change_set"),
+    ):
+        with pytest.raises(RequestRefusedError, match=said) as refused:
+            _build_with_template(publisher, content)
+        assert refused.value.error_code == "cruxible.kit.automation_template_invalid"
+
+
+def test_a_manifest_names_only_a_template_it_lists_as_a_file() -> None:
+    from cruxible_client.contracts.kits import KitManifest, kit_file_entry
+
+    with pytest.raises(ValueError, match="not one of the kit's files"):
+        KitManifest(
+            kit_id="acme",
+            version="1.0.0",
+            owns=("acme.",),
+            artifacts=(),
+            automation_template="automation.json",
+        )
+    listed = KitManifest(
+        kit_id="acme",
+        version="1.0.0",
+        owns=("acme.",),
+        artifacts=(),
+        files=(kit_file_entry("automation.json", b"{}"),),
+        automation_template="automation.json",
+    )
+    bare = KitManifest(kit_id="acme", version="1.0.0", owns=("acme.",), artifacts=())
+    assert listed.content_digest == bare.content_digest
+    assert "automation_template" not in bare.model_dump(mode="json")

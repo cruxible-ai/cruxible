@@ -904,12 +904,18 @@ def playbill_provider_move(instance_id: str, request: ProviderMoveRequest) -> Pr
 def playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildResult:
     check_permission("cruxible_kit_build", instance_id=instance_id)
     actor = _actor_context()
+    template_actor_id: str | None = None
+    if request.automation_template is not None:
+        # Checking the template is its authoring preview: the preview's own gate.
+        check_permission("cruxible_authoring_compile", instance_id=instance_id)
+        template_actor_id = _actor_id(instance_id)
     return _proposal_validation_boundary(
         "kit build",
         lambda: service_build_kit(
             get_playbill_manager().get(instance_id),
             request,
             principal_id=None if actor is None else actor.actor_id,
+            template_actor_id=template_actor_id,
         ),
     )
 
