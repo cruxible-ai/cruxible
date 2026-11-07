@@ -368,6 +368,54 @@ def test_a_proposed_pair_holding_only_anothers_claim_is_never_retired(
     assert memberships(instance) == {"web": {A: "required", B: "required"}}
 
 
+def _scopes(instance: Any) -> set[tuple[str, str, str | None]]:
+    """(inventory, purl, qualifier) of each live ``scope`` fact."""
+
+    claims = live_claims(instance)
+    keys = keys_by_path(claims)
+    found = set()
+    for c in claims:
+        if c.statement.predicate == SCOPE:
+            component, inventory = keys[c.statement.subject.artifact_path]
+            found.add((inventory, component, c.statement.qualifier))
+    return found
+
+
+@pytest.mark.parametrize("by", ["inventory", "component"])
+def test_a_keep_template_never_hides_its_claimtypes_mirror_template(
+    tmp_path: Path, by: str
+) -> None:
+    """Review F1: one ClaimType under two qualifiers, one kept, one mirrored.
+
+    By-end discovery proposes the pairs holding a ClaimType any non-keep
+    template judges; a keep template of the same ClaimType never removes it.
+    A complete empty enumeration retires only the mirror-qualified holder.
+    """
+
+    claims = [
+        {
+            "type": SCOPE,
+            "value": "$item.fields.scope",
+            "qualifier": qualifier,
+            "when_absent": policy,
+            "rationale": "The source lists the component in the inventory.",
+        }
+        for qualifier, policy in (("kept", "keep"), ("mirrored", "mirror"))
+    ]
+    instance, root = _sbom(tmp_path, by=by, claims=claims)
+    header = {"inventory": "web"} if by == "inventory" else {"component": A}
+    write_doc(root, "sbom", rows("web", [A]), **header)
+    activate(instance, run(instance, root, line=LINE))
+    assert _scopes(instance) == {("web", A, "kept"), ("web", A, "mirrored")}
+
+    write_doc(root, "sbom", [], **header)
+    state = run(instance, root, line=LINE, minute=1)
+    assert state.status == "succeeded", json.dumps(state.terminal.model_dump(mode="json"))
+    assert _changes(state) == ["retirement"]
+    activate(instance, state)
+    assert _scopes(instance) == {("web", A, "kept")}
+
+
 def test_absence_by_component_judges_that_components_occurrences_only(tmp_path: Path) -> None:
     """The other orientation: one component's occurrences across inventories."""
 

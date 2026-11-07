@@ -727,8 +727,8 @@ def _pairs_by_end(
     Each end resolves by the one text order (V4) under the ``by`` part's kind,
     or by a structured row's path or key. One ``pair_units`` seek per end
     proposes the pairs whose ``by`` end it is and that hold a live fact of a
-    template's ClaimType (``keep`` excluded): a historical shell holds no row
-    and costs nothing. A proposed pair is only a candidate; the caller judges
+    ClaimType some non-``keep`` template judges: a historical shell holds no
+    row and costs nothing. A proposed pair is only a candidate; the caller judges
     it from its own Claims. An end that names no Subject refuses, as ``expect``
     does, unless this run creates it (a first import): it holds no pair yet.
     An ambiguous end refuses.
@@ -744,13 +744,14 @@ def _pairs_by_end(
             "claims_absence_invalid: expect.by must name a Subject-valued key part of "
             + node.subject.kind
         )
+    # The ClaimTypes of the templates that judge absence. A ClaimType a keep
+    # template also uses (another qualifier, say) is still judged by the others.
     predicates = tuple(
         sorted(
-            {mapping.claim_type.target.name for mapping in node.claims}
-            - {
+            {
                 mapping.claim_type.target.name
                 for mapping in node.claims
-                if mapping.when_absent == "keep"
+                if mapping.when_absent != "keep"
             }
         )
     )
