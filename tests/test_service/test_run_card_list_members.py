@@ -121,9 +121,8 @@ def test_an_empty_list_the_provider_says_is_incomplete_is_flagged_with_no_member
     from cruxible_core.service.discovery.runs import _with_members
 
     nodes = [GetRunNode(node="doc", kind="provider", sequence=1)]
-    completeness = RunCompleteness(
-        complete=False, reasons=(CompletenessReason(node="doc", kind="incomplete_input", inputs=("doc.pages",)),)
-    )
+    reason = CompletenessReason(node="doc", kind="incomplete_input", inputs=("doc.pages",))
+    completeness = RunCompleteness(complete=False, reasons=(reason,))
     (doc,) = _with_members(nodes, {}, False, completeness)
     assert doc.members == ()
     assert doc.members_truncated is False
@@ -131,10 +130,11 @@ def test_an_empty_list_the_provider_says_is_incomplete_is_flagged_with_no_member
 
 
 def test_a_node_whose_members_all_fall_beyond_the_window_is_marked_truncated() -> None:
-    """F2: when the run's member page is truncated, a node with none of its
+    """F2: when the member page is truncated, a node absent from it is marked too.
 
-    own members on the page (they all fell beyond the 64-record window) is
-    still marked ``members_truncated``, not silently reported as complete.
+    Its own members all fell beyond the 64-record window, so none of them
+    reached the page; it still gets ``members_truncated``, not a silent
+    report of completeness.
     """
 
     from cruxible_client.contracts.operational_reads import GetRunNode
