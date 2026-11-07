@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -215,3 +216,71 @@ def test_hidden_candidates_never_take_page_slots(
         ([(EXPOSURE, (), 10)], True),
         ([(EXPOSURE, (), 6), (OCCURRENCE, (), 1)], False),
     ]
+
+
+# -- one walk, one visibility instant -----------------------------------------------
+
+DAY = timedelta(days=1)
+
+
+@pytest.fixture(scope="module")
+def windows(tmp_path_factory: pytest.TempPathFactory) -> ReachWorld:
+    """``a`` is effective until day 1, ``b`` always, ``c`` from day 2 (day 0 is WHEN)."""
+
+    built = ReachWorld(tmp_path_factory.mktemp("pair-windows"))
+    end = built.subject(COMPONENT, "c")
+    for name, period in (
+        ("a", {"effective_until": WHEN + DAY}),
+        ("b", {}),
+        ("c", {"effective_from": WHEN + 2 * DAY}),
+    ):
+        pair = built.subject(EXPOSURE, end, built.subject(VULN, name))
+        built.claim(JUSTIFICATION, REASON, pair, **period)
+    built.accept()
+    return built
+
+
+def _page(built: ReachWorld, **fields: Any) -> GetResult:
+    return service_playbill_get(
+        built.instance, request=GetRequest(ref=END, detail="pairs", **fields), access=_ACCESS
+    )
+
+
+def test_a_pairs_walk_reads_one_instant_whatever_the_clock_does(
+    windows: ReachWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Day 0 sees a and b, day 3 sees b and c; no instant sees all three."""
+
+    from cruxible_core.service.discovery import get as get_module
+
+    monkeypatch.setattr(get_module, "utc_now", lambda: WHEN)
+    first = _page(windows, limit=1)
+    assert first.evaluation_time == WHEN and first.next_cursor is not None
+    # The default clock moves past a's window and into c's between pages.
+    monkeypatch.setattr(get_module, "utc_now", lambda: WHEN + 3 * DAY)
+    pages = [first]
+    while pages[-1].next_cursor is not None:
+        pages.append(_page(windows, limit=1, cursor=pages[-1].next_cursor))
+    assert all(page.evaluation_time == WHEN for page in pages)
+    listed = [pair for page in pages for group in page.pairs.groups for pair in group.pairs]  # type: ignore[union-attr]
+    hidden = sum(group.hidden for page in pages for group in page.pairs.groups)  # type: ignore[union-attr]
+    assert listed == [_exposure("a"), _exposure("b")]
+    assert hidden == 1
+    assert listed == reference_pairs(windows.instance, END, at=WHEN).listed[(EXPOSURE, "component")]
+    # A fresh walk at day 3 is its own snapshot.
+    later = _page(windows, limit=200)
+    assert [pair for group in later.pairs.groups for pair in group.pairs] == [  # type: ignore[union-attr]
+        _exposure("b"),
+        _exposure("c"),
+    ]
+
+
+def test_a_pairs_cursor_refuses_another_evaluation_time(windows: ReachWorld) -> None:
+    from cruxible_core.service.list_pages import ListCursorMismatch
+
+    first = _page(windows, limit=1, evaluation_time=WHEN)
+    # The pinned instant itself continues; another refuses.
+    same = _page(windows, limit=1, evaluation_time=WHEN, cursor=first.next_cursor)
+    assert same.pairs is not None and same.evaluation_time == WHEN
+    with pytest.raises(ListCursorMismatch, match="omit evaluation_time"):
+        _page(windows, limit=1, evaluation_time=WHEN + 3 * DAY, cursor=first.next_cursor)

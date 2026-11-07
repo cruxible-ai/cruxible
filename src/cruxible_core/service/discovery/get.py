@@ -2907,7 +2907,7 @@ def _pairs(
 
     after: tuple[str, str] | None = None
     if continuation is not None:
-        if continuation.snapshot != _KEYSET or len(continuation.last_key) != 2:
+        if continuation.snapshot != _KEYSET or len(continuation.last_key) != 3:
             raise ListCursorMismatch(
                 f"{ListCursorMismatch.error_code}: the cursor does not continue this "
                 "listing; read pairs again without a cursor"
@@ -2954,10 +2954,42 @@ def _pairs(
             coordinate=AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json"),
             selection=_history_selection(request),
             snapshot=_KEYSET,
-            last_key=page.last,
+            # The visibility instant the walk judged its first page at: every
+            # page of one walk reads one snapshot (_pairs_instant).
+            last_key=(*page.last, evaluation_time.isoformat()),
         )
     )
     return GetPairs(groups=groups), page.last is not None, next_cursor
+
+
+def _pairs_instant(request: GetRequest, continuation: ListContinuation) -> datetime:
+    """The instant a pairs continuation judges visibility at: the one its walk began at.
+
+    Visibility depends on effective periods, so a walk whose pages were judged
+    at different instants could list pairs no single instant holds. The cursor
+    carries the first page's instant; an explicit other ``evaluation_time``
+    refuses.
+    """
+
+    mismatch = ListCursorMismatch(
+        f"{ListCursorMismatch.error_code}: the cursor does not continue this "
+        "listing; read pairs again without a cursor"
+    )
+    if continuation.snapshot != _KEYSET or len(continuation.last_key) != 3:
+        raise mismatch
+    try:
+        pinned = datetime.fromisoformat(continuation.last_key[2])
+    except ValueError as exc:
+        raise mismatch from exc
+    if pinned.utcoffset() is None:
+        raise mismatch
+    if request.evaluation_time is not None and request.evaluation_time != pinned:
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor continues pairs judged at "
+            f"{pinned.isoformat()}; omit evaluation_time to continue it, or read pairs "
+            "again without a cursor"
+        )
+    return pinned
 
 
 # -- a Line's runs ----------------------------------------------------------------------
@@ -3300,7 +3332,11 @@ def service_playbill_get(
         return _get_backlinks(instance, request, access=access)
     continuation, at = _history_continuation(instance, request)
     coordinate = resolve_read_coordinate(instance, at)
-    evaluation_time = request.evaluation_time or utc_now()
+    evaluation_time = (
+        _pairs_instant(request, continuation)
+        if request.detail == "pairs" and continuation is not None
+        else request.evaluation_time or utc_now()
+    )
     resolved = resolve_get_ref(
         instance,
         coordinate,

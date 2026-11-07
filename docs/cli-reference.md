@@ -2115,7 +2115,9 @@ and facts never imply the link: authority stays on the link.
   none) are counted as `hidden` instead. A card examines ten candidates per
   group, and a page at most twice its `--limit` plus eight; a page can list
   fewer rows than `--limit` while it says more follow, and its cursor continues
-  after the last candidate it examined. A pair whose facts are all retired is a
+  after the last candidate it examined. Every page of one walk is judged at the
+  first page's instant, which the cursor carries; a different
+  `--evaluation-time` with that cursor refuses. A pair whose facts are all retired is a
   historical shell, which `--detail incoming` still reaches through its key
   Claims.
 
