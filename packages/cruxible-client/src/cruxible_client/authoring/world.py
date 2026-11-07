@@ -80,9 +80,10 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.sdk import ClaimView, Cruxible
     from cruxible_client.contracts.compact_query import QueryClaimValue
     from cruxible_client.contracts.orient import OrientSubjectKind
-    from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyValue
+    from cruxible_client.contracts.subject_kinds import SubjectKeyValue
     from cruxible_client.contracts.write import (
         Change,
+        CreateKeyPart,
         DocOp,
         Evidence,
         RetireChange,
@@ -608,7 +609,7 @@ class WorldNewSubject(WorldWritable):
 
     subject_kind: str
     _world: World = field(repr=False)
-    _key: SubjectKeyValue | tuple[SubjectKeyPart, ...] | None = None
+    _key: SubjectKeyValue | tuple[CreateKeyPart, ...] | None = None
     _create_new: bool = False
     _expect_new: bool = False
     _changes: tuple[_FieldChange, ...] = ()
@@ -1247,9 +1248,9 @@ class World:
     ) -> WorldNewSubject:
         """One draft: its key read by the kind's identity rule, the other keywords as fields."""
 
-        from cruxible_client.contracts.subject_kinds import SubjectKeyPart
+        from cruxible_client.contracts.write import CreateKeyPart
 
-        sent: SubjectKeyValue | tuple[SubjectKeyPart, ...] | None = None
+        sent: SubjectKeyValue | tuple[CreateKeyPart, ...] | None = None
         if identity.rule == "minted":
             if key or create_new:
                 raise TypeError(
@@ -1289,7 +1290,7 @@ class World:
                 values[identity.keys[0]]
                 if len(identity.keys) == 1
                 else tuple(
-                    SubjectKeyPart(predicate=predicate, value=values[predicate])
+                    CreateKeyPart(predicate=predicate, value=values[predicate])
                     for predicate in identity.keys
                 )
             )

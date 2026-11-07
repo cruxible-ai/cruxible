@@ -84,12 +84,8 @@ PartKeyTuple = tuple[tuple[str, SubjectKeyPartValue], ...]
 A Subject-valued part's value is the end Subject (``SubjectEnd``, its path).
 """
 
-KeyTuple = tuple[tuple[str, SubjectKeyValue], ...]
-"""A canonical key of literal parts, as the creation routes (authoring, write) still type it.
-
-Every reader accepts a ``PartKeyTuple``; the routes widen to it when they
-create pairs (slice S2).
-"""
+KeyTuple = PartKeyTuple
+"""A canonical key as every route types it: literal parts and, for a pair kind, ends."""
 
 
 @dataclass(frozen=True)
@@ -180,9 +176,7 @@ def canonical_key(
             predicate=predicate,
         )
         found.append((predicate, value))
-    # A pair kind's key holds ``SubjectEnd`` parts; the creation routes that
-    # consume this type it as ``KeyTuple`` until they create pairs (slice S2).
-    return tuple(found)  # type: ignore[arg-type]
+    return tuple(found)
 
 
 def key_normalizer_of(
@@ -2257,7 +2251,6 @@ def key_claim_type_shape(tree: Mapping[str, bytes], predicate: str) -> KeyClaimT
         claim_type_path,
         parse_claim_type,
     )
-    from cruxible_client.contracts.subject_kinds import KeyClaimTypeShape
 
     try:
         path = claim_type_path(predicate)
@@ -2266,7 +2259,15 @@ def key_claim_type_shape(tree: Mapping[str, bytes], predicate: str) -> KeyClaimT
     content = tree.get(path)
     if content is None:
         return None
-    claim_type = parse_claim_type(content, path=path)
+    return claim_type_key_shape(parse_claim_type(content, path=path))
+
+
+def claim_type_key_shape(claim_type: ClaimType) -> KeyClaimTypeShape:
+    """What the SubjectKind law (and the creation layers) read of one key ClaimType."""
+
+    from cruxible_client.contracts.subject_kinds import KeyClaimTypeShape
+
+    predicate = claim_type.predicate
     schema_type = value_type_name(claim_type.value)
     return KeyClaimTypeShape(
         predicate=predicate,
@@ -2587,6 +2588,7 @@ __all__ = [
     "SUBJECT_KEY_INVALID",
     "SUBJECT_KEY_MISSING",
     "KeyTuple",
+    "claim_type_key_shape",
     "PartKeyTuple",
     "PendingEnd",
     "PendingKey",

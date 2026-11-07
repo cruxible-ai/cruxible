@@ -13658,7 +13658,7 @@
           },
           "SubjectInput": {
             "additionalProperties": false,
-            "description": "Create one Subject: name its kind and its key; core assigns the id.\n\n``key`` maps each key ClaimType of the kind's SubjectKind (by predicate, or by\nits last name under the kind) to its value; omit it for a minted kind. The\nid is the readable rendering of the canonical key (or a minted id), reported\nin the result; the key parts become Claims citing ``rationale`` as your own\nwords.",
+            "description": "Create one Subject: name its kind and its key; core assigns the id.\n\n``key`` maps each key ClaimType of the kind's SubjectKind (by predicate, or by\nits last name under the kind) to its value; omit it for a minted kind. A\npair kind's end (a Subject-valued key part) is a Subject object: an existing\nSubject, or ``{subject_kind, key}`` naming one by key -- the live holder, or\nthe one a subject member of the same change set creates. The id is the\nreadable rendering of the canonical key (or a minted id), reported in the\nresult; the key parts become Claims citing ``rationale`` as your own words.",
             "properties": {
               "create_new": {
                 "default": false,
@@ -13679,6 +13679,9 @@
                         },
                         {
                           "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/SubjectObjectInput"
                         }
                       ]
                     },
@@ -13694,7 +13697,7 @@
                     "type": "boolean"
                   }
                 ],
-                "description": "Key ClaimType (predicate or short name) -> value, or just the value when the kind has one key; omit for a minted kind.",
+                "description": "Key ClaimType (predicate or short name) -> value, or just the value when the kind has one key; omit for a minted kind. A pair's end is {\"kind\": \"subject\", \"subject\": ...}.",
                 "title": "Key"
               },
               "kind": {

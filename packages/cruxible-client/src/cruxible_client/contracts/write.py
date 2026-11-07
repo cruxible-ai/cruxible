@@ -50,7 +50,7 @@ from cruxible_client.contracts.codes import CurrentCode, code_told_union
 from cruxible_client.contracts.doc_sections import SectionPath, section_digest
 from cruxible_client.contracts.get_reads import GetCoordinate, ReadSurface
 from cruxible_client.contracts.read_values import ShownValue
-from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyValue
+from cruxible_client.contracts.subject_kinds import SubjectKeyValue, key_value_problem
 
 #: The kind part of a Subject reference: a canonical Subject kind.
 SUBJECT_KIND_PATTERN = r"[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*"
@@ -366,6 +366,25 @@ SubjectTarget: TypeAlias = SubjectRef | CreatedSubject
 """A change's Subject: an accepted one as kind/id, or one this write creates."""
 
 
+class CreateKeyPart(_StrictWriteModel):
+    """One key part of a create: a literal, or (a pair's end) a Subject."""
+
+    predicate: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})+$")
+    value: SubjectKeyValue | CreatedSubject = Field(
+        description="A Subject-valued part takes kind/id or {created: label}."
+    )
+
+    @field_validator("value")
+    @classmethod
+    def _value(cls, value: SubjectKeyValue | CreatedSubject) -> SubjectKeyValue | CreatedSubject:
+        if isinstance(value, CreatedSubject):
+            return value
+        problem = key_value_problem(value)
+        if problem is not None:
+            raise ValueError(problem)
+        return value
+
+
 class CreateChange(_StrictWriteModel):
     """Create a Subject by kind and key, or land on its one live holder; core assigns ids."""
 
@@ -374,7 +393,7 @@ class CreateChange(_StrictWriteModel):
     subject_kind: str = Field(
         pattern=rf"^{SUBJECT_KIND_PATTERN}$", description="The kind, as orient names it."
     )
-    key: SubjectKeyValue | tuple[SubjectKeyPart, ...] | None = Field(
+    key: SubjectKeyValue | tuple[CreateKeyPart, ...] | None = Field(
         default=None,
         description=('One key value, or parts {"predicate", "value"}; none for a minted kind.'),
     )
@@ -919,6 +938,7 @@ __all__ = [
     "ChangeOutcome",
     "ContractEvidence",
     "CreateChange",
+    "CreateKeyPart",
     "CreatedSubject",
     "NEW_SUBJECT_LABEL_PATTERN",
     "NewSubjectLabel",

@@ -134,8 +134,11 @@ from cruxible_client.contracts.shapes import (
 )
 from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.subject_kinds import (
+    SubjectEnd,
     SubjectKeyPart,
+    SubjectKeyValue,
     SubjectKind,
+    key_predicate,
     parse_subject_kind,
     subject_kind_path,
 )
@@ -160,6 +163,7 @@ from cruxible_client.contracts.write import (
     ContractEvidence,
     CreateChange,
     CreatedSubject,
+    CreateKeyPart,
     DocEditObservation,
     DocOutcome,
     ExpectedValue,
@@ -196,6 +200,8 @@ from cruxible_core.indexes.subject_identity import (
     IdentityView,
     KeyReader,
     KeyTuple,
+    PendingEnd,
+    PendingKey,
     SubjectKeyInvalid,
     canonical_key,
     canonical_key_value,
@@ -238,6 +244,8 @@ _OWN_WORDS_CONTRACTS = frozenset(
     {DIRECT_SELF_ASSERTED_CONTRACT_ID, COORDINATOR_SELF_SOURCE_CONTRACT_ID}
 )
 _MAX_CANDIDATES = 8
+# A Claim rationale is one line of at most this many characters.
+_RATIONALE_MAX = 280
 # How many of a contract's Captures about the Subject, newest first, are tried
 # for the newest one that verifies.
 _MAX_CONTRACT_CAPTURES = 32
@@ -507,7 +515,9 @@ class _Bound:
     path: str | None
     resolved: Literal["created", "existing"]
     member: str | None = None
-    key: KeyTuple = ()
+    #: The key in key order; a pair's end this write creates is its member
+    #: (``PendingEnd``) until lowering names it.
+    key: PendingKey = ()
 
     @property
     def ref(self) -> str | None:
@@ -607,6 +617,8 @@ class _Planner:
         self._kinds: dict[str, SubjectKind | None] = {}
         self._planned_keys: dict[tuple[str, str], _Bound] = {}
         self._pending_paths: dict[str, _Bound] = {}
+        self._retired_here: dict[str, bool] | None = None
+        self._pending_members: set[str] = set()
         self._key_reader: KeyReader | None = None
         # Each re-bind a ``from_capture`` expanded into, by its position in the
         # expanded changes: the Capture whose citation it replaces.
@@ -948,8 +960,16 @@ class _Planner:
         return self._kinds[kind]
 
     def _single_key(self, kind: str) -> SubjectKind | None:
+        """The kind when it has one literal key: ``kind/<text>`` may then read as that key.
+
+        A pair kind is never named by bare key text, even with one part.
+        """
+
         declared = self.declared_kind(kind)
         if declared is None or len(declared.keys) != 1:
+            return None
+        info = self.vocabulary.predicates.get(declared.keys[0])
+        if info is not None and claim_value_kind(info.claim_type.value) == "subject":
             return None
         return declared
 
@@ -1060,8 +1080,15 @@ class _Planner:
 
     def _creation_key(
         self, declared: SubjectKind, change: CreateChange, *, index: int
-    ) -> tuple[KeyTuple, str | None]:
-        """The canonical key a keyed ``create`` names, and a one-key text read as an alias."""
+    ) -> tuple[PendingKey, str | None]:
+        """The canonical key a keyed ``create`` names, and a one-key text read as an alias.
+
+        A pair's end is named as ``kind/id`` (an id, alias or single key, the
+        rule set and add use for a Subject value) or ``{"created": label}``. An
+        end this write creates is its creation member until lowering names it
+        (``PendingEnd``): the member is unique in the write, so distinct ends
+        never share a pending key, and one end named twice is one member.
+        """
 
         kind = declared.subject_kind
         path = f"changes[{index}].key"
@@ -1078,8 +1105,17 @@ class _Planner:
                 field_path=path,
             )
         given: dict[str, object]
+        pending: dict[str, PendingEnd] = {}
         if isinstance(change.key, tuple):
-            given = {part.predicate: part.value for part in change.key}
+            given = {}
+            for ordinal, part in enumerate(change.key):
+                given[part.predicate] = self._key_part_value(
+                    declared,
+                    part,
+                    pending,
+                    index=index,
+                    path=f"{path}[{ordinal}].value",
+                )
         elif len(declared.keys) != 1:
             raise _refuse(
                 "cruxible.subject.key_invalid",
@@ -1091,7 +1127,15 @@ class _Planner:
                 field_path=path,
             )
         else:
-            given = {declared.keys[0]: change.key}
+            given = {
+                declared.keys[0]: self._key_part_value(
+                    declared,
+                    CreateKeyPart(predicate=declared.keys[0], value=change.key),
+                    pending,
+                    index=index,
+                    path=path,
+                )
+            }
 
         def claim_type_of(predicate: str) -> ClaimType | None:
             info = self.vocabulary.predicates.get(predicate)
@@ -1112,35 +1156,143 @@ class _Planner:
             if isinstance(change.key, tuple) and len(change.key) == 1
             else change.key
         )
-        single = raw if len(declared.keys) == 1 and isinstance(raw, str) else None
-        return key, single
+        single = raw if len(declared.keys) == 1 and isinstance(raw, str) and not pending else None
+        # An end this write creates holds a stand-in path while the key is
+        # canonicalized (its kind checked); the stand-in is then its member.
+        found: PendingKey = tuple(
+            (predicate, pending.get(predicate, value)) for predicate, value in key
+        )
+        return found, single
+
+    def _key_part_value(
+        self,
+        declared: SubjectKind,
+        part: CreateKeyPart,
+        pending: dict[str, PendingEnd],
+        *,
+        index: int,
+        path: str,
+    ) -> object:
+        """One create key part's raw value; a pair's end lands on its Subject."""
+
+        # An unknown part is refused by ``canonical_key``, naming the kind's keys.
+        predicate = key_predicate(declared, part.predicate) or part.predicate
+        info = self.vocabulary.predicates.get(predicate)
+        if info is None or claim_value_kind(info.claim_type.value) != "subject":
+            if isinstance(part.value, CreatedSubject):
+                raise _refuse(
+                    "cruxible.write.value_type_mismatch",
+                    f"{part.predicate} is a literal key part, so it takes a value, not a "
+                    "created Subject",
+                    change=index,
+                    field_path=path,
+                )
+            return part.value
+        allowed = tuple(subject_value_kinds(info.claim_type.value))
+        if isinstance(part.value, CreatedSubject):
+            bound = self.bound(part.value.created, index=index, path=path)
+            if bound.kind not in allowed:
+                raise _refuse(
+                    "cruxible.write.value_kind_not_admitted",
+                    f"{part.predicate} takes a Subject of kind {', '.join(allowed)}, not "
+                    f"{bound.kind!r}",
+                    change=index,
+                    candidates=allowed,
+                    repair=f"Pass a Subject of kind {' or '.join(allowed)}",
+                    field_path=path,
+                )
+            if bound.path is not None:
+                return SubjectEnd(path=bound.path)
+            assert bound.member is not None
+            pending[predicate] = PendingEnd(member=bound.member)
+            return SubjectEnd(path=f"subjects/{bound.kind}/pending.json")
+        text = subject_reference(part.value) if isinstance(part.value, str) else part.value
+        end_kind, _, end_id = text.partition("/") if isinstance(text, str) else ("", "", "")
+        if not end_kind or not end_id:
+            raise _refuse(
+                "cruxible.write.value_type_mismatch",
+                f'{part.predicate} takes a Subject as kind/id or {{"created": label}}, not '
+                f"{part.value!r}",
+                change=index,
+                repair=f"Pass a Subject of kind {' or '.join(allowed)} as kind/id",
+                field_path=path,
+            )
+        if end_kind not in allowed:
+            raise _refuse(
+                "cruxible.write.value_kind_not_admitted",
+                f"{part.predicate} takes a Subject of kind {', '.join(allowed)}, not {end_kind!r}",
+                change=index,
+                candidates=allowed,
+                repair=f"Pass a Subject of kind {' or '.join(allowed)}",
+                field_path=path,
+            )
+        resolved = self.resolve_ref(end_kind, end_id, index=index, path=path)
+        if resolved.path is not None:
+            return SubjectEnd(path=resolved.path)
+        planned = self._planned_subject(end_kind, end_id, index=index, path=path)
+        if planned is not None:
+            if planned.path is not None:
+                return SubjectEnd(path=planned.path)
+            assert planned.member is not None
+            pending[predicate] = PendingEnd(member=planned.member)
+            return SubjectEnd(path=f"subjects/{end_kind}/pending.json")
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            known = subjects_of_kind(projection.typed.connection, end_kind).values()
+        raise _refuse(
+            "cruxible.write.value_subject_not_found",
+            f"{part.predicate} names Subject {text!r}, which does not exist; a key part never "
+            "creates the end it names",
+            change=index,
+            candidates=nearest(str(text), known),
+            repair=(
+                f"Name an existing {end_kind}, or create it in this write and name it "
+                '{"created": "<label>"}'
+            ),
+            field_path=path,
+        )
 
     def _pending_creation(
         self,
         label: str,
         kind: str,
-        key: KeyTuple,
+        key: PendingKey,
         *,
         create_new: bool,
         single_text: str | None = None,
     ) -> SubjectCreationAuthoringPayload:
-        """A creation whose id core assigns at submission, distinct from every other one."""
+        """A creation whose id core assigns at submission, distinct from every other one.
+
+        A pair's end is a Subject object: the end itself, or the creation member
+        of this write that creates it (lowering names ends before their pairs).
+        """
+
+        def part_value(value: object) -> SubjectKeyValue | SubjectClaimObject:
+            if isinstance(value, SubjectEnd):
+                return SubjectClaimObject(address=SemanticAddress.whole_artifact(value.path))
+            if isinstance(value, PendingEnd):
+                end_kind, _, digest = value.member.removeprefix("SubjectCreation:").rpartition("@")
+                return SubjectClaimObject(
+                    address=SemanticAddress.subject_creation(end_kind, digest)
+                )
+            return cast(SubjectKeyValue, single_text if single_text is not None else value)
 
         parts = tuple(
-            SubjectKeyPart(
-                predicate=predicate, value=single_text if single_text is not None else value
-            )
-            for predicate, value in key
+            SubjectKeyPart(predicate=predicate, value=part_value(value)) for predicate, value in key
         )
-        taken = {payload.member_identity for payload in self.plan.pending.values()}
         rationale = self.request.because
         payload = SubjectCreationAuthoringPayload(
             subject_kind=kind, key=parts, rationale=rationale, create_new=create_new
         )
-        if payload.member_identity in taken:
+        # The members already planned, kept as they are planned: one set
+        # lookup per creation, never a re-digest of every earlier one.
+        if payload.member_identity in self._pending_members:
             # Two creations alike in every field would be one member: the label
-            # tells them apart, so each lowers to its own Subject.
-            payload = payload.model_copy(update={"rationale": f"{rationale}\n\nCreates {label}."})
+            # tells them apart, so each lowers to its own Subject (on one line,
+            # within a Claim rationale's length: it backs the key Claims).
+            suffix = f" (creates {label})"
+            room = _RATIONALE_MAX - len(suffix)
+            lead = rationale if len(rationale) <= room else rationale[: room - 1].rstrip() + "…"
+            payload = payload.model_copy(update={"rationale": lead + suffix})
         return payload
 
     def create_change(self, index: int, change: CreateChange) -> _Planned:
@@ -1202,9 +1354,25 @@ class _Planner:
                 repair="Drop create_new: the create then lands on the Subject holding the key",
                 field_path=f"{prefix}.create_new",
             )
+        final = _final_key(key)
+        if final is None:
+            # An end this write creates is new, so the pair is: it lands on a
+            # sibling create of the same ends, else lowering names it.
+            planned_pair = self._planned_keys.get((kind, key_encoding(key)))
+            if planned_pair is not None:
+                return _Bound(
+                    index=index,
+                    label=label,
+                    kind=kind,
+                    path=None,
+                    resolved="created",
+                    member=planned_pair.member,
+                    key=key,
+                )
+            return self._new_creation(index, label, kind, key, create_new=False)
         with self.identity_view() as view:
             resolution = view.resolve_creation(
-                kind, key, single_text=single, create_new=change.create_new
+                kind, final, single_text=single, create_new=change.create_new
             )
         refs = tuple(f"{kind}/{subject_kind_of(path)[1]}" for path in resolution.holders)
         if resolution.ambiguous:
@@ -1259,7 +1427,7 @@ class _Planner:
         index: int,
         label: str,
         kind: str,
-        key: KeyTuple,
+        key: PendingKey,
         *,
         create_new: bool,
         single_text: str | None = None,
@@ -1270,13 +1438,15 @@ class _Planner:
             label, kind, key, create_new=create_new, single_text=single_text
         )
         self.plan.pending[label] = payload
+        member = payload.member_identity
+        self._pending_members.add(member)
         bound = _Bound(
             index=index,
             label=label,
             kind=kind,
             path=None,
             resolved="created",
-            member=payload.member_identity,
+            member=member,
             key=key,
         )
         self.plan.labels[label] = bound
@@ -2397,6 +2567,54 @@ class _Planner:
             field_path=f"{prefix}.field",
         )
 
+    def _subjects_retired_here(self) -> dict[str, bool]:
+        """Each Subject a retire change of this write names, by path: whether ``with_claims``.
+
+        Read once per write from its changes (an exact id or the shared
+        resolver's reading); a target that does not resolve is refused by its
+        own change.
+        """
+
+        if self._retired_here is None:
+            found: dict[str, bool] = {}
+            for position, change in enumerate(self.request.changes):
+                if not isinstance(change, RetireChange) or not _names_subject(change):
+                    continue
+                kind, _, subject_id = str(change.target).partition("/")
+                if kind not in self.vocabulary.kinds:
+                    continue
+                try:
+                    resolution = self.resolve_ref(
+                        kind, subject_id, index=position, path=f"changes[{position}].target"
+                    )
+                except WriteRefusalError:
+                    continue
+                if resolution.path is not None and resolution.via != "alias":
+                    found[resolution.path] = found.get(resolution.path, False) or (
+                        change.with_claims
+                    )
+            self._retired_here = found
+        return self._retired_here
+
+    def _is_end_part(self, holder_path: str, predicate: str) -> bool:
+        """Whether ``predicate`` is a Subject-valued key part (a pair end) of the holder kind."""
+
+        kind = subject_kind_of(holder_path)[0]
+        declared = self.declared_kind(kind)
+        if declared is None:
+            # A grandfathered pair kind's ends stay fixed too: its retired
+            # SubjectKind still names them.
+            content = self.instance.blob_at(self.head.git_oid, subject_kind_path(kind))
+            declared = (
+                None
+                if content is None
+                else parse_subject_kind(content, path=subject_kind_path(kind))
+            )
+        if declared is None or declared.minted or predicate not in declared.keys:
+            return False
+        info = self.vocabulary.predicates.get(predicate)
+        return info is not None and claim_value_kind(info.claim_type.value) == "subject"
+
     def _retiring(self) -> set[str]:
         retiring = {item.retires for item in self.plan.changes if item.retires is not None}
         retiring.update(claim for item in self.plan.changes for claim in item.retires_also)
@@ -2883,7 +3101,10 @@ class _Planner:
         Its other live Claims retire only with ``with_claims`` (under the
         write's reason); otherwise the write refuses, listing them. Claims of
         other Subjects whose value is this one are never retired here: the
-        write refuses, listing each with its re-point or retire. Cost: this
+        write refuses, listing each with its re-point or retire. A pair whose
+        end this is (its key Claim names it) is never re-pointed (its ends are
+        fixed): the repair retires the pair ``with_claims`` (R5, no cascade),
+        and a pair this same write retires no longer holds the end. Cost: this
         Subject's Claims and the references to it, read from the typed index.
         """
 
@@ -2957,6 +3178,18 @@ class _Planner:
                 )
                 if _bare(str(row[0])) not in changing
             ]
+        retired_here = self._subjects_retired_here()
+        pairs: list[tuple[str, str, str]] = []
+        others: list[tuple[str, str, str]] = []
+        for item in incoming:
+            _identity, holder_path, predicate = item
+            is_end = self._is_end_part(holder_path, predicate)
+            if holder_path in retired_here and (is_end or retired_here[holder_path]):
+                # Its holder retires in this write: an endpoint with its pair,
+                # any other Claim with its Subject's with_claims.
+                continue
+            (pairs if is_end else others).append(item)
+        incoming = [*pairs, *others]
         if incoming:
             with self.identity_view() as view:
                 survivors = tuple(
@@ -2978,21 +3211,41 @@ class _Planner:
                 claim_id = _bare(identity)
                 lines.append(f"{holder} {field_name} = {named} [{claim_id}]")
                 repairs.append(
-                    _render_write_call(self.request.surface, "set", holder, field_name, survivor)
+                    # A pair's end is fixed for life: the pair retires instead.
+                    _render_subject_retire(self.request.surface, holder)
+                    if (identity, holder_path, predicate) in pairs
+                    else _render_write_call(
+                        self.request.surface, "set", holder, field_name, survivor
+                    )
                     if survivor is not None
                     else _render_write_call(self.request.surface, "retire", claim_id)
                 )
+            how = (
+                "Retire the pair(s) with their Claims in this write"
+                if not others
+                else "Retire the pair(s) with their Claims, and re-point the rest"
+                if pairs and survivor is not None
+                else "Retire the pair(s) with their Claims, and retire the rest"
+                if pairs
+                else ("Re-point" if survivor is not None else "Retire") + " each first"
+            )
             raise _refuse(
                 "cruxible.write.subject_referenced",
                 f"{named} is the value of {len(incoming)} live Claim(s) of other Subjects, "
-                "which a Subject's retirement never ends: " + "; ".join(lines[:_MAX_CANDIDATES]),
+                "which a Subject's retirement never ends"
+                + (f", {len(pairs)} of them the end of a live pair" if pairs else "")
+                + ": "
+                + "; ".join(lines[:_MAX_CANDIDATES]),
                 change=index,
-                candidates=tuple(_bare(item[0]) for item in incoming),
-                repair=(
-                    ("Re-point" if survivor is not None else "Retire")
-                    + " each first: "
-                    + "; ".join(repairs[:_MAX_CANDIDATES])
+                candidates=tuple(
+                    dict.fromkeys(
+                        item[1].removeprefix("subjects/").removesuffix(".json")
+                        if item in pairs
+                        else _bare(item[0])
+                        for item in incoming
+                    )
                 ),
+                repair=how + ": " + "; ".join(dict.fromkeys(repairs[:_MAX_CANDIDATES])),
                 field_path=prefix,
             )
         stated = [(identity, predicate) for identity, predicate in own if predicate not in keys]
@@ -3291,9 +3544,10 @@ class _Planner:
     @timed_phase("plan")
     def build(self) -> _Plan:
         # Retirements first, so a set in the same write sees what it leaves;
-        # then creations, so a change names a created Subject in any order.
-        # A Subject's retirement is planned last: what the write's other changes
-        # retire or revise no longer references it.
+        # then creations, so a change names a created Subject in any order --
+        # a pair's ends before the pair (``_creates_in_key_order``). A Subject's
+        # retirement is planned last: what the write's other changes retire or
+        # revise no longer references it.
         order = sorted(
             enumerate(self.expanded_changes()),
             key=lambda item: (
@@ -3307,6 +3561,7 @@ class _Planner:
                 item[0],
             ),
         )
+        order = _creates_in_key_order(order)
         touched: dict[str, int] = {}
         slots: dict[tuple[str, str], int] = {}
         for index, change in order:
@@ -3880,6 +4135,77 @@ def _first_repair(warnings: Sequence[WriteWarning]) -> str | None:
         ),
         None,
     )
+
+
+def _created_in_key(change: CreateChange) -> tuple[str, ...]:
+    """The labels of this write's creates that ``change`` names as a pair's ends."""
+
+    if not isinstance(change.key, tuple):
+        return ()
+    return tuple(
+        part.value.created for part in change.key if isinstance(part.value, CreatedSubject)
+    )
+
+
+def _creates_in_key_order(
+    order: list[tuple[int, Change]],
+) -> list[tuple[int, Change]]:
+    """``order`` with each create after the creates its key names (a pair after its ends).
+
+    A stable topological order over the ``{"created": label}`` key parts; every
+    other change keeps its place. A create naming itself, directly or through
+    other creates, is refused ``key_part_self`` (the kinds' DAG forbids it).
+    Linear in the creates and their key parts.
+    """
+
+    creates = [(index, change) for index, change in order if isinstance(change, CreateChange)]
+    if not any(_created_in_key(change) for _index, change in creates):
+        return order
+    by_label: dict[str, tuple[int, CreateChange]] = {}
+    for index, change in creates:
+        by_label.setdefault(change.label, (index, change))
+    placed: set[int] = set()
+    ordered: list[tuple[int, Change]] = []
+
+    def place(item: tuple[int, CreateChange], chain: tuple[str, ...]) -> None:
+        index, change = item
+        if index in placed:
+            return
+        for label in _created_in_key(change):
+            if label == change.label or label in chain:
+                raise _refuse(
+                    "cruxible.write.key_part_self",
+                    f"create {change.label!r} names "
+                    + (
+                        "itself as its own end"
+                        if label == change.label
+                        else f"{label!r}, whose key names it in turn"
+                    ),
+                    change=index,
+                    repair="Name another Subject, or another create change of this write",
+                    field_path=f"changes[{index}].key",
+                )
+            target = by_label.get(label)
+            if target is not None:
+                place(target, (*chain, change.label))
+        placed.add(index)
+        ordered.append(item)
+
+    for item in creates:
+        place(item, ())
+    position = iter(ordered)
+    return [
+        next(position) if isinstance(change, CreateChange) else (index, change)
+        for index, change in order
+    ]
+
+
+def _final_key(key: PendingKey) -> KeyTuple | None:
+    """``key`` when every end is named, None while one is a pending creation."""
+
+    if any(isinstance(value, PendingEnd) for _predicate, value in key):
+        return None
+    return cast(KeyTuple, key)
 
 
 # -- refusals as outcomes -------------------------------------------------------------

@@ -339,6 +339,25 @@ def _creation_address(value: object) -> SemanticAddress | None:
     return SemanticAddress.subject_creation(kind, digest)
 
 
+def _key_part_value(
+    value: str | int | bool | SubjectRef | SubjectKeyReference | SubjectCreationDraft,
+) -> str | int | bool | SubjectClaimObject:
+    """One creation key part as sent: a literal, or a pair's end as a Subject object."""
+
+    if isinstance(value, SubjectCreationDraft):
+        end_kind, _, digest = value.member_identity.removeprefix("SubjectCreation:").rpartition("@")
+        return SubjectClaimObject(address=SemanticAddress.subject_creation(end_kind, digest))
+    if isinstance(value, SubjectRef):
+        return SubjectClaimObject(
+            address=_creation_address(value) or _subject_address(value.address)
+        )
+    if isinstance(value, SubjectKeyReference):
+        return SubjectClaimObject(
+            address=SemanticAddress.subject_key(value.subject_kind, value.key)
+        )
+    return value
+
+
 def _key_reference_text(value: SubjectKeyReference) -> str:
     """How a key reference reads in a program stamp: ``kind{key part=value, ...}``."""
 
@@ -2939,7 +2958,13 @@ class Cruxible:
         self,
         kind: str,
         *,
-        key: Mapping[str, str | int | bool] | str | int | bool | None = None,
+        key: Mapping[
+            str, str | int | bool | SubjectRef | SubjectKeyReference | SubjectCreationDraft
+        ]
+        | str
+        | int
+        | bool
+        | None = None,
         rationale: str | None = None,
         create_new: bool = False,
     ) -> SubjectCreationDraft:
@@ -2950,17 +2975,23 @@ class Cruxible:
         kind has one key; omit it for a minted kind. A key a live Subject already
         holds resolves to it and creates nothing (several holders refuse,
         ``key_ambiguous``); ``create_new=True`` creates another holder of a ``hint``
-        kind's key anyway (assert ``semantic.distinct_from`` between them). The id
-        is the readable rendering of the canonical key (or a minted id); the key
-        parts become Claims backed by ``rationale``. Next: ``draft.submit()``, or
-        ``cx.changes(rationale=...).subject(draft)`` to say more about it in the same set.
+        kind's key anyway (assert ``semantic.distinct_from`` between them). A pair
+        kind's end (a Subject-valued key part) is a ``SubjectRef``, a
+        ``SubjectKeyReference``, or the ``SubjectCreationDraft`` of an end created
+        in the same set. The id is the readable rendering of the canonical key (or
+        a minted id); the key parts become Claims backed by ``rationale``. Next:
+        ``draft.submit()``, or ``cx.changes(rationale=...).subject(draft)`` to say
+        more about it in the same set.
         """
 
         if key is None or isinstance(key, Mapping):
             creation = SubjectCreationAuthoringPayload(
                 subject_kind=kind,
                 key=tuple(
-                    SubjectKeyPart(predicate=name if "." in name else f"{kind}.{name}", value=value)
+                    SubjectKeyPart(
+                        predicate=name if "." in name else f"{kind}.{name}",
+                        value=_key_part_value(value),
+                    )
                     for name, value in (key or {}).items()
                 ),
                 rationale=rationale,

@@ -239,8 +239,10 @@ from cruxible_client.contracts.source_references import (
     LedgerSourceReference,
 )
 from cruxible_client.contracts.subject_kinds import (
+    KeyClaimTypeShape,
+    SubjectEnd,
     SubjectIdUnassignable,
-    SubjectKeyValue,
+    SubjectKeyPartValue,
     SubjectKind,
     SubjectKindKeys,
     SubjectKindMinted,
@@ -313,10 +315,12 @@ from cruxible_core.indexes.subject_identity import (
     assign_creation_id,
     candidate_identity_issues,
     canonical_key,
+    claim_type_key_shape,
+    creation_order,
     key_ambiguous_message,
     key_encoding,
-    key_order,
     key_values,
+    kind_depths,
     live_key_claims,
     subject_creation_shape,
     subject_kind_of,
@@ -3748,6 +3752,12 @@ class _Creation:
     #: The key already names a live Subject: the creation resolves to it and
     #: writes nothing (create-by-key is an idempotent upsert).
     resolved: bool = False
+    #: The kind's creation layer: 0 without Subject-valued key parts, else one
+    #: above its ends' (``kind_depths``). Ends are named, and staged, first.
+    layer: int = 0
+    #: The Subject it lands on holds ``key``: it is new, or the key named it
+    #: (not an alias of a Subject holding another key).
+    holds_key: bool = True
 
 
 SUBJECT_KEY_CLAIM_ID_DOMAIN = "cruxible-subject-key-claim-id-v1"
@@ -3842,15 +3852,21 @@ def members_identity_overlay(
                 if basis == "alias" and target.startswith("subjects/")
             )
             address = statement.subject
-            # Key values: only an unqualified literal is a key part.
+            # Key values: an unqualified literal, or (a pair's end) a whole Subject.
             if (
                 address.selector.scheme == "artifact-v1"
                 and address.artifact_path.startswith("subjects/")
                 and statement.qualifier is None
-                and isinstance(statement.object, LiteralClaimObject)
                 and statement.predicate != "semantic.alias"
             ):
-                added.append((address.artifact_path, statement.predicate, statement.object.value))
+                if isinstance(statement.object, LiteralClaimObject):
+                    added.append(
+                        (address.artifact_path, statement.predicate, statement.object.value)
+                    )
+                elif isinstance(statement.object, SubjectClaimObject):
+                    end = _whole_subject_end(statement.object.address)
+                    if end is not None:
+                        added.append((address.artifact_path, statement.predicate, end))
     declared = _DeclaredInChange(members=members, base_tree=base_tree)
     affected: dict[str, tuple[str, ...]] = {}
     for claim_id in sorted(removed):
@@ -3878,7 +3894,7 @@ def members_identity_overlay(
     # above: the overlay is linear in the change, not owners times members.
     claim_types: dict[str, ClaimType | None] = {}
     for subject, keys in affected.items():
-        parts: list[tuple[str, SubjectKeyValue]] = []
+        parts: list[tuple[str, SubjectKeyPartValue]] = []
         for predicate in keys:
             values: list[object] = [
                 value
@@ -3893,18 +3909,34 @@ def members_identity_overlay(
             if claim_type is not None:
                 form = effective_canonical_form(claim_type)
                 for value in added_values.get((subject, predicate), ()):
+                    if isinstance(value, SubjectEnd):
+                        values.append(value)
+                        continue
                     try:
                         values.append(canonicalize_literal(value, form))
                     except CanonicalFormDidNotConverge:
                         values.append(None)
-            if len(values) != 1 or key_value_problem(values[0]) is not None:
+            if len(values) != 1 or (
+                not isinstance(values[0], SubjectEnd) and key_value_problem(values[0]) is not None
+            ):
                 break
-            parts.append((predicate, cast(SubjectKeyValue, values[0])))
+            parts.append((predicate, cast(SubjectKeyPartValue, values[0])))
         else:
             overlay.keys[subject] = tuple(parts)
             continue
         overlay.keys[subject] = None
     return overlay
+
+
+def _whole_subject_end(address: SemanticAddress) -> SubjectEnd | None:
+    """The whole Subject an address names, as a key part's canonical value, else None."""
+
+    if address.selector.scheme != "artifact-v1" or address.selector.value:
+        return None
+    try:
+        return SubjectEnd(path=address.artifact_path)
+    except ValueError:
+        return None
 
 
 class _DeclaredInChange:
@@ -3955,24 +3987,34 @@ def _assign_creations(
     nothing; several, refuse ``key_ambiguous``. Only ``create_new`` on a
     ``hint`` kind creates a further holder (refused on a ``unique`` kind).
 
-    Ids, in canonical-key order: a first holder takes the readable rendering of
-    its key, suffixed with the key's digest when the rendering is an existing
+    Creations are named in layers (``kind_depths``): kinds with no
+    Subject-valued key part first, then their pairs, then pairs of pairs. A
+    pair's end -- the Subject itself, the Subject its kind's key names, or the
+    Subject a creation member of this change lands on -- is landed on its path
+    once the layer below is named, so the pair's key is final before it is
+    resolved: two pair creations whose ends land on one Subject land on one
+    pair, and a pair of existing ends that already exists is landed on.
+
+    Ids, in the one creation order (``creation_order``: layer, kind, canonical
+    key; ordinary creations before create_new members of the same key, member
+    identity breaking ties): a first holder takes the readable rendering of its
+    key, suffixed with the key's digest when the rendering is an existing
     Subject's id, a live alias of the kind, or an id this change already
-    assigned. Ordinary creations precede create_new members of the same key,
-    with member identity breaking ties; a further holder takes the rendering and a digest of the
+    assigned; a further holder takes the rendering and a digest of the
     operation and member; a minted kind's Subject an id minted from the
     operation and member. Each records how (``SubjectAssignment``), so the
-    candidate boundary re-derives it on every route.
+    candidate boundary re-derives it on every route, in the same order.
     """
 
     creations: dict[str, _Creation] = {}
-    keyed: list[tuple[str, int, SubjectCreationAuthoringPayload, SubjectKind, KeyTuple]] = []
+    keyed: list[tuple[int, SubjectCreationAuthoringPayload, SubjectKind]] = []
+    declared_of = _DeclaredInChange(members=members, base_tree=base_tree)
     for index, member in enumerate(members):
         if not isinstance(member, SubjectCreationAuthoringPayload):
             continue
         element = f"members[{index}]"
         kind = member.subject_kind
-        declared = _declared_in_change(kind, members=members, base_tree=base_tree)
+        declared = declared_of(kind)
         if declared is None:
             _refuse(
                 SUBJECT_KIND_UNDECLARED,
@@ -4002,136 +4044,413 @@ def _assign_creations(
                 assignment=SubjectAssignment(rule="minted", operation=operation, member=identity),
             )
             continue
-
-        def claim_type_of(predicate: str) -> ClaimType | None:
-            return _claim_type_in_change(predicate, members=members, base_tree=base_tree)
-
-        given: dict[str, object] = {part.predicate: part.value for part in member.key}
-        if member.key_value is not None:
-            if len(declared.keys) != 1:
-                _refuse(
-                    "cruxible.subject.key_invalid",
-                    f"{element}.key_value",
-                    f"{kind} is named by {len(declared.keys)} key parts "
-                    f"({', '.join(declared.keys)}); a bare key value names only a one-key kind.",
-                    repair_kind="replace_key",
-                    repair_description="Give each key part by name.",
-                    replacement={"keys": list(declared.keys)},
-                )
-            given = {declared.keys[0]: member.key_value}
-        try:
-            key = canonical_key(declared, given, claim_type=claim_type_of)
-        except SubjectKeyInvalid as exc:
+        if member.key_value is not None and len(declared.keys) != 1:
             _refuse(
                 "cruxible.subject.key_invalid",
-                f"{element}.key",
-                f"{kind}: {exc}",
+                f"{element}.key_value",
+                f"{kind} is named by {len(declared.keys)} key parts "
+                f"({', '.join(declared.keys)}); a bare key value names only a one-key kind.",
                 repair_kind="replace_key",
-                repair_description=(
-                    f"Give one value for each key of {kind}: " + ", ".join(declared.keys)
-                ),
+                repair_description="Give each key part by name.",
                 replacement={"keys": list(declared.keys)},
             )
-        keyed.append((key_encoding(key), index, member, declared, key))
+        keyed.append((index, member, declared))
     if not keyed:
         return creations
+    claim_types: dict[str, ClaimType | None] = {}
+
+    def claim_type_of(predicate: str) -> ClaimType | None:
+        if predicate not in claim_types:
+            claim_types[predicate] = _claim_type_in_change(
+                predicate, members=members, base_tree=base_tree
+            )
+        return claim_types[predicate]
+
+    def key_shape_of(predicate: str) -> KeyClaimTypeShape | None:
+        found = claim_type_of(predicate)
+        return None if found is None else claim_type_key_shape(found)
+
+    layers = kind_depths(
+        {declared.subject_kind for _index, _member, declared in keyed},
+        subject_kind_of=declared_of,
+        key_shape_of=key_shape_of,
+    )
+    by_layer: dict[int, list[tuple[int, SubjectCreationAuthoringPayload, SubjectKind]]] = {}
+    for item in keyed:
+        by_layer.setdefault(layers.get(item[2].subject_kind, 0), []).append(item)
+    creators = {
+        member.member_identity.rpartition("@")[2]: member
+        for member in members
+        if isinstance(member, SubjectCreationAuthoringPayload)
+    }
     names: dict[str, set[str]] = {}
     with instance.bind_accepted_projection(base) as projection:
         connection = projection.typed.connection
         view = IdentityView(
-            connection, members_identity_overlay(connection, members=members, base_tree=base_tree)
+            connection,
+            members_identity_overlay(connection, members=members, base_tree=base_tree),
+            key_reader=tree_key_reader(base_tree),
         )
-        for _encoding, index, member, declared, key in sorted(
-            keyed,
-            key=lambda item: (
-                item[3].subject_kind,
-                key_order(item[4]),
-                item[2].create_new,
-                item[2].member_identity,
-            ),
-        ):
-            kind = member.subject_kind
-            element = f"members[{index}]"
-            if member.create_new and declared.unique:
-                _refuse(
-                    "cruxible.subject.create_new_refused",
-                    f"{element}.create_new",
-                    f"{kind} keys are unique: a key names one Subject, so create_new does not "
-                    "apply.",
-                    repair_kind="drop_create_new",
-                    repair_description=(
-                        "Drop create_new: the creation then resolves to the Subject holding the "
-                        "key."
-                    ),
+        base_view = IdentityView(connection, key_reader=tree_key_reader(base_tree))
+        # The keys a creation of this change holds, for an end named by key.
+        created_keys: set[tuple[str, str]] = set()
+        for layer in sorted(by_layer):
+            ordered: list[
+                tuple[
+                    tuple[object, ...], int, SubjectCreationAuthoringPayload, SubjectKind, KeyTuple
+                ]
+            ] = []
+            for index, member, declared in by_layer[layer]:
+                kind = member.subject_kind
+                element = f"members[{index}]"
+                given: dict[str, object] = (
+                    {declared.keys[0]: member.key_value}
+                    if member.key_value is not None
+                    else {
+                        part.predicate: (
+                            _key_part_end(
+                                view,
+                                part.value,
+                                base_view=base_view,
+                                element=f"{element}.key",
+                                creators=creators,
+                                creations=creations,
+                                created_keys=created_keys,
+                                declared_of=declared_of,
+                                claim_type_of=claim_type_of,
+                            )
+                            if isinstance(part.value, SubjectClaimObject)
+                            else part.value
+                        )
+                        for part in member.key
+                    }
                 )
-            resolution = view.resolve_creation(
-                kind,
-                key,
-                single_text=_single_text(member, declared),
-                create_new=member.create_new,
-            )
-            refs = tuple(f"{kind}/{subject_kind_of(path)[1]}" for path in resolution.holders)
-            if resolution.ambiguous:
-                _refuse(
-                    "cruxible.subject.key_ambiguous"
-                    if resolution.via == "key"
-                    else "cruxible.authoring.alias_ambiguous",
-                    f"{element}.key",
-                    (
-                        f"{len(refs)} live {kind} Subjects hold this key: {', '.join(refs)}; "
-                        "name one by id."
-                        if resolution.via == "key"
-                        else f"An alias of {kind} spelled as this key names {len(refs)} "
-                        f"Subjects: {', '.join(refs)}; name one by id."
-                    ),
-                    repair_kind="replace_subject",
-                    repair_description="Name one of the listed Subjects by id.",
-                    replacement={"candidates": list(refs)},
-                )
-            if resolution.path is not None:
-                creations[member.member_identity] = _Creation(
-                    kind=kind,
-                    subject_id=subject_kind_of(resolution.path)[1],
-                    path=resolution.path,
-                    key=key,
-                    declared=declared,
-                    resolved=True,
-                )
-                continue
-            assigned = names.setdefault(kind, set())
-            if resolution.holders:
-                # create_new on a hint kind: a further holder of the key, named from
-                # the operation and the member so it never reuses the key's rendering.
-                subject_id = distinct_holder_id(
-                    key_values(key), operation=operation, member=member.member_identity
-                )
-                assignment: SubjectAssignment | None = SubjectAssignment(
-                    rule="further_holder", operation=operation, member=member.member_identity
-                )
-            else:
                 try:
-                    subject_id = assign_creation_id(view, kind, key, names=assigned)
-                except SubjectIdUnassignable as exc:
+                    key = canonical_key(declared, given, claim_type=claim_type_of)
+                except SubjectKeyInvalid as exc:
                     _refuse(
                         "cruxible.subject.key_invalid",
                         f"{element}.key",
-                        str(exc),
+                        f"{kind}: {exc}",
                         repair_kind="replace_key",
-                        repair_description="Give a key whose rendering is free.",
+                        repair_description=(
+                            f"Give one value for each key of {kind}: " + ", ".join(declared.keys)
+                        ),
+                        replacement={"keys": list(declared.keys)},
                     )
-                assignment = None
-            assigned.add(subject_id)
-            path = subject_path(kind, subject_id)
-            view.add_creation(path, key)
-            creations[member.member_identity] = _Creation(
-                kind=kind,
-                subject_id=subject_id,
-                path=path,
-                key=key,
-                declared=declared,
-                assignment=assignment,
-            )
+                order = creation_order(layer, kind, key, member.member_identity)
+                ordered.append(
+                    ((*order[:3], member.create_new, order[3]), index, member, declared, key)
+                )
+            for _order, index, member, declared, key in sorted(ordered, key=lambda item: item[0]):
+                creation = _assign_keyed_creation(
+                    view,
+                    operation=operation,
+                    index=index,
+                    member=member,
+                    declared=declared,
+                    key=key,
+                    names=names.setdefault(member.subject_kind, set()),
+                    layer=layer,
+                )
+                creations[member.member_identity] = creation
+                if creation.holds_key:
+                    # A creation that landed through an alias holds that
+                    # Subject's own key, not the one it asked for.
+                    created_keys.add((creation.kind, key_encoding(key)))
     return creations
+
+
+def _key_part_end(
+    view: IdentityView,
+    value: SubjectClaimObject,
+    *,
+    base_view: IdentityView,
+    element: str,
+    creators: Mapping[str, SubjectCreationAuthoringPayload],
+    creations: Mapping[str, _Creation],
+    created_keys: set[tuple[str, str]],
+    declared_of: Callable[[str], SubjectKind | None],
+    claim_type_of: Callable[[str], ClaimType | None],
+) -> SubjectEnd:
+    """The end a Subject-valued key part names, landed on its path (the part's canonical value).
+
+    The forms a Claim object lands through: the Subject itself (or the one live
+    Subject its alias or single key names), the Subject a creation member of
+    the same change lands on, or the Subject its kind's key names: the one
+    holder of the key among the accepted Subjects and this change's creations
+    (several refuse ``key_ambiguous``; a creation member reference picks one).
+    An end's layer is named before its pair's, so a creation it names already
+    has its path.
+    """
+
+    address = value.address
+    scheme = address.selector.scheme
+    path: str | None = None
+    if scheme == "subject-creation-v1":
+        creator = creators.get(address.selector.value)
+        if creator is None or address.artifact_path != subject_kind_path(creator.subject_kind):
+            _refuse(
+                SUBJECT_CREATION_REFERENCE_UNRESOLVED,
+                element,
+                "A key part names a Subject by a creation member this change does not hold "
+                f"({address.artifact_path}, {address.selector.value}).",
+                repair_kind="replace_subject",
+                repair_description=(
+                    "Name the end by the reference its creation member returned in this change "
+                    "set, or by an existing kind/id."
+                ),
+            )
+        assigned = creations.get(creator.member_identity)
+        if assigned is None:
+            # Not named below this pair's layer: a creation of another kind
+            # than the part's end (the key canonicalization says which).
+            _refuse(
+                "cruxible.subject.key_invalid",
+                element,
+                f"A key part names the {creator.subject_kind} this change creates, which is not "
+                "an end of the pair's kind.",
+                repair_kind="replace_key",
+                repair_description="Name a Subject of the kind the key part takes.",
+            )
+        path = assigned.path
+    elif scheme == "subject-key-v1":
+        reference = address.subject_key_reference
+        assert reference is not None
+        kind, raw = reference
+        declared = declared_of(kind)
+        if declared is None or declared.minted:
+            _refuse(
+                "cruxible.subject.key_invalid",
+                element,
+                f"{kind} has no declared keys, so no Subject of it is named by key.",
+                repair_kind="replace_subject",
+                repair_description="Name the end as kind/id, or by its creation member.",
+            )
+        try:
+            key = canonical_key(
+                declared, key_reference_mapping(declared, raw), claim_type=claim_type_of
+            )
+        except (SubjectKeyInvalid, ValueError) as exc:
+            _refuse(
+                "cruxible.subject.key_invalid",
+                element,
+                f"{kind}: {exc}",
+                repair_kind="replace_key",
+                repair_description=f"Give each key of {kind}: " + ", ".join(declared.keys),
+                replacement={"keys": list(declared.keys)},
+            )
+        # An end named by key is the one Subject the reference names, every
+        # reading counted: the key's holders (accepted ones and each creation of
+        # this change; creations landing on one Subject are one), and, for a bare
+        # one-key text, the Subject that text names as an id or alias. Several
+        # holders, or readings that disagree, refuse key_ambiguous: a whole-Subject
+        # address, a structured key or a creation member reference picks one.
+        text = raw if isinstance(raw, str) and len(key) == 1 else None
+        now = _end_by_key(view, kind, key, text, element=element)
+        if (kind, key_encoding(key)) in created_keys:
+            # A creation of this change holds the key: its layer is named.
+            path = now
+        else:
+            # Frozen at the base, as a Claim's key reference is; the change's own
+            # identity changes must not move it (``identity_reference_unstable``).
+            path = _end_by_key(base_view, kind, key, text, element=element)
+            if path is not None and now != path:
+                _refuse(
+                    IDENTITY_REFERENCE_UNSTABLE,
+                    element,
+                    f"The {kind} key {raw!r} names {path} at the base, and "
+                    f"{now or 'no Subject'} once this change's own identity changes "
+                    "(key or alias Claims) apply.",
+                    repair_kind="split_change_set",
+                    repair_description=(
+                        "Put the identity change (an alias or key Claim) and the pair that names "
+                        "the end by key in separate change sets."
+                    ),
+                )
+        if path is None:
+            _refuse(
+                SUBJECT_KEY_MISSING,
+                element,
+                f"No live {kind} Subject holds the key {raw!r}, and no creation of this "
+                "change does.",
+                repair_kind="create_subject",
+                repair_description=(
+                    "Add a subject member creating the end to the same change set: "
+                    + subject_creation_shape(kind)
+                ),
+            )
+    else:
+        kind, subject_id = subject_kind_of(address.artifact_path)
+        resolution = view.resolve(kind, subject_id)
+        if resolution.ambiguous:
+            _refuse(
+                "cruxible.subject.key_ambiguous"
+                if resolution.via == "key"
+                else "cruxible.authoring.alias_ambiguous",
+                element,
+                f"{kind}/{subject_id} names several Subjects: " + ", ".join(resolution.candidates),
+                repair_kind="replace_subject",
+                repair_description="Name one of the listed Subjects as kind/id.",
+                replacement={"candidates": list(resolution.candidates)},
+            )
+        if resolution.path is None:
+            _refuse(
+                "cruxible.authoring.object_subject_not_found",
+                element,
+                f"The key part names {kind}/{subject_id}, which names no Subject; a key part "
+                "never creates the end it names.",
+                repair_kind="create_subject",
+                repair_description=(
+                    "Name an accepted Subject, or create the end in the same change set and name "
+                    "it by its creation member: " + subject_creation_shape(kind)
+                ),
+                replacement={"subject": f"{kind}/{subject_id}"},
+            )
+        path = resolution.path
+    return SubjectEnd(path=path)
+
+
+def _end_by_key(
+    view: IdentityView,
+    kind: str,
+    key: KeyTuple,
+    text: str | None,
+    *,
+    element: str,
+) -> str | None:
+    """The one Subject an end named by key names in ``view``, refusing any ambiguity.
+
+    The key's live holders, and (for a bare one-key ``text``) the live Subject
+    whose id it is, else the one an alias of the kind names. Several holders,
+    several alias targets, or an id/alias reading that names another Subject
+    than the key's holder refuse ``key_ambiguous`` with every candidate: a key
+    reference never silently picks one reading (review F2). None when nothing
+    is named.
+    """
+
+    held = view.holders(kind, key)
+    named: tuple[str, ...] = ()
+    if text is not None:
+        exact = f"subjects/{kind}/{text}.json"
+        named = (exact,) if view.live(exact) else view.alias_targets(kind, text)
+    found = sorted({*held, *named})
+    if len(found) > 1:
+        refs = [path.removeprefix("subjects/").removesuffix(".json") for path in found]
+        _refuse(
+            "cruxible.subject.key_ambiguous",
+            element,
+            f"The {kind} key reference names {len(found)} Subjects: {', '.join(refs)}"
+            + (
+                f" (holders of the key, or named by {text!r} as an id or alias)"
+                if named
+                else " (each holds the key)"
+            )
+            + ".",
+            repair_kind="replace_subject",
+            repair_description=(
+                "Name the end as kind/id, by a structured key ({part: value}), or by the "
+                "creation member that creates the one you mean."
+            ),
+            replacement={"candidates": refs},
+        )
+    return found[0] if found else None
+
+
+def _assign_keyed_creation(
+    view: IdentityView,
+    *,
+    operation: str,
+    index: int,
+    member: SubjectCreationAuthoringPayload,
+    declared: SubjectKind,
+    key: KeyTuple,
+    names: set[str],
+    layer: int,
+) -> _Creation:
+    """Resolve one keyed creation and name it, laying a new Subject over ``view``."""
+
+    kind = member.subject_kind
+    element = f"members[{index}]"
+    if member.create_new and declared.unique:
+        _refuse(
+            "cruxible.subject.create_new_refused",
+            f"{element}.create_new",
+            f"{kind} keys are unique: a key names one Subject, so create_new does not apply.",
+            repair_kind="drop_create_new",
+            repair_description=(
+                "Drop create_new: the creation then resolves to the Subject holding the key."
+            ),
+        )
+    resolution = view.resolve_creation(
+        kind,
+        key,
+        single_text=_single_text(member, declared),
+        create_new=member.create_new,
+    )
+    refs = tuple(f"{kind}/{subject_kind_of(path)[1]}" for path in resolution.holders)
+    if resolution.ambiguous:
+        _refuse(
+            "cruxible.subject.key_ambiguous"
+            if resolution.via == "key"
+            else "cruxible.authoring.alias_ambiguous",
+            f"{element}.key",
+            (
+                f"{len(refs)} live {kind} Subjects hold this key: {', '.join(refs)}; "
+                "name one by id."
+                if resolution.via == "key"
+                else f"An alias of {kind} spelled as this key names {len(refs)} "
+                f"Subjects: {', '.join(refs)}; name one by id."
+            ),
+            repair_kind="replace_subject",
+            repair_description="Name one of the listed Subjects by id.",
+            replacement={"candidates": list(refs)},
+        )
+    if resolution.path is not None:
+        return _Creation(
+            kind=kind,
+            subject_id=subject_kind_of(resolution.path)[1],
+            path=resolution.path,
+            key=key,
+            declared=declared,
+            resolved=True,
+            layer=layer,
+            holds_key=resolution.via == "key",
+        )
+    assignment: SubjectAssignment | None
+    if resolution.holders:
+        # create_new on a hint kind: a further holder of the key, named from
+        # the operation and the member so it never reuses the key's rendering.
+        subject_id = distinct_holder_id(
+            key_values(key), operation=operation, member=member.member_identity
+        )
+        assignment = SubjectAssignment(
+            rule="further_holder", operation=operation, member=member.member_identity
+        )
+    else:
+        try:
+            subject_id = assign_creation_id(view, kind, key, names=names)
+        except SubjectIdUnassignable as exc:
+            _refuse(
+                "cruxible.subject.key_invalid",
+                f"{element}.key",
+                str(exc),
+                repair_kind="replace_key",
+                repair_description="Give a key whose rendering is free.",
+            )
+        assignment = None
+    names.add(subject_id)
+    path = subject_path(kind, subject_id)
+    view.add_creation(path, key)
+    return _Creation(
+        kind=kind,
+        subject_id=subject_id,
+        path=path,
+        key=key,
+        declared=declared,
+        assignment=assignment,
+        layer=layer,
+    )
 
 
 def subject_creation_paths(
@@ -4712,7 +5031,15 @@ def _stage_subject_creation(
     key_claims: list[str] = []
     rationale = member.rationale or (
         f"{creation.kind}/{creation.subject_id} is named by its key: "
-        + ", ".join(f"{predicate}={value!r}" for predicate, value in creation.key)
+        + ", ".join(
+            f"{predicate}="
+            + (
+                value.path.removeprefix("subjects/").removesuffix(".json")
+                if isinstance(value, SubjectEnd)
+                else repr(value)
+            )
+            for predicate, value in creation.key
+        )
         + "."
     )
     for predicate, value in creation.key:
@@ -4735,10 +5062,15 @@ def _stage_subject_creation(
         claim_id = subject_key_claim_id(
             operation=intent.intent_id, member=member.member_identity, predicate=predicate
         )
+        # A pair's end is a link Claim to the end Subject; a literal part, a literal.
         statement = AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact(creation.path),
             predicate=predicate,
-            object=LiteralClaimObject(value=value),
+            object=(
+                SubjectClaimObject(address=SemanticAddress.whole_artifact(value.path))
+                if isinstance(value, SubjectEnd)
+                else LiteralClaimObject(value=value)
+            ),
             role=role,
         )
         # The author's own words lower as a write's ``--because`` does, so the
@@ -5091,6 +5423,14 @@ def _lower_change_set(
     for index, member in enumerate(payload.members):
         path = _member_primary_path(member, claim_identities=claim_identities, creations=creations)
         primary_paths.append(path)
+        if (
+            isinstance(member, SubjectCreationAuthoringPayload)
+            and creations[member.member_identity].resolved
+        ):
+            # A creation that lands on a Subject (accepted, or created by a
+            # sibling member) writes nothing: several members may name one
+            # Subject, as two pair creations with one end do.
+            continue
         owner = owner_by_path.get(path)
         if owner is not None:
             _refuse(
@@ -5135,6 +5475,18 @@ def _lower_change_set(
         stage_indices = [
             index for index, member in enumerate(payload.members) if _member_stage(member) == stage
         ]
+        if stage == "subject_creation":
+            # A pair's key Claims name its ends: ends are staged first, layer
+            # by layer (each kind's creation layer), as they were named.
+            stage_indices.sort(
+                key=lambda index: (
+                    creations[
+                        cast(
+                            SubjectCreationAuthoringPayload, payload.members[index]
+                        ).member_identity
+                    ].layer
+                )
+            )
         for index in _stage_member_order(stage_indices, payload.members):
             member = payload.members[index]
             path = primary_paths[index]

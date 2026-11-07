@@ -516,7 +516,7 @@ def test_define_reads_each_kind_s_identity_rule_and_the_stub_types_it(
 ) -> None:
     """One key positionally or by its leaf, a composite key by its parts, a minted kind none."""
 
-    from cruxible_client.contracts.subject_kinds import SubjectKeyPart
+    from cruxible_client.contracts.write import CreateKeyPart
 
     playbill, _client = connection
     world = playbill.world()
@@ -526,8 +526,8 @@ def test_define_reads_each_kind_s_identity_rule_and_the_stub_types_it(
     assert click._key == world.sec.package.define(name="click")._key == "click"
     batch = world.dev.batch.define(repo="core", number=7, create_new=True)
     assert batch._key == (
-        SubjectKeyPart(predicate="dev.batch.repo", value="core"),
-        SubjectKeyPart(predicate="dev.batch.number", value=7),
+        CreateKeyPart(predicate="dev.batch.repo", value="core"),
+        CreateKeyPart(predicate="dev.batch.number", value=7),
     )
     minted = world.sec.vulnerability.define(severity=world.sec.vuln.severity.high)
     assert minted._key is None and [item.field for item in minted._changes] == [SEVERITY]
