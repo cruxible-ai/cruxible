@@ -121,12 +121,19 @@ def _digest(tag: int) -> str:
 def test_a_live_runbooks_revision_does_not_double_count(tmp_path: Path) -> None:
     connection = _connection(tmp_path / "revise.sqlite3")
     path = "runbooks/rb.json"
-    _insert_runbook(connection, path=path, digest=_digest(0), revision=1, lifecycle="live", predecessor=None)
+    _insert_runbook(
+        connection, path=path, digest=_digest(0), revision=1, lifecycle="live", predecessor=None
+    )
     assert _runbook_count(connection) == 1
     # replace_rows: DELETE the old row at the same path, then INSERT the successor.
     _delete_runbook(connection, path)
     _insert_runbook(
-        connection, path=path, digest=_digest(1), revision=2, lifecycle="live", predecessor=_digest(0)
+        connection,
+        path=path,
+        digest=_digest(1),
+        revision=2,
+        lifecycle="live",
+        predecessor=_digest(0),
     )
     assert _runbook_count(connection) == 1
 
@@ -134,11 +141,18 @@ def test_a_live_runbooks_revision_does_not_double_count(tmp_path: Path) -> None:
 def test_a_runbooks_retirement_decrements_and_the_zero_bucket_is_removed(tmp_path: Path) -> None:
     connection = _connection(tmp_path / "retire.sqlite3")
     path = "runbooks/rb.json"
-    _insert_runbook(connection, path=path, digest=_digest(0), revision=1, lifecycle="live", predecessor=None)
+    _insert_runbook(
+        connection, path=path, digest=_digest(0), revision=1, lifecycle="live", predecessor=None
+    )
     assert _runbook_count(connection) == 1
     _delete_runbook(connection, path)
     _insert_runbook(
-        connection, path=path, digest=_digest(1), revision=2, lifecycle="retired", predecessor=_digest(0)
+        connection,
+        path=path,
+        digest=_digest(1),
+        revision=2,
+        lifecycle="retired",
+        predecessor=_digest(0),
     )
     assert _runbook_count(connection) == 0
     # CHECK(amount>0) forbids a zero row: it must be removed, not merely zeroed.
@@ -148,18 +162,33 @@ def test_a_runbooks_retirement_decrements_and_the_zero_bucket_is_removed(tmp_pat
 def test_a_second_runbooks_retirement_leaves_the_first_counted(tmp_path: Path) -> None:
     connection = _connection(tmp_path / "two_retire.sqlite3")
     _insert_runbook(
-        connection, path="runbooks/one.json", digest=_digest(0), revision=1, lifecycle="live",
-        predecessor=None, identity="Runbook:one",
+        connection,
+        path="runbooks/one.json",
+        digest=_digest(0),
+        revision=1,
+        lifecycle="live",
+        predecessor=None,
+        identity="Runbook:one",
     )
     _insert_runbook(
-        connection, path="runbooks/two.json", digest=_digest(1), revision=1, lifecycle="live",
-        predecessor=None, identity="Runbook:two",
+        connection,
+        path="runbooks/two.json",
+        digest=_digest(1),
+        revision=1,
+        lifecycle="live",
+        predecessor=None,
+        identity="Runbook:two",
     )
     assert _runbook_count(connection) == 2
     _delete_runbook(connection, "runbooks/one.json")
     _insert_runbook(
-        connection, path="runbooks/one.json", digest=_digest(2), revision=2, lifecycle="retired",
-        predecessor=_digest(0), identity="Runbook:one",
+        connection,
+        path="runbooks/one.json",
+        digest=_digest(2),
+        revision=2,
+        lifecycle="retired",
+        predecessor=_digest(0),
+        identity="Runbook:one",
     )
     assert _runbook_count(connection) == 1
 
@@ -168,21 +197,36 @@ def test_a_triggers_retargeting_moves_the_bucket_old_and_new(tmp_path: Path) -> 
     connection = _connection(tmp_path / "retarget.sqlite3")
     path = "triggers/t.json"
     _insert_trigger(
-        connection, path=path, digest=_digest(0), revision=1, lifecycle="live", predecessor=None,
-        target="Runbook:one", schedule_kind="cron",
+        connection,
+        path=path,
+        digest=_digest(0),
+        revision=1,
+        lifecycle="live",
+        predecessor=None,
+        target="Runbook:one",
+        schedule_kind="cron",
     )
     assert _trigger_bucket(connection, "Runbook:one", "cron") == 1
     _delete_trigger(connection, path)
     _insert_trigger(
-        connection, path=path, digest=_digest(1), revision=2, lifecycle="live", predecessor=_digest(0),
-        target="Runbook:two", schedule_kind="cadence",
+        connection,
+        path=path,
+        digest=_digest(1),
+        revision=2,
+        lifecycle="live",
+        predecessor=_digest(0),
+        target="Runbook:two",
+        schedule_kind="cadence",
     )
     # The old bucket uncounts to zero and is removed, never left stale.
     assert _trigger_bucket(connection, "Runbook:one", "cron") == 0
-    assert connection.execute(
-        "SELECT 1 FROM trigger_aim_counts WHERE target_kind='runbook' AND target='Runbook:one' "
-        "AND schedule_kind='cron'"
-    ).fetchone() is None
+    assert (
+        connection.execute(
+            "SELECT 1 FROM trigger_aim_counts WHERE target_kind='runbook' AND target='Runbook:one' "
+            "AND schedule_kind='cron'"
+        ).fetchone()
+        is None
+    )
     # The new bucket (new target, new schedule_kind) counts the retargeted Trigger.
     assert _trigger_bucket(connection, "Runbook:two", "cadence") == 1
 
@@ -191,13 +235,25 @@ def test_a_triggers_retirement_leaves_no_stale_bucket(tmp_path: Path) -> None:
     connection = _connection(tmp_path / "trigger_retire.sqlite3")
     path = "triggers/t.json"
     _insert_trigger(
-        connection, path=path, digest=_digest(0), revision=1, lifecycle="live", predecessor=None,
-        target="Runbook:one", schedule_kind="cron",
+        connection,
+        path=path,
+        digest=_digest(0),
+        revision=1,
+        lifecycle="live",
+        predecessor=None,
+        target="Runbook:one",
+        schedule_kind="cron",
     )
     _delete_trigger(connection, path)
     _insert_trigger(
-        connection, path=path, digest=_digest(1), revision=2, lifecycle="retired", predecessor=_digest(0),
-        target="Runbook:one", schedule_kind="cron",
+        connection,
+        path=path,
+        digest=_digest(1),
+        revision=2,
+        lifecycle="retired",
+        predecessor=_digest(0),
+        target="Runbook:one",
+        schedule_kind="cron",
     )
     assert connection.execute("SELECT COUNT(*) FROM trigger_aim_counts").fetchone()[0] == 0
 
@@ -208,22 +264,46 @@ def test_a_rolled_back_replacement_leaves_counters_at_their_pre_transaction_valu
     connection = _connection(tmp_path / "rollback.sqlite3")
     runbook_path = "runbooks/rb.json"
     trigger_path = "triggers/t.json"
-    _insert_runbook(connection, path=runbook_path, digest=_digest(0), revision=1, lifecycle="live", predecessor=None)
+    _insert_runbook(
+        connection,
+        path=runbook_path,
+        digest=_digest(0),
+        revision=1,
+        lifecycle="live",
+        predecessor=None,
+    )
     _insert_trigger(
-        connection, path=trigger_path, digest=_digest(0), revision=1, lifecycle="live", predecessor=None,
-        target="Runbook:one", schedule_kind="cron",
+        connection,
+        path=trigger_path,
+        digest=_digest(0),
+        revision=1,
+        lifecycle="live",
+        predecessor=None,
+        target="Runbook:one",
+        schedule_kind="cron",
     )
     assert _runbook_count(connection) == 1
     assert _trigger_bucket(connection, "Runbook:one", "cron") == 1
     connection.execute("BEGIN")
     _delete_runbook(connection, runbook_path)
     _insert_runbook(
-        connection, path=runbook_path, digest=_digest(1), revision=2, lifecycle="retired", predecessor=_digest(0)
+        connection,
+        path=runbook_path,
+        digest=_digest(1),
+        revision=2,
+        lifecycle="retired",
+        predecessor=_digest(0),
     )
     _delete_trigger(connection, trigger_path)
     _insert_trigger(
-        connection, path=trigger_path, digest=_digest(1), revision=2, lifecycle="live", predecessor=_digest(0),
-        target="Runbook:two", schedule_kind="cadence",
+        connection,
+        path=trigger_path,
+        digest=_digest(1),
+        revision=2,
+        lifecycle="live",
+        predecessor=_digest(0),
+        target="Runbook:two",
+        schedule_kind="cadence",
     )
     connection.execute("ROLLBACK")
     assert _runbook_count(connection) == 1
@@ -241,7 +321,8 @@ def _counter_state(connection: Any) -> tuple[int, tuple[tuple[str, str, int], ..
         sorted(
             (str(target), str(schedule_kind), int(bucket_amount))
             for target, schedule_kind, bucket_amount in connection.execute(
-                "SELECT target,schedule_kind,amount FROM trigger_aim_counts WHERE target_kind='runbook'"
+                "SELECT target,schedule_kind,amount FROM trigger_aim_counts "
+                "WHERE target_kind='runbook'"
             )
         )
     )
@@ -251,7 +332,9 @@ def _counter_state(connection: Any) -> tuple[int, tuple[tuple[str, str, int], ..
 def _reference_state(connection: Any) -> tuple[int, tuple[tuple[str, str, int], ...]]:
     """The exact current live population, computed fresh -- the old (unoptimized) semantics."""
 
-    amount = connection.execute("SELECT COUNT(*) FROM runbooks WHERE lifecycle='live'").fetchone()[0]
+    amount = connection.execute("SELECT COUNT(*) FROM runbooks WHERE lifecycle='live'").fetchone()[
+        0
+    ]
     triggers = tuple(
         sorted(
             (str(target), str(schedule_kind), int(bucket_amount))

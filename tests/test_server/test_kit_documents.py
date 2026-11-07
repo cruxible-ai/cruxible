@@ -19,6 +19,7 @@ from cruxible_client.contracts.backlinks import BacklinksRequest
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentLink, DocumentShell
 from cruxible_client.contracts.kits import (
     KitArtifact,
+    KitBuildRequest,
     KitBundle,
     KitRemoveRequest,
 )
@@ -109,6 +110,42 @@ def _publisher_kit(publisher: _World, version: str = "1.0.0") -> KitBundle:
         bundle.document_body_digests().values()
     )
     return bundle
+
+
+def test_a_template_builds_beside_an_exported_document_with_a_non_genesis_body(
+    worlds: tuple[_World, _World],
+) -> None:
+    """D-R48 review fix round 2, R3: the throwaway closure check runs after the
+    kit's own Document bodies land in its body store, so a kit that also ships
+    an automation template and a governed Document (a real body, never the
+    empty one a fresh instance starts with) builds -- it previously refused
+    ``cruxible.document.body_missing`` because the check ran before bodies
+    were collected and landed only artifact bytes.
+    """
+
+    from cruxible_client.contracts.kits import KitAutomationTemplate
+    from tests.test_server.test_playbill_kits import _START, _START_DAILY, _template
+
+    publisher, _consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    _document(publisher, GUIDE, b"# Seats\nReal guidance content, not the empty body.\n")
+    content = _template(_START, _START_DAILY)
+
+    bundle = playbill_api.playbill_kit_build(
+        publisher.instance_id,
+        KitBuildRequest(
+            kit_id="acme",
+            version="1.0.0",
+            owns=("acme.",),
+            automation_template=KitAutomationTemplate(path="automation.json", content=content),
+        ),
+    ).bundle
+
+    assert bundle.manifest.automation_template == "automation.json"
+    assert GUIDE_PATH in bundle.contents()
+    assert {body.digest for body in bundle.document_bodies} == set(
+        bundle.document_body_digests().values()
+    )
 
 
 def test_a_kit_installs_upgrades_and_removes_its_documents(

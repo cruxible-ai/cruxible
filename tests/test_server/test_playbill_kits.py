@@ -1904,6 +1904,221 @@ def test_a_template_naming_a_publisher_local_line_the_kit_does_not_export_refuse
     assert get_playbill_manager().get(publisher.instance_id).accepted_coordinate() == head
 
 
+def _bundled_local_call_provider(
+    tmp_path: Path, instance: typing.Any, checkout: typing.Any, *, name: str = "kit-call"
+) -> typing.Any:
+    """A real wheel for ``name``'s ``local.increment`` operation, staged for ``KitBuildRequest``.
+
+    No refusal Contracts: ``build_local_call``'s registration declares none,
+    so this exercises the Provider-seeding path (D-R48 review fix round 2, R2)
+    on its own, apart from the separate (and already-known) gap that a
+    Provider's REFUSAL Contracts are never swept into a kit's exported closure.
+    """
+
+    import hashlib
+
+    from cruxible_client.contracts.kits import KitBuildProvider
+    from cruxible_client.contracts.provider_installation import ProviderWheelObject
+    from tests.support.provider_installation import build_local_call
+
+    wheel, lock = build_local_call(tmp_path, checkout.repository, name=name)
+    runtime = next(checkout.wheels.glob("cruxible_provider_runtime-*.whl"))
+
+    def staged_digest(path: Path) -> str:
+        content = path.read_bytes()
+        digest = "sha256:" + hashlib.sha256(content).hexdigest()
+        instance.body_store().store(content)
+        return digest
+
+    def staged_wheel(path: Path) -> ProviderWheelObject:
+        return ProviderWheelObject(filename=path.name, digest=staged_digest(path))
+
+    wheel_object = staged_wheel(wheel)
+    lock_digest = staged_digest(lock)
+    runtime_object = staged_wheel(runtime)
+    return KitBuildProvider(
+        wheel=wheel_object,
+        lock_digest=lock_digest,
+        dependencies=(runtime_object,),
+    )
+
+
+def test_a_template_binding_a_bundled_provider_operation_builds(
+    worlds: tuple[_World, _World], tmp_path: Path, provider_checkout: typing.Any
+) -> None:
+    """D-R48 review fix round 2, R2: the check seeds the bundle's own validated
+    provider packages' operations, so a Line binding ``name#operation`` of a
+    bundled build authors -- never a publisher-local build's.
+    """
+
+    from cruxible_client.contracts.authoring.inputs import ProcedureInput
+    from cruxible_client.contracts.kits import KitAutomationTemplate
+    from cruxible_client.contracts.procedures.authored import CallStep
+    from tests.core_support._identity_support import accept_tree
+    from tests.support.procedures import procedure_limits, procedure_spec
+    from tests.support.provider_installation import (
+        LOCAL_CALL_IN,
+        LOCAL_CALL_OUT,
+        local_call_contract_files,
+    )
+
+    publisher, _consumer = worlds
+    instance = get_playbill_manager().get(publisher.instance_id)
+    accept_tree(
+        instance, local_call_contract_files(), name="local-call-contract", actor_id="operator"
+    )
+    _author_as(
+        instance,
+        ProcedureInput(
+            kind="procedure",
+            spec=procedure_spec(
+                procedure="acme.increment",
+                params={"n": "int"},
+                output={"n": "int"},
+                slots={"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
+                steps=[
+                    CallStep(
+                        call="result",
+                        slot="increment",
+                        input={"n": {"$ref": "param", "path": ["n"]}},
+                    )
+                ],
+                returns="result",
+                hard_caps=procedure_limits(wall_clock="PT30S", provider_calls=1),
+            ),
+        ),
+        actor_id="operator",
+        name="acme-increment-procedure",
+    )
+    provider = _bundled_local_call_provider(tmp_path, instance, provider_checkout)
+    content = _template(
+        {
+            "kind": "line",
+            "name": "acme.increment-run",
+            "procedure_name": "acme.increment",
+            "bindings": {"increment": "kit-call#local.increment"},
+            "acquisition": {},
+            "findings": {},
+            "parameters": {"n": 1},
+            "max_authority": "observe",
+            "occurrence_epoch": 1,
+        }
+    )
+    head = instance.accepted_coordinate()
+
+    bundle = playbill_api.playbill_kit_build(
+        publisher.instance_id,
+        KitBuildRequest(
+            kit_id="acme",
+            version="1.0.0",
+            owns=("acme.",),
+            providers=(provider,),
+            automation_template=KitAutomationTemplate(path="automation.json", content=content),
+        ),
+    ).bundle
+
+    assert bundle.manifest.automation_template == "automation.json"
+    assert instance.accepted_coordinate() == head
+
+
+def test_a_template_binding_a_publisher_local_provider_not_in_the_bundle_refuses(
+    worlds: tuple[_World, _World], tmp_path: Path, provider_checkout: typing.Any
+) -> None:
+    """The same template, but ``kit-call`` is installed live on the publisher
+    and NOT named in ``request.providers``: a fresh adopter's throwaway
+    closure never seeds it (a Provider is never kit content, and the check
+    reads only ``request.providers``, never the publisher's own installed
+    builds), so the build refuses exactly as it would for them -- never
+    because the publisher happens to run it locally.
+    """
+
+    from cruxible_client.contracts.authoring.inputs import ProcedureInput
+    from cruxible_client.contracts.kits import KitAutomationTemplate
+    from cruxible_client.contracts.procedures.authored import CallStep
+    from cruxible_client.transport.http import CruxibleClient
+    from cruxible_core.cli.provider_wheels import install_provider_wheel
+    from cruxible_core.errors import RequestRefusedError
+    from tests.core_support._identity_support import accept_tree
+    from tests.support.procedures import procedure_limits, procedure_spec
+    from tests.support.provider_installation import (
+        LOCAL_CALL_IN,
+        LOCAL_CALL_OUT,
+        build_local_call,
+        local_call_contract_files,
+    )
+
+    publisher, _consumer = worlds
+    instance = get_playbill_manager().get(publisher.instance_id)
+    accept_tree(
+        instance, local_call_contract_files(), name="local-call-contract", actor_id="operator"
+    )
+    _author_as(
+        instance,
+        ProcedureInput(
+            kind="procedure",
+            spec=procedure_spec(
+                procedure="acme.increment",
+                params={"n": "int"},
+                output={"n": "int"},
+                slots={"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
+                steps=[
+                    CallStep(
+                        call="result",
+                        slot="increment",
+                        input={"n": {"$ref": "param", "path": ["n"]}},
+                    )
+                ],
+                returns="result",
+                hard_caps=procedure_limits(wall_clock="PT30S", provider_calls=1),
+            ),
+        ),
+        actor_id="operator",
+        name="acme-increment-procedure",
+    )
+    # A real, live install on the publisher -- not staged, not bundled, and
+    # never passed to ``request.providers``. A check that fell back to the
+    # publisher's own installed builds would wrongly resolve the binding.
+    wheel, lock = build_local_call(tmp_path, provider_checkout.repository, name="kit-call")
+    runtime = next(provider_checkout.wheels.glob("cruxible_provider_runtime-*.whl"))
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = publisher.http  # type: ignore[assignment]
+    result = install_provider_wheel(
+        client, publisher.instance_id, wheel=wheel, lock=lock, dependency_wheels=(runtime,)
+    )
+    assert result.registered, result
+    content = _template(
+        {
+            "kind": "line",
+            "name": "acme.increment-run",
+            "procedure_name": "acme.increment",
+            "bindings": {"increment": "kit-call#local.increment"},
+            "acquisition": {},
+            "findings": {},
+            "parameters": {"n": 1},
+            "max_authority": "observe",
+            "occurrence_epoch": 1,
+        }
+    )
+    head = instance.accepted_coordinate()
+
+    with pytest.raises(RequestRefusedError) as refused:
+        playbill_api.playbill_kit_build(
+            publisher.instance_id,
+            KitBuildRequest(
+                kit_id="acme",
+                version="1.0.0",
+                owns=("acme.",),
+                automation_template=KitAutomationTemplate(path="automation.json", content=content),
+            ),
+        )
+
+    # Binding resolution refuses directly (``resolve_slot_bindings``), not
+    # wrapped as ``cruxible.kit.automation_template_invalid`` -- the same code
+    # a fresh adopter's real ``kit add`` would see for this same Line.
+    assert refused.value.error_code == "cruxible.line.binding_unavailable"
+    assert instance.accepted_coordinate() == head
+
+
 def test_a_template_that_is_not_one_change_set_refuses_the_build(
     worlds: tuple[_World, _World],
 ) -> None:

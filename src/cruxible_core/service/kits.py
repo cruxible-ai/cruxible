@@ -427,9 +427,12 @@ def service_build_kit(
     in the manifest and carried as bytes in the returned bundle. The
     ``automation_template`` is checked as ``template_actor_id``'s authoring
     preview against exactly this build's exported closure (never this
-    instance's other local definitions; D-R48 fix round F3), and refuses the
-    build ``cruxible.kit.automation_template_invalid`` unless it authors
-    cleanly there.
+    instance's other local definitions; D-R48 fix round F3), the bundled
+    provider packages' own validated builds and operations (review fix round
+    2, R2), and the closure's own Document bodies (review fix round 2, R3),
+    and refuses the build ``cruxible.kit.automation_template_invalid`` (or the
+    underlying typed refusal, e.g. ``cruxible.line.binding_unavailable``)
+    unless it authors cleanly there.
     """
 
     template = request.automation_template
@@ -479,11 +482,25 @@ def service_build_kit(
     bundle = build_kit(
         tree, request, provenance=provenance, providers=tuple(packages), automation_template=None
     )
+    # Collected before the template check (R3): a non-genesis Document body in
+    # the closure must already be in the throwaway instance's body store when
+    # the template is checked against it, exactly as a fresh adopter receives
+    # it with the release.
+    bodies = sorted(set(bundle.document_body_digests().values()))
+    body_bytes = {
+        digest: _staged(instance, digest, f"the Document body {digest}") for digest in bodies
+    }
     if template is not None:
         from cruxible_core.service.kit_template import check_automation_template
 
         assert template_actor_id is not None  # refused above when a template is named
-        check_automation_template(bundle.contents(), template, actor_id=template_actor_id)
+        check_automation_template(
+            bundle.contents(),
+            template,
+            actor_id=template_actor_id,
+            providers=tuple(packages),
+            document_bodies=body_bytes,
+        )
         bundle = bundle.model_copy(
             update={
                 "manifest": bundle.manifest.model_copy(
@@ -495,13 +512,11 @@ def service_build_kit(
                 "files": (KitFileBytes.of(template.path, template.content.encode("utf-8")),),
             }
         )
-    bodies = sorted(set(bundle.document_body_digests().values()))
-    if bodies:
+    if body_bytes:
         bundle = bundle.model_copy(
             update={
                 "document_bodies": tuple(
-                    KitDocumentBody.of(_staged(instance, digest, f"the Document body {digest}"))
-                    for digest in bodies
+                    KitDocumentBody.of(content) for content in body_bytes.values()
                 )
             }
         )
