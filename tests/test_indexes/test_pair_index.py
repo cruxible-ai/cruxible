@@ -220,6 +220,51 @@ def test_a_kind_made_a_pair_kind_while_it_had_no_subject_builds_alike() -> None:
     assert rows["pair_units"] == [(C1, O_OWNER, O_FACT, owned)]
 
 
+def test_the_permitted_first_part_transitions_build_alike() -> None:
+    """Review F1: a retiring successor adding a part, and a ClaimType-only conversion, of a
+    kind with no Subject: the incremental index equals a full build (both empty of it)."""
+
+    from cruxible_client.contracts.claim_types import (
+        claim_type_digest,
+        claim_type_path,
+        render_claim_type,
+    )
+    from cruxible_client.contracts.shapes import coerce_field_type
+    from tests.core_support._pair_support import TYPES, keyed
+
+    tree = _ends()
+    literal_owned = keyed(OWNED, O_SERIAL)
+    tree[kind_path(OWNED)] = render_subject_kind(literal_owned)
+    world = World(tree)
+    retiring = successor_kind(
+        literal_owned,
+        identity_rule=KINDS[OWNED].identity_rule,
+        lifecycle=ArtifactLifecycle(
+            state="retired", predecessor_digest=subject_kind_digest(literal_owned).tagged
+        ),
+    )
+    changes = {kind_path(OWNED): render_subject_kind(retiring)}
+    publish(world.connection, changes, changed=changes)
+    world.tree.update(changes)
+    previous = TYPES[O_SERIAL]
+    converted = previous.model_copy(
+        update={
+            "value": coerce_field_type({"kind": "subject", "subject_kinds": (VULN,)}),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(previous).tagged),
+        }
+    )
+    changes = {claim_type_path(O_SERIAL): render_claim_type(converted)}
+    publish(world.connection, changes, changed=changes)
+    world.tree.update(changes)
+    rows = pair_rows(world.connection)
+    cold = projection(world.tree)
+    try:
+        assert rows == pair_rows(cold)
+    finally:
+        cold.close()
+    assert rows == {"pair_ends": [], "pair_slot_live": [], "pair_units": []}
+
+
 def test_full_build_equals_incremental_after_randomized_sequences() -> None:
     for seed in range(6):
         _randomized(random.Random(seed))

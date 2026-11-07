@@ -1364,25 +1364,50 @@ def _endpoint_declaration_issues(
                     )
                 )
             continue
-        if new.lifecycle.state != "live" or not subject_key_ends(
+        # Whatever the successor's lifecycle: a retiring successor that adds a
+        # Subject part still makes every Subject of the kind a pair to a full build.
+        if not subject_key_ends(
             new,
             {predicate: key_claim_type_shape(candidate_tree, predicate) for predicate in new.keys},
         ):
             continue
-        low, high = _kind_range(kind)
-        if connection.execute(
-            "SELECT 1 FROM subjects WHERE path>=? AND path<? LIMIT 1", (low, high)
-        ).fetchone():
-            issues.append(
-                SubjectIdentityIssue(
-                    SUBJECT_KIND_ENDPOINT_DECLARATION_FIXED,
-                    subject_kind_path(kind),
-                    f"{kind} already has Subjects, which were not created as pairs and have no "
-                    "endpoints; a kind becomes a pair kind (a Subject-valued key part) only "
-                    "while it has no Subject, live or retired. Declare the pair as a new kind.",
-                )
-            )
+        if _kind_has_subjects(connection, kind):
+            issues.append(_not_yet_a_pair_kind(kind))
     return issues
+
+
+def _parent_kind_keys(connection: sqlite3.Connection, kind: str) -> tuple[str, ...]:
+    """The key predicates the parent's SubjectKind of ``kind`` names, whatever its lifecycle."""
+
+    row = connection.execute(
+        "SELECT key_predicates FROM subject_kinds WHERE identity=? AND rule='keys'",
+        (f"SubjectKind:{kind}",),
+    ).fetchone()
+    return () if row is None else tuple(str(item) for item in json.loads(str(row[0])))
+
+
+def _kind_has_subjects(connection: sqlite3.Connection, kind: str) -> bool:
+    """Whether the parent holds any Subject of ``kind``, live or retired (one range probe)."""
+
+    low, high = _kind_range(kind)
+    return (
+        connection.execute(
+            "SELECT 1 FROM subjects WHERE path>=? AND path<? LIMIT 1", (low, high)
+        ).fetchone()
+        is not None
+    )
+
+
+def _not_yet_a_pair_kind(kind: str) -> SubjectIdentityIssue:
+    from cruxible_client.contracts.subject_kinds import subject_kind_path
+
+    return SubjectIdentityIssue(
+        SUBJECT_KIND_ENDPOINT_DECLARATION_FIXED,
+        subject_kind_path(kind),
+        f"{kind} already has Subjects, which were not created as pairs and have no "
+        "endpoints; a kind becomes a pair kind (a Subject-valued key part) only "
+        "while it has no Subject, live or retired. Declare the pair as a new kind.",
+    )
 
 
 def _shell(tree: Mapping[str, bytes], path: str) -> Any | None:
@@ -2240,24 +2265,23 @@ def _pair_key_type_issues(
     and about that kind only, and never retired while the kind exists -- even
     when the same change succeeds the SubjectKind. A literal key ClaimType of a
     live kind becomes Subject-valued only beside a SubjectKind successor, which
-    the boundary judges (``endpoint_declaration_fixed``). One read of the keyed
-    kinds per change that succeeds a ClaimType.
+    the boundary judges (``endpoint_declaration_fixed``), and never while the
+    kind holds a Subject. A key ClaimType is about its kind only, so the kinds
+    it may key are its own allowed kinds: one indexed read each.
     """
 
     from cruxible_client.contracts.subject_kinds import subject_kind_path
 
     issues: list[SubjectIdentityIssue] = []
-    keyed: dict[str, list[tuple[str, str]]] = {}
-    for identity, keys, lifecycle in connection.execute(
-        "SELECT identity, key_predicates, lifecycle FROM subject_kinds WHERE rule='keys'"
-    ):
-        for predicate in json.loads(str(keys)):
-            if predicate in changed:
-                keyed.setdefault(predicate, []).append(
-                    (str(identity).removeprefix("SubjectKind:"), str(lifecycle))
-                )
     for predicate, (old, new) in sorted(changed.items()):
-        for kind, lifecycle in sorted(keyed.get(predicate, ())):
+        candidates = {
+            *old.allowed_subject_kinds,
+            *(() if new is None else new.allowed_subject_kinds),
+        }
+        keyed = sorted(
+            kind for kind in candidates if predicate in _parent_kind_keys(connection, kind)
+        )
+        for kind in keyed:
             if claim_value_kind(old.value) == "subject":
                 kept = (
                     new is not None
@@ -2281,12 +2305,17 @@ def _pair_key_type_issues(
                             "kind.",
                         )
                     )
-            elif (
-                new is not None
-                and claim_value_kind(new.value) == "subject"
-                and lifecycle == "live"
-                and kind not in changed_kinds
-            ):
+            elif new is not None and claim_value_kind(new.value) == "subject":
+                # Literal -> Subject: the kind would become a pair kind. Never
+                # while it holds a Subject (live or retired, its kind live or
+                # retired: a full build would make those pairs without
+                # endpoints), and only beside a SubjectKind successor, whose law
+                # and boundary judge the pair kind.
+                if _kind_has_subjects(connection, kind):
+                    issues.append(_not_yet_a_pair_kind(kind))
+                    continue
+                if kind in changed_kinds:
+                    continue
                 issues.append(
                     SubjectIdentityIssue(
                         SUBJECT_KIND_KEY_BROKEN,

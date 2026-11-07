@@ -524,13 +524,19 @@ def test_an_endpoint_claim_type_keeps_its_end_kind_even_beside_a_kind_successor(
     assert "cruxible.subject_kind.key_claim_type_broken" in judge(
         parent, {claim_type_path(E_COMPONENT): retired}
     )
-    # A literal key ClaimType of a live kind made Subject-valued, kind untouched.
+    # A literal key ClaimType of a live kind made Subject-valued, kind untouched:
+    # pt.component holds Subjects, so it can never become a pair kind.
     to_subject = _type_successor(
         PURL, value=coerce_field_type({"kind": "subject", "subject_kinds": (VULN,)})
     )
-    assert "cruxible.subject_kind.key_claim_type_broken" in judge(
-        parent, {claim_type_path(PURL): to_subject}
-    )
+    assert judge(parent, {claim_type_path(PURL): to_subject}) == [
+        "cruxible.subject_kind.endpoint_declaration_fixed"
+    ]
+    # With no Subject yet it still needs a SubjectKind successor beside it.
+    bare = definitions()
+    assert judge(bare, {claim_type_path(PURL): to_subject}) == [
+        "cruxible.subject_kind.key_claim_type_broken"
+    ]
 
 
 def test_a_grandfathered_pair_keeps_its_endpoints_frozen() -> None:
@@ -572,6 +578,70 @@ def test_a_kind_becomes_a_pair_kind_only_while_it_has_no_subject() -> None:
     assert judge(undeclared, {subject_kind_path(OWNED): render_subject_kind(KINDS[OWNED])}) == [
         "cruxible.subject_kind.endpoint_declaration_fixed"
     ]
+
+
+def _literal_owned_with_a_retired_subject(*, retire_kind: bool = False) -> dict[str, bytes]:
+    """K = ``pt.owned`` keyed by ``serial`` alone, holding one retired Subject s1."""
+
+    literal_owned = keyed(OWNED, O_SERIAL)
+    parent = definitions(COMPONENT, VULN)
+    parent[subject_kind_path(OWNED)] = render_subject_kind(
+        successor_kind(
+            literal_owned,
+            lifecycle=ArtifactLifecycle(
+                state="retired", predecessor_digest=subject_kind_digest(literal_owned).tagged
+            ),
+        )
+        if retire_kind
+        else literal_owned
+    )
+    put(parent, *end(COMPONENT, "c1", 1))
+    serial = claim(50, O_SERIAL, literal("s1"), subject=path_of(OWNED, "s1"))
+    put(parent, retired_shell(shell(OWNED, "s1")), retired_claim(serial))
+    return parent
+
+
+def test_a_retiring_successor_cannot_add_the_first_subject_part_either() -> None:
+    """Review F1: the lifecycle of the successor does not bypass the Subject probe."""
+
+    literal_owned = keyed(OWNED, O_SERIAL)
+    retiring = successor_kind(
+        literal_owned,
+        identity_rule=KINDS[OWNED].identity_rule,
+        lifecycle=ArtifactLifecycle(
+            state="retired", predecessor_digest=subject_kind_digest(literal_owned).tagged
+        ),
+    )
+    change = {subject_kind_path(OWNED): render_subject_kind(retiring)}
+    assert judge(_literal_owned_with_a_retired_subject(), change) == [
+        "cruxible.subject_kind.endpoint_declaration_fixed"
+    ]
+    # Without any Subject of the kind the same retiring successor passes.
+    fresh = definitions(COMPONENT, VULN)
+    fresh[subject_kind_path(OWNED)] = render_subject_kind(literal_owned)
+    assert judge(fresh, change) == []
+
+
+def test_a_claim_type_alone_cannot_make_a_kind_with_subjects_a_pair_kind() -> None:
+    """Review F1: literal -> subject<K> on a key ClaimType, with no SubjectKind successor."""
+
+    from cruxible_client.contracts.shapes import coerce_field_type
+
+    to_subject = _type_successor(
+        O_SERIAL, value=coerce_field_type({"kind": "subject", "subject_kinds": (COMPONENT,)})
+    )
+    change = {claim_type_path(O_SERIAL): to_subject}
+    # The kind retired (grandfathered), its Subject retired: still refused.
+    for retire_kind in (True, False):
+        codes = judge(_literal_owned_with_a_retired_subject(retire_kind=retire_kind), change)
+        assert "cruxible.subject_kind.endpoint_declaration_fixed" in codes, (retire_kind, codes)
+    # Beside a SubjectKind successor (same rule) the kind's Subjects still refuse it.
+    parent = _literal_owned_with_a_retired_subject()
+    beside = {
+        **change,
+        subject_kind_path(OWNED): render_subject_kind(successor_kind(keyed(OWNED, O_SERIAL))),
+    }
+    assert "cruxible.subject_kind.endpoint_declaration_fixed" in judge(parent, beside)
 
 
 def test_a_mixed_key_rekeys_its_literal_part_only() -> None:
