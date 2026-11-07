@@ -446,8 +446,14 @@ def attest_claim(
     ``evidence`` is one write evidence option (``self``, ``section`` with
     ``own_words``, ``file``, ``capture``, ``contract``), file and section
     evidence observed here from ``workspace``. The daemon makes or resolves
-    those Captures at its head, which becomes the signed referent. With
-    neither, the attestation cites the Claim's own evidence.
+    those Captures at its head. With no ``referent_coordinate``, that head
+    becomes the signed referent. A caller who names one (a pinned
+    ``ClaimRef``) keeps it, whether or not evidence is supplied; if the Claim
+    was revised since, so that pinned revision is no longer the one standing
+    at the evidence head, this refuses (``ClaimAttestationReferentStaleError``)
+    rather than sign the old revision over evidence prepared for the new one.
+    With neither ``because`` nor ``evidence``, the attestation cites the
+    Claim's own evidence.
     """
 
     claim = claim_id.removeprefix("Claim:")
