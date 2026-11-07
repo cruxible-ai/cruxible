@@ -53,6 +53,7 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.policies import (
+    CAPTURE_CONTRACT_FAMILY_SHAPES,
     CAPTURE_CONTRACT_REF_ROLE,
     CaptureContractAdmission,
     ClaimEvidenceAdmissionPolicy,
@@ -901,6 +902,10 @@ def lint_claim_type_input(
     warnings: list[ClaimTypeLintWarningV1] = []
     admitted: set[str] = set()
     admitted_identities: set[str] = set()
+    # A family entry's membership is open (the catalog, not this lint, decides
+    # who joins it), so it is tracked by the shape it admits, never by a
+    # specific resolved contract identity or digest.
+    admitted_family_shapes: set[str] = set()
     resolvable_identities = set(resolvable_contracts.values())
     for index, raw_rule in enumerate(rules):
         if not isinstance(raw_rule, dict):
@@ -912,6 +917,10 @@ def lint_claim_type_input(
             except (FormatError, ValueError):
                 continue
         admitted_identities.update(named)
+        for family in raw_rule.get("capture_contract_families", []) or []:
+            shape = CAPTURE_CONTRACT_FAMILY_SHAPES.get(family)
+            if shape is not None:
+                admitted_family_shapes.add(shape)
         for identity in named:
             if identity not in resolvable_identities:
                 warnings.append(
@@ -947,6 +956,7 @@ def lint_claim_type_input(
     if (
         not admitted.intersection(resolvable_contracts)
         and not admitted_identities.intersection(resolvable_identities)
+        and not admitted_family_shapes
         and accepted_contracts
         and not warnings
     ):
@@ -972,7 +982,11 @@ def lint_claim_type_input(
     for source_id in sorted(source_ids, key=lambda item: item.encode("utf-8")):
         contract = foreign_source_capture_contract(source_id)
         contract_digest = capture_contract_digest(contract).tagged
-        if contract_digest in admitted or contract.identity.qualified in admitted_identities:
+        if (
+            contract_digest in admitted
+            or contract.identity.qualified in admitted_identities
+            or contract.shape in admitted_family_shapes
+        ):
             continue
         warnings.append(
             ClaimTypeLintWarningV1(
