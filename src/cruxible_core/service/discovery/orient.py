@@ -89,6 +89,7 @@ from cruxible_core.indexes.query_selection import (
     LIVE_SUBJECT_COUNTS_SQL,
 )
 from cruxible_core.indexes.sql_batch import select_in
+from cruxible_core.indexes.typed_state import RUNBOOK_LIVE_COUNT_SQL
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.service.discovery.activity import ActivityPosition, activity_page
@@ -1294,7 +1295,8 @@ def _operational_counts(
 
         counts = {
             "lines": count("SELECT count(*) FROM lines WHERE lifecycle='live'"),
-            "runbooks": count("SELECT count(*) FROM runbooks WHERE lifecycle='live'"),
+            # D-R48 F1: the maintained singleton, never a scan of runbooks.
+            "runbooks": count(RUNBOOK_LIVE_COUNT_SQL),
             # The counter Capture inserts and deletes keep, never a count of the Captures.
             "captures": count(CAPTURE_COUNT_SQL),
             "capture_contracts": count(
