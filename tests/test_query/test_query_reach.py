@@ -36,6 +36,7 @@ from tests.core_support._query_reach_world import (
     PACKAGE,
     PAST,
     REPO,
+    REVIEW,
     SEVERITY,
     STATUS,
     SURFACE,
@@ -232,6 +233,8 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> ReachWorld:
     for name, tags in (("a0", ("x", "y")), ("a1", ("x",))):
         for tag in tags:
             built.claim(TAG, tag, built.subject(UNIT, "acme", name))
+    # A unit whose inverse-capable review slot holds only a none.
+    built.claim(REVIEW, None, built.subject(UNIT, "other", "voided"))
     # One finding with competing one-valued severities (a conflict to surface or refuse).
     contested = built.subject(UNIT, "other", "contested")
     disputed = built.subject(FINDING, "fc")
@@ -951,3 +954,55 @@ def test_a_scalar_claim_leftover_and_its_excluded_variants(
     assert result.verdict == "refused" and result.refusal is not None
     assert result.refusal.code == "cruxible.query.claim_conflict"
     assert observed[-1] is None
+
+
+def test_a_visible_none_refuses_before_an_empty_seek(world: ReachWorld) -> None:
+    """A literal slot that admits an inverse can hold a visible none, which coerces to no
+    scalar type: the full load refuses on it, so neither a leftover nor a seek over
+    that predicate may prune it away."""
+
+    from cruxible_client.contracts.query.grammar import (
+        QueryClaimValueRef,
+        QueryComparisonFilter,
+        QueryLiteralRef,
+    )
+
+    whole = served.build_accepted_query_facts(
+        world.instance, coordinate=world.instance.accepted_coordinate()
+    )
+
+    def compared(predicate: str, value: str, operator: str = "eq") -> Any:
+        return QueryComparisonFilter(
+            left=QueryClaimValueRef(binding="u", predicate=predicate),
+            operator=operator,
+            right=QueryLiteralRef(value=value),
+            value_type="string",
+        )
+
+    every = (
+        "contradicted",
+        "stale",
+        "supported",
+        "uncovered",
+        "unresolved",
+    )
+    for where in (
+        # The review part sorts before the empty surface seek and is left out.
+        _all_of(compared(REVIEW, "deferred", "ne"), compared(SURFACE, "nosuch")),
+        # The review part is the seek itself.
+        compared(REVIEW, "nosuch"),
+    ):
+        query = _query_over(world, UNIT, "u", where).query
+        query = _accepted(
+            query.model_copy(
+                update={
+                    "evaluation_policy": query.evaluation_policy.model_copy(
+                        update={"visible_verdicts": every, "visible_currency": ("current", "stale")}
+                    )
+                }
+            )
+        )
+        result = compare(world, query, {}, whole=whole)
+        assert result.verdict == "refused", result
+        assert result.refusal is not None
+        assert result.refusal.code == "cruxible.query.value_type_mismatch"

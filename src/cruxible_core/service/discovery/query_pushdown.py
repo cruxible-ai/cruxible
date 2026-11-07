@@ -259,6 +259,8 @@ def select_query_facts(
         claim_type = claim_type_of(ref.predicate)
         return (
             claim_type is not None
+            # A none (inverse) object holds no value of the declared type.
+            and claim_type.inverse is None
             and claim_type.cardinality == "one"
             and claim_value_kind(claim_type.value) == "literal"
             and value_type in {"string", "integer", "boolean"}
@@ -407,7 +409,9 @@ def select_query_facts(
         if operator != "eq" or not surfaces:
             return None
         claim_type = claim_type_of(ref.predicate)
-        if claim_type is None:
+        if claim_type is None or claim_type.inverse is not None:
+            # A seek's own part runs on eliminated rows: an inverse-capable
+            # type can hold a visible none, whose value coerces to no type.
             return None
         if claim_value_kind(claim_type.value) == "subject":
             if filter_.value_type != "subject_reference":

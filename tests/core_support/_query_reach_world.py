@@ -70,6 +70,8 @@ REPO = f"{UNIT}.repo"
 SURFACE = f"{UNIT}.surface"
 STATUS = f"{UNIT}.status"
 TAG = f"{UNIT}.tag"
+#: A literal string slot that admits an inverse: it can hold a visible none.
+REVIEW = f"{UNIT}.review"
 LOCUS = f"{FINDING}.locus"
 FOUND_IN = f"{FINDING}.found_in"
 SEVERITY = f"{FINDING}.severity"
@@ -119,6 +121,7 @@ TYPES: dict[str, ClaimType] = {
         _type(SURFACE),
         _type(STATUS, {"type": "string", "enum": ["blocked", "checked", "deferred"]}),
         _type(TAG, many=True),
+        _type(REVIEW, inverse=True),
         _type(LOCUS),
         _type(FOUND_IN, (UNIT,), many=True),
         _type(SEVERITY),
@@ -289,6 +292,7 @@ __all__ = [
     "STATUS",
     "SURFACE",
     "TAG",
+    "REVIEW",
     "TYPES",
     "UNIT",
     "VID",
