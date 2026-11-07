@@ -464,6 +464,7 @@ def _new_capture_accounts(
                 capture_contract=accepted,
                 envelope=envelope,
                 verified_attestations=law.verified_attestations,
+                historical_capture_contract=historical_capture_contract,
             )
         except (CruxibleError, ValueError) as exc:
             raise ClaimAttestationRefusal(

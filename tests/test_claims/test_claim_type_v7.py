@@ -246,6 +246,29 @@ def test_an_unsatisfiable_requirement_is_refused_by_the_claim_type_law() -> None
     ]
 
 
+def test_a_family_only_rule_satisfies_a_captured_requirement() -> None:
+    """D1 (2026-11-06): a rule naming only ``capture_contract_families`` still
+    names a declared CaptureContract -- just by shape instead of by identity --
+    so it satisfies ``evidence_requirement: captured`` exactly as an exact-name
+    rule would.
+    """
+
+    family_only = ClaimEvidenceAdmissionPolicy(
+        rules=(
+            ClaimEvidenceAdmissionRule(
+                rule_id="workspace",
+                claim_roles=("normative", "observation"),
+                capture_contract_families=("workspace_file",),
+                admission="direct",
+                subject_binding="exact_claim_subject",
+            ),
+        )
+    )
+    claim_type = v7(evidence_requirement="captured", evidence_admission_policy=family_only)
+    result = evaluate_claim_type_law(claim_type, path=PATH, predecessor=None)
+    assert [item.code for item in result.diagnostics] == []
+
+
 def test_only_none_compiles_the_origin_supporting_rule() -> None:
     def rule(claim_type: ClaimType) -> object:
         return claim_adjudication_rule(

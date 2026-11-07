@@ -655,6 +655,10 @@ def _claim_admission_accounts(
             claim_type=claim_type,
             capture_contract=contract,
             capture_digest=citation.capture_digest,
+            envelope=envelope,
+            historical_capture_contract=lambda digest: (
+                contracts.get(digest) or _superseded_contract(instance, coordinate, digest)
+            ),
         )
         if isinstance(citation, ClaimCitation) and citation.role == "copy" and not eligible:
             accounts.append(
@@ -676,6 +680,9 @@ def _claim_admission_accounts(
             capture_contract=contract,
             envelope=envelope,
             verified_attestations=law.verified_attestations,
+            historical_capture_contract=lambda digest: (
+                contracts.get(digest) or _superseded_contract(instance, coordinate, digest)
+            ),
         )
         decisions = tuple(
             CaptureEvidenceAdmissionV1(

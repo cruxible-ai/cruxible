@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.captures import (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    capture_contract_digest,
+    foreign_source_capture_contract,
+)
 from cruxible_client.contracts.policies import (
     CaptureContractAdmission,
     ClaimAdmissionCandidateContext,
@@ -259,6 +266,169 @@ def test_evidence_policy_refuses_duplicate_rules_reducers_and_empty_contracts() 
         ClaimEvidenceAdmissionRule.model_validate(
             {**direct.model_dump(mode="json"), "capture_contracts": []}
         )
+
+
+def _workspace_file_rule(**updates: object) -> ClaimEvidenceAdmissionRule:
+    values: dict[str, object] = {
+        "rule_id": "workspace",
+        "claim_roles": ("observation",),
+        "capture_contract_families": ("workspace_file",),
+        "admission": "direct",
+        "subject_binding": "exact_claim_subject",
+    }
+    values.update(updates)
+    return ClaimEvidenceAdmissionRule.model_validate(values)
+
+
+def _workspace_file_evidence(contract: object, **updates: object) -> EvidenceAdmissionInput:
+    values: dict[str, object] = {
+        "claim_role": "observation",
+        "capture_contract_digest": capture_contract_digest(contract).tagged,
+        "capture_contract_identity": contract.identity.qualified,  # type: ignore[union-attr]
+        "capture_contract_shape": contract.shape,  # type: ignore[union-attr]
+        "source_subject_bound": True,
+    }
+    values.update(updates)
+    return EvidenceAdmissionInput.model_validate(values)
+
+
+def test_capture_contract_families_require_at_least_one_selector() -> None:
+    # A family selector alone satisfies the rule: no exact contract is required.
+    rule = _workspace_file_rule()
+    assert rule.capture_contracts == ()
+    assert rule.capture_contract_families == ("workspace_file",)
+    with pytest.raises(ValidationError, match="must not be empty"):
+        ClaimEvidenceAdmissionRule.model_validate(
+            {
+                "rule_id": "nothing",
+                "claim_roles": ("observation",),
+                "capture_contracts": [],
+                "capture_contract_families": [],
+                "admission": "direct",
+                "subject_binding": "exact_claim_subject",
+            }
+        )
+    with pytest.raises(ValidationError):
+        ClaimEvidenceAdmissionRule.model_validate(
+            {
+                "rule_id": "unknown-family",
+                "claim_roles": ("observation",),
+                "capture_contract_families": ["not_a_real_family"],
+                "admission": "direct",
+                "subject_binding": "exact_claim_subject",
+            }
+        )
+
+
+def test_a_family_selector_admits_two_catalogued_files_and_refuses_a_non_file_capture() -> None:
+    """D1 (2026-11-06): a family entry is resolved by the contract's own declared
+    ``shape`` -- never by a string match on its name -- so a rule naming
+    ``workspace_file`` admits any catalogued workspace file's foreign-source
+    CaptureContract, including ones added to the catalog after the rule was
+    authored, and only those.
+    """
+
+    policy = ClaimEvidenceAdmissionPolicy(rules=(_workspace_file_rule(),))
+    file_a = foreign_source_capture_contract("repo.file-a")
+    file_b = foreign_source_capture_contract("repo.file-b")
+    assert file_a.shape == file_b.shape == "foreign_span"
+    assert file_a.identity.qualified != file_b.identity.qualified
+
+    for contract in (file_a, file_b):
+        result = evaluate_claim_evidence_admission(policy, _workspace_file_evidence(contract))
+        assert result.verdict == "eligible"
+        assert result.rule_id == "workspace"
+
+    non_file = evaluate_claim_evidence_admission(
+        policy, _workspace_file_evidence(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
+    )
+    assert non_file.verdict == "refused"
+    assert non_file.refusal_code == "cruxible.evidence.undeclared_contract_kind"
+
+
+def test_an_exact_contract_rule_is_unaffected_by_a_capture_shape() -> None:
+    """Passing ``shape`` never widens what an exact-identity rule admits."""
+
+    policy = _evidence_policy()
+    file_a = foreign_source_capture_contract("repo.file-a")
+    # The exact rule names CONTRACT_A only; a catalogued workspace file's own
+    # shape must not substitute for the identity the rule actually names.
+    result = evaluate_claim_evidence_admission(policy, _workspace_file_evidence(file_a))
+    assert result.verdict == "refused"
+    assert result.refusal_code == "cruxible.evidence.undeclared_contract_kind"
+
+
+@pytest.mark.parametrize("catalog_size", (10, 100))
+def test_family_admission_cost_does_not_grow_with_the_catalog(
+    monkeypatch: pytest.MonkeyPatch, catalog_size: int
+) -> None:
+    """Admission cost is constant as the number of catalogued files grows.
+
+    A rule naming ``capture_contract_families`` never needs to look up, or even
+    know the size of, the workspace file catalog: it decides by the one
+    Capture's own declared shape alone. Building a ``catalog_size``-member
+    catalog and then forbidding any further catalog-contract construction
+    proves the admission check touches none of it.
+    """
+
+    catalog = [
+        foreign_source_capture_contract(f"repo.file-{index:03d}") for index in range(catalog_size)
+    ]
+    target = catalog[-1]
+    policy = ClaimEvidenceAdmissionPolicy(rules=(_workspace_file_rule(),))
+    evidence = _workspace_file_evidence(target)
+
+    import cruxible_client.contracts.captures as captures_module
+
+    calls: list[str] = []
+
+    def _forbidden(*args: object, **kwargs: object) -> None:
+        calls.append("called")
+        raise AssertionError("admission must never rebuild a catalogued contract")
+
+    monkeypatch.setattr(captures_module, "foreign_source_capture_contract", _forbidden)
+
+    result = evaluate_claim_evidence_admission(policy, evidence)
+
+    assert result.verdict == "eligible"
+    assert calls == []
+
+
+_WORKSPACE_CATALOG = """\
+tag: playbill-source-catalog-v1
+catalog_kind: portable
+entries:
+  - name: repo.known
+    locator: known.md
+"""
+
+
+def test_an_uncatalogued_path_cannot_be_cited(tmp_path: Path) -> None:
+    """The workspace catalog stays the admission boundary.
+
+    A family entry admits any catalogued workspace file's CaptureContract, but
+    an uncatalogued file was never given a CaptureContract in the first place
+    -- the catalog refuses to select it before any evidence rule, family or
+    exact, is ever consulted.
+    """
+
+    from cruxible_client.authoring.sdk_types import SourceSelectionError
+    from cruxible_client.authoring.write_evidence import observe_evidence
+    from cruxible_client.contracts.write import FileEvidence
+
+    workspace = tmp_path
+    (workspace / ".cruxible").mkdir(parents=True, exist_ok=True)
+    (workspace / ".cruxible" / "files.yaml").write_text(_WORKSPACE_CATALOG, encoding="utf-8")
+    (workspace / "known.md").write_text("# Known\n\nCount: 3\n", encoding="utf-8")
+    (workspace / "secret.md").write_text("# Secret\n\nCount: 3\n", encoding="utf-8")
+
+    # The catalogued file cites cleanly.
+    observed = observe_evidence(FileEvidence(file="known.md#Count: 3"), workspace=workspace)
+    assert observed is not None and observed.observation is not None
+
+    # The uncatalogued one, despite matching text, cannot be selected at all.
+    with pytest.raises(SourceSelectionError):
+        observe_evidence(FileEvidence(file="secret.md#Count: 3"), workspace=workspace)
 
 
 def test_resolution_preserves_conflict_and_rejects_deleted_authority_selector() -> None:

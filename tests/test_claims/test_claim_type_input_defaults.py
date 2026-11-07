@@ -254,6 +254,42 @@ def test_lint_names_an_unadmitted_role_and_a_reserved_field_name(tmp_path: Path)
     }
 
 
+def test_lint_does_not_warn_when_a_family_rule_covers_an_anticipated_source(
+    tmp_path: Path,
+) -> None:
+    """D1 (2026-11-06): a family entry's membership is open (the catalog decides
+    who joins it, never this lint), so an anticipated workspace-file source and
+    a family-only rule must not read as an unaccepted or unadmitted contract.
+    """
+
+    instance, _owner = initialize_local(tmp_path)
+    record = ClaimTypeInputRecord.model_validate(
+        {
+            **_MINIMAL,
+            "predicate": "catalog.part.notes",
+            "permitted_roles": ["observation"],
+            "anticipated_source_ids": ["repo.family-fixture"],
+            "evidence_admission_policy": {
+                "rules": [
+                    {
+                        "rule_id": "workspace",
+                        "claim_roles": ["observation"],
+                        "capture_contract_families": ["workspace_file"],
+                        "admission": "direct",
+                        "subject_binding": "exact_claim_subject",
+                    }
+                ]
+            },
+        }
+    )
+
+    lint = lint_claim_type_input(instance, record, coordinate=instance.accepted_coordinate())
+
+    codes = {item.code for item in lint.warnings}
+    assert "cruxible.claim_type.evidence_policy_admits_no_accepted_contract" not in codes
+    assert "cruxible.claim_type.anticipated_source_contract_omitted" not in codes
+
+
 def test_adopting_a_builtin_the_instance_holds_refuses_with_the_read(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
