@@ -28,6 +28,9 @@ jobs:
       CRUXIBLE_PROVIDERS_CHECKOUT: ${{ github.workspace }}/cruxible-providers
       # The checkout is mandatory here: its tests fail rather than skip.
       CRUXIBLE_PROVIDERS_REQUIRED: "1"
+      # Later `uv run` steps must not re-sync to the lock, which would replace the
+      # provider runtime installed from the checkout with the locked PyPI release.
+      UV_NO_SYNC: "1"
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
