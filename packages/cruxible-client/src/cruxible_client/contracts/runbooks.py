@@ -267,12 +267,17 @@ RunbookStepStatus: TypeAlias = Literal[
     "failed",
     # A Trigger-fired run: the Line is not enabled, so nothing may run it.
     "not_enabled",
+    # A replayed fire: the step's target (its Line, or its action) no longer
+    # exists, so the claimed plan cannot run it.
+    "unavailable",
     # The internal action was fired into the trigger journal.
     "fired",
     # An earlier step stopped the run.
     "not_run",
 ]
-RunbookStopReason: TypeAlias = Literal["step_failed", "step_proposed", "line_not_enabled"]
+RunbookStopReason: TypeAlias = Literal[
+    "step_failed", "step_proposed", "line_not_enabled", "target_unavailable"
+]
 
 
 class RunbookStepOutcome(_StrictRunbookModel):

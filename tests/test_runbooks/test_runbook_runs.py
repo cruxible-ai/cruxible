@@ -287,9 +287,15 @@ def _enable(instance: Any, line: str, *, now: datetime) -> None:
 def _fired_world(tmp_path: Path, steps: list[dict[str, str]]) -> tuple[Any, Path, datetime]:
     """A Runbook with a cadence Trigger, its Lines enabled, and one fire in the journal."""
 
+    instance, root = runbook_world(tmp_path)
+    return _fire_runbook(instance, root, steps)
+
+
+def _fire_runbook(
+    instance: Any, root: Path, steps: list[dict[str, str]]
+) -> tuple[Any, Path, datetime]:
     from cruxible_core.triggers.journal import internal_triggers
 
-    instance, root = runbook_world(tmp_path)
     author_runbook(instance, "test.rb", steps)
     author_runbook_trigger(
         instance,
@@ -306,13 +312,12 @@ def _fired_world(tmp_path: Path, steps: list[dict[str, str]]) -> tuple[Any, Path
     return instance, root, now
 
 
-def _action_fires(instance: Any) -> int:
+def _action_fires(instance: Any, action: str = "evidence.sweep") -> int:
     from cruxible_core.triggers.journal import trigger_events
 
     # Only the Runbook's own fires: a seeded Trigger fires the same action too.
     return sum(
-        event.trigger == "Trigger:test.rb-tick"
-        for event in trigger_events(instance, action="evidence.sweep")
+        event.trigger == "Trigger:test.rb-tick" for event in trigger_events(instance, action=action)
     )
 
 
@@ -390,6 +395,108 @@ def test_a_crash_mid_run_resumes_the_same_fire(
     assert last.run_id == runbook_service.fired_run_id("test.rb", claimed.started)
     assert counted_line_runs == {SETTLE: 1}
     assert _action_fires(instance) == 1
+
+
+def test_a_replay_runs_the_claimed_plan_not_a_successor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F1a: a Runbook succeeded between a crash and its replay changes nothing the fire runs.
+
+    The fire's exact ordered plan is retained with its claim; the replay runs that
+    plan, reads step 1 back and fires step 2 once. The successor's reordering neither
+    re-runs the completed action at its new position nor skips the other.
+    """
+
+    from cruxible_client.contracts.runbooks import parse_runbook, runbook_digest, runbook_path
+    from cruxible_core.triggers import journal
+
+    instance, root, now = _fired_world(
+        tmp_path, [{"action": "evidence.sweep"}, {"action": "curation.detect"}]
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+
+    original = runbook_digest(
+        parse_runbook(tree[runbook_path("test.rb")], path=runbook_path("test.rb"))
+    ).tagged
+    real = journal.fire_runbook_action
+
+    def crash_on_curation(instance: Any, **kwargs: Any) -> int:
+        if kwargs["action"] == "curation.detect":
+            raise RuntimeError("the daemon died here")
+        return real(instance, **kwargs)
+
+    monkeypatch.setattr(journal, "fire_runbook_action", crash_on_curation)
+    with pytest.raises(RuntimeError):
+        _drain(instance, root, now=now)
+    monkeypatch.setattr(journal, "fire_runbook_action", real)
+    assert (_action_fires(instance), _action_fires(instance, "curation.detect")) == (1, 0)
+    # A successor reorders the steps before the replay.
+    author_runbook(
+        instance, "test.rb", [{"action": "curation.detect"}, {"action": "evidence.sweep"}]
+    )
+    _drain(instance, root, now=now + timedelta(seconds=5))
+    last = runbook_service.latest_runbook_run(instance, "test.rb")
+    assert last is not None and last.runbook_artifact_digest == original
+    assert [step.target.action for step in last.steps] == ["evidence.sweep", "curation.detect"]
+    assert _statuses(last) == ["fired", "fired"]
+    # Each action fired exactly once for this fire: no reuse, no repeat, no skip.
+    assert (_action_fires(instance), _action_fires(instance, "curation.detect")) == (1, 1)
+    assert list(journal.pending_runbook_fires(instance)) == []
+
+
+def test_a_claimed_step_whose_target_is_gone_stops_the_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F1a: a step of the claimed plan whose Line no longer exists stops, typed."""
+
+    from cruxible_client.contracts.authoring.inputs import LineInput
+    from cruxible_core.triggers import journal
+    from tests.support.operation_world import author_line
+    from tests.support.runbooks import PROCEDURE, author
+
+    observe = "test.observe-line"
+    instance, root = runbook_world(tmp_path)
+    author_line(
+        instance,
+        name=observe,
+        procedure=PROCEDURE,
+        parameters={"path": "data/doc.json"},
+        max_authority="observe",
+        label=observe,
+    )
+    instance, root, now = _fire_runbook(
+        instance, root, [{"line": observe}, {"action": "evidence.sweep"}]
+    )
+
+    def crash(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("the daemon died here")
+
+    monkeypatch.setattr(procedure_runs, "service_run_playbill_line", crash)
+    with pytest.raises(RuntimeError):
+        _drain(instance, root, now=now)
+    monkeypatch.undo()
+    author(
+        instance,
+        LineInput.model_validate(
+            {
+                "kind": "line",
+                "name": observe,
+                "procedure_name": PROCEDURE,
+                "parameters": {"path": "data/doc.json"},
+                "max_authority": "observe",
+                "retire": True,
+            }
+        ),
+        name="retire-observe",
+    )
+    _drain(instance, root, now=now + timedelta(seconds=5))
+    last = runbook_service.latest_runbook_run(instance, "test.rb")
+    assert last is not None
+    assert (last.stop_reason, last.stopped_at_step) == ("target_unavailable", 1)
+    assert _statuses(last) == ["unavailable", "not_run"]
+    assert last.steps[0].code == "target_unavailable"
+    assert _action_fires(instance) == 0
+    assert list(journal.pending_runbook_fires(instance)) == []
 
 
 def test_a_line_disabled_before_its_admission_never_runs(

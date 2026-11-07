@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections import OrderedDict
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -76,7 +76,8 @@ _VERSION = 5
 _RUNBOOK_FIRES_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS runbook_fires (fire_key TEXT PRIMARY KEY, "
     "latest INTEGER NOT NULL, started INTEGER NOT NULL DEFAULT 0, "
-    "covered INTEGER NOT NULL DEFAULT 0) STRICT",
+    "covered INTEGER NOT NULL DEFAULT 0, plan_digest TEXT, plan BLOB, "
+    "CHECK((plan IS NULL) = (plan_digest IS NULL))) STRICT",
     "CREATE INDEX IF NOT EXISTS runbook_fires_pending ON runbook_fires(fire_key) "
     "WHERE latest>covered",
 )
@@ -336,6 +337,10 @@ class RunbookFireProgress:
     latest: int
     started: int
     covered: int
+    #: The claimed fire's exact Runbook (its canonical artifact bytes and digest),
+    #: recorded with the claim before any step runs; a replay runs this plan.
+    plan_digest: str | None = None
+    plan: bytes | None = None
 
 
 def pending_runbook_fires(instance: Any) -> tuple[RunbookFireProgress, ...]:
@@ -355,28 +360,39 @@ def pending_runbook_fires(instance: Any) -> tuple[RunbookFireProgress, ...]:
     return tuple(RunbookFireProgress(str(a), int(b), int(c), int(d)) for a, b, c, d in rows)
 
 
-def claim_runbook_fire(instance: Any, fire_key: str) -> RunbookFireProgress | None:
-    """Claim the fire a run serves, durably, before any of its steps runs.
+def claim_runbook_fire(
+    instance: Any, fire_key: str, *, plan: Callable[[], tuple[str, bytes]]
+) -> RunbookFireProgress | None:
+    """Claim the fire a run serves, with its exact plan, durably, before any step runs.
 
     A fire claimed and never finished (a crash mid-run) is returned as that
-    same fire, so its replay derives the same step occurrences; otherwise the
-    newest fire is claimed, folding every fire since the last finished run.
+    same fire WITH the plan recorded when it was claimed, so its replay runs
+    the same ordered steps whatever the Runbook has become since. Otherwise
+    the newest fire is claimed, folding every fire since the last finished
+    run, and ``plan()`` (the current Runbook's digest and canonical bytes) is
+    recorded with it in the same transaction.
     """
 
     with _open(instance, create=True) as connection:
         assert connection is not None
         row = connection.execute(
-            "SELECT latest,started,covered FROM runbook_fires WHERE fire_key=?", (fire_key,)
+            "SELECT latest,started,covered,plan_digest,plan FROM runbook_fires WHERE fire_key=?",
+            (fire_key,),
         ).fetchone()
         if row is None or int(row[0]) <= int(row[2]):
             return None
-        latest, started, covered = (int(item) for item in row)
-        if started <= covered:
-            started = latest
+        latest, started, covered = (int(item) for item in row[:3])
+        plan_digest, plan_bytes = row[3], row[4]
+        if started <= covered or plan_bytes is None:
+            started = latest if started <= covered else started
+            plan_digest, plan_bytes = plan()
             connection.execute(
-                "UPDATE runbook_fires SET started=? WHERE fire_key=?", (started, fire_key)
+                "UPDATE runbook_fires SET started=?,plan_digest=?,plan=? WHERE fire_key=?",
+                (started, plan_digest, plan_bytes, fire_key),
             )
-        return RunbookFireProgress(fire_key, latest, started, covered)
+        return RunbookFireProgress(
+            fire_key, latest, started, covered, str(plan_digest), bytes(plan_bytes)
+        )
 
 
 def finish_runbook_fire(instance: Any, fire_key: str, fire: int) -> None:
@@ -392,17 +408,25 @@ def finish_runbook_fire(instance: Any, fire_key: str, fire: int) -> None:
 def fire_runbook_action(
     instance: Any, *, action: str, trigger: str, occurrence: str, now: datetime
 ) -> int:
-    """Fire one Runbook action step once per occurrence: a replay returns the first fire."""
+    """Fire one Runbook action step once per occurrence: a replay returns the first fire.
+
+    The occurrence names the fire, the step position and the action; a receipt
+    is reused only for exactly that action, never for another at the position.
+    """
 
     if action not in INTERNAL_ACTIONS:
         raise ValueError(f"{action!r} is not a registered internal action")
     with _open(instance, create=True) as connection:
         assert connection is not None
         row = connection.execute(
-            "SELECT sequence FROM events WHERE trigger_id=? AND occurrence=?",
+            "SELECT sequence,action FROM events WHERE trigger_id=? AND occurrence=?",
             (trigger, occurrence),
         ).fetchone()
         if row is not None:
+            if str(row[1]) != action:
+                raise ValueError(
+                    f"Runbook occurrence {occurrence!r} fired {row[1]!r}, not {action!r}"
+                )
             return int(row[0])
         cursor = connection.execute(
             "INSERT INTO events(action,trigger_id,due_at,fired_at,occurrence) VALUES (?,?,?,?,?)",

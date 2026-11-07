@@ -72,16 +72,16 @@ RUNBOOK_STATE = DisposableState(
 
 @dataclass(frozen=True)
 class LineStepNotRun:
-    """A Line step the runner could not start, and why (a Trigger-fired run only)."""
+    """A step the runner could not start, and why (a Trigger-fired run only)."""
 
-    status: Literal["not_enabled"]
+    status: Literal["not_enabled", "unavailable"]
     code: str
     message: str
 
 
 #: Each runner takes the target and the step's 1-based position.
 LineStepRunner = Callable[[str, int], "ProcedureRunStateV2 | LineStepNotRun"]
-ActionStepFirer = Callable[[str, int], int]
+ActionStepFirer = Callable[[str, int], "int | LineStepNotRun"]
 
 
 def fired_run_id(name: str, fire: int) -> str:
@@ -172,6 +172,7 @@ _STOPS: dict[str, RunbookStopReason] = {
     "failed": "step_failed",
     "proposed": "step_proposed",
     "not_enabled": "line_not_enabled",
+    "unavailable": "target_unavailable",
 }
 
 
@@ -210,8 +211,18 @@ def execute_runbook(
                     message=str(exc),
                 )
             else:
-                outcome = RunbookStepOutcome(
-                    step=step, target=target, status="fired", event_id=event
+                outcome = (
+                    RunbookStepOutcome(
+                        step=step,
+                        target=target,
+                        status=event.status,
+                        code=event.code,
+                        message=event.message,
+                    )
+                    if isinstance(event, LineStepNotRun)
+                    else RunbookStepOutcome(
+                        step=step, target=target, status="fired", event_id=event
+                    )
                 )
         else:
             try:

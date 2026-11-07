@@ -26,6 +26,7 @@ from typing import Any
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.line_dispatch import LineEnablementPrincipal
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
+from cruxible_client.contracts.runbooks import AcceptedRunbook
 from cruxible_client.contracts.triggers import RUNBOOK_FIRE_PREFIX
 from cruxible_core.consumers.protocol import (
     ConsumerHealth,
@@ -59,12 +60,20 @@ def run_fired_runbook(
     *,
     name: str,
     fire: int,
+    plan: AcceptedRunbook,
     trigger: str | None,
     now: datetime,
 ) -> Any:
     """One Trigger-fired run of fire ``fire``: every Line step under its own enablement.
 
-    Every step has a stable identity (the Runbook, the fire, the step). A Line
+    ``plan`` is the Runbook exactly as it stood when the fire was claimed (the
+    journal retains it with the claim): the run executes that ordered plan,
+    never the Runbook's current definition, so a successor accepted between a
+    crash and its replay changes nothing the fire runs. A step whose target no
+    longer exists stops the run (``target_unavailable``).
+
+    Every step has a stable identity (the Runbook, the fire, the step and its
+    target). A Line
     step's is its Line occurrence, so a step the run journal already admitted
     is read back and never run again; an action step's is its journal
     occurrence, so it fires once. A replay of the same fire therefore
@@ -80,6 +89,8 @@ def run_fired_runbook(
 
     from functools import partial
 
+    from cruxible_client.contracts.procedures.line_specs import LineSpec
+    from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
     from cruxible_core.documents.workspace_file import WorkspaceFileReadRefused
     from cruxible_core.procedures.line_admission import LINE_ARM_ADMISSION_GATE
     from cruxible_core.runtime.line_arms import arm_authority
@@ -92,7 +103,6 @@ def run_fired_runbook(
     )
     from cruxible_core.service.runbooks import (
         LineStepNotRun,
-        accepted_runbook,
         execute_runbook,
         fired_run_id,
         record_runbook_run,
@@ -100,13 +110,24 @@ def run_fired_runbook(
     from cruxible_core.triggers.journal import fire_runbook_action
 
     instance = manager.get(instance_id)
-    accepted = accepted_runbook(instance, name)
+    accepted = plan
     try:
         reader = manager.workspace_file_reader(instance_id)
     except WorkspaceFileReadRefused:
         reader = None
 
+    def unavailable(target: str) -> LineStepNotRun:
+        return LineStepNotRun(
+            "unavailable",
+            "target_unavailable",
+            f"Step target {target!r} of the claimed plan no longer exists; the fire stops here.",
+        )
+
     def run_line(line: str, step: int) -> Any:
+        with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+            current = projection.typed.source(f"Line:{line}")
+        if not isinstance(current, LineSpec) or current.lifecycle.state != "live":
+            return unavailable(f"Line:{line}")
         occurrence = procedure_runs.RunbookStepOccurrence(runbook=name, fire=fire, step=step)
         admitted = procedure_runs.admitted_runbook_step(instance, line, occurrence)
         if admitted is not None:
@@ -153,12 +174,15 @@ def run_fired_runbook(
         finally:
             LINE_ARM_ADMISSION_GATE.reset(gate)
 
-    def fire_action(action: str, step: int) -> int:
+    def fire_action(action: str, step: int) -> int | LineStepNotRun:
+        if action not in INTERNAL_ACTIONS:
+            return unavailable(f"action:{action}")
+        # The occurrence names the fire, the position and the action itself.
         return fire_runbook_action(
             instance,
             action=action,
             trigger=trigger or f"Runbook:{name}",
-            occurrence=f"runbook:{name}:{fire}:{step}",
+            occurrence=f"runbook:{name}:{fire}:{step}:{action}",
             now=now,
         )
 
@@ -195,10 +219,19 @@ class RunbookConsumers:
         keys = _fire_keys(instance)
         for progress in pending_runbook_fires(instance):
             if progress.fire_key in keys:
-                yield ConsumerWork(key=progress.fire_key, item={"fire_key": progress.fire_key})
+                yield ConsumerWork(
+                    key=progress.fire_key,
+                    item={"fire_key": progress.fire_key, "latest": progress.latest},
+                )
 
     def run(self, manager: Any, instance_id: str, work: ConsumerWork, *, now: datetime) -> None:
-        from cruxible_core.service.runbooks import RunbookNotFoundError
+        from cruxible_client.contracts.runbooks import (
+            AcceptedRunbook,
+            parse_runbook,
+            render_runbook,
+            runbook_path,
+        )
+        from cruxible_core.service.runbooks import RunbookNotFoundError, accepted_runbook
         from cruxible_core.triggers.journal import (
             claim_runbook_fire,
             finish_runbook_fire,
@@ -207,23 +240,39 @@ class RunbookConsumers:
 
         instance = manager.get(instance_id)
         key = str(work.item["fire_key"])
-        # Claimed durably before any step runs: a crash resumes this same fire.
-        claimed = claim_runbook_fire(instance, key)
+        name = key.removeprefix(RUNBOOK_FIRE_PREFIX)
+
+        def current_plan() -> tuple[str, bytes]:
+            current = accepted_runbook(instance, name)
+            return current.artifact_digest, render_runbook(current.runbook)
+
+        # Claimed durably, with its exact plan, before any step runs: a crash
+        # resumes this same fire and runs this same plan.
+        try:
+            claimed = claim_runbook_fire(instance, key, plan=current_plan)
+        except RunbookNotFoundError:
+            # Retired before the fire was claimed: nothing runs, its fires are covered.
+            finish_runbook_fire(instance, key, int(work.item["latest"]))
+            return
         if claimed is None:
             return
+        assert claimed.plan is not None and claimed.plan_digest is not None
+        plan = AcceptedRunbook(
+            path=runbook_path(name),
+            runbook=parse_runbook(claimed.plan, path=runbook_path(name)),
+            artifact_digest=claimed.plan_digest,
+        )
         fired = trigger_events(instance, after=claimed.started - 1, action=key, limit=1)
         trigger = fired[0].trigger if fired else None
-        try:
-            run_fired_runbook(
-                manager,
-                instance_id,
-                name=key.removeprefix(RUNBOOK_FIRE_PREFIX),
-                fire=claimed.started,
-                trigger=trigger,
-                now=now,
-            )
-        except RunbookNotFoundError:
-            pass  # retired since it fired: nothing runs, the fires are covered
+        run_fired_runbook(
+            manager,
+            instance_id,
+            name=name,
+            fire=claimed.started,
+            plan=plan,
+            trigger=trigger,
+            now=now,
+        )
         finish_runbook_fire(instance, key, claimed.started)
 
     def health(self, instance: Any, *, now: datetime) -> tuple[ConsumerHealth, ...]:
