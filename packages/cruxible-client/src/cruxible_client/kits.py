@@ -26,6 +26,7 @@ files reach it through its body store (``stage_kit_providers``).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -48,15 +49,18 @@ from cruxible_client.artifacts import (
 from cruxible_client.contracts.canonical import pretty_canonical_bytes
 from cruxible_client.contracts.kits import (
     KIT_ARTIFACT_DIRECTORY,
+    KIT_DOCUMENT_BODY_DIRECTORY,
     KIT_FILE_DIRECTORY,
     KIT_MANIFEST_FILE,
     KIT_PROVIDER_DIRECTORY,
     KitArtifactBytes,
     KitBundle,
+    KitDocumentBody,
     KitFileBytes,
     KitManifest,
     KitProviderFileBytes,
     KitStatus,
+    kit_document_body_digests,
     kit_version_key,
 )
 from cruxible_client.contracts.validation_messages import validation_summary
@@ -141,7 +145,28 @@ def read_kit_directory(root: Path) -> KitBundle:
         artifacts=tuple(artifacts),
         provider_files=tuple(files),
         files=_read_kit_files(root, manifest),
+        document_bodies=_read_document_bodies(
+            root, {item.path: item.content for item in artifacts}
+        ),
     )
+
+
+def _read_document_bodies(
+    root: Path, artifacts: Mapping[str, bytes]
+) -> tuple[KitDocumentBody, ...]:
+    """Each governed Document's body, read at ``bodies/<sha256 hex>``."""
+
+    wanted = sorted(set(kit_document_body_digests(artifacts).values()))
+    bodies = []
+    for digest in wanted:
+        path = root / KIT_DOCUMENT_BODY_DIRECTORY / digest.partition(":")[2]
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"kit directory {root} lacks the Document body {digest}")
+        body = KitDocumentBody.of(path.read_bytes())
+        if body.digest != digest:
+            raise ValueError(f"kit Document body {path.name} differs from its digest")
+        bodies.append(body)
+    return tuple(bodies)
 
 
 def _read_kit_files(root: Path, manifest: KitManifest) -> tuple[KitFileBytes, ...]:
@@ -213,6 +238,16 @@ def write_kit_directory(bundle: KitBundle, root: Path) -> None:
         raise ValueError("this bundle names kit files but carries none of their bytes")
     for kit_file in bundle.files:
         _write_new_file(root, kit_file.path, kit_file.content)
+    _require_document_bodies(bundle)
+    for body in bundle.document_bodies:
+        _write_new_file(
+            root, f"{KIT_DOCUMENT_BODY_DIRECTORY}/{body.digest.partition(':')[2]}", body.content
+        )
+
+
+def _require_document_bodies(bundle: KitBundle) -> None:
+    if bundle.document_body_digests() and not bundle.document_bodies:
+        raise ValueError("this bundle names governed Documents but carries none of their bodies")
 
 
 def write_kit_docs(bundle: KitBundle, out: Path, *, skills: bool = True) -> tuple[Path, ...]:
@@ -271,6 +306,7 @@ def install_kit_skills(bundle: KitBundle, skills_root: Path) -> tuple[Path, ...]
 
 _PROVIDER_PREFIX = KIT_PROVIDER_DIRECTORY + "/"
 _FILE_PREFIX = KIT_FILE_DIRECTORY + "/"
+_BODY_PREFIX = KIT_DOCUMENT_BODY_DIRECTORY + "/"
 
 
 def _pack_kit(bundle: KitBundle) -> tuple[bytes, tuple[bytes, ...]]:
@@ -285,7 +321,12 @@ def _pack_kit(bundle: KitBundle) -> tuple[bytes, tuple[bytes, ...]]:
             _PROVIDER_PREFIX + name: content for name, content in bundle.provider_contents().items()
         },
         **{_FILE_PREFIX + path: content for path, content in bundle.file_contents().items()},
+        **{
+            _BODY_PREFIX + body.digest.partition(":")[2]: body.content
+            for body in bundle.document_bodies
+        },
     }
+    _require_document_bodies(bundle)
     return config, (pack_files(files),)
 
 
@@ -304,7 +345,17 @@ def _unpack_kit(config: bytes, layers: tuple[bytes, ...]) -> KitBundle:
         artifacts=tuple(
             KitArtifactBytes.of(path, files[path])
             for path in sorted(files)
-            if not path.startswith((_PROVIDER_PREFIX, _FILE_PREFIX))
+            if not path.startswith((_PROVIDER_PREFIX, _FILE_PREFIX, _BODY_PREFIX))
+        ),
+        document_bodies=tuple(
+            sorted(
+                (
+                    KitDocumentBody.of(files[path])
+                    for path in files
+                    if path.startswith(_BODY_PREFIX)
+                ),
+                key=lambda body: body.digest,
+            )
         ),
         provider_files=tuple(
             KitProviderFileBytes.of(path.removeprefix(_PROVIDER_PREFIX), files[path])
@@ -329,11 +380,17 @@ def stage_kit_providers(client: CruxibleClient, instance_id: str, bundle: KitBun
 
     if bundle.manifest.provider_files() and not bundle.provider_files:
         raise KitSourceError("the kit names provider packages but carries none of their bytes")
+    if bundle.document_body_digests() and not bundle.document_bodies:
+        raise KitSourceError("the kit names governed Documents but carries none of their bodies")
     for item in bundle.provider_files:
         stored = client.store_body(instance_id, item.content)
         if stored.digest != bundle.manifest.provider_files()[item.filename]:
             raise ConfigError(f"the daemon stored {item.filename} under another digest")
-    return bundle.model_copy(update={"provider_files": ()})
+    # Each governed Document's body rides the same staging (kit add reads it there).
+    for body in bundle.document_bodies:
+        if client.store_body(instance_id, body.content).digest != body.digest:
+            raise ConfigError(f"the daemon stored Document body {body.digest} under another digest")
+    return bundle.model_copy(update={"provider_files": (), "document_bodies": ()})
 
 
 KIT_ARTIFACT: ArtifactKind[KitBundle] = ArtifactKind(

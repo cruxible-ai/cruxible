@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-06:core-surface",
-    "surface_digest": "sha256:9b976e02021bb16f686e07d5de5b7cfab5773980f4e91d9f3c2e925544bc4180"
+    "surface_digest": "sha256:2060cb18add988632a8d4d8f5084abdeb92f7bd58708f5901d39e230c0b4e495"
   },
   "surface": {
     "cli_leaves": [
@@ -1497,7 +1497,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/kits",
         "request_model": "cruxible_client.contracts.kits.KitAddRequest",
-        "request_schema_digest": "sha256:2c1fc73718719a980aaf1670f5a78041c7226f98eff3025955cd2405f904f049",
+        "request_schema_digest": "sha256:6e633f8324a5d2a8f8e139b9cc5243b1cf04054864f17795c8c47a865f79197e",
         "response_model": "cruxible_client.contracts.kits.KitChangeResult",
         "response_schema_digest": "sha256:6df4d15e8e8102c1a1a907bc8a6c6e347b04f273d8506ce87bce18b3fbef7118"
       },
@@ -1511,7 +1511,7 @@
         "request_model": "cruxible_client.contracts.kits.KitBuildRequest",
         "request_schema_digest": "sha256:4489de1df842225b7cef5e36a9d7f45ab4dc3db033ef2045abf94a6d6013e752",
         "response_model": "cruxible_client.contracts.kits.KitBuildResult",
-        "response_schema_digest": "sha256:2746866961979edd0efb6104ac93d00f8cc4cce35569cbdd5023428439bb5ae3"
+        "response_schema_digest": "sha256:0a36747b5adda92e1da28f1024f0b5a4a697fd8fc1b2ea6f8c9ea0f5d28de058"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.kit_remove",
@@ -2499,7 +2499,7 @@
           "store_body"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_add",
-        "input_schema_digest": "sha256:4996d5348d77b265ee9ba40a8618c5a817c9d2d02f52143f674ee1e0e2a5a9cc",
+        "input_schema_digest": "sha256:558fb0798998fec11331312124a21e6a002e9e726204009fb47c9429116a9df3",
         "name": "cruxible_kit_add",
         "output_schema_digest": "sha256:16b2149bc477f300aa80e9a2dede08cd3fafbad0193e40d8694e8269939e0eb5",
         "permission": "GOVERNED_WRITE"
@@ -2511,7 +2511,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_build",
         "input_schema_digest": "sha256:179adb2fb6859e482ef57f53feee1767818b77408d6e665819211254b7e802a7",
         "name": "cruxible_kit_build",
-        "output_schema_digest": "sha256:b49f1bf1b84c4ca6e93ce8beaed969863fbdeb28e9ea9fc51e0f2ffe71e62f87",
+        "output_schema_digest": "sha256:0c3587ca7d8617ffb109b65b729d2fcd0fe1dd1608826740539c75323406b690",
         "permission": "READ_ONLY"
       },
       {
