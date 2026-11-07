@@ -43,7 +43,7 @@ def _cadence(trigger: str, action: str, interval: timedelta) -> InternalTrigger:
 def test_one_kind_one_health_and_independent_part_cursors(tmp_path: Path) -> None:
     instance, _owner, _capture, _contract = fixed_world(tmp_path)
     drain(instance, now=EVALUATION_TIME)
-    assert [kind.name for kind in consumer_kinds()] == ["line", "next", "floor"]
+    assert [kind.name for kind in consumer_kinds()] == ["line", "next", "floor", "runbook"]
     (health,) = consumer_health(instance, now=EVALUATION_TIME)
     assert (health.kind, health.consumer_id, health.state) == ("next", "consumer:next", "running")
     assert set(health.detail) == {

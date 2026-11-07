@@ -37,10 +37,12 @@ from uuid import uuid4
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (
     INTERNAL_ACTIONS,
+    RUNBOOK_FIRE_PREFIX,
     AcceptedTrigger,
     GenerationAcceptedSchedule,
     Trigger,
     TriggerSchedule,
+    runbook_fire_key,
     schedule_is_timed,
     trigger_digest,
     trigger_path,
@@ -100,9 +102,13 @@ class InternalTrigger:
     def of(
         cls, trigger: Trigger, *, accepted_at: datetime, accepted_generation: int | None = None
     ) -> InternalTrigger:
+        # A Runbook-aimed Trigger fires into the same log under its Runbook's
+        # fire key; the Runbook consumer, not an action worker, follows it.
         action = trigger.action
+        if action is None and trigger.runbook is not None:
+            action = runbook_fire_key(trigger.runbook.name)
         if action is None:
-            raise ValueError("an internal Trigger fires an internal action")
+            raise ValueError("an internal Trigger fires an internal action or a Runbook")
         return cls(
             trigger.identity.qualified,
             action,
@@ -141,7 +147,7 @@ _TRIGGERS_CAPACITY = 64
 
 
 def internal_triggers(instance: Any) -> tuple[InternalTrigger, ...]:
-    """Every live Trigger aimed at an internal action at the accepted head.
+    """Every live Trigger aimed at an internal action or a Runbook at the accepted head.
 
     Read once per accepted generation: the Trigger set only changes when a new
     generation is accepted, so an idle tick never opens the projection.
@@ -156,8 +162,8 @@ def internal_triggers(instance: Any) -> tuple[InternalTrigger, ...]:
 
     with instance.bind_accepted_projection(coordinate) as projection:
         identities = projection.typed.connection.execute(
-            "SELECT identity FROM triggers WHERE target_kind='action' AND lifecycle='live' "
-            "ORDER BY identity"
+            "SELECT identity FROM triggers WHERE target_kind IN ('action','runbook') "
+            "AND lifecycle='live' ORDER BY identity"
         ).fetchall()
         accepted = [projection.typed.source(identity) for (identity,) in identities]
     triggers = tuple(
@@ -285,6 +291,19 @@ def latest_sequence(instance: Any, *, action: str) -> int:
                 "SELECT coalesce(max(sequence),0) FROM events WHERE action=?", (action,)
             ).fetchone()[0]
         )
+
+
+def latest_runbook_fires(instance: Any) -> dict[str, int]:
+    """Each Runbook fire key's latest fire sequence: one range seek of the action index."""
+
+    with _open(instance) as connection:
+        if connection is None:
+            return {}
+        rows = connection.execute(
+            "SELECT action,max(sequence) FROM events WHERE action>=? AND action<? GROUP BY action",
+            (RUNBOOK_FIRE_PREFIX, RUNBOOK_FIRE_PREFIX[:-1] + chr(ord(RUNBOOK_FIRE_PREFIX[-1]) + 1)),
+        ).fetchall()
+    return {str(action): int(sequence) for action, sequence in rows}
 
 
 def fire_manual(instance: Any, *, action: str, principal: str, now: datetime) -> TriggerEvent:
