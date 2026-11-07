@@ -183,11 +183,29 @@ def select_query_facts(
             )
         }
 
-    def safe_ref(ref: QueryValueRef, value_type: str) -> bool:
-        """Reading ``ref`` on any entry Subject cannot refuse (literals are probed apart)."""
+    def safe_ref(ref: QueryValueRef, value_type: str, others: tuple[QueryValueRef, ...]) -> bool:
+        """Reading ``ref`` on any entry Subject cannot refuse (literals are probed apart).
 
-        if not isinstance(ref, QueryClaimValueRef | QueryClaimFieldRef):
+        Every row-dependent operand must provably coerce: a Subject field is a
+        string (and takes a compared Claim predicate's canonical form and key
+        normalizer, which can refuse); ``now`` renders as a timestamp string.
+        """
+
+        if isinstance(ref, QueryLiteralRef | QueryParameterRef):
             return True
+        compared_with_claim = any(isinstance(item, QueryClaimValueRef) for item in others)
+        if isinstance(ref, QuerySubjectFieldRef):
+            return (
+                ref.binding == entry.binding
+                and value_type in {"string", "subject_reference"}
+                and not compared_with_claim
+            )
+        if not isinstance(ref, QueryClaimValueRef | QueryClaimFieldRef):
+            # ``now``: a rendered UTC timestamp string.
+            return (
+                value_type in {"string", "subject_reference", "timestamp"}
+                and not compared_with_claim
+            )
         if not surfaces or ref.binding != entry.binding:
             return False
         claim_type = claim_type_of(ref.predicate)
@@ -214,7 +232,10 @@ def select_query_facts(
             refs: tuple[QueryValueRef, ...] = (filter_.left, filter_.right)
         else:
             refs = (filter_.left, *filter_.values)
-        return all(safe_ref(ref, filter_.value_type) for ref in refs)
+        return all(
+            safe_ref(ref, filter_.value_type, refs[:index] + refs[index + 1 :])
+            for index, ref in enumerate(refs)
+        )
 
     absorbed = False
 

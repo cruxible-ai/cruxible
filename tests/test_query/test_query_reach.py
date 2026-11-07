@@ -417,3 +417,59 @@ def test_reads_are_flat_in_unrelated_subjects(measured: list[dict[str, Any]], re
     for counter in COUNTED:
         assert small[counter] > 0
         assert large[counter] <= small[counter] * RATIO + SLACK[counter], (read, counter, measured)
+
+
+def _all_of(*filters: Any) -> Any:
+    from cruxible_client.contracts.query.grammar import QueryConjunctionFilter
+
+    return QueryConjunctionFilter(
+        filters=tuple(
+            sorted(filters, key=lambda item: canonical_bytes(item.model_dump(mode="json")))
+        )
+    )
+
+
+def test_a_row_dependent_operand_refusal_survives_a_seek(world: ReachWorld) -> None:
+    """A Subject field compared as an integer refuses on every row the full load evaluates;
+    a kind seek that selects nothing must not turn that refusal into an empty answer."""
+
+    from cruxible_client.contracts.query.grammar import (
+        QueryComparisonFilter,
+        QueryLiteralRef,
+        QuerySubjectFieldRef,
+    )
+
+    whole = served.build_accepted_query_facts(
+        world.instance, coordinate=world.instance.accepted_coordinate()
+    )
+    base = definition(world, plan_spec())
+    for operand in (
+        QueryComparisonFilter(
+            left=QuerySubjectFieldRef(binding="u", field="subject_id"),
+            operator="eq",
+            right=QueryLiteralRef(value=1),
+            value_type="integer",
+        ),
+        QueryComparisonFilter(
+            left=QuerySubjectFieldRef(binding="u", field="subject_id"),
+            operator="eq",
+            right=QueryLiteralRef(value=True),
+            value_type="boolean",
+        ),
+    ):
+        # Canonical order evaluates the subject_id part first, so the full load
+        # refuses on the first unit before the kind part could short-circuit.
+        where = _all_of(
+            operand,
+            QueryComparisonFilter(
+                left=QuerySubjectFieldRef(binding="u", field="subject_kind"),
+                operator="eq",
+                right=QueryLiteralRef(value="qr.other"),
+                value_type="string",
+            ),
+        )
+        query = _accepted(base.query.model_copy(update={"where": where, "parameters": ()}))
+        result = compare(world, query, None, whole=whole)
+        assert result.verdict == "refused", result
+        assert result.refusal is not None
+        assert result.refusal.code == "cruxible.query.value_type_mismatch"
