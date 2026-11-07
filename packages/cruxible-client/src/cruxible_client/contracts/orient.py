@@ -185,19 +185,29 @@ class OrientPredicate(_StrictOrientModel):
     kit: str | None = Field(default=None, exclude_if=_is_none)
 
 
+class OrientKindEnd(_StrictOrientModel):
+    """One Subject-valued key part of a pair kind: its key ClaimType and the end's kind."""
+
+    key: str
+    kind: str
+
+
 class OrientSubjectKind(_StrictOrientModel):
     """One live SubjectKind: how core names a new Subject of the kind.
 
     ``rule`` is ``keys`` (named by its key ClaimTypes, in key order, ``unique``
     or ``hint``) or ``minted`` (core mints the id). A kind with no live
-    SubjectKind has no row: no new Subject of it can be created. ``kit`` is
-    the installed kit that owns the SubjectKind, absent when no kit owns it.
+    SubjectKind has no row: no new Subject of it can be created. ``ends``
+    lists a pair kind's Subject-valued key parts, in key order: a pair kind is
+    keyed by its ends. ``kit`` is the installed kit that owns the SubjectKind,
+    absent when no kit owns it.
     """
 
     kind: str
     rule: Literal["keys", "minted"]
     keys: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
     uniqueness: Literal["unique", "hint"] | None = Field(default=None, exclude_if=_is_none)
+    ends: tuple[OrientKindEnd, ...] = Field(default=(), exclude_if=_is_empty)
     kit: str | None = Field(default=None, exclude_if=_is_none)
 
 
@@ -230,7 +240,8 @@ class OrientKind(_StrictOrientModel):
     subjects: int = Field(ge=0)
     #: How core names Subjects of the kind (its SubjectKind): ``keys: <key
     #: ClaimTypes> (unique|hint)``, ``minted``, or ``undeclared`` -- no new Subject
-    #: of an undeclared kind can be created until a SubjectKind is authored.
+    #: of an undeclared kind can be created until a SubjectKind is authored. A
+    #: pair kind's Subject-valued part reads ``<key>: subject<end kind>``.
     identity: str = UNDECLARED_KIND_IDENTITY
     evidence: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
     predicates: tuple[OrientPredicate, ...]
@@ -870,6 +881,7 @@ __all__ = [
     "OrientResult",
     "OrientSection",
     "OrientContract",
+    "OrientKindEnd",
     "OrientSubjectKind",
     "OrientSurface",
     "OrientYou",

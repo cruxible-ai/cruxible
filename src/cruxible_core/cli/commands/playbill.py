@@ -5833,6 +5833,7 @@ def _backlink_line(link: Any) -> str:
             "why",
             "history",
             "incoming",
+            "pairs",
             "runs",
             "backlinks",
             "proof",
@@ -5863,12 +5864,12 @@ def _backlink_line(link: Any) -> str:
     "--limit",
     type=int,
     default=None,
-    help="Rows per --detail history, incoming, runs or backlinks page (default 20).",
+    help="Rows per --detail history, incoming, pairs, runs or backlinks page (default 20).",
 )
 @click.option(
     "--cursor",
     default=None,
-    help="Continue --detail history, incoming, runs or backlinks from its next_cursor.",
+    help="Continue --detail history, incoming, pairs, runs or backlinks from its next_cursor.",
 )
 @click.option(
     "--field",
@@ -6161,8 +6162,18 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
             click.echo(
                 f"{card['subject']}  ({card['lifecycle']}, {card['incoming_count']} incoming)"
             )
+            # A pair's ends, then its fields, then the pairs it is an end of.
+            ends = card.get("ends", ())
             rows = card["claims"]
-            width = max((len(row["predicate"]) for row in rows), default=0)
+            width = max(
+                (len(row["predicate"]) for row in rows),
+                default=0,
+            )
+            width = max([width, *(len(end["part"]) for end in ends)])
+            for end in ends:
+                flags = f"  [{', '.join(end['flags'])}]" if end.get("flags") else ""
+                claim = f"  {end['claim']}" if end.get("claim") else ""
+                click.echo(f"  {end['part'].ljust(width)}  -> {end['subject']}{claim}{flags}")
             for row in rows:
                 flags = f"  [{', '.join(row['flags'])}]" if row["flags"] else ""
                 # A field holding only nones has no value to show; each none
@@ -6180,6 +6191,11 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
                         f"  {''.ljust(width)}  none{unit}  {none['claim']} "
                         f"[{none['verdict']}{marks}]"
                     )
+            for group in card.get("pairs", ()):
+                more = ", ..." if group.get("more") else ""
+                click.echo(
+                    f"pairs {group['kind']} by {group['part']}: " + ", ".join(group["pairs"]) + more
+                )
         else:
             for key, value in card.items():
                 if key == "nodes" and result.kind == "procedure_run" and value:
@@ -6263,6 +6279,13 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
             click.echo(f"(no backlinks into {result.backlinks.target})")
         for link in result.backlinks.links:
             click.echo(_backlink_line(link))
+        return
+    if result.pairs is not None:
+        if not result.pairs.groups:
+            click.echo("(no pairs name this Subject)")
+        for group in result.pairs.groups:
+            for pair in group.pairs:
+                click.echo(f"{pair}  {group.kind}  by {group.part}")
         return
     if result.incoming is not None:
         if not result.incoming.claims:
