@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 
 from cruxible_client.contracts import claims
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     AcceptedCaptureContract,
@@ -229,3 +230,133 @@ def test_a_family_rule_admits_two_catalogued_files_and_refuses_a_non_file_captur
         verified_attestations=(),
     )
     assert refused[0].trace.result.verdict == "refused"
+
+
+def _copy_citation_claim(base_claim, *, capture_digest: str):
+    """``base_claim`` restated as an independent copy citation of ``capture_digest``."""
+
+    return base_claim.model_copy(
+        update={
+            "backing": base_claim.backing.model_copy(
+                update={
+                    "capture_digests": (capture_digest,),
+                    "citations": (
+                        claims.build_claim_citation(
+                            base_claim.identity,
+                            capture_digest=capture_digest,
+                            role="copy",
+                            origin="independent",
+                        ),
+                    ),
+                }
+            )
+        }
+    )
+
+
+def test_a_family_rule_admits_an_independent_copy_citation(tmp_path) -> None:
+    """D1 review F2: the copy-eligibility gate must see the same verified
+    family membership the admission path does, or a family-backed copy
+    citation is silently excluded (reads uncovered) even though the same
+    Capture would be admitted as ordinary evidence.
+    """
+
+    instance, _ = initialize_local(tmp_path)
+    claim_id = "CLM-" + "b" * 32
+    source_id = "repo.copy-source"
+    text = b"a page's own words, captured verbatim"
+    claim_type = _family_claim_type()
+
+    built = _foreign_capture(instance, source_id=source_id, text=text)
+    contract = foreign_source_capture_contract(source_id)
+    accepted = AcceptedCaptureContract(
+        path=capture_contract_path(contract.identity.name),
+        contract=contract,
+        artifact_digest=capture_contract_digest(contract).tagged,
+    )
+    base_claim = _claim(
+        claim_id=claim_id,
+        capture_digest=built.capture_digest,
+        source_digest=built.source_body_digest,
+        source_length=len(text),
+        contract=contract,
+    )
+    copy_claim = _copy_citation_claim(base_claim, capture_digest=built.capture_digest)
+
+    assert claims.capture_citation_eligible(
+        copy_claim,
+        claim_type=claim_type,
+        capture_contract=accepted,
+        capture_digest=built.capture_digest,
+        envelope=built.envelope,
+    )
+    # Without the envelope (so without a verified shape), the same family-only
+    # rule cannot tell this copy apart from an arbitrary one and refuses it --
+    # the gap F2 found: a caller that forgot to thread the envelope silently
+    # excludes every family-backed copy.
+    assert not claims.capture_citation_eligible(
+        copy_claim,
+        claim_type=claim_type,
+        capture_contract=accepted,
+        capture_digest=built.capture_digest,
+    )
+
+
+def test_a_non_catalogued_foreign_span_capture_is_refused_by_admission_and_eligibility(
+    tmp_path,
+) -> None:
+    """D1 review F1: the public ``foreign_span`` shape alone must never admit a
+    Capture whose contract was not built, byte-for-byte, by core's own
+    ``foreign_source_capture_contract`` builder for its own claimed source.
+    An independently authored CaptureContract that merely declares the same
+    shape (never produced by that builder, so never catalogue-bound) is
+    refused through both the admission path and the independent-copy
+    eligibility gate, even though it is an otherwise well-formed, valid
+    CaptureContract and a well-formed Capture under it.
+    """
+
+    instance, _ = initialize_local(tmp_path)
+    claim_id = "CLM-" + "c" * 32
+    source_id = "other.remote-span"
+    text = b"an independently asserted foreign span, not from the catalog"
+    claim_type = _family_claim_type()
+
+    built = _foreign_capture(instance, source_id=source_id, text=text)
+    # A hand-authored CaptureContract that shares the public foreign_span
+    # shape but was never produced by foreign_source_capture_contract: its
+    # identity carries no `playbill.foreign-source.` provenance at all.
+    forged = foreign_source_capture_contract(source_id).model_copy(
+        update={"identity": ArtifactIdentity(kind="CaptureContract", name=source_id)}
+    )
+    assert forged.shape == "foreign_span"
+    forged_accepted = AcceptedCaptureContract(
+        path=capture_contract_path(forged.identity.name),
+        contract=forged,
+        artifact_digest=capture_contract_digest(forged).tagged,
+    )
+    base_claim = _claim(
+        claim_id=claim_id,
+        capture_digest=built.capture_digest,
+        source_digest=built.source_body_digest,
+        source_length=len(text),
+        contract=forged,
+    )
+
+    decisions = claims.evaluate_capture_evidence_admissions(
+        base_claim,
+        claim_type=claim_type,
+        capture_digest=built.capture_digest,
+        capture_contract=forged_accepted,
+        envelope=built.envelope,
+        verified_attestations=(),
+    )
+    assert decisions[0].trace.result.verdict == "refused"
+
+    copy_claim = _copy_citation_claim(base_claim, capture_digest=built.capture_digest)
+    assert not claims.capture_citation_eligible(
+        copy_claim,
+        claim_type=claim_type,
+        capture_contract=forged_accepted,
+        capture_digest=built.capture_digest,
+        envelope=built.envelope,
+    )

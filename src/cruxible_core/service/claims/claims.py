@@ -655,6 +655,7 @@ def _claim_admission_accounts(
             claim_type=claim_type,
             capture_contract=contract,
             capture_digest=citation.capture_digest,
+            envelope=envelope,
         )
         if isinstance(citation, ClaimCitation) and citation.role == "copy" and not eligible:
             accounts.append(
