@@ -57,6 +57,7 @@ from cruxible_client.contracts.orient import (
     OrientEvidenceCounts,
     OrientKind,
     OrientKindDetail,
+    OrientKindEnd,
     OrientKindSummary,
     OrientOperation,
     OrientPredicate,
@@ -136,6 +137,7 @@ from cruxible_core.storage.read_positions import positioned_read
 
 if TYPE_CHECKING:
     from cruxible_core.consumers.next.facts import ReadHeads
+    from cruxible_core.indexes.typed_state import TypedStateReader
 
 _LIST = "orient"
 _NEXT_PROFILE = CoverageAccessProfile(
@@ -195,28 +197,70 @@ class _State:
     placements: dict[str, tuple[str, int]] = dataclass_field(default_factory=dict)
 
 
-def accepted_subject_kinds(connection: sqlite3.Connection) -> tuple[OrientSubjectKind, ...]:
+def accepted_subject_kinds(typed: TypedStateReader) -> tuple[OrientSubjectKind, ...]:
     """Every live SubjectKind in one projection, by kind: one read of the index.
 
     The rows the ``subject_kinds`` section pages and the world stub types
-    ``define`` from; it grows with the vocabulary, never with the Subjects.
+    ``define`` from; it grows with the vocabulary, never with the Subjects. A
+    pair kind's ends come from its Subject-valued key ClaimTypes: one batched
+    read of the key parts' value kinds, then one definition read per
+    Subject-valued part.
     """
 
+    connection = typed.connection
+    declared = [
+        (str(identity).removeprefix("SubjectKind:"), str(rule), uniqueness, keys)
+        for identity, rule, uniqueness, keys in connection.execute(
+            "SELECT identity, rule, uniqueness, key_predicates FROM subject_kinds "
+            "WHERE lifecycle='live' ORDER BY identity"
+        )
+    ]
+    key_sets = {
+        kind: () if rule == "minted" else tuple(str(item) for item in json.loads(str(keys)))
+        for kind, rule, _uniqueness, keys in declared
+    }
+    subject_valued = {
+        str(identity).removeprefix("ClaimType:")
+        for identity, object_kind in select_in(
+            connection,
+            "SELECT identity, object_kind FROM claim_types WHERE identity IN ({})",
+            sorted({f"ClaimType:{key}" for keys in key_sets.values() for key in keys}),
+        )
+        if str(object_kind) == "subject"
+    }
+    end_kinds: dict[str, tuple[str, ...]] = {}
+    for predicate in sorted(subject_valued):
+        claim_type = typed.source(f"ClaimType:{predicate}")
+        end_kinds[predicate] = (
+            subject_value_kinds(claim_type.value) if isinstance(claim_type, ClaimType) else ()
+        )
     rows: list[OrientSubjectKind] = []
-    for identity, rule, uniqueness, keys in connection.execute(
-        "SELECT identity, rule, uniqueness, key_predicates FROM subject_kinds "
-        "WHERE lifecycle='live' ORDER BY identity"
-    ):
-        minted = str(rule) == "minted"
+    for kind, rule, uniqueness, _keys in declared:
+        minted = rule == "minted"
         rows.append(
             OrientSubjectKind(
-                kind=str(identity).removeprefix("SubjectKind:"),
+                kind=kind,
                 rule="minted" if minted else "keys",
-                keys=() if minted else tuple(json.loads(str(keys))),
+                keys=key_sets[kind],
                 uniqueness=None if minted or uniqueness is None else str(uniqueness),  # type: ignore[arg-type]
+                ends=tuple(
+                    OrientKindEnd(key=key, kind=end_kinds[key][0])
+                    for key in key_sets[kind]
+                    if len(end_kinds.get(key, ())) == 1
+                ),
             )
         )
     return tuple(rows)
+
+
+def kind_identity(item: OrientSubjectKind) -> str:
+    """How core names Subjects of one kind, as ``orient`` shows it per kind."""
+
+    if item.rule == "minted":
+        return "minted"
+    ends = {end.key: end.kind for end in item.ends}
+    parts = (key if key not in ends else f"{key}: subject<{ends[key]}>" for key in item.keys)
+    return f"keys: {', '.join(parts)} ({item.uniqueness})"
 
 
 def _query_row(query: QueryDefinition) -> OrientQuery:
@@ -252,12 +296,7 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
         subjects_by_kind = {
             str(kind): int(count) for kind, count in connection.execute(LIVE_SUBJECT_COUNTS_SQL)
         }
-        identities = {
-            item.kind: "minted"
-            if item.rule == "minted"
-            else f"keys: {', '.join(item.keys)} ({item.uniqueness})"
-            for item in accepted_subject_kinds(connection)
-        }
+        identities = {item.kind: kind_identity(item) for item in accepted_subject_kinds(typed)}
         procedures = tuple(
             OrientProcedure(
                 name=item.identity.removeprefix("Procedure:"),
@@ -863,7 +902,7 @@ def service_playbill_orient(
         # One read of the SubjectKind index: it grows with the vocabulary,
         # never with the Subjects the full map counts.
         with instance.bind_accepted_projection(coordinate) as projection:
-            declared = accepted_subject_kinds(projection.typed.connection)
+            declared = accepted_subject_kinds(projection.typed)
             owners = kit_owners(instance, projection.typed.connection)
         declared = tuple(
             item.model_copy(update={"kit": owned_by(owners, "SubjectKind", item.kind)})
@@ -1841,6 +1880,7 @@ def _section_rows(state: _State, section: OrientSection) -> tuple[tuple[Any, ...
 __all__ = [
     "OrientCaller",
     "accepted_subject_kinds",
+    "kind_identity",
     "render_orient_call",
     "service_playbill_head",
     "service_playbill_orient",

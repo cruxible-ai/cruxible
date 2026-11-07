@@ -1203,6 +1203,7 @@ def register_tools(
             "why",
             "history",
             "incoming",
+            "pairs",
             "runs",
             "backlinks",
             "proof",

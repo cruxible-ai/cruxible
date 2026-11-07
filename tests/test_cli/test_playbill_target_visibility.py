@@ -68,6 +68,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("procedure", "measure"): "active",
     ("procedure", "dispose"): "active",
     ("line", "run"): "active",
+    ("runbook", "run"): "active",
     ("line", "enable"): "active",
     ("line", "disable"): "active",
     ("line", "evaluate"): "active",

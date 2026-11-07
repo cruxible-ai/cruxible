@@ -44,7 +44,9 @@ def test_get_publishes_its_protocol_enums_and_setup_stays_off_mcp() -> None:
         "why",
         "history",
         "incoming",
+        "pairs",
         "runs",
+        "backlinks",
         "proof",
         "body",
     ]

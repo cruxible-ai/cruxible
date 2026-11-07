@@ -161,7 +161,7 @@ def _deliver_world_stub(instance: Any, render: FloorRender, root: Path) -> None:
             compiler_digest=head.compiler_digest,
         )
         with instance.bind_accepted_projection(at) as projection:
-            subject_kinds = accepted_subject_kinds(projection.typed.connection)
+            subject_kinds = accepted_subject_kinds(projection.typed)
         rendered = render_vocabulary_stub(
             (claim_type.model_dump(mode="json") for claim_type in render.inputs.types.values()),
             coordinate=contracts.AcceptedCoordinate.model_validate(head.model_dump(mode="json")),

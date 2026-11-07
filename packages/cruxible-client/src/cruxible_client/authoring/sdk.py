@@ -4376,6 +4376,9 @@ class Cruxible:
         ``detail="incoming"`` on a Subject answers every live Claim whose
         Subject-valued object it is (``GetIncoming``), every page read: the
         asserting Subject, predicate and Claim of each edge pointing at it.
+        ``detail="pairs"`` on a Subject answers the pair Subjects it is an end
+        of (``GetPairs``), every page read: by pair kind and key part, each
+        pair holding a live fact.
         ``detail="runs"`` on a Line answers its Procedure runs newest
         admission first (``GetLineRuns``), every page read.
         ``detail="backlinks"`` on a Subject, ClaimType or Procedure answers
@@ -4443,6 +4446,7 @@ class Cruxible:
                     result.evidence,
                     result.history,
                     result.incoming,
+                    result.pairs,
                     result.runs,
                     result.backlinks,
                     result.body,
@@ -4670,6 +4674,35 @@ class Cruxible:
             result = result.model_copy(
                 update={
                     "incoming": result.incoming.model_copy(update={"claims": tuple(pointing)}),
+                    "truncated": False,
+                    "next_cursor": None,
+                }
+            )
+        if result.pairs is not None:
+            # Every page, pinned to the first page's coordinate by the cursor; a
+            # group cut between pages continues on the next one.
+            groups = list(result.pairs.groups)
+            page = result
+            while page.truncated and page.next_cursor is not None:
+                page = self._client.get(
+                    self._instance_id,
+                    request=request.model_copy(update={"at": None, "cursor": page.next_cursor}),
+                )
+                assert page.pairs is not None
+                for group in page.pairs.groups:
+                    last = groups[-1] if groups else None
+                    if last is not None and (last.kind, last.part) == (group.kind, group.part):
+                        groups[-1] = last.model_copy(
+                            update={
+                                "pairs": (*last.pairs, *group.pairs),
+                                "hidden": last.hidden + group.hidden,
+                            }
+                        )
+                    else:
+                        groups.append(group)
+            result = result.model_copy(
+                update={
+                    "pairs": result.pairs.model_copy(update={"groups": tuple(groups)}),
                     "truncated": False,
                     "next_cursor": None,
                 }

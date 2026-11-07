@@ -46,7 +46,16 @@ from cruxible_client.contracts.read_values import ShownValue
 from cruxible_client.contracts.repairs import ServedRepair
 
 GetDetail = Literal[
-    "summary", "evidence", "why", "history", "incoming", "runs", "backlinks", "proof", "body"
+    "summary",
+    "evidence",
+    "why",
+    "history",
+    "incoming",
+    "pairs",
+    "runs",
+    "backlinks",
+    "proof",
+    "body",
 ]
 GetRefKind = Literal[
     "claim",
@@ -81,12 +90,15 @@ GET_BODY_DEFAULT_MAX_BYTES = 64 * 1024
 #: The widest byte range one ``get(detail="body")`` returns.
 GET_BODY_RANGE_MAX_BYTES = 256 * 1024
 #: Rows per paged ``get`` detail (``history``: revisions or a Subject's field
-#: events; ``incoming``: the Claims pointing at a Subject; ``runs``: a Line's
-#: runs), by default and at most.
+#: events; ``incoming``: the Claims pointing at a Subject; ``pairs``: the pairs
+#: a Subject is an end of; ``runs``: a Line's runs), by default and at most.
 GET_HISTORY_DEFAULT_LIMIT = 20
 GET_HISTORY_MAX_LIMIT = 200
 #: The ``get`` details that page with ``limit`` and ``cursor``.
-GET_PAGED_DETAILS: tuple[str, ...] = ("history", "incoming", "runs", "backlinks")
+GET_PAGED_DETAILS: tuple[str, ...] = ("history", "incoming", "pairs", "runs", "backlinks")
+#: The pairs a Subject card lists per pair kind and key part; ``detail="pairs"``
+#: pages them all.
+GET_CARD_PAIRS = 5
 
 # A git oid or a prefix of one; the read resolves it (at least 12 hex, unique).
 _GIT_OID = r"^[0-9a-f]{1,64}$"
@@ -94,7 +106,7 @@ _GIT_OID = r"^[0-9a-f]{1,64}$"
 # Which details apply to which kind of reference.
 GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "claim": ("summary", "evidence", "why", "history", "proof"),
-    "subject": ("summary", "why", "history", "incoming", "backlinks", "proof"),
+    "subject": ("summary", "why", "history", "incoming", "pairs", "backlinks", "proof"),
     "claim_type": ("summary", "history", "backlinks", "proof"),
     "document": ("summary", "why", "history", "proof", "body"),
     "procedure": ("summary", "history", "backlinks", "proof"),
@@ -159,7 +171,7 @@ class GetRequest(_StrictGetModel):
     at: AcceptedCoordinate | str | None = None
     evaluation_time: datetime | None = None
     surface: ReadSurface = "mcp"
-    # ``detail="history"``, ``"incoming"``, ``"runs"`` and ``"backlinks"`` page:
+    # ``detail="history"``, ``"incoming"``, ``"pairs"``, ``"runs"`` and ``"backlinks"`` page:
     # rows per page (default 20) and the opaque ``next_cursor`` of the page before.
     limit: int | None = Field(default=None, ge=1, le=GET_HISTORY_MAX_LIMIT)
     cursor: str | None = Field(default=None, min_length=1)
@@ -195,7 +207,8 @@ class GetRequest(_StrictGetModel):
             self.limit is not None or self.cursor is not None
         ) and self.detail not in GET_PAGED_DETAILS:
             raise ValueError(
-                'limit and cursor page detail="history", "incoming", "runs" or "backlinks" only'
+                'limit and cursor page detail="history", "incoming", "pairs", "runs" or '
+                '"backlinks" only'
             )
         if self.field is not None and self.detail != "history":
             raise ValueError('field narrows detail="history" on a Subject only')
@@ -290,6 +303,54 @@ class GetIncoming(_StrictGetModel):
     claims: tuple[GetIncomingClaim, ...]
 
 
+class GetPairEnd(_StrictGetModel):
+    """One end of a pair Subject: the key part that names it and the Subject it names."""
+
+    #: The key part, by its short field name.
+    part: str
+    #: The end, ``kind/id``.
+    subject: str
+    #: The key Claim naming the end; absent once the pair (and so the Claim) is retired.
+    claim: str | None = Field(default=None, exclude_if=_omit_none)
+    flags: tuple[ReadFlag, ...] = Field(default=(), exclude_if=lambda value: not value)
+
+
+class GetEndPairs(_StrictGetModel):
+    """The pairs a Subject is an end of through one key part of one pair kind, in id order.
+
+    A pair is listed when it holds a visible fact: a live, positive, supported
+    and current Claim (a query's default visibility at the read's instant). A
+    pair whose facts are all hidden (not yet effective, expired, stale,
+    contradicted) is counted in ``hidden``; one whose facts are all retired is
+    a historical shell, reached through ``incoming``.
+    """
+
+    #: The pair kind.
+    kind: str
+    #: The key part that names this Subject, by its short field name.
+    part: str
+    #: The pairs, ``kind/id``.
+    pairs: tuple[str, ...]
+    #: Pairs read here whose facts are all hidden, so not listed.
+    hidden: int = Field(default=0, ge=0, exclude_if=lambda value: value == 0)
+    #: On a card: more pairs may follow; ``detail="pairs"`` pages them all.
+    more: bool = Field(default=False, exclude_if=lambda value: value is False)
+
+
+class GetPairs(_StrictGetModel):
+    """One page of the pairs a Subject is an end of, by pair kind and key part.
+
+    Read through the pair index one page at a time: a page examines at most
+    twice its ``limit`` plus eight candidate pairs, never the Subject's whole
+    set of pairs nor any other Subject's. Hidden candidates are counted per
+    group, never listed; a page may hold fewer rows than ``limit`` while
+    ``truncated`` says more candidates follow.
+    """
+
+    kind: Literal["pairs"] = "pairs"
+    groups: tuple[GetEndPairs, ...]
+
+
 class GetLineRuns(_StrictGetModel):
     """One page of a Line's Procedure runs, newest admission first.
 
@@ -309,8 +370,13 @@ class GetSubjectCard(_StrictGetModel):
     subject: str
     kind: str
     lifecycle: str
+    #: A pair Subject's ends, in key order; its Subject-valued key Claims are
+    #: listed here, not under ``claims``.
+    ends: tuple[GetPairEnd, ...] = Field(default=(), exclude_if=lambda value: not value)
     claims: tuple[GetSubjectClaim, ...]
     incoming_count: int
+    #: The pairs this Subject is an end of, at most ``GET_CARD_PAIRS`` per group.
+    pairs: tuple[GetEndPairs, ...] = Field(default=(), exclude_if=lambda value: not value)
     next: tuple[str, ...] = ()
 
 
@@ -456,6 +522,13 @@ class GetTriggerCard(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
+class GetKindEnd(_StrictGetModel):
+    """One Subject-valued key part of a pair kind: its key ClaimType and the end's kind."""
+
+    key: str
+    kind: str
+
+
 class GetSubjectKindCard(_StrictGetModel):
     """One SubjectKind: how core names and identifies Subjects of the kind."""
 
@@ -471,11 +544,21 @@ class GetSubjectKindCard(_StrictGetModel):
     #: identity), keyed by predicate; a key not listed takes ``none@1``.
     normalizers: dict[str, str] = Field(default_factory=dict, exclude_if=lambda value: not value)
     uniqueness: Literal["unique", "hint"] | None = Field(default=None, exclude_if=_omit_none)
+    #: A pair kind: keyed by its ends (Subject-valued key parts).
+    pair: bool = Field(default=False, exclude_if=lambda value: value is False)
+    #: A pair kind's ends, in key order.
+    ends: tuple[GetKindEnd, ...] = Field(default=(), exclude_if=lambda value: not value)
     #: How many Subjects of the kind are live at this coordinate.
     live_subjects: int
     #: The installed kit that owns the SubjectKind; absent when no kit owns it.
     kit: str | None = Field(default=None, exclude_if=_omit_none)
     next: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _pair_has_ends(self) -> GetSubjectKindCard:
+        if self.pair != bool(self.ends):
+            raise ValueError("a pair kind lists its ends, and only a pair kind does")
+        return self
 
 
 class GetContractField(_StrictGetModel):
@@ -914,6 +997,7 @@ class GetResult(_StrictGetModel):
     evidence: GetEvidence | None = Field(default=None, exclude_if=_omit_none)
     history: GetHistoryAny | None = Field(default=None, exclude_if=_omit_none)
     incoming: GetIncoming | None = Field(default=None, exclude_if=_omit_none)
+    pairs: GetPairs | None = Field(default=None, exclude_if=_omit_none)
     runs: GetLineRuns | None = Field(default=None, exclude_if=_omit_none)
     backlinks: GetBacklinks | None = Field(default=None, exclude_if=_omit_none)
     body: GetBody | None = Field(default=None, exclude_if=_omit_none)
@@ -924,7 +1008,7 @@ class GetResult(_StrictGetModel):
     reason: GetProposedReason | None = Field(default=None, exclude_if=_omit_none)
     # Today's full accepted envelope, unchanged.
     proof: dict[str, Any] | None = Field(default=None, exclude_if=_omit_none)
-    # Paging of ``detail="history"``, ``"incoming"``, ``"runs"`` and ``"backlinks"``;
+    # Paging of ``detail="history"``, ``"incoming"``, ``"pairs"``, ``"runs"`` and ``"backlinks"``;
     # absent on every other detail.
     truncated: bool | None = Field(default=None, exclude_if=_omit_none)
     next_cursor: str | None = Field(default=None, exclude_if=_omit_none)
@@ -988,6 +1072,7 @@ __all__ = [
     "GET_HISTORY_DEFAULT_LIMIT",
     "GET_HISTORY_MAX_LIMIT",
     "GET_PAGED_DETAILS",
+    "GET_CARD_PAIRS",
     "AttestationCountReason",
     "ByteRange",
     "ClaimLine",
@@ -1022,6 +1107,10 @@ __all__ = [
     "GetHistory",
     "GetHistoryAny",
     "GetIncoming",
+    "GetEndPairs",
+    "GetKindEnd",
+    "GetPairEnd",
+    "GetPairs",
     "GetIncomingClaim",
     "GetLineRuns",
     "GetPrincipalCard",

@@ -59,6 +59,7 @@ from cruxible_client.contracts.get_display import (
 )
 from cruxible_client.contracts.get_reads import (
     GET_BODY_DEFAULT_MAX_BYTES,
+    GET_CARD_PAIRS,
     GET_DETAILS_BY_KIND,
     GET_HISTORY_DEFAULT_LIMIT,
     ByteRange,
@@ -77,6 +78,7 @@ from cruxible_client.contracts.get_reads import (
     GetContractField,
     GetCoordinate,
     GetDocumentCard,
+    GetEndPairs,
     GetEvidence,
     GetEvidenceRule,
     GetFieldChanged,
@@ -88,8 +90,11 @@ from cruxible_client.contracts.get_reads import (
     GetHistory,
     GetIncoming,
     GetIncomingClaim,
+    GetKindEnd,
     GetLineRuns,
     GetNone,
+    GetPairEnd,
+    GetPairs,
     GetPrincipalCard,
     GetProcedureCard,
     GetProcedureNode,
@@ -128,6 +133,7 @@ from cruxible_client.contracts.shapes import (
     Contract,
     contract_ref_for_identity,
     render_type,
+    subject_value_kinds,
     value_members,
 )
 from cruxible_client.contracts.subject_kinds import SubjectKind
@@ -165,6 +171,18 @@ from cruxible_core.service.discovery.operational import (
     uncited_capture_present,
 )
 from cruxible_core.service.discovery.operational_viewer import OperationalViewer
+from cruxible_core.service.discovery.pair_reads import (
+    CARD_SCAN,
+    PairsCursorInvalid,
+    cut_page,
+    end_pair_groups,
+    fact_claim_paths,
+    group_pairs,
+    page_candidates,
+    page_scan,
+    pair_ends,
+    visible_pairs,
+)
 from cruxible_core.service.discovery.read_flags import (
     answer_flags,
     ordered_flags,
@@ -1288,6 +1306,38 @@ def _subject_card(
                 (path,),
             ).fetchone()[0]
         )
+        # A pair's ends (its pair_ends rows) and, as an end, its pair candidates
+        # per pair kind and part (pair_units seeks): at most CARD_SCAN per group.
+        ends = pair_ends(projection.typed.connection, path)
+        scanned = [
+            (group, group_pairs(projection.typed.connection, path, group, limit=CARD_SCAN + 1))
+            for group in end_pair_groups(projection.typed.connection, path)
+        ]
+        examined = [(group, pair) for group, found in scanned for pair in found[:CARD_SCAN]]
+        fact_paths = fact_claim_paths(projection.typed.connection, examined)
+    # Candidates only propose: each is listed when one of its facts is visible.
+    visible = visible_pairs(
+        instance,
+        coordinate,
+        pairs=[pair for _group, pair in examined],
+        claim_paths=fact_paths,
+        evaluation_time=evaluation_time,
+    )
+    end_groups = []
+    for group, found in scanned:
+        visible_found = [pair for pair in found[:CARD_SCAN] if pair in visible]
+        more = len(visible_found) > GET_CARD_PAIRS or len(found) > CARD_SCAN
+        if not found:
+            continue
+        end_groups.append(
+            GetEndPairs(
+                kind=group.kind,
+                part=short_field_name(group.part, group.kind, accepted_predicates),
+                pairs=tuple(_subject_ref(item) for item in visible_found[:GET_CARD_PAIRS]),
+                hidden=len(found[:CARD_SCAN]) - len(visible_found),
+                more=more,
+            )
+        )
     held = unsure_holds(
         instance,
         coordinate,
@@ -1295,9 +1345,41 @@ def _subject_card(
         statuses={item.claim_id: item.status for item in rows},
         evaluation_time=evaluation_time,
     )
+    end_parts = dict(ends)
+    end_claims: dict[str, ClaimValueRecord] = {}
     slots: dict[tuple[str, str | None], list[ClaimValueRecord]] = defaultdict(list)
     for item in rows:
+        if (
+            item.predicate in end_parts
+            and item.qualifier is None
+            and item.object_kind == "subject"
+            and item.value == end_parts[item.predicate]
+        ):
+            # An endpoint key Claim: shown as the pair's end, not as a field.
+            end_claims.setdefault(item.predicate, item)
+            continue
         slots[(item.predicate, item.qualifier)].append(item)
+    pair_end_rows = tuple(
+        GetPairEnd(
+            part=short_field_name(part, kind, accepted_predicates),
+            subject=_subject_ref(end),
+            claim=None if part not in end_claims else end_claims[part].claim_id,
+            flags=()
+            if part not in end_claims
+            else tuple(
+                ordered_flags(
+                    set(
+                        verdict_flags(
+                            end_claims[part].verdict,
+                            end_claims[part].status,
+                            held=f"Claim:{end_claims[part].claim_id}" in held,
+                        )
+                    )
+                )
+            ),
+        )
+        for part, end in ends
+    )
     entries: list[GetSubjectClaim] = []
     evidence_steps: list[str] = []
     for (predicate, qualifier), slot_members in sorted(
@@ -1371,13 +1453,17 @@ def _subject_card(
                 nones=nones,
             )
         )
-    any_claim_flagged = any(entry.flags for entry in entries)
+    any_claim_flagged = any(entry.flags for entry in entries) or any(
+        end.flags for end in pair_end_rows
+    )
     return GetSubjectCard(
         subject=subject,
         kind=kind,
         lifecycle=shell.lifecycle.state,
+        ends=pair_end_rows,
         claims=tuple(entries),
         incoming_count=incoming,
+        pairs=tuple(end_groups),
         next=(
             *dict.fromkeys(evidence_steps),
             # See the matching note in _claim_card: suggest ``why`` only when
@@ -1386,6 +1472,12 @@ def _subject_card(
             _render_get(surface, subject, "history"),
             # What points at it: the edges stored on other Subjects.
             *((_render_get(surface, subject, "incoming"),) if incoming else ()),
+            # The rest of its pairs, when the card cut a group.
+            *(
+                (_render_get(surface, subject, "pairs"),)
+                if any(group.more for group in end_groups)
+                else ()
+            ),
         ),
     )
 
@@ -1777,8 +1869,16 @@ def _subject_kind_card(
         counted = projection.typed.connection.execute(LIVE_SUBJECT_COUNT_SQL, (kind,)).fetchone()
         live = 0 if counted is None else counted[0]
         kit = owned_by(kit_owners(instance, projection.typed.connection), "SubjectKind", kind)
+        # A pair kind's ends: each Subject-valued key part's one end kind.
+        ends = tuple(
+            GetKindEnd(key=predicate, kind=end_kinds[0])
+            for predicate in declared.keys
+            if len(end_kinds := _end_kinds(projection, predicate)) == 1
+        )
     rule = declared.identity_rule
     return GetSubjectKindCard(
+        pair=bool(ends),
+        ends=ends,
         subject_kind=resolved.identity,
         description=declared.description,
         lifecycle=declared.lifecycle.state,
@@ -1801,6 +1901,15 @@ def _subject_kind_card(
             }[surface],
         ),
     )
+
+
+def _end_kinds(projection: Any, predicate: str) -> tuple[str, ...]:
+    """The Subject kinds a key ClaimType's value names; empty for a literal part."""
+
+    claim_type = projection.typed.source(f"ClaimType:{predicate}")
+    if not isinstance(claim_type, ClaimType):
+        return ()
+    return subject_value_kinds(claim_type.value)
 
 
 def _contract_card(
@@ -2093,6 +2202,7 @@ def _claim_rationale(
 
 _HISTORY_LIST = "get history"
 _INCOMING_LIST = "get incoming"
+_PAIRS_LIST = "get pairs"
 _RUNS_LIST = "get runs"
 #: A keyset cursor's snapshot: it continues after its last key, whatever lands meanwhile.
 _KEYSET = "keyset"
@@ -2677,7 +2787,12 @@ def _history_selection(request: GetRequest) -> dict[str, str]:
 
 
 #: Each paged detail's cursor list: a cursor from one never continues another.
-_PAGED_LISTS = {"history": _HISTORY_LIST, "incoming": _INCOMING_LIST, "runs": _RUNS_LIST}
+_PAGED_LISTS = {
+    "history": _HISTORY_LIST,
+    "incoming": _INCOMING_LIST,
+    "pairs": _PAIRS_LIST,
+    "runs": _RUNS_LIST,
+}
 
 
 def _history_continuation(
@@ -2768,6 +2883,113 @@ def _incoming(
         else None
     )
     return GetIncoming(claims=claims), truncated, next_cursor
+
+
+# -- pairs ----------------------------------------------------------------------------
+
+
+def _pairs(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    evaluation_time: datetime,
+    request: GetRequest,
+    limit: int,
+    continuation: ListContinuation | None,
+) -> tuple[GetPairs, bool, str | None]:
+    """One page of the pairs this Subject is an end of, by pair kind, part and id.
+
+    Keyset seeks of the pair index after the cursor's (part, pair), at most
+    ``page_scan(limit)`` candidates, judged by one batched fact read: the page
+    never reads the Subject's whole set of pairs (``pair_reads``).
+    """
+
+    after: tuple[str, str] | None = None
+    if continuation is not None:
+        if continuation.snapshot != _KEYSET or len(continuation.last_key) != 3:
+            raise ListCursorMismatch(
+                f"{ListCursorMismatch.error_code}: the cursor does not continue this "
+                "listing; read pairs again without a cursor"
+            )
+        after = (continuation.last_key[0], continuation.last_key[1])
+    path = resolved.path or f"subjects/{_name(resolved.identity)}.json"
+    scan = page_scan(limit)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        try:
+            candidates = page_candidates(
+                projection.typed.connection, path, after=after, count=scan + 1
+            )
+        except PairsCursorInvalid as exc:
+            raise ListCursorMismatch(
+                f"{ListCursorMismatch.error_code}: the cursor does not continue this "
+                "listing; read pairs again without a cursor"
+            ) from exc
+        fact_paths = fact_claim_paths(projection.typed.connection, candidates[:scan])
+        accepted_predicates = _live_predicates(projection) if candidates else frozenset()
+    # Candidates only propose: each is listed when one of its facts is visible;
+    # a hidden one is counted and the cursor moves past it.
+    visible = visible_pairs(
+        instance,
+        coordinate,
+        pairs=[pair for _group, pair in candidates[:scan]],
+        claim_paths=fact_paths,
+        evaluation_time=evaluation_time,
+    )
+    page = cut_page(candidates, visible, limit=limit, scan=scan)
+    groups = tuple(
+        GetEndPairs(
+            kind=group.kind,
+            part=short_field_name(group.part, group.kind, accepted_predicates),
+            pairs=tuple(_subject_ref(item) for item in listed),
+            hidden=hidden,
+        )
+        for group, listed, hidden in page.groups
+    )
+    next_cursor = (
+        None
+        if page.last is None
+        else encode_list_cursor(
+            list_name=_PAIRS_LIST,
+            coordinate=AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json"),
+            selection=_history_selection(request),
+            snapshot=_KEYSET,
+            # The visibility instant the walk judged its first page at: every
+            # page of one walk reads one snapshot (_pairs_instant).
+            last_key=(*page.last, evaluation_time.isoformat()),
+        )
+    )
+    return GetPairs(groups=groups), page.last is not None, next_cursor
+
+
+def _pairs_instant(request: GetRequest, continuation: ListContinuation) -> datetime:
+    """The instant a pairs continuation judges visibility at: the one its walk began at.
+
+    Visibility depends on effective periods, so a walk whose pages were judged
+    at different instants could list pairs no single instant holds. The cursor
+    carries the first page's instant; an explicit other ``evaluation_time``
+    refuses.
+    """
+
+    mismatch = ListCursorMismatch(
+        f"{ListCursorMismatch.error_code}: the cursor does not continue this "
+        "listing; read pairs again without a cursor"
+    )
+    if continuation.snapshot != _KEYSET or len(continuation.last_key) != 3:
+        raise mismatch
+    try:
+        pinned = datetime.fromisoformat(continuation.last_key[2])
+    except ValueError as exc:
+        raise mismatch from exc
+    if pinned.utcoffset() is None:
+        raise mismatch
+    if request.evaluation_time is not None and request.evaluation_time != pinned:
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor continues pairs judged at "
+            f"{pinned.isoformat()}; omit evaluation_time to continue it, or read pairs "
+            "again without a cursor"
+        )
+    return pinned
 
 
 # -- a Line's runs ----------------------------------------------------------------------
@@ -3110,7 +3332,11 @@ def service_playbill_get(
         return _get_backlinks(instance, request, access=access)
     continuation, at = _history_continuation(instance, request)
     coordinate = resolve_read_coordinate(instance, at)
-    evaluation_time = request.evaluation_time or utc_now()
+    evaluation_time = (
+        _pairs_instant(request, continuation)
+        if request.detail == "pairs" and continuation is not None
+        else request.evaluation_time or utc_now()
+    )
     resolved = resolve_get_ref(
         instance,
         coordinate,
@@ -3294,6 +3520,16 @@ def service_playbill_get(
             instance,
             coordinate,
             resolved,
+            request=request,
+            limit=request.limit or GET_HISTORY_DEFAULT_LIMIT,
+            continuation=continuation,
+        )
+    elif request.detail == "pairs":
+        fields["pairs"], fields["truncated"], fields["next_cursor"] = _pairs(
+            instance,
+            coordinate,
+            resolved,
+            evaluation_time=evaluation_time,
             request=request,
             limit=request.limit or GET_HISTORY_DEFAULT_LIMIT,
             continuation=continuation,
