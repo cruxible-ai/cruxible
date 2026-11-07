@@ -209,13 +209,17 @@ def test_a_renamed_and_recreated_name_is_never_consumed_from_a_stale_cache(
     resolved = WorkspaceFileReader._resolve_component(FAKE_FD, "FOO.json", cache)
     assert resolved is None, "a stale candidate must never be trusted on its word alone"
 
-    actual = WorkspaceFileReader._actual_component(FAKE_FD, "FOO.json", cache=cache)
+    actual, verified_identity = WorkspaceFileReader._actual_component(
+        FAKE_FD, "FOO.json", cache=cache
+    )
     assert actual == "FOO.json"
+    assert verified_identity is None  # resolved by exact match once relisted, nothing substituted
     opened = os.stat("FOO.json", dir_fd=FAKE_FD, follow_symlinks=False)
     assert opened.st_ino == new_ino  # the live file, not the renamed original
 
     # The cache is fresh now: the renamed file resolves correctly too.
-    assert WorkspaceFileReader._actual_component(FAKE_FD, "Foo.json", cache=cache) == "Foo.json"
+    renamed, _ = WorkspaceFileReader._actual_component(FAKE_FD, "Foo.json", cache=cache)
+    assert renamed == "Foo.json"
 
 
 def test_a_listing_that_changes_mid_glob_relists_once_for_the_new_name(
@@ -226,14 +230,17 @@ def test_a_listing_that_changes_mid_glob_relists_once_for_the_new_name(
     fake_directory.create("a.json")
     cache: DirectoryEntryCache = {}
     WorkspaceFileReader._directory_entries(FAKE_FD, cache=cache)
-    assert WorkspaceFileReader._actual_component(FAKE_FD, "a.json", cache=cache) == "a.json"
+    resolved_a, _ = WorkspaceFileReader._actual_component(FAKE_FD, "a.json", cache=cache)
+    assert resolved_a == "a.json"
 
     fake_directory.create("b.json")
-    assert WorkspaceFileReader._actual_component(FAKE_FD, "b.json", cache=cache) == "b.json"
+    resolved_b, _ = WorkspaceFileReader._actual_component(FAKE_FD, "b.json", cache=cache)
+    assert resolved_b == "b.json"
     # The relist is itself cached: a further lookup costs no further listing.
     key = (fake_directory.dev, fake_directory.ino)
     assert cache[key][0] == fake_directory.identity()
-    assert WorkspaceFileReader._actual_component(FAKE_FD, "a.json", cache=cache) == "a.json"
+    resolved_a_again, _ = WorkspaceFileReader._actual_component(FAKE_FD, "a.json", cache=cache)
+    assert resolved_a_again == "a.json"
 
 
 def test_a_directory_inode_reused_for_different_content_is_never_trusted(
