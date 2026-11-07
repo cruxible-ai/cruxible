@@ -1822,6 +1822,10 @@ class _MemberContext:
     candidate_dependencies: DependencyIndexV1
     candidate_identities: Mapping[str, tuple[ArtifactIdentity, str]]
     resolved: _ResolvedArtifacts
+    #: This change's own newly-proposed CaptureContract members, by exact
+    #: digest -- computed once per change (``_changed_capture_contracts_by_digest``
+    #: over ``scope``), never per Claim and never a walk of ``resolved``.
+    staged_capture_contracts: Mapping[str, AcceptedCaptureContract]
     claim_admission_by_path: Mapping[str, tuple[dict[str, object], ...]]
     claim_admission_digests_by_path: Mapping[str, tuple[str, ...]]
     claim_admission_query_digests_by_path: Mapping[str, tuple[str, ...]]
@@ -3332,11 +3336,43 @@ def _subject_versions(
     )
 
 
+def _changed_capture_contracts_by_digest(
+    scope: Iterable[str], candidate_tree: Mapping[str, bytes]
+) -> dict[str, AcceptedCaptureContract]:
+    """This change's own newly-proposed CaptureContract members, by exact digest.
+
+    ``scope`` is the change set's own changed paths -- never the full
+    candidate or accepted CaptureContract table -- so this parses at most a
+    handful of members once per change (review F1, round 2): the first cut
+    re-keyed ``_ResolvedArtifacts.capture_contracts``, a mapping lazily
+    backed by every CaptureContract the candidate can resolve (named-rule
+    lookups need that reach); calling ``.values()`` on it forced a full
+    accepted-state enumeration -- O(every contract in the instance) -- for
+    every Claim, family rule or not. Walking ``scope`` instead touches only
+    the paths this exact change proposes.
+    """
+
+    staged: dict[str, AcceptedCaptureContract] = {}
+    for path in scope:
+        if not _CAPTURE_CONTRACT_PATH_RE.match(path):
+            continue
+        content = candidate_tree.get(path)
+        if content is None:
+            continue
+        contract = parse_capture_contract(content, path=path)
+        digest = capture_contract_digest(contract).tagged
+        staged[digest] = AcceptedCaptureContract(
+            path=path, contract=contract, artifact_digest=digest
+        )
+    return staged
+
+
 def historical_capture_contract_resolver(
     provider: HistoricalArtifactProvider | None,
     at: AcceptedCoordinate,
     *,
     indexed: bool = False,
+    staged: Mapping[str, AcceptedCaptureContract] | None = None,
 ) -> "CaptureContractVersions":
     """Resolve exact CaptureContract versions accepted within the prefix ending at ``at``.
 
@@ -3345,6 +3381,14 @@ def historical_capture_contract_resolver(
     resolves and only live contracts verify. The answer is authoritative (a
     None means no such version was accepted) only with a provider over an
     index of every accepted generation, genesis included (``indexed``).
+
+    ``staged`` is this same change's own not-yet-accepted CaptureContracts
+    (digest-keyed, e.g. a foreign-source contract a Claim's first citation of
+    a source installs as its own dependency): a keyed lookup checked before
+    the accepted-history provider, never a catalog walk, so a contract this
+    change installs counts as accepted-state membership on the same write
+    that installs it. Anything neither staged here nor accepted at ``at``
+    still resolves to None -- fail closed, unchanged.
     """
     from cruxible_core.evidence.attestation_verification import CaptureContractVersions
 
@@ -3353,6 +3397,10 @@ def historical_capture_contract_resolver(
     def resolve(digest: str) -> AcceptedCaptureContract | None:
         if digest in cache:
             return cache[digest]
+        staged_contract = None if staged is None else staged.get(digest)
+        if staged_contract is not None:
+            cache[digest] = staged_contract
+            return staged_contract
         found = None if provider is None else provider(at, digest, family="capture-contracts/")
         accepted = None
         if found is not None:
@@ -3434,7 +3482,9 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         evaluation_time=datetime.fromisoformat(context.timestamp.replace("Z", "+00:00")),
         allow_claim_type_retirement_shape_exemption=retiring,
         historical_capture_contract=historical_capture_contract_resolver(
-            context.historical_artifact_provider, context.accepted_coordinate()
+            context.historical_artifact_provider,
+            context.accepted_coordinate(),
+            staged=context.staged_capture_contracts,
         ),
         claim_type_v7_semantics=True,
         # An attributed retirement alone: a Claim retired with its Subject, or
@@ -4735,6 +4785,7 @@ def _evaluate_scoped_members(
             )
     candidate_states = candidate_dependencies.states
     resolved = _resolved_artifacts(candidate_tree, candidate_states)
+    staged_capture_contracts = _changed_capture_contracts_by_digest(scope, candidate_tree)
     claim_admission_by_path: dict[str, tuple[dict[str, object], ...]] = {}
     claim_admission_digests_by_path: dict[str, tuple[str, ...]] = {}
     claim_admission_query_digests_by_path: dict[str, tuple[str, ...]] = {}
@@ -4876,6 +4927,7 @@ def _evaluate_scoped_members(
             candidate_dependencies=candidate_dependencies,
             candidate_identities=candidate_identities,
             resolved=resolved,
+            staged_capture_contracts=staged_capture_contracts,
             claim_admission_by_path=claim_admission_by_path,
             claim_admission_digests_by_path=claim_admission_digests_by_path,
             claim_admission_query_digests_by_path=(claim_admission_query_digests_by_path),
