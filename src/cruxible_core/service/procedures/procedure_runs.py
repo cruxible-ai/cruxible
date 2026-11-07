@@ -866,7 +866,10 @@ class BoundedKeyRules(KeyRules):
             definition = None if predicate is None else self.claim_type(predicate)
             if definition is None:
                 continue
-            checked = check_value(part_value, definition.value, at="", field=name)
+            # A problem only: no result is allocated for a part that holds.
+            checked = check_value(
+                part_value, definition.value, at="", field=name, _problem_only=True
+            )
             if isinstance(checked, FieldInvalid):
                 raise KeyPartOutOfBounds(
                     f"{predicate}: {checked.problem.code} for its declared value type"
