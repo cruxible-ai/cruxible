@@ -96,9 +96,8 @@ def author(instance: Any, payload: Any, *, name: str) -> dict[str, bytes]:
     from cruxible_client.contracts.authoring.inputs import lower_authoring_input
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
     from cruxible_core.authoring.lowering import lower_authoring
-    from cruxible_core.proposals.proposals import AuthenticatedActor
-
     from cruxible_core.indexes.projection import AcceptedCoordinate
+    from cruxible_core.proposals.proposals import AuthenticatedActor
 
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     # A draft, never stored: the coordinator would resume an earlier intent

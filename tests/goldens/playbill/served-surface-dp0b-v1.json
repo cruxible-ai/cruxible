@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-02:core-runbook",
-    "surface_digest": "sha256:bf008717bd43a2b15104f6b07a3fc454521e5375cdec67f8aa7de7fd4f631f31"
+    "surface_digest": "sha256:0f3638a4c6d70c7d4d303bf8894f8630bf12509c28b8a176e114500a7a7c490b"
   },
   "surface": {
     "cli_leaves": [
@@ -710,6 +710,21 @@
         ],
         "command": "retire",
         "delegate": "cruxible_core.cli.commands.playbill.retire"
+      },
+      {
+        "client_operations": [
+          "preview_runbook"
+        ],
+        "command": "runbook preview",
+        "delegate": "cruxible_core.cli.commands.playbill.preview_runbook"
+      },
+      {
+        "client_operations": [
+          "preview_runbook",
+          "run_runbook"
+        ],
+        "command": "runbook run",
+        "delegate": "cruxible_core.cli.commands.playbill.run_runbook"
       },
       {
         "client_operations": [],

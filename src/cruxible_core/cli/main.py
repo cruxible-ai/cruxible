@@ -89,6 +89,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("procedure", "measure"): "active",
     ("procedure", "dispose"): "active",
     ("line", "run"): "active",
+    ("runbook", "run"): "active",
     ("line", "enable"): "active",
     ("line", "disable"): "active",
     ("line", "evaluate"): "active",
@@ -193,7 +194,9 @@ def handle_errors(f: Any) -> Any:
                     target_mode = None
                 if command_path == ("write",) and kwargs.get("schema"):
                     target_mode = None
-                if command_path == ("line", "evaluate") and kwargs.get("dry_run"):
+                if command_path in {("line", "evaluate"), ("runbook", "run")} and kwargs.get(
+                    "dry_run"
+                ):
                     target_mode = None
                 if target_mode is not None and target_mode != "manual":
                     # Runtime import avoids the main <-> commands import cycle.
@@ -794,6 +797,17 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         },
         module="playbill",
         attr="line_group",
+    ),
+    "runbook": _group(
+        "Run or preview an accepted Runbook.",
+        {
+            "run": _command("playbill", "run_runbook", "Run a Runbook's steps in order now."),
+            "preview": _command(
+                "playbill", "preview_runbook", "Show what a Runbook's steps can do."
+            ),
+        },
+        module="playbill",
+        attr="runbook_group",
     ),
     "inbox": _group(
         "Judge what Lines sent to intelligence.",

@@ -298,6 +298,7 @@ def service_run_runbook(
     needs the tier ``action run`` needs. Any refusal is that step's failure.
     """
 
+    instance.require_writable()
     from cruxible_core.runtime.permissions import (
         RUNTIME_OPERATION_PERMISSIONS,
     )
@@ -307,7 +308,6 @@ def service_run_runbook(
     )
     from cruxible_core.triggers.journal import fire_manual
 
-    instance.require_writable()
     accepted = accepted_runbook(instance, name)
     clock = _DaemonClock(daemon_clock)
     action_rung = RUNTIME_OPERATION_PERMISSIONS["cruxible_action_run"].value - 1

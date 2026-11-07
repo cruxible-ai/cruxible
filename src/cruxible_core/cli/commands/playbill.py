@@ -4492,7 +4492,7 @@ def authoring_example_command(
     Input kind family: claim | procedure |
     subject | subject_kind | subject_succession | query_definition |
     approval_policy | procedure_runtime_policy | procedure_mandate |
-    line | trigger | contract | change_set (tagless).
+    line | trigger | runbook | contract | change_set (tagless).
 
     \b
     Change-set member kind family: claim | claim_type | claim_type_succession |

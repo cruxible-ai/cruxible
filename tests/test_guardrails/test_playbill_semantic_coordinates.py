@@ -44,6 +44,7 @@ from cruxible_client.contracts.laws import (
     PROVIDER_V2_ACCEPTANCE_LAW,
     PROVIDER_V3_ACCEPTANCE_LAW,
     RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
+    RUNBOOK_ACCEPTANCE_LAW,
     SUBJECT_ACCEPTANCE_LAW,
     SUBJECT_KIND_ACCEPTANCE_LAW,
     InstalledAcceptanceLaw,
@@ -117,6 +118,13 @@ LAW_COORDINATES: tuple[
         "playbill-note-v1",
         1,
         "sha256:e16424467bd4abb90aaa76ea25803ab5dc3d393e31c190eba38791536b0b22ac",
+    ),
+    (
+        RUNBOOK_ACCEPTANCE_LAW,
+        "cruxible.runbook.v1",
+        "cruxible-runbook-v1",
+        1,
+        "sha256:975f59d99e2562e152bf1741d221de34474e17456066fa2954b0005997e878a5",
     ),
     (
         APPROVAL_POLICY_ACCEPTANCE_LAW,
