@@ -425,20 +425,16 @@ def service_build_kit(
     coordinate, the building principal): claimed, not proven. Each provider
     package named in ``request.providers`` is read from the body store, recorded
     in the manifest and carried as bytes in the returned bundle. The
-    ``automation_template`` is checked first, as ``template_actor_id``'s
-    authoring preview against the accepted head (nothing is stored), and refuses
-    the build ``cruxible.kit.automation_template_invalid`` unless it authors cleanly.
+    ``automation_template`` is checked as ``template_actor_id``'s authoring
+    preview against exactly this build's exported closure (never this
+    instance's other local definitions; D-R48 fix round F3), and refuses the
+    build ``cruxible.kit.automation_template_invalid`` unless it authors
+    cleanly there.
     """
 
     template = request.automation_template
-    if template is not None:
-        from cruxible_core.service.kit_template import check_automation_template
-
-        if template_actor_id is None:
-            raise DataValidationError(
-                "checking an automation template needs an authoring principal"
-            )
-        check_automation_template(instance, template, actor_id=template_actor_id)
+    if template is not None and template_actor_id is None:
+        raise DataValidationError("checking an automation template needs an authoring principal")
 
     coordinate = instance.accepted_coordinate()
     tree = instance.immutable_tree_at(coordinate.git_oid)
@@ -481,14 +477,24 @@ def service_build_kit(
         files[inspected.provider.lock.filename] = lock
         files.update(dependencies)
     bundle = build_kit(
-        tree,
-        request,
-        provenance=provenance,
-        providers=tuple(packages),
-        automation_template=None
-        if template is None
-        else (template.path, template.content.encode("utf-8")),
+        tree, request, provenance=provenance, providers=tuple(packages), automation_template=None
     )
+    if template is not None:
+        from cruxible_core.service.kit_template import check_automation_template
+
+        assert template_actor_id is not None  # refused above when a template is named
+        check_automation_template(bundle.contents(), template, actor_id=template_actor_id)
+        bundle = bundle.model_copy(
+            update={
+                "manifest": bundle.manifest.model_copy(
+                    update={
+                        "automation_template": template.path,
+                        "files": (kit_file_entry(template.path, template.content.encode("utf-8")),),
+                    }
+                ),
+                "files": (KitFileBytes.of(template.path, template.content.encode("utf-8")),),
+            }
+        )
     bodies = sorted(set(bundle.document_body_digests().values()))
     if bodies:
         bundle = bundle.model_copy(

@@ -1815,6 +1815,95 @@ def test_a_template_that_does_not_author_refuses_the_build_naming_it(
     assert get_playbill_manager().get(publisher.instance_id).accepted_coordinate() == head
 
 
+def _author_as(instance: typing.Any, payload: typing.Any, *, actor_id: str, name: str) -> None:
+    """Lower one authoring input at the head and accept what it changes, as ``actor_id``."""
+
+    from cruxible_client.contracts.authoring.inputs import lower_authoring_input
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.authoring.lowering import lower_authoring
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+    from tests.core_support._identity_support import accept_tree
+
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    intent = coordinator.create(
+        actor=AuthenticatedActor(actor_id=actor_id),
+        payload=lower_authoring_input(payload),
+        canonical_timestamp="2026-11-07T11:00:00.000000Z",
+    ).intent
+    changed = dict(lower_authoring(instance, intent=intent, actor_id=actor_id).changed_members)
+    if changed:
+        accept_tree(instance, changed, name=name, actor_id=actor_id)
+
+
+def test_a_template_naming_a_publisher_local_line_the_kit_does_not_export_refuses(
+    worlds: tuple[_World, _World],
+) -> None:
+    """D-R48 fix round F3: the check validates the exported closure, never the publisher's
+    other local definitions.
+
+    ``triage-hourly`` is a real, live Line on the publisher -- just not one the kit
+    exports (Lines are never kit content). A template whose Runbook names it must
+    refuse exactly as a fresh adopter's build would, not pass because the
+    publisher happens to hold a Line of that name for its own operational use.
+    """
+
+    from cruxible_client.contracts.authoring.inputs import LineInput, ProcedureInput
+    from cruxible_core.errors import RequestRefusedError
+    from tests.core_support._identity_support import accept_tree
+    from tests.support.operation_world import (
+        build_files,
+        contract_files,
+        operation_build,
+        slotted_spec,
+    )
+
+    publisher, _consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    instance = get_playbill_manager().get(publisher.instance_id)
+    accept_tree(
+        instance,
+        {**contract_files(), **build_files(operation_build())},
+        name="local-operations",
+        actor_id="operator",
+    )
+    _author_as(
+        instance,
+        ProcedureInput(kind="procedure", spec=slotted_spec(name="acme.compute")),
+        actor_id="operator",
+        name="local-procedure",
+    )
+    _author_as(
+        instance,
+        LineInput.model_validate(
+            {
+                "kind": "line",
+                "name": "triage-hourly",
+                "procedure_name": "acme.compute",
+                "bindings": {},
+                "acquisition": {},
+                "findings": {},
+                "parameters": {"value": 1},
+                "max_authority": "observe",
+                "occurrence_epoch": 1,
+            }
+        ),
+        actor_id="operator",
+        name="local-line",
+    )
+    head = instance.accepted_coordinate()
+
+    content = _template(
+        {"kind": "runbook", "name": "acme.start", "steps": [{"line": "triage-hourly"}]}
+    )
+    with pytest.raises(RequestRefusedError) as refused:
+        _build_with_template(publisher, content)
+
+    assert refused.value.error_code == "cruxible.kit.automation_template_invalid"
+    assert "cruxible.authoring.runbook_line_missing" in str(refused.value)
+    assert get_playbill_manager().get(publisher.instance_id).accepted_coordinate() == head
+    assert get_playbill_manager().get(publisher.instance_id).accepted_coordinate() == head
+
+
 def test_a_template_that_is_not_one_change_set_refuses_the_build(
     worlds: tuple[_World, _World],
 ) -> None:
