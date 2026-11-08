@@ -134,4 +134,6 @@ def test_the_mcp_instructions_teach_the_three_read_verbs() -> None:
 
     for verb in ("cruxible_orient", "cruxible_query", "cruxible_get"):
         assert verb in BASE_INSTRUCTIONS
-    assert ".cruxible/floor/current/<kind>/<id>.yaml" in BASE_INSTRUCTIONS
+    # The lean instructions point to the served index, not an injected floor dump.
+    assert "small" in BASE_INSTRUCTIONS
+    assert "relevant kinds or sections" in BASE_INSTRUCTIONS

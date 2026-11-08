@@ -210,3 +210,29 @@ def test_default_input_schema_catalog_stays_within_agent_budget(
     assert estimate <= DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS, (
         f"default input schemas plus descriptions cost about {estimate:.0f} tokens"
     )
+
+
+@pytest.mark.parametrize("instance_id", [None, "inst_" + "x" * 32, "inst_" + "x" * 200])
+def test_injected_instructions_are_small_and_do_not_enumerate_the_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+    instance_id: str | None,
+) -> None:
+    from cruxible_core.mcp.curation import ToolCuration
+    from cruxible_core.mcp.server import _build_instructions
+    from cruxible_core.runtime.permissions import PermissionMode
+
+    monkeypatch.setattr("cruxible_core.mcp.server.configured_instance_id", lambda: instance_id)
+    for mode in PermissionMode:
+        instructions = _build_instructions(
+            mode,
+            curation=ToolCuration("full", frozenset({"cruxible_get"})),
+            transport_error="unreachable " * 100,
+        )
+        assert len(instructions) / 4 < 300
+        assert "never self-approve" in " ".join(instructions.split())
+        assert "Listing is static" in instructions
+        assert "Hidden by curation" not in instructions
+        assert "Available tools:" not in instructions
+        assert "Denied at this tier" not in instructions
+        if instance_id and len(instance_id) <= 40:
+            assert instance_id in instructions

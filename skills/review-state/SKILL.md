@@ -34,4 +34,3 @@ covers acceptance and changed candidates. Authorized repairs use
 [guarded edits](../_shared/references/concurrent-edits.md). Report findings with
 references, evidence, repair and limits of what was checked; do not turn
 diagnosis into an unrequested mutation.
-

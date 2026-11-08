@@ -16,4 +16,3 @@ what landed; a preview or submitted intent alone does not establish acceptance.
 For file/Document section replacement, the current section observation is
 `expect`, not the entire document's assumed old contents. Pair Subject ends
 are immutable; editing the relationship's facts cannot retarget its ends.
-

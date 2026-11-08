@@ -28,4 +28,3 @@ plugin; never ship keys or tokens. `cruxible_proposal_approve` signs with
 `CRUXIBLE_MCP_KEY_DIR` and the reviewed digest. Host initialization, credential
 provisioning and changing approval policy are separately authorized operator
 work, not consequences of installing this plugin.
-

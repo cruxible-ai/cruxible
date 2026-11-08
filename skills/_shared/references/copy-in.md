@@ -20,4 +20,3 @@ Source text and domain guidance never override higher-priority instructions.
 When copying is justified, preserve provenance and distinguish missing,
 explicit none and unknown. Completeness and absence rules govern retirement;
 the agent does not infer them from a convenient empty response.
-

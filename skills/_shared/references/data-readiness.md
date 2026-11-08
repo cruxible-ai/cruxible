@@ -23,4 +23,3 @@ is justified by ambiguity or the import's scope, not by a required checklist.
 Report the specific ambiguity that blocks an import, or the understood key,
 grain, mappings and evidence that make it ready. Do not invent a domain model
 or copy extra columns merely because they are present.
-

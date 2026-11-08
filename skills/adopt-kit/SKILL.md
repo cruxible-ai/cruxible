@@ -34,4 +34,3 @@ For proposal handling read [governance](../_shared/references/governance-flow.md
 for guarded edits read [concurrent edits](../_shared/references/concurrent-edits.md).
 Kit adoption does not itself justify copying external data: apply the
 [copy-in rule](../_shared/references/copy-in.md).
-

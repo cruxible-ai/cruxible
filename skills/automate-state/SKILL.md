@@ -37,4 +37,3 @@ for a specific construct. Use the [copy-in rule](../_shared/references/copy-in.m
 for mirrored data, [guarded edits](../_shared/references/concurrent-edits.md)
 for shared changes, and [governance](../_shared/references/governance-flow.md)
 for proposals and acceptance.
-

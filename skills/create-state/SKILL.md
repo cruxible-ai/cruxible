@@ -36,4 +36,3 @@ and [governance](../_shared/references/governance-flow.md) when a change awaits
 review. Report the accepted references and coordinate, or the specific proposal
 still awaiting acceptance. Pages and automation are additions only when the
 user's intended outcome needs them.
-
