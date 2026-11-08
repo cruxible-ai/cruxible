@@ -231,10 +231,12 @@ class _Seal:
 _SEALED: dict[int, _Seal] = {}
 
 
-def _forget(key: int, ref: weakref.ref[BaseModel]) -> None:
-    entry = _SEALED.get(key)
+def _forget(key: int, ref: weakref.ref[BaseModel], _sealed: dict[int, _Seal] = _SEALED) -> None:
+    # The registry is bound here, not looked up: a model collected while the
+    # interpreter tears modules down (globals already None) still finds it.
+    entry = _sealed.get(key)
     if entry is not None and entry.ref is ref:
-        _SEALED.pop(key, None)
+        _sealed.pop(key, None)
 
 
 def _register(model: BaseModel) -> None:
