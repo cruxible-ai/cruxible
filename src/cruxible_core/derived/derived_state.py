@@ -563,6 +563,9 @@ class CandidateTree(MutableMapping[str, bytes]):
         # Keep one base plus a bounded complete edit map, never an overlay chain.
         self._parent = parent._parent if parent._parent is not None else parent
         self._rows = parent._rows
+        # One fork's own writes, independent of edits inherited from its root.
+        self._fork_rows = parent._rows
+        self._touched_paths: set[str] = set()
         self._input_bytes = parent._input_bytes
         self._resident_bytes = parent._resident_bytes
         self._semantic_bytes = parent._semantic_bytes
@@ -594,6 +597,7 @@ class CandidateTree(MutableMapping[str, bytes]):
     def __setitem__(self, key: str, value: bytes) -> None:
         if normalize_ledger_path(key) != key or not isinstance(value, bytes):
             raise ValueError("candidate edits require canonical paths and immutable bytes")
+        self._touched_paths.add(key)
         previous = self._rows.get(key)
         weight_delta = (
             len(value) - _size(previous)
@@ -619,6 +623,7 @@ class CandidateTree(MutableMapping[str, bytes]):
     def __delitem__(self, key: str) -> None:
         if key not in self._rows:
             raise KeyError(key)
+        self._touched_paths.add(key)
         weight = len(key.encode("utf-8")) + _size(self._rows[key])
         self._input_bytes -= weight
         self._resident_bytes -= _resident(key, self._rows[key])
@@ -629,6 +634,16 @@ class CandidateTree(MutableMapping[str, bytes]):
         self._edits = self._edits.set(key, None) if key in self._parent else self._edits.delete(key)
         self._stage_claim(key)
         self._cached = None
+
+    def touched_paths_since(self, base: Mapping[str, bytes]) -> frozenset[str] | None:
+        """This fork's writes if it started at ``base``'s exact rows, without a diff scan."""
+        # SnapshotTree wraps PersistentMap in O(1), retaining its immutable root.
+        if (
+            isinstance(base, (SnapshotTree, CandidateTree))
+            and base._rows._root is self._fork_rows._root
+        ):
+            return frozenset(self._touched_paths)
+        return None
 
     def _stage_claim(self, key: str) -> None:
         # Mark this Claim path for re-indexing on the next slot lookup of a tree

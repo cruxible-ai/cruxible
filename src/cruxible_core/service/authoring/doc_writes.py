@@ -1,8 +1,10 @@
 """Admit workspace edits and retain overwritten subtrees; never open workspace paths."""
 
 import base64
-import os
 import re
+import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -36,7 +38,7 @@ from cruxible_client.contracts.write import (
     WriteRequest,
 )
 from cruxible_core.authoring.registrations import source_projection_blocks
-from cruxible_core.exhaust.backends import LocalJournalBackend, _atomic_write
+from cruxible_core.exhaust.backends import LocalJournalBackend
 from cruxible_core.exhaust.records import (
     DOC_EDIT_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
@@ -58,6 +60,7 @@ from cruxible_core.storage.cas import BodyAccessContext
 
 _FENCE = "doc-edit-local-v1"
 _ACCESS = BodyAccessContext(principal_id="doc-history", can_read_body=True)
+_PENDING_LIMIT = 64
 
 
 class _EditRecord(BaseModel):
@@ -92,17 +95,78 @@ def _pending_root(instance: PlaybillInstance) -> Path:
     return instance.root / instance.descriptor.storage.exhaust / "doc-edits" / "pending"
 
 
+def _store_pending(connection: sqlite3.Connection, token: str, pending: _PendingEdit) -> None:
+    unconfirmed = pending.before_content_base64 is not None
+    connection.execute(
+        "INSERT INTO pending_edits(token,source_id,unconfirmed,payload) VALUES(?,?,?,?) "
+        "ON CONFLICT(token) DO UPDATE SET "
+        "unconfirmed=excluded.unconfirmed,payload=excluded.payload",
+        (token, pending.edit.source_id, int(unconfirmed), pending.model_dump_json()),
+    )
+    if unconfirmed:
+        # At most limit+1 payloads for this source, even during legacy import.
+        # The covering index skips compact receipts and unrelated sources.
+        expired = connection.execute(
+            "SELECT token FROM pending_edits WHERE source_id=? AND unconfirmed=1 "
+            "ORDER BY sequence DESC LIMIT 1 OFFSET ?",
+            (pending.edit.source_id, _PENDING_LIMIT),
+        ).fetchone()
+        if expired is not None:
+            connection.execute("DELETE FROM pending_edits WHERE token=?", expired)
+
+
+@contextmanager
+def _pending_store(root: Path) -> Iterator[sqlite3.Connection]:
+    root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = root.parent / "pending.sqlite3"
+    connection = sqlite3.connect(path, timeout=30)
+    path.chmod(0o600)
+    try:
+        connection.execute("PRAGMA secure_delete=ON")
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS pending_edits ("
+            "sequence INTEGER PRIMARY KEY AUTOINCREMENT, token TEXT NOT NULL UNIQUE, "
+            "source_id TEXT NOT NULL, unconfirmed INTEGER NOT NULL, payload TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS pending_by_source "
+            "ON pending_edits(source_id,unconfirmed,sequence DESC)"
+        )
+        if connection.execute("PRAGMA user_version").fetchone()[0] == 0:
+            # One cold format migration: visit old receipts once, retaining only
+            # the newest bounded payloads per source. Normal writes never scan.
+            for legacy in sorted(root.glob("DCE-*.json"), key=lambda p: p.stat().st_mtime_ns):
+                _store_pending(
+                    connection, legacy.stem, _PendingEdit.model_validate_json(legacy.read_bytes())
+                )
+            connection.execute("PRAGMA user_version=1")
+            connection.commit()
+            connection.execute("BEGIN IMMEDIATE")
+        if root.exists():
+            # Only after the import commits; retry cleanup after an interrupted migration.
+            for legacy in root.glob("DCE-*.json"):
+                legacy.unlink()
+            root.rmdir()
+        yield connection
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def _save_pending(path: Path, pending: _PendingEdit) -> None:
-    _atomic_write(path, pending.model_dump_json().encode())
-    with path.open("rb") as handle:
-        os.fsync(handle.fileno())
-    # Persist the fixed-depth pending namespace as well as the receipt itself.
-    for parent in (path.parent, path.parent.parent, path.parent.parent.parent):
-        directory = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+    with _pending_store(path.parent) as connection:
+        _store_pending(connection, path.stem, pending)
+
+
+def _load_pending(path: Path) -> _PendingEdit:
+    with _pending_store(path.parent) as connection:
+        row = connection.execute(
+            "SELECT payload FROM pending_edits WHERE token=?", (path.stem,)
+        ).fetchone()
+    if row is None:
+        raise FileNotFoundError(path)
+    return _PendingEdit.model_validate_json(row[0])
 
 
 def _journal(
@@ -128,8 +192,9 @@ def prepare_doc_edits(
 ) -> dict[int, str]:
     """Keep pending edits outside history and CAS until the writer confirms its CAS.
 
-    Each token addresses one immutable admitted edit. No instance inventory or
-    pending-record scan is needed to prepare, confirm, retry or read history.
+    Each token addresses one immutable admitted edit. The latest 64 unconfirmed
+    payloads per source are retained; confirmation receipts stay compact. No
+    instance inventory or pending-record scan runs after the cold format migration.
     """
     confirmations: dict[int, str] = {}
     for index, edit in enumerate(request.docs):
@@ -166,7 +231,6 @@ def prepare_doc_edits(
             before_content_base64=edit.before_content_base64,
         )
         root = _pending_root(instance)
-        root.mkdir(mode=0o700, parents=True, exist_ok=True)
         _save_pending(root / f"{token}.json", pending)
         confirmations[index] = token
     return confirmations
@@ -186,7 +250,7 @@ def confirm_doc_edits(
             raise _refuse("cruxible.doc.confirmation_invalid", "Invalid document confirmation")
         path = _pending_root(instance) / f"{token}.json"
         try:
-            pending = _PendingEdit.model_validate_json(path.read_bytes())
+            pending = _load_pending(path)
         except FileNotFoundError as exc:
             raise _refuse(
                 "cruxible.doc.confirmation_unknown", "No admitted edit has this confirmation"

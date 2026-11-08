@@ -146,13 +146,13 @@ def _load_private_key(path: Path) -> Ed25519PrivateKey:
             "client approval key directory permissions must exclude group/world access"
         )
     metadata = path.stat()
-    if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) & 0o077:
-        raise SigningKeyError("client approval key permissions must exclude group/world access")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     descriptor: int | None = None
     try:
         descriptor = os.open(path, flags)
         opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or stat.S_IMODE(opened.st_mode) & 0o077:
+            raise SigningKeyError("client approval key permissions must exclude group/world access")
         if opened.st_dev != metadata.st_dev or opened.st_ino != metadata.st_ino:
             raise SigningKeyError("client approval key changed while it was opened")
         content = bytearray()

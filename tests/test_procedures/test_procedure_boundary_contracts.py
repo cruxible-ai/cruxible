@@ -30,7 +30,7 @@ from cruxible_client.contracts.procedures.models import (
     ReadNode,
 )
 from cruxible_client.contracts.query.definitions import query_definition_digest
-from cruxible_client.contracts.shapes import Contract
+from cruxible_client.contracts.shapes import Contract, validate_contract
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
@@ -99,7 +99,7 @@ def _validator(*contracts: Contract) -> AcceptedProcedureContractValidator:
 
 def test_a_boundary_value_is_checked_exactly_and_names_the_nested_field() -> None:
     rows = boundary_contract(
-        "rows", {"rows": "list<test.nested-row@1>{max_items: 10}"}, _NESTED_ROW
+        "nested-list.output", {"rows": "list<test.nested-row@1>{max_items: 10}"}, _NESTED_ROW
     )
     validator = _validator(rows, _NESTED_ROW, _PART)
     pin = contract_pin("contract-out", rows)
@@ -121,7 +121,9 @@ def test_a_boundary_value_is_checked_exactly_and_names_the_nested_field() -> Non
 
 
 def test_a_list_at_a_boundary_refuses_past_the_run_item_budget_without_clipping() -> None:
-    rows = boundary_contract("rows", {"rows": "list<test.work-row@1>{max_items: 100}"}, WORK_ROW)
+    rows = boundary_contract(
+        "list-budget.output", {"rows": "list<test.work-row@1>{max_items: 100}"}, WORK_ROW
+    )
     validator = _validator(rows, WORK_ROW)
     payload = {"rows": [{"item_id": "a"}, {"item_id": "b"}]}
 
@@ -139,8 +141,8 @@ def test_a_list_at_a_boundary_refuses_past_the_run_item_budget_without_clipping(
 
 
 def test_a_boundary_contract_not_accepted_at_its_pinned_digest_refuses() -> None:
-    rows = boundary_contract("rows", {"count": "int"})
-    other = boundary_contract("rows", {"count": "string"})
+    rows = boundary_contract("wrong-digest.output", {"count": "int"})
+    other = validate_contract({"name": rows.name, "version": 1, "fields": {"count": "string"}})
     with pytest.raises(ProcedureContractValidationError, match="not accepted"):
         _validator(other).validate_contract(
             contract=contract_pin("contract-out", rows), payload={"count": 1}, direction="output"
@@ -394,7 +396,7 @@ def test_nested_list_budget_and_observations(direction):
     )
 
     rows = boundary_contract(
-        "rows", {"rows": "list<test.nested-row@1>{max_items: 10}"}, _NESTED_ROW
+        "nested-list.output", {"rows": "list<test.nested-row@1>{max_items: 10}"}, _NESTED_ROW
     )
     resolve = contract_resolver(rows, _NESTED_ROW, _PART)
     validator = _validator(rows, _NESTED_ROW, _PART)

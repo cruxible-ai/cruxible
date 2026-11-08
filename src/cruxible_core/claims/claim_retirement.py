@@ -367,17 +367,12 @@ class ChangeRetirementClosures:
 def _wrote_exactly(
     before: Mapping[str, bytes], after: Mapping[str, bytes], written: Mapping[str, object]
 ) -> bool:
-    """Whether ``after`` differs from ``before`` at exactly ``written`` (each already differs)."""
+    """Whether this member wrote exactly ``written`` (each result already differs)."""
 
-    if (
-        isinstance(before, CandidateTree)
-        and isinstance(after, CandidateTree)
-        and before._parent is after._parent
-    ):
-        # Both hold their complete edits against one root: the edit count moves
-        # by the written paths not edited before, and by nothing else.
-        new = sum(1 for path in written if path not in before._edits)
-        return len(after._edits) == len(before._edits) + new
+    if isinstance(after, CandidateTree):
+        touched = after.touched_paths_since(before)
+        if touched is not None:
+            return touched == written.keys()
     from cruxible_core.derived.derived_state import changed_paths
 
     return set(changed_paths(before, after)) == set(written)

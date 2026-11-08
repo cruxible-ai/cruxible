@@ -363,11 +363,7 @@ def boundary_contract(
         return ref.model_copy(update={"digest": contract_digest(target).tagged})
 
     pinned = pin_contract_refs(declared, pin)
-    # The first declaration of an identity is the fixture's; a test that
-    # declares another shape under the same identity passes it explicitly.
-    _DECLARED.setdefault(pinned.identity, pinned)
-    for item in nested:
-        _DECLARED.setdefault(item.identity, item)
+    declare_boundaries(pinned, *nested)
     return pinned
 
 
@@ -396,8 +392,16 @@ _DECLARED: dict[ArtifactIdentity, Contract] = {}
 def declare_boundaries(*contracts: Contract) -> tuple[Contract, ...]:
     """Record fixture boundary Contracts so :func:`procedure_members` can accept them."""
 
+    additions: dict[ArtifactIdentity, Contract] = {}
     for contract in contracts:
-        _DECLARED[contract.identity] = contract
+        existing = additions.get(contract.identity, _DECLARED.get(contract.identity))
+        if existing is not None and existing != contract:
+            raise ValueError(
+                f"{contract.identity.qualified} is already declared differently; "
+                "use a unique test Contract name"
+            )
+        additions[contract.identity] = contract
+    _DECLARED.update(additions)
     return contracts
 
 
