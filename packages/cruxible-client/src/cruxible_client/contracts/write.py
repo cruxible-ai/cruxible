@@ -303,6 +303,10 @@ class DocEditObservation(_StrictWriteModel):
     op: Literal["append", "replace"]
     section: SectionPath
     before_digest: str | None = Field(default=None, pattern=CAPTURE_DIGEST_PATTERN)
+    before_content_base64: str | None = Field(
+        default=None, max_length=4 * ((FOREIGN_SOURCE_MAX_BYTES + 2) // 3), exclude_if=_omit_none
+    )
+    before_section: SectionPath | None = Field(default=None, exclude_if=_omit_none)
     after_digest: str = Field(pattern=CAPTURE_DIGEST_PATTERN)
     content_base64: str = Field(max_length=4 * ((FOREIGN_SOURCE_MAX_BYTES + 2) // 3))
     before_coordinate: WorkingDigestCoordinate | None = None
@@ -328,6 +332,21 @@ class DocEditObservation(_StrictWriteModel):
             raise ValueError("append must label a new section, not the preamble")
         if self.op == "replace" and (self.before_coordinate is None or self.before_digest is None):
             raise ValueError("replace requires the prior file coordinate and subtree digest")
+        if self.op == "replace":
+            if self.before_content_base64 is None or self.before_section is None:
+                raise ValueError("replace requires the previous subtree bytes and heading path")
+            previous = _canonical_base64(self.before_content_base64, label="previous subtree")
+            if (
+                len(previous) > FOREIGN_SOURCE_MAX_BYTES
+                or section_digest(previous) != self.before_digest
+            ):
+                raise ValueError(
+                    "previous subtree digest does not reproduce or exceeds byte budget"
+                )
+            if len(previous) != self.end_byte - self.start_byte:
+                raise ValueError("previous subtree differs from the edit window length")
+        elif self.before_content_base64 is not None or self.before_section is not None:
+            raise ValueError("append carries no previous subtree")
         if self.end_byte < self.start_byte or (
             self.before_coordinate is not None
             and self.end_byte > self.before_coordinate.source_byte_length
@@ -340,6 +359,8 @@ class DocEditObservation(_StrictWriteModel):
                 or len(whole) != self.before_coordinate.source_byte_length
             ):
                 raise ValueError("document preimage differs from its coordinate")
+            if self.op == "replace" and whole[self.start_byte : self.end_byte] != previous:
+                raise ValueError("previous subtree differs from the document preimage")
         return self
 
 

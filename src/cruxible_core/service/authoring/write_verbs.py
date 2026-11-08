@@ -4425,6 +4425,10 @@ def service_playbill_write(
         instance.capture_verification_request(),
     ):
         outcome = _service_write(instance, request=request, caller=caller)
+        if not request.dry_run and outcome.status in ("accepted", "awaiting_approval"):
+            from cruxible_core.service.authoring.doc_writes import record_doc_edits
+
+            record_doc_edits(instance, request=request, outcome=outcome, actor=caller.actor)
         if request.docs:
             outcome = outcome.model_copy(
                 update={

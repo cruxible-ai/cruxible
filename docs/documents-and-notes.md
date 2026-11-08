@@ -86,9 +86,14 @@ heading paths to find sections:
   path in `under` (`()` appends at the end of the file). Its text must start
   with a heading.
 - **`replace_section`** (`op: replace`) replaces the section at a heading
-  path, including its heading. Pass `expect` with the section's current
-  digest (each write reports the digest it wrote): if someone changed the
-  section since you read it, nothing is written.
+  path, including its heading. By default it overwrites the current text and
+  keeps the old version in history. Pass `expect` when others may be editing,
+  using the section's digest when you read it (each write reports the digest
+  it wrote): if someone changed the section since then, nothing is written.
+  Read `get file:<catalog-name> --detail history` to see the old version's
+  digest and the author who replaced it; each entry links to its retained bytes.
+  History records edits admitted by the server; the write reports any local
+  file conflict.
 - **`id`** names the section so changes can cite it: `batch.section(ID)`, or
   `{kind: section, ref: ID}` in a write file.
 

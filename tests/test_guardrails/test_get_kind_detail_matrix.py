@@ -58,7 +58,7 @@ _REF_FORMS = {
 
 
 def _refs(instance: Any) -> dict[str, str]:
-    found: dict[str, str] = {}
+    found: dict[str, str] = {"file": "file:notes"}
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
         connection = projection.typed.connection
         for kind, (table, _prefix) in _TABLES.items():

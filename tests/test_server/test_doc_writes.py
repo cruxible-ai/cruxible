@@ -1,5 +1,6 @@
 """Document edits and section citations through a real HTTP application fixture."""
 
+import base64
 from datetime import UTC, datetime
 
 import pytest
@@ -79,6 +80,16 @@ def test_replace_cas_dry_run_docs_only_and_document_followup(playbill_http, tmp_
         .write()
     )
     assert replaced.docs[0].written and (workspace / "notes.md").read_text() == "# Decision\nnew\n"
+    source = created.docs[0].source_id
+    history = cx.get(f"file:{source}", detail="history").value
+    assert history.revisions[0].digest == digest
+    client, instance_id, _ = playbill_http
+    assert (
+        history.revisions[0].actor == client.get(f"/api/v1/{instance_id}/whoami").json()["actor_id"]
+    )
+    retained = cx.get(f"file:{source}@1", detail="body").value
+    assert base64.b64decode(retained.content_base64) == b"# Decision\nold\n"
+
     with pytest.raises(WriteRefusalError) as caught:
         cx.changes(because="Stale").replace_section(
             "notes.md", ("Decision",), "# Decision\nthird", expect=digest

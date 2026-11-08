@@ -3336,6 +3336,10 @@ def service_playbill_get(
     ordinary public get always keeps its nearest-name repair suggestions.
     """
 
+    if request.ref.startswith("file:"):
+        from cruxible_core.service.authoring.doc_writes import read_doc_edits
+
+        return read_doc_edits(instance, request=request, access=access)
     if request.detail == "backlinks":
         return _get_backlinks(instance, request, access=access)
     continuation, at = _history_continuation(instance, request)

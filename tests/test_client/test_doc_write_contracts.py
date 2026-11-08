@@ -153,6 +153,9 @@ def test_replace_preamble_observation_may_be_empty() -> None:
         op="replace",
         section=[],
         before_digest=section_digest(b"old"),
+        before_content_base64=base64.b64encode(b"old").decode(),
+        before_section=[],
+        end_byte=3,
         before_coordinate={
             "kind": "observed_digest",
             "source_byte_length": 3,
@@ -204,3 +207,32 @@ def test_ref_and_explicit_address_are_mutually_exclusive(explicit):
 def test_ref_only_evidence_round_trips():
     evidence = SectionEvidence(ref="basis")
     assert SectionEvidence.model_validate_json(evidence.model_dump_json()) == evidence
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"before_content_base64": "eA=="},
+        {"before_content_base64": "not base64"},
+        {"before_content_base64": None},
+        {"before_section": None},
+        {"end_byte": 2},
+    ],
+)
+def test_replace_observation_requires_verified_prior_bytes(patch):
+    raw = _edit(b"new")
+    raw.update(
+        op="replace",
+        section=[],
+        before_section=[],
+        before_digest=section_digest(b"old"),
+        before_content_base64=base64.b64encode(b"old").decode(),
+        before_coordinate={
+            "kind": "observed_digest",
+            "source_byte_length": 3,
+            "source_content_digest": section_digest(b"old"),
+        },
+        end_byte=3,
+    )
+    with pytest.raises(ValidationError):
+        DocEditObservation.model_validate({**raw, **patch})

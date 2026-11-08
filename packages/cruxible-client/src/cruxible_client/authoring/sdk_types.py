@@ -22,6 +22,7 @@ from cruxible_client.contracts.temporal import ensure_utc
 
 
 class RefKind(str, Enum):
+    FILE = "file"
     SUBJECT = "subject"
     CLAIM_TYPE = "claim_type"
     CLAIM = "claim"

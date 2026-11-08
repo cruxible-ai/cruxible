@@ -447,6 +447,7 @@ def _enum(value: _EnumT | str, kind: type[_EnumT], *, label: str) -> _EnumT:
 
 # The kind a daemon-resolved ``get`` reference names, as the SDK's RefKind.
 _GET_REF_KINDS: Mapping[str, RefKind] = {
+    "file": RefKind.FILE,
     "claim": RefKind.CLAIM,
     "subject": RefKind.SUBJECT,
     "claim_type": RefKind.CLAIM_TYPE,
@@ -4355,7 +4356,7 @@ class Cruxible:
         range: tuple[int, int] | str | None = None,
         field: str | ClaimTypeRef | None = None,
     ) -> KnowledgeCard:
-        """Read one governed thing by reference, resolved directly by the daemon.
+        """Read one thing by reference, resolved directly by the daemon.
 
         ``ref`` is a typed ref or any string form an agent sees: ``CLM-…`` or a
         unique prefix, ``kind/id``, a predicate, ``ClaimType:``/``Document:``/
@@ -4374,6 +4375,9 @@ class Cruxible:
         read (``GetSubjectHistory``): each revision of each Claim about it,
         newest first, with what changed and why; ``field`` narrows them to one
         field. On anything else it answers its revisions (``GetHistory``).
+        ``file:<catalog-name>`` history lists admitted section overwrites;
+        ``file:<catalog-name>@<revision>`` with ``detail="body"`` recovers the
+        prior subtree of that overwrite, including its heading.
         ``detail="incoming"`` on a Subject answers every live Claim whose
         Subject-valued object it is (``GetIncoming``), every page read: the
         asserting Subject, predicate and Claim of each edge pointing at it.

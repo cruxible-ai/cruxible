@@ -59,6 +59,7 @@ GetDetail = Literal[
     "body",
 ]
 GetRefKind = Literal[
+    "file",
     "claim",
     "subject",
     "claim_type",
@@ -107,6 +108,7 @@ _GIT_OID = r"^[0-9a-f]{1,64}$"
 
 # Which details apply to which kind of reference.
 GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
+    "file": ("history", "body"),
     "claim": ("summary", "evidence", "why", "history", "proof"),
     "subject": ("summary", "why", "history", "incoming", "pairs", "backlinks", "proof"),
     "claim_type": ("summary", "history", "backlinks", "proof"),

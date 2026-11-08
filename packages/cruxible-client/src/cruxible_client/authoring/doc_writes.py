@@ -261,6 +261,14 @@ def write_workspace(
                 op=op.op,
                 section=result.section,
                 before_digest=result.before_digest,
+                before_content_base64=(
+                    base64.b64encode((before or b"")[start:end]).decode()
+                    if isinstance(op, ReplaceSection)
+                    else None
+                ),
+                before_section=(op.section if result.changed else result.section)
+                if isinstance(op, ReplaceSection)
+                else None,
                 after_digest=result.after_digest,
                 content_base64=base64.b64encode(
                     parse_sections(result.content, file=op.file).subtree(result.section)
