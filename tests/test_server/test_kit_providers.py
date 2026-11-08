@@ -151,7 +151,13 @@ _RUN_WALL_CLOCK = {"microseconds": 30_000_000}
 _MAX_WALL_CLOCK = {"microseconds": 60_000_000}
 
 
-def _worlds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Any, Any]]:
+def _worlds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    preaccept: bool = True,
+    independent: bool = False,
+) -> Iterator[tuple[Any, Any]]:
     """A publisher and a fresh consumer on one daemon whose operator resolves registry
     wheels from PyPI (a plain transferred wheel needs it; a kit's bundled one does not)."""
 
@@ -164,9 +170,10 @@ def _worlds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[A
             {"provider_index_urls": ["https://pypi.org/simple", "https://files.pythonhosted.org/"]}
         )
     )
-    for worlds in _fresh_open_worlds(tmp_path, monkeypatch, independent=False):
-        for world in worlds:
-            _accept_local_call_contract(world)
+    for worlds in _fresh_open_worlds(tmp_path, monkeypatch, independent=independent):
+        if preaccept:
+            for world in worlds:
+                _accept_local_call_contract(world)
         yield worlds
 
 
@@ -344,24 +351,19 @@ def _run(world: Any, name: str, n: int) -> Any:
     return _run_line(world.instance_id, line_name)
 
 
-def test_fresh_consumer_provisions_the_operation_contract_before_bundled_install(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_checkout: ProviderCheckout
+@pytest.mark.parametrize("independent", [False, True])
+def test_fresh_consumer_accepts_the_bundled_operation_contract_before_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provider_checkout: ProviderCheckout,
+    independent: bool,
 ) -> None:
-    """Isolate install prerequisites from the kit's own provider-sequencing gap.
-
-    A kit may bundle an operation alongside a pure definition. The installer
-    still validates its real input/output Contract before kit definitions land
-    (a kit's bundled provider installs before the kit's own definitions do, so
-    an operation Contract must already be resolvable there; D-R48 review fix
-    round 3, F1, swept it into the export, but cannot change when a provider
-    install itself runs). The original slotted export scenarios below keep
-    their stronger assertions.
-    """
+    """A fresh add governs Contracts, provider, then definitions, in that order."""
     from cruxible_client.contracts.authoring.inputs import ProcedureInput
     from tests.support.provider_installation import local_call_contract_files
     from tests.test_server.test_provider_installation import _run_call
 
-    opened = _worlds(tmp_path, monkeypatch)
+    opened = _worlds(tmp_path, monkeypatch, preaccept=False, independent=independent)
     publisher, consumer = next(opened)
     try:
         project = _package(tmp_path / "kit-source", provider_checkout, name="kit-call")
@@ -397,16 +399,47 @@ def test_fresh_consumer_provisions_the_operation_contract_before_bundled_install
         }
         assert len(release.manifest.providers) == 1
         before = _tree(consumer)
-        assert all(before[path] == content for path, content in local_call_contract_files().items())
+        assert not any(path in before for path in local_call_contract_files())
+        instance = get_playbill_manager().get(consumer.instance_id)
+        with instance.accepted_history_reader() as history:
+            before_generation = int(history.sequence)
         preview = _add(consumer, release)
         assert preview.status == "would_propose", preview
         assert [step.action for step in preview.providers] == ["would_install"]
         assert _tree(consumer) == before
         assert not any(path.startswith("providers/kit-call/") for path in before)
         added = _add(consumer, release, dry_run=False)
-        assert added.status == "accepted", added
-        assert [step.action for step in added.providers] == ["install"]
+        if independent:
+            assert added.status == "proposed" and added.approval_required, added
+            assert added.proposal_id is not None
+            assert _tree(consumer) == before
+            # Retrying before approval reuses the prerequisite proposal and
+            # does not prepare or install the provider.
+            repeated = _add(consumer, release, dry_run=False)
+            assert repeated.proposal_id == added.proposal_id
+            consumer.approve(added.proposal_id)
+            contracts_only = _tree(consumer)
+            changed_definitions = {
+                path
+                for path in set(contracts_only) - set(before)
+                if path.startswith(("contracts/", "providers/", "procedures/", "documents/"))
+            }
+            assert changed_definitions == set(local_call_contract_files())
+            added = _add(consumer, release, dry_run=False)
+            assert added.status == "awaiting_providers", added
+            (step,) = added.providers
+            assert step.proposal_id is not None
+            consumer.approve(step.proposal_id)
+            resumed = playbill_api.playbill_kit_status(consumer.instance_id).resumes
+            assert len(resumed) == 1 and resumed[0].proposal_id is not None
+            consumer.approve(resumed[0].proposal_id)
+        else:
+            assert added.status == "accepted", added
+            assert [step.action for step in added.providers] == ["install"]
+        with instance.accepted_history_reader() as history:
+            assert int(history.sequence) - before_generation == 3
         tree = _tree(consumer)
+        assert all(tree[path] == content for path, content in release.contents().items())
         path = next(path for path in tree if path.startswith("providers/kit-call/"))
         provider = parse_provider(tree[path], path=path)
         assert _run_call(
@@ -417,6 +450,20 @@ def test_fresh_consumer_provisions_the_operation_contract_before_bundled_install
             value={"n": 2},
             name="bundled-prerequisite",
         ) == {"n": 3}
+        if not independent:
+            upgraded = _package(
+                tmp_path / "kit-upgrade", provider_checkout, name="kit-call", increment=2
+            )
+            _install(publisher, upgraded)
+            upgrade = _build(publisher, upgraded, version="1.1.0")
+            with instance.accepted_history_reader() as history:
+                before_upgrade = int(history.sequence)
+            result = _add(consumer, upgrade, dry_run=False)
+            assert result.status == "accepted", result
+            assert result.transition == "upgrade"
+            with instance.accepted_history_reader() as history:
+                # Identical operation Contracts need no prerequisite change.
+                assert int(history.sequence) - before_upgrade == 2
     finally:
         for _ in opened:
             pass

@@ -2027,8 +2027,9 @@ def test_a_template_binding_a_bundled_provider_operation_builds(
     assert instance.accepted_coordinate() == head
 
 
+@pytest.mark.parametrize("preaccept", [False, True])
 def test_a_bundled_providers_refusal_contract_outside_owns_builds_and_installs(
-    worlds: tuple[_World, _World], tmp_path: Path, provider_checkout: typing.Any
+    worlds: tuple[_World, _World], tmp_path: Path, provider_checkout: typing.Any, preaccept: bool
 ) -> None:
     """D-R48 review fix round 3, F1: ``build_kit`` sweeps a bundled package's
     complete operation Contract closure -- input, output AND refusal -- into
@@ -2039,18 +2040,19 @@ def test_a_bundled_providers_refusal_contract_outside_owns_builds_and_installs(
     never widened here): nothing but the Provider's own registration pins
     it, so before this fix the kit would not export it at all and the build
     would refuse ``cruxible.kit.automation_template_invalid`` /
-    ``cruxible.provider.operation_contract_unresolved``. A fresh consumer
-    pre-accepts both the operation's Contracts (exactly as every other
-    bundled-provider test in this suite does: a kit's bundled provider
-    installs before the kit's own definitions land, so an operation Contract
-    must already be resolvable there, a separate and already-known
-    sequencing gap, not this fix round's scope) before installing the kit,
-    which then must carry the refusal Contract through to the installed
-    tree.
+    ``cruxible.provider.operation_contract_unresolved``. The consumer can
+    pre-accept these Contracts or let kit add govern them before installing
+    the bundled provider.
     """
 
     from cruxible_client.contracts.authoring.inputs import ProcedureInput
     from cruxible_client.contracts.procedures.authored import CallStep
+    from cruxible_client.contracts.shapes import (
+        Contract,
+        contract_digest,
+        contract_path,
+        render_contract,
+    )
     from tests.core_support._identity_support import accept_tree
     from tests.support.procedures import procedure_limits, procedure_spec
     from tests.support.provider_installation import (
@@ -2058,9 +2060,39 @@ def test_a_bundled_providers_refusal_contract_outside_owns_builds_and_installs(
         LOCAL_CALL_OUT,
         OTHER_DECLINED_REF,
         local_call_contract_files,
-        other_declined_contract_files,
     )
 
+    # A refusal Contract also pins a nested version with a predecessor:
+    # all three must land in the prerequisite change, before registration.
+    leaf1 = Contract.model_validate({"name": "other.detail", "version": 1, "fields": {}})
+    leaf2 = Contract.model_validate(
+        {
+            "name": "other.detail",
+            "version": 2,
+            "predecessor_digest": contract_digest(leaf1).tagged,
+            "fields": {},
+        }
+    )
+    declined = Contract.model_validate(
+        {
+            "name": "other.declined",
+            "version": 1,
+            "fields": {
+                "detail": {
+                    "type": {
+                        "kind": "contract",
+                        "contract": leaf2.ref.model_copy(
+                            update={"digest": contract_digest(leaf2).tagged}
+                        ).model_dump(mode="json"),
+                    }
+                }
+            },
+        }
+    )
+    refusal_files = {
+        contract_path(contract.name, contract.version): render_contract(contract)
+        for contract in (leaf1, leaf2, declined)
+    }
     publisher, consumer = worlds
     instance = get_playbill_manager().get(publisher.instance_id)
     accept_tree(
@@ -2068,7 +2100,7 @@ def test_a_bundled_providers_refusal_contract_outside_owns_builds_and_installs(
     )
     accept_tree(
         instance,
-        other_declined_contract_files(),
+        refusal_files,
         name="other-declined-contract",
         actor_id="operator",
     )
@@ -2113,29 +2145,26 @@ def test_a_bundled_providers_refusal_contract_outside_owns_builds_and_installs(
     assert instance.accepted_coordinate() == head
     assert bundle.manifest.owns == ("acme.",)
     refusal_path = "contracts/other.declined/v1.json"
+    assert refusal_files.items() <= bundle.contents().items()
     assert refusal_path in bundle.contents(), (
         "the bundled provider's refusal Contract must be swept into the export "
         "even though it is outside every owned prefix"
     )
 
-    # A fresh consumer: the provider's own operation Contracts (in, out and
-    # refusal alike) must already be resolvable before the provider installs
-    # (a kit's bundled provider installs before the kit's own definitions
-    # land). Pre-accepting them here mirrors every other bundled-provider
-    # test in this suite; it is not something this fix changes.
     consumer_instance = get_playbill_manager().get(consumer.instance_id)
-    accept_tree(
-        consumer_instance,
-        local_call_contract_files(),
-        name="local-call-contract",
-        actor_id="operator",
-    )
-    accept_tree(
-        consumer_instance,
-        other_declined_contract_files(),
-        name="other-declined-contract",
-        actor_id="operator",
-    )
+    if preaccept:
+        accept_tree(
+            consumer_instance,
+            local_call_contract_files(),
+            name="local-call-contract",
+            actor_id="operator",
+        )
+        accept_tree(
+            consumer_instance,
+            refusal_files,
+            name="other-declined-contract",
+            actor_id="operator",
+        )
     for item in bundle.provider_files:
         consumer_instance.body_store().store(item.content)
     staged = bundle.model_copy(update={"provider_files": ()})
@@ -2144,6 +2173,7 @@ def test_a_bundled_providers_refusal_contract_outside_owns_builds_and_installs(
     assert added.status == "accepted", added
 
     tree = consumer.tree()
+    assert refusal_files.items() <= tree.items()
     assert refusal_path in tree, (
         "the kit's own definitions must carry the refusal Contract to the "
         "installed tree, as a carried dependency (never owned, never widened "
