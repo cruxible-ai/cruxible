@@ -1845,6 +1845,113 @@ def _inspect_staged(
     }
 
 
+def _install_provider_contracts(
+    instance: PlaybillInstance,
+    mode: ChangeMode,
+    manifest: KitManifest,
+    contents: Mapping[str, bytes],
+    inspected: Mapping[str, InspectedProviderPackage],
+    missing: list[KitProvider],
+    *,
+    actor_id: str,
+    timestamp: str,
+) -> KitChangeResult | None:
+    """Accept bundled operations' Contract closure before registering their builds.
+
+    Walk only the release's Contracts, including nested pins and predecessors.
+    The ordinary proposal policy governs this prerequisite change; when it
+    needs approval, stop before installing anything and let the caller approve
+    and retry. The kit receipt is written only by the final definitions change.
+    """
+
+    assert mode.head is not None
+    tree = instance.immutable_tree_at(mode.head.git_oid)
+    contracts = {
+        path: content for path, content in contents.items() if path.startswith("contracts/")
+    }
+    states = {path: _artifact_state(path, content) for path, content in contracts.items()}
+    roots = {
+        path
+        for provider in missing
+        if provider.delivery == "bundled"
+        for operation in inspected[provider.provider_id].document.operations
+        for ref in operation.contract_refs()
+        if (path := contract_path(ref.name, ref.version)) in contracts
+    }
+    writes = {}
+    for path, _dependencies in _dependency_order(
+        states, {path: json.loads(content) for path, content in contracts.items()}, within=roots
+    ):
+        current = tree.get(path)
+        if current is None:
+            writes[path] = contracts[path]
+        elif current != contracts[path]:
+            raise immutable_contract_error(path)
+    if not writes:
+        return None
+    candidate = tree.fork()
+    for path, content in writes.items():
+        candidate[path] = content
+    suffix = canonical_digest(
+        "playbill-kit-provider-contracts-target-v1",
+        {
+            "base": mode.head.semantic_root,
+            "kit": manifest.kit_id,
+            "members": {path: content.hex() for path, content in sorted(writes.items())},
+        },
+    )
+    target = f"refs/proposals/{actor_id}/kit-contracts-{suffix[:32]}"
+    pending = open_proposal_at_target(instance, target)
+    if pending is None:
+        admitted = admit_change_set(
+            instance,
+            mode,
+            actor_id=actor_id,
+            request=ProposalAdmissionRequest(
+                target_ref=target,
+                proposed_base_oid=mode.head.git_oid,
+                rationale=(
+                    f"Install operation Contracts for kit {manifest.kit_id} {manifest.version}."
+                ),
+            ),
+            candidate_tree=candidate,
+            timestamp=timestamp,
+        )
+        proposal_id = admitted.proposal_id
+        approval_required = admitted.approval_required
+        if not admitted.admitted:
+            return KitChangeResult(
+                kit_id=manifest.kit_id,
+                version=manifest.version,
+                status="blocked",
+                proposal_id=proposal_id,
+                detail=admitted.refusal_detail(),
+                coordinate=mode.coordinate,
+            )
+    else:
+        proposal_id = pending.proposal_id
+        assert pending.candidate_digest is not None
+        evidence = instance.proposal_evidence().read_candidate(pending.candidate_digest)
+        approval_required = bool(evidence.approval_requirements)
+    assert proposal_id is not None
+    if not approval_required:
+        activation = service_activate_playbill_proposal(
+            instance, proposal_id=proposal_id, activated_by=actor_id
+        )
+        if activation.status == "accepted":
+            return None
+    return KitChangeResult(
+        kit_id=manifest.kit_id,
+        version=manifest.version,
+        status="proposed" if approval_required else "blocked",
+        proposal_id=proposal_id,
+        approval_required=approval_required,
+        detail="Accept the kit's operation Contract proposal, then retry kit add to install "
+        "its providers and remaining definitions.",
+        coordinate=mode.coordinate,
+    )
+
+
 def _install_providers(
     instance: PlaybillInstance,
     missing: list[KitProvider],
@@ -1943,8 +2050,9 @@ def service_add_kit(
     """Propose the diff that brings this instance to one kit release.
 
     Derived across many artifacts, so it previews unless ``dry_run`` is false.
-    A kit naming provider packages installs the missing ones first, through
-    ``install_provider``; the definitions follow once they land. An index
+    A kit first proposes missing operation Contracts for its bundled providers,
+    then installs the missing packages through ``install_provider``; the rest
+    of the definitions follow once they land. An index
     default another live Provider stands in for is not installed. A commit that
     stops at ``awaiting_providers`` is recorded, and the activation that lands
     the last awaited install proposes the definitions as this caller
@@ -2136,6 +2244,19 @@ def _add_kit(
                 coordinate=mode.coordinate,
                 **described,  # type: ignore[arg-type]
             )
+        assert inspected is not None
+        prerequisite = _install_provider_contracts(
+            instance,
+            mode,
+            manifest,
+            contents,
+            inspected,
+            missing,
+            actor_id=actor_id,
+            timestamp=timestamp,
+        )
+        if prerequisite is not None:
+            return prerequisite.model_copy(update=described)
         steps = _install_providers(instance, missing, steps, install_provider)
         described["providers"] = tuple(steps)
         pending = [step for step in steps if step.action in {"awaiting_approval", "blocked"}]
@@ -2360,8 +2481,9 @@ def _add_kit(
             version=manifest.version,
             status="would_propose",
             plan=plan,
-            detail="a commit installs the bundled providers first, then proposes the "
-            "definitions, which are evaluated once those are installed",
+            detail="a commit accepts missing bundled operation Contracts first, installs "
+            "the providers, then proposes the remaining definitions, which are evaluated "
+            "once those are installed",
             coordinate=mode.coordinate,
             **described,  # type: ignore[arg-type]
         )
