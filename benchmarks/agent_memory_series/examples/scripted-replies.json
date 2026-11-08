@@ -1,0 +1,12 @@
+[
+  {
+    "phase": "session",
+    "session_index": 1,
+    "reply": {
+      "text": "Synthetic fixture audit; supply target-specific scripted replies to exercise grading.",
+      "usage": {"input_tokens": 80, "output_tokens": 20, "turns": 2, "compute_seconds": 0.01},
+      "upkeep_compute_seconds": 0.01,
+      "first_useful_state": true
+    }
+  }
+]
