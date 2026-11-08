@@ -129,6 +129,7 @@ class _File:
     entry: FileCatalogEntry | None
     ops: list[DocOp] = field(default_factory=list)
     edits: list[SectionEdit] = field(default_factory=list)
+    record_indices: list[int] = field(default_factory=list)
     citations: dict[tuple[str, ...], bytes] = field(default_factory=dict)
 
 
@@ -261,6 +262,14 @@ def write_workspace(
                 op=op.op,
                 section=result.section,
                 before_digest=result.before_digest,
+                before_content_base64=(
+                    base64.b64encode((before or b"")[start:end]).decode()
+                    if isinstance(op, ReplaceSection)
+                    else None
+                ),
+                before_section=(op.section if result.changed else result.section)
+                if isinstance(op, ReplaceSection)
+                else None,
                 after_digest=result.after_digest,
                 content_base64=base64.b64encode(
                     parse_sections(result.content, file=op.file).subtree(result.section)
@@ -275,6 +284,7 @@ def write_workspace(
             state.ops.append(op)
             state.edits.append(result)
             observations.append(observation)
+            state.record_indices.append(len(records))
             records.append((op.file, state, observation))
         changes: list[Change] = []
         for change in request.changes:
@@ -352,17 +362,20 @@ def write_workspace(
             section=obs.section,
             before_digest=obs.before_digest,
             after_digest=obs.after_digest,
+            confirmation=outcome.docs[index].confirmation if index < len(outcome.docs) else None,
         )
-        for file, state, obs in records
+        for index, (file, state, obs) in enumerate(records)
     ]
     if request.dry_run or outcome.status not in ("accepted", "awaiting_approval"):
         return outcome.model_copy(update={"docs": tuple(outcomes)})
+    confirmations: list[str] = []
     for state in files.values():
         if not state.ops:
             continue
         failure = None
         followup = None
         try:
+            applied = [True] * len(state.ops)
             _path(workspace, str(state.path))
             state.path.parent.mkdir(parents=True, exist_ok=True)
             try:
@@ -371,8 +384,9 @@ def write_workspace(
                 )
             except PageWriteError:
                 rebase_original = moved = _read(state.path)
-                for op, previous in zip(state.ops, state.edits, strict=True):
+                for index, (op, previous) in enumerate(zip(state.ops, state.edits, strict=True)):
                     rebased, _, _ = _apply(moved, op)
+                    applied[index] = rebased.changed
                     if (
                         isinstance(op, ReplaceSection)
                         and rebased.changed
@@ -390,6 +404,11 @@ def write_workspace(
                             "section_changed", "Rebase would change cited section bytes."
                         )
                 replace_page_file(state.path, expected=rebase_original, replacement=moved)
+            confirmations.extend(
+                token
+                for index, changed in zip(state.record_indices, applied, strict=True)
+                if changed and (token := outcomes[index].confirmation) is not None
+            )
             if state.entry is None:
                 # Refresh by catalog revision after file creation. Retry after a
                 # crash between these steps adds the single missing binding.
@@ -415,11 +434,25 @@ def write_workspace(
                     "and retry with its current expect digest"
                 ),
             )
-        for i, (_, record_state, _) in enumerate(records):
-            if record_state is state:
-                outcomes[i] = outcomes[i].model_copy(
-                    update={"written": failure is None, "refusal": failure, "next": followup}
-                )
+        for index in state.record_indices:
+            outcomes[index] = outcomes[index].model_copy(
+                update={"written": failure is None, "refusal": failure, "next": followup}
+            )
+    if confirmations:
+        confirmed = submit(
+            WriteRequest(
+                because=request.because,
+                doc_confirmations=tuple(confirmations),
+                surface=request.surface,
+                full_coordinate=request.full_coordinate,
+            )
+        )
+        if confirmed.status != "accepted":
+            raise WriteRefusalError(
+                "cruxible.doc.history_unconfirmed",
+                "The file was written, but its history confirmation was refused",
+                repair_line=f"Retry write with doc_confirmations: {confirmations!r}",
+            )
     next_steps = [
         item.refusal.repair if item.refusal else item.next
         for item in outcomes

@@ -1053,13 +1053,15 @@ class JournalIndex:
                     where.append(f"sequence{op}?")
                     args.append(bound)
             order = "DESC" if descending else "ASC"
-            # An exact occurrence or run is one short index range; without the
+            # An exact payload, occurrence or run is one short index range; without the
             # hint the planner may prefer an index that only serves the order.
             hint = (
                 " INDEXED BY records_occurrence"
                 if occurrence_id is not None and partition_id is not None
                 else " INDEXED BY records_run_kind"
                 if run_id is not None and event_kind is not None
+                else " INDEXED BY records_payload"
+                if payload_digest is not None and event_kind is not None
                 else ""
             )
             sql = (

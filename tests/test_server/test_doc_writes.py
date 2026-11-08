@@ -1,5 +1,6 @@
 """Document edits and section citations through a real HTTP application fixture."""
 
+import base64
 from datetime import UTC, datetime
 
 import pytest
@@ -79,6 +80,16 @@ def test_replace_cas_dry_run_docs_only_and_document_followup(playbill_http, tmp_
         .write()
     )
     assert replaced.docs[0].written and (workspace / "notes.md").read_text() == "# Decision\nnew\n"
+    source = created.docs[0].source_id
+    history = cx.get(f"file:{source}", detail="history").value
+    assert history.revisions[0].digest == digest
+    client, instance_id, _ = playbill_http
+    assert (
+        history.revisions[0].actor == client.get(f"/api/v1/{instance_id}/whoami").json()["actor_id"]
+    )
+    retained = cx.get(f"file:{source}@1", detail="body").value
+    assert base64.b64decode(retained.content_base64) == b"# Decision\nold\n"
+
     with pytest.raises(WriteRefusalError) as caught:
         cx.changes(because="Stale").replace_section(
             "notes.md", ("Decision",), "# Decision\nthird", expect=digest
@@ -279,3 +290,30 @@ def test_typed_shared_section_evidence_authors_one_operation(playbill_http, tmp_
         because="Ready together",
     )
     assert result.status == "accepted" and len(result.docs) == 1
+
+
+def test_http_refuses_previous_bytes_that_do_not_match_before_digest(playbill_http, tmp_path):
+    from tests.test_service.test_doc_writes import _replacement_observation
+
+    client, instance_id, _ = playbill_http
+    _seed(client, instance_id)
+    edit = _replacement_observation().model_dump(mode="json")
+    edit["before_content_base64"] = base64.b64encode(b"forged previous text").decode()
+    result = client.post(
+        f"/api/v1/{instance_id}/write",
+        json={
+            "because": "Invalid previous bytes",
+            "docs": [edit],
+        },
+    )
+    assert result.status_code == 422
+    assert "previous subtree digest does not reproduce" in result.text
+    history = client.post(
+        f"/api/v1/{instance_id}/get",
+        json={
+            "ref": "file:repo.notes",
+            "detail": "history",
+        },
+    )
+    assert history.status_code == 200
+    assert history.json()["history"]["revisions"] == []

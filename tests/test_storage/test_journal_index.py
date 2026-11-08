@@ -403,3 +403,43 @@ def test_capture_discovery_follows_contract_names_and_caches_exact_version_resol
     assert [row.record.payload_digest for row in records] == [
         row.record.payload_digest for row in backend.select_records(_stream(), run_id="run-a")
     ]
+
+
+def test_exact_payload_retry_probe_uses_bounded_work_at_two_history_sizes(tmp_path, monkeypatch):
+    work = []
+    for size in (10, 1000):
+        root = tmp_path / str(size)
+        root.mkdir()
+        backend, stream, _key, record = _run_world(root)
+        for index in range(size):
+            record("source", f"edit-{index}", "doc_edit")
+        instructions = 0
+
+        def tick():
+            nonlocal instructions
+            instructions += 1
+            return 0
+
+        def probe():
+            assert (
+                backend.index.select(
+                    stream,
+                    partition_id="source",
+                    event_kind="doc_edit",
+                    payload_digest="sha256:" + "f" * 64,
+                    limit=1,
+                )
+                == ()
+            )
+
+        with backend.index.connection() as connection:
+            connection.set_progress_handler(tick, 1)
+            try:
+                probe()
+            finally:
+                connection.set_progress_handler(None, 0)
+        work.append(instructions)
+        plans = _plans(monkeypatch, probe)
+        payload = next(plan for sql, plan in plans if "payload_digest=?" in sql)
+        assert any("records_payload" in line and "payload_digest=?" in line for line in payload)
+    assert work[1] <= work[0] + 20, work

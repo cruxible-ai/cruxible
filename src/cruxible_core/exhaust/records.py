@@ -45,7 +45,9 @@ LINE_DISPATCH_JOURNAL_FAMILY = "line-dispatch-v1"
 LINE_INBOX_JOURNAL_FAMILY = "line-inbox-v1"
 CLAIM_REOBSERVATION_JOURNAL_FAMILY = "claim-reobservation-v1"
 CAPTURE_ERASURE_JOURNAL_FAMILY = "capture-erasure-v1"
+DOC_EDIT_JOURNAL_FAMILY = "doc-edit-v1"
 REGISTERED_JOURNAL_FAMILIES: tuple[str, ...] = (
+    DOC_EDIT_JOURNAL_FAMILY,
     LINE_DISPATCH_JOURNAL_FAMILY,
     LINE_INBOX_JOURNAL_FAMILY,
     CLAIM_REOBSERVATION_JOURNAL_FAMILY,
@@ -60,6 +62,7 @@ _PARTITION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _HEX_SIGNATURE_RE = re.compile(r"^[0-9a-f]{128}$")
 
 JournalEventKindV1 = Literal[
+    "doc_edit",
     "line_dispatch_transition",
     "line_inbox_transition",
     "claim_reobservation",
@@ -138,6 +141,24 @@ def _validate_event_family(
 ) -> None:
     """Bind each event kind to the one family whose coordinates it can honestly fill."""
 
+    if event_kind == "doc_edit" or journal_family == DOC_EDIT_JOURNAL_FAMILY:
+        if (
+            event_kind != "doc_edit"
+            or journal_family != DOC_EDIT_JOURNAL_FAMILY
+            or any(
+                value is not None
+                for value in (
+                    procedure_artifact_digest,
+                    run_id,
+                    line_spec_digest,
+                    occurrence_id,
+                    attempt,
+                    admission_binding_digest,
+                )
+            )
+        ):
+            raise ValueError("Document edits carry no Procedure-run coordinates")
+        return
     if event_kind == "line_dispatch_transition" or journal_family == LINE_DISPATCH_JOURNAL_FAMILY:
         if (
             event_kind != "line_dispatch_transition"
