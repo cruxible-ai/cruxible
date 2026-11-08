@@ -10,12 +10,17 @@ from fastapi.testclient import TestClient
 from cruxible_core.runtime.permissions import PermissionMode
 
 
+@pytest.mark.parametrize(
+    ("surface", "call_prefix"), [("mcp", "cruxible_"), ("cli", "cruxible "), ("sdk", "cx.")]
+)
 def test_http_orient_answers_the_map_rendered_for_the_requested_surface(
     playbill_http: tuple[TestClient, str, Path],
+    surface: str,
+    call_prefix: str,
 ) -> None:
     client, instance_id, _private_key = playbill_http
 
-    response = client.get(f"/api/v1/{instance_id}/orient", params={"surface": "mcp"})
+    response = client.get(f"/api/v1/{instance_id}/orient", params={"surface": surface})
 
     assert response.status_code == 200, response.text
     body = response.json()
@@ -35,21 +40,22 @@ def test_http_orient_answers_the_map_rendered_for_the_requested_surface(
         "mandates",
         "runs",
         "running",
+        "runbooks",
         "claims",
     }
     assert body["you"]["actor"] is not None
     # Optional parts that do not apply are absent, never null.
     assert "kind_detail" not in body and "next_cursor" not in body
     assert None not in body.values()
-    assert all(line.startswith("cruxible_") for line in body["next"])
+    assert all(line.startswith(call_prefix) for line in body["next"])
 
     pinned = client.get(
         f"/api/v1/{instance_id}/orient",
-        params={"at": body["coordinate"]["git_oid"], "section": "documents"},
+        params={"at": body["coordinate"]["git_oid"], "section": "runbooks", "surface": surface},
     )
     assert pinned.status_code == 200, pinned.text
     assert pinned.json()["coordinate"] == body["coordinate"]
-    assert pinned.json()["documents"] == []
+    assert pinned.json()["runbooks"] == []
 
 
 def test_http_orient_refusals_are_coded(

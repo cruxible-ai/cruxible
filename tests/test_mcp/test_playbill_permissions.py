@@ -82,6 +82,16 @@ def test_full_profile_advertises_the_uncurated_surface(
     assert _tool_names() == set(TOOL_PERMISSIONS)
 
 
+@pytest.mark.parametrize("mode", ["read_only", "governed_write"])
+def test_kit_build_requires_the_authoring_tier(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
+    monkeypatch.setenv("CRUXIBLE_MODE", mode)
+    reset_permissions()
+
+    assert TOOL_PERMISSIONS["cruxible_kit_build"] == PermissionMode.GOVERNED_WRITE
+    assert ("cruxible_kit_build" in _tool_names()) == (mode == "governed_write")
+
+
 @pytest.mark.parametrize("profile", ["expert", "all", "state_authoring", "review"])
 def test_retired_profile_names_are_refused(
     monkeypatch: pytest.MonkeyPatch,

@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-11-08:d-r49-confirm-landed-edits",
-    "surface_digest": "sha256:6a22e832c61d5537b082f7248b4ce63f9ac9fc2025528df5ebf92aeace509eea"
+    "register_entry": "2026-11-08:ci-ceiling-kit-build-authoring",
+    "surface_digest": "sha256:45483d06fd02e54762248fcb39a27dab082a0b458c3458baa85502b2a6992c22"
   },
   "surface": {
     "cli_leaves": [
@@ -2553,7 +2553,7 @@
         "input_schema_digest": "sha256:aa02642b4d17c39778cd3dfcfbe5ee91d54596862e14859b17ca22cba54d6f61",
         "name": "cruxible_kit_build",
         "output_schema_digest": "sha256:1e4f19f3fbe338edda26f82d378429f33e2d16938d198644c62d846231eae42c",
-        "permission": "READ_ONLY"
+        "permission": "GOVERNED_WRITE"
       },
       {
         "client_operations": [
