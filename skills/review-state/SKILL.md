@@ -1,92 +1,37 @@
 ---
 name: review-state
-description: Review an existing Cruxible instance - its work queues, value verdicts and evidence, open proposals, stale pages and citations, Lines, and kits - and report prioritized findings with the exact repair before changing anything.
+description: Diagnose requested questions about Cruxible state, evidence, proposals or automation, and review exact candidates without implicitly changing state.
 ---
 
-# Review State
+# Review state
 
-Use this skill on an existing instance when the goal is diagnosis: what is
-wrong, what is weak, and what should be fixed first. Review first and report.
-Don't write, approve, or activate anything unless the user asks.
+An instance describes its own vocabulary through `cruxible orient`,
+ClaimType descriptions, named queries and governed Documents linked by
+`guides`. Read the part relevant to the user's question. A requested diagnosis
+does not imply an audit of every kind or permission to repair the instance.
 
-The guides explain each signal (https://docs.cruxible.ai, or `docs/` in the
-Cruxible repository); this skill is the order to check them in.
+`next` reports attention and served repairs; `query` answers questions as
+rows with verdict flags; `get` exposes a reference's summary, evidence, why
+and history. Distinguish an explicit none from an unknown or unexamined value.
+A stored Claim is not automatically supported, and a proposal is not accepted
+state. Name the evidence and coordinate behind a conclusion.
 
-## 1. Scope
+Pair Subjects have immutable ends and facts of their own. Follow served
+pair/backlink cursors; hidden counts do not disclose hidden members. Governed
+Documents retain their own links and citations. A Runbook's retained runs
+describe the definition each run used; its current preview describes the
+head, not a historical execution.
 
-Ask what the user is worried about (a wrong answer, stale pages, a stuck Line,
-general health) and which questions matter most. Then read the map:
+An attestation records examination of an exact Claim version. It accepts the
+same evidence choices as a write: because/own words, a section, a file
+passage, a Capture or a contract. Supporting, contradicting and unsure have
+different consequences. An attestation is a signed append, never proposal
+approval; append one only when requested, with what was actually examined.
 
-```bash
-cruxible whoami
-cruxible orient
-```
+For proposal review, use the exact candidate digest and a second agent; never
+approve your own proposal, even with auth off. The [governance reference](../_shared/references/governance-flow.md)
+covers acceptance and changed candidates. Authorized repairs use
+[guarded edits](../_shared/references/concurrent-edits.md). Report findings with
+references, evidence, repair and limits of what was checked; do not turn
+diagnosis into an unrequested mutation.
 
-## 2. The work queues
-
-```bash
-cruxible next                          # what is wrong or waiting, with repairs
-cruxible proposal list --status open
-cruxible audit                         # Claims most worth verifying
-```
-
-Group `next` by family: drift, freshness, disagreement, weak evidence, pages,
-proposals, automation, upgrades ([Keeping knowledge
-current](https://docs.cruxible.ai/keeping-knowledge-current/)). A status line
-above the rows (compiler, floor, mirror, Line enablements) is a finding too.
-
-## 3. Values and evidence
-
-For the kinds that matter, read values with their flags, and for each flagged
-value, why:
-
-```bash
-cruxible query KIND --select a,b
-cruxible get CLM-… --detail evidence
-cruxible get CLM-… --detail history
-```
-
-Per finding, decide: is the evidence missing, not admitted for the Claim's
-role, stale, or contradicted? Is the vocabulary wrong? Is the value just out
-of date? ([Evidence and admission](https://docs.cruxible.ai/evidence-and-admission/)
-explains verdicts and flags.) Run the saved queries that matter and check they
-answer the real question.
-
-## 4. Pages and citations
-
-Stale blocks and drifted citations show in `next`
-(`projection_backing_stale`, `projection_dirty`, `citation_drifted`,
-`document_modified`). A page that people rely on and that is behind its state
-is a high-severity finding; read the Claims behind it with `get`
-([Documents and notes](https://docs.cruxible.ai/documents-and-notes/)). Before
-judging a file, `cruxible coverage resolve --file PATH` says which Claims rest
-on it.
-
-## 5. Lines and kits
-
-```bash
-cruxible orient --section lines
-cruxible get Line:NAME                 # Triggers, enablements, recent runs
-cruxible procedure readings NAME       # when measurements are declared
-cruxible kit status                    # edited definitions, kept divergences, newer releases
-```
-
-Look for Lines that aren't enabled, enablements that stopped and why, gaps
-after a restart, unread inbox items, mandates near expiry, and measurements
-that resolved against the Procedure ([Lines and
-automation](https://docs.cruxible.ai/lines-and-automation/)).
-
-## 6. Report
-
-Report findings in priority order, one row each:
-
-| Severity | Area | Finding | Evidence | Repair |
-|---|---|---|---|---|
-
-- **Evidence** names exact references (`CLM-…`, `KIND/ID`, a proposal ID,
-  `Line:NAME`) so anyone can `get` them.
-- **Repair** is the exact command (`next` usually supplies it), or the design
-  change it needs.
-
-Separate what is wrong now from what is risky, say which empty answers mean
-"none" and which mean "unknown", and say what you didn't check.
