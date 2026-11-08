@@ -1,0 +1,8 @@
+{
+  "name": "cruxible",
+  "version": "0.0.0",
+  "description": "Typed, governed shared state and evidence for agents.",
+  "author": {
+    "name": "Cruxible LLC"
+  }
+}

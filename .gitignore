@@ -38,3 +38,6 @@ docs/llms-full.txt
 # The workspace directory (client custody) and the captured raw history
 .cruxible/
 playbill-history/
+
+# Generated, credential-free plugin transport; personal MCP configs stay ignored.
+!/plugins/cruxible/.mcp.json

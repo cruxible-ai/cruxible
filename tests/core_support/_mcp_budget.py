@@ -22,6 +22,11 @@ from typing import Any
 #: retirement, new capabilities, once trims fell short.
 DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS = 10_400
 
+#: The distributed plugin uses full + a pinned 20-tool allowlist. The 2026-11-08
+#: maintainer ruling adds kit/provider/Line/Runbook startup to the lean catalog;
+#: this separate ceiling does not widen the existing default profile's budget.
+PLUGIN_PROFILE_MODEL_VISIBLE_TOKENS = 15_400
+
 
 def model_visible_tokens(tool: Any) -> float:
     """One tool's estimated model-visible cost: its input schema and description."""
