@@ -27,7 +27,7 @@ and ``retire_40 <= LINEAR * retire_10 + SLACK``. Counters are the guard's plus
 its auxiliary ones (``claim_parses_uncached`` beside ``claim_parses``,
 ``members_enumerated``, ``overlay_edits_loaded``), with the whole-tree
 enumerations of a route's activation counted apart from its run's. Known growth
-is a strict xfail naming its owner (``KNOWN``, and the retirement rule).
+is a strict xfail naming its owner (``KNOWN``).
 """
 
 from __future__ import annotations
@@ -372,15 +372,6 @@ def test_an_sbom_import_grows_linearly_with_its_components(
     assert forty <= LINEAR * ten + SLACK[counter], (counter, ten, forty)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Owner: apply-cost Cause 2. Each retirement member's closure "
-        "(reverse_pin_closure via claim_retirement_inventory) builds its own "
-        "EvaluationRows.overlay of the whole staged change, so a change's "
-        "retirements cost O(retirements x change edits)."
-    ),
-)
 @pytest.mark.parametrize("world", ["small", "large"])
 def test_a_retirement_change_grows_linearly_with_its_retirements(
     session: _Session, world: str
