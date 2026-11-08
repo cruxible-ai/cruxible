@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 
 from tests.test_scale import _counters
-from tests.test_scale._counters import Window, counting, trace_sqlite
+from tests.test_scale._counters import Window, counting, enumerations_counted_as, trace_sqlite
 from tests.test_scale.test_scale_guard import RATIO, SLACK
 
 ROWS = 50
@@ -478,6 +478,62 @@ def test_function_counters_follow_names_bound_by_import_and_are_removed(root: Pa
             query.parse_claim(b"not json", path="claims/00/CLM-x.json")
     assert window.counts["claim_parses"] == 1
     assert query.parse_claim is original and claims.parse_claim is original
+
+
+def test_uncached_claim_parses_count_memo_misses_beside_every_call(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts import claims
+    from cruxible_client.contracts.claims import ClaimFormatError
+    from cruxible_client.contracts.content_memo import ParseMemo
+
+    memo: ParseMemo[Any] = ParseMemo(capacity=8, max_bytes=1 << 20)
+    path = "claims/00/CLM-00000000000000000000000000000000.json"
+    memo.parse(b"held", path, None, lambda: ("parsed",))
+    monkeypatch.setattr(claims, "_CLAIM_PARSES", memo)
+    with counting(root) as window:
+        assert claims.parse_claim(b"held", path=path) == ("parsed",)
+        with pytest.raises(ClaimFormatError):
+            claims.parse_claim(b"not json", path=path)
+    assert (window.counts["claim_parses"], window.counts["claim_parses_uncached"]) == (2, 1)
+
+
+def test_members_enumerated_counts_whole_tree_walks_and_not_lookups(root: Path) -> None:
+    from cruxible_core.derived.derived_state import CandidateTree, SnapshotTree
+
+    tree = SnapshotTree({"a": b"1", "b": b"2", "c": b"3"})
+    staged = tree.fork()
+    staged["d"] = b"4"
+    with counting(root) as window:
+        assert tree["a"] == b"1" and "b" in tree and staged["d"] == b"4"
+        assert window.counts["members_enumerated"] == 0
+        assert list(tree) == ["a", "b", "c"]
+        assert len(tree.items()) == len(tree.values()) == 3
+        assert len(dict(staged)) == 4
+        assert window.counts["members_enumerated"] == 13
+        with enumerations_counted_as("held_apart"):
+            assert len(tree.items()) == 3
+        assert (window.counts["members_enumerated"], window.counts["held_apart"]) == (13, 3)
+    assert list(tree) == ["a", "b", "c"]
+    assert window.counts["members_enumerated"] == 13
+    assert "__iter__" in SnapshotTree.__dict__ and SnapshotTree.__iter__.__name__ == "__iter__"
+    assert not hasattr(SnapshotTree.__dict__["__iter__"], "__wrapped__")
+    assert not hasattr(CandidateTree.__dict__["__iter__"], "__wrapped__")
+
+
+def test_overlay_edits_loaded_counts_each_candidate_selections_edit_map(root: Path) -> None:
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.errors import ProjectionIntegrityError
+    from cruxible_core.indexes.evaluated_state import EvaluationRows
+
+    handle = SimpleNamespace(parent=object(), children=[])  # refused before any SQL
+    with counting(root) as window:
+        for _ in range(2):
+            with pytest.raises(ProjectionIntegrityError):
+                EvaluationRows.overlay(handle, {"a": b"1", "b": None})  # type: ignore[arg-type]
+    assert window.counts["overlay_edits_loaded"] == 4
+    assert not hasattr(EvaluationRows.__dict__["overlay"], "__wrapped__")
 
 
 def test_opens_under_the_root_and_spawns_are_counted(root: Path, tmp_path_factory) -> None:  # type: ignore[no-untyped-def]

@@ -28,6 +28,22 @@ whose managed root is ``root`` and fills a ``Counter`` with the work done:
   ``read_tree`` and every blob read go through; the per-process blob cache in
   front of it absorbs repeats.
 
+``AUXILIARY`` counters are counted in every window too, but a guard opts in to
+asserting them (``COUNTERS`` is what every guard asserts):
+
+- ``claim_parses_uncached``: Claims actually parsed (``_parse_claim``, the
+  bounded parse memo's miss path). Beside ``claim_parses`` (calls), it tells a
+  memo that thrashes from one that serves repeats;
+- ``members_enumerated``: tree members yielded by enumerating a whole
+  ``SnapshotTree`` or ``CandidateTree`` (iterating it, its keys, items or
+  values). A per-change step that walks the staged tree is O(the instance),
+  however well the blob cache hides the reads. Inside ``enumerations_counted_as``
+  they count under the name given instead, so a guard can hold one part of a
+  route (an activation) apart from the rest;
+- ``overlay_edits_loaded``: changed members loaded into a candidate selection
+  (``EvaluationRows.overlay``, the length of its edit map): building one per
+  item of a change makes the change O(items x its edits).
+
 Only the measuring thread's work counts (the thread that opened the window):
 another thread's opens, spawns, calls and SQL never do.
 
@@ -113,9 +129,11 @@ COUNTERS = (
     "cas_body_reads",
     "git_blob_reads",
 )
+AUXILIARY = ("claim_parses_uncached", "members_enumerated", "overlay_edits_loaded")
 
 _FUNCTIONS = (
     ("cruxible_client.contracts.claims", "parse_claim", "claim_parses"),
+    ("cruxible_client.contracts.claims", "_parse_claim", "claim_parses_uncached"),
     ("cruxible_client.contracts.canonical", "canonical_bytes", "canonical_encodes"),
     ("cruxible_client.contracts.canonical", "pretty_canonical_bytes", "canonical_encodes"),
     ("cruxible_client.contracts.canonical", "canonical_digest", "canonical_digests"),
@@ -137,6 +155,15 @@ _METHOD_COUNTERS = {
     "availability": "cas_body_reads",
     "read_blobs": "git_blob_reads",
 }
+#: Whole-tree enumerations (``members_enumerated``); a ``CandidateTree``'s keys,
+#: items and values are ``Mapping``'s, which iterate it.
+_ENUMERATIONS = (
+    ("cruxible_core.derived.derived_state", "SnapshotTree", "__iter__"),
+    ("cruxible_core.derived.derived_state", "SnapshotTree", "items"),
+    ("cruxible_core.derived.derived_state", "SnapshotTree", "values"),
+    ("cruxible_core.derived.derived_state", "CandidateTree", "__iter__"),
+)
+_ENUMERATION_COUNTER = ["members_enumerated"]
 
 
 @dataclass
@@ -237,6 +264,13 @@ class _Rebinder:
                 else _counting(raw, _METHOD_COUNTERS[name])
             )
             self.methods.append((owner, name, raw, wrapper))
+        for module_name, class_name, name in _ENUMERATIONS:
+            owner = getattr(importlib.import_module(module_name), class_name)
+            raw = owner.__dict__[name]
+            self.methods.append((owner, name, raw, _counting_members(raw)))
+        owner = importlib.import_module("cruxible_core.indexes.evaluated_state").EvaluationRows
+        raw = owner.__dict__["overlay"]
+        self.methods.append((owner, "overlay", raw, _counting_overlay(raw)))
 
     def _index_new_modules(self, *, wrapped: bool) -> None:
         by_id = (
@@ -282,6 +316,50 @@ def _counting(original: Callable[..., Any], counter: str) -> Callable[..., Any]:
         if window is not None and window.measuring():
             window.counts[counter] += 1
         return original(*args, **kwargs)
+
+    return counted
+
+
+def _counting_members(original: Callable[..., Any]) -> Callable[..., Any]:
+    @functools.wraps(original)
+    def counted(self: Any) -> Any:
+        members = original(self)
+        window = _WINDOW
+        if window is None or not window.measuring():
+            return members
+        counter = _ENUMERATION_COUNTER[-1]
+        if isinstance(members, list):  # ``items`` and ``values`` resolve every member at once
+            window.counts[counter] += len(members)
+            return members
+        return _yielded(members, window, counter)
+
+    return counted
+
+
+def _yielded(members: Iterator[Any], window: Window, counter: str) -> Iterator[Any]:
+    for member in members:
+        window.counts[counter] += 1
+        yield member
+
+
+@contextmanager
+def enumerations_counted_as(counter: str) -> Iterator[None]:
+    """Count whole-tree enumerations inside under ``counter`` (``members_enumerated`` outside)."""
+
+    _ENUMERATION_COUNTER.append(counter)
+    try:
+        yield
+    finally:
+        _ENUMERATION_COUNTER.pop()
+
+
+def _counting_overlay(original: Callable[..., Any]) -> Callable[..., Any]:
+    @functools.wraps(original)
+    def counted(self: Any, edits: Any) -> Any:
+        window = _WINDOW
+        if window is not None and window.measuring():
+            window.counts["overlay_edits_loaded"] += len(edits)
+        return original(self, edits)
 
     return counted
 
@@ -801,7 +879,7 @@ def counting(root: Path) -> Iterator[Window]:
         for state in window.states:
             _flush(state, window)
             state.current = None
-        for name in COUNTERS:
+        for name in (*COUNTERS, *AUXILIARY):
             window.counts.setdefault(name, 0)
         # Attribution's own statements run while the guard's handler is still set and
         # never reach a connection's own progress handler or trace callback.

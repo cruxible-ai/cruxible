@@ -284,9 +284,9 @@ from cruxible_client.contracts.triggers import (
 )
 from cruxible_core.authoring.registrations import source_projection_blocks
 from cruxible_core.claims.claim_retirement import (
+    ChangeRetirementClosures,
     ClaimRetireError,
     build_claim_retirement_candidate,
-    claim_retirement_inventory,
 )
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDisposition,
@@ -5180,6 +5180,11 @@ MEMBER_STAGING_ORDER = (
     "trigger",
     "claim_retirement",
 )
+# One change set's retirement closures share one overlay of the tree the first
+# retirement sees (ChangeRetirementClosures): sound only while nothing but
+# retirements is staged after that tree.
+if MEMBER_STAGING_ORDER[-1] != "claim_retirement":
+    raise AssertionError("claim_retirement must be the last member staging pass")
 
 
 def _member_stage(member: AuthoringChangeSetMember) -> str:
@@ -5527,81 +5532,91 @@ def _lower_change_set(
         for i, member in enumerate(payload.members)
         if not isinstance(member, ProcedureAuthoringPayload)
     )
-    for stage in MEMBER_STAGING_ORDER:
-        stage_indices = [
-            index for index, member in enumerate(payload.members) if _member_stage(member) == stage
-        ]
-        if stage == "subject_creation":
-            # A pair's key Claims name its ends: ends are staged first, layer
-            # by layer (each kind's creation layer), as they were named.
-            stage_indices.sort(
-                key=lambda index: (
-                    creations[
-                        cast(
-                            SubjectCreationAuthoringPayload, payload.members[index]
-                        ).member_identity
-                    ].layer
+    # Every retirement member's closure over one overlay (ChangeRetirementClosures).
+    retirement_closures = ChangeRetirementClosures(
+        instance, coordinate=AcceptedCoordinate.from_internal(base)
+    )
+    try:
+        for stage in MEMBER_STAGING_ORDER:
+            stage_indices = [
+                index
+                for index, member in enumerate(payload.members)
+                if _member_stage(member) == stage
+            ]
+            if stage == "subject_creation":
+                # A pair's key Claims name its ends: ends are staged first, layer
+                # by layer (each kind's creation layer), as they were named.
+                stage_indices.sort(
+                    key=lambda index: (
+                        creations[
+                            cast(
+                                SubjectCreationAuthoringPayload, payload.members[index]
+                            ).member_identity
+                        ].layer
+                    )
                 )
-            )
-        for index in _stage_member_order(stage_indices, payload.members):
-            member = payload.members[index]
-            path = primary_paths[index]
-            member_paths.add(path)
-            if index in consumed:
-                # A re-authored Claim is lowered by the succession that names it,
-                # under the successor vocabulary; staging it again here would
-                # lower it a second time against a tree it has already changed.
-                member_resolved = sibling_resolved[index]
-            else:
-                try:
-                    (
-                        staged_tree,
-                        member_resolved,
-                        extra_paths,
-                        staged_siblings,
-                    ) = _stage_change_set_member(
-                        instance,
-                        member=member,
-                        intent=intent,
-                        actor_id=actor_id,
-                        base=base,
-                        base_tree=base_tree,
-                        staged_tree=staged_tree,
-                        claim_index=claim_index,
-                        path=path,
-                        members=payload.members,
-                        claim_identities=claim_identities,
-                        candidate_identities=candidate_identities,
-                        candidate_paths=candidate_paths,
-                        re_author_siblings=re_author_siblings.get(index, {}),
-                        derivation_procedure=derivation_procedure,
-                        captures=captures,
-                        creations=creations,
-                        key_paths=key_paths,
-                    )
-                except AuthoringLoweringError as error:
-                    raise _rescope_member_error(
-                        error,
-                        index=index,
-                        sibling_member_by_claim_id=sibling_member_by_claim_id,
-                    ) from error
-                if isinstance(member, ClaimTypeSuccessionMember):
-                    _refuse_contended_succession_paths(
-                        index=index,
-                        changed_paths=extra_paths,
-                        owner_by_path=owner_by_path,
-                        re_authored=frozenset(re_author_siblings.get(index, {}).values()),
-                        members=payload.members,
-                    )
-                sibling_resolved.update(staged_siblings)
-                claim_index.advance(staged_tree, {path, *extra_paths})
-                member_paths.update(extra_paths)
-                for extra_path in extra_paths:
-                    installed_by.setdefault(extra_path, set()).add(index)
-            member_resolved["identity"] = authoring_member_identity(member)
-            member_resolved["member"] = index
-            member_resolved["path"] = path
-            resolved.append(member_resolved)
+            for index in _stage_member_order(stage_indices, payload.members):
+                member = payload.members[index]
+                path = primary_paths[index]
+                member_paths.add(path)
+                if index in consumed:
+                    # A re-authored Claim is lowered by the succession that names it,
+                    # under the successor vocabulary; staging it again here would
+                    # lower it a second time against a tree it has already changed.
+                    member_resolved = sibling_resolved[index]
+                else:
+                    try:
+                        (
+                            staged_tree,
+                            member_resolved,
+                            extra_paths,
+                            staged_siblings,
+                        ) = _stage_change_set_member(
+                            instance,
+                            member=member,
+                            intent=intent,
+                            actor_id=actor_id,
+                            base=base,
+                            base_tree=base_tree,
+                            staged_tree=staged_tree,
+                            claim_index=claim_index,
+                            path=path,
+                            members=payload.members,
+                            claim_identities=claim_identities,
+                            candidate_identities=candidate_identities,
+                            candidate_paths=candidate_paths,
+                            re_author_siblings=re_author_siblings.get(index, {}),
+                            derivation_procedure=derivation_procedure,
+                            captures=captures,
+                            creations=creations,
+                            key_paths=key_paths,
+                            retirement_closures=retirement_closures,
+                        )
+                    except AuthoringLoweringError as error:
+                        raise _rescope_member_error(
+                            error,
+                            index=index,
+                            sibling_member_by_claim_id=sibling_member_by_claim_id,
+                        ) from error
+                    if isinstance(member, ClaimTypeSuccessionMember):
+                        _refuse_contended_succession_paths(
+                            index=index,
+                            changed_paths=extra_paths,
+                            owner_by_path=owner_by_path,
+                            re_authored=frozenset(re_author_siblings.get(index, {}).values()),
+                            members=payload.members,
+                        )
+                    sibling_resolved.update(staged_siblings)
+                    claim_index.advance(staged_tree, {path, *extra_paths})
+                    member_paths.update(extra_paths)
+                    for extra_path in extra_paths:
+                        installed_by.setdefault(extra_path, set()).add(index)
+                member_resolved["identity"] = authoring_member_identity(member)
+                member_resolved["member"] = index
+                member_resolved["path"] = path
+                resolved.append(member_resolved)
+    finally:
+        retirement_closures.close()
     _recheck_key_references_lowered(
         instance,
         base=base,
@@ -5670,6 +5685,7 @@ def _stage_change_set_member(
     captures: ProducerReceiptResolverProtocol,
     creations: Mapping[str, _Creation] | None = None,
     key_paths: Mapping[tuple[str, str], str] | None = None,
+    retirement_closures: ChangeRetirementClosures,
 ) -> StagedMember:
     """Write one member into the staged tree and report what it resolved to."""
 
@@ -5733,12 +5749,11 @@ def _stage_change_set_member(
         )
     if isinstance(member, ClaimRetirementMember):
         tree, resolved, extra = _stage_claim_retirement(
-            instance,
             member=member,
-            base=base,
             staged_tree=staged_tree,
             path=path,
             derivation_procedure=derivation_procedure,
+            closures=retirement_closures,
         )
         return tree, resolved, extra, {}
     if isinstance(member, ProcedureAuthoringPayload):
@@ -6361,15 +6376,18 @@ def _stage_claim_type_succession(
 
 
 def _stage_claim_retirement(
-    instance: PlaybillInstance,
     *,
     member: ClaimRetirementMember,
-    base: AcceptedProjectionCoordinate,
     staged_tree: Mapping[str, bytes],
     path: str,
     derivation_procedure: ArtifactPin | None = None,
+    closures: ChangeRetirementClosures,
 ) -> tuple[MutableMapping[str, bytes], dict[str, object], set[str]]:
-    """Retire one Claim and its live closure inside the same change set."""
+    """Retire one Claim and its live closure inside the same change set.
+
+    Its closure is the one ``claim_retirement_inventory`` computes over
+    ``staged_tree``, answered by the change set's shared ``closures``.
+    """
 
     for witness in (member.absence, *(dependent.absence for dependent in member.dependents)):
         if witness is not None and (
@@ -6409,12 +6427,7 @@ def _stage_claim_retirement(
         effective_until=member.effective_until,
     )
     try:
-        inventory = claim_retirement_inventory(
-            instance,
-            tree=staged_tree,
-            coordinate=AcceptedCoordinate.from_internal(base),
-            claim=claim,
-        )
+        inventory = closures.inventory(tree=staged_tree, claim=claim)
     except ClaimRetireError as error:
         _refuse(
             "cruxible.authoring.claim_retirement_closure_unsupported",
@@ -6483,6 +6496,7 @@ def _stage_claim_retirement(
     shared_candidate = fork_tree(staged_tree)
     for changed_path in {path, *extra}:
         shared_candidate[changed_path] = candidate_tree[changed_path]
+    closures.record(before=staged_tree, after=shared_candidate, results=retirements)
     return (
         shared_candidate,
         {

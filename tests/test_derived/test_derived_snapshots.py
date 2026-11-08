@@ -245,3 +245,27 @@ def test_fork_and_seal_do_not_enumerate_for_resource_accounting(monkeypatch):
     del expected[_path("anchor")]
     assert sealed._input_bytes == sum(len(p.encode()) + len(b) for p, b in expected.items())
     assert sealed._semantic_members == len(expected)
+
+
+def test_a_staging_cursor_is_sealed_against_its_parent_without_enumerating(monkeypatch):
+    """A change set's cursor names its own edits: one retirement member costs its edits,
+    never a walk of the whole tree (each member of a large retirement used to pay one)."""
+    from cruxible_core.derived.derived_state import snapshot_against
+
+    base = SnapshotTree(_tree())
+    draft = base.fork()
+    draft[_path("new")] = b"new"
+    draft[_path("anchor")] = b"changed"
+    expected = snapshot_against(dict(draft), base)
+
+    def refuse(*_):
+        pytest.fail("sealing a staging cursor enumerated the tree")
+
+    with monkeypatch.context() as guard:
+        guard.setattr(PersistentMap, "__iter__", refuse)
+        guard.setattr(PersistentMap, "items", refuse)
+        sealed = snapshot_against(draft, base)
+    assert sealed is draft.snapshot()
+    assert dict(sealed) == dict(expected)
+    assert dict(sealed.edits_from(base)) == dict(expected.edits_from(base))
+    assert dict(sealed.edits_from(base)) == {_path("new"): b"new", _path("anchor"): b"changed"}

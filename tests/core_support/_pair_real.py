@@ -236,22 +236,28 @@ def real_claim(
 
 
 def accept_raw(instance: PlaybillInstance, updates: dict[str, bytes], *, name: str) -> Any:
-    """Submit ``updates`` over the head as a raw proposal; activate it when admitted."""
+    """Submit ``updates`` over the head as a raw proposal; activate it when admitted.
 
-    base = instance.accepted_coordinate()
-    proposed = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id="owner"),
-        request=ProposalAdmissionRequest(
-            target_ref=f"refs/proposals/owner/{name}", proposed_base_oid=base.git_oid
-        ),
-        candidate_tree={**instance.tree_at(base.git_oid), **updates},
-        timestamp="2026-11-06T12:00:00.000000Z",
-    )
-    if proposed.candidate is None:
-        return proposed
-    receipt = service_activate_playbill_proposal(
-        instance, proposal_id=proposed.admission.proposal_id, activated_by="owner"
-    )
+    One projection scope, as a served request has: submit and activation share
+    its bound projections and parse carrier, so activation does not re-parse
+    every Claim the submit just parsed once the parse memo's byte budget evicts them.
+    """
+
+    with instance.projection_scope():
+        base = instance.accepted_coordinate()
+        proposed = instance.proposal_service().submit(
+            actor=AuthenticatedActor(actor_id="owner"),
+            request=ProposalAdmissionRequest(
+                target_ref=f"refs/proposals/owner/{name}", proposed_base_oid=base.git_oid
+            ),
+            candidate_tree={**instance.tree_at(base.git_oid), **updates},
+            timestamp="2026-11-06T12:00:00.000000Z",
+        )
+        if proposed.candidate is None:
+            return proposed
+        receipt = service_activate_playbill_proposal(
+            instance, proposal_id=proposed.admission.proposal_id, activated_by="owner"
+        )
     assert receipt.status == "accepted", receipt
     return proposed
 

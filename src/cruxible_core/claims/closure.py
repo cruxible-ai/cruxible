@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import Any, Final, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, field_validator, model_validator
 
@@ -881,6 +881,48 @@ class DependencyIndexV1:
         return (*self.edges_by_source.get(path, ()), *self.edges_by_target.get(path, ()))
 
 
+class SelectedReverseNeighbors:
+    """One tree's reverse-pin neighbors over its selected rows, open until closed.
+
+    The accepted rows plus, for a staged tree, one overlay of its edits: building
+    the overlay loads and parses every edit, so a caller walking many closures
+    over one fixed tree holds one of these rather than one per walk.
+    """
+
+    def __init__(self, base: Any, selected: Any) -> None:
+        self._base = base
+        self._selected = selected
+
+    def __call__(
+        self, identity: str
+    ) -> tuple[tuple[ArtifactDependencyStateV1, tuple[str, ...]], ...]:
+        return cast(
+            tuple[tuple[ArtifactDependencyStateV1, tuple[str, ...]], ...],
+            self._selected.reverse_neighbors(identity),
+        )
+
+    def close(self) -> None:
+        self._base.close()
+
+
+def selected_reverse_neighbors(tree: Mapping[str, bytes]) -> SelectedReverseNeighbors | None:
+    """The selected-rows neighbors of an instance-bound tree; None for a cold tree."""
+
+    from cruxible_core.derived.derived_state import CandidateTree, SnapshotTree
+    from cruxible_core.indexes.evaluated_state import EvaluationRows
+
+    snapshot = tree.snapshot() if isinstance(tree, CandidateTree) else tree
+    if not isinstance(snapshot, SnapshotTree) or snapshot._accepted_reader is None:
+        return None
+    base = EvaluationRows(snapshot._accepted_reader())
+    try:
+        selected = base if snapshot._parent is None else base.overlay(snapshot._edits)
+    except BaseException:
+        base.close()
+        raise
+    return SelectedReverseNeighbors(base, selected)
+
+
 @dataclass(frozen=True)
 class ReversePinClosureItem:
     """One member reached by a complete deterministic reverse-pin walk."""
@@ -914,19 +956,12 @@ def reverse_pin_closure(
     silently discover dependencies beyond an excluded member.
     """
 
-    from cruxible_core.derived.derived_state import CandidateTree, SnapshotTree
-    from cruxible_core.indexes.evaluated_state import EvaluationRows
-
-    snapshot = tree.snapshot() if isinstance(tree, CandidateTree) else tree
-    if isinstance(snapshot, SnapshotTree) and snapshot._accepted_reader is not None:
-        base = EvaluationRows(snapshot._accepted_reader())
+    selected = selected_reverse_neighbors(tree)
+    if selected is not None:
         try:
-            selected = base if snapshot._parent is None else base.overlay(snapshot._edits)
-            return _walk_reverse_pin_closure(
-                root, include, selected.reverse_neighbors, by_name=by_name
-            )
+            return _walk_reverse_pin_closure(root, include, selected, by_name=by_name)
         finally:
-            base.close()
+            selected.close()
 
     index = build_dependency_index(tree)
     digest_identities = dict(claim_identity_by_digest or {})
@@ -977,13 +1012,21 @@ def _walk_reverse_pin_closure(
     *,
     by_name: bool = False,
 ) -> tuple[ReversePinClosureItem, ...]:
-    """One deterministic BFS; excluded nodes are traversal boundaries."""
+    """One deterministic BFS; excluded nodes are traversal boundaries.
+
+    An excluded node is never inspected: exclusion is judged before its edge
+    roles, so a node's rows matter only once it could join the closure. (A
+    retirement stage walks one tree with earlier members' retirements excluded
+    by identity; their re-derived rows must not decide what the walk refuses.)
+    """
     pending = deque((root.qualified,))
     seen_identities = {root.qualified}
     inventory = {}
     while pending:
         triggering = pending.popleft()
         for state, all_roles in neighbors(triggering):
+            if not include(state):
+                continue
             if not all_roles:
                 raise ValueError("reverse-pin index lacks an exact dependency edge")
             # Provenance is never a dependency: a Claim that only records which
@@ -1001,7 +1044,7 @@ def _walk_reverse_pin_closure(
             )
             if not roles:
                 continue
-            if state.identity.qualified in seen_identities or not include(state):
+            if state.identity.qualified in seen_identities:
                 continue
             inventory[state.identity.qualified] = ReversePinClosureItem(
                 state=state,
