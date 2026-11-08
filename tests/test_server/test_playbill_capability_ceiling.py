@@ -107,6 +107,23 @@ def test_each_playbill_tier_allows_at_ceiling_and_refuses_above_it(
     assert "capability ceiling" in payload["message"]
 
 
+def test_kit_build_without_a_template_still_requires_authoring_permission(
+    host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client_at_ceiling(monkeypatch, "read_only")
+
+    response = client.post(
+        f"/api/v1/{host_id}/kits/build",
+        json={"kit_id": "acme", "version": "1.0.0", "owns": ["acme."]},
+    )
+
+    assert response.status_code == 403, response.text
+    context = response.json()["context"]
+    assert context["tool_name"] == "cruxible_kit_build"
+    assert context["ceiling_mode"] == "READ_ONLY"
+
+
 def test_admin_ceiling_allows_host_allocation(
     host_id: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -390,7 +407,6 @@ _READ_ONLY_POSTS: dict[str, str] = {
     "/api/v1/{instance_id}/floor/export": "returns the floor bytes at a coordinate",
     "/api/v1/{instance_id}/get": "reads one ref",
     "/api/v1/{instance_id}/get-batch": "reads a batch of refs",
-    "/api/v1/{instance_id}/kits/build": "returns a kit bundle exported from accepted state",
     "/api/v1/{instance_id}/lines/{line}/evaluate": (
         "a dry run reads; enqueueing needs governed write, which the ceiling refuses"
     ),

@@ -175,9 +175,12 @@ exact version from the provider index unless a live Provider here already
 implements its interfaces (`satisfied`). Activation and any approval stay the
 ordinary steps.
 
+`kit_build` requires governed-write access because checking its automation
+template is an authoring preview performed as the caller's principal.
+
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_kit_build` | Export the definitions under owned identity prefixes as one kit release; `providers` names provider packages staged with `cruxible_body_store`, bundled or (`delivery: index`) as a default installed by name (every Provider a carried Procedure pins must be named, and every carried ProviderInterface must be what a named wheel registers) | `READ_ONLY` |
+| `cruxible_kit_build` | Export the definitions under owned identity prefixes as one kit release; `providers` names provider packages staged with `cruxible_body_store`, bundled or (`delivery: index`) as a default installed by name (every Provider a carried Procedure pins must be named, and every carried ProviderInterface must be what a named wheel registers) | `GOVERNED_WRITE` |
 | `cruxible_kit_status` | List installed kits, paths edited since install, kept divergences, provenance, provider packages with their delivery and install state, and (for registry kits) the latest available version (`offline` skips the check) | `READ_ONLY` |
 | `cruxible_kit_add` | Install or upgrade a kit by registry `reference` (the adapter pulls it) or `bundle`; always proposes, `keep`/`keep_local_edits`/`retire_dependents`/`allow_downgrade` decide divergences; lands at once when policy requires no approval; a commit stages and installs bundled providers, and a default provider nothing here implements, first (`ADMIN` for the install) | `GOVERNED_WRITE` |
 | `cruxible_kit_remove` | Retire the definitions a kit owns (never what it only carried, nor its provider packages); a definition edited since install, or live Claims or definitions that depend on what it would retire, block it; lands at once when policy requires no approval | `GOVERNED_WRITE` |
