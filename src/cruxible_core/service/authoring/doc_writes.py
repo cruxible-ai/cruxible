@@ -1,8 +1,11 @@
 """Admit workspace edits and retain overwritten subtrees; never open workspace paths."""
 
 import base64
+import os
 import re
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
@@ -33,11 +36,12 @@ from cruxible_client.contracts.write import (
     WriteRequest,
 )
 from cruxible_core.authoring.registrations import source_projection_blocks
-from cruxible_core.exhaust.backends import LocalJournalBackend
+from cruxible_core.exhaust.backends import LocalJournalBackend, _atomic_write
 from cruxible_core.exhaust.records import (
     DOC_EDIT_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
     parse_journal_payload,
+    payload_digest,
 )
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -57,7 +61,7 @@ _ACCESS = BodyAccessContext(principal_id="doc-history", can_read_body=True)
 
 
 class _EditRecord(BaseModel):
-    """An admitted overwrite; the workspace adapter still performs its file CAS.
+    """A confirmed overwrite whose workspace file CAS succeeded.
 
     The prior body is one CAS blob, never a copy of the page or workspace.
     This record attributes the replacing write, not authorship of the prior prose.
@@ -72,6 +76,33 @@ class _EditRecord(BaseModel):
     status: str
     proposal: str | None
     because: str
+    write_id: str | None = None
+
+
+class _PendingEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    edit: _EditRecord
+    actor: GovernedActorContext
+    coordinate: AcceptedCoordinate
+    # None is the compact confirmation receipt; unconfirmed bytes never land in CAS.
+    before_content_base64: str | None
+
+
+def _pending_root(instance: PlaybillInstance) -> Path:
+    return instance.root / instance.descriptor.storage.exhaust / "doc-edits" / "pending"
+
+
+def _save_pending(path: Path, pending: _PendingEdit) -> None:
+    _atomic_write(path, pending.model_dump_json().encode())
+    with path.open("rb") as handle:
+        os.fsync(handle.fileno())
+    # Persist the fixed-depth pending namespace as well as the receipt itself.
+    for parent in (path.parent, path.parent.parent, path.parent.parent.parent):
+        directory = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
 
 
 def _journal(
@@ -88,15 +119,20 @@ def _journal(
     return (LocalJournalBackend(root) if root.exists() else None), stream
 
 
-def record_doc_edits(
+def prepare_doc_edits(
     instance: PlaybillInstance,
     *,
     request: WriteRequest,
     outcome: WriteOutcome,
     actor: AuthenticatedActor,
-) -> None:
-    """Retain only changed replacement subtrees after admission, before local I/O."""
-    for edit in request.docs:
+) -> dict[int, str]:
+    """Keep pending edits outside history and CAS until the writer confirms its CAS.
+
+    Each token addresses one immutable admitted edit. No instance inventory or
+    pending-record scan is needed to prepare, confirm, retry or read history.
+    """
+    confirmations: dict[int, str] = {}
+    for index, edit in enumerate(request.docs):
         if (
             not isinstance(edit, DocEditObservation)
             or edit.op != "replace"
@@ -104,40 +140,100 @@ def record_doc_edits(
         ):
             continue
         assert edit.before_content_base64 is not None and edit.before_section is not None
+        assert edit.before_digest is not None
+        token = "DCE-" + uuid4().hex
+        now = instance.recording_clock()
+        pending = _PendingEdit(
+            edit=_EditRecord(
+                source_id=edit.source_id,
+                before_section=edit.before_section,
+                section=edit.section,
+                before_digest=edit.before_digest,
+                after_digest=edit.after_digest,
+                status=outcome.status,
+                proposal=None if outcome.proposal is None else outcome.proposal.proposal_id,
+                because=request.because,
+                write_id=token,
+            ),
+            coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            actor=GovernedActorContext(
+                actor_type="service_account",
+                actor_id=actor.actor_id,
+                org_id=instance.descriptor.instance_id,
+                operation_id=token,
+                timestamp=now,
+            ),
+            before_content_base64=edit.before_content_base64,
+        )
+        root = _pending_root(instance)
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _save_pending(root / f"{token}.json", pending)
+        confirmations[index] = token
+    return confirmations
+
+
+def confirm_doc_edits(
+    instance: PlaybillInstance,
+    *,
+    tokens: tuple[str, ...],
+    actor: AuthenticatedActor,
+) -> WriteOutcome:
+    """Publish only successful file edits; retries are indexed and idempotent."""
+    from cruxible_core.service.authoring.write_verbs import _refuse
+
+    for token in tokens:
+        if re.fullmatch(r"DCE-[0-9a-f]{32}", token) is None:
+            raise _refuse("cruxible.doc.confirmation_invalid", "Invalid document confirmation")
+        path = _pending_root(instance) / f"{token}.json"
+        try:
+            pending = _PendingEdit.model_validate_json(path.read_bytes())
+        except FileNotFoundError as exc:
+            raise _refuse(
+                "cruxible.doc.confirmation_unknown", "No admitted edit has this confirmation"
+            ) from exc
+        if pending.actor.actor_id != actor.actor_id:
+            raise _refuse(
+                "cruxible.doc.confirmation_author", "Only the admitted edit's author can confirm it"
+            )
+        if pending.before_content_base64 is None:
+            continue
+        previous = base64.b64decode(pending.before_content_base64, validate=True)
+        if section_digest(previous) != pending.edit.before_digest:
+            raise _refuse("cruxible.doc.previous_bytes_mismatch", "Previous subtree digest differs")
         bodies = instance.body_store()
-        previous = bodies.store(base64.b64decode(edit.before_content_base64))
-        assert previous.digest == edit.before_digest
         journal, stream = _journal(instance, create=True)
         assert journal is not None
-        partition = section_digest(edit.source_id.encode()).removeprefix("sha256:")
+        partition = section_digest(pending.edit.source_id.encode()).removeprefix("sha256:")
+        payload = pending.edit.model_dump(mode="json")
+        # Recover a crash after journal append but before compacting the pending
+        # bytes. This probe is one indexed key, never the source's whole history.
+        if journal.select_records(
+            stream,
+            partition_id=partition,
+            event_kind="doc_edit",
+            payload_digest=payload_digest(payload),
+            limit=1,
+        ):
+            _save_pending(path, pending.model_copy(update={"before_content_base64": None}))
+            continue
+        bodies.store(previous)
         head = journal.read_head(stream, partition)
         journal.activate_writer(stream, partition, fencing_token=_FENCE, expected_head=head)
         ProcedureExhaustWriter(journal=journal, bodies=bodies, fencing_token=_FENCE).append(
             stream=stream,
             partition_id=partition,
             event_kind="doc_edit",
-            accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            accepted_coordinate=pending.coordinate,
             definition_digest=stream.identity_digest,
-            actor_context=GovernedActorContext(
-                actor_type="service_account",
-                actor_id=actor.actor_id,
-                org_id=instance.descriptor.instance_id,
-                operation_id="doc-edit",
-                timestamp=instance.recording_clock(),
-            ),
+            actor_context=pending.actor,
             recorded_at=instance.recording_clock(),
             expected_head=head,
-            payload=_EditRecord(
-                source_id=edit.source_id,
-                before_section=edit.before_section,
-                section=edit.section,
-                before_digest=previous.digest,
-                after_digest=edit.after_digest,
-                status=outcome.status,
-                proposal=None if outcome.proposal is None else outcome.proposal.proposal_id,
-                because=request.because,
-            ).model_dump(mode="json"),
+            payload=payload,
         )
+        _save_pending(path, pending.model_copy(update={"before_content_base64": None}))
+    return WriteOutcome(
+        status="accepted", coordinate=compact_coordinate(instance, instance.accepted_coordinate())
+    )
 
 
 def read_doc_edits(
@@ -150,7 +246,7 @@ def read_doc_edits(
 
     ``file:source@N`` reads the prior subtree retained by overwrite N. History
     returns metadata only; recovery reads authorize bytes like Document bodies.
-    Operational admission records are live, including when a file CAS conflicts.
+    Only edits confirmed after a successful workspace file CAS are visible.
     """
     match = re.fullmatch(r"file:([a-z][a-z0-9_.-]{0,255})(?:@([1-9][0-9]*))?", request.ref)
     if match is None:
@@ -302,6 +398,21 @@ def validate_doc_edits(
                 field_path=f"docs[{index}]",
                 repair="Use the CLI, SDK or MCP write adapter beside the workspace",
             )
+        if edit.op == "replace":
+            try:
+                previous = base64.b64decode(edit.before_content_base64 or "", validate=True)
+            except ValueError as exc:
+                raise _refuse(
+                    "cruxible.doc.previous_bytes_mismatch",
+                    "Previous subtree is not valid base64",
+                    field_path=f"docs[{index}]",
+                ) from exc
+            if edit.before_content_base64 is None or section_digest(previous) != edit.before_digest:
+                raise _refuse(
+                    "cruxible.doc.previous_bytes_mismatch",
+                    "Previous subtree digest differs",
+                    field_path=f"docs[{index}]",
+                )
         blocks = source_projection_blocks(instance, edit.source_id)
         page = (
             None

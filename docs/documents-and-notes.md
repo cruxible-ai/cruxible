@@ -92,8 +92,8 @@ heading paths to find sections:
   it wrote): if someone changed the section since then, nothing is written.
   Read `get file:<catalog-name> --detail history` to see the old version's
   digest and the author who replaced it; each entry links to its retained bytes.
-  History records edits admitted by the server; the write reports any local
-  file conflict.
+  History records an edit only after the file write succeeds; a local file
+  conflict leaves history unchanged.
 - **`id`** names the section so changes can cite it: `batch.section(ID)`, or
   `{kind: section, ref: ID}` in a write file.
 

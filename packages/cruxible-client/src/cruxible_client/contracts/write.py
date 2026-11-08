@@ -700,10 +700,19 @@ class WriteRequest(_WriteRequestBase):
     )
     changes: tuple[Change, ...] = Field(default=(), max_length=500)
     docs: tuple[DocOp | DocEditObservation, ...] = Field(default=(), max_length=500)
+    doc_confirmations: tuple[Annotated[str, Field(pattern=r"^DCE-[0-9a-f]{32}$")], ...] = Field(
+        default=(),
+        max_length=500,
+        exclude_if=_omit_empty,
+        description="Writer-side acknowledgement of edits whose local file CAS succeeded.",
+    )
 
     @model_validator(mode="after")
     def _nonempty(self) -> WriteRequest:
-        if not self.changes and not self.docs:
+        if self.doc_confirmations:
+            if self.changes or self.docs or self.dry_run:
+                raise ValueError("document confirmations cannot accompany edits or a dry run")
+        elif not self.changes and not self.docs:
             raise ValueError("write requires at least one change or document operation")
         return self
 
@@ -888,6 +897,12 @@ class DocOutcome(_StrictWriteModel):
     before_digest: str | None = Field(default=None, pattern=CAPTURE_DIGEST_PATTERN)
     after_digest: str = Field(pattern=CAPTURE_DIGEST_PATTERN)
     written: bool = False
+    confirmation: str | None = Field(
+        default=None,
+        pattern=r"^DCE-[0-9a-f]{32}$",
+        exclude_if=_omit_none,
+        description="Pending edit to confirm only after the local file write succeeds.",
+    )
     refusal: WriteRefusal | None = None
     next: str | None = None
 

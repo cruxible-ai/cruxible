@@ -11,6 +11,7 @@ from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.get_reads import GetCoordinate
 from cruxible_client.contracts.write import (
     AppendSection,
+    DocOutcome,
     ReplaceSection,
     WriteOutcome,
     WriteRequest,
@@ -341,3 +342,47 @@ def test_about_link_is_observed_like_section_evidence_and_unlink_needs_no_sectio
             workspace=tmp_path,
             submit=submit,
         )
+
+
+def test_failed_history_confirmation_reports_that_the_file_was_written(tmp_path):
+    path = tmp_path / "notes.md"
+    path.write_bytes(b"# A\nold\n")
+    token = "DCE-" + "a" * 32
+
+    def submit(request):
+        if request.doc_confirmations:
+            assert request.doc_confirmations == (token,)
+            assert path.read_bytes() == b"# A\nnew\n"
+            return _answer("refused")
+        edit = request.docs[0]
+        return _answer().model_copy(
+            update={
+                "docs": (
+                    DocOutcome(
+                        source_id=edit.source_id,
+                        section=edit.section,
+                        before_digest=edit.before_digest,
+                        after_digest=edit.after_digest,
+                        confirmation=token,
+                    ),
+                )
+            }
+        )
+
+    with pytest.raises(WriteRefusalError, match="file was written") as caught:
+        write_workspace(
+            WriteRequest(
+                because="Replace",
+                docs=(
+                    ReplaceSection(
+                        file="notes.md",
+                        section=("A",),
+                        text="# A\nnew",
+                    ),
+                ),
+            ),
+            workspace=tmp_path,
+            submit=submit,
+        )
+    assert caught.value.error_code == "cruxible.doc.history_unconfirmed"
+    assert token in caught.value.repair_line

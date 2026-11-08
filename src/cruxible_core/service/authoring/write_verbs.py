@@ -4424,11 +4424,28 @@ def service_playbill_write(
         read_request(instance) if request.dry_run else nullcontext(),
         instance.capture_verification_request(),
     ):
-        outcome = _service_write(instance, request=request, caller=caller)
-        if not request.dry_run and outcome.status in ("accepted", "awaiting_approval"):
-            from cruxible_core.service.authoring.doc_writes import record_doc_edits
+        confirmations: dict[int, str] = {}
+        if request.doc_confirmations:
+            from cruxible_core.service.authoring.doc_writes import confirm_doc_edits
 
-            record_doc_edits(instance, request=request, outcome=outcome, actor=caller.actor)
+            try:
+                outcome = confirm_doc_edits(
+                    instance, tokens=request.doc_confirmations, actor=caller.actor
+                )
+            except WriteRefusalError as error:
+                outcome = WriteOutcome(
+                    status="refused",
+                    coordinate=compact_coordinate(instance, instance.accepted_coordinate()),
+                    refusal=_refusal(error),
+                )
+        else:
+            outcome = _service_write(instance, request=request, caller=caller)
+            if not request.dry_run and outcome.status in ("accepted", "awaiting_approval"):
+                from cruxible_core.service.authoring.doc_writes import prepare_doc_edits
+
+                confirmations = prepare_doc_edits(
+                    instance, request=request, outcome=outcome, actor=caller.actor
+                )
         if request.docs:
             outcome = outcome.model_copy(
                 update={
@@ -4439,8 +4456,9 @@ def service_playbill_write(
                             section=edit.section,
                             before_digest=edit.before_digest,
                             after_digest=edit.after_digest,
+                            confirmation=confirmations.get(index),
                         )
-                        for edit in request.docs
+                        for index, edit in enumerate(request.docs)
                         if isinstance(edit, DocEditObservation)
                     ),
                 }

@@ -8,8 +8,9 @@ import pytest
 from cruxible_client.authoring.doc_writes import write_workspace
 from cruxible_client.contracts.claims import claim_path, parse_claim
 from cruxible_client.contracts.doc_sections import section_digest
-from cruxible_client.contracts.errors import CasError
+from cruxible_client.contracts.errors import CasError, WriteRefusalError
 from cruxible_client.contracts.get_reads import GetRequest
+from cruxible_client.contracts.proposal_models import AuthenticatedActor
 from cruxible_client.contracts.write import (
     AppendSection,
     DocEditObservation,
@@ -293,3 +294,218 @@ def test_overwrite_history_pages_sources_and_skips_preview_and_refusal(tmp_path)
             request=GetRequest(ref="file:doc-one.md@1", detail="body"),
             access=BodyAccessContext(principal_id="reader"),
         )
+
+
+@pytest.mark.parametrize("race", ["conflict", "unrelated", "already_applied"])
+def test_history_confirms_only_replacements_that_land_after_local_cas(tmp_path, race):
+    instance, _ = seed_write_surface(tmp_path)
+    workspace = tmp_path / "prose"
+    workspace.mkdir()
+    path = workspace / "notes.md"
+    path.write_bytes(b"# Reason\noriginal\n# Other\nunrelated\n")
+    access = BodyAccessContext(principal_id="reader", can_read_body=True)
+
+    def history():
+        return service_playbill_get(
+            instance, request=GetRequest(ref="file:doc-notes.md", detail="history"), access=access
+        ).history
+
+    def submit(request):
+        return service_playbill_write(instance, request=request, caller=caller())
+
+    def replace(text, send=submit):
+        return write_workspace(
+            WriteRequest(
+                because="Edit",
+                docs=(
+                    ReplaceSection(
+                        file="notes.md",
+                        section=("Reason",),
+                        text=text,
+                    ),
+                ),
+            ),
+            workspace=workspace,
+            submit=send,
+        )
+
+    replace("# Reason\nfirst")
+    before_history = history()
+    prior = b"# Reason\nfirst\n"
+    confirmed = []
+
+    def raced_submit(request):
+        outcome = submit(request)
+        if request.docs:
+            assert history() == before_history
+            assert not instance.body_store().metadata(section_digest(prior), access=access).present
+            if race == "conflict":
+                path.write_bytes(b"# Reason\nconcurrent\n# Other\nunrelated\n")
+            elif race == "already_applied":
+                path.write_bytes(b"# Reason\nsecond\n# Other\nunrelated\n")
+            else:
+                path.write_bytes(b"# Reason\nfirst\n# Other\nconcurrent\n")
+        else:
+            assert b"# Reason\nsecond\n" in path.read_bytes()
+            confirmed.extend(request.doc_confirmations)
+        return outcome
+
+    result = replace("# Reason\nsecond", raced_submit)
+    if race == "unrelated":
+        assert result.docs[0].written
+        assert len(confirmed) == 1
+        assert len(history().revisions) == 2
+        assert instance.body_store().read(section_digest(prior), access=access) == prior
+    else:
+        assert not confirmed
+        assert history() == before_history
+        assert not instance.body_store().metadata(section_digest(prior), access=access).present
+        if race == "conflict":
+            assert not result.docs[0].written
+            assert result.docs[0].refusal.code == "cruxible.doc.doc_write_conflict"
+        else:
+            assert result.docs[0].written
+
+
+def _replacement_observation():
+    previous = b"# Reason\nprevious\n"
+    raw = _edit(b"# Reason\nnew\n")
+    raw.update(
+        op="replace",
+        before_section=["Reason"],
+        before_digest=section_digest(previous),
+        before_coordinate=_observation(previous).coordinate,
+        before_content_base64=base64.b64encode(previous).decode(),
+        end_byte=len(previous),
+    )
+    return DocEditObservation.model_validate(raw)
+
+
+def test_confirmation_is_author_bound_durable_and_idempotent(tmp_path):
+    from cruxible_core.service.authoring.doc_writes import confirm_doc_edits
+
+    instance, _ = seed_write_surface(tmp_path)
+    edit = _replacement_observation()
+    admitted = service_playbill_write(
+        instance, request=WriteRequest(because="Replace", docs=(edit,)), caller=caller()
+    )
+    token = admitted.docs[0].confirmation
+    assert token is not None
+    access = BodyAccessContext(principal_id="reader", can_read_body=True)
+
+    def history():
+        return service_playbill_get(
+            instance, request=GetRequest(ref="file:repo.notes", detail="history"), access=access
+        ).history
+
+    assert history().revisions == ()
+    assert not instance.body_store().metadata(edit.before_digest, access=access).present
+    with pytest.raises(WriteRefusalError, match="Only the admitted edit's author"):
+        confirm_doc_edits(instance, tokens=(token,), actor=AuthenticatedActor(actor_id="other"))
+    assert history().revisions == ()
+    instance = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    for _ in range(2):
+        result = service_playbill_write(
+            instance,
+            request=WriteRequest(because="File landed", doc_confirmations=(token,)),
+            caller=caller(),
+        )
+        assert result.status == "accepted"
+    assert len(history().revisions) == 1
+    assert history().revisions[0].actor == caller().actor.actor_id
+    assert instance.body_store().read(edit.before_digest, access=access) == base64.b64decode(
+        edit.before_content_base64
+    )
+
+
+def test_confirmation_retry_recovers_journal_append_before_pending_receipt(tmp_path, monkeypatch):
+    from cruxible_core.service.authoring import doc_writes
+
+    instance, _ = seed_write_surface(tmp_path)
+    admitted = service_playbill_write(
+        instance,
+        request=WriteRequest(because="Replace", docs=(_replacement_observation(),)),
+        caller=caller(),
+    )
+    token = admitted.docs[0].confirmation
+    request = WriteRequest(because="File landed", doc_confirmations=(token,))
+    save = doc_writes._save_pending
+
+    def crash(path, pending):
+        if pending.before_content_base64 is None:
+            raise OSError("crash after history append")
+        save(path, pending)
+
+    monkeypatch.setattr(doc_writes, "_save_pending", crash)
+    with pytest.raises(OSError, match="crash after history append"):
+        service_playbill_write(instance, request=request, caller=caller())
+    monkeypatch.setattr(doc_writes, "_save_pending", save)
+    instance = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    assert service_playbill_write(instance, request=request, caller=caller()).status == "accepted"
+    history = service_playbill_get(
+        instance,
+        request=GetRequest(ref="file:repo.notes", detail="history"),
+        access=BodyAccessContext(principal_id="reader"),
+    ).history
+    assert len(history.revisions) == 1
+
+
+def test_daemon_refuses_mismatched_previous_bytes_even_for_an_internal_observation(tmp_path):
+    instance, _ = seed_write_surface(tmp_path)
+    edit = _replacement_observation().model_copy(
+        update={
+            "before_content_base64": base64.b64encode(b"forged previous text").decode(),
+        }
+    )
+    request = WriteRequest(because="Invalid", docs=(_replacement_observation(),)).model_copy(
+        update={"docs": (edit,)}
+    )
+    result = service_playbill_write(instance, request=request, caller=caller())
+    assert result.refused
+    assert result.refusal.code == "cruxible.doc.previous_bytes_mismatch"
+    assert result.refusal.field_path == "docs[0]"
+
+
+def test_mixed_file_batch_confirms_only_the_file_whose_cas_succeeded(tmp_path):
+    instance, _ = seed_write_surface(tmp_path)
+    workspace = tmp_path / "prose"
+    workspace.mkdir()
+    good, raced = workspace / "good.md", workspace / "raced.md"
+    good.write_bytes(b"# Reason\ngood previous\n")
+    raced_previous = b"# Reason\nraced previous\n"
+    raced.write_bytes(raced_previous)
+    tokens = []
+
+    def submit(request):
+        result = service_playbill_write(instance, request=request, caller=caller())
+        if request.docs:
+            raced.write_bytes(b"# Reason\nconcurrent\n")
+        else:
+            tokens.extend(request.doc_confirmations)
+        return result
+
+    result = write_workspace(
+        WriteRequest(
+            because="Two files",
+            docs=(
+                ReplaceSection(file="good.md", section=("Reason",), text="# Reason\ngood new"),
+                ReplaceSection(file="raced.md", section=("Reason",), text="# Reason\nraced new"),
+            ),
+        ),
+        workspace=workspace,
+        submit=submit,
+    )
+    assert result.docs[0].written and not result.docs[1].written
+    assert tokens == [result.docs[0].confirmation]
+    for name, count in (("good", 1), ("raced", 0)):
+        history = service_playbill_get(
+            instance,
+            request=GetRequest(ref=f"file:doc-{name}.md", detail="history"),
+            access=BodyAccessContext(principal_id="reader"),
+        ).history
+        assert len(history.revisions) == count
+    assert (
+        not instance.body_store()
+        .metadata(section_digest(raced_previous), access=BodyAccessContext(principal_id="reader"))
+        .present
+    )

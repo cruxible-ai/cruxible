@@ -236,3 +236,21 @@ def test_replace_observation_requires_verified_prior_bytes(patch):
     )
     with pytest.raises(ValidationError):
         DocEditObservation.model_validate({**raw, **patch})
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"dry_run": True},
+        {"changes": ({"op": "set", "field": "status", "value": "ready"},)},
+        {"docs": ({"op": "append", "file": "notes.md", "text": "# A"},)},
+        {"doc_confirmations": ("../not-a-token",)},
+    ],
+)
+def test_document_confirmation_is_a_separate_bounded_write_phase(patch):
+    with pytest.raises(ValidationError):
+        WriteRequest.model_validate(
+            {"because": "File landed", "doc_confirmations": ["DCE-" + "a" * 32], **patch}
+        )
+    request = WriteRequest(because="File landed", doc_confirmations=("DCE-" + "a" * 32,))
+    assert WriteRequest.model_validate_json(request.model_dump_json()) == request

@@ -4375,7 +4375,7 @@ class Cruxible:
         read (``GetSubjectHistory``): each revision of each Claim about it,
         newest first, with what changed and why; ``field`` narrows them to one
         field. On anything else it answers its revisions (``GetHistory``).
-        ``file:<catalog-name>`` history lists admitted section overwrites;
+        ``file:<catalog-name>`` history lists confirmed section overwrites;
         ``file:<catalog-name>@<revision>`` with ``detail="body"`` recovers the
         prior subtree of that overwrite, including its heading.
         ``detail="incoming"`` on a Subject answers every live Claim whose
