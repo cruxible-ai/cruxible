@@ -509,3 +509,113 @@ def test_mixed_file_batch_confirms_only_the_file_whose_cas_succeeded(tmp_path):
         .metadata(section_digest(raced_previous), access=BodyAccessContext(principal_id="reader"))
         .present
     )
+
+
+@pytest.mark.parametrize("unrelated_sources", [2, 200])
+def test_unconfirmed_payloads_are_bounded_per_source_without_scanning(
+    tmp_path, monkeypatch, unrelated_sources
+):
+    from uuid import uuid4
+
+    from cruxible_core.service.authoring import doc_writes
+
+    instance, _ = seed_write_surface(tmp_path)
+    monkeypatch.setattr(doc_writes, "_PENDING_LIMIT", 3)
+    edit = _replacement_observation()
+
+    def admit():
+        outcome = service_playbill_write(
+            instance, request=WriteRequest(because="Replace", docs=(edit,)), caller=caller()
+        )
+        assert outcome.status == "accepted"
+        return outcome.docs[0].confirmation
+
+    confirmed = admit()
+    assert (
+        service_playbill_write(
+            instance,
+            request=WriteRequest(because="Landed", doc_confirmations=(confirmed,)),
+            caller=caller(),
+        ).status
+        == "accepted"
+    )
+    first = admit()
+    root = doc_writes._pending_root(instance)
+    pending = doc_writes._load_pending(root / f"{first}.json")
+    for index in range(unrelated_sources):
+        other = pending.model_copy(
+            update={"edit": pending.edit.model_copy(update={"source_id": f"other-{index}"})}
+        )
+        doc_writes._save_pending(root / f"DCE-{uuid4().hex}.json", other)
+    instance = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+
+    def no_scan(*args, **kwargs):
+        raise AssertionError("a write must not scan the pending namespace")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "glob", no_scan)
+        recent = [admit() for _ in range(5)]
+        expired = service_playbill_write(
+            instance,
+            request=WriteRequest(because="Too late", doc_confirmations=(first,)),
+            caller=caller(),
+        )
+        assert expired.refusal.code == "cruxible.doc.confirmation_unknown"
+        # An old confirmed receipt remains idempotent even after newer admissions.
+        assert (
+            service_playbill_write(
+                instance,
+                request=WriteRequest(because="Retry", doc_confirmations=(confirmed,)),
+                caller=caller(),
+            ).status
+            == "accepted"
+        )
+        latest = service_playbill_write(
+            instance,
+            request=WriteRequest(because="Landed", doc_confirmations=(recent[-1],)),
+            caller=caller(),
+        )
+        assert latest.status == "accepted"
+    with doc_writes._pending_store(root) as connection:
+        rows = connection.execute(
+            "SELECT token,unconfirmed FROM pending_edits WHERE source_id=?",
+            (edit.source_id,),
+        ).fetchall()
+        assert set(rows) == {(confirmed, 0), (recent[-3], 1), (recent[-2], 1), (recent[-1], 0)}
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM pending_edits WHERE source_id != ?", (edit.source_id,)
+            ).fetchone()[0]
+            == unrelated_sources
+        )
+
+
+def test_legacy_pending_files_migrate_once_with_the_same_payload_bound(tmp_path, monkeypatch):
+    import os
+
+    from cruxible_core.service.authoring import doc_writes
+
+    instance, _ = seed_write_surface(tmp_path)
+    admitted = service_playbill_write(
+        instance,
+        request=WriteRequest(because="Replace", docs=(_replacement_observation(),)),
+        caller=caller(),
+    )
+    root = doc_writes._pending_root(instance)
+    pending = doc_writes._load_pending(root / f"{admitted.docs[0].confirmation}.json")
+    # Recreate the old on-disk format, including a compact confirmation receipt.
+    (root.parent / "pending.sqlite3").unlink()
+    root.mkdir()
+    for index in range(6):
+        path = root / f"DCE-{index:032x}.json"
+        record = pending if index else pending.model_copy(update={"before_content_base64": None})
+        path.write_text(record.model_dump_json())
+        os.utime(path, (index, index))
+    monkeypatch.setattr(doc_writes, "_PENDING_LIMIT", 3)
+    assert doc_writes._load_pending(root / f"DCE-{5:032x}.json") == pending
+    assert not root.exists()
+    with doc_writes._pending_store(root) as connection:
+        assert connection.execute("SELECT count(*) FROM pending_edits").fetchone()[0] == 4
+    with pytest.raises(FileNotFoundError):
+        doc_writes._load_pending(root / f"DCE-{1:032x}.json")
+    assert doc_writes._load_pending(root / f"DCE-{0:032x}.json").before_content_base64 is None
