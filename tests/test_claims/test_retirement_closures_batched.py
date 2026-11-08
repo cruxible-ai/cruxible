@@ -306,6 +306,19 @@ def test_the_batched_walk_matches_the_per_member_walk_on_random_worlds(block: in
     assert {"claim_terminal", "closure_unsupported", "closure_incomplete"} <= set(refusals)
 
 
+def test_an_excluded_node_with_a_role_less_row_is_a_boundary_in_both_walks() -> None:
+    """Seed 18692: member 0 retires node 3, whose re-derived successor lost its
+    backing-input edge to node 2 while an index row still lists it as pinning 2.
+    Exclusion is judged before roles, so neither walk inspects node 3 and both
+    refuse member 1 the same way (it carries its closure wrong)."""
+
+    world = _world(18692)
+    assert world.phantoms == {(3, 2)} and (3, 2, "backing-input") in world.edges
+    sequential = _stage(world, batched=False)
+    assert sequential == _stage(world, batched=True)
+    assert sequential[1] == (1, "closure_incomplete")
+
+
 def test_the_worlds_exercise_the_cases_the_argument_rests_on() -> None:
     """Earlier members' retirements bound later walks, and retire later roots."""
 

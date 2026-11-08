@@ -1012,13 +1012,21 @@ def _walk_reverse_pin_closure(
     *,
     by_name: bool = False,
 ) -> tuple[ReversePinClosureItem, ...]:
-    """One deterministic BFS; excluded nodes are traversal boundaries."""
+    """One deterministic BFS; excluded nodes are traversal boundaries.
+
+    An excluded node is never inspected: exclusion is judged before its edge
+    roles, so a node's rows matter only once it could join the closure. (A
+    retirement stage walks one tree with earlier members' retirements excluded
+    by identity; their re-derived rows must not decide what the walk refuses.)
+    """
     pending = deque((root.qualified,))
     seen_identities = {root.qualified}
     inventory = {}
     while pending:
         triggering = pending.popleft()
         for state, all_roles in neighbors(triggering):
+            if not include(state):
+                continue
             if not all_roles:
                 raise ValueError("reverse-pin index lacks an exact dependency edge")
             # Provenance is never a dependency: a Claim that only records which
@@ -1036,7 +1044,7 @@ def _walk_reverse_pin_closure(
             )
             if not roles:
                 continue
-            if state.identity.qualified in seen_identities or not include(state):
+            if state.identity.qualified in seen_identities:
                 continue
             inventory[state.identity.qualified] = ReversePinClosureItem(
                 state=state,
