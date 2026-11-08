@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import os
 import socket
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -449,33 +452,26 @@ def test_disappearing_file_after_open_refuses(
     assert caught.value.path_class == "missing"
 
 
-def test_a_resolved_candidate_swapped_right_after_its_identity_check_is_never_read(
+def _seam_actual_component(
+    monkeypatch: pytest.MonkeyPatch,
+    resolve: Callable[..., tuple[str, tuple[int, int] | None]],
+) -> None:
+    monkeypatch.setattr(WorkspaceFileReader, "_actual_component", staticmethod(resolve))
+
+
+def test_a_swap_that_lands_before_the_open_reads_the_live_file_and_attests_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A glob directory cache's resolved candidate, swapped the instant after
-    it was verified to be the requested name's object, must never be read
-    (F3, round 3): ``_same_object`` only takes a snapshot, and the name it
-    verified can be a different object by the time ``read`` opens it.
-
-    ``_actual_component`` is the seam ``read`` trusts for both the resolved
-    name and the identity verified for it; this swaps the file it names
-    immediately after a real, successful verification -- the same gap a
-    genuine case-folding candidate recovered from a stale cache would leave
-    open -- without depending on the host filesystem's own case-folding or
-    normalization behavior to construct two colliding real names. The
-    resolution layer's own correctness (that it verifies a case-folding
-    candidate and refuses a stale one) is covered directly by the
-    ``_resolve_component``/``_same_object`` tests in
-    ``test_workspace_glob_expand.py``; this test is read's half of the
-    contract: carrying a verified identity through to the open and
-    refusing, before any byte is read, if the opened object disagrees.
+    """A file replaced between resolution and the open is an ordinary earlier
+    write: ``read`` opens the requested name, so the bytes are the name's
+    current bytes and the receipt digests exactly them. The identity a stat
+    saw at resolution is never compared against the open: on ext4 the
+    replacement reuses the freed inode, so it would prove nothing.
     """
 
     root = tmp_path / "workspace"
     root.mkdir()
-    target = root / "note.json"
-    target.write_bytes(b"original")
-
+    (root / "note.json").write_bytes(b"original")
     real_actual_component = WorkspaceFileReader._actual_component
     swapped = False
 
@@ -484,23 +480,136 @@ def test_a_resolved_candidate_swapped_right_after_its_identity_check_is_never_re
     ) -> tuple[str, tuple[int, int] | None]:
         nonlocal swapped
         actual, _ = real_actual_component(parent_fd, requested, cache=cache)
-        verified = os.stat(actual, dir_fd=parent_fd, follow_symlinks=False)
-        verified_identity = (verified.st_dev, verified.st_ino)
+        seen = os.stat(actual, dir_fd=parent_fd, follow_symlinks=False)
         if not swapped:
             swapped = True
             (root / actual).unlink()
             (root / actual).write_bytes(b"swapped")
-        return actual, verified_identity
+        return actual, (seen.st_dev, seen.st_ino)
 
-    monkeypatch.setattr(
-        WorkspaceFileReader, "_actual_component", staticmethod(swap_after_resolution)
-    )
+    _seam_actual_component(monkeypatch, swap_after_resolution)
+    result = _read(_reader(root), _request(root, "note.json"))
+    assert swapped, "the injected swap never ran: the test did not reach an open"
+    assert base64.b64decode(str(result.provider_input["bytes"])) == b"swapped"
+    assert result.receipt.bytes_digest == "sha256:" + hashlib.sha256(b"swapped").hexdigest()
+    assert result.receipt.relative_path == "note.json"
 
+
+def test_a_substituted_name_that_is_not_the_requested_object_is_never_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Whatever identity the resolution layer hands over, ``read`` refuses a
+    substituted name unless the requested spelling names the descriptor it
+    opened, checked while it is held: deterministic on every filesystem."""
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "note.json").write_bytes(b"requested")
+    (root / "other.json").write_bytes(b"other")
+    real_actual_component = WorkspaceFileReader._actual_component
+
+    def substitute_other(
+        parent_fd: int, requested: str, *, cache: DirectoryEntryCache | None = None
+    ) -> tuple[str, tuple[int, int] | None]:
+        if requested != "note.json":
+            return real_actual_component(parent_fd, requested, cache=cache)
+        other = os.stat("other.json", dir_fd=parent_fd, follow_symlinks=False)
+        return "other.json", (other.st_dev, other.st_ino)
+
+    _seam_actual_component(monkeypatch, substitute_other)
     with pytest.raises(WorkspaceFileReadRefused) as caught:
         _read(_reader(root), _request(root, "note.json"))
     assert caught.value.path_class == "changed_during_read"
-    assert swapped, "the injected swap never ran: the test did not reach an open"
-    assert target.read_bytes() == b"swapped"  # confirms the swap really happened
+
+
+def test_a_requested_name_swapped_right_after_the_open_is_never_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A substitution verified as the requested object (two links to one
+    file), then the requested name replaced the instant after the open: the
+    held descriptor's inode cannot be reused by the replacement, so the check
+    refuses on every filesystem, before any byte is read."""
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "note.json").write_bytes(b"original")
+    os.link(root / "note.json", root / "alias.json")
+    real_actual_component = WorkspaceFileReader._actual_component
+
+    def substitute_alias(
+        parent_fd: int, requested: str, *, cache: DirectoryEntryCache | None = None
+    ) -> tuple[str, tuple[int, int] | None]:
+        if requested != "note.json":
+            return real_actual_component(parent_fd, requested, cache=cache)
+        verified = WorkspaceFileReader._same_object(parent_fd, "note.json", "alias.json")
+        assert verified is not None
+        return "alias.json", verified
+
+    real_open = os.open
+    real_read = workspace_file_module.os.read
+    swapped = False
+    bytes_read = False
+
+    def open_then_swap(
+        path: str, flags: int, mode: int = 0o777, *, dir_fd: int | None = None
+    ) -> int:
+        nonlocal swapped
+        descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+        if path == "alias.json" and not swapped:
+            swapped = True
+            (root / "note.json").unlink()
+            (root / "note.json").write_bytes(b"swapped")
+        return descriptor
+
+    def recording_read(descriptor: int, count: int) -> bytes:
+        nonlocal bytes_read
+        bytes_read = True
+        return real_read(descriptor, count)
+
+    _seam_actual_component(monkeypatch, substitute_alias)
+    monkeypatch.setattr(workspace_file_module.os, "open", open_then_swap)
+    monkeypatch.setattr(workspace_file_module.os, "read", recording_read)
+    with pytest.raises(WorkspaceFileReadRefused) as caught:
+        _read(_reader(root), _request(root, "note.json"))
+    assert swapped, "the injected swap never ran: the test did not reach the open"
+    assert not bytes_read
+    assert caught.value.path_class == "changed_during_read"
+
+
+def test_a_freed_inode_reused_by_a_replacement_never_passes_for_the_requested_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ext4 case, end to end on a case-sensitive volume: ``Foo.json`` is
+    substituted for a requested ``FOO.json`` after a real ``_same_object``
+    check (two links to one file), then both names are removed and
+    ``Foo.json`` recreated before the open. ext4 hands the freed inode to the
+    new file, so an identity taken at resolution matches it; the check made
+    against the held descriptor does not, since ``FOO.json`` is gone."""
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    if volume_folds_case(root):
+        pytest.skip("this volume folds case, so two case-variant names cannot coexist")
+    (root / "Foo.json").write_bytes(b"original")
+    os.link(root / "Foo.json", root / "FOO.json")
+    real_actual_component = WorkspaceFileReader._actual_component
+
+    def substitute_then_recreate(
+        parent_fd: int, requested: str, *, cache: DirectoryEntryCache | None = None
+    ) -> tuple[str, tuple[int, int] | None]:
+        if requested != "FOO.json":
+            return real_actual_component(parent_fd, requested, cache=cache)
+        verified = WorkspaceFileReader._same_object(parent_fd, "FOO.json", "Foo.json")
+        assert verified is not None
+        (root / "FOO.json").unlink()
+        (root / "Foo.json").unlink()
+        (root / "Foo.json").write_bytes(b"replaced")
+        return "Foo.json", verified
+
+    _seam_actual_component(monkeypatch, substitute_then_recreate)
+    with pytest.raises(WorkspaceFileReadRefused) as caught:
+        _read(_reader(root), _request(root, "FOO.json"))
+    assert caught.value.path_class == "changed_during_read"
 
 
 def _authored(relative_path: str, workspace: str | None = None) -> WorkspaceFileSourceRequestV2:

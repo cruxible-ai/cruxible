@@ -102,9 +102,12 @@ class WorkspaceFileReadResultV1:
 
 
 #: One directory's identity at the moment it was listed: ``(device, inode,
-#: st_mtime_ns, st_ctime_ns)``. A cache entry is trusted only while a fresh
+#: st_mtime_ns, st_ctime_ns)``. A cache entry is reused only while a fresh
 #: stat of the same directory still matches it, so content changed since (or
-#: a directory inode reused for a different directory) is never read from it.
+#: a directory inode reused for a different directory) normally relists. The
+#: listing is only ever a hint: a name it substitutes is checked against the
+#: opened descriptor before use, so a stale entry costs a relist or a refusal,
+#: never a wrong read.
 DirectoryIdentity = tuple[int, int, int, int]
 
 #: One glob operation's shared directory-entry cache (D-R41): a real
@@ -346,11 +349,13 @@ class WorkspaceFileReader:
         never by the fd number itself (each file read reopens the directory,
         so the same real directory gets a fresh, numerically different fd):
         this is what lets sibling members of a glob share one listing. An
-        entry is trusted only while a fresh stat of ``parent_fd`` still
+        entry is reused only while a fresh stat of ``parent_fd`` still
         matches the directory's identity when it was listed (device, inode,
         and its own ``st_mtime_ns``/``st_ctime_ns``): a directory whose
         content changed since, or whose inode was reused for a different
-        directory, is relisted rather than trusted. ``force_refresh`` relists
+        directory, is relisted. Correctness never rests on this: ``read``
+        verifies any substituted name against the descriptor it opened.
+        ``force_refresh`` relists
         unconditionally (still updating the cache), for a caller that already
         knows a cached candidate let it down.
         """
@@ -389,12 +394,13 @@ class WorkspaceFileReader:
     def _same_object(parent_fd: int, one: str, other: str) -> tuple[int, int] | None:
         """The shared ``(device, inode)`` if a fresh stat of ``one`` and ``other`` agree.
 
-        A stat is a snapshot, not a hold: the name can still be renamed to a
-        different object the instant after this returns. The caller that
-        goes on to open ``other`` must fstat what it actually opened and
-        compare it to the identity returned here before trusting it -- this
-        call only produces the identity to compare against, never a guarantee
-        about what a later open will see.
+        A stat is a snapshot, not a hold: nothing is open, so the object can
+        be replaced the instant after this returns, and on ext4 the
+        replacement can even reuse the freed inode, so the identity returned
+        is no fingerprint to compare a later open against. It only decides
+        whether a cached candidate is worth trying (else the directory is
+        relisted); ``read`` checks what it actually opened with
+        ``_require_names_held`` while holding the descriptor.
         """
 
         try:
@@ -414,19 +420,17 @@ class WorkspaceFileReader:
         """``requested``'s real spelling in ``parent_fd``'s listing, or ``None`` if unplaced.
 
         A case-folding candidate recovered from ``cache`` is returned only
-        once a fresh stat confirms it presently names the same object as
-        ``requested``: a stale listing's candidate is never substituted on
-        its word alone. ``None`` lets the caller relist and retry once
-        before refusing.
+        once a fresh stat finds it naming the same object as ``requested``,
+        so a stale listing's candidate triggers a relist (``None`` lets the
+        caller relist and retry once before refusing) rather than a doomed
+        open.
 
-        The second element is the identity verified for a substituted
-        candidate (``None`` when the exact requested name was used
-        unchanged, since nothing was substituted to verify). The verification
-        here is only a stat, taken before the name is opened: the caller
-        must still fstat what it opens and compare it to this identity
-        before trusting the bytes behind it, or the candidate could be
-        swapped for a different object in the gap between this check and
-        that open.
+        The second element is the identity that stat saw for a substituted
+        candidate (``None`` when the exact requested name was used, or no
+        cache was given). It is a hint, not a guarantee: whenever the name
+        returned differs from ``requested``, ``read`` refuses unless
+        ``requested`` names the descriptor it opened, checked while it is
+        held (``_require_names_held``).
         """
 
         entries, by_name = WorkspaceFileReader._directory_entries(parent_fd, cache=cache)
@@ -466,13 +470,13 @@ class WorkspaceFileReader:
         is never trusted as final: the directory is relisted once and
         ``requested`` resolved again from that fresh result before refusing.
 
-        Returns the resolved name together with the identity verified for it
-        (``None`` when the exact requested name was used unchanged). The
-        verification is a stat taken here, not a hold on the object: the
-        caller must fstat the descriptor it opens for this name and refuse
-        before reading anything from it if that disagrees with a non-``None``
-        identity, since the name can still be swapped in the gap between
-        this resolution and that open.
+        Returns the resolved name together with the identity a stat saw for
+        it (``None`` when the exact requested name was used unchanged). That
+        identity only steers the relist; it is not compared against what is
+        opened, since a freed inode can be reused by a replacement between
+        this stat and the open. A caller that opens a name differing from
+        ``requested`` must check, while holding the descriptor, that
+        ``requested`` still names it (``_require_names_held``).
         """
 
         resolved = WorkspaceFileReader._resolve_component(parent_fd, requested, cache)
@@ -482,6 +486,32 @@ class WorkspaceFileReader:
         if resolved is None:
             raise WorkspaceFileReadRefused("missing", "workspace source is unavailable")
         return resolved
+
+    @staticmethod
+    def _require_names_held(parent_fd: int, requested: str, held_fd: int) -> None:
+        """Refuse unless ``requested`` names the object ``held_fd`` holds, right now.
+
+        This is what makes a substituted spelling safe to read: the open
+        went through the directory's real spelling, so the requested one
+        must name the very object opened. The comparison runs while the
+        descriptor is held, so the held object's inode cannot be freed and
+        handed to a replacement (ext4 reuses a freed inode at once): equal
+        ``(device, inode)`` here is the same object, never a look-alike. A
+        requested name that is gone, or names anything else, refuses
+        ``changed_during_read``.
+        """
+
+        held = os.fstat(held_fd)
+        try:
+            named = os.stat(requested, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError as exc:
+            raise WorkspaceFileReadRefused(
+                "changed_during_read", "workspace source changed while it was read"
+            ) from exc
+        if (named.st_dev, named.st_ino) != (held.st_dev, held.st_ino):
+            raise WorkspaceFileReadRefused(
+                "changed_during_read", "workspace source changed while it was read"
+            )
 
     @staticmethod
     def _fd_path(descriptor: int) -> Path:
@@ -525,6 +555,14 @@ class WorkspaceFileReader:
         directory's entries across sibling reads instead of relisting it per
         file; omitted (the default), every call lists its own directory, as
         before.
+
+        Every check that decides what is read runs on a held descriptor:
+        each component is opened no-follow from the root's descriptor, and
+        a component opened under the directory's real spelling instead of
+        the requested one is read or traversed only once the requested
+        spelling is confirmed to name that held object. A write that lands
+        before the open is an ordinary earlier write: its bytes are read,
+        and the receipt digests exactly them.
         """
 
         if self.operating_profile == "cloud" and not self.daemon_owned:
@@ -551,7 +589,7 @@ class WorkspaceFileReader:
             root_real = self._fd_path(descriptors[0])
             self._check_managed_root(root_real)
             for component in parts[:-1]:
-                actual, verified_identity = self._actual_component(
+                actual, _ = self._actual_component(
                     descriptors[-1], component, cache=directory_cache
                 )
                 before = os.stat(actual, dir_fd=descriptors[-1], follow_symlinks=False)
@@ -564,20 +602,12 @@ class WorkspaceFileReader:
                         "non_regular", "workspace source parent must be a directory"
                     )
                 descriptors.append(os.open(actual, flags_directory, dir_fd=descriptors[-1]))
-                # ``actual`` may have been a case-folding substitution for
-                # ``component`` (D-R41/F3): the stat above that confirmed it
-                # is a directory ran against the same race window the
-                # resolution did, so only the descriptor just opened -- fstat
-                # before it is used for anything -- can be trusted against
-                # the identity verified at resolution time.
-                if verified_identity is not None:
-                    opened_dir = os.fstat(descriptors[-1])
-                    if (opened_dir.st_dev, opened_dir.st_ino) != verified_identity:
-                        raise WorkspaceFileReadRefused(
-                            "changed_during_read",
-                            "workspace source changed while it was read",
-                        )
-            actual_leaf, leaf_identity = self._actual_component(
+                # ``actual`` may be a case-folding substitution for
+                # ``component`` (D-R41/F3): before traversing into it, the
+                # requested spelling must name the directory just opened.
+                if actual != component:
+                    self._require_names_held(descriptors[-2], component, descriptors[-1])
+            actual_leaf, _ = self._actual_component(
                 descriptors[-1], parts[-1], cache=directory_cache
             )
             before = os.stat(actual_leaf, dir_fd=descriptors[-1], follow_symlinks=False)
@@ -586,15 +616,10 @@ class WorkspaceFileReader:
                     "symlink", "workspace source may not be a symbolic link"
                 )
             descriptors.append(os.open(actual_leaf, flags_file, dir_fd=descriptors[-1]))
+            # Same for the leaf, before any byte of it is read.
+            if actual_leaf != parts[-1]:
+                self._require_names_held(descriptors[-2], parts[-1], descriptors[-1])
             opened = os.fstat(descriptors[-1])
-            # Same race as above, for the leaf: a candidate substituted for
-            # ``parts[-1]`` could have been swapped between the stat that
-            # verified it and this open, so the opened descriptor's own
-            # identity is what is checked, before any byte of it is read.
-            if leaf_identity is not None and (opened.st_dev, opened.st_ino) != leaf_identity:
-                raise WorkspaceFileReadRefused(
-                    "changed_during_read", "workspace source changed while it was read"
-                )
             if not stat.S_ISREG(opened.st_mode):
                 raise WorkspaceFileReadRefused(
                     "non_regular", "workspace source must be a regular file"
