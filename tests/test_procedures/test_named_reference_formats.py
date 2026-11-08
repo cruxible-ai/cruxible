@@ -310,8 +310,8 @@ def test_sdk_root_record_constructor_accepts_a_named_owner_contract():
     # constructor read off the wrong root has the wrong schema and refuses the
     # other direction's field.
     contracts = (
-        boundary_contract("empty-input", {"status": "string"}),
-        boundary_contract("claim-rows", {"row_count": "int"}),
+        boundary_contract("named-owner.input", {"status": "string"}),
+        boundary_contract("named-owner.output", {"row_count": "int"}),
     )
     from tests.support.procedures import contract_pin, named, procedure_definition
 

@@ -478,9 +478,19 @@ def test_acceptance_refuses_nested_noncanonical_number_defaults(tmp_path):
     from cruxible_client.contracts.shapes import contract_ref_for_identity
     from tests.support.procedures import boundary_contract, contract_resolver
 
-    inner = boundary_contract("test.numbers", {"n": "number"})
-    params = boundary_contract("test.limited.params", {"limit": "test.numbers@1"}, inner)
+    inner = boundary_contract("nested-number-defaults.number", {"n": "number"})
+    params = boundary_contract(
+        "nested-number-defaults.params", {"limit": "nested-number-defaults.number@1"}, inner
+    )
     definition = ProcedureDefinition.model_validate(lower_procedure_spec(_spec()).definition)
+    assert definition.parameter_contract is not None
+    definition = definition.model_copy(
+        update={
+            "parameter_contract": definition.parameter_contract.model_copy(
+                update={"target": params.identity}
+            )
+        }
+    )
     resolve = contract_resolver(inner, params)
     assert resolve(contract_ref_for_identity(definition.parameter_contract.target)) == params
     invalid = definition.model_copy(update={"parameter_defaults": {"limit": {"n": "0.50"}}})

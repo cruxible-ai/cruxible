@@ -26,7 +26,7 @@ def _kev_listed_from(effective_from: str) -> tuple[Any, Any]:
     from tests.support.procedures import boundary_contract
     from tests.test_pilot.support import KEV_FIELDS
 
-    rows = boundary_contract("security.kev-entry", {**KEV_FIELDS, "listed_from": "datetime?"})
+    rows = boundary_contract("kev-listed-from.row", {**KEV_FIELDS, "listed_from": "datetime?"})
     data = kev_spec().model_dump(mode="python", by_alias=True)
     extract, claims = data["steps"][2], data["steps"][3]
     extract["row"] = rows.ref.spelling
