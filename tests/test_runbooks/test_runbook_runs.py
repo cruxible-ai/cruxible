@@ -166,6 +166,14 @@ def _overhead(tmp_path: Path, steps: int, monkeypatch: pytest.MonkeyPatch) -> Co
     tmp_path.mkdir(parents=True)
     instance, root = runbook_world(tmp_path)
     author_runbook(instance, "test.rb", [{"line": SETTLE}] * steps)
+    # Setup's own writes each fire a background workspace-advertisement
+    # (``advertise_workspace``, fire-and-forget) that reads the accepted
+    # coordinate on its own thread. Drain it before opening the counted
+    # window: on a slower or busier host it can still be running once the
+    # monkeypatches below are in place, and its reads would be counted as
+    # this run's own overhead, making the measurement flaky rather than
+    # reflecting what the run itself does.
+    instance.settled_workspace_advertisement()
     counts: Counter[str] = Counter()
     real_open = DisposableState.open
     real_coordinate = type(instance).accepted_coordinate
