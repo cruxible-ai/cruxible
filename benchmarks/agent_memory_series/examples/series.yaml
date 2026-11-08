@@ -1,0 +1,44 @@
+version: 1
+name: security-memory-series
+# Slot intentionally unfilled. Supply a local fixture Git URL/path and an exact
+# 40- or 64-hex base commit before a scripted dry run. Choose the real target later.
+target: null
+model: maintainer-selects-one-model-for-all-arms
+budget:
+  max_tokens: 20000
+  max_turns: 50
+  max_seconds: 900
+repetitions: 1  # Fixture default; choose measured repetitions before a live run.
+arms:
+  - id: A
+    method: cloudflare-skill
+    skill: {name: cloudflare-security-audit, version: SUPPLY-PIN}
+    memory_paths: [findings.json, reports]
+  - id: B
+    method: cruxible-security-kit
+    plugin: {name: cruxible, version: SUPPLY-SHIPPED-PLUGIN-PIN}
+    kit: {name: security, version: SUPPLY-KIT-PIN}
+    memory_paths: [.cruxible]
+  # Optional C uses the same shipped plugin, no kit, no extra audit skills.
+  # - id: C
+  #   method: cruxible-no-kit
+  #   plugin: {name: cruxible, version: SUPPLY-SHIPPED-PLUGIN-PIN}
+  #   memory_paths: [.cruxible]
+sessions:
+  - id: baseline
+    description: Audit the initial repository snapshot.
+    changes: []
+  - id: fix
+    description: Apply the predefined fix; reassess what depends on the changed code.
+    changes:
+      - kind: patch
+        description: Apply the predefined target fix.
+        path: fixture-fix.patch  # Supply the target-specific, frozen patch.
+  - id: revert
+    description: Revert the fix and reassess the earlier judgment.
+    changes:
+      - kind: command
+        description: Restore the target file to the pinned base.
+        argv: [git, checkout, HEAD, --, app.py]
+        timeout_seconds: 30
+questions_file: questions.yaml
