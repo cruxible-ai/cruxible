@@ -446,9 +446,12 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
         _owned_pin,
     )
 
-    ci = _owned_contract("input", {"account": "string"})
-    co = _owned_contract("output", {"ok": "bool"})
-    cp = _owned_contract("params", {"a": "int", "b": "int"})
+    # Namespaced: the fixture Contract registry is process-wide and first
+    # declaration wins, so a bare "input"/"output" would rebind every later
+    # fixture that pins those shared names (and change its run identity).
+    ci = _owned_contract("daily-summary.input", {"account": "string"})
+    co = _owned_contract("daily-summary.output", {"ok": "bool"})
+    cp = _owned_contract("daily-summary.params", {"a": "int", "b": "int"})
     pp = _owned_pin("contract-params", cp)
     pi, po = _owned_pin("contract-in", ci), _owned_pin("contract-out", co)
     artifact = _owned_accepted(
