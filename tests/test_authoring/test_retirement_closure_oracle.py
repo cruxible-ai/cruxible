@@ -61,9 +61,6 @@ from tests.test_claims.test_claim_retirement import _accept_historical_derivatio
 pytestmark = pytest.mark.executor_only
 
 SEEDS = int(os.environ.get("CRUXIBLE_RETIREMENT_ORACLE_SEEDS", "100"))
-#: What the seeds lowered to (refusal codes, or "lowered"), and each lowering's retirements.
-OUTCOMES: Counter[str] = Counter()
-RETIRED: list[int] = []
 REASONS = ("was-rescinded", "was-wrong", "superseded")
 
 
@@ -291,6 +288,15 @@ def _dependents(required: list[dict[str, Any]], reason: str) -> tuple[ClaimRetir
 def test_batched_retirement_closures_lower_as_per_member_inventories(
     world: _World, seed: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _exercise_seed(world, seed, monkeypatch, _Batched)
+
+
+def _exercise_seed(
+    world: _World,
+    seed: int,
+    monkeypatch: pytest.MonkeyPatch,
+    closures: type[_Batched],
+) -> tuple[str, int | None]:
     rng = random.Random(seed)
     creates = [
         _derived(world.template, f"n{seed}-{index}", rng.sample(world.claims, rng.randint(1, 3)))
@@ -352,27 +358,42 @@ def test_batched_retirement_closures_lower_as_per_member_inventories(
         )
     final = intent.model_copy(update={"payload": payload()})
     expected = _outcome(world, final, _PerMemberClosures, monkeypatch)
-    batched = _outcome(world, final, _Batched, monkeypatch)
+    batched = _outcome(world, final, closures, monkeypatch)
     assert batched == expected, (seed, expected[:2], batched[:2])
-    OUTCOMES[expected[1] if expected[0] == "refused" else "lowered"] += 1
     if expected[0] == "lowered":
         retired = [
             path
             for path, content in expected[4]
             if path.startswith("claims/") and parse_claim(content, path=path).retirement
         ]
-        RETIRED.append(len(retired))
+        return "lowered", len(retired)
+    return expected[1], None
 
 
-def test_the_seeds_exercised_the_batched_walk(world: _World) -> None:
-    """Runs after the seeds: most members were answered from one overlay per change."""
+def test_the_seeds_exercised_the_batched_walk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Own world, seeds and counters: works alone or on any xdist worker."""
 
-    print(dict(OUTCOMES), sorted(RETIRED))
+    class Coverage(_Batched):
+        walked = 0
+        lowerings_walked = 0
+
+    world = _World(tmp_path)
+    outcomes: Counter[str] = Counter()
+    retired: list[int] = []
+    coverage_seeds = 32
+    for seed in range(coverage_seeds):
+        outcome, count = _exercise_seed(world, seed, monkeypatch, Coverage)
+        outcomes[outcome] += 1
+        if count is not None:
+            retired.append(count)
+    print(dict(outcomes), sorted(retired))
     assert {
         "lowered",
         "cruxible.authoring.claim_terminal",
         "cruxible.authoring.claim_retirement_closure_incomplete",
-    } <= set(OUTCOMES), OUTCOMES
-    assert max(RETIRED) >= 8, RETIRED
-    assert _Batched.lowerings_walked >= SEEDS // 2, _Batched.lowerings_walked
-    assert _Batched.walked >= 2 * SEEDS, _Batched.walked
+    } <= set(outcomes), outcomes
+    assert max(retired) >= 8, retired
+    assert Coverage.lowerings_walked >= coverage_seeds // 2, Coverage.lowerings_walked
+    assert Coverage.walked >= 2 * coverage_seeds, Coverage.walked
