@@ -11,12 +11,14 @@ from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
     DocumentShell,
+    document_digest,
 )
 from cruxible_client.contracts.errors import (
     ApprovalIntegrityError,
     CasError,
     DocumentNotFoundError,
     FormatError,
+    ProposalStale,
     SettlementIntegrityError,
 )
 from cruxible_client.contracts.get_reads import GetRequest
@@ -342,3 +344,67 @@ def test_service_owner_rotation_and_recovery_require_lifecycle_actor_key_binding
             signer_id="recovery",
             access=BodyAccessContext(principal_id="recovery"),
         )
+
+
+def test_two_document_revisions_from_one_accepted_version_conflict(tmp_path):
+    instance, owner, reviewer = _instance(tmp_path)
+
+    def approve(proposal):
+        candidate = proposal.candidate
+        assert candidate is not None
+        signed = _sign(
+            reviewer, candidate.candidate_digest, candidate.candidate.parent_semantic_root
+        )
+        service_submit_playbill_approval(
+            instance,
+            proposal_id=proposal.admission.proposal_id,
+            attestation=signed.attestation,
+            authenticated_submitter="reviewer",
+        )
+
+    initial = _shell(instance.store_document_body(b"original").digest)
+    proposed = service_propose_playbill_document(
+        instance, shell=initial, actor_id="owner", proposal_name="initial", timestamp=TIMESTAMP
+    ).proposal
+    approve(proposed)
+    service_activate_playbill_proposal(
+        instance, proposal_id=proposed.admission.proposal_id, activated_by="owner"
+    )
+    base = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    proposals = []
+    for name in ("first", "second"):
+        revised = initial.model_copy(
+            update={
+                "body_digest": instance.store_document_body(name.encode()).digest,
+                "predecessor_digest": document_digest(initial).tagged,
+                "lifecycle": DocumentLifecycle(revision=2),
+            }
+        )
+        proposal = service_propose_playbill_document(
+            instance,
+            shell=revised,
+            actor_id="owner",
+            proposal_name=name,
+            timestamp=TIMESTAMP,
+            base=base,
+        ).proposal
+        approve(proposal)
+        proposals.append(proposal)
+    first, second = proposals
+    service_activate_playbill_proposal(
+        instance, proposal_id=first.admission.proposal_id, activated_by="owner"
+    )
+    accepted = instance.accepted_coordinate()
+    with pytest.raises(ProposalStale):
+        service_activate_playbill_proposal(
+            instance, proposal_id=second.admission.proposal_id, activated_by="owner"
+        )
+    assert instance.accepted_coordinate() == accepted
+    body = service_dereference_playbill_document(
+        instance,
+        identity="document:design",
+        access=BodyAccessContext(principal_id="owner", can_read_body=True),
+    )
+    assert base64.b64decode(body.content_base64) == b"first"
+    history = service_playbill_document_history(instance, identity="document:design")
+    assert [entry.revision for entry in history.entries] == [1, 2]
