@@ -489,12 +489,11 @@ missed occurrences, and `line dispatch` runs them later.
 ## Automation that comes with a kit
 
 A kit carries definitions, including Procedures, but installing one never
-starts automation. By convention, a kit's automation ships as an inert
-example change set that you adopt deliberately: copy it, change the Line
-names, sources, schedules and mandate expiry to yours, submit it, review it,
-and enable each Line. The security kit's `examples/automation.json` is one,
-with a README that explains each choice. Its Lines start at `propose`, and
-its README shows how to graduate the ones that copy verbatim facts.
+starts automation. A kit's automation ships as one automation template, named
+in its manifest, that you adopt deliberately: tailor the Line names, sources,
+schedules and mandate dates, submit it, approve it, then preview and run its
+start Runbook ([Automation that comes with a kit](kits.md#automation-that-comes-with-a-kit)).
+The security kit's is `automation.json`, with `security.start`.
 Upgrading a kit that changes a Procedure brings its Lines back disabled
 (`line_disabled_by_upgrade` in `next`) and its settle mandates back to
 propose, so you consent to the new version and re-grant settling.

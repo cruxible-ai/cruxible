@@ -32,6 +32,7 @@ from cruxible_client.contracts.operational_reads import (
     GetMandateCard,
     GetProcedureRunCard,
     GetResolutionContractCard,
+    GetRunbookCard,
     LiveView,
     RunRow,
 )
@@ -78,6 +79,7 @@ GetRefKind = Literal[
     "procedure_runtime_policy",
     "provider",
     "contract",
+    "runbook",
 ]
 # Verdict problems a row or card carries; derived from the verdict machinery,
 # never re-adjudicated here.
@@ -125,6 +127,7 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "procedure_runtime_policy": ("summary", "history", "proof"),
     "provider": ("summary", "history", "proof"),
     "contract": ("summary", "history", "proof"),
+    "runbook": ("summary", "history", "proof"),
 }
 
 
@@ -682,6 +685,7 @@ GetCard = (
     | GetProcedureRuntimePolicyCard
     | GetProviderCard
     | GetContractCard
+    | GetRunbookCard
 )
 
 

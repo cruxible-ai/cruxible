@@ -89,6 +89,7 @@ from cruxible_core.indexes.query_selection import (
     LIVE_SUBJECT_COUNTS_SQL,
 )
 from cruxible_core.indexes.sql_batch import select_in
+from cruxible_core.indexes.typed_state import RUNBOOK_LIVE_COUNT_SQL
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.service.discovery.activity import ActivityPosition, activity_page
@@ -960,6 +961,17 @@ def service_playbill_orient(
             limit=limit,
             surface=surface,
         )
+    # Runbooks read their index by name, one page at a time, never the vocabulary.
+    if section == "runbooks":
+        return _runbooks_section(
+            instance,
+            base,
+            coordinate=coordinate,
+            served=served,
+            continuation=continuation,
+            limit=limit,
+            surface=surface,
+        )
     # The logical sources read the landing tallies and one seek per source, never the landings.
     if section == "sources":
         return _sources_section(
@@ -1144,6 +1156,8 @@ def service_playbill_orient(
         calls.append(_Call("orient", (("section", "running"),)))
     if counts["lines"]:
         calls.append(_Call("orient", (("section", "lines"),)))
+    if counts["runbooks"]:
+        calls.append(_Call("orient", (("section", "runbooks"),)))
     if next_cursor is not None:
         calls.append(_Call("orient", (("cursor", next_cursor),)))
     live_procedures = sum(item.lifecycle == "live" for item in state.procedures)
@@ -1281,6 +1295,8 @@ def _operational_counts(
 
         counts = {
             "lines": count("SELECT count(*) FROM lines WHERE lifecycle='live'"),
+            # D-R48 F1: the maintained singleton, never a scan of runbooks.
+            "runbooks": count(RUNBOOK_LIVE_COUNT_SQL),
             # The counter Capture inserts and deletes keep, never a count of the Captures.
             "captures": count(CAPTURE_COUNT_SQL),
             "capture_contracts": count(
@@ -1416,6 +1432,46 @@ def _captures_section(
         **base,
         section="captures",
         captures=rows,
+        truncated=next_cursor is not None,
+        next_cursor=next_cursor,
+        next=tuple(render_orient_call(call, surface) for call in calls),
+    )
+
+
+def _runbooks_section(
+    instance: PlaybillInstance,
+    base: dict[str, Any],
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    served: AcceptedCoordinate,
+    continuation: ListContinuation | None,
+    limit: int,
+    surface: OrientSurface,
+) -> OrientResult:
+    """One keyset page of accepted Runbooks by name; each row's latest run is read live."""
+
+    from cruxible_core.service.discovery.runbook_reads import runbook_rows
+
+    after = _keyset_after(continuation)
+    if after is not None and len(after) != 1:
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor is malformed; "
+            "orient again without a cursor"
+        )
+    rows, stop = runbook_rows(
+        instance, coordinate, limit=limit, after=None if after is None else after[0]
+    )
+    next_cursor = (
+        None if stop is None else _keyset_cursor(view="runbooks", served=served, last_key=[stop])
+    )
+    calls = [_Call("get", (("ref", rows[0].runbook),))] if rows else []
+    if next_cursor is not None:
+        calls.append(_Call("orient", (("section", "runbooks"), ("cursor", next_cursor))))
+    return OrientResult(
+        **base,
+        section="runbooks",
+        live=live_view(instance, ("runbooks.last_run", "runbooks.last_run_at")),
+        runbooks=rows,
         truncated=next_cursor is not None,
         next_cursor=next_cursor,
         next=tuple(render_orient_call(call, surface) for call in calls),

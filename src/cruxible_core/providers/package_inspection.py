@@ -3,7 +3,9 @@
 Metadata only: the registration through core's own reader (``package_metadata``),
 the wheel pin and lock through the first-party toolchain. No provider code
 runs. ``kit build`` uses it to record the package, with its operation names,
-in the kit manifest.
+in the kit manifest, and (the automation template check, D-R48 review fix
+round 2, R2) to seed a throwaway instance with exactly this bundled build and
+its operations, never a publisher-local one.
 """
 
 from __future__ import annotations
@@ -23,7 +25,10 @@ from cruxible_core.providers.package_materialization import (
     toolchain,
 )
 from cruxible_core.providers.package_metadata import read_wheel_registration
-from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
+from cruxible_core.providers.package_registration import (
+    ContractDigests,
+    PackageRegistrationDocumentV1,
+)
 
 _REPAIR = RepairOperation(operation="cruxible.kit.build")
 
@@ -40,6 +45,53 @@ class InspectedProviderPackage:
     #: the consumer's closure is whatever the provider index serves.
     pin_key: str | None
     materialization: str | None
+    #: The package's registration, metadata-only (no code runs to read it): its
+    #: full typed operations (name, in/out Contract refs, effect), which
+    #: ``provider`` only names. The kit-build template check (D-R48 fix round
+    #: 2, R2) uses it to seed the throwaway instance with exactly the Provider
+    #: build and operations a bundled package registers -- never a publisher-
+    #: local definition.
+    document: PackageRegistrationDocumentV1
+
+    def build_artifact(
+        self, *, control_domain: str, contracts: ContractDigests
+    ) -> tuple[str, bytes] | None:
+        """This bundled package's Provider artifact (path, bytes), or None.
+
+        None for an index default without a resolved dependency closure
+        (``pin_key``/``materialization``): there is no one build to seed, as a
+        real adopter without a serving build installs from the index instead.
+        Operations are pinned against ``contracts`` (the Contract versions
+        resolvable where this is seeded), exactly as a real install pins them
+        against the consumer's accepted Contracts.
+        """
+
+        if self.pin_key is None or self.materialization is None:
+            return None
+        from cruxible_client.contracts.providers import (
+            ProviderLocalDistributionPin,
+            ProviderLocalEnvBackendPin,
+            provider_path,
+            render_provider,
+        )
+
+        distribution = ProviderLocalDistributionPin(
+            name=self.provider.package,
+            version=self.provider.version,
+            filename=self.provider.wheel.filename,
+            sha256=self.provider.wheel.sha256,
+        )
+        local_env = ProviderLocalEnvBackendPin(
+            lock_sha256=self.provider.lock.sha256,
+            materialization_digests={self.pin_key: self.materialization},
+        )
+        build = self.document.provider_definition(
+            distribution=distribution,
+            local_env=local_env,
+            control_domain=control_domain,
+            operations=self.document.pinned_operations(contracts),
+        )
+        return provider_path(build.identity.name), render_provider(build)
 
 
 def _refuse(code: str, message: str) -> RequestRefusedError:
@@ -120,6 +172,7 @@ def inspect_provider_package(
             provider=_kit_provider(document, pin, locked, dependency_pins),
             pin_key=None,
             materialization=None,
+            document=document,
         )
     with tempfile.TemporaryDirectory(prefix="cruxible-kit-provider-") as temporary:
         root = Path(temporary)
@@ -137,6 +190,7 @@ def inspect_provider_package(
         provider=_kit_provider(document, pin, locked, dependency_pins),
         pin_key=resolved.pin_key,
         materialization=resolved.materialization,
+        document=document,
     )
 
 

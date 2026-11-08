@@ -38,6 +38,7 @@ from cruxible_client.contracts.operational_reads import (
     OrientLine,
     OrientMandate,
     OrientPrediction,
+    OrientRunbook,
     OrientSource,
     RunRow,
     RunStatus,
@@ -57,6 +58,7 @@ OrientSection: TypeAlias = Literal[
     "runs",
     "running",
     "lines",
+    "runbooks",
     "captures",
     "capture_contracts",
     "predictions",
@@ -297,8 +299,8 @@ class OrientClaimCounts(_StrictOrientModel):
 class OrientArtifactCounts(_StrictOrientModel):
     """How many of each family exist; each operational family is its own section.
 
-    ``lines``, ``capture_contracts``, ``resolution_contracts`` and ``mandates``
-    count accepted artifacts, ``captures`` the Captures accepted Claims cite,
+    ``lines``, ``runbooks``, ``capture_contracts``, ``resolution_contracts`` and
+    ``mandates`` count live accepted artifacts, ``captures`` the Captures accepted Claims cite,
     and ``runs`` / ``running`` the Procedure runs admitted and still running.
     """
 
@@ -308,6 +310,7 @@ class OrientArtifactCounts(_StrictOrientModel):
     queries: int = Field(ge=0)
     operations: int = Field(ge=0)
     lines: int = Field(default=0, ge=0)
+    runbooks: int = Field(default=0, ge=0)
     captures: int = Field(default=0, ge=0)
     capture_contracts: int = Field(default=0, ge=0)
     resolution_contracts: int = Field(default=0, ge=0)
@@ -752,7 +755,8 @@ class OrientResult(_StrictOrientModel):
     - ``section``: that section's rows (``documents``, ``procedures``,
       ``claim_types``, ``subject_kinds``, ``queries``, ``operations``, or an
       operational family:
-      ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,
+      ``runs``, ``running``, ``lines``, ``runbooks``, ``captures``,
+      ``capture_contracts``,
       ``predictions``, ``mandates``), the logical sources runs landed
       Captures from (``sources``), the principal registry (``principals``),
       the governed policies in force (``policies``), the accepted generations
@@ -795,6 +799,8 @@ class OrientResult(_StrictOrientModel):
     runs: tuple[RunRow, ...] | None = Field(default=None, exclude_if=_is_none)
     # Accepted Lines, with each arm's state and pending counts at the head.
     lines: tuple[OrientLine, ...] | None = Field(default=None, exclude_if=_is_none)
+    # Accepted Runbooks by name (paged by key), each with its latest run, read live.
+    runbooks: tuple[OrientRunbook, ...] | None = Field(default=None, exclude_if=_is_none)
     # Captures accepted Claims cite, newest observation first (paged by key).
     captures: tuple[OrientCapture, ...] | None = Field(default=None, exclude_if=_is_none)
     capture_contracts: tuple[OrientCaptureContract, ...] | None = Field(

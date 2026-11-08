@@ -356,23 +356,34 @@ approval and otherwise stops at a proposal.
 
 ## Automation that comes with a kit
 
-A kit never carries Lines, Triggers or mandates: what runs on your instance,
-when, and with how much authority is yours to decide. By convention, a kit
-that has automation to suggest ships it as an inert example change set,
-`examples/automation.json`, beside a README that explains each choice.
-Installing the kit doesn't submit it. To adopt it:
+A kit never installs Lines, Triggers or mandates: what runs on your instance,
+when, and with how much authority is yours to decide. A kit that has
+automation to suggest ships it as one **automation template**: a change set of
+Lines, Triggers, mandates and Runbooks, at the path its `cruxible-kit.json`
+names in `automation_template` (the security kit's is `automation.json`).
+`kit add` and an upgrade never install or submit it; `kit add` and `kit pull`
+name it. The kit's build checked that it authors cleanly against the kit's own
+definitions. The template includes a start Runbook naming its Lines in the
+order their reads and writes imply (the security kit's is `security.start`).
 
-1. Copy it into your workspace, and change the Line names, the sources each
-   Line reads, the cron times (UTC), and each mandate's expiry to yours.
-2. Submit it (`cruxible authoring submit automation.json`), review the
-   proposal, and accept it under your approval policy.
-3. Enable each Line you want running (`cruxible line enable NAME`).
+The standard start:
 
-Example automation starts at `propose`, so everything it finds is reviewed
-until you decide otherwise. The kit's README says which Lines can earn
-`settle` and how ([Lines and automation](lines-and-automation.md#earning-settle)).
-The security kit provides an example of Lines over its Procedures, Triggers
-that schedule them, and propose-only mandates adopted in one reviewed change.
+1. **Tailor** the template: the Line names (and the start Runbook's steps with
+   them), the sources each Line reads, the cron times (UTC), and each
+   mandate's `valid_from` and `expires_at`.
+2. **Submit** it (`cruxible authoring submit automation.json`) and **approve**
+   the proposal under your approval policy. A Runbook may name Lines the same
+   change set adds, and a Trigger may aim at a Runbook it adds.
+3. **Preview** the start: `cruxible runbook preview security.start` shows, per
+   step, what it reads and writes, what its mandates settle and what would go
+   to review, and any step that reads what only a later step writes.
+4. **Run** it: `cruxible runbook run security.start`. Steps run in order; a step
+   whose writes go to review stops the run, so approve that proposal and run it
+   again.
+
+Then enable each Line you want running on its schedule (`cruxible line enable
+NAME`). The kit's README says which Lines settle what and why
+([Lines and automation](lines-and-automation.md#earning-settle)).
 
 ## Build a kit
 
@@ -394,6 +405,13 @@ cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ./car-pa
   exported.
 - The manifest records who built the release, on which instance and at which
   accepted coordinate.
+- `--automation-template FILE` names the kit's automation template (it sits at
+  the kit's root under its own file name). The build refuses
+  (`cruxible.kit.automation_template_invalid`, naming the template and its first
+  diagnostic) unless it authors cleanly against this instance's accepted
+  definitions. The check is an authoring preview: nothing is stored. The
+  template travels as one of the kit's files, outside the release's content
+  digest, and is never installed.
 
 ### Bundle your own provider
 

@@ -117,6 +117,7 @@ from cruxible_client.contracts.get_display import (
 )
 from cruxible_client.contracts.kits import (
     KitAddRequest,
+    KitAutomationTemplate,
     KitBuildRequest,
     KitChangeResult,
     KitRemoveRequest,
@@ -1871,6 +1872,14 @@ _KIT_KEEP_TEXT = {
 }
 
 
+def _echo_automation_template(path: str | None) -> None:
+    if path is not None:
+        click.echo(
+            f"automation template: {path} (never installed: tailor it, then "
+            f"cruxible authoring submit {path})"
+        )
+
+
 def _echo_kit_change(result: KitChangeResult) -> None:
     version = "" if result.version is None else f" {result.version}"
     transition = ""
@@ -1924,6 +1933,7 @@ def _echo_kit_change(result: KitChangeResult) -> None:
     for refusal in result.refusals:
         click.echo(refusal.code)
         click.echo(f"Next: {printable(refusal.repair)}")
+    _echo_automation_template(result.automation_template)
     for item in result.plan:
         if (
             result.status in {"would_propose", "would_block"}
@@ -1983,6 +1993,18 @@ def _echo_kit_change(result: KitChangeResult) -> None:
         "that install (install the repository's build first with provider install)."
     ),
 )
+@click.option(
+    "--automation-template",
+    "automation_template",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help=(
+        "The kit's automation template: one change set of Lines, Triggers, Mandates and "
+        "Runbooks, at the kit's root under its own file name. The build refuses unless it "
+        "authors cleanly against this instance's accepted definitions (a preview: nothing "
+        "is stored); kit add never installs or submits it."
+    ),
+)
 @json_option
 @handle_errors
 def build_kit(
@@ -1992,6 +2014,7 @@ def build_kit(
     out: Path,
     providers: tuple[Path, ...],
     default_providers: tuple[Path, ...],
+    automation_template: Path | None,
     output_json: bool,
 ) -> None:
     """Export this instance's owned definitions as one self-contained kit release.
@@ -1999,10 +2022,19 @@ def build_kit(
     Provider packages are named with --provider or --default-provider (the same
     build this instance installed); kit add installs the providers before the
     definitions, a default one only when no installed build already serves
-    every slot the kit's Procedures declare.
+    every slot the kit's Procedures declare. --automation-template names and
+    checks the automation template adopters tailor and submit.
     """
     if out.exists():
         raise click.UsageError(f"{out} already exists")
+    template = (
+        None
+        if automation_template is None
+        else KitAutomationTemplate(
+            path=automation_template.name,
+            content=automation_template.read_text(encoding="utf-8"),
+        )
+    )
 
     def build(client: Any, instance_id: str) -> Any:
         request = KitBuildRequest(
@@ -2017,6 +2049,7 @@ def build_kit(
                 stage_kit_provider_directory(client, instance_id, directory, delivery="index")
                 for directory in default_providers
             ),
+            automation_template=template,
         )
         return client.build_kit(instance_id, request)
 
@@ -2030,6 +2063,7 @@ def build_kit(
             f"{len(bundle.manifest.providers)} provider package(s), "
             f"{bundle.manifest.content_digest}"
         )
+        _echo_automation_template(bundle.manifest.automation_template)
 
 
 @kit_group.command("add")
@@ -2159,10 +2193,18 @@ def pull_kit(reference: str, out: Path, layout: bool, output_json: bool) -> None
         write_layout(image, out, ref=origin)
     else:
         write_kit_directory(bundle, out)
+    template = bundle.manifest.automation_template
     if output_json:
-        _emit_json({"source": origin, "content_digest": bundle.manifest.content_digest})
+        _emit_json(
+            {
+                "source": origin,
+                "content_digest": bundle.manifest.content_digest,
+                **({} if template is None else {"automation_template": template}),
+            }
+        )
     else:
         click.echo(f"{origin}: {len(bundle.artifacts)} artifacts")
+        _echo_automation_template(template)
 
 
 @kit_group.command("status")
@@ -4573,7 +4615,8 @@ def authoring_example_command(
     \b
     Change-set member kind family: claim | claim_type | claim_type_succession |
     claim_retirement | subject | subject_kind | subject_succession |
-    query_definition | procedure_mandate | line | trigger | contract | procedure.
+    query_definition | procedure_mandate | line | trigger | runbook | contract |
+    procedure.
     claim_type, claim_type_succession and
     claim_retirement are member kinds only -- none is a top-level input.
     approval_policy and procedure_runtime_policy are the reverse: the member

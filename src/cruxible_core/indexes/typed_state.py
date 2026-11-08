@@ -394,6 +394,9 @@ SINGLETONS = {
 }
 COMMON_COLUMNS = "identity,kind,format_tag,path,artifact_digest,predecessor_digest,revision"
 
+#: orient's Runbook count (D-R48 F1): the maintained singleton, one primary-key seek.
+RUNBOOK_LIVE_COUNT_SQL = "SELECT amount FROM runbook_live_count WHERE singleton=1"
+
 # Live Claims of one slot (Subject path, predicate, qualifier). ``+lifecycle`` is
 # SQLite's no-op unary plus: it keeps the planner off ``claims_by_lifecycle`` and
 # ``claims_by_predicate`` (a walk of every live Claim, or every live Claim of the
@@ -568,6 +571,62 @@ def schema_sql() -> str:
             # A Runbook preview's generation_accepted cascades: one seek, never a scan.
             "CREATE INDEX triggers_by_schedule ON triggers(schedule_kind,identity) WHERE lifecycle='live'",
             "CREATE INDEX procedure_mandates_by_line ON procedure_mandates(line_identity,line_digest,valid_from_us,identity) WHERE lifecycle='live'",
+            # orient's Runbook count (D-R48 F1): a moved singleton, never a scan
+            # of runbooks. A revision, retirement or retarget replaces a
+            # Runbook's row in place (``replace_rows`` deletes the path's old
+            # row before the new one is inserted), so the count must track
+            # both sides of that replacement, not only inserts.
+            "CREATE TABLE runbook_live_count ("
+            "singleton INTEGER PRIMARY KEY CHECK(singleton=1), amount INTEGER NOT NULL CHECK(amount>0)"
+            ") STRICT",
+            """CREATE TRIGGER runbook_live_count_insert AFTER INSERT ON runbooks
+WHEN NEW.lifecycle='live' BEGIN
+ INSERT INTO runbook_live_count VALUES (1,1) ON CONFLICT(singleton) DO UPDATE SET amount=amount+1;
+END""",
+            # The replaced row's own lifecycle (OLD), not the successor's: a
+            # live Runbook revised, retired or retargeted had counted once and
+            # must uncount once, whatever its replacement turns out to be.
+            # SQLite's CHECK is never deferred, so a decrement that would land
+            # on zero must delete the row instead of writing the forbidden
+            # zero: the delete (amount=1) runs before the update (amount>1),
+            # never the other way round.
+            """CREATE TRIGGER runbook_live_count_delete AFTER DELETE ON runbooks
+WHEN OLD.lifecycle='live' BEGIN
+ DELETE FROM runbook_live_count WHERE singleton=1 AND amount=1;
+ UPDATE runbook_live_count SET amount=amount-1 WHERE singleton=1 AND amount>1;
+END""",
+            # A Line or Runbook card's aimed-Trigger total and schedule kinds
+            # (D-R48 F2): per (target_kind,target,schedule_kind), how many live
+            # Triggers aim there. A revision, retirement or retarget replaces a
+            # Trigger's row in place (same mechanism as Runbooks above), so a
+            # retarget must move the count from the old bucket to the new one,
+            # and a retirement must leave no stale bucket behind. The card's
+            # named page is a direct ``triggers_by_target`` seek, never this
+            # table.
+            """CREATE TABLE trigger_aim_counts (
+    target_kind TEXT NOT NULL, target TEXT NOT NULL, schedule_kind TEXT NOT NULL,
+    amount INTEGER NOT NULL CHECK(amount>0),
+    PRIMARY KEY(target_kind,target,schedule_kind)
+) STRICT, WITHOUT ROWID""",
+            """CREATE TRIGGER trigger_aim_count_insert AFTER INSERT ON triggers
+WHEN NEW.lifecycle='live' BEGIN
+ INSERT INTO trigger_aim_counts VALUES (NEW.target_kind,NEW.target,NEW.schedule_kind,1)
+ ON CONFLICT(target_kind,target,schedule_kind) DO UPDATE SET amount=amount+1;
+END""",
+            # The replaced row's own (target_kind,target,schedule_kind) bucket
+            # (OLD), not the successor's: a live Trigger revised, retired or
+            # retargeted had counted once in its old bucket and must uncount
+            # there, whatever bucket its replacement lands in. As above, the
+            # delete (amount=1) runs before the update (amount>1) so the
+            # table never has to hold the CHECK-forbidden zero even
+            # transiently.
+            """CREATE TRIGGER trigger_aim_count_delete AFTER DELETE ON triggers
+WHEN OLD.lifecycle='live' BEGIN
+ DELETE FROM trigger_aim_counts
+ WHERE target_kind=OLD.target_kind AND target=OLD.target AND schedule_kind=OLD.schedule_kind AND amount=1;
+ UPDATE trigger_aim_counts SET amount=amount-1
+ WHERE target_kind=OLD.target_kind AND target=OLD.target AND schedule_kind=OLD.schedule_kind AND amount>1;
+END""",
             """CREATE TABLE promotion_subjects (
             promotion_identity TEXT NOT NULL REFERENCES exhaust_promotions(identity), subject_identity TEXT NOT NULL,
             record_kind TEXT NOT NULL CHECK(record_kind IN ('procedure','line')), result_key TEXT NOT NULL,

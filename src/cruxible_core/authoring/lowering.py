@@ -222,6 +222,7 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_path,
     render_query_definition,
 )
+from cruxible_client.contracts.runbooks import runbook_path
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_client.contracts.shapes import (
     ContractRef,
@@ -5175,6 +5176,7 @@ MEMBER_STAGING_ORDER = (
     "procedure",
     "line",
     "procedure_mandate",
+    "runbook",
     "trigger",
     "claim_retirement",
 )
@@ -5189,6 +5191,11 @@ def _member_stage(member: AuthoringChangeSetMember) -> str:
     order instead -- definitions, then the Claims that read them, then the
     Procedures and mandates that pin those, then the retirements that withdraw
     Claims the same set may just have written.
+
+    A Runbook names Lines and a Trigger may name a Runbook (D-R36): Runbooks
+    stage after the Lines (and their Mandates) and before the Triggers, so an
+    adopted automation template's start Runbook reads the Lines the same set
+    stages, and a Trigger aimed at it reads the Runbook (D-R48).
 
     A ClaimType succession sits between the definitions and the Claims: it
     reads the definitions, and every Claim after it -- the ones it re-authors
@@ -5216,6 +5223,8 @@ def _member_stage(member: AuthoringChangeSetMember) -> str:
         return "procedure_mandate"
     if isinstance(member, LineAuthoringPayload):
         return "line"
+    if isinstance(member, RunbookAuthoringPayload):
+        return "runbook"
     if isinstance(member, TriggerAuthoringPayload):
         return "trigger"
     return "definition"
@@ -5323,6 +5332,8 @@ def _member_primary_path(
         return line_spec_path(member.name)
     if isinstance(member, TriggerAuthoringPayload):
         return trigger_path(member.name)
+    if isinstance(member, RunbookAuthoringPayload):
+        return runbook_path(member.name)
     if isinstance(member, SubjectKindAuthoringPayload):
         return subject_kind_path(member.name)
     if isinstance(member, ContractAuthoringPayload):
@@ -5780,6 +5791,15 @@ def _stage_change_set_member(
             set(),
             {},
         )
+    if isinstance(member, RunbookAuthoringPayload):
+        from cruxible_core.authoring.runbook_lowering import render_runbook_member
+
+        # The staged tree holds every Line this set stages (Runbooks stage after
+        # Lines): one candidate path read per step.
+        runbook_member_path, content, digest = render_runbook_member(member, tree=staged_tree)
+        candidate_tree = fork_tree(staged_tree)
+        candidate_tree[runbook_member_path] = content
+        return candidate_tree, {"artifact_digest": digest}, set(), {}
     if isinstance(member, SubjectKindAuthoringPayload):
         kind_path, content, digest = _render_subject_kind_member(member, tree=staged_tree)
         candidate_tree = fork_tree(staged_tree)

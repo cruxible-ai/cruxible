@@ -600,6 +600,7 @@ AuthoringChangeSetMemberInput: TypeAlias = Annotated[
     | ProcedureMandateInput
     | LineInput
     | TriggerInput
+    | RunbookInput
     | SubjectKindInput
     | ContractInput
     | ProcedureInput,
@@ -902,6 +903,12 @@ def _trigger_payload(value: TriggerInput) -> TriggerAuthoringPayload:
     return TriggerAuthoringPayload.model_validate(value.model_dump(mode="python", exclude={"kind"}))
 
 
+def _runbook_payload(value: RunbookInput) -> RunbookAuthoringPayload:
+    return RunbookAuthoringPayload(
+        name=value.name, description=value.description, steps=value.steps, retire=value.retire
+    )
+
+
 def _subject_creation_payload(value: SubjectInput) -> SubjectCreationAuthoringPayload:
     """The key as given; lowering resolves short names and orders it by the kind's keys."""
 
@@ -1038,6 +1045,8 @@ def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChange
         return _line_payload(member)
     if isinstance(member, TriggerInput):
         return _trigger_payload(member)
+    if isinstance(member, RunbookInput):
+        return _runbook_payload(member)
     if isinstance(member, SubjectKindInput):
         return _subject_kind_payload(member)
     if isinstance(member, ContractInput):
@@ -1100,9 +1109,7 @@ def _lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
     if isinstance(value, TriggerInput):
         return _trigger_payload(value)
     if isinstance(value, RunbookInput):
-        return RunbookAuthoringPayload(
-            name=value.name, description=value.description, steps=value.steps, retire=value.retire
-        )
+        return _runbook_payload(value)
     if isinstance(value, SubjectKindInput):
         return _subject_kind_payload(value)
     if isinstance(value, ContractInput):

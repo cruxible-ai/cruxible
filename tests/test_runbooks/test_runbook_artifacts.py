@@ -365,3 +365,94 @@ def test_the_trigger_law_judges_a_runbook_target() -> None:
     assert [item.code for item in refused.diagnostics] == [
         "cruxible.trigger.target_runbook_unavailable"
     ]
+
+
+# -- one change set: Lines, the Runbook over them, the Trigger aimed at it ----------
+
+
+def test_a_runbook_may_name_lines_staged_in_the_same_change(tmp_path: Path) -> None:
+    """D-R48: an adopted automation template stages its Lines, the start Runbook
+    naming them and a Trigger aimed at that Runbook in ONE change set. Lowering
+    stages Runbooks after Lines and Mandates and before Triggers, so each reads
+    the change's own candidate tree; the acceptance law judges the same tree."""
+
+    from cruxible_client.contracts.authoring.inputs import ChangeSetInput
+    from cruxible_client.contracts.procedures.line_specs import line_spec_path
+    from tests.support.runbooks import author
+
+    instance, _root = runbook_world(tmp_path)
+    changed = author(
+        instance,
+        ChangeSetInput.model_validate(
+            {
+                "kind": "change_set",
+                "members": [
+                    {
+                        "kind": "line",
+                        "name": "test.same-change-line",
+                        "procedure_name": "test.override",
+                        "parameters": {"path": "data/doc.json"},
+                        "max_authority": "observe",
+                    },
+                    {
+                        "kind": "runbook",
+                        "name": "test.start",
+                        "steps": [{"line": "test.same-change-line"}, {"line": SETTLE}],
+                    },
+                    {
+                        "kind": "trigger",
+                        "name": "test.start-daily",
+                        "runbook_name": "test.start",
+                        "schedule": {"kind": "cron", "expression": "0 6 * * *"},
+                    },
+                ],
+            }
+        ),
+        name="same-change",
+    )
+    assert set(changed) == {
+        line_spec_path("test.same-change-line"),
+        runbook_path("test.start"),
+        trigger_path("test.start-daily"),
+    }
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        runbook = projection.typed.source("Runbook:test.start")
+        trigger = projection.typed.source("Trigger:test.start-daily")
+    assert runbook.steps == (_line("test.same-change-line"), _line(SETTLE))
+    assert trigger.runbook == ArtifactIdentity(kind="Runbook", name="test.start")
+
+
+def test_a_runbook_naming_a_line_the_change_does_not_stage_still_refuses(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.authoring.inputs import ChangeSetInput
+    from tests.support.runbooks import author
+
+    instance, _root = runbook_world(tmp_path)
+    base = instance.accepted_coordinate()
+    with pytest.raises(AuthoringLoweringError) as refused:
+        author(
+            instance,
+            ChangeSetInput.model_validate(
+                {
+                    "kind": "change_set",
+                    "members": [
+                        {
+                            "kind": "line",
+                            "name": "test.same-change-line",
+                            "procedure_name": "test.override",
+                            "parameters": {"path": "data/doc.json"},
+                            "max_authority": "observe",
+                        },
+                        {
+                            "kind": "runbook",
+                            "name": "test.start",
+                            "steps": [{"line": "test.not-staged"}],
+                        },
+                    ],
+                }
+            ),
+            name="same-change-missing",
+        )
+    assert refused.value.code == "cruxible.authoring.runbook_line_missing"
+    assert instance.accepted_coordinate() == base

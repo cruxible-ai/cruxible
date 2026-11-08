@@ -347,11 +347,15 @@ def _run(world: Any, name: str, n: int) -> Any:
 def test_fresh_consumer_provisions_the_operation_contract_before_bundled_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_checkout: ProviderCheckout
 ) -> None:
-    """Isolate install prerequisites from the separately blocked slot-Contract export.
+    """Isolate install prerequisites from the kit's own provider-sequencing gap.
 
     A kit may bundle an operation alongside a pure definition. The installer
-    still validates its real input/output Contract before kit definitions land.
-    The original slotted export scenarios below keep their stronger assertions.
+    still validates its real input/output Contract before kit definitions land
+    (a kit's bundled provider installs before the kit's own definitions do, so
+    an operation Contract must already be resolvable there; D-R48 review fix
+    round 3, F1, swept it into the export, but cannot change when a provider
+    install itself runs). The original slotted export scenarios below keep
+    their stronger assertions.
     """
     from cruxible_client.contracts.authoring.inputs import ProcedureInput
     from tests.support.provider_installation import local_call_contract_files
@@ -382,11 +386,14 @@ def test_fresh_consumer_provisions_the_operation_contract_before_bundled_install
         submitted = intent.submit(accept="never")
         publisher.approve(submitted._candidate_status.proposal_id)
         release = _build(publisher, project)
-        # The inline boundaries ship as the Procedure's co-proposed Contracts.
+        # The inline boundaries ship as the Procedure's co-proposed Contracts;
+        # the bundled provider's own operation Contract ships too (D-R48 review
+        # fix round 3, F1), even though this pure Procedure never pins it itself.
         assert set(release.contents()) == {
             "contracts/acme.installation-marker.input/v1.json",
             "contracts/acme.installation-marker.output/v1.json",
             "procedures/acme.installation-marker.json",
+            "contracts/local.increment.value/v1.json",
         }
         assert len(release.manifest.providers) == 1
         before = _tree(consumer)

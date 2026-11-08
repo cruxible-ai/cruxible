@@ -47,6 +47,7 @@ from cruxible_client.contracts.kits import (
     KitChangeResult,
     KitConsequence,
     KitDocumentBody,
+    KitFileBytes,
     KitIdReusedRefusal,
     KitInstalledArtifact,
     KitKeptDivergence,
@@ -65,6 +66,7 @@ from cruxible_client.contracts.kits import (
     kit_artifact_path_allowed,
     kit_content_digest,
     kit_document_body_digests,
+    kit_file_entry,
     kit_lineage_keys,
     kit_receipt_document_id,
     kit_version_key,
@@ -89,6 +91,7 @@ from cruxible_client.contracts.providers import (
 from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair, RepairOperation
 from cruxible_client.contracts.shapes import (
     Contract,
+    contract_path,
     contract_path_for_identity,
     evaluate_contract_law,
 )
@@ -411,15 +414,31 @@ def _staged(instance: PlaybillInstance, digest: str, name: str) -> bytes:
 
 
 def service_build_kit(
-    instance: PlaybillInstance, request: KitBuildRequest, *, principal_id: str | None = None
+    instance: PlaybillInstance,
+    request: KitBuildRequest,
+    *,
+    principal_id: str | None = None,
+    template_actor_id: str | None = None,
 ) -> KitBuildResult:
     """Export owned definitions at the accepted head as one release of ``kit_id``.
 
     The manifest records where it was built (this instance, the accepted
     coordinate, the building principal): claimed, not proven. Each provider
     package named in ``request.providers`` is read from the body store, recorded
-    in the manifest and carried as bytes in the returned bundle.
+    in the manifest and carried as bytes in the returned bundle. The
+    ``automation_template`` is checked as ``template_actor_id``'s authoring
+    preview against exactly this build's exported closure (never this
+    instance's other local definitions; D-R48 fix round F3), the bundled
+    provider packages' own validated builds and operations (review fix round
+    2, R2), and the closure's own Document bodies (review fix round 2, R3),
+    and refuses the build ``cruxible.kit.automation_template_invalid`` (or the
+    underlying typed refusal, e.g. ``cruxible.line.binding_unavailable``)
+    unless it authors cleanly there.
     """
+
+    template = request.automation_template
+    if template is not None and template_actor_id is None:
+        raise DataValidationError("checking an automation template needs an authoring principal")
 
     coordinate = instance.accepted_coordinate()
     tree = instance.immutable_tree_at(coordinate.git_oid)
@@ -461,14 +480,44 @@ def service_build_kit(
         files[inspected.provider.wheel.filename] = wheel
         files[inspected.provider.lock.filename] = lock
         files.update(dependencies)
-    bundle = build_kit(tree, request, provenance=provenance, providers=tuple(packages))
+    bundle = build_kit(
+        tree, request, provenance=provenance, providers=tuple(packages), automation_template=None
+    )
+    # Collected before the template check (R3): a non-genesis Document body in
+    # the closure must already be in the throwaway instance's body store when
+    # the template is checked against it, exactly as a fresh adopter receives
+    # it with the release.
     bodies = sorted(set(bundle.document_body_digests().values()))
-    if bodies:
+    body_bytes = {
+        digest: _staged(instance, digest, f"the Document body {digest}") for digest in bodies
+    }
+    if template is not None:
+        from cruxible_core.service.kit_template import check_automation_template
+
+        assert template_actor_id is not None  # refused above when a template is named
+        check_automation_template(
+            bundle.contents(),
+            template,
+            actor_id=template_actor_id,
+            providers=tuple(packages),
+            document_bodies=body_bytes,
+        )
+        bundle = bundle.model_copy(
+            update={
+                "manifest": bundle.manifest.model_copy(
+                    update={
+                        "automation_template": template.path,
+                        "files": (kit_file_entry(template.path, template.content.encode("utf-8")),),
+                    }
+                ),
+                "files": (KitFileBytes.of(template.path, template.content.encode("utf-8")),),
+            }
+        )
+    if body_bytes:
         bundle = bundle.model_copy(
             update={
                 "document_bodies": tuple(
-                    KitDocumentBody.of(_staged(instance, digest, f"the Document body {digest}"))
-                    for digest in bodies
+                    KitDocumentBody.of(content) for content in body_bytes.values()
                 )
             }
         )
@@ -578,13 +627,15 @@ def build_kit(
     *,
     provenance: KitProvenance | None = None,
     providers: tuple[InspectedProviderPackage, ...] = (),
+    automation_template: tuple[str, bytes] | None = None,
 ) -> KitBundle:
     """Export the owned definitions of one accepted tree as a self-contained release.
 
     Mutable definitions become lineage-free snapshots; their pins move to the
     snapshot digests. Immutable Contract versions retain exact bytes and carry
     their nested closure and predecessor chain. A Provider pin names a bundled
-    package instead.
+    package instead. An ``automation_template`` (its kit path and bytes, already
+    checked) is named in the manifest and carried as the release's kit file.
     """
 
     bundled: dict[str, InspectedProviderPackage] = {}
@@ -619,6 +670,25 @@ def build_kit(
     }
     if not roots:
         raise DataValidationError(f"no live definitions are named under {', '.join(request.owns)}")
+    # A bundled provider is never carried itself (it registers on install), but a
+    # consumer installing it still needs every Contract its operations pin --
+    # input, output and refusal alike -- resolvable, whatever namespace those
+    # Contracts live in. Nothing in the owned tree pins a refusal Contract (only
+    # the Provider artifact does, and a Provider is never walked for
+    # dependencies), so each bundled package's operations are swept in as their
+    # own roots here; their own nested closure (predecessor chain, further pins)
+    # still comes from the ordinary dependency walk below.
+    roots |= {
+        path
+        for package in bundled.values()
+        for operation in package.document.operations
+        for ref in (
+            operation.in_,
+            operation.out,
+            *(refusal.contract for refusal in operation.refusals.values()),
+        )
+        if (path := contract_path(ref.name, ref.version)) in states
+    }
     remap: dict[str, str] = {}
     built: dict[str, bytes] = {}
     for path, pinned in _dependency_order(states, payloads, within=roots):
@@ -648,10 +718,17 @@ def build_kit(
         ),
         providers=tuple(bundled[name].provider for name in sorted(bundled)),
         provenance=provenance,
+        files=()
+        if automation_template is None
+        else (kit_file_entry(automation_template[0], automation_template[1]),),
+        automation_template=None if automation_template is None else automation_template[0],
     )
     return KitBundle(
         manifest=manifest,
         artifacts=tuple(KitArtifactBytes.of(path, built[path]) for path in sorted(built)),
+        files=()
+        if automation_template is None
+        else (KitFileBytes.of(automation_template[0], automation_template[1]),),
     )
 
 
@@ -1893,6 +1970,10 @@ def service_add_kit(
             install_provider=install_provider,
         )
         previewing = mode.previewing
+    template = request.bundle.manifest.automation_template
+    if template is not None:
+        # Named, never installed: the adopter tailors and submits it (D-R48).
+        result = result.model_copy(update={"automation_template": template})
     if previewing or kit_resume.resuming():
         return result
     if result.status == "awaiting_providers":
