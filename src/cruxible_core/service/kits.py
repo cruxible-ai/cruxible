@@ -91,6 +91,7 @@ from cruxible_client.contracts.providers import (
 from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair, RepairOperation
 from cruxible_client.contracts.shapes import (
     Contract,
+    contract_path,
     contract_path_for_identity,
     evaluate_contract_law,
 )
@@ -669,6 +670,25 @@ def build_kit(
     }
     if not roots:
         raise DataValidationError(f"no live definitions are named under {', '.join(request.owns)}")
+    # A bundled provider is never carried itself (it registers on install), but a
+    # consumer installing it still needs every Contract its operations pin --
+    # input, output and refusal alike -- resolvable, whatever namespace those
+    # Contracts live in. Nothing in the owned tree pins a refusal Contract (only
+    # the Provider artifact does, and a Provider is never walked for
+    # dependencies), so each bundled package's operations are swept in as their
+    # own roots here; their own nested closure (predecessor chain, further pins)
+    # still comes from the ordinary dependency walk below.
+    roots |= {
+        path
+        for package in bundled.values()
+        for operation in package.document.operations
+        for ref in (
+            operation.in_,
+            operation.out,
+            *(refusal.contract for refusal in operation.refusals.values()),
+        )
+        if (path := contract_path(ref.name, ref.version)) in states
+    }
     remap: dict[str, str] = {}
     built: dict[str, bytes] = {}
     for path, pinned in _dependency_order(states, payloads, within=roots):

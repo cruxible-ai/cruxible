@@ -17,6 +17,14 @@ LOCAL_CALL_VALUE = {"name": "local.increment.value", "version": 1, "fields": {"n
 LOCAL_CALL_IN = "local.increment.value@1"
 LOCAL_CALL_OUT = "local.increment.value@1"
 
+#: A REFUSAL Contract an operation's own registration pins (``build_local_call``'s
+#: ``refusal=``), never a Procedure slot's in/out: outside every namespace a
+#: ``local.increment`` consumer owns, to exercise D-R48 review fix round 3, F1
+#: (``build_kit`` must sweep a bundled package's refusal Contracts too, whatever
+#: namespace they live in, since nothing else pins them into the owned closure).
+OTHER_DECLINED_VALUE = {"name": "other.declined", "version": 1, "fields": {}}
+OTHER_DECLINED_REF = "other.declined@1"
+
 
 def local_call_contract_files() -> dict[str, bytes]:
     """The accepted-tree member of ``local.increment``'s Contract."""
@@ -24,6 +32,15 @@ def local_call_contract_files() -> dict[str, bytes]:
     from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
 
     contract = Contract.model_validate(LOCAL_CALL_VALUE)
+    return {contract_path(contract.name, contract.version): render_contract(contract)}
+
+
+def other_declined_contract_files() -> dict[str, bytes]:
+    """The accepted-tree member of ``other.declined``'s Contract (``OTHER_DECLINED_REF``)."""
+
+    from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
+
+    contract = Contract.model_validate(OTHER_DECLINED_VALUE)
     return {contract_path(contract.name, contract.version): render_contract(contract)}
 
 
@@ -122,12 +139,16 @@ def build_local_call(
     backends: tuple[str, ...] = ("local_env",),
     operations: tuple[str, ...] = ("local.increment",),
     runtime_requirements: tuple[dict[str, Any], ...] = (),
+    refusal: str | None = None,
 ) -> tuple[Path, Path]:
     """A provider runtime protocol 2.0 package: registration and manifest schema 2.
 
     One entrypoint, ``local_call.operation:Increment``, serves every name in
     ``operations``; the wheel's ``cruxible.providers`` entry points are one per
-    operation, valued by that entrypoint.
+    operation, valued by that entrypoint. ``refusal`` (a ``name@N`` Contract
+    ref) declares one typed refusal code (``declined``) on every operation,
+    for a package that pins a REFUSAL Contract never a plain in/out slot pins
+    (D-R48 review fix round 3, F1): a kit-build regression exercising it.
     """
 
     module_name = "local_call"
@@ -204,6 +225,9 @@ class Increment:
                     "out": LOCAL_CALL_OUT,
                     "effect": "pure",
                     "entrypoint": entrypoint,
+                    **(
+                        {} if refusal is None else {"refusals": {"declined": {"contract": refusal}}}
+                    ),
                 }
                 for operation in sorted(operations)
             ],

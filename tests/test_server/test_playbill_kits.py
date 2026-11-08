@@ -1905,14 +1905,20 @@ def test_a_template_naming_a_publisher_local_line_the_kit_does_not_export_refuse
 
 
 def _bundled_local_call_provider(
-    tmp_path: Path, instance: typing.Any, checkout: typing.Any, *, name: str = "kit-call"
+    tmp_path: Path,
+    instance: typing.Any,
+    checkout: typing.Any,
+    *,
+    name: str = "kit-call",
+    refusal: str | None = None,
 ) -> typing.Any:
     """A real wheel for ``name``'s ``local.increment`` operation, staged for ``KitBuildRequest``.
 
-    No refusal Contracts: ``build_local_call``'s registration declares none,
-    so this exercises the Provider-seeding path (D-R48 review fix round 2, R2)
-    on its own, apart from the separate (and already-known) gap that a
-    Provider's REFUSAL Contracts are never swept into a kit's exported closure.
+    ``refusal`` (a ``name@N`` Contract ref), when given, is declared on every
+    operation the package registers (D-R48 review fix round 3, F1): the one
+    kind of Contract a bundled operation pins that nothing else in the owned
+    tree ever pins (only the Provider's own registration does), so a kit's
+    export must sweep it on its own.
     """
 
     import hashlib
@@ -1921,7 +1927,7 @@ def _bundled_local_call_provider(
     from cruxible_client.contracts.provider_installation import ProviderWheelObject
     from tests.support.provider_installation import build_local_call
 
-    wheel, lock = build_local_call(tmp_path, checkout.repository, name=name)
+    wheel, lock = build_local_call(tmp_path, checkout.repository, name=name, refusal=refusal)
     runtime = next(checkout.wheels.glob("cruxible_provider_runtime-*.whl"))
 
     def staged_digest(path: Path) -> str:
@@ -2019,6 +2025,131 @@ def test_a_template_binding_a_bundled_provider_operation_builds(
 
     assert bundle.manifest.automation_template == "automation.json"
     assert instance.accepted_coordinate() == head
+
+
+def test_a_bundled_providers_refusal_contract_outside_owns_builds_and_installs(
+    worlds: tuple[_World, _World], tmp_path: Path, provider_checkout: typing.Any
+) -> None:
+    """D-R48 review fix round 3, F1: ``build_kit`` sweeps a bundled package's
+    complete operation Contract closure -- input, output AND refusal -- into
+    the export, whatever namespace those Contracts live in, never only the
+    ``owns`` prefix's own dependency closure.
+
+    ``other.declined`` is outside ``acme.`` (the kit's only owned prefix,
+    never widened here): nothing but the Provider's own registration pins
+    it, so before this fix the kit would not export it at all and the build
+    would refuse ``cruxible.kit.automation_template_invalid`` /
+    ``cruxible.provider.operation_contract_unresolved``. A fresh consumer
+    pre-accepts both the operation's Contracts (exactly as every other
+    bundled-provider test in this suite does: a kit's bundled provider
+    installs before the kit's own definitions land, so an operation Contract
+    must already be resolvable there, a separate and already-known
+    sequencing gap, not this fix round's scope) before installing the kit,
+    which then must carry the refusal Contract through to the installed
+    tree.
+    """
+
+    from cruxible_client.contracts.authoring.inputs import ProcedureInput
+    from cruxible_client.contracts.procedures.authored import CallStep
+    from tests.core_support._identity_support import accept_tree
+    from tests.support.procedures import procedure_limits, procedure_spec
+    from tests.support.provider_installation import (
+        LOCAL_CALL_IN,
+        LOCAL_CALL_OUT,
+        OTHER_DECLINED_REF,
+        local_call_contract_files,
+        other_declined_contract_files,
+    )
+
+    publisher, consumer = worlds
+    instance = get_playbill_manager().get(publisher.instance_id)
+    accept_tree(
+        instance, local_call_contract_files(), name="local-call-contract", actor_id="operator"
+    )
+    accept_tree(
+        instance,
+        other_declined_contract_files(),
+        name="other-declined-contract",
+        actor_id="operator",
+    )
+    _author_as(
+        instance,
+        ProcedureInput(
+            kind="procedure",
+            spec=procedure_spec(
+                procedure="acme.increment",
+                params={"n": "int"},
+                output={"n": "int"},
+                slots={"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
+                steps=[
+                    CallStep(
+                        call="result",
+                        slot="increment",
+                        input={"n": {"$ref": "param", "path": ["n"]}},
+                    )
+                ],
+                returns="result",
+                hard_caps=procedure_limits(wall_clock="PT30S", provider_calls=1),
+            ),
+        ),
+        actor_id="operator",
+        name="acme-increment-procedure",
+    )
+    provider = _bundled_local_call_provider(
+        tmp_path, instance, provider_checkout, refusal=OTHER_DECLINED_REF
+    )
+    head = instance.accepted_coordinate()
+
+    result = playbill_api.playbill_kit_build(
+        publisher.instance_id,
+        KitBuildRequest(
+            kit_id="acme",
+            version="1.0.0",
+            owns=("acme.",),  # never widened to include "other."
+            providers=(provider,),
+        ),
+    )
+    bundle = result.bundle
+    assert instance.accepted_coordinate() == head
+    assert bundle.manifest.owns == ("acme.",)
+    refusal_path = "contracts/other.declined/v1.json"
+    assert refusal_path in bundle.contents(), (
+        "the bundled provider's refusal Contract must be swept into the export "
+        "even though it is outside every owned prefix"
+    )
+
+    # A fresh consumer: the provider's own operation Contracts (in, out and
+    # refusal alike) must already be resolvable before the provider installs
+    # (a kit's bundled provider installs before the kit's own definitions
+    # land). Pre-accepting them here mirrors every other bundled-provider
+    # test in this suite; it is not something this fix changes.
+    consumer_instance = get_playbill_manager().get(consumer.instance_id)
+    accept_tree(
+        consumer_instance,
+        local_call_contract_files(),
+        name="local-call-contract",
+        actor_id="operator",
+    )
+    accept_tree(
+        consumer_instance,
+        other_declined_contract_files(),
+        name="other-declined-contract",
+        actor_id="operator",
+    )
+    for item in bundle.provider_files:
+        consumer_instance.body_store().store(item.content)
+    staged = bundle.model_copy(update={"provider_files": ()})
+
+    added = consumer.add(staged)
+    assert added.status == "accepted", added
+
+    tree = consumer.tree()
+    assert refusal_path in tree, (
+        "the kit's own definitions must carry the refusal Contract to the "
+        "installed tree, as a carried dependency (never owned, never widened "
+        "into owns)"
+    )
+    assert any(path.startswith("providers/kit-call/") for path in tree)
 
 
 def test_a_template_binding_a_publisher_local_provider_not_in_the_bundle_refuses(
