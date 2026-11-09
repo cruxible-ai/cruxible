@@ -1,42 +1,37 @@
-"""Rubric grading and a round-trip manual sheet, with optional arm blinding."""
+"""Per-session review sheets for the maintainer's eye test, with optional arm blinding.
+
+No rubric: each answer gets free-text notes and three fault flags
+(stale_as_current, wrong, missing), plus needs_validation_with_blocker, a
+valid answer that names what is unverified and what blocks verifying it.
+"""
 
 from __future__ import annotations
 
 import csv
+from collections import defaultdict
 from pathlib import Path
-from typing import Protocol
 
-from .config import Question, digest
-from .results import CriterionResult, Grade, Record, WrongMoves
+from .config import digest
+from .results import Record, Review
 
-
-class Grader(Protocol):
-    name: str
-
-    def grade(self, question: Question, session_index: int, answer: str) -> Grade: ...
-
-
-class ManualGrader:
-    name = "manual_pending"
-
-    def grade(self, question: Question, session_index: int, answer: str) -> Grade:
-        return Grade(
-            criteria=tuple(CriterionResult(criterion_id=c.id) for c in question.criteria),
-            grader=self.name,
-        )
-
-
-class ModelGraderStub:
-    """A model grader must return the same typed per-criterion contract.
-
-    The interface deliberately receives no arm, plugin configuration, cost or
-    memory size. Implement model transport/usage capture before using it.
-    """
-
-    name = "model_grader_stub"
-
-    def grade(self, question: Question, session_index: int, answer: str) -> Grade:
-        raise NotImplementedError("Implement a model grader; no model grading has been performed")
+COLUMNS = [
+    "response_id",
+    "arm",
+    "repetition",
+    "session_index",
+    "kind",
+    "question_id",
+    "question_kind",
+    "prompt",
+    "reviewer_context",
+    "answer",
+    "stale_as_current",
+    "wrong",
+    "missing",
+    "needs_validation_with_blocker",
+    "notes",
+]
+FLAGS = ("stale_as_current", "wrong", "missing", "needs_validation_with_blocker")
 
 
 def _blind_id(record: Record) -> str:
@@ -46,80 +41,14 @@ def _blind_id(record: Record) -> str:
             "prompt": record.prompt,
             "answer": record.output,
             "source": record.source.digest,
-            "rubric": None if record.question is None else record.question.model_dump(mode="json"),
         }
     ).removeprefix("sha256:")[:24]
 
 
-def export_sheet(records: list[Record], path: Path, *, blind: bool = True) -> None:
-    """One row per criterion, plus one wrong-moves row for each audit session."""
-    columns = [
-        "response_id",
-        "arm",
-        "repetition",
-        "session_index",
-        "kind",
-        "question_id",
-        "question_kind",
-        "prompt",
-        "answer",
-        "criterion_id",
-        "criterion",
-        "expected",
-        "passed",
-        "stale_answer_as_current",
-        "lost_finding",
-        "notes",
-    ]
-    rows = []
-    for record in records:
-        if record.kind == "setup":
-            continue
-        question = record.question
-        criteria = question.criteria if question is not None else (None,)
-        for criterion in criteria:
-            current = (
-                next(
-                    (
-                        c
-                        for c in record.grade.criteria
-                        if criterion and c.criterion_id == criterion.id
-                    ),
-                    None,
-                )
-                if record.grade
-                else None
-            )
-            rows.append(
-                {
-                    "response_id": _blind_id(record),
-                    "arm": "" if blind else record.arm,
-                    "repetition": record.repetition,
-                    "session_index": record.session_index,
-                    "kind": record.kind,
-                    "question_id": question.id if question else "",
-                    "question_kind": question.kind if question else "",
-                    "prompt": record.prompt,
-                    "answer": record.output,
-                    "criterion_id": criterion.id if criterion else "",
-                    "criterion": criterion.description
-                    if criterion
-                    else "Audit-session wrong moves",
-                    "expected": criterion.expected_by_session.get(record.session_index, "")
-                    if criterion
-                    else "",
-                    "passed": _cell(None if current is None else current.passed),
-                    "stale_answer_as_current": _cell(record.wrong_moves.stale_answer_as_current),
-                    "lost_finding": _cell(record.wrong_moves.lost_finding),
-                    "notes": "" if current is None else current.notes,
-                }
-            )
-    # Stable mixing avoids presenting all A answers followed by all B answers.
-    rows.sort(key=lambda row: (row["response_id"], row["criterion_id"]))
-    with path.open("x", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=columns)
-        writer.writeheader()
-        writer.writerows(rows)
+def _context(record: Record) -> str:
+    if record.question is None:
+        return ""
+    return record.question.reviewer_context_by_session.get(record.session_index, "")
 
 
 def _cell(value: bool | None) -> str:
@@ -129,75 +58,96 @@ def _cell(value: bool | None) -> str:
 def _boolean(value: str) -> bool | None:
     if not value.strip():
         return None
-    if value.strip().lower() in {"true", "1", "yes", "pass"}:
+    if value.strip().lower() in {"true", "1", "yes", "y", "x"}:
         return True
-    if value.strip().lower() in {"false", "0", "no", "fail"}:
+    if value.strip().lower() in {"false", "0", "no", "n"}:
         return False
-    raise ValueError(f"invalid grading value {value!r}; use true, false or blank")
+    raise ValueError(f"invalid review flag {value!r}; use true, false or blank")
 
 
-def apply_sheet(records: list[Record], path: Path) -> list[Record]:
-    by_id = {_blind_id(record): record for record in records if record.kind != "setup"}
-    rows: dict[str, dict[str, dict[str, str]]] = {}
-    with path.open(newline="") as handle:
-        for row in csv.DictReader(handle):
-            response = row["response_id"]
-            if response not in by_id:
-                raise ValueError(f"unknown response id {response}")
-            record = by_id[response]
-            if row["session_index"] != str(record.session_index) or row["kind"] != record.kind:
-                raise ValueError(
-                    "grading sheet session metadata differs from the captured response"
-                )
-            if row["answer"] != record.output or row["prompt"] != record.prompt:
-                raise ValueError("grading sheet no longer matches the captured answer/prompt")
-            criteria = rows.setdefault(response, {})
-            key = row["criterion_id"]
-            if key in criteria:
-                raise ValueError(f"duplicate criterion row for {response}/{key}")
-            criteria[key] = row
-    updated = []
+def export_sheets(records: list[Record], directory: Path, *, blind: bool = True) -> list[Path]:
+    """One CSV per session index (`session-NN.csv`): audit-session and answer rows.
+
+    Metrics are left out so the eye test does not see cost. Blinding hides the
+    arm and mixes response order; an answer itself may reveal its memory method.
+    """
+    by_session: dict[int, list[dict[str, str]]] = defaultdict(list)
     for record in records:
         if record.kind == "setup":
-            updated.append(record)
             continue
-        criteria = rows.get(_blind_id(record), {})
-        expected = {c.id for c in record.question.criteria} if record.question else {""}
-        if set(criteria) != expected:
-            raise ValueError("grading sheet must retain each response and every criterion row")
-        if record.question:
-            for criterion in record.question.criteria:
-                row = criteria[criterion.id]
-                if row["criterion"] != criterion.description or row[
-                    "expected"
-                ] != criterion.expected_by_session.get(record.session_index, ""):
+        review = record.review or Review()
+        question = record.question
+        by_session[record.session_index].append(
+            {
+                "response_id": _blind_id(record),
+                "arm": "" if blind else record.arm,
+                "repetition": str(record.repetition),
+                "session_index": str(record.session_index),
+                "kind": record.kind,
+                "question_id": question.id if question else "",
+                "question_kind": question.kind if question else "",
+                "prompt": record.prompt,
+                "reviewer_context": _context(record),
+                "answer": record.output,
+                **{flag: _cell(getattr(review, flag)) for flag in FLAGS},
+                "notes": review.notes,
+            }
+        )
+    directory.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for session, rows in sorted(by_session.items()):
+        # Audit rows first, then answers grouped by question; ids mix the arms.
+        rows.sort(
+            key=lambda row: (row["kind"] != "session", row["question_id"], row["response_id"])
+        )
+        path = directory / f"session-{session:02d}.csv"
+        with path.open("x", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=COLUMNS)
+            writer.writeheader()
+            writer.writerows(rows)
+        paths.append(path)
+    return paths
+
+
+def sheet_files(paths: list[Path]) -> list[Path]:
+    files: list[Path] = []
+    for path in paths:
+        files.extend(sorted(path.glob("*.csv")) if path.is_dir() else [path])
+    return files
+
+
+def apply_sheets(
+    records: list[Record], paths: list[Path], *, reviewer: str = "manual"
+) -> list[Record]:
+    """Import reviewed rows; untouched rows (no flag, no note) stay unreviewed."""
+    by_id = {_blind_id(record): record for record in records if record.kind != "setup"}
+    reviews: dict[str, Review] = {}
+    seen: set[str] = set()
+    for path in sheet_files(paths):
+        with path.open(newline="") as handle:
+            for row in csv.DictReader(handle):
+                response = row["response_id"]
+                if response not in by_id:
+                    raise ValueError(f"unknown response id {response}")
+                if response in seen:
+                    raise ValueError(f"duplicate review row for {response}")
+                seen.add(response)
+                record = by_id[response]
+                if row["session_index"] != str(record.session_index) or row["kind"] != record.kind:
                     raise ValueError(
-                        "grading sheet changed a frozen rubric criterion or expected fact"
+                        "review sheet session metadata differs from the captured response"
                     )
-        moves = {
-            (_boolean(row["stale_answer_as_current"]), _boolean(row["lost_finding"]))
-            for row in criteria.values()
-        }
-        if len(moves) != 1:
-            raise ValueError("wrong-move flags must agree across a response's criterion rows")
-        stale, lost = moves.pop()
-        values: dict[str, object] = {
-            "wrong_moves": WrongMoves(
-                stale_answer_as_current=stale,
-                lost_finding=lost,
-            )
-        }
-        if record.question:
-            values["grade"] = Grade(
-                grader="manual_csv",
-                criteria=tuple(
-                    CriterionResult(
-                        criterion_id=c.id,
-                        passed=_boolean(criteria[c.id]["passed"]),
-                        notes=criteria[c.id]["notes"],
-                    )
-                    for c in record.question.criteria
-                ),
-            )
-        updated.append(Record.model_validate({**record.model_dump(), **values}))
-    return updated
+                if row["answer"] != record.output or row["prompt"] != record.prompt:
+                    raise ValueError("review sheet no longer matches the captured answer/prompt")
+                if row["reviewer_context"] != _context(record):
+                    raise ValueError("review sheet changed the frozen reviewer context")
+                flags = {flag: _boolean(row[flag]) for flag in FLAGS}
+                notes = row["notes"].strip()
+                if notes or any(value is not None for value in flags.values()):
+                    reviews[response] = Review(reviewer=reviewer, notes=notes, **flags)
+    return [
+        record.model_copy(update={"review": reviews[_blind_id(record)]})
+        if record.kind != "setup" and _blind_id(record) in reviews
+        else record
+        for record in records
+    ]

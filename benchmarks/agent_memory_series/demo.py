@@ -12,11 +12,26 @@ from .adapters import ScriptedAdapter
 from .config import BenchmarkConfig
 from .runner import run_benchmark
 
-BASE = 'danger = True\nversion = "1.0"\n'
+APP = "import yaml\n\n\ndef load(text):\n    return yaml.load(text)  # reachable\n"
+REQUIREMENTS = "pyyaml==5.3\n"
 FIX = (
-    "--- a/app.py\n+++ b/app.py\n@@ -1,2 +1,2 @@\n"
-    '-danger = True\n+danger = False\n version = "1.0"\n'
+    "--- a/requirements.txt\n+++ b/requirements.txt\n@@ -1,2 +1,2 @@\n"
+    "-pyyaml==5.3\n+pyyaml==5.4\n requests==2.19.0\n"
 )
+NEW_DEPENDENCY = (
+    "--- a/requirements.txt\n+++ b/requirements.txt\n@@ -1 +1,2 @@\n"
+    " pyyaml==5.3\n+requests==2.19.0\n"
+)
+KEV = '{"vulnerabilities": [{"cveID": "CVE-2020-14343", "dateAdded": "2026-01-01"}]}\n'
+
+
+def write(path: str, text: str) -> list[str]:
+    """A deterministic change command: write one file (no implicit shell)."""
+    code = (
+        "import sys; from pathlib import Path; p = Path(sys.argv[1]); "
+        "p.parent.mkdir(parents=True, exist_ok=True); p.write_text(sys.argv[2])"
+    )
+    return [sys.executable, "-c", code, path, text]
 
 
 def create_fixture(tmp_path: Path) -> BenchmarkConfig:
@@ -28,8 +43,10 @@ def create_fixture(tmp_path: Path) -> BenchmarkConfig:
         return subprocess.check_output(["git", *args], cwd=target, env=env).decode().strip()
 
     git("init", "--quiet")
-    (target / "app.py").write_text(BASE)
-    (target / "requirements.txt").write_text("example==1.0\n")
+    (target / "app.py").write_text(APP)
+    (target / "requirements.txt").write_text(REQUIREMENTS)
+    # Host-agent instructions in the target are stripped identically for every arm.
+    (target / "CLAUDE.md").write_text("Project instructions no arm may inherit\n")
     git("add", ".")
     git(
         "-c",
@@ -40,56 +57,126 @@ def create_fixture(tmp_path: Path) -> BenchmarkConfig:
         "-qm",
         "Fixture base",
     )
-    arm_a: dict[str, object] = {
-        "id": "A",
-        "method": "cloudflare-skill",
-        "skill": {"name": "cloudflare", "version": "fixture"},
-        "memory_paths": ["findings.json"],
-    }
-    arms: list[dict[str, object]] = [arm_a]
-    for key in ("B", "C"):
-        arms.append(
-            {
-                "id": key,
-                "method": "cruxible-security-kit" if key == "B" else "cruxible-no-kit",
-                "plugin": {"name": "shipped-cruxible-plugin", "version": "fixture"},
-                "kit": {"name": "security", "version": "fixture"} if key == "B" else None,
-                "memory_paths": [".cruxible"],
-            }
-        )
+    # Fixture setup mirrors the real shape without installing anything real:
+    # A installs its skill into the arm's tooling directory (a live adapter
+    # copies it into each fresh client config); B starts a helper (stand-in for
+    # the scratch daemon), provisions approval keys and adopts the kit by agent.
+    install_skill = write("{tooling}/skills/fixture-audit/SKILL.md", "fixture skill\n")
+    helper = "import pathlib, sys, time; pathlib.Path(sys.argv[1]).touch(); time.sleep(600)"
+    arms: list[dict[str, object]] = [
+        {
+            "id": "A",
+            "method": "cloudflare-skill",
+            "skill": {"name": "cloudflare", "version": "fixture"},
+            "memory_paths": ["findings.json"],
+            "setup": [
+                {"kind": "command", "description": "Install the skill", "argv": install_skill}
+            ],
+        },
+        {
+            "id": "B",
+            "method": "cruxible-security-kit",
+            "plugin": {"name": "shipped-cruxible-plugin", "version": "fixture"},
+            "kit": {"name": "security", "version": "fixture"},
+            "memory_paths": [".cruxible"],
+            "cruxible": {"bin_dir": "{tooling}/bin"},
+            "environment": {"CRUXIBLE_MCP_KEY_DIR": "{keys}/mcp"},
+            "setup": [
+                {
+                    "kind": "command",
+                    "description": "Start the fixture helper",
+                    "argv": ["{python}", "-c", helper, "{run_root}/helper.ready"],
+                    "background": True,
+                    "wait_for": "{run_root}/helper.ready",
+                    "timeout_seconds": 30,
+                },
+                {
+                    "kind": "command",
+                    "description": "Provision owner and reviewer approval keys",
+                    "argv": [
+                        "{python}",
+                        "-c",
+                        "import sys; from pathlib import Path; d = Path(sys.argv[1]); "
+                        "d.mkdir(mode=0o700); [(d / f'{p}.ed25519').write_text(p) "
+                        "for p in ('owner', 'reviewer')]",
+                        "{keys}/mcp",
+                    ],
+                },
+                {
+                    "kind": "agent",
+                    "description": "Adopt the kit and its automation template",
+                    "prompt": "Adopt the security kit and its automation template.",
+                },
+            ],
+        },
+        {
+            "id": "C",
+            "method": "cruxible-no-kit",
+            "plugin": {"name": "shipped-cruxible-plugin", "version": "fixture"},
+            "memory_paths": [".cruxible"],
+            "cruxible": {"mcp_tools": ["cruxible_orient", "cruxible_query"]},
+            "setup": [
+                {
+                    "kind": "agent",
+                    "description": "Initialize an empty instance",
+                    "prompt": "Initialize Cruxible for this repository.",
+                }
+            ],
+        },
+    ]
     return BenchmarkConfig.model_validate(
         {
             "name": "fixture",
             "target": {"git_url": str(target), "base_commit": git("rev-parse", "HEAD")},
             "model": "scripted-fixture",
-            "budget": {"max_tokens": 1000, "max_turns": 10, "max_seconds": 30},
+            "guard": {"max_seconds_per_invocation": 60, "max_cost_usd_per_invocation": 1.0},
             "repetitions": 2,
             "arms": arms,
             "sessions": [
                 {"id": "baseline", "description": "Inspect the base", "changes": []},
                 {
+                    "id": "new-dependency",
+                    "description": "A new dependency was added",
+                    "changes": [
+                        {"kind": "patch", "description": "Add requests", "text": NEW_DEPENDENCY}
+                    ],
+                },
+                {
                     "id": "fix",
-                    "description": "Remove the unsafe path",
+                    "description": "pyyaml was upgraded",
+                    "changes": [{"kind": "patch", "description": "Bump pyyaml", "text": FIX}],
+                },
+                {
+                    "id": "revert",
+                    "description": "The upgrade was reverted",
                     "changes": [
                         {
-                            "kind": "patch",
-                            "description": "Disable the fixture danger flag",
-                            "text": FIX,
+                            "kind": "command",
+                            "description": "Restore pyyaml 5.3",
+                            "argv": write("requirements.txt", "pyyaml==5.3\nrequests==2.19.0\n"),
                         }
                     ],
                 },
                 {
-                    "id": "revert",
-                    "description": "Revert the fix",
+                    "id": "refactor",
+                    "description": "The loader now uses safe_load",
                     "changes": [
                         {
                             "kind": "command",
-                            "description": "Restore the fixture base source",
-                            "argv": [
-                                sys.executable,
-                                "-c",
-                                f"from pathlib import Path; Path('app.py').write_text({BASE!r})",
-                            ],
+                            "description": "Remove the reachable unsafe load",
+                            "argv": write("app.py", APP.replace("yaml.load", "yaml.safe_load")),
+                        }
+                    ],
+                },
+                {
+                    "id": "intel-update",
+                    "description": "Threat intelligence was updated",
+                    "changes": [
+                        {
+                            "kind": "feed",
+                            "description": "KEV lists the pyyaml CVE",
+                            "name": "kev.json",
+                            "text": KEV,
                         }
                     ],
                 },
@@ -98,25 +185,19 @@ def create_fixture(tmp_path: Path) -> BenchmarkConfig:
                 {
                     "id": "control",
                     "kind": "control",
-                    "prompt": "Read the version and current danger flag from app.py.",
-                    "criteria": [
-                        {
-                            "id": "current",
-                            "description": "Gives the current flag",
-                            "expected_by_session": {1: "live", 2: "fixed", 3: "live"},
-                        }
-                    ],
-                    "after_sessions": [1, 2, 3],
+                    "prompt": "Which pyyaml version does requirements.txt declare? Cite the line.",
+                    "after_sessions": [1, 3, 4, 6],
+                    "reviewer_context_by_session": {1: "5.3", 3: "5.4", 4: "5.3", 6: "5.3"},
                 },
                 {
                     "id": "contradiction",
                     "kind": "contradiction",
                     "prompt": "What is now contradicted, and what depends on it?",
-                    "criteria": [
-                        {"id": "judgment", "description": "Identifies the superseded judgment"},
-                        {"id": "dependencies", "description": "Identifies dependent findings"},
-                    ],
-                    "after_sessions": [2, 3],
+                    "after_sessions": [4, 5, 6],
+                    "reviewer_context_by_session": {
+                        4: "The fix was reverted: the pyyaml finding is live again.",
+                        5: "safe_load removed the reachable path.",
+                    },
                 },
             ],
         }

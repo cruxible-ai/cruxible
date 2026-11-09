@@ -1,42 +1,27 @@
+# No rubric: the reviewer reads each answer by eye and records notes plus
+# stale_as_current / wrong / missing flags. "Needs validation" with the named
+# blocker is a valid answer. reviewer_context_by_session goes only to the
+# review sheet (fill it against the frozen change script before running).
 - id: live-findings
   kind: recall
   prompt: Which findings are live now? Give severity and evidence for each.
-  after_sessions: [1, 2, 3]
-  criteria:
-    - id: current-set
-      description: Gives the correct current set of live findings, with no retired finding stated as live.
-      expected_by_session: {} # Fill against the chosen change script before running.
-    - id: evidence
-      description: Cites the current source location and explains the severity.
-- id: contradictions
-  kind: contradiction
-  prompt: What have we learned that is now contradicted, and what depends on it?
-  after_sessions: [2, 3]
-  criteria:
-    - id: contradicted-judgment
-      description: Names the previous judgment contradicted by this session's change and its new evidence.
-    - id: dependents
-      description: Identifies the downstream findings or decisions whose basis must be reconsidered.
-- id: version-control
-  kind: control
-  prompt: What dependency version is declared in requirements.txt? Cite the line.
-  after_sessions: [1, 2, 3]
-  criteria:
-    - id: one-file-answer
-      description: Gives the exact declared version and its source line; one-file text search suffices.
+  after_sessions: [1, 2, 3, 4, 5, 6, 7]
 - id: changed-judgments
   kind: change
   prompt: What changed since the previous session, and why did each affected judgment move?
-  after_sessions: [2, 3]
-  criteria:
-    - id: explained-change
-      description: Identifies the scripted change and links it to the affected finding and judgment.
+  after_sessions: [2, 3, 4, 5, 6, 7]
+- id: contradictions
+  kind: contradiction
+  prompt: What have we learned that is now contradicted, and what depends on it?
+  after_sessions: [3, 5, 6, 7]
+  reviewer_context_by_session:
+    5: The session-3 fix was reverted; findings it closed are live again.
+    6: The refactor removed a reachable path; judgments that relied on it no longer hold.
 - id: unchecked-scope
   kind: coverage
   prompt: What has never been checked, or has drifted since it was checked?
-  after_sessions: [1, 2, 3]
-  criteria:
-    - id: unchecked
-      description: Names the known unchecked scope without treating absence of a finding as evidence of safety.
-    - id: drift
-      description: Identifies changed evidence whose previous check no longer applies.
+  after_sessions: [1, 4, 7]
+- id: version-control
+  kind: control
+  prompt: Which version of the main web framework does the dependency manifest declare? Cite the line.
+  after_sessions: [1, 4, 7]

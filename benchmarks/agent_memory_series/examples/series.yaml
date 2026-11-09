@@ -1,44 +1,147 @@
-version: 1
+version: 2
 name: security-memory-series
 # Slot intentionally unfilled. Supply a local fixture Git URL/path and an exact
-# 40- or 64-hex base commit before a scripted dry run. Choose the real target later.
+# 40- or 64-hex base commit before a scripted dry run. The pilot target comes
+# from the shortlist (README "Choosing a target").
 target: null
-model: maintainer-selects-one-model-for-all-arms
-budget:
-  max_tokens: 20000
-  max_turns: 50
-  max_seconds: 900
-repetitions: 1  # Fixture default; choose measured repetitions before a live run.
+# Main harness: Claude Code, same model for every arm (maintainer decision).
+model: claude-opus-5-5
+# Not a budget: usage is measured, never capped. A ceiling far above normal
+# use; hitting it is recorded as an outcome and the series continues.
+guard:
+  max_seconds_per_invocation: 14400
+  max_cost_usd_per_invocation: 100
+repetitions: 1  # Pilot: 1. Reported runs: 3 per repo; report spread (spread.csv), not only means.
+# Removed from every arm's checkout identically: host-agent instructions and memory.
+strip_from_target: [CLAUDE.md, CLAUDE.local.md, .claude, AGENTS.md, .codex]
 arms:
   - id: A
     method: cloudflare-skill
     skill: {name: cloudflare-security-audit, version: SUPPLY-PIN}
     memory_paths: [findings.json, reports]
+    setup:  # Off the clock.
+      # Installed into the arm's tooling directory; the live adapter copies it into
+      # each invocation's fresh CLAUDE_CONFIG_DIR (no auto-memory carryover).
+      - kind: command
+        description: Fetch the pinned skill commit into the tooling directory.
+        argv: [git, clone, --quiet, SUPPLY-SKILL-REPO-URL, "{tooling}/skill-src"]
+      - kind: command
+        description: Check out the pinned skill commit.
+        argv: [git, -C, "{tooling}/skill-src", checkout, --quiet, SUPPLY-SKILL-COMMIT]
   - id: B
     method: cruxible-security-kit
     plugin: {name: cruxible, version: SUPPLY-SHIPPED-PLUGIN-PIN}
     kit: {name: security, version: SUPPLY-KIT-PIN}
     memory_paths: [.cruxible]
+    # B gets every Cruxible surface and chooses (broader than the plugin's
+    # 20-tool default): the MCP server with the full catalog, the matching
+    # `cruxible` CLI on PATH, and a Python with cruxible_client importable.
+    # Every action is logged by surface (results: actions; surfaces.csv).
+    cruxible:
+      mcp_tools: null  # full catalog (~131k schema tokens; plugin allowlist ~15k)
+      bin_dir: SUPPLY-ABSOLUTE-ENV-BIN-WITH-MATCHING-CRUXIBLE
+      # Fallback if the pilot shows Claude Code loads the full catalog eagerly:
+      # plugin allowlist + authoring + remaining kit tools.
+      # mcp_tools: [cruxible_orient, cruxible_query, cruxible_get, cruxible_next,
+      #   cruxible_set, cruxible_retire, cruxible_write, cruxible_proposal_list,
+      #   cruxible_proposal_review, cruxible_proposal_approve, cruxible_proposal_activate,
+      #   cruxible_whoami, cruxible_server_info, cruxible_kit_status, cruxible_kit_add,
+      #   cruxible_provider_install, cruxible_line_enable, cruxible_line_run,
+      #   cruxible_runbook_preview, cruxible_runbook_run,
+      #   cruxible_authoring_example, cruxible_authoring_get, cruxible_authoring_list,
+      #   cruxible_authoring_compile, cruxible_authoring_bind, cruxible_authoring_preflight,
+      #   cruxible_authoring_submit, cruxible_authoring_status, cruxible_document_propose,
+      #   cruxible_body_store, cruxible_claim_type_propose, cruxible_claim_type_migrate,
+      #   cruxible_capture_contract_propose, cruxible_capture_read, cruxible_claim_attest,
+      #   cruxible_files_check, cruxible_files_propose, cruxible_files_compile,
+      #   cruxible_proposal_readmit, cruxible_proposal_withdraw, cruxible_proposal_reject,
+      #   cruxible_kit_build, cruxible_kit_remove, cruxible_provider_list]
+    # The host settings a normal local setup gives the plugin's MCP server: one
+    # key directory holding <principal>.ed25519 for the owner and the reviewer.
+    # A reviewer subagent approves with cruxible_proposal_approve(signer_id=reviewer);
+    # approving without signer_id is refused and names both signers.
+    environment:
+      CRUXIBLE_MCP_KEY_DIR: "{keys}/mcp"
+      CRUXIBLE_PRINCIPAL_ID: owner
+    setup:  # Off the clock, in order.
+      - kind: command
+        description: Start this run's scratch daemon (stopped when the arm closes).
+        argv: [cruxible, server, start, --state-root, "{state_root}", --socket, "{socket}"]
+        background: true
+        wait_for: "{socket}"
+        timeout_seconds: 120
+      - kind: command
+        description: Initialize with an owner and a reviewer principal, keys outside the workspace.
+        argv: [cruxible, --server-socket, "{socket}", init, --principal-id, owner,
+               --key-dir, "{keys}/owner", --reviewer-key-dir, "{keys}/reviewer"]
+      - kind: command
+        description: Collect both approval keys in the MCP key directory (hard links, no symlinks).
+        argv: ["{python}", "-c",
+               "import os, sys; from pathlib import Path; k = Path(sys.argv[1]); m = k / 'mcp'; m.mkdir(mode=0o700); [os.link(k / p / f'{p}.ed25519', m / f'{p}.ed25519') for p in ('owner', 'reviewer')]",
+               "{keys}"]
+      - kind: agent
+        description: Adopt the kit through the plugin's adopt-kit skill.
+        prompt: >-
+          Adopt the security kit for this repository: preview and add it, then tailor
+          its automation template (Line names, sources, schedule, Mandate expiry),
+          submit it, have a reviewer subagent approve it as its own principal, and
+          preview the start Runbook.
   # Optional C uses the same shipped plugin, no kit, no extra audit skills.
   # - id: C
   #   method: cruxible-no-kit
   #   plugin: {name: cruxible, version: SUPPLY-SHIPPED-PLUGIN-PIN}
   #   memory_paths: [.cruxible]
+  #   cruxible: {mcp_tools: null, bin_dir: SAME-AS-B}
+  #   environment: {CRUXIBLE_MCP_KEY_DIR: "{keys}/mcp", CRUXIBLE_PRINCIPAL_ID: owner}
+  #   setup: [same daemon/init/key steps as B, no kit]
+# Each session applies one frozen change, identical across arms. Patch paths
+# are relative to this file; supply them from the chosen target's history.
 sessions:
   - id: baseline
     description: Audit the initial repository snapshot.
     changes: []
-  - id: fix
-    description: Apply the predefined fix; reassess what depends on the changed code.
+  - id: new-dependency
+    description: A dependency was added.
     changes:
       - kind: patch
-        description: Apply the predefined target fix.
-        path: fixture-fix.patch  # Supply the target-specific, frozen patch.
-  - id: revert
-    description: Revert the fix and reassess the earlier judgment.
+        description: Add a dependency with a known advisory, and the code that uses it.
+        path: patches/02-new-dependency.patch
+  - id: fix
+    description: A dependency was upgraded.
     changes:
-      - kind: command
-        description: Restore the target file to the pinned base.
-        argv: [git, checkout, HEAD, --, app.py]
-        timeout_seconds: 30
+      - kind: patch
+        description: Upgrade a vulnerable dependency to its fixed version.
+        path: patches/03-fix.patch
+  - id: new-endpoint
+    description: A new request handler was added.
+    changes:
+      - kind: patch
+        description: Add an endpoint that reaches a vulnerable call.
+        path: patches/04-new-endpoint.patch
+  - id: revert
+    description: A recent change was reverted.
+    changes:
+      - kind: patch
+        description: Reverse the session-3 upgrade (the target's real revert where one exists).
+        path: patches/05-revert.patch
+  - id: refactor
+    description: Code was refactored.
+    changes:
+      - kind: patch
+        description: Refactor that removes a previously reachable path to a vulnerable call.
+        path: patches/06-refactor.patch
+  - id: intel-update
+    description: No code changed this session.
+    changes:
+      # Frozen advisory snapshots, written to AGENT_MEMORY_FEEDS_DIR for every arm.
+      # If an arm cannot read frozen feeds, run this session on live feeds instead
+      # and record the fetch time (the answers then change, not the code).
+      - kind: feed
+        description: KEV catalog now lists a CVE of a dependency in use.
+        name: kev/known_exploited_vulnerabilities.json
+        path: feeds/07-kev.json
+      - kind: feed
+        description: EPSS score of another dependency CVE rises.
+        name: epss/epss_scores.csv
+        path: feeds/07-epss.csv
 questions_file: questions.yaml
