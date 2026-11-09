@@ -499,6 +499,9 @@ def _settle(
             }
         )
     )
+    # The advertisement the previous write queued runs here, before the window
+    # (see _advertise_on_the_measuring_thread).
+    instance.settled_workspace_advertisement()
     with _counted() as counts, _journal_counted(), _objects_counted():
         state = settle_support.run_settle(
             instance, root, line, now=fixtures.NOW + timedelta(minutes=10 * (batch + 1))
@@ -569,6 +572,26 @@ def _roomy_selection_budget(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.setattr(module, "capture_contract", roomy)
 
 
+def _advertise_on_the_measuring_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the workspace advertiser off its background thread.
+
+    An accepted settle queues an advertisement whose review-ref reconcile opens
+    the accepted-history reader, which syncs the history index to the new head.
+    The settle itself reaches the same sync after its acceptance (a node contract
+    resolved at the new head binds that projection). With the advertiser on its
+    own thread the two race: whichever gets there first indexes the generation,
+    so the window counted that work only when the background thread lost (a
+    loaded host): 13 statements plus one identity lookup per Claim member, which
+    moved the slope by a fraction of a statement per item. Without the thread the
+    settle always pays its own sync inside its window, and the advertisement
+    runs on this thread between windows (``settled_workspace_advertisement``).
+    """
+
+    from cruxible_core.runtime.instance import PlaybillInstance
+
+    monkeypatch.setattr(PlaybillInstance, "_start_advertiser_locked", lambda self: None)
+
+
 def _measure_work_per_item(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -579,6 +602,7 @@ def _measure_work_per_item(
 ) -> tuple[Counter[str], Counter[str], Counter[str]]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     _roomy_selection_budget(monkeypatch)
+    _advertise_on_the_measuring_thread(monkeypatch)
     with _sql_traced(tmp_path):
         instance, root, line = settle_support.settle_world(
             tmp_path,
@@ -833,6 +857,7 @@ def _measure_absence_work(tmp_path, monkeypatch, *, policy, count):
     """Absence outside the grant's scope proposes (all or nothing); measure that real door."""
     tmp_path.mkdir(parents=True, exist_ok=True)
     _roomy_selection_budget(monkeypatch)
+    _advertise_on_the_measuring_thread(monkeypatch)
     with _sql_traced(tmp_path):
         instance, root, line = settle_support.settle_world(
             tmp_path,
@@ -849,6 +874,7 @@ def _measure_absence_work(tmp_path, monkeypatch, *, policy, count):
             canonical.canonical_bytes({"proposals": [], "count": 0})
         )
         _forget_parsed_receipts()
+        instance.settled_workspace_advertisement()  # as in _settle
         with _counted() as counts, _journal_counted(), _objects_counted():
             state = settle_support.run_settle(
                 instance, root, line, now=fixtures.NOW + timedelta(hours=2)

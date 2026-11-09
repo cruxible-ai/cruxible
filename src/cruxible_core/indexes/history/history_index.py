@@ -129,6 +129,34 @@ def _prior_member_sequences(
     return {path: tuple(dict.fromkeys(sequences)) for path, sequences in found.items()}
 
 
+def _member_identities(
+    connection: sqlite3.Connection,
+    pairs: Sequence[tuple[str, str | None]],
+    *,
+    through: int,
+) -> dict[tuple[str, str | None], str]:
+    """The sole identity of each (path, digest) version at or before ``through``.
+
+    A pair with no version, or with versions under more than one identity, is
+    absent. One chunked read over the members' digests, never one per member.
+    """
+
+    wanted = {pair for pair in pairs if pair[1] is not None}
+    found: dict[tuple[str, str | None], set[str]] = {}
+    digests = tuple(dict.fromkeys(digest for _, digest in wanted))
+    for start in range(0, len(digests), 500):
+        chunk = digests[start : start + 500]
+        for path, digest, identity in connection.execute(
+            "SELECT DISTINCT path,artifact_digest,identity FROM artifact_versions "
+            f"WHERE artifact_digest IN ({','.join('?' for _ in chunk)}) "
+            "AND occurrence_sequence<=?",
+            (*chunk, through),
+        ):
+            if (path, digest) in wanted:
+                found.setdefault((path, digest), set()).add(identity)
+    return {pair: next(iter(names)) for pair, names in found.items() if len(names) == 1}
+
+
 def _schema_rows(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
     rows = connection.execute(
         "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name"
@@ -1888,15 +1916,21 @@ class AcceptedHistoryIndex:
             members = []
             if record is not None:
                 law_paths = {e.path for e in _law_evidence(record)}
-                for ordinal, member in enumerate(_record_members(record)):
-                    digest = _member_digest(member)
-                    identity_digest = digest or getattr(member, "predecessor_artifact_digest", None)
-                    identities = connection.execute(
-                        "SELECT DISTINCT identity FROM artifact_versions WHERE path=? "
-                        "AND artifact_digest=? AND occurrence_sequence<=? LIMIT 2",
-                        (member.path, identity_digest, position),
-                    ).fetchall()
-                    identity = identities[0][0] if len(identities) == 1 else None
+                located = [
+                    (
+                        member,
+                        digest := _member_digest(member),
+                        digest or getattr(member, "predecessor_artifact_digest", None),
+                    )
+                    for member in _record_members(record)
+                ]
+                identities = _member_identities(
+                    connection,
+                    [(member.path, identity_digest) for member, _, identity_digest in located],
+                    through=position,
+                )
+                for ordinal, (member, digest, identity_digest) in enumerate(located):
+                    identity = identities.get((member.path, identity_digest))
                     members.append(
                         (
                             position,

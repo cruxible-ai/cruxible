@@ -846,3 +846,86 @@ def test_record_source_binding_does_not_keep_its_owner_alive():
     assert binding[1] is Source.blob_at
     del source
     assert ref() is None
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_batched_member_identities_answer_as_the_per_member_lookup(seed):
+    """One chunked read per generation gives each member the identity it always had.
+
+    Mixed generations: creates, revisions, retirements (members located by their
+    predecessor digest), paths reused by a later identity, and one digest held by
+    two identities at a path (ambiguous, so no identity).
+    """
+    import random
+
+    from cruxible_core.indexes.history import history_index
+
+    rng = random.Random(seed)
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(history_index._SCHEMA)
+    live: dict[str, tuple[str, str]] = {}  # identity -> (path, digest)
+    retired: list[tuple[str, str]] = []
+    paths = [f"claims/p{index}.json" for index in range(12)]
+    generations = 40
+    for sequence in range(generations):
+        connection.execute(
+            "INSERT INTO accepted_generations VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                sequence,
+                f"oid{sequence}",
+                "s",
+                "g",
+                "c",
+                1,
+                sequence - 1 if sequence else None,
+                *((f"cand{sequence}", "a", f"cs{sequence}", "d") if sequence else (None,) * 4),
+            ),
+        )
+        rows = set()
+        for _ in range(rng.randint(1, 6)):
+            move = rng.random()
+            if move < 0.4 or not live:
+                identity = f"Claim:{sequence}-{rng.randrange(10**6)}"
+                path = rng.choice(paths)  # paths repeat across identities
+                digest = f"d{rng.randrange(60)}"  # digests repeat across paths
+                live[identity] = (path, digest)
+            elif move < 0.8:
+                identity = rng.choice(sorted(live))
+                path = live[identity][0]
+                digest = f"d{rng.randrange(60)}"
+                live[identity] = (path, digest)
+            else:
+                identity = rng.choice(sorted(live))
+                retired.append(live.pop(identity))
+                continue
+            rows.add((identity, digest, sequence, path, None, 1))
+        for row in rows:
+            connection.execute("INSERT OR IGNORE INTO artifact_versions VALUES (?,?,?,?,?,?)", row)
+    seen = [
+        tuple(row)
+        for row in connection.execute("SELECT path,artifact_digest FROM artifact_versions")
+    ]
+    assert any(
+        count > 1
+        for (count,) in connection.execute(
+            "SELECT count(DISTINCT identity) FROM artifact_versions GROUP BY path,artifact_digest"
+        )
+    ), "the world must hold an ambiguous version"
+    for through in sorted(rng.sample(range(generations), 10)):
+        pairs = [
+            *rng.sample(seen, min(len(seen), 30)),
+            *retired[:5],
+            ("claims/missing.json", "d1"),
+            (paths[0], None),
+        ]
+        rng.shuffle(pairs)
+        expected = {}
+        for path, digest in pairs:
+            found = connection.execute(
+                "SELECT DISTINCT identity FROM artifact_versions WHERE path=? "
+                "AND artifact_digest=? AND occurrence_sequence<=? LIMIT 2",
+                (path, digest, through),
+            ).fetchall()
+            expected[(path, digest)] = found[0][0] if len(found) == 1 else None
+        actual = history_index._member_identities(connection, pairs, through=through)
+        assert {pair: actual.get(pair) for pair in pairs} == expected
