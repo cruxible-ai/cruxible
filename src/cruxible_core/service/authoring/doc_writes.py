@@ -398,6 +398,13 @@ def read_doc_edits(
             "History takes file:<name>; body takes file:<name>@<revision>",
         )
     coordinate = resolve_read_coordinate(instance, request.at)
+    if request.at is not None and coordinate.git_oid != instance.accepted_coordinate().git_oid:
+        raise ReadRefusalError(
+            "cruxible.get.historical_read_unsupported",
+            "File overwrite history is operational state, readable only at the current head",
+            field_path="at",
+            repair_line="Omit at to read currently confirmed file overwrites",
+        )
     journal, stream = _journal(instance)
     partition = section_digest(source.encode()).removeprefix("sha256:")
     last = None if revision is None else int(revision)

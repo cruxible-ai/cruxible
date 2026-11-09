@@ -8,7 +8,7 @@ import pytest
 from cruxible_client.authoring.doc_writes import write_workspace
 from cruxible_client.contracts.claims import claim_path, parse_claim
 from cruxible_client.contracts.doc_sections import section_digest
-from cruxible_client.contracts.errors import CasError, WriteRefusalError
+from cruxible_client.contracts.errors import CasError, ReadRefusalError, WriteRefusalError
 from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.proposal_models import AuthenticatedActor
 from cruxible_client.contracts.write import (
@@ -794,3 +794,46 @@ def test_client_exposes_confirmation_failures_without_repeating_unknown_tokens(t
     )
     assert "do not resend" in caught.value.repair_line
     assert "Retry write with doc_confirmations" not in caught.value.repair_line
+
+
+@pytest.mark.parametrize(
+    ("ref", "detail"), [("file:repo.notes", "history"), ("file:repo.notes@1", "body")]
+)
+def test_file_history_refuses_an_older_coordinate_instead_of_showing_later_edits(
+    tmp_path, ref, detail
+):
+    instance, _ = seed_write_surface(tmp_path)
+    old = instance.accepted_coordinate()
+    _move_to_v7(instance, "measured", evidence_requirement="captured")
+    admitted = service_playbill_write(
+        instance,
+        request=WriteRequest(because="Later edit", docs=(_replacement_observation(),)),
+        caller=caller(),
+    )
+    assert (
+        service_playbill_write(
+            instance,
+            request=WriteRequest(
+                because="Landed", doc_confirmations=(admitted.docs[0].confirmation,)
+            ),
+            caller=caller(),
+        ).status
+        == "accepted"
+    )
+    access = BodyAccessContext(principal_id="reader", can_read_body=True)
+    with pytest.raises(ReadRefusalError) as caught:
+        service_playbill_get(
+            instance, request=GetRequest(ref=ref, detail=detail, at=old.git_oid), access=access
+        )
+    assert caught.value.error_code == "cruxible.get.historical_read_unsupported"
+    assert caught.value.field_path == "at"
+    assert caught.value.repair_line
+    current = service_playbill_get(
+        instance,
+        request=GetRequest(ref=ref, detail=detail, at=instance.accepted_coordinate().git_oid),
+        access=access,
+    )
+    if detail == "history":
+        assert len(current.history.revisions) == 1
+    else:
+        assert base64.b64decode(current.body.content_base64) == b"# Reason\nprevious\n"

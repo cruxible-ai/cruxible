@@ -100,6 +100,8 @@ heading paths to find sections:
   reports each result in `doc_confirmations`. Do not resend unknown or expired
   tokens. A client crash after writing the file but before confirmation can
   leave that edit without retained history.
+  File overwrite history is live operational state. An `at` pin to an earlier
+  accepted generation refuses; a pin to the current head is allowed.
 - **`id`** names the section so changes can cite it: `batch.section(ID)`, or
   `{kind: section, ref: ID}` in a write file.
 
