@@ -1,0 +1,80 @@
+name: Coverage audit
+
+# TEMPORARY (deep audit, 2026-11-09): per-test coverage contexts and durations,
+# sharded so each job fits a runner. Runs only on pushes to this branch; never
+# merge this file to main.
+on:
+  push:
+    branches: [claude/coverage-audit]
+
+env:
+  CRUXIBLE_PROVIDERS_COMMIT: f8d90c9f4d31e3619d970b3e6f96f171648368b3
+
+jobs:
+  shard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    env:
+      CRUXIBLE_PROVIDERS_CHECKOUT: ${{ github.workspace }}/cruxible-providers
+      CRUXIBLE_PROVIDERS_REQUIRED: "1"
+      UV_NO_SYNC: "1"
+      SHARDS: "10"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: cruxible-ai/cruxible-providers
+          ref: ${{ env.CRUXIBLE_PROVIDERS_COMMIT }}
+          path: cruxible-providers
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+      - name: Install dependencies
+        run: uv sync --all-packages --all-extras --python 3.12
+      - name: Install the provider runtime and pytest-cov
+        run: uv pip install "$CRUXIBLE_PROVIDERS_CHECKOUT/packages/cruxible-provider-runtime" pytest-cov
+      - name: Choose this shard's test files
+        run: |
+          python3 - <<'PY'
+          import os, pathlib
+          shards, mine = int(os.environ["SHARDS"]), int("${{ matrix.shard }}")
+          files = sorted(
+              p for p in pathlib.Path("tests").rglob("test_*.py")
+              if "test_scale" not in p.parts and "test_image" not in p.parts
+          )
+          # Greedy balance by file size (a rough proxy for run time).
+          bins = [[0, []] for _ in range(shards)]
+          for path in sorted(files, key=lambda p: -p.stat().st_size):
+              smallest = min(bins, key=lambda b: b[0])
+              smallest[0] += path.stat().st_size
+              smallest[1].append(str(path))
+          pathlib.Path("shard-files.txt").write_text("\n".join(sorted(bins[mine][1])) + "\n")
+          print(len(bins[mine][1]), "files in shard", mine)
+          PY
+      - name: Test with per-test coverage
+        continue-on-error: true
+        run: >
+          xargs uv run pytest -n auto --dist loadfile --tb=line -q
+          --timeout 3600 --timeout-method=thread -p no:cacheprovider
+          --cov=cruxible_core --cov=cruxible_client --cov-context=test --cov-report=
+          --durations=0 < shard-files.txt > durations.txt 2>&1
+      - name: Name this shard's data
+        if: always()
+        run: |
+          tail -5 durations.txt || true
+          [ -f .coverage ] && mv .coverage "coverage.shard${{ matrix.shard }}.sqlite" || true
+          mv durations.txt "durations.shard${{ matrix.shard }}.txt" || true
+      - name: Upload audit data
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-audit-shard${{ matrix.shard }}
+          path: |
+            coverage.shard*.sqlite
+            durations.shard*.txt
+            shard-files.txt
+          retention-days: 14
