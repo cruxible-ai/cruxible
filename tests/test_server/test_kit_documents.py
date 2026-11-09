@@ -11,6 +11,7 @@ path (``documents/kit-<id>.json``).
 from __future__ import annotations
 
 import base64
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,6 +19,7 @@ import pytest
 from cruxible_client.contracts.backlinks import BacklinksRequest
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentLink, DocumentShell
 from cruxible_client.contracts.kits import (
+    KitAddRequest,
     KitArtifact,
     KitBuildRequest,
     KitBundle,
@@ -146,6 +148,53 @@ def test_a_template_builds_beside_an_exported_document_with_a_non_genesis_body(
     assert {body.digest for body in bundle.document_bodies} == set(
         bundle.document_body_digests().values()
     )
+
+
+def test_a_fresh_consumer_previews_document_bodies_without_persisting_then_commits(
+    worlds: tuple[_World, _World], tmp_path: Path
+) -> None:
+    from tests.support.store_snapshot import assert_writes_nothing
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    _document(publisher, GUIDE, b"# Seats\nNew guidance absent from consumer genesis.\n")
+    bundle = _publisher_kit(publisher)
+    (body,) = bundle.document_bodies
+    manager = get_playbill_manager()
+    manager.consumer_runner.close()
+
+    def settle_background() -> None:
+        for world in (publisher, consumer):
+            manager.get(world.instance_id).settled_workspace_advertisement()
+        consumer.tree()
+
+    store = _instance(consumer).body_store()
+    assert store.availability(body.digest) == "missing"
+    preview = assert_writes_nothing(
+        [tmp_path],
+        lambda: playbill_api.playbill_kit_add(
+            consumer.instance_id, KitAddRequest(bundle=bundle, source="test")
+        ),
+        warm=settle_background,
+    )
+    assert preview.status == "would_propose", preview
+    assert preview.proposal_id is None and preview.coordinate is not None
+    assert {item.path: item.action for item in preview.plan}[GUIDE_PATH] == "add"
+    assert store.availability(body.digest) == "missing"
+    assert GUIDE_PATH not in consumer.tree()
+
+    committed = playbill_api.playbill_kit_add(
+        consumer.instance_id,
+        KitAddRequest(
+            bundle=_staged(consumer, bundle),
+            source="test",
+            dry_run=False,
+            at=preview.coordinate.git_oid,
+        ),
+    )
+    consumer.settle(committed)
+    assert GUIDE_PATH in consumer.tree()
+    assert store.availability(body.digest) == "present"
 
 
 def test_a_kit_installs_upgrades_and_removes_its_documents(
