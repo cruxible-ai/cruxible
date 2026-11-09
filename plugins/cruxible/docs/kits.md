@@ -105,36 +105,39 @@ A kit names the provider packages its definitions need in one of two ways:
 - **Bundled**: a kit's own domain code (for example a parser for one domain's
   feed) travels inside the kit as the package's built wheel and lock file,
   never as source. Installing the kit installs the package first, and the
-  package supplies implementations for the kit's Procedure slots.
+  package's operations serve the kit's Procedure slots.
 - **Default**: a published, general-purpose package (for example
   `cruxible-provider-web` for `web.fetch`) is named by package and exact
   version, and the kit carries none of its files. Installing the kit installs
-  it by name from the provider index, only when nothing installed already
-  implements what the kit needs.
+  it by name from the provider index, only when builds already installed do
+  not serve every slot the kit's Procedures declare.
 
 ## Procedures with Provider slots
 
-A Procedure may name exact Providers or leave Provider slots open. Each slot
-names the ProviderInterface it requires. Kits can ship slotted Procedures so
-the consumer chooses which search service, converter or other implementation
-runs them.
+A Procedure never names a provider. Each provider call names a slot, and the
+Procedure declares each slot's signature: its input Contract, its output
+Contract and its effect (`pure`, `external_read` or `external_mutation`). Any
+installed provider build with an operation of exactly that signature fits the
+slot, so a kit's Procedures leave the consumer free to choose which search
+service, converter or other implementation runs them.
 
-At admission, a direct run selects the single installed build fitting each
-slot. When several builds fit, choose one with `--bind slot=provider`. A Line
-can record the same choices in its `bindings` mapping. The run records the
-resolved builds for replay; the accepted Procedure stays unchanged.
+A Line binds every slot to one exact build and operation when it is accepted,
+and its runs never rebind. A direct run fits each slot it is not told about to
+the single live operation serving its signature; `--bind slot=provider`
+chooses one. The run records the bound builds for replay; the accepted
+Procedure stays unchanged.
 
-Any implementation of a slot's interface fits it. An interface is registered
-once per instance, by its definition: a second package implementing the same
-definition installs onto the same registration instead of a new one, so its
-Provider fits the same slots. A provider receives every input its interface's
-contract admits, and refuses, typed, what it cannot serve.
+Contracts are shared definitions: builds whose operations name the same
+Contracts serve the same slots. A provider is pure computation behind its
+Contracts: it receives every input its operation's input Contract admits, and
+refuses, typed, what it cannot serve.
 
 ## Providers you already have
 
-- **Built in.** Every new instance starts with the `workspace.file` interface
-  and a built-in provider for it, which turns an authorized workspace file read
-  into evidence. Nothing to install. Kits that use it pin it as it is.
+- **Built in.** Every new instance starts with the built-in `workspace.file`
+  operation and its core-owned Contracts, which turn an authorized workspace
+  file read into evidence. Nothing to install; a slot with its signature binds
+  to it.
 - **Published by name.** General-purpose providers install by package name:
   from the operator's provider repository when one is configured, otherwise
   from the provider index (PyPI unless the operator names another).
@@ -156,14 +159,14 @@ contract admits, and refuses, typed, what it cannot serve.
   redirect, and connects only to the address it checked, so DNS rebinding
   cannot reach behind it. It needs direct outbound access and fetches pages as
   served.
-  Cruxible owns the `web.fetch` contract, so every package that implements it
-  installs onto the same `ProviderInterface:web.fetch`.
+  Any package whose operation serves the same `web.fetch` Contracts fits the
+  same slots.
 - **From a kit.** A kit's own domain provider arrives bundled in the kit; a
-  kit's default provider is installed by name when the kit is added and
-  nothing here implements its interfaces yet.
+  kit's default provider is installed by name when the kit is added and the
+  kit's slots are not already served here.
 
-Installing a provider needs `admin` permission. It registers the package's
-Provider and interfaces as a change, which lands at once when the approval
+Installing a provider needs `admin` permission. It registers the build and
+its operations as a change, which lands at once when the approval
 policy requires no approval and otherwise stops at a proposal to approve and
 activate. Installing grants no permission to run anything.
 
@@ -192,8 +195,8 @@ cruxible kit add ghcr.io/cruxible-ai/kits/car-parts@sha256:<digest>
 
 The preview lists the plan grouped by kind (what each definition does and
 how many dependents it has), each provider package and what happens to it
-(already installed, `satisfied` when an installed provider already implements a
-default's interfaces, or to be installed), and who built the release, from
+(already installed, `satisfied` when builds installed here already serve
+every slot the kit's Procedures declare, or to be installed), and who built the release, from
 which instance and at which coordinate. That build
 record is claimed by the builder, not proven. The preview ends with the
 command that commits exactly what you saw:
@@ -239,31 +242,29 @@ as the build the kit recorded: the provider index must list the recorded wheel
 hash before the wheel is fetched, and the wheel's lock must match before any
 dependency is fetched. Another build under the same name and version is
 refused (`cruxible.provider.index_build_differs`) with nothing installed. A
-default is skipped (`satisfied`) when no Procedure the kit carries pins it and
-an installed provider already implements each interface the kit carries for
-it; the Procedure's slot can then use that provider. A daemon configured with a
+default is skipped (`satisfied`) when live builds of other providers here
+already serve every slot signature the kit's Procedures declare; those slots
+then bind to them. A daemon configured with a
 provider repository installs by name only from that repository, so there a
 default that is not satisfied is refused: install an implementation yourself
 and add the kit again.
 
 ### Run a slotted Procedure
 
-`get` on a Procedure renders its declared slots and their required interfaces:
+`get` on a Procedure renders its declared slots and their signatures:
 
 ~~~bash
 cruxible get Procedure:catalog.price-check
 ~~~
 
-A Procedure may leave Provider slots open, each naming its required interface.
-A direct run selects the single installed build that fits each slot. No fit refuses
-`cruxible.procedure.slot_binding_missing`; several fits refuse
-`cruxible.procedure.slot_binding_ambiguous` and list the candidates. Select explicitly
-with `cruxible procedure run NAME INPUT --bind slot=provider`, or pass
-`bindings={"slot": "provider"}` to the SDK's `Procedure.run`. A `line` member can
-carry the same `bindings` mapping alongside its Procedure and parameters.
-Existing Blueprint artifacts remain readable, and their exact Procedure instances
-keep running. An existing Blueprint may be retired without changing its definition;
-new definitions are Procedures with slots.
+A direct run fits each slot to the single live operation serving its
+signature. No fit refuses `cruxible.line.slot_unfilled`; several fits refuse
+`cruxible.line.slot_ambiguous` and list the candidates. Select explicitly with
+`cruxible procedure run NAME INPUT --bind slot=provider` (`provider[/build][#operation]`;
+a bare name is its most recently registered live build), or pass
+`bindings={"slot": "provider"}` to the SDK's `Procedure.run`. A Line records an
+exact build and operation for every slot in its `bindings`, alongside its
+Procedure and parameters.
 
 
 ### Check and upgrade
@@ -312,8 +313,8 @@ are unaffected. Old builds stay installed and runnable; kit add neither retires
 nor lists them.
 
 Provider builds have identities `Provider:NAME/BUILD`, where BUILD is a hash of
-the wheel and lock or image, excluding the host environment. Contract registrations
-are shared by builds implementing the same interface contract. Installing a
+the wheel and lock or image, excluding the host environment. Contracts are shared:
+builds whose operations name the same Contracts serve the same slots. Installing a
 build adds it alongside earlier builds; existing exact pins stay put. New
 authoring by bare provider name chooses the live build registered most recently,
 even when its package version is lower. Signing-key and capture-declaration changes
@@ -322,11 +323,10 @@ live build the default; builds registered in the same generation require an
 explicit build name until the tie is resolved. Explicit build names select that build.
 These rules also apply to retained single-path Providers: changing signing keys
 or Capture declarations preserves their runtime build's original registration order.
-Moving a retained exact Procedure updates the provider and interface references
-in its graph. Moving a slotted Procedure's provider build rebinds affected Lines
-by fit, preserving the Procedure definition.
-`cruxible provider move NAME --to newest|BUILD` moves Procedures as a governed
-change with its own preview. `cruxible provider retire NAME/BUILD` is refused
+Procedures name no builds, so moving a provider moves Lines:
+`cruxible provider move NAME --to newest|BUILD` rebinds the Lines bound to NAME
+(or only those named with `--only`) as a governed change with its own preview,
+carrying them disabled and their Mandates propose-only. `cruxible provider retire NAME/BUILD` is refused
 while live definitions pin it and retains its runtime environment after retirement.
 Legacy single-path Providers remain readable without a rewrite; `cruxible-builtin`
 keeps its single path.
@@ -337,8 +337,7 @@ and `--retire-dependents IDENTITY` retires it together with its dependents.
 The preview counts dependents after the release's replacements: a query that
 the same release replaces and that no longer uses the dropped type does not count.
 Definitions the release replaces carry their dependents (such as Claims and
-Procedures) forward in the same change set. Retained Blueprints may be retired,
-but their definitions cannot be edited on compiler 36.
+Procedures) forward in the same change set.
 For a carried Claim, `get --detail evidence` and the floor's `changes/` file
 show the kit transition as the rationale for that revision.
 
@@ -426,30 +425,28 @@ cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ./car-pa
 
 ### Bundle your own provider
 
-When a kit's Procedures pin a provider that is not built in, the kit must
-bundle it. Bundling takes the provider's package directory, which holds its
+A kit's own domain provider travels bundled. Bundling takes the provider's package directory, which holds its
 `pyproject.toml`, its `uv.lock`, and in `dist/` the built wheel plus a wheel
 for each dependency the lock names by path:
 
 ~~~bash
 cruxible provider install ./catalog-parser/dist/catalog_parser-1.0.0-py3-none-any.whl \
   --lock ./catalog-parser/uv.lock
-# author and accept the Procedures that pin it, then:
+# author and accept the Procedures whose slots it serves, then:
 cruxible kit build --id car-parts --version 1.0.0 --owns catalog. \
   --provider ./catalog-parser --out ./car-parts-1.0.0
 ~~~
 
 The build checks that what you bundle is exactly what this instance
-installed, that every Provider a carried Procedure pins is bundled, and that
-every carried ProviderInterface is what a bundled wheel registers. A changed
-wheel needs a new package version, since an instance holding the old build
+installed and that every Provider a carried definition pins is bundled. A
+changed wheel needs a new package version, since an instance holding the old build
 refuses a different build under the same version. Registry dependencies (for
 example `cruxible-provider-runtime`) are not bundled; the consumer's daemon
 resolves them from its provider index.
 
 ### Name a default provider
 
-For a general-purpose contract such as `web.fetch`, name a published package
+For general-purpose operations such as `web.fetch`, name a published package
 as the kit's default instead of bundling it. Lay its directory out as for
 `--provider`: a `pyproject.toml` naming the package, the lock the published
 wheel embeds as `uv.lock` (`cruxible.kit.provider_lock_not_embedded`
@@ -465,11 +462,12 @@ cruxible kit build --id car-parts --version 1.1.0 --owns catalog. \
 
 The manifest records the package, its exact version and the wheel and lock
 digests (`delivery: index`), and the kit carries none of its files. Every
-Provider a carried Procedure pins must be named by `--provider` or
-`--default-provider`, as the build this instance installed. A Procedure that
-pins the default always gets it installed on `kit add`; a Procedure slot typed
-by its interface selects a fitting installed build at run admission. More than
-one fitting build requires an explicit binding.
+Provider a carried definition pins must be named by `--provider` or
+`--default-provider`, as the build this instance installed. `kit add` installs
+the default unless builds already here serve every slot the kit's Procedures
+declare. A Line binds each slot to an exact build when accepted; a direct run
+fits each slot, and more than one fitting operation requires an explicit
+binding.
 
 ### Document it
 
