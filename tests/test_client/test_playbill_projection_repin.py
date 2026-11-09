@@ -911,8 +911,10 @@ def test_repin_missing_block_and_conflict_name_the_file(tmp_path: Path) -> None:
     assert "in file 'corpus.runbook' changed" in str(conflict)
 
 
-def test_create_state_teaches_file_repin_operand() -> None:
-    skill = Path(__file__).resolve().parents[2] / "skills/create-state/SKILL.md"
-    text = skill.read_text()
+def test_shared_editing_reference_teaches_file_repin_operand() -> None:
+    root = Path(__file__).resolve().parents[2]
+    skill = root / "skills/create-state/SKILL.md"
+    assert "../_shared/references/concurrent-edits.md" in skill.read_text()
+    text = (root / "skills/_shared/references/concurrent-edits.md").read_text()
     assert "cruxible block repin FILE ID" in text
     assert "cruxible block repin SOURCE ID" not in text
