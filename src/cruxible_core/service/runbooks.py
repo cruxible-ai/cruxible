@@ -38,6 +38,7 @@ from cruxible_client.contracts.runbooks import (
     RunbookRunResult,
     RunbookStepOutcome,
     RunbookStopReason,
+    runbook_attention_steps,
     runbook_digest,
     runbook_path,
 )
@@ -135,6 +136,7 @@ def _line_outcome(step: int, target: LineTarget, state: Any) -> RunbookStepOutco
         "target": target,
         "run_id": state.run_id,
         "run_status": state.status,
+        "counts": getattr(state, "counts", None),
     }
     if state.status != "succeeded":
         terminal = getattr(state, "terminal", None)
@@ -261,6 +263,7 @@ def execute_runbook(
         stop_reason=stop,
         stopped_at_step=stopped_at,
         steps=tuple(outcomes),
+        attention_steps=runbook_attention_steps(tuple(outcomes)),
     )
 
 

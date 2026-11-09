@@ -795,6 +795,15 @@ class LineInboxStore:
             for row in rows
         )
 
+    def posted_by_run(self, run_id: str) -> int:
+        """How many items one run posted (new items and re-sightings): one index range."""
+
+        if not self.root.is_dir():
+            return 0
+        with self.locked() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM postings WHERE run_id=?", (run_id,)).fetchone()
+        return int(row[0])
+
     def unread_by_line(self) -> tuple[tuple[str, int], ...]:
         """Each Line with unread items and how many, by Line."""
 

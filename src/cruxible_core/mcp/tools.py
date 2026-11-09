@@ -408,8 +408,9 @@ def register_tools(
             str | None,
             Field(
                 description=(
-                    "A registry reference (project-state:1.0.0 or "
-                    "ghcr.io/acme/kits/foo@sha256:...); this adapter pulls and verifies it. "
+                    "A kit directory (holding cruxible-kit.json) or OCI image layout on "
+                    "this adapter's disk, or a registry reference (project-state:1.0.0 or "
+                    "ghcr.io/acme/kits/foo@sha256:...) it pulls and verifies. "
                     "Or give bundle."
                 )
             ),

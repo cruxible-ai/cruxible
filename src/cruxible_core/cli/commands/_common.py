@@ -36,6 +36,28 @@ SERVER_MODE_REQUIRED_MESSAGE = (
     "Server mode is required. Set CRUXIBLE_SERVER_SOCKET or CRUXIBLE_SERVER_URL."
 )
 
+
+def no_daemon_message(command_name: str) -> str:
+    """Why a command that needs a daemon found none, and how to give it one."""
+
+    from cruxible_core.errors import CoreError
+    from cruxible_core.mcp.daemon import default_socket_path
+    from cruxible_core.server.config import get_server_state_root
+
+    try:
+        socket = str(default_socket_path(get_server_state_root()))
+    except CoreError:
+        socket = "<CRUXIBLE_STATE_ROOT>/run/daemon.sock"
+    return (
+        f"{command_name} needs server mode: the CLI sends the command to a running "
+        "Cruxible daemon, which holds the state; nothing runs in this process. No daemon "
+        "was found: no --server-socket/--server-url, no CRUXIBLE_SERVER_SOCKET/"
+        f"CRUXIBLE_SERVER_URL, no remembered context, and none answering at {socket}. "
+        f"Start one with `cruxible server start --socket {socket}` (an MCP adapter starts "
+        "one there by itself), or pass --server-socket PATH."
+    )
+
+
 json_option = click.option(
     "--json",
     "output_json",
@@ -483,9 +505,7 @@ def _dispatch_cli(
     if client is not None:
         return remote_call(client)
     if not allow_local:
-        raise click.UsageError(
-            f"Local execution disabled for {command_name or 'this command'}; use server mode."
-        )
+        raise click.UsageError(no_daemon_message(command_name or "this command"))
     if _root_ctx_obj().get("require_server"):
         raise click.UsageError(SERVER_MODE_REQUIRED_MESSAGE)
     return local_call()

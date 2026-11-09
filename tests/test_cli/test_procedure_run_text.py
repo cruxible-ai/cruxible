@@ -88,3 +88,21 @@ def test_a_refused_or_failed_run_exits_1_and_the_rest_exit_0() -> None:
         assert stopped.value.code == 1
     for status in ("succeeded", "halted", "running"):
         _exit_for_run(SimpleNamespace(status=status))  # type: ignore[arg-type]
+
+
+def test_a_succeeded_line_run_with_an_incomplete_source_says_it_needs_attention(capsys) -> None:
+    from cruxible_client.contracts.claim_evidence import CompletenessReason, RunCompleteness
+    from cruxible_client.contracts.procedures.node_summary import run_counts
+
+    counts = run_counts(
+        [],
+        completeness=RunCompleteness(
+            reasons=(CompletenessReason(node="scores", kind="count_mismatch"),)
+        ),
+    )
+    out = _echo(capsys, status="succeeded", counts=counts, next_operation={"kind": "done"})
+    assert out.splitlines()[:2] == [
+        "audit.sign-line: succeeded  (needs attention)",
+        "Counts: written 0 (settled 0, proposed 0); unchanged 0; refused 0; inbox 0; "
+        "INCOMPLETE (scores count_mismatch)",
+    ]

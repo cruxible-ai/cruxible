@@ -54,6 +54,8 @@ SLOT = "slot"
 DOOR = "door"
 SOURCE = "source"
 DEPENDENCY = "dependency"
+#: A (subject end, Subject keyed by it) link: its pair's subject-end entries.
+END = "end"
 #: The order the fold emits its families in; within one, ``emit_order`` decides.
 FAMILY_RANK = {THRESHOLD: 0, SLOT: 1, DOOR: 2, DEPENDENCY: 3}
 
@@ -104,6 +106,9 @@ _FACT_COLUMNS = (
     "lower_us",
     "upper_us",
     "error_code",
+    "subject_path",
+    "object_path",
+    "is_key",
 )
 
 
@@ -638,6 +643,102 @@ def source_key(context: RowContext, claim_id: str) -> KeyRows | None:
     return result
 
 
+def end_key(end: str, pair: str) -> str:
+    """The subject-end key of one (end, Subject keyed by it) link."""
+
+    return _json([end, pair])
+
+
+#: Linked Subjects an end key batch reads per query (a hub's fan-out is paged).
+END_PAGE = 500
+
+
+def end_keys(context: RowContext, keys: Iterable[str]) -> dict[str, KeyRows | None]:
+    """Each (end, pair) key's subject-end entries (``subject_end_entries``).
+
+    Per end: one indexed probe for a live observation (an observed end has no
+    entries, whatever its pairs hold) and one read of its retired observations;
+    then the pairs in pages of ``END_PAGE``, one query a page over those pairs'
+    own Claims. A key's
+    contributions are the entries of that one pair's Claims, so a change to one
+    pair re-derives one key.
+    """
+
+    from cruxible_core.service.discovery.next import SubjectEndClaim, subject_end_entries
+
+    found: dict[str, KeyRows | None] = {}
+    by_end: dict[str, list[tuple[str, str]]] = {}
+    for key in sorted(set(keys)):
+        found[key] = None
+        end, pair = json.loads(key)
+        by_end.setdefault(str(end), []).append((key, str(pair)))
+    connection = context.connection
+    for end, items in sorted(by_end.items()):
+        observed = connection.execute(
+            "SELECT 1 FROM claim_facts WHERE subject_path=? AND lifecycle='live' AND is_key=0 "
+            "LIMIT 1",
+            (end,),
+        ).fetchone()
+        if observed is not None:
+            continue
+        sources = []
+        for row in connection.execute(
+            "SELECT claim_id FROM claim_facts WHERE subject_path=? AND lifecycle='retired' "
+            "AND is_key=0 ORDER BY claim_id",
+            (end,),
+        ):
+            claim = context.claim(str(row[0]))
+            sources.append(
+                SubjectEndClaim(
+                    identity=str(row[0]),
+                    lifecycle="retired",
+                    is_key=False,
+                    visible=False,
+                    predecessor_digest=(
+                        None if claim is None else claim.lifecycle.predecessor_digest
+                    ),
+                )
+            )
+        if not sources:
+            continue
+        for start in range(0, len(items), END_PAGE):
+            page = items[start : start + END_PAGE]
+            pairs = sorted({pair for _key, pair in page})
+            # One read of the page's own Claims, by Subject: each pair's link to
+            # the end comes from its key parts, never from a scan of the end's keys.
+            linked: set[str] = set()
+            about: dict[str, list[SubjectEndClaim]] = {}
+            for row in connection.execute(
+                "SELECT subject_path,claim_id,lifecycle,is_key,visible,object_path "
+                f"FROM claim_facts WHERE subject_path IN ({','.join('?' for _ in pairs)})",
+                pairs,
+            ):
+                pair = str(row[0])
+                if row[3] and row[2] == "live" and row[5] == end:
+                    linked.add(pair)
+                about.setdefault(pair, []).append(
+                    SubjectEndClaim(
+                        identity=str(row[1]),
+                        lifecycle=str(row[2]),
+                        is_key=bool(row[3]),
+                        visible=row[4] == 1,
+                    )
+                )
+            for key, pair in page:
+                if pair not in linked:
+                    continue
+                contributions = [
+                    entry
+                    for source in sources
+                    for entry in subject_end_entries(
+                        source, end_path=end, end_claims=(), pair_claims=about.get(pair, ())
+                    )
+                ]
+                if contributions:
+                    found[key] = KeyRows(END, key, contributions=contributions)
+    return found
+
+
 def dependency_rows(connection: sqlite3.Connection, dependent: str) -> KeyRows | None:
     """One dependent's stale-dependency row, from every source's stored entries."""
 
@@ -678,6 +779,8 @@ def derive_one(context: RowContext, family: str, key: str) -> KeyRows | None:
         return door_key(context, key)
     if family == SOURCE:
         return source_key(context, key)
+    if family == END:
+        return end_keys(context, (key,))[key]
     raise ValueError(f"no derivation for row family {family}")
 
 
@@ -688,9 +791,12 @@ def derive(context: RowContext, keys: Iterable[tuple[str, str]], delta: RowsDelt
     sources' entries moved, for ``apply_dependents``.
     """
 
-    for family, key in sorted(set(keys)):
-        if family != DEPENDENCY:
+    wanted = sorted(set(keys))
+    for family, key in wanted:
+        if family not in (DEPENDENCY, END):
             delta.keys[(family, key)] = derive_one(context, family, key)
+    for key, result in end_keys(context, (key for family, key in wanted if family == END)).items():
+        delta.keys[(END, key)] = result
 
 
 def apply(connection: sqlite3.Connection, delta: RowsDelta) -> set[str]:
@@ -700,7 +806,7 @@ def apply(connection: sqlite3.Connection, delta: RowsDelta) -> set[str]:
     for (family, key), result in sorted(delta.keys.items()):
         if family == DEPENDENCY:
             continue
-        if family == SOURCE:
+        if family in (SOURCE, END):
             before = {
                 str(row[0])
                 for row in connection.execute(
@@ -812,6 +918,7 @@ def stored_rows(
 __all__ = [
     "DEPENDENCY",
     "DOOR",
+    "END",
     "FAMILY_RANK",
     "SCHEMA",
     "SLOT",
@@ -826,6 +933,8 @@ __all__ = [
     "derive",
     "derive_one",
     "door_keys",
+    "end_key",
+    "end_keys",
     "res_slot_of",
     "slot_key",
     "stored_rows",

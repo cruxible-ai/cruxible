@@ -69,6 +69,12 @@ def test_a_completed_run_settles_and_fires_in_order(
     assert event.sequence == result.steps[1].event_id
     assert counted_line_runs == {SETTLE: 1}
     assert runbook_service.latest_runbook_run(instance, "test.rb") == result
+    # The settle step.s counts say what it achieved: written and settled, nothing refused.
+    counts = result.steps[0].counts
+    assert counts is not None and counts.complete and not counts.needs_attention
+    assert counts.written >= 1 and counts.settled == counts.written and counts.proposed == 0
+    assert (counts.refused, counts.inbox) == (0, 0)
+    assert result.steps[1].counts is None and result.attention_steps == ()
 
 
 def test_a_stop_on_proposal_halts_every_later_step(
@@ -92,6 +98,9 @@ def test_a_stop_on_proposal_halts_every_later_step(
     assert _statuses(result) == ["proposed", "not_run", "not_run"]
     (proposal,) = result.steps[0].proposal_ids
     assert proposal.startswith("sha256:")
+    proposed = result.steps[0].counts
+    assert proposed is not None and proposed.proposed == proposed.written >= 1
+    assert proposed.settled == 0
     # Nothing after the review ran: no later Line run, no action fire, no settle.
     assert counted_line_runs == {PROPOSE: 1}
     assert trigger_events(instance, action="evidence.sweep") == ()
@@ -683,3 +692,125 @@ def test_an_idle_poll_is_constant_in_retained_fires(
         _due_vm_steps(instance, monkeypatch)  # warm: the Trigger set is read once per head
         counts[history] = _due_vm_steps(instance, monkeypatch)
     assert counts[1000] == counts[100], counts
+
+
+def test_a_completed_run_names_the_steps_whose_counts_need_attention() -> None:
+    """A step that "succeeded" but refused every item or read an incomplete source is
+    named in ``attention_steps``; the status stays ``completed``."""
+
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.claim_evidence import (
+        ClaimsDiagnostic,
+        CompletenessReason,
+        RunCompleteness,
+    )
+    from cruxible_client.contracts.procedures.node_summary import (
+        ClaimsRunSummary,
+        ExtractRunSummary,
+        run_counts,
+    )
+    from cruxible_client.contracts.runbooks import (
+        AcceptedRunbook,
+        Runbook,
+        runbook_digest,
+        runbook_path,
+    )
+
+    def claims(written: int, skipped: dict[str, int], delivery: str) -> ClaimsRunSummary:
+        return ClaimsRunSummary.model_validate(
+            {
+                "written": written,
+                "revised": 0,
+                "inverse_written": 0,
+                "subjects_created": 0,
+                "re_observed": 0,
+                "no_op": 0,
+                "retired": 0,
+                "surfaced": 0,
+                "downgraded": 0,
+                "skipped": skipped,
+                "delivery": delivery,
+            }
+        )
+
+    refused = run_counts(
+        [claims(2, {"extract_refused": 9}, "settled")],
+        findings=[
+            ClaimsDiagnostic(kind="extract_refused", target="t", problem="value_invalid")
+            for _ in range(9)
+        ],
+        inbox=9,
+    )
+    assert (refused.written, refused.settled, refused.refused, refused.inbox) == (2, 2, 9, 9)
+    assert [(item.code, item.count) for item in refused.top_refusals] == [
+        ("extract_refused.value_invalid", 9)
+    ]
+    assert refused.complete and refused.needs_attention
+    incomplete = run_counts(
+        [
+            ExtractRunSummary(
+                records=0, invalid_records=0, duplicates=0, invalid_fields=0, complete=False
+            ),
+            claims(0, {}, "empty"),
+        ],
+        completeness=RunCompleteness(
+            reasons=(CompletenessReason(node="scores", kind="count_mismatch"),)
+        ),
+    )
+    assert not incomplete.complete and incomplete.needs_attention
+    assert incomplete.written == 0
+    clean = run_counts([claims(3, {}, "settled")])
+    assert not clean.needs_attention
+    # An inbox count that could not be read is never "nothing posted".
+    unknown = run_counts([claims(3, {}, "settled")], inbox=None)
+    assert unknown.inbox is None and unknown.needs_attention
+
+    def state(counts: Any) -> Any:
+        return SimpleNamespace(
+            run_id="RUN-x", status="succeeded", terminal_egress=(), counts=counts, terminal=None
+        )
+
+    tallies = {"test.a": clean, "test.b": refused, "test.c": incomplete, "test.d": unknown}
+    runbook = Runbook.model_validate(
+        {
+            "identity": {"kind": "Runbook", "name": "test.rb"},
+            "steps": [
+                {"kind": "line", "line": {"target": {"kind": "Line", "name": n}}}
+                for n in ("test.a", "test.b", "test.c", "test.d")
+            ],
+        }
+    )
+    accepted = AcceptedRunbook(
+        path=runbook_path("test.rb"),
+        runbook=runbook,
+        artifact_digest=runbook_digest(runbook).tagged,
+    )
+    result = runbook_service.execute_runbook(
+        accepted,
+        mode="manual",
+        run_line=lambda line, _step: state(tallies[line]),
+        fire_action=lambda action, _step: 1,
+        clock=lambda: datetime(2026, 11, 9, tzinfo=UTC),
+    )
+    assert result.status == "completed"
+    assert [step.status for step in result.steps] == ["succeeded"] * 4
+    assert result.attention_steps == (2, 3, 4)
+    assert RunbookRunResult.model_validate(result.model_dump(mode="json")) == result
+
+    # The CLI prints each step's counts and names the steps needing attention.
+    import click
+    from click.testing import CliRunner
+
+    from cruxible_core.cli.commands import playbill as playbill_cli
+
+    @click.command()
+    def show() -> None:
+        playbill_cli._echo_runbook_run(result)
+
+    output = CliRunner().invoke(show).output
+    assert "completed; needs attention: steps 2, 3, 4" in output
+    assert "inbox ?" in output
+    assert "! written 2 (settled 2, proposed 0); unchanged 0; refused 9 " in output
+    assert "(extract_refused.value_invalid 9); inbox 9" in output
+    assert "INCOMPLETE (scores count_mismatch)" in output

@@ -98,6 +98,7 @@ def test_default_orient_names_each_kind_with_its_predicates_as_values(seeded) ->
     assert result.you is not None and result.you.can_author is True
     assert result.attention is not None and result.attention.open_proposals == 0
     assert result.truncated is False and result.next_cursor is None
+    assert result.queries_truncated is False
 
     wire = result.model_dump(mode="json")
     # Absent optional parts are left off the wire rather than sent as nulls.
@@ -739,3 +740,16 @@ def test_orient_and_get_show_operation_contracts_and_source_parsing_declarations
     builtin_proof = get("Provider:cruxible-builtin", "proof").proof
     assert builtin_proof is not None
     assert all("enumerates" not in op for op in builtin_proof["envelope"]["operations"])
+
+
+def test_a_default_map_listing_fewer_queries_than_it_counts_says_so(  # type: ignore[no-untyped-def]
+    seeded, monkeypatch
+) -> None:
+    from cruxible_core.service.discovery import orient
+
+    monkeypatch.setattr(orient, "ORIENT_DEFAULT_QUERIES", 1)
+    result = service_playbill_orient(seeded, caller=OWNER)
+    assert result.artifacts is not None and result.artifacts.queries == 2
+    assert [item.name for item in result.queries or ()] == [QUERY_NAME]
+    assert result.queries_truncated is True
+    assert result.model_dump(mode="json")["queries_truncated"] is True

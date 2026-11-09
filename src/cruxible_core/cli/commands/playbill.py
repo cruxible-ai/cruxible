@@ -188,6 +188,7 @@ from cruxible_core.cli.commands._common import (
     change_control_options,
     echo_preview_next,
     json_option,
+    no_daemon_message,
 )
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.cli.payloads import (
@@ -1065,7 +1066,7 @@ def init_playbill(
     if workspace_path is None:
         _refuse_tcp_workspace_operation(git_workspace)
     if not (_root_ctx_obj().get("server_url") or _root_ctx_obj().get("server_socket")):
-        raise click.UsageError("Local execution disabled for cruxible init; use server mode.")
+        raise click.UsageError(no_daemon_message("cruxible init"))
     transport = _transport_target(_root_ctx_obj())
     if transport is None:  # pragma: no cover - guarded by _get_client above
         raise click.UsageError("Server mode is required for cruxible init")
@@ -2259,7 +2260,7 @@ def kit_status(offline: bool, output_json: bool) -> None:
             )
         for provider in kit.providers:
             state: str = provider.state
-            if provider.installed_version is not None:
+            if provider.state == "differs" and provider.installed_version is not None:
                 state += f" (installed: {provider.installed_version})"
             click.echo(
                 f"  provider {provider.provider_id} ({provider.package} {provider.version}): "
@@ -7490,10 +7491,34 @@ def _cli_repair(repair: Any) -> str:
     return " ".join(parts)
 
 
+def _counts_text(counts: Any) -> str:
+    """A run's counts on one line; incompleteness and refusals named."""
+
+    parts = [
+        f"written {counts.written} (settled {counts.settled}, proposed {counts.proposed})",
+        f"unchanged {counts.unchanged}",
+    ]
+    if counts.retired:
+        parts.append(f"retired {counts.retired}")
+    refused = f"refused {counts.refused}"
+    if counts.top_refusals:
+        refused += " (" + ", ".join(f"{i.code} {i.count}" for i in counts.top_refusals) + ")"
+    parts.append(refused)
+    parts.append(f"inbox {'?' if counts.inbox is None else counts.inbox}")
+    if not counts.complete:
+        reasons = ", ".join(f"{r.node} {r.kind}" for r in counts.incomplete_reasons)
+        parts.append("INCOMPLETE" + (f" ({reasons})" if reasons else ""))
+    return "; ".join(parts)
+
+
 def _echo_run_outcome(result: contracts.ProcedureRunState, label: str) -> None:
     """Lead with the answer: the result on success, the code and repair on refusal."""
 
-    click.echo(f"{label}: {result.status}")
+    counts = getattr(result, "counts", None)
+    attention = counts is not None and counts.needs_attention
+    click.echo(f"{label}: {result.status}" + ("  (needs attention)" if attention else ""))
+    if counts is not None:
+        click.echo("Counts: " + _counts_text(counts))
     if result.status == "succeeded" and result.result is not None:
         click.echo("Result: " + json.dumps(result.result, sort_keys=True))
     terminal = result.terminal
@@ -8623,6 +8648,11 @@ def _echo_runbook_run(result: Any) -> None:
         if result.status == "stopped"
         else "completed"
     )
+    if result.attention_steps:
+        listed = ", ".join(str(item) for item in result.attention_steps)
+        stopped += (
+            f"; needs attention: step{'s' if len(result.attention_steps) > 1 else ''} {listed}"
+        )
     click.echo(f"Runbook {result.runbook}: {stopped}  [{result.run_id}]")
     for step in result.steps:
         extra = [
@@ -8635,6 +8665,9 @@ def _echo_runbook_run(result: Any) -> None:
             f"  {step.step:>2}  {step.status:<11} {_target_text(step.target)}"
             + (f"  ({', '.join(extra)})" if extra else "")
         )
+        if step.counts is not None:
+            mark = "!" if step.counts.needs_attention else " "
+            click.echo(f"    {mark} {_counts_text(step.counts)}")
 
 
 def _echo_runbook_preview(preview: Any) -> None:

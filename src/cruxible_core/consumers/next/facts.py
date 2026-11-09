@@ -98,7 +98,9 @@ if TYPE_CHECKING:
 
 #: The derivation format. Bump it whenever a row's derivation changes: the
 #: number is part of the schema text, so a new one rebuilds the state (R5).
-FORMAT = 13  # Expiring leads clamped to horizon/4; repair operands; tally `ineligible`.
+FORMAT = 15  # Subject-end entries per (end, pair) key; live key-object index. A state
+#: built at 14 holds subject-end contributions per retired observation and no END keys,
+#: so it must rebuild once.
 #: The one deadline next arms: the earliest instant a stored fact or row stops holding.
 NEXT_EXPIRE = "next.expire"
 #: The daily evidence sweep: each fire compares every consulted body's file identity,
@@ -131,9 +133,12 @@ CREATE TABLE claim_facts (
  currency TEXT, status TEXT, visible INTEGER, max_support_expiry_us INTEGER,
  set_args_json TEXT, lower_us INTEGER, upper_us INTEGER, error_code TEXT,
  error_detail TEXT, citation_error TEXT, account_captures TEXT,
- pin_targets TEXT NOT NULL
+ pin_targets TEXT NOT NULL, is_key INTEGER
 ) STRICT;
 CREATE INDEX claim_facts_by_slot ON claim_facts(res_slot,claim_id);
+CREATE INDEX claim_facts_by_subject ON claim_facts(subject_path,lifecycle,claim_id);
+CREATE INDEX claim_facts_by_key_object ON claim_facts(object_path,lifecycle,subject_path)
+ WHERE is_key=1 AND object_path IS NOT NULL;
 CREATE INDEX claim_facts_by_support_expiry ON claim_facts(max_support_expiry_us)
  WHERE max_support_expiry_us IS NOT NULL;
 CREATE INDEX claim_facts_with_errors ON claim_facts(lifecycle,path) WHERE error_code IS NOT NULL;
@@ -265,6 +270,7 @@ _FACT_COLUMNS = (
     "citation_error",
     "account_captures",
     "pin_targets",
+    "is_key",
 )
 _CLAIM_PATH = re.compile(r"claims/[0-9a-f]{2}/(CLM-[0-9a-f]{32})\.json")
 _VERDICTS: TypeAdapter[ClaimVerdictResult] = TypeAdapter(ClaimVerdictResult)
@@ -498,6 +504,26 @@ def _citation_row(claim_id: str, commitment: Any) -> tuple[Any, ...]:
     )
 
 
+def _key_part(
+    tree: Mapping[str, bytes], subject_path: str, predicate: str
+) -> tuple[bool, str | None]:
+    """Whether ``predicate`` is a key part of the Subject's kind, and the kind's path read."""
+
+    from cruxible_client.contracts.subject_kinds import (
+        SubjectKindFormatError,
+        live_subject_kind,
+        subject_kind_path,
+    )
+
+    kind = subject_path.removeprefix("subjects/").partition("/")[0]
+    try:
+        kind_path = subject_kind_path(kind)
+        declared = live_subject_kind(tree, kind)
+    except SubjectKindFormatError:
+        return False, None
+    return declared is not None and predicate in declared.keys, kind_path
+
+
 def _claim_facts(
     instance: Any,
     context: ClaimVerdictReadContext,
@@ -555,6 +581,9 @@ def _claim_facts(
     }
     if object_path is not None:
         reads.add(f"path:{object_path}")
+    is_key, kind_path = _key_part(context.tree, subject_path, statement.predicate)
+    if kind_path is not None:
+        reads.add(f"path:{kind_path}")
     door_reads, account_captures = _door_reads(
         instance, context, claim, door_captures=door_captures, stored=stored, digest=digest
     )
@@ -674,6 +703,7 @@ def _claim_facts(
         "citation_error": citation_error,
         "account_captures": None if account_captures is None else _json(account_captures),
         "pin_targets": _json(sorted({pin.target.qualified for pin in claim.pins})),
+        "is_key": int(is_key),
     }
     capture_bodies = dict(recording.capture_bodies)
     store = context.body_store()
@@ -1797,7 +1827,103 @@ def _dirty_keys(
         )
     )
     keys.update((rows.SOURCE, target) for target in targets if target.startswith("Claim:"))
+    keys.update(
+        _subject_end_keys(
+            connection, [(delta.before.get(identity), after.get(identity)) for identity in replaced]
+        )
+    )
     return keys
+
+
+#: What the subject-end rule reads of a Claim (``subject_end_entries``).
+_END_READS = ("lifecycle", "visible", "is_key", "subject_path", "object_path")
+
+
+def _subject_end_keys(
+    connection: sqlite3.Connection,
+    changes: Sequence[tuple[Mapping[str, Any] | None, Mapping[str, Any] | None]],
+) -> set[tuple[str, str]]:
+    """The (end, pair) keys whose subject-end entries these Claim changes can move.
+
+    - A Claim about a Subject moves that Subject's own links (its pair Claims,
+      or a key part naming an end): only those keys, never an end's other pairs.
+    - A Claim about an end moves every pair of that end only when the end's
+      entries can change: its observation appears or disappears, or, while it
+      stays unobserved, its retired observations change. An end observed
+      before and after reaches nothing.
+
+    Each probe is an indexed read sized by the Subjects the change names.
+    """
+
+    links: set[tuple[str, str]] = set()
+    by_subject: dict[str, dict[str, tuple[Mapping[str, Any] | None, Mapping[str, Any] | None]]]
+    by_subject = {}
+    for old, new in changes:
+        if not _moved(old, new, _END_READS):
+            continue
+        for side in (old, new):
+            if side is None:
+                continue
+            subject = str(side["subject_path"])
+            by_subject.setdefault(subject, {})[str(side["claim_id"])] = (old, new)
+            if side["is_key"] and side["object_path"] is not None:
+                links.add((str(side["object_path"]), subject))
+    if not by_subject:
+        return set()
+    subjects = tuple(sorted(by_subject))
+    links.update(
+        (str(row[0]), str(row[1]))
+        for row in _rows(
+            connection,
+            "SELECT object_path,subject_path FROM claim_facts WHERE is_key=1 AND lifecycle='live' "
+            "AND object_path IS NOT NULL AND subject_path IN ({marks})",
+            subjects,
+        )
+    )
+    # Whether each changed Subject's entries as an end can move is decided first,
+    # from its own Claims (bounded probes); only then are its pairs read, and an
+    # end observed before and after never touches them.
+    for subject in subjects:
+        if _end_entries_moved(connection, subject, by_subject[subject]):
+            links.update(
+                (subject, str(row[0]))
+                for row in connection.execute(
+                    "SELECT subject_path FROM claim_facts INDEXED BY claim_facts_by_key_object "
+                    "WHERE object_path=? AND lifecycle='live' AND is_key=1",
+                    (subject,),
+                )
+            )
+    return {(rows.END, rows.end_key(end, pair)) for end, pair in links}
+
+
+def _end_entries_moved(
+    connection: sqlite3.Connection,
+    end: str,
+    changed: Mapping[str, tuple[Mapping[str, Any] | None, Mapping[str, Any] | None]],
+) -> bool:
+    """Whether changing these Claims about ``end`` can move its pairs' entries."""
+
+    def observes(side: Mapping[str, Any] | None) -> bool:
+        return side is not None and side["lifecycle"] == "live" and not side["is_key"]
+
+    def retired(side: Mapping[str, Any] | None) -> bool:
+        return side is not None and side["lifecycle"] == "retired" and not side["is_key"]
+
+    # A live observation the change did not touch: observed before and after.
+    live = connection.execute(
+        "SELECT claim_id FROM claim_facts WHERE subject_path=? AND lifecycle='live' AND is_key=0 "
+        "LIMIT ?",
+        (end, len(changed) + 1),
+    ).fetchall()
+    if any(str(row[0]) not in changed for row in live):
+        return False
+    before = any(observes(old) for old, _new in changed.values())
+    after = any(observes(new) for _old, new in changed.values())
+    if before != after:
+        return True
+    if after:
+        return False
+    return any(retired(old) or retired(new) for old, new in changed.values())
 
 
 def _expired_keys(connection: sqlite3.Connection, at: datetime) -> set[tuple[str, str]]:
@@ -1812,7 +1938,13 @@ def _all_keys(
 ) -> set[tuple[str, str]]:
     """Every key a rebuild derives: each live Claim's threshold and slot, each door, each source."""
 
-    keys: set[tuple[str, str]] = set()
+    keys: set[tuple[str, str]] = {
+        (rows.END, rows.end_key(str(row[0]), str(row[1])))
+        for row in connection.execute(
+            "SELECT DISTINCT object_path,subject_path FROM claim_facts WHERE is_key=1 "
+            "AND lifecycle='live' AND object_path IS NOT NULL"
+        )
+    }
     for claim_id, lifecycle, conflict_slot in connection.execute(
         "SELECT claim_id,lifecycle,conflict_slot FROM claim_facts"
     ):

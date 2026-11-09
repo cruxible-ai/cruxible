@@ -10,11 +10,18 @@ whatever the run read.
 
 from __future__ import annotations
 
+from collections import Counter
+from collections.abc import Iterable
 from typing import Annotated, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
-from cruxible_client.contracts.claim_evidence import FindingKind
+from cruxible_client.contracts.claim_evidence import (
+    ClaimsDiagnostic,
+    CompletenessReason,
+    FindingKind,
+    RunCompleteness,
+)
 from cruxible_client.contracts.procedures.nodes import TransformKind
 from cruxible_client.contracts.shapes import ComparisonOp
 
@@ -232,6 +239,125 @@ NodeRunSummary: TypeAlias = Annotated[
 
 NODE_RUN_SUMMARY_ADAPTER: TypeAdapter[NodeRunSummary] = TypeAdapter(NodeRunSummary)
 
+#: Refusal codes a run's counts name, at most (the most frequent first).
+RUN_COUNTS_TOP_REFUSALS_MAX = 3
+
+
+class RunRefusalCount(_NodeSummary):
+    """One refusal code and how many of the run's findings carried it.
+
+    ``code`` is the finding kind, with its problem when it names one
+    (``extract_refused.value_invalid``).
+    """
+
+    code: str
+    count: SummaryCount
+
+
+class RunCounts(_NodeSummary):
+    """What one Line run did, in counts: the line a reader checks before "succeeded".
+
+    ``status`` says the run finished; this says what it achieved. ``written``
+    counts new, revising and inverse Claims across the run's claims terminals;
+    ``settled`` and ``proposed`` split them by how each terminal delivered
+    (``proposed`` includes a change still waiting on the Line's open proposal).
+    ``unchanged`` counts re-observed and no-op restatements, ``retired`` the
+    retirements. ``refused`` counts the items not written (every finding but
+    an incomplete source), with ``top_refusals`` naming the most frequent codes
+    among the findings the run kept. ``inbox`` counts the items this run posted
+    to its Line's inbox; when the inbox could not be read it is the count the
+    run's journaled ``post_inbox`` summaries prove, or ``None`` when they prove
+    none (findings routed to the inbox are not journaled). ``complete`` is
+    false when the run recorded incompleteness, with ``incomplete_reasons``
+    naming each node and kind. ``needs_attention`` is true when the run was
+    incomplete, refused an item, posted to the inbox, or its inbox count is
+    unknown (``None``): an unreadable count never reads as nothing posted.
+    """
+
+    tag: Literal["cruxible-run-counts-v1"] = "cruxible-run-counts-v1"
+    complete: bool
+    incomplete_reasons: tuple[CompletenessReason, ...] = Field(
+        default=(), max_length=20, exclude_if=lambda value: not value
+    )
+    written: SummaryCount = 0
+    settled: SummaryCount = 0
+    proposed: SummaryCount = 0
+    unchanged: SummaryCount = 0
+    retired: SummaryCount = 0
+    refused: SummaryCount = 0
+    top_refusals: tuple[RunRefusalCount, ...] = Field(
+        default=(), max_length=RUN_COUNTS_TOP_REFUSALS_MAX, exclude_if=lambda value: not value
+    )
+    inbox: SummaryCount | None = 0
+    needs_attention: bool
+
+    @model_validator(mode="after")
+    def _attention(self) -> RunCounts:
+        expected = not self.complete or self.refused > 0 or self.inbox != 0
+        if self.needs_attention != expected:
+            raise ValueError(
+                "needs_attention is true exactly when the run was incomplete, "
+                "refused an item, posted to the inbox, or its inbox count is unknown"
+            )
+        return self
+
+
+def run_counts(
+    summaries: Iterable[NodeRunSummary | None],
+    *,
+    findings: Iterable[ClaimsDiagnostic] = (),
+    completeness: RunCompleteness | None = None,
+    inbox: int | None = 0,
+) -> RunCounts:
+    """Fold a run's node summaries, kept findings and completeness into one RunCounts.
+
+    Constant work per node: it reads the summaries the run journaled, never a body.
+    """
+
+    written = settled = proposed = unchanged = retired = refused = posted = 0
+    for summary in summaries:
+        if isinstance(summary, EgressRunSummary) and summary.kind == "post_inbox":
+            posted += summary.emitted
+        if isinstance(summary, ClaimsRunSummary):
+            changed = summary.written + summary.revised + summary.inverse_written
+            written += changed
+            if summary.delivery == "settled":
+                settled += changed
+            elif summary.delivery in {"proposed", "still_current"}:
+                proposed += changed
+            unchanged += summary.re_observed + summary.no_op
+            retired += summary.retired
+            refused += sum(
+                count for kind, count in summary.skipped.items() if kind != "incomplete_source"
+            )
+    codes = Counter(
+        item.kind if not item.problem else f"{item.kind}.{item.problem}"
+        for item in findings
+        if item.kind != "incomplete_source"
+    )
+    complete = completeness is None or completeness.complete
+    if inbox is None and posted:
+        # The inbox could not be read: the journal still proves these posts.
+        inbox = posted
+    return RunCounts(
+        complete=complete,
+        incomplete_reasons=() if completeness is None else completeness.reasons,
+        written=written,
+        settled=settled,
+        proposed=proposed,
+        unchanged=unchanged,
+        retired=retired,
+        refused=refused,
+        top_refusals=tuple(
+            RunRefusalCount(code=code, count=count)
+            for code, count in sorted(codes.items(), key=lambda item: (-item[1], item[0]))[
+                :RUN_COUNTS_TOP_REFUSALS_MAX
+            ]
+        ),
+        inbox=inbox,
+        needs_attention=not complete or refused > 0 or inbox != 0,
+    )
+
 
 __all__ = [
     "NODE_RUN_SUMMARY_ADAPTER",
@@ -254,9 +380,13 @@ __all__ = [
     "HaltRunSummary",
     "NodeRunSummary",
     "ReadRunSummary",
+    "RUN_COUNTS_TOP_REFUSALS_MAX",
     "RepeatRunSummary",
+    "RunRefusalCount",
+    "RunCounts",
     "SummaryCount",
     "SummaryInt",
     "SummaryText",
     "TransformRunSummary",
+    "run_counts",
 ]

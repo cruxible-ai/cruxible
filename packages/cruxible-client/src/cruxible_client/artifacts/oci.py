@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generic, TypeVar
 
+from cruxible_client._safe_files import HeldRoot
+
 MANIFEST_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
 INDEX_MEDIA_TYPE = "application/vnd.oci.image.index.v1+json"
 LAYOUT_FILE = "oci-layout"
@@ -161,6 +163,12 @@ def _blob_path(root: Path, digest: str) -> Path:
     return root / "blobs" / "sha256" / value
 
 
+def _blob_name(digest: str) -> str:
+    """A blob's path relative to the layout root."""
+
+    return _blob_path(Path("."), digest).as_posix()
+
+
 def _write_atomic(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -196,15 +204,18 @@ def read_layout(root: Path) -> ArtifactImage:
 
     if not (root / LAYOUT_FILE).is_file():
         raise ValueError(f"{root} is not an OCI image layout")
-    index = json.loads((root / "index.json").read_bytes())
-    manifests = index.get("manifests") if isinstance(index, dict) else None
-    if not isinstance(manifests, list) or len(manifests) != 1:
-        raise ValueError(f"{root} must hold exactly one artifact")
-    descriptor = manifests[0]
-    manifest = _blob_path(root, str(descriptor.get("digest"))).read_bytes()
-    if sha256_digest(manifest) != descriptor.get("digest"):
-        raise ValueError(f"{root} manifest does not match its index digest")
-    return assemble_image(manifest, lambda item: _blob_path(root, str(item["digest"])).read_bytes())
+    # Every file is read from descriptors held beneath the layout root: a
+    # symbolic link inside it (``blobs`` leading elsewhere) is refused, not followed.
+    with HeldRoot(root) as held:
+        index = json.loads(held.read("index.json"))
+        manifests = index.get("manifests") if isinstance(index, dict) else None
+        if not isinstance(manifests, list) or len(manifests) != 1:
+            raise ValueError(f"{root} must hold exactly one artifact")
+        descriptor = manifests[0]
+        manifest = held.read(_blob_name(str(descriptor.get("digest"))))
+        if sha256_digest(manifest) != descriptor.get("digest"):
+            raise ValueError(f"{root} manifest does not match its index digest")
+        return assemble_image(manifest, lambda item: held.read(_blob_name(str(item["digest"]))))
 
 
 def is_layout(path: Path) -> bool:

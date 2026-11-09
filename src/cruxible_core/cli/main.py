@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import importlib
 import os
@@ -1071,6 +1072,16 @@ def cli(
         )
     except (ConfigError, ContextResolutionError, WorkspaceDirectoryConflict) as exc:
         raise click.UsageError(str(exc)) from exc
+    transport_source: str = resolved.transport_source
+    if not (settings.server_url or settings.server_socket):
+        # Nothing names a daemon: use the one answering at the state root's default
+        # socket, the daemon an MCP adapter finds or starts (never start one here).
+        from cruxible_core.mcp.daemon import answering_default_socket
+
+        found = answering_default_socket()
+        if found is not None:
+            settings = dataclasses.replace(settings, server_socket=found)
+            transport_source = "state_root"
 
     for warning in resolved.warnings:
         click.echo(f"warning: {warning}", err=True)
@@ -1084,7 +1095,7 @@ def cli(
             "principal_id": (principal_id or "").strip() or None,
             "require_server": settings.require_server,
             "json_compact": json_compact,
-            "target_transport_source": resolved.transport_source,
+            "target_transport_source": transport_source,
             "target_instance_source": resolved.instance_source,
             "instance_transport": (
                 resolved.server_url.rstrip("/")

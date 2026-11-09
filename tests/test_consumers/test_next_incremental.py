@@ -396,6 +396,70 @@ def _subscribed_keys(state: World, before: _Snapshot) -> set[tuple[str, str]]:
     return keys
 
 
+_END_COLUMNS = ("lifecycle", "visible", "is_key", "subject_path", "object_path")
+
+
+def _subject_end_keys(
+    old: dict[str, tuple[Any, ...]], new: dict[str, tuple[Any, ...]], claims: set[str]
+) -> set[tuple[str, str]]:
+    """The (end, pair) keys a change reaches (design: what the subject-end rule reads).
+
+    A changed Claim reaches its own Subject's links (the ends its key parts
+    name, before and after). A changed Claim about an end reaches every pair of
+    that end only when the end's observation appears or disappears, or its
+    retired observations change while it stays unobserved.
+    """
+
+    def col(row: tuple[Any, ...] | None, name: str) -> Any:
+        return None if row is None else row[_FACT[name]]
+
+    def end_columns(row: tuple[Any, ...] | None) -> tuple[Any, ...] | None:
+        return None if row is None else tuple(col(row, name) for name in _END_COLUMNS)
+
+    def observes(row: tuple[Any, ...] | None) -> bool:
+        return row is not None and col(row, "lifecycle") == "live" and not col(row, "is_key")
+
+    def retired(row: tuple[Any, ...] | None) -> bool:
+        return row is not None and col(row, "lifecycle") == "retired" and not col(row, "is_key")
+
+    live_links = {
+        (col(row, "object_path"), col(row, "subject_path"))
+        for row in new.values()
+        if col(row, "is_key") == 1
+        and col(row, "lifecycle") == "live"
+        and col(row, "object_path") is not None
+    }
+    links: set[tuple[str, str]] = set()
+    moved: dict[str, set[str]] = {}
+    for claim_id in claims:
+        was, now = old.get(claim_id), new.get(claim_id)
+        if end_columns(was) == end_columns(now):
+            continue
+        for side in (was, now):
+            if side is not None:
+                moved.setdefault(col(side, "subject_path"), set()).add(claim_id)
+                if col(side, "is_key") and col(side, "object_path") is not None:
+                    links.add((col(side, "object_path"), col(side, "subject_path")))
+    links |= {(end, pair) for end, pair in live_links if pair in moved}
+    for end, changed in moved.items():
+        pairs = {pair for linked, pair in live_links if linked == end}
+        if not pairs:
+            continue
+        untouched = any(
+            observes(row) and claim_id not in changed
+            for claim_id, row in new.items()
+            if col(row, "subject_path") == end
+        )
+        if untouched:
+            continue
+        before = any(observes(old.get(claim_id)) for claim_id in changed)
+        after = any(observes(new.get(claim_id)) for claim_id in changed)
+        sources = any(retired(old.get(c)) or retired(new.get(c)) for c in changed)
+        if before != after or (not after and sources):
+            links |= {(end, pair) for pair in pairs}
+    return {(rows.END, rows.end_key(end, pair)) for end, pair in links}
+
+
 def _expected_keys(
     state: World,
     before: _Snapshot,
@@ -452,6 +516,7 @@ def _expected_keys(
         if digest in digests
     }
     keys |= {(rows.SOURCE, target) for target in targets if target.startswith("Claim:")}
+    keys |= _subject_end_keys(old, new, claims)
     at_us = utc_microseconds(state.at)
     assert at_us is not None
     keys |= {

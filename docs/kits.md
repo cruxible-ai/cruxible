@@ -531,7 +531,7 @@ there never moves to different content.
 
 ## On MCP
 
-`cruxible_kit_add` (a registry reference or an inline bundle),
+`cruxible_kit_add` (a kit directory, layout or registry reference, or an inline bundle),
 `cruxible_kit_build`, `cruxible_kit_status` and `cruxible_kit_remove` are in
 the `full` MCP profile; set `CRUXIBLE_MCP_PROFILE=full`. They behave as the
 CLI commands do. See [MCP tools](mcp-tools.md).

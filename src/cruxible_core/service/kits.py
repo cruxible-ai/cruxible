@@ -2680,7 +2680,7 @@ def _installed_kit(connection: Any, tree: Mapping[str, bytes], receipt: KitRecei
                 wheel_sha256=provider.wheel.sha256,
                 delivery=provider.delivery,
                 state=shown,
-                installed_version=version if shown == "differs" else None,
+                installed_version=version if shown in {"installed", "differs"} else None,
             )
         )
     return InstalledKit(

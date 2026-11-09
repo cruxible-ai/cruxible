@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 import httpx
 from pydantic import ValidationError
 
+from cruxible_client._safe_files import ContainmentError, HeldRoot, SafeFileReadError
 from cruxible_client.artifacts import (
     ArtifactImage,
     ArtifactKind,
@@ -46,6 +47,7 @@ from cruxible_client.artifacts import (
     unpack_artifact,
     unpack_files,
 )
+from cruxible_client.artifacts.registry import RegistryRefusal
 from cruxible_client.contracts.canonical import pretty_canonical_bytes
 from cruxible_client.contracts.kits import (
     KIT_ARTIFACT_DIRECTORY,
@@ -88,8 +90,14 @@ def kit_reference(source: str) -> Reference:
     """``source`` as a registry reference, or a typed refusal naming the kit forms."""
 
     if source.startswith((".", "/", "~")):
-        # A path, never a registry name: one that reached here names nothing on disk.
-        raise KitSourceError(f"no kit directory or layout at {source}")
+        # A path, never a registry name. Say what is actually on disk: nothing at
+        # all, or a local kit handed to a caller that only fetches from a registry.
+        if Path(source).expanduser().exists():
+            raise KitSourceError(
+                f"{source} is a local path, not a registry reference; read it as a kit "
+                "directory or layout (resolve_kit) instead of fetching it"
+            )
+        raise KitSourceError(f"no kit directory or layout at {source} (nothing exists there)")
     try:
         return parse_reference(source)
     except ValueError as exc:
@@ -97,106 +105,93 @@ def kit_reference(source: str) -> Reference:
 
 
 def read_kit_directory(root: Path) -> KitBundle:
-    """Read one kit directory; every file under ``artifacts/`` must be in the manifest."""
+    """Read one kit directory; every file under ``artifacts/`` must be in the manifest.
 
-    manifest = KitManifest.model_validate_json((root / KIT_MANIFEST_FILE).read_bytes())
-    artifact_root = root / KIT_ARTIFACT_DIRECTORY
-    present = sorted(
-        path.relative_to(artifact_root).as_posix()
-        for path in artifact_root.rglob("*")
-        if path.is_file() or path.is_symlink()
-    )
-    named = [item.path for item in manifest.artifacts]
-    if present != named:
-        extra = sorted(set(present) - set(named))
-        missing = sorted(set(named) - set(present))
-        raise ValueError(
-            f"kit directory {root} does not match its manifest "
-            f"(unlisted: {extra or 'none'}; missing: {missing or 'none'})"
+    Every read and listing walks beneath the directory from held descriptors
+    (``HeldRoot``): a symbolic link anywhere inside the kit is refused, and a
+    parent swapped for one mid-read is never followed.
+    """
+
+    with HeldRoot(root) as held:
+        manifest = KitManifest.model_validate_json(held.read(KIT_MANIFEST_FILE))
+        present = held.files(KIT_ARTIFACT_DIRECTORY, missing_ok=True)
+        named = [item.path for item in manifest.artifacts]
+        if present != sorted(named):
+            extra = sorted(set(present) - set(named))
+            missing = sorted(set(named) - set(present))
+            raise ValueError(
+                f"kit directory {root} does not match its manifest "
+                f"(unlisted: {extra or 'none'}; missing: {missing or 'none'})"
+            )
+        artifacts = [
+            KitArtifactBytes.of(name, held.read(f"{KIT_ARTIFACT_DIRECTORY}/{name}"))
+            for name in named
+        ]
+        bundled = sorted(manifest.provider_files())
+        provided = held.files(KIT_PROVIDER_DIRECTORY, missing_ok=True)
+        if provided != bundled:
+            extra = sorted(set(provided) - set(bundled))
+            missing = sorted(set(bundled) - set(provided))
+            raise ValueError(
+                f"kit directory {root} does not hold exactly its manifest's provider files "
+                f"(unlisted: {extra or 'none'}; missing: {missing or 'none'})"
+            )
+        files = [
+            KitProviderFileBytes.of(name, held.read(f"{KIT_PROVIDER_DIRECTORY}/{name}"))
+            for name in bundled
+        ]
+        return KitBundle(
+            manifest=manifest,
+            artifacts=tuple(artifacts),
+            provider_files=tuple(files),
+            files=_read_kit_files(held, manifest),
+            document_bodies=_read_document_bodies(
+                held, {item.path: item.content for item in artifacts}
+            ),
         )
-    artifacts = []
-    for name in named:
-        path = artifact_root / name
-        if path.is_symlink():
-            raise ValueError(f"kit artifact {name} is a symbolic link")
-        artifacts.append(KitArtifactBytes.of(name, path.read_bytes()))
-    provider_root = root / KIT_PROVIDER_DIRECTORY
-    bundled = sorted(manifest.provider_files())
-    held = sorted(
-        path.relative_to(provider_root).as_posix()
-        for path in (provider_root.rglob("*") if provider_root.is_dir() else ())
-        if path.is_file() or path.is_symlink()
-    )
-    if held != bundled:
-        extra = sorted(set(held) - set(bundled))
-        missing = sorted(set(bundled) - set(held))
-        raise ValueError(
-            f"kit directory {root} does not hold exactly its manifest's provider files "
-            f"(unlisted: {extra or 'none'}; missing: {missing or 'none'})"
-        )
-    files = []
-    for name in bundled:
-        path = provider_root / name
-        if path.is_symlink():
-            raise ValueError(f"kit provider file {name} is a symbolic link")
-        files.append(KitProviderFileBytes.of(name, path.read_bytes()))
-    return KitBundle(
-        manifest=manifest,
-        artifacts=tuple(artifacts),
-        provider_files=tuple(files),
-        files=_read_kit_files(root, manifest),
-        document_bodies=_read_document_bodies(
-            root, {item.path: item.content for item in artifacts}
-        ),
-    )
 
 
 def _read_document_bodies(
-    root: Path, artifacts: Mapping[str, bytes]
+    held: HeldRoot, artifacts: Mapping[str, bytes]
 ) -> tuple[KitDocumentBody, ...]:
     """Each governed Document's body, read at ``bodies/<sha256 hex>``."""
 
     wanted = sorted(set(kit_document_body_digests(artifacts).values()))
     bodies = []
     for digest in wanted:
-        path = root / KIT_DOCUMENT_BODY_DIRECTORY / digest.partition(":")[2]
-        if path.is_symlink() or not path.is_file():
-            raise ValueError(f"kit directory {root} lacks the Document body {digest}")
-        body = KitDocumentBody.of(path.read_bytes())
+        name = digest.partition(":")[2]
+        try:
+            content = held.read(f"{KIT_DOCUMENT_BODY_DIRECTORY}/{name}")
+        except (FileNotFoundError, SafeFileReadError) as exc:
+            raise ValueError(f"kit directory {held.root} lacks the Document body {digest}") from exc
+        body = KitDocumentBody.of(content)
         if body.digest != digest:
-            raise ValueError(f"kit Document body {path.name} differs from its digest")
+            raise ValueError(f"kit Document body {name} differs from its digest")
         bodies.append(body)
     return tuple(bodies)
 
 
-def _read_kit_files(root: Path, manifest: KitManifest) -> tuple[KitFileBytes, ...]:
-    """The inert files the manifest lists, read at their own paths under ``root``.
+def _read_kit_files(held: HeldRoot, manifest: KitManifest) -> tuple[KitFileBytes, ...]:
+    """The inert files the manifest lists, read at their own paths under the kit.
 
     Other files beside them (a kit repository's sources and tests) are not kit
     content and are never read.
     """
 
-    resolved_root = root.resolve()
-    held = []
+    found = []
     missing = []
     for item in manifest.files:
-        path = root / item.path
-        if path.is_symlink() or any(parent.is_symlink() for parent in _parents(root, item.path)):
-            raise ValueError(f"kit file {item.path} is (or sits under) a symbolic link")
-        if not path.is_file():
+        try:
+            content = held.read(item.path)
+        except ContainmentError as exc:
+            raise ValueError(f"kit file {item.path} is (or sits under) a symbolic link") from exc
+        except (FileNotFoundError, SafeFileReadError):
             missing.append(item.path)
             continue
-        if not path.resolve().is_relative_to(resolved_root):
-            raise ValueError(f"kit file {item.path} escapes the kit directory")
-        held.append(KitFileBytes.of(item.path, path.read_bytes()))
+        found.append(KitFileBytes.of(item.path, content))
     if missing:
-        raise ValueError(f"kit directory {root} lacks the manifest's kit files {missing}")
-    return tuple(held)
-
-
-def _parents(root: Path, relative: str) -> list[Path]:
-    parts = relative.split("/")[:-1]
-    return [root.joinpath(*parts[:end]) for end in range(1, len(parts) + 1)]
+        raise ValueError(f"kit directory {held.root} lacks the manifest's kit files {missing}")
+    return tuple(found)
 
 
 def _write_new_file(root: Path, relative: str, content: bytes) -> None:
@@ -425,7 +420,10 @@ def _local_kit(path: Path) -> tuple[KitBundle, ArtifactImage | None, str] | None
 
     if path.is_dir():
         if is_layout(path):
-            image = read_layout(path)
+            try:
+                image = read_layout(path)
+            except ContainmentError as exc:
+                raise KitSourceError(f"OCI layout {path}: {exc}") from exc
             return unpack_artifact(KIT_ARTIFACT, image), image, f"{path.name}@{image.digest}"
         if not (path / KIT_MANIFEST_FILE).is_file():
             raise KitSourceError(f"directory {path} holds no {KIT_MANIFEST_FILE}")
@@ -453,8 +451,31 @@ def resolve_kit(source: str, *, registry: RegistryClient | None = None) -> tuple
     if local is not None:
         bundle, _, origin = local
         return bundle, origin
-    image, origin = fetch_kit_image(source, registry=registry)
+    image, origin = _fetch_after_local_miss(source, registry=registry)
     return unpack_artifact(KIT_ARTIFACT, image), origin
+
+
+def _fetch_after_local_miss(
+    source: str, *, registry: RegistryClient | None
+) -> tuple[ArtifactImage, str]:
+    """Fetch ``source`` from its registry once nothing on disk answered it.
+
+    A registry miss on a source that also reads as a relative path (``kits/foo``)
+    says both places were tried, so a mistyped directory is not reported as an
+    unpublished release alone.
+    """
+
+    try:
+        return fetch_kit_image(source, registry=registry)
+    except RegistryRefusal as exc:
+        if exc.reason != "not_found" or "/" not in source:
+            raise
+        raise RegistryRefusal(
+            "not_found",
+            f"{str(exc).removeprefix(exc.error_code + ': ')}; no local kit directory "
+            f"or layout exists at {source} either",
+            status=exc.status,
+        ) from exc
 
 
 def resolve_kit_image(
@@ -468,7 +489,7 @@ def resolve_kit_image(
 
     local = _local_kit(Path(source).expanduser())
     if local is None:
-        return fetch_kit_image(source, registry=registry)
+        return _fetch_after_local_miss(source, registry=registry)
     bundle, image, origin = local
     return (image if image is not None else pack_artifact(KIT_ARTIFACT, bundle)), origin
 

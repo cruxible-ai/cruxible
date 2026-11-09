@@ -4055,7 +4055,13 @@ def _claim_dependency_items(
         return ()
     # No consumed Claim inputs means there can be no stale dependency edge.
     # Check the accepted population before building replay/visibility facts.
-    if claims is not None and not any(claim.backing.input_claim_digests for claim in claims):
+    # A retired observation can leave a judgment on a keyed Subject standing on an
+    # unobserved end (``subject_end_entries``), with no input edge at all.
+    if (
+        claims is not None
+        and not any(claim.backing.input_claim_digests for claim in claims)
+        and not _any_retired_claim(instance, coordinate)
+    ):
         # The skipped retired build would have refused an accepted retired
         # Claim whose adjudication rule no longer reproduces; still refuse.
         verify_retired_claim_adjudication(instance, coordinate=coordinate)
@@ -4115,11 +4121,136 @@ def _claim_dependency_items(
             lineage_complete=source.accepted.path not in incomplete,
         ):
             by_dependent[identity].append(entry)
+    for identity, entry in _subject_end_fold(
+        instance, coordinate, facts.claims, visible=frozenset(current_claims)
+    ):
+        by_dependent[identity].append(entry)
 
     return tuple(
         claim_dependency_row(identity, by_dependent[identity])
         for identity in sorted(by_dependent, key=lambda item: item.encode("utf-8"))
     )
+
+
+def _any_retired_claim(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
+) -> bool:
+    """Whether the coordinate holds any retired Claim: one index probe."""
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        return (
+            projection.typed.connection.execute(
+                "SELECT 1 FROM claims WHERE lifecycle='retired' LIMIT 1"
+            ).fetchone()
+            is not None
+        )
+
+
+def _subject_end_fold(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    claims: Iterable[Any],
+    *,
+    visible: frozenset[str],
+) -> list[tuple[str, dict[str, object]]]:
+    """Every subject-end entry, by the rule ``subject_end_entries`` states (the oracle).
+
+    Key-ness is read only for the Claims the rule can reach: none at all when no
+    Claim is retired or no live Subject-valued Claim names a retired one's Subject.
+    """
+
+    from cruxible_client.contracts.claims import SubjectClaimObject
+
+    rows = list(claims)
+    retired_about = {
+        row.accepted.claim.statement.subject.artifact_path
+        for row in rows
+        if row.accepted.claim.lifecycle.state == "retired"
+    }
+    if not retired_about:
+        return []
+    links = [
+        row
+        for row in rows
+        if row.accepted.claim.lifecycle.state == "live"
+        and isinstance(row.accepted.claim.statement.object, SubjectClaimObject)
+        and row.accepted.claim.statement.object.address.artifact_path in retired_about
+    ]
+    if not links:
+        return []
+    keys = SubjectKindKeys(instance, coordinate)
+    pairs_by_end: dict[str, set[str]] = defaultdict(set)
+    for row in links:
+        statement = row.accepted.claim.statement
+        subject = statement.subject.artifact_path
+        if keys.is_key(subject, statement.predicate):
+            assert isinstance(statement.object, SubjectClaimObject)
+            pairs_by_end[statement.object.address.artifact_path].add(subject)
+    if not pairs_by_end:
+        return []
+    wanted = set(pairs_by_end) | {pair for pairs in pairs_by_end.values() for pair in pairs}
+    by_subject: dict[str, list[SubjectEndClaim]] = defaultdict(list)
+    retired: list[tuple[str, SubjectEndClaim]] = []
+    for row in rows:
+        claim = row.accepted.claim
+        subject = claim.statement.subject.artifact_path
+        if subject not in wanted:
+            continue
+        view = SubjectEndClaim(
+            identity=claim.identity.qualified,
+            lifecycle=claim.lifecycle.state,
+            is_key=keys.is_key(subject, claim.statement.predicate),
+            visible=row.accepted.path in visible,
+            predecessor_digest=claim.lifecycle.predecessor_digest,
+        )
+        by_subject[subject].append(view)
+        if view.lifecycle == "retired" and not view.is_key and subject in pairs_by_end:
+            retired.append((subject, view))
+    found: list[tuple[str, dict[str, object]]] = []
+    for end, source in retired:
+        found.extend(
+            subject_end_entries(
+                source,
+                end_path=end,
+                end_claims=by_subject[end],
+                pair_claims=[
+                    claim for pair in sorted(pairs_by_end[end]) for claim in by_subject[pair]
+                ],
+            )
+        )
+    return found
+
+
+class SubjectKindKeys:
+    """Each Subject kind's key ClaimTypes at one coordinate, read once per kind."""
+
+    def __init__(self, instance: Any, coordinate: AcceptedProjectionCoordinate) -> None:
+        self._instance = instance
+        self._coordinate = coordinate
+        self._tree: Mapping[str, bytes] | None = None
+        self._keys: dict[str, frozenset[str]] = {}
+
+    def of_kind(self, kind: str) -> frozenset[str]:
+        from cruxible_client.contracts.subject_kinds import (
+            SubjectKindFormatError,
+            live_subject_kind,
+        )
+
+        if kind not in self._keys:
+            if self._tree is None:
+                from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
+
+                self._tree = ClaimVerdictReadContext(self._instance, self._coordinate).tree
+            try:
+                declared = live_subject_kind(self._tree, kind)
+            except SubjectKindFormatError:
+                declared = None
+            self._keys[kind] = frozenset(() if declared is None else declared.keys)
+        return self._keys[kind]
+
+    def is_key(self, subject_path: str, predicate: str) -> bool:
+        kind = subject_path.removeprefix("subjects/").partition("/")[0]
+        return predicate in self.of_kind(kind)
 
 
 def stale_input_entries(
@@ -4152,6 +4283,69 @@ def stale_input_entries(
             )
         )
     return entries
+
+
+#: The impact reason of a Claim about a keyed Subject whose end is no longer observed.
+SUBJECT_END_UNOBSERVED = "cruxible.impact.subject_end_unobserved"
+
+
+@dataclass(frozen=True)
+class SubjectEndClaim:
+    """What the subject-end rule reads of one Claim (Layer 1 and the fold alike)."""
+
+    identity: str
+    lifecycle: str
+    #: A key part of its Subject (its predicate is a key ClaimType of the kind).
+    is_key: bool
+    visible: bool
+    #: For a retired Claim, the version its retirement retired.
+    predecessor_digest: str | None = None
+
+
+def subject_identity_of(path: str) -> str:
+    """``subjects/<kind>/<id>.json`` as ``Subject:<kind>/<id>``."""
+
+    return "Subject:" + path.removeprefix("subjects/").removesuffix(".json")
+
+
+def subject_end_entries(
+    source: SubjectEndClaim,
+    *,
+    end_path: str,
+    end_claims: Iterable[SubjectEndClaim],
+    pair_claims: Iterable[SubjectEndClaim],
+) -> list[tuple[str, dict[str, object]]]:
+    """The dependents one retired observation leaves standing on an unobserved end.
+
+    A keyed Subject (a pair such as ``occurrence(inventory, component)``) stands
+    on its ends. When an end loses its last live observation -- every non-key
+    Claim about it is retired, and ``source`` is one of those retirements --
+    each live, visible, non-key Claim about a Subject keyed by that end (a
+    judgment on the pair) is left standing on nothing current. Each such
+    Claim gets one stale entry per retired observation of the end, so the
+    judgment resurfaces in ``next`` until it is revised away, retired, or the
+    end is observed again. ``end_claims`` are the Claims about the end;
+    ``pair_claims`` the Claims about the Subjects keyed by it (key Claims and
+    retired ones are skipped here).
+    """
+
+    if source.lifecycle != "retired" or source.is_key:
+        return []
+    if any(claim.lifecycle == "live" and not claim.is_key for claim in end_claims):
+        return []
+    entry: dict[str, object] = {
+        "source_claim_identity": source.identity,
+        "used_artifact_digest": source.predecessor_digest,
+        "current_artifact_digest": None,
+        "impact_reasons": [SUBJECT_END_UNOBSERVED],
+        "lineage_complete": True,
+        "subject_end": subject_identity_of(end_path),
+    }
+    return [
+        (claim.identity, dict(entry))
+        for claim in sorted(pair_claims, key=lambda item: item.identity.encode("utf-8"))
+        if claim.lifecycle == "live" and not claim.is_key and claim.visible
+    ]
 
 
 def claim_dependency_row(

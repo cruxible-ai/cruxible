@@ -178,6 +178,9 @@ def test_a_line_posts_each_item_as_is_with_its_capture_attached(tmp_path: Path) 
         item.envelope.dedupe_key for item in entries
     }
     assert LineInboxStore(instance).unread_by_line() == ((line.identity.qualified, 3),)
+    # The run counts its postings: a "succeeded" run that left inbox items.
+    assert state.counts is not None
+    assert (state.counts.inbox, state.counts.needs_attention) == (3, True)
     # Posting is inert: the accepted head did not move.
     assert instance.accepted_coordinate() == head
 
@@ -295,6 +298,7 @@ def test_a_for_each_over_no_records_posts_nothing(tmp_path: Path) -> None:
 
     assert state.status == "succeeded", state.terminal
     assert _entries(instance) == []
+    assert state.counts is not None and state.counts.inbox == 0
 
 
 def test_an_item_outside_its_contract_refuses_and_posts_nothing(tmp_path: Path) -> None:
@@ -518,3 +522,23 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
     assert sorted(item.payload["cve"] for item in _entries(instance)) == [
         row["cve"] for row in ROWS
     ]
+
+
+def test_an_unreadable_inbox_count_keeps_the_journaled_posts_and_needs_attention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the count lookup fails: the run's post_inbox summaries still prove 3 posts."""
+
+    import sqlite3
+
+    instance, root, line = inbox_world(tmp_path)
+
+    def unreadable(self: Any, run_id: str) -> int:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(LineInboxStore, "posted_by_run", unreadable)
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "succeeded", state.terminal
+    assert state.counts is not None
+    assert (state.counts.inbox, state.counts.needs_attention) == (3, True)

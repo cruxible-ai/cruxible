@@ -674,6 +674,8 @@ def test_dynamic_source_request_is_a_pre_spawn_result_and_capture_is_post_comple
     assert not executor.material_reservations.active()
 
     monkeypatch.setattr(procedure_run_service, "_records_for_run", lambda *_args: records)
+    # The stand-in instance has no inbox to count.
+    monkeypatch.setattr(procedure_run_service, "_run_inbox_postings", lambda *_args: 0)
 
     class _Instance:
         def body_store(self):  # type: ignore[no-untyped-def]

@@ -44,6 +44,7 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.mandate_scope import MandateBasis, MandateChangeKind, SettleScopeGap
+from cruxible_client.contracts.procedures.node_summary import RunCounts
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.triggers import (
@@ -297,6 +298,17 @@ class RunbookStepOutcome(_StrictRunbookModel):
     #: The refusal or failure code a failed step stopped on.
     code: str | None = Field(default=None, exclude_if=lambda value: value is None)
     message: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: The Line run's counts (written, settled, proposed, refused, inbox,
+    #: completeness): a "succeeded" step can still have refused every item.
+    counts: RunCounts | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+def runbook_attention_steps(steps: tuple[RunbookStepOutcome, ...]) -> tuple[int, ...]:
+    """The steps whose Line run counts need attention, in order."""
+
+    return tuple(
+        item.step for item in steps if item.counts is not None and item.counts.needs_attention
+    )
 
 
 class RunbookRunResult(_StrictRunbookModel):
@@ -316,6 +328,9 @@ class RunbookRunResult(_StrictRunbookModel):
     )
     stopped_at_step: int | None = Field(default=None, exclude_if=lambda value: value is None)
     steps: tuple[RunbookStepOutcome, ...]
+    #: The steps whose Line run was incomplete, refused items, or posted to the
+    #: inbox: a "completed" run with any of these did not do all it could.
+    attention_steps: tuple[int, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     _times = field_validator("started_at", "finished_at")(ensure_utc)
 
@@ -325,6 +340,13 @@ class RunbookRunResult(_StrictRunbookModel):
             raise ValueError("a stopped run names its stop reason, and only a stopped run")
         if (self.stop_reason is None) != (self.stopped_at_step is None):
             raise ValueError("a stop reason names the step it stopped at")
+        attention = tuple(
+            item.step
+            for item in self.steps
+            if item.counts is not None and item.counts.needs_attention
+        )
+        if self.attention_steps != attention:
+            raise ValueError("attention_steps names exactly the steps whose counts need attention")
         return self
 
 

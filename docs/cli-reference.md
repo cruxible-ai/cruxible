@@ -29,6 +29,13 @@ of `.cruxible/files.yaml` when both exist. The global context is only a
 fallback, its remembered instance remains bound to the transport on which it
 was selected, and entering one workspace never retargets another.
 
+When none of these names a daemon, the CLI uses the one answering at
+`<CRUXIBLE_STATE_ROOT>/run/daemon.sock` (the socket the MCP adapter finds or
+starts), reported as `transport=state_root`. It never starts a daemon itself.
+Commands run in server mode: the CLI sends each one to that daemon, which holds
+the state; with no daemon, a command refuses and says how to start one
+(`cruxible server start --socket <state root>/run/daemon.sock`).
+
 `--principal-id` (or `CRUXIBLE_PRINCIPAL_ID`) names the principal this process
 acts as; the CLI, SDK (`Cruxible.connect(principal_id=...)`) and MCP server all
 send it with every request. The daemon checks that it names a registered, active
@@ -1329,8 +1336,8 @@ refuses with `cruxible.kit.not_installed`, naming the installed kits.
 
 MCP: `cruxible_kit_build` (`providers` names packages staged with
 `cruxible_body_store`; `delivery: index` makes one a default provider), `cruxible_kit_status` (with the same update check,
-`offline`), `cruxible_kit_add` (by registry `reference`, which the adapter pulls,
-or inline `bundle`; a commit stages its provider files) and
+`offline`), `cruxible_kit_add` (`reference` is a kit directory or layout the adapter reads,
+or a registry reference it pulls; or inline `bundle`; a commit stages its provider files) and
 `cruxible_kit_remove`. HTTP:
 `POST /{instance}/kits/build`, `GET /{instance}/kits`,
 `POST /{instance}/kits` and `POST /{instance}/kits/remove`.
@@ -3116,6 +3123,21 @@ first step that fails or sends writes to review (a proposal, or the Line's
 open proposal kept current); later steps report `not_run`. Exits 1 when a
 step failed; a stop for review exits 0. `--dry-run` prints the preview
 instead.
+
+`succeeded` says a step's Line run finished, not what it achieved. Each Line
+step (and each `line run`) carries `counts`:
+
+| Field | What it counts |
+|---|---|
+| `written` | new, revising and inverse Claims (`settled` + `proposed`) |
+| `unchanged`, `retired` | restatements; retirements |
+| `refused` | items not written, with `top_refusals` (code and count) |
+| `inbox` | items the run posted to its Line's inbox; null when unreadable and the journal proves none (counts as needing attention) |
+| `complete` | false with `incomplete_reasons` (node and kind) |
+
+`attention_steps` names the steps that were incomplete, refused an item,
+posted to the inbox or could not count its inbox; the CLI prints it after
+`completed` and marks each such step with `!`.
 
 `cruxible runbook preview NAME` shows what each step can read (Queries, and
 the ClaimTypes, kinds and keys behind them, late reads marked), write and
