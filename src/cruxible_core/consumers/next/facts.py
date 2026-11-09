@@ -1826,9 +1826,8 @@ def _dirty_keys(
     )
     keys.update((rows.SOURCE, target) for target in targets if target.startswith("Claim:"))
     keys.update(
-        (rows.SOURCE, claim_id)
-        for claim_id in _subject_end_sources(
-            connection, ((delta.before.get(identity), after.get(identity)) for identity in replaced)
+        _subject_end_keys(
+            connection, [(delta.before.get(identity), after.get(identity)) for identity in replaced]
         )
     )
     return keys
@@ -1838,61 +1837,97 @@ def _dirty_keys(
 _END_READS = ("lifecycle", "visible", "is_key", "subject_path", "object_path")
 
 
-def _subject_end_sources(
+def _subject_end_keys(
     connection: sqlite3.Connection,
-    changes: Iterable[tuple[Mapping[str, Any] | None, Mapping[str, Any] | None]],
-) -> set[str]:
-    """The retired observations whose subject-end entries these Claim changes can move.
+    changes: Sequence[tuple[Mapping[str, Any] | None, Mapping[str, Any] | None]],
+) -> set[tuple[str, str]]:
+    """The (end, pair) keys whose subject-end entries these Claim changes can move.
 
-    A Claim about an end moves whether that end is observed; a key part moves
-    which Subjects an end keys; a Claim about a keyed Subject moves that
-    Subject's ends' dependents. Each reaches only the retired, non-key Claims
-    about the ends involved, read through the post-change indexes: per change,
-    the neighbourhood of the Subjects it names.
+    - A Claim about a Subject moves that Subject's own links (its pair Claims,
+      or a key part naming an end): only those keys, never an end's other pairs.
+    - A Claim about an end moves every pair of that end only when the end's
+      entries can change: its observation appears or disappears, or, while it
+      stays unobserved, its retired observations change. An end observed
+      before and after reaches nothing.
+
+    Each probe is an indexed read sized by the Subjects the change names.
     """
 
-    subjects: set[str] = set()
-    ends: set[str] = set()
+    links: set[tuple[str, str]] = set()
+    by_subject: dict[str, dict[str, tuple[Mapping[str, Any] | None, Mapping[str, Any] | None]]]
+    by_subject = {}
     for old, new in changes:
         if not _moved(old, new, _END_READS):
             continue
         for side in (old, new):
             if side is None:
                 continue
-            subjects.add(str(side["subject_path"]))
+            subject = str(side["subject_path"])
+            by_subject.setdefault(subject, {})[str(side["claim_id"])] = (old, new)
             if side["is_key"] and side["object_path"] is not None:
-                ends.add(str(side["object_path"]))
-    if not subjects and not ends:
+                links.add((str(side["object_path"]), subject))
+    if not by_subject:
         return set()
-    # A changed Claim's own Subject, when some live key part names it (it is an end).
-    ends.update(
+    subjects = tuple(sorted(by_subject))
+    links.update(
+        (str(row[0]), str(row[1]))
+        for row in _rows(
+            connection,
+            "SELECT object_path,subject_path FROM claim_facts WHERE is_key=1 AND lifecycle='live' "
+            "AND object_path IS NOT NULL AND subject_path IN ({marks})",
+            subjects,
+        )
+    )
+    ends = {
         str(row[0])
         for row in _rows(
             connection,
             "SELECT DISTINCT object_path FROM claim_facts WHERE is_key=1 AND lifecycle='live' "
             "AND object_path IN ({marks})",
-            tuple(sorted(subjects)),
-        )
-    )
-    # The ends of each changed Claim's Subject, when it is keyed by Subjects (a pair).
-    ends.update(
-        str(row[0])
-        for row in _rows(
-            connection,
-            "SELECT DISTINCT object_path FROM claim_facts WHERE is_key=1 AND lifecycle='live' "
-            "AND object_path IS NOT NULL AND subject_path IN ({marks})",
-            tuple(sorted(subjects)),
-        )
-    )
-    return {
-        str(row[0])
-        for row in _rows(
-            connection,
-            "SELECT claim_id FROM claim_facts WHERE lifecycle='retired' AND is_key=0 "
-            "AND subject_path IN ({marks})",
-            tuple(sorted(ends)),
+            subjects,
         )
     }
+    for end in sorted(ends):
+        if _end_entries_moved(connection, end, by_subject[end]):
+            links.update(
+                (end, str(row[0]))
+                for row in connection.execute(
+                    "SELECT DISTINCT subject_path FROM claim_facts WHERE object_path=? "
+                    "AND is_key=1 AND lifecycle='live'",
+                    (end,),
+                )
+            )
+    return {(rows.END, rows.end_key(end, pair)) for end, pair in links}
+
+
+def _end_entries_moved(
+    connection: sqlite3.Connection,
+    end: str,
+    changed: Mapping[str, tuple[Mapping[str, Any] | None, Mapping[str, Any] | None]],
+) -> bool:
+    """Whether changing these Claims about ``end`` can move its pairs' entries."""
+
+    def observes(side: Mapping[str, Any] | None) -> bool:
+        return side is not None and side["lifecycle"] == "live" and not side["is_key"]
+
+    def retired(side: Mapping[str, Any] | None) -> bool:
+        return side is not None and side["lifecycle"] == "retired" and not side["is_key"]
+
+    # A live observation the change did not touch: observed before and after.
+    live = connection.execute(
+        "SELECT claim_id FROM claim_facts WHERE subject_path=? AND lifecycle='live' AND is_key=0 "
+        "LIMIT ?",
+        (end, len(changed) + 1),
+    ).fetchall()
+    if any(str(row[0]) not in changed for row in live):
+        return False
+    before = any(observes(old) for old, _new in changed.values())
+    after = any(observes(new) for _old, new in changed.values())
+    if before != after:
+        return True
+    if after:
+        return False
+    return any(retired(old) or retired(new) for old, new in changed.values())
 
 
 def _expired_keys(connection: sqlite3.Connection, at: datetime) -> set[tuple[str, str]]:
@@ -1907,7 +1942,13 @@ def _all_keys(
 ) -> set[tuple[str, str]]:
     """Every key a rebuild derives: each live Claim's threshold and slot, each door, each source."""
 
-    keys: set[tuple[str, str]] = set()
+    keys: set[tuple[str, str]] = {
+        (rows.END, rows.end_key(str(row[0]), str(row[1])))
+        for row in connection.execute(
+            "SELECT DISTINCT object_path,subject_path FROM claim_facts WHERE is_key=1 "
+            "AND lifecycle='live' AND object_path IS NOT NULL"
+        )
+    }
     for claim_id, lifecycle, conflict_slot in connection.execute(
         "SELECT claim_id,lifecycle,conflict_slot FROM claim_facts"
     ):
