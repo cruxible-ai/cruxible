@@ -88,7 +88,10 @@ def _load_private_key(path: Path) -> Ed25519PrivateKey:
     descriptor: int | None = None
     content = bytearray()
     try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        # The pre-open regular-file check cannot prevent a replacement by a FIFO.
+        descriptor = os.open(
+            path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        )
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode) or stat.S_IMODE(opened.st_mode) & 0o077:
             raise SigningKeyError(
