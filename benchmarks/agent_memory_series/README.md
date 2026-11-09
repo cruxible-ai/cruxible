@@ -21,6 +21,19 @@ snapshots, question order and change script. Each invocation is a fresh
 conversation: only the configured external memory persists. Subagents are
 allowed in both arms, as in real use.
 
+## Scope and reporting caveats
+
+- The benchmark is decoupled from the release. The PyGoat pilot is shown as
+  an early result; the full runs (several repositories, 3 repetitions each)
+  come later.
+- Every write-up states two caveats:
+  - Review sheets are not truly blind: arm B's answers cite Claims, so a
+    reviewer can tell which arm wrote them. Blinding only hides the arm column
+    and mixes the order.
+  - Arm B's security kit carries the adapted Cloudflare audit methodology
+    (hunter/verifier/coverage guidance). The comparison is about memory and
+    state, not about a different audit method.
+
 ## Maintainer decisions this harness implements (2026-11-09)
 
 | Decision | Where |
@@ -31,6 +44,7 @@ allowed in both arms, as in real use.
 | B's reviewer subagent approves as its own principal | B setup runs `cruxible init --reviewer-key-dir`; see [Reviewer principal](#reviewer-principal-arm-b) |
 | Eye-test review per session, not a rubric | `review/session-NN.csv`; `Review` flags + notes |
 | Quantitative metrics and trend 1 -> N | `summary.csv`, `trend.csv` |
+| Frozen feeds stay frozen: any invocation or setup step that rewrites them fails the run | `runner` feed digest around every invocation |
 | Claude Code, fresh config dir per invocation, no `--bare`, no resume | `CLIAdapterStub.plan` / `CLIInvocation` |
 | B gets MCP full catalog + CLI + SDK; log surface per action | `Arm.cruxible`; `Reply.actions`; `surfaces.csv` |
 | Fallback MCP catalog if eager loading skews tokens | `cruxible.mcp_tools` allowlist (commented in the example) |
@@ -102,9 +116,10 @@ changes the answers, not the code.
 
 ## Setup and the reviewer principal (arm B)
 
-Setup is off the clock for both arms. Each `agent` setup step is recorded as a
-`setup` record (usage kept); `command` steps are logged in
-`runs/ARM/rep-NNN/setup.json`. Session metrics start at session 1.
+Setup is off the clock for both arms. Every setup step is a `setup` record:
+an `agent` step keeps its model usage; a `command` step has known-zero model
+usage and its measured wall time (a background step: until ready). Details are
+also in `runs/ARM/rep-NNN/setup.json`. Session metrics start at session 1.
 
 | Arm | Setup steps in the example |
 | --- | --- |
@@ -173,7 +188,7 @@ deferring them, use the fallback for B and record which catalog ran
 | `results.jsonl` | Setup/session/question records: answers, usage, wall time, runaway, model ID, surface actions, reviews |
 | `review/session-NN.csv` | One review sheet per session, blinded, without metrics |
 | `summary.csv`, `summary.md` | Per arm/session: review flags, question and audit usage, amortized cost, surface use, size |
-| `setup.csv` | Setup usage per arm, summed over steps |
+| `setup.csv` | Setup per arm, every step (agent prompts and harness commands): steps, usage, total/command/agent wall time |
 | `trend.csv` | Session 1 -> N per arm and metric: first, last, change %, least-squares slope |
 | `spread.csv` | Across repetitions: n, mean, min, max, stdev |
 | `surfaces.csv` | Cruxible actions by arm, session, phase, surface and name |
@@ -209,7 +224,8 @@ changed prompts/answers and edited reviewer context.
 | Metric | Definition |
 | --- | --- |
 | Flagged answers | Reviewed answers with any fault flag |
-| Tokens, total tokens, turns, cost, model calls, subagent calls, wall time | Means per question and per audit session; unknown stays missing |
+| Tokens, total tokens, turns, cost, model calls, subagent calls, wall time | Means per question and per audit session; unknown stays missing. Total tokens is unknown unless input, output and both cache counters are reported (known absence = explicit 0) |
+| Coverage | `questions_with_token_usage`, `questions_with_cost`, `repetitions_with_complete_tokens`, `repetitions_with_complete_cost` |
 | Amortized tokens/cost per question | Cumulative audit + answering usage (setup excluded) divided by questions asked so far |
 | First useful state | Session-1 audit tokens/turns until the adapter reports useful state |
 | Upkeep between questions | Audit tokens and compute since the previous question batch |
