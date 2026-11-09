@@ -88,7 +88,7 @@ def test_multiline_extraction_is_inadmissible(tmp_path: Path, separator: str):
 
     rows = Contract.model_validate(
         {
-            "name": "test.claim-row",
+            "name": "test.native-claim-types.row",
             "version": 1,
             "fields": {"status": "string{max_len: 256}", "note": "string{max_len: 256}?"},
         }
@@ -99,7 +99,7 @@ def test_multiline_extraction_is_inadmissible(tmp_path: Path, separator: str):
         types=(terminal_type(value="string{max_len: 256}"),),
         rows=rows,
     )
-    install(instance, claims_spec())
+    install(instance, claims_spec(rows=rows))
     state = run(instance, root)
     assert state.status == "succeeded", state.terminal
     assert state.terminal_egress[0].proposal_id is None

@@ -18,6 +18,7 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     strategy:
       # Finish every Python version even when one fails, so one CI run reports them all.
       fail-fast: false
@@ -67,7 +68,7 @@ jobs:
         run: uv run mypy src packages/cruxible-client/src
 
       - name: Test
-        run: uv run pytest -n auto --dist loadfile --tb=short --timeout 900
+        run: uv run pytest -n auto --dist loadfile --tb=short --timeout 900 --timeout-method=thread
 
   docker-image-test:
     runs-on: ubuntu-latest

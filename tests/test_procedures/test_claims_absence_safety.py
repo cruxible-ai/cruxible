@@ -63,7 +63,9 @@ def safety_world(
         ),
     )
     row = boundary_contract(
-        "test.claim-row",
+        "test.claims-absence-safety.negative-row"
+        if negative
+        else "test.claims-absence-safety.text-row",
         {
             "status": "enum[open, closed, unknown]" if negative else "string{max_len: 256}",
             "note": "datetime?",
@@ -90,7 +92,7 @@ def safety_world(
         if policy == "inverse"
         else "$item.fields.status"
     )
-    raw = claims_spec(mappings=[{"type": PREDICATE, "value": value}]).model_dump(
+    raw = claims_spec(rows=row, mappings=[{"type": PREDICATE, "value": value}]).model_dump(
         mode="python", by_alias=True
     )
     raw["steps"][-1]["claims"][0]["when_absent"] = policy
