@@ -254,3 +254,26 @@ def test_document_confirmation_is_a_separate_bounded_write_phase(patch):
         )
     request = WriteRequest(because="File landed", doc_confirmations=("DCE-" + "a" * 32,))
     assert WriteRequest.model_validate_json(request.model_dump_json()) == request
+
+
+def test_confirmation_results_round_trip_without_changing_old_outcomes():
+    from cruxible_client.contracts.write import DocConfirmationOutcome, WriteRefusal
+
+    old = WriteOutcome(status="accepted", coordinate=GetCoordinate(git_oid="a" * 12, generation=1))
+    assert "doc_confirmations" not in old.model_dump(mode="json")
+    partial = old.model_copy(
+        update={
+            "status": "refused",
+            "doc_confirmations": (
+                DocConfirmationOutcome(confirmation="DCE-" + "a" * 32),
+                DocConfirmationOutcome(
+                    confirmation="DCE-" + "b" * 32,
+                    refusal=WriteRefusal(
+                        code="cruxible.doc.confirmation_unknown", message="Unknown"
+                    ),
+                ),
+            ),
+        }
+    )
+    assert WriteOutcome.model_validate_json(partial.model_dump_json()) == partial
+    assert partial.doc_confirmations[0].refusal is None

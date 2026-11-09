@@ -94,6 +94,14 @@ heading paths to find sections:
   digest and the author who replaced it; each entry links to its retained bytes.
   History records an edit only after the file write succeeds; a local file
   conflict leaves history unchanged.
+  The client confirms each landed replacement within 24 hours of admission;
+  other writers cannot evict it during that window. A confirmation batch
+  records valid tokens even if another token is unknown or expired, and
+  reports each result in `doc_confirmations`. Do not resend unknown or expired
+  tokens. A client crash after writing the file but before confirmation can
+  leave that edit without retained history.
+  File overwrite history is live operational state. An `at` pin to an earlier
+  accepted generation refuses; a pin to the current head is allowed.
 - **`id`** names the section so changes can cite it: `batch.section(ID)`, or
   `{kind: section, ref: ID}` in a write file.
 

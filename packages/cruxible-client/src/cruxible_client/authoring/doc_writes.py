@@ -450,8 +450,13 @@ def write_workspace(
         if confirmed.status != "accepted":
             raise WriteRefusalError(
                 "cruxible.doc.history_unconfirmed",
-                "The file was written, but its history confirmation was refused",
-                repair_line=f"Retry write with doc_confirmations: {confirmations!r}",
+                "The file was written, but some history confirmations were refused",
+                repair_line=(
+                    confirmed.refusal.repair
+                    if confirmed.refusal is not None
+                    else "Inspect each doc_confirmations result before retrying"
+                ),
+                outcome=confirmed,
             )
     next_steps = [
         item.refusal.repair if item.refusal else item.next

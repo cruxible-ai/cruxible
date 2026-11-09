@@ -146,7 +146,8 @@ def _load_private_key(path: Path) -> Ed25519PrivateKey:
             "client approval key directory permissions must exclude group/world access"
         )
     metadata = path.stat()
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    # A path can become a FIFO after the pre-open check. Never wait for its writer.
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     descriptor: int | None = None
     try:
         descriptor = os.open(path, flags)

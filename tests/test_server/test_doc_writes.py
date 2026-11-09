@@ -317,3 +317,16 @@ def test_http_refuses_previous_bytes_that_do_not_match_before_digest(playbill_ht
     )
     assert history.status_code == 200
     assert history.json()["history"]["revisions"] == []
+
+
+def test_http_file_history_refuses_a_historical_coordinate(playbill_http, tmp_path):
+    _, instance, _ = _context(playbill_http, tmp_path)
+    old = instance.accepted_coordinate().git_oid
+    _move_to_v7(instance, "measured", actor_id="operator", evidence_requirement="captured")
+    client, instance_id, _ = playbill_http
+    result = client.post(
+        f"/api/v1/{instance_id}/get",
+        json={"ref": "file:repo.notes", "detail": "history", "at": old},
+    )
+    assert result.status_code == 400, result.text
+    assert result.json()["error_code"] == "cruxible.get.historical_read_unsupported"

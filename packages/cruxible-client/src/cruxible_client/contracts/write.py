@@ -907,6 +907,13 @@ class DocOutcome(_StrictWriteModel):
     next: str | None = None
 
 
+class DocConfirmationOutcome(_StrictWriteModel):
+    """One landed edit's history confirmation; no refusal means it was recorded."""
+
+    confirmation: str
+    refusal: WriteRefusal | None = Field(default=None, exclude_if=_omit_none)
+
+
 DOCS_ONLY_HINT = (
     "No Claim cites this text. If it records a belief or decision, add a Claim citing "
     "the section; to keep it as a note about Subjects, link it with an about change "
@@ -921,6 +928,9 @@ class WriteOutcome(_StrictWriteModel):
     status: WriteStatus
     changes: tuple[ChangeOutcome, ...] = ()
     docs: tuple[DocOutcome, ...] = Field(default=(), exclude_if=_omit_empty)
+    doc_confirmations: tuple[DocConfirmationOutcome, ...] = Field(
+        default=(), exclude_if=_omit_empty
+    )
     hint: str | None = Field(default=None, exclude_if=_omit_none)
     subjects_added: tuple[str, ...] = Field(
         default=(),
@@ -959,6 +969,7 @@ class WriteOutcome(_StrictWriteModel):
 
 
 __all__ = [
+    "DocConfirmationOutcome",
     "AboutChange",
     "AppendSection",
     "DocEditObservation",

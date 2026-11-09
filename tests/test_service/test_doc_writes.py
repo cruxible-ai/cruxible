@@ -8,7 +8,7 @@ import pytest
 from cruxible_client.authoring.doc_writes import write_workspace
 from cruxible_client.contracts.claims import claim_path, parse_claim
 from cruxible_client.contracts.doc_sections import section_digest
-from cruxible_client.contracts.errors import CasError, WriteRefusalError
+from cruxible_client.contracts.errors import CasError, ReadRefusalError, WriteRefusalError
 from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.proposal_models import AuthenticatedActor
 from cruxible_client.contracts.write import (
@@ -400,8 +400,11 @@ def test_confirmation_is_author_bound_durable_and_idempotent(tmp_path):
 
     assert history().revisions == ()
     assert not instance.body_store().metadata(edit.before_digest, access=access).present
-    with pytest.raises(WriteRefusalError, match="Only the admitted edit's author"):
-        confirm_doc_edits(instance, tokens=(token,), actor=AuthenticatedActor(actor_id="other"))
+    refused = confirm_doc_edits(
+        instance, tokens=(token,), actor=AuthenticatedActor(actor_id="other")
+    )
+    assert refused.refused
+    assert refused.doc_confirmations[0].refusal.code == "cruxible.doc.confirmation_author"
     assert history().revisions == ()
     instance = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     for _ in range(2):
@@ -511,16 +514,83 @@ def test_mixed_file_batch_confirms_only_the_file_whose_cas_succeeded(tmp_path):
     )
 
 
+@pytest.mark.parametrize("count", [65, 500])
+def test_one_request_retains_and_confirms_every_replacement(tmp_path, count):
+    instance, _ = seed_write_surface(tmp_path)
+    admitted = service_playbill_write(
+        instance,
+        request=WriteRequest(
+            because="Many replacements", docs=(_replacement_observation(),) * count
+        ),
+        caller=caller(),
+    )
+    assert admitted.status == "accepted"
+    tokens = tuple(doc.confirmation for doc in admitted.docs)
+    assert len(set(tokens)) == count and None not in tokens
+    confirmed = service_playbill_write(
+        instance, request=WriteRequest(because="Landed", doc_confirmations=tokens), caller=caller()
+    )
+    assert confirmed.status == "accepted", confirmed
+    assert [result.confirmation for result in confirmed.doc_confirmations] == list(tokens)
+    assert all(result.refusal is None for result in confirmed.doc_confirmations)
+    revisions = []
+    cursor = None
+    while True:
+        page = service_playbill_get(
+            instance,
+            request=GetRequest(ref="file:repo.notes", detail="history", limit=200, cursor=cursor),
+            access=BodyAccessContext(principal_id="reader"),
+        )
+        revisions.extend(page.history.revisions)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+    assert len(revisions) == count
+    assert {entry.value.object["write_id"] for entry in revisions} == set(tokens)
+
+
+def test_other_authors_cannot_evict_a_request_inside_its_confirmation_window(tmp_path):
+    from datetime import timedelta
+
+    from cruxible_core.service.authoring import doc_writes
+
+    instance, _ = seed_write_surface(tmp_path)
+    now = instance.recording_clock()
+    instance.recording_clock = lambda: now
+    request = WriteRequest(because="First author", docs=(_replacement_observation(),) * 65)
+    admitted = service_playbill_write(instance, request=request, caller=caller())
+    tokens = tuple(doc.confirmation for doc in admitted.docs)
+    # Exercise admission's pending-store layer with several other authenticated
+    # author identities, without installing unrelated principals in this fixture.
+    for index in range(3):
+        doc_writes.prepare_doc_edits(
+            instance,
+            request=WriteRequest(because="Other author", docs=(_replacement_observation(),) * 500),
+            outcome=admitted,
+            actor=AuthenticatedActor(actor_id=f"other-{index}"),
+        )
+    now += timedelta(seconds=doc_writes._CONFIRMATION_WINDOW_SECONDS - 1)
+    instance = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    instance.recording_clock = lambda: now
+    confirmed = service_playbill_write(
+        instance, request=WriteRequest(because="Landed", doc_confirmations=tokens), caller=caller()
+    )
+    assert confirmed.status == "accepted", confirmed
+    assert len(confirmed.doc_confirmations) == 65
+
+
 @pytest.mark.parametrize("unrelated_sources", [2, 200])
-def test_unconfirmed_payloads_are_bounded_per_source_without_scanning(
+def test_expired_cleanup_is_source_local_and_unknown_tokens_do_not_strand_valid_ones(
     tmp_path, monkeypatch, unrelated_sources
 ):
+    from datetime import timedelta
     from uuid import uuid4
 
     from cruxible_core.service.authoring import doc_writes
 
     instance, _ = seed_write_surface(tmp_path)
-    monkeypatch.setattr(doc_writes, "_PENDING_LIMIT", 3)
+    now = instance.recording_clock()
+    instance.recording_clock = lambda: now
     edit = _replacement_observation()
 
     def admit():
@@ -539,49 +609,50 @@ def test_unconfirmed_payloads_are_bounded_per_source_without_scanning(
         ).status
         == "accepted"
     )
-    first = admit()
+    expired = [admit() for _ in range(3)]
     root = doc_writes._pending_root(instance)
-    pending = doc_writes._load_pending(root / f"{first}.json")
+    pending = doc_writes._load_pending(root / f"{expired[0]}.json")
     for index in range(unrelated_sources):
         other = pending.model_copy(
             update={"edit": pending.edit.model_copy(update={"source_id": f"other-{index}"})}
         )
         doc_writes._save_pending(root / f"DCE-{uuid4().hex}.json", other)
-    instance = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    now += timedelta(seconds=doc_writes._CONFIRMATION_WINDOW_SECONDS + 1)
 
     def no_scan(*args, **kwargs):
         raise AssertionError("a write must not scan the pending namespace")
 
     with monkeypatch.context() as patch:
         patch.setattr(Path, "glob", no_scan)
-        recent = [admit() for _ in range(5)]
-        expired = service_playbill_write(
+        recent = admit()
+        batch = (expired[0], recent, *expired[1:])
+        result = service_playbill_write(
             instance,
-            request=WriteRequest(because="Too late", doc_confirmations=(first,)),
+            request=WriteRequest(because="Landed", doc_confirmations=batch),
             caller=caller(),
         )
-        assert expired.refusal.code == "cruxible.doc.confirmation_unknown"
-        # An old confirmed receipt remains idempotent even after newer admissions.
+        assert result.refused
+        assert [item.confirmation for item in result.doc_confirmations] == list(batch)
+        assert result.doc_confirmations[1].refusal is None
+        assert [item.refusal.code for item in result.doc_confirmations if item.refusal] == [
+            "cruxible.doc.confirmation_unknown"
+        ] * 3
+        assert "do not resend unknown or expired tokens" in result.refusal.repair
+        # Confirmed receipts remain idempotent after the admission window closes.
         assert (
             service_playbill_write(
                 instance,
-                request=WriteRequest(because="Retry", doc_confirmations=(confirmed,)),
+                request=WriteRequest(because="Retry", doc_confirmations=(confirmed, recent)),
                 caller=caller(),
             ).status
             == "accepted"
         )
-        latest = service_playbill_write(
-            instance,
-            request=WriteRequest(because="Landed", doc_confirmations=(recent[-1],)),
-            caller=caller(),
-        )
-        assert latest.status == "accepted"
     with doc_writes._pending_store(root) as connection:
-        rows = connection.execute(
-            "SELECT token,unconfirmed FROM pending_edits WHERE source_id=?",
-            (edit.source_id,),
-        ).fetchall()
-        assert set(rows) == {(confirmed, 0), (recent[-3], 1), (recent[-2], 1), (recent[-1], 0)}
+        assert set(
+            connection.execute(
+                "SELECT token,unconfirmed FROM pending_edits WHERE source_id=?", (edit.source_id,)
+            )
+        ) == {(confirmed, 0), (recent, 0)}
         assert (
             connection.execute(
                 "SELECT count(*) FROM pending_edits WHERE source_id != ?", (edit.source_id,)
@@ -590,9 +661,38 @@ def test_unconfirmed_payloads_are_bounded_per_source_without_scanning(
         )
 
 
-def test_legacy_pending_files_migrate_once_with_the_same_payload_bound(tmp_path, monkeypatch):
-    import os
+def test_expired_confirmation_is_reported_without_recording_history(tmp_path):
+    from datetime import timedelta
 
+    from cruxible_core.service.authoring import doc_writes
+
+    instance, _ = seed_write_surface(tmp_path)
+    admitted = service_playbill_write(
+        instance,
+        request=WriteRequest(because="Replace", docs=(_replacement_observation(),)),
+        caller=caller(),
+    )
+    now = instance.recording_clock() + timedelta(
+        seconds=doc_writes._CONFIRMATION_WINDOW_SECONDS + 1
+    )
+    instance.recording_clock = lambda: now
+    result = service_playbill_write(
+        instance,
+        request=WriteRequest(because="Late", doc_confirmations=(admitted.docs[0].confirmation,)),
+        caller=caller(),
+    )
+    assert result.doc_confirmations[0].refusal.code == "cruxible.doc.confirmation_expired"
+    assert (
+        service_playbill_get(
+            instance,
+            request=GetRequest(ref="file:repo.notes", detail="history"),
+            access=BodyAccessContext(principal_id="reader"),
+        ).history.revisions
+        == ()
+    )
+
+
+def test_legacy_pending_files_migrate_once_without_evicting_in_flight_tokens(tmp_path):
     from cruxible_core.service.authoring import doc_writes
 
     instance, _ = seed_write_surface(tmp_path)
@@ -603,19 +703,190 @@ def test_legacy_pending_files_migrate_once_with_the_same_payload_bound(tmp_path,
     )
     root = doc_writes._pending_root(instance)
     pending = doc_writes._load_pending(root / f"{admitted.docs[0].confirmation}.json")
-    # Recreate the old on-disk format, including a compact confirmation receipt.
     (root.parent / "pending.sqlite3").unlink()
     root.mkdir()
-    for index in range(6):
-        path = root / f"DCE-{index:032x}.json"
+    for index in range(65):
         record = pending if index else pending.model_copy(update={"before_content_base64": None})
-        path.write_text(record.model_dump_json())
-        os.utime(path, (index, index))
-    monkeypatch.setattr(doc_writes, "_PENDING_LIMIT", 3)
-    assert doc_writes._load_pending(root / f"DCE-{5:032x}.json") == pending
+        (root / f"DCE-{index:032x}.json").write_text(record.model_dump_json())
+    assert doc_writes._load_pending(root / f"DCE-{1:032x}.json") == pending
     assert not root.exists()
     with doc_writes._pending_store(root) as connection:
-        assert connection.execute("SELECT count(*) FROM pending_edits").fetchone()[0] == 4
-    with pytest.raises(FileNotFoundError):
-        doc_writes._load_pending(root / f"DCE-{1:032x}.json")
+        assert connection.execute("SELECT count(*) FROM pending_edits").fetchone()[0] == 65
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
     assert doc_writes._load_pending(root / f"DCE-{0:032x}.json").before_content_base64 is None
+
+
+def test_count_bounded_sqlite_store_migrates_deadlines_from_issuance_once(tmp_path):
+    import sqlite3
+
+    from cruxible_core.service.authoring import doc_writes
+
+    instance, _ = seed_write_surface(tmp_path)
+    admitted = service_playbill_write(
+        instance,
+        request=WriteRequest(because="Replace", docs=(_replacement_observation(),)),
+        caller=caller(),
+    )
+    token = admitted.docs[0].confirmation
+    root = doc_writes._pending_root(instance)
+    path = root / f"{token}.json"
+    pending = doc_writes._load_pending(path)
+    database = root.parent / "pending.sqlite3"
+    database.unlink()
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE pending_edits (sequence INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "token TEXT NOT NULL UNIQUE, source_id TEXT NOT NULL, "
+            "unconfirmed INTEGER NOT NULL, payload TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO pending_edits(token,source_id,unconfirmed,payload) VALUES(?,?,1,?)",
+            (token, pending.edit.source_id, pending.model_dump_json()),
+        )
+        connection.execute("PRAGMA user_version=1")
+    for _ in range(2):
+        assert doc_writes._load_pending(path) == pending
+        with doc_writes._pending_store(root) as connection:
+            deadline = connection.execute("SELECT expires_at FROM pending_edits").fetchone()[0]
+            assert (
+                abs(
+                    deadline
+                    - pending.actor.timestamp.timestamp()
+                    - doc_writes._CONFIRMATION_WINDOW_SECONDS
+                )
+                < 0.001
+            )
+            assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+
+
+def test_client_exposes_confirmation_failures_without_repeating_unknown_tokens(tmp_path):
+    from datetime import timedelta
+
+    from cruxible_core.service.authoring import doc_writes
+
+    instance, _ = seed_write_surface(tmp_path)
+    workspace = tmp_path / "client-prose"
+    workspace.mkdir()
+    path = workspace / "notes.md"
+    path.write_bytes(b"# Reason\nold\n")
+
+    def submit(request):
+        if request.doc_confirmations:
+            now = instance.recording_clock() + timedelta(
+                seconds=doc_writes._CONFIRMATION_WINDOW_SECONDS + 1
+            )
+            instance.recording_clock = lambda: now
+        return service_playbill_write(instance, request=request, caller=caller())
+
+    with pytest.raises(WriteRefusalError) as caught:
+        write_workspace(
+            WriteRequest(
+                because="Landed too late",
+                docs=(ReplaceSection(file="notes.md", section=("Reason",), text="# Reason\nnew"),),
+            ),
+            workspace=workspace,
+            submit=submit,
+        )
+    assert path.read_bytes() == b"# Reason\nnew\n"
+    assert (
+        caught.value.outcome.doc_confirmations[0].refusal.code
+        == "cruxible.doc.confirmation_expired"
+    )
+    assert "do not resend" in caught.value.repair_line
+    assert "Retry write with doc_confirmations" not in caught.value.repair_line
+
+
+@pytest.mark.parametrize(
+    ("ref", "detail"), [("file:repo.notes", "history"), ("file:repo.notes@1", "body")]
+)
+def test_file_history_refuses_an_older_coordinate_instead_of_showing_later_edits(
+    tmp_path, ref, detail
+):
+    instance, _ = seed_write_surface(tmp_path)
+    old = instance.accepted_coordinate()
+    _move_to_v7(instance, "measured", evidence_requirement="captured")
+    admitted = service_playbill_write(
+        instance,
+        request=WriteRequest(because="Later edit", docs=(_replacement_observation(),)),
+        caller=caller(),
+    )
+    assert (
+        service_playbill_write(
+            instance,
+            request=WriteRequest(
+                because="Landed", doc_confirmations=(admitted.docs[0].confirmation,)
+            ),
+            caller=caller(),
+        ).status
+        == "accepted"
+    )
+    access = BodyAccessContext(principal_id="reader", can_read_body=True)
+    with pytest.raises(ReadRefusalError) as caught:
+        service_playbill_get(
+            instance, request=GetRequest(ref=ref, detail=detail, at=old.git_oid), access=access
+        )
+    assert caught.value.error_code == "cruxible.get.historical_read_unsupported"
+    assert caught.value.field_path == "at"
+    assert caught.value.repair_line
+    current = service_playbill_get(
+        instance,
+        request=GetRequest(ref=ref, detail=detail, at=instance.accepted_coordinate().git_oid),
+        access=access,
+    )
+    if detail == "history":
+        assert len(current.history.revisions) == 1
+    else:
+        assert base64.b64decode(current.body.content_base64) == b"# Reason\nprevious\n"
+
+
+@pytest.mark.parametrize("same_token", [False, True])
+def test_concurrent_confirmations_return_a_typed_retry_and_never_duplicate_history(
+    tmp_path, monkeypatch, same_token
+):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from cruxible_core.exhaust.backends import LocalJournalBackend
+
+    instance, _ = seed_write_surface(tmp_path)
+    admitted = service_playbill_write(
+        instance,
+        request=WriteRequest(because="Concurrent edits", docs=(_replacement_observation(),) * 2),
+        caller=caller(),
+    )
+    tokens = tuple(doc.confirmation for doc in admitted.docs)
+    attempted = (tokens[0], tokens[0] if same_token else tokens[1])
+    gate = threading.Barrier(2, timeout=10)
+    activate = LocalJournalBackend.activate_writer
+
+    def race_activation(self, *args, **kwargs):
+        # Both callers have read the same head before either may activate/append.
+        gate.wait()
+        return activate(self, *args, **kwargs)
+
+    def confirm(token):
+        return service_playbill_write(
+            instance,
+            request=WriteRequest(because="Landed", doc_confirmations=(token,)),
+            caller=caller(),
+        )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(LocalJournalBackend, "activate_writer", race_activation)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(confirm, attempted))
+    assert sorted(result.status for result in results) == ["accepted", "refused"]
+    failed = next(result for result in results if result.refused).doc_confirmations[0]
+    assert failed.refusal.code == "cruxible.doc.confirmation_conflict"
+    assert failed.confirmation in failed.refusal.repair
+    assert "Retry write with doc_confirmations" in failed.refusal.repair
+    # A retry after either interleaving records only missing events.
+    for token in attempted:
+        assert confirm(token).status == "accepted"
+    history = service_playbill_get(
+        instance,
+        request=GetRequest(ref="file:repo.notes", detail="history"),
+        access=BodyAccessContext(principal_id="reader"),
+    ).history
+    assert len(history.revisions) == (1 if same_token else 2)
+    assert {entry.value.object["write_id"] for entry in history.revisions} == set(attempted)
