@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -228,23 +229,78 @@ def test_a_bundle_stripped_of_its_files_cannot_write_docs(tmp_path: Path) -> Non
         write_kit_directory(stripped, tmp_path / "kit")
 
 
-def test_containment_resolves_every_component_and_folds_case_where_the_volume_does(
-    tmp_path: Path,
-) -> None:
-    from cruxible_client._safe_files import ContainmentError, _case_folding, contained_path
+def test_a_held_root_refuses_any_symbolic_link_beneath_it(tmp_path: Path) -> None:
+    from cruxible_client._safe_files import ContainmentError, HeldRoot
 
     root = tmp_path / "Kit"
-    (root / "artifacts").mkdir(parents=True)
-    (root / "artifacts" / "a.json").write_text("{}")
+    (root / "artifacts" / "nested").mkdir(parents=True)
+    (root / "artifacts" / "nested" / "a.json").write_text("{}")
     outside = tmp_path / "outside"
     outside.mkdir()
-    (outside / "b.json").write_text("{}")
+    (outside / "b.json").write_text("outside")
     (root / "linked").symlink_to(outside, target_is_directory=True)
+    (root / "artifacts" / "file-link.json").symlink_to(outside / "b.json")
 
-    assert contained_path(root, root / "artifacts" / "a.json").name == "a.json"
-    with pytest.raises(ContainmentError):
-        contained_path(root, root / "linked" / "b.json")
-    if _case_folding(root):
-        # The same root named in another case is still the root.
-        swapped = tmp_path / "kIT"
-        assert contained_path(swapped, root / "artifacts" / "a.json").name == "a.json"
+    with HeldRoot(root) as held:
+        assert held.read("artifacts/nested/a.json") == b"{}"
+        with pytest.raises(ContainmentError, match="symbolic link"):
+            held.read("linked/b.json")
+        with pytest.raises(ContainmentError, match="symbolic link"):
+            held.read("artifacts/file-link.json")
+        with pytest.raises(ContainmentError, match="symbolic link"):
+            held.files("artifacts")
+        with pytest.raises(ContainmentError):
+            held.read("../outside/b.json")
+        assert held.files("missing", missing_ok=True) == []
+
+
+def test_a_parent_swapped_for_a_symlink_after_the_root_is_held_is_never_followed(
+    tmp_path: Path,
+) -> None:
+    """The reviewer's race: replace a parent directory with an outside link mid-read."""
+
+    from cruxible_client._safe_files import ContainmentError, HeldRoot
+
+    root = tmp_path / "named"
+    parent = root / "artifacts"
+    parent.mkdir(parents=True)
+    (parent / "item.json").write_bytes(b"inside")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "item.json").write_bytes(b"outside")
+
+    with HeldRoot(root) as held:
+        assert held.read("artifacts/item.json") == b"inside"
+        # Swapped after the root is held and before the read walks to it.
+        parent.rename(root / "previous")
+        parent.symlink_to(outside, target_is_directory=True)
+        with pytest.raises(ContainmentError, match="symbolic link"):
+            held.read("artifacts/item.json")
+        with pytest.raises(ContainmentError, match="symbolic link"):
+            held.files("artifacts")
+
+
+def test_a_swap_between_walking_a_parent_and_opening_the_file_reads_inside_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once a parent is held by descriptor, swapping its pathname changes nothing read."""
+
+    import cruxible_client._safe_files as safe
+
+    root = tmp_path / "named"
+    parent = root / "artifacts"
+    parent.mkdir(parents=True)
+    (parent / "item.json").write_bytes(b"inside")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "item.json").write_bytes(b"outside")
+    original = safe.read_regular_file
+
+    def swap_then_read(path: Any, **kwargs: Any) -> bytes:
+        parent.rename(root / "previous")
+        parent.symlink_to(outside, target_is_directory=True)
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(safe, "read_regular_file", swap_then_read)
+    with safe.HeldRoot(root) as held:
+        assert held.read("artifacts/item.json") == b"inside"

@@ -212,10 +212,10 @@ def test_a_kit_directory_whose_artifacts_lead_outside_it_is_refused(
     client = _RecordingClient()
     bind_mcp_daemon(monkeypatch, client)
 
-    with pytest.raises(KitSourceError, match="resolves outside"):
+    with pytest.raises(KitSourceError, match="symbolic link"):
         handlers.handle_playbill_kit_add("inst", reference=str(kit))
     # The CLI reads through the same shared reader.
-    with pytest.raises(KitSourceError, match="resolves outside"):
+    with pytest.raises(KitSourceError, match="symbolic link"):
         resolve_kit(str(kit))
     assert client.sent == []
 
@@ -238,9 +238,9 @@ def test_an_oci_layout_whose_blobs_lead_outside_it_is_refused(
     client = _RecordingClient()
     bind_mcp_daemon(monkeypatch, client)
 
-    with pytest.raises(KitSourceError, match="resolves outside"):
+    with pytest.raises(KitSourceError, match="symbolic link"):
         handlers.handle_playbill_kit_add("inst", reference=str(named))
-    with pytest.raises(KitSourceError, match="resolves outside"):
+    with pytest.raises(KitSourceError, match="symbolic link"):
         resolve_kit_image(str(named))
     assert client.sent == []
     # A layout whose files all sit beneath it still reads.

@@ -7,6 +7,7 @@ and bound reads used for comparisons or processing budgets.
 
 from __future__ import annotations
 
+import errno
 import os
 import stat
 from pathlib import Path
@@ -42,42 +43,124 @@ def read_regular_file(
 
 
 class ContainmentError(ValueError):
-    """A path resolves outside the root a caller named (through any symlink on the way)."""
+    """A path beneath a held root crosses a symbolic link (or leaves the root)."""
 
 
-def _case_folding(root: Path) -> bool:
-    """Whether ``root``'s volume folds case: the same directory answers to a swapped name."""
-
-    text = str(root)
-    swapped = text.swapcase()
-    if swapped == text:
-        return False
-    try:
-        return os.path.samefile(text, swapped)
-    except OSError:
-        return False
+_DIRECTORY = (
+    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+)
 
 
-def contained_path(root: Path, path: Path) -> Path:
-    """``path`` fully resolved, refused unless it lies beneath ``root`` resolved.
+def _relative_parts(relative: str) -> list[str]:
+    parts = relative.split("/")
+    if not relative or relative.startswith("/") or any(p in ("", ".", "..") for p in parts):
+        raise ContainmentError(f"{relative!r} is not a relative path beneath the root")
+    return parts
 
-    Every component is resolved, so a symlinked parent directory that leads out
-    of the root is refused as surely as a symlinked file; the comparison folds
-    case on a case-folding volume. Raises ``ContainmentError`` (and
-    ``FileNotFoundError`` when nothing is there).
+
+def _symlink_refusal(relative: str) -> ContainmentError:
+    return ContainmentError(f"{relative} is (or sits under) a symbolic link")
+
+
+class HeldRoot:
+    """A directory held open by descriptor; every read walks beneath it, atomically.
+
+    The named root is opened once. Each later path is opened component by
+    component from held directory descriptors with ``O_NOFOLLOW`` (and
+    ``O_DIRECTORY`` for each parent), and its bytes come from the final held
+    descriptor. Swapping a parent for a symbolic link between a check and the
+    open is therefore refused, never followed; no pathname is resolved twice.
     """
 
-    resolved_root = root.resolve(strict=True)
-    resolved = path.resolve(strict=True)
-    inside = resolved.is_relative_to(resolved_root)
-    if not inside and _case_folding(resolved_root):
-        inside = Path(str(resolved).casefold()).is_relative_to(Path(str(resolved_root).casefold()))
-    if not inside:
-        raise ContainmentError(f"{path} resolves outside {root}")
-    return resolved
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self._fd = os.open(
+            root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+        )
 
+    def close(self) -> None:
+        if self._fd >= 0:
+            os.close(self._fd)
+            self._fd = -1
 
-def read_contained(root: Path, path: Path) -> bytes:
-    """The regular file at ``path``, read only once it is contained beneath ``root``."""
+    def __enter__(self) -> HeldRoot:
+        return self
 
-    return read_regular_file(contained_path(root, path))
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+    def _open_directory(self, parts: list[str], relative: str) -> int:
+        """A new descriptor for the directory ``parts`` names beneath the root."""
+
+        current = os.dup(self._fd)
+        for part in parts:
+            try:
+                following = os.open(part, _DIRECTORY, dir_fd=current)
+            except OSError as exc:
+                symlink = exc.errno == errno.ELOOP or (
+                    exc.errno == errno.ENOTDIR
+                    and stat.S_ISLNK(os.lstat(part, dir_fd=current).st_mode)
+                )
+                os.close(current)
+                if symlink:
+                    raise _symlink_refusal(relative) from exc
+                raise
+            os.close(current)
+            current = following
+        return current
+
+    def read(self, relative: str, *, max_bytes: int | None = None) -> bytes:
+        """The regular file at ``relative`` beneath the root, read from its held descriptor."""
+
+        parts = _relative_parts(relative)
+        directory = self._open_directory(parts[:-1], relative)
+        try:
+            return read_regular_file(parts[-1], dir_fd=directory, max_bytes=max_bytes)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise _symlink_refusal(relative) from exc
+            raise
+        finally:
+            os.close(directory)
+
+    def files(self, relative: str, *, missing_ok: bool = False) -> list[str]:
+        """Every file beneath directory ``relative``, as paths relative to it, sorted.
+
+        Listed through held descriptors (``os.scandir`` on each); a symbolic link
+        anywhere beneath it is refused.
+        """
+
+        try:
+            directory = self._open_directory(_relative_parts(relative), relative)
+        except FileNotFoundError:
+            if missing_ok:
+                return []
+            raise
+        found: list[str] = []
+
+        def walk(descriptor: int, prefix: str) -> None:
+            with os.scandir(descriptor) as entries:
+                listed = sorted(entries, key=lambda entry: entry.name)
+            for entry in listed:
+                name = f"{prefix}{entry.name}"
+                if entry.is_symlink():
+                    raise _symlink_refusal(f"{relative}/{name}")
+                if entry.is_dir(follow_symlinks=False):
+                    try:
+                        child = os.open(entry.name, _DIRECTORY, dir_fd=descriptor)
+                    except OSError as exc:
+                        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                            raise _symlink_refusal(f"{relative}/{name}") from exc
+                        raise
+                    try:
+                        walk(child, f"{name}/")
+                    finally:
+                        os.close(child)
+                else:
+                    found.append(name)
+
+        try:
+            walk(directory, "")
+        finally:
+            os.close(directory)
+        return sorted(found)
