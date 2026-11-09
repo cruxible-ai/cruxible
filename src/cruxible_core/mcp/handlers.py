@@ -108,7 +108,7 @@ from cruxible_client.errors import ServerUnreachableError
 from cruxible_client.kits import (
     KIT_ARTIFACT,
     check_kit_updates,
-    fetch_kit_image,
+    resolve_kit_image,
     stage_kit_providers,
 )
 from cruxible_client.transport.http import configured_principal_id
@@ -333,7 +333,9 @@ def handle_playbill_kit_add(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> KitChangeResult:
-    """Install a kit by registry reference (this adapter pulls and verifies it) or bundle.
+    """Install a kit by reference or bundle. This adapter reads the reference as
+    ``kit add`` does: a local kit directory or OCI layout, else a registry
+    reference it pulls and verifies.
 
     A commit stages the kit's bundled provider files in the daemon's body store
     first, so the daemon can install them; a preview sends none.
@@ -348,7 +350,7 @@ def handle_playbill_kit_add(
         raise DataValidationError("kit add takes exactly one of reference or bundle")
     source = None
     if reference is not None:
-        image, source = fetch_kit_image(reference)
+        image, source = resolve_kit_image(reference)
         bundle = unpack_artifact(KIT_ARTIFACT, image)
     assert bundle is not None
     resolved = bundle

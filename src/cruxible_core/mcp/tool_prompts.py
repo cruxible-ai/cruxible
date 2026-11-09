@@ -39,7 +39,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "kept on purpose, and (for registry kits) the latest available version."
     ),
     "cruxible_kit_add": (
-        "Use when you want to install or upgrade a kit, by registry reference or bundle. It "
+        "Use when you want to install or upgrade a kit, by local kit directory, OCI layout, "
+        "registry reference or bundle. It "
         "always proposes: a definition held differently takes the release's version unless "
         "kept (keep, keep_local_edits); the plan says what each change does and counts "
         "dependents. It lands at once when the approval policy requires no approval. A kit "

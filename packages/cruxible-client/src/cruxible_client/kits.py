@@ -46,6 +46,7 @@ from cruxible_client.artifacts import (
     unpack_artifact,
     unpack_files,
 )
+from cruxible_client.artifacts.registry import RegistryRefusal
 from cruxible_client.contracts.canonical import pretty_canonical_bytes
 from cruxible_client.contracts.kits import (
     KIT_ARTIFACT_DIRECTORY,
@@ -88,8 +89,14 @@ def kit_reference(source: str) -> Reference:
     """``source`` as a registry reference, or a typed refusal naming the kit forms."""
 
     if source.startswith((".", "/", "~")):
-        # A path, never a registry name: one that reached here names nothing on disk.
-        raise KitSourceError(f"no kit directory or layout at {source}")
+        # A path, never a registry name. Say what is actually on disk: nothing at
+        # all, or a local kit handed to a caller that only fetches from a registry.
+        if Path(source).expanduser().exists():
+            raise KitSourceError(
+                f"{source} is a local path, not a registry reference; read it as a kit "
+                "directory or layout (resolve_kit) instead of fetching it"
+            )
+        raise KitSourceError(f"no kit directory or layout at {source} (nothing exists there)")
     try:
         return parse_reference(source)
     except ValueError as exc:
@@ -453,8 +460,31 @@ def resolve_kit(source: str, *, registry: RegistryClient | None = None) -> tuple
     if local is not None:
         bundle, _, origin = local
         return bundle, origin
-    image, origin = fetch_kit_image(source, registry=registry)
+    image, origin = _fetch_after_local_miss(source, registry=registry)
     return unpack_artifact(KIT_ARTIFACT, image), origin
+
+
+def _fetch_after_local_miss(
+    source: str, *, registry: RegistryClient | None
+) -> tuple[ArtifactImage, str]:
+    """Fetch ``source`` from its registry once nothing on disk answered it.
+
+    A registry miss on a source that also reads as a relative path (``kits/foo``)
+    says both places were tried, so a mistyped directory is not reported as an
+    unpublished release alone.
+    """
+
+    try:
+        return fetch_kit_image(source, registry=registry)
+    except RegistryRefusal as exc:
+        if exc.reason != "not_found" or "/" not in source:
+            raise
+        raise RegistryRefusal(
+            "not_found",
+            f"{str(exc).removeprefix(exc.error_code + ': ')}; no local kit directory "
+            f"or layout exists at {source} either",
+            status=exc.status,
+        ) from exc
 
 
 def resolve_kit_image(
@@ -468,7 +498,7 @@ def resolve_kit_image(
 
     local = _local_kit(Path(source).expanduser())
     if local is None:
-        return fetch_kit_image(source, registry=registry)
+        return _fetch_after_local_miss(source, registry=registry)
     bundle, image, origin = local
     return (image if image is not None else pack_artifact(KIT_ARTIFACT, bundle)), origin
 

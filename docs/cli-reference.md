@@ -1329,8 +1329,8 @@ refuses with `cruxible.kit.not_installed`, naming the installed kits.
 
 MCP: `cruxible_kit_build` (`providers` names packages staged with
 `cruxible_body_store`; `delivery: index` makes one a default provider), `cruxible_kit_status` (with the same update check,
-`offline`), `cruxible_kit_add` (by registry `reference`, which the adapter pulls,
-or inline `bundle`; a commit stages its provider files) and
+`offline`), `cruxible_kit_add` (`reference` is a kit directory or layout the adapter reads,
+or a registry reference it pulls; or inline `bundle`; a commit stages its provider files) and
 `cruxible_kit_remove`. HTTP:
 `POST /{instance}/kits/build`, `GET /{instance}/kits`,
 `POST /{instance}/kits` and `POST /{instance}/kits/remove`.
