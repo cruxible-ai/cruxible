@@ -837,3 +837,56 @@ def test_file_history_refuses_an_older_coordinate_instead_of_showing_later_edits
         assert len(current.history.revisions) == 1
     else:
         assert base64.b64decode(current.body.content_base64) == b"# Reason\nprevious\n"
+
+
+@pytest.mark.parametrize("same_token", [False, True])
+def test_concurrent_confirmations_return_a_typed_retry_and_never_duplicate_history(
+    tmp_path, monkeypatch, same_token
+):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from cruxible_core.exhaust.backends import LocalJournalBackend
+
+    instance, _ = seed_write_surface(tmp_path)
+    admitted = service_playbill_write(
+        instance,
+        request=WriteRequest(because="Concurrent edits", docs=(_replacement_observation(),) * 2),
+        caller=caller(),
+    )
+    tokens = tuple(doc.confirmation for doc in admitted.docs)
+    attempted = (tokens[0], tokens[0] if same_token else tokens[1])
+    gate = threading.Barrier(2, timeout=10)
+    activate = LocalJournalBackend.activate_writer
+
+    def race_activation(self, *args, **kwargs):
+        # Both callers have read the same head before either may activate/append.
+        gate.wait()
+        return activate(self, *args, **kwargs)
+
+    def confirm(token):
+        return service_playbill_write(
+            instance,
+            request=WriteRequest(because="Landed", doc_confirmations=(token,)),
+            caller=caller(),
+        )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(LocalJournalBackend, "activate_writer", race_activation)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(confirm, attempted))
+    assert sorted(result.status for result in results) == ["accepted", "refused"]
+    failed = next(result for result in results if result.refused).doc_confirmations[0]
+    assert failed.refusal.code == "cruxible.doc.confirmation_conflict"
+    assert failed.confirmation in failed.refusal.repair
+    assert "Retry write with doc_confirmations" in failed.refusal.repair
+    # A retry after either interleaving records only missing events.
+    for token in attempted:
+        assert confirm(token).status == "accepted"
+    history = service_playbill_get(
+        instance,
+        request=GetRequest(ref="file:repo.notes", detail="history"),
+        access=BodyAccessContext(principal_id="reader"),
+    ).history
+    assert len(history.revisions) == (1 if same_token else 2)
+    assert {entry.value.object["write_id"] for entry in history.revisions} == set(attempted)

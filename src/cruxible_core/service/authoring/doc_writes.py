@@ -17,7 +17,11 @@ from cruxible_client.contracts.declared_blocks import (
     stamped_projection_windows,
 )
 from cruxible_client.contracts.doc_sections import SectionPath, section_digest
-from cruxible_client.contracts.errors import ReadRefusalError, WriteRefusalError
+from cruxible_client.contracts.errors import (
+    JournalConflictError,
+    ReadRefusalError,
+    WriteRefusalError,
+)
 from cruxible_client.contracts.get_reads import (
     GET_BODY_DEFAULT_MAX_BYTES,
     GET_HISTORY_DEFAULT_LIMIT,
@@ -354,19 +358,26 @@ def _confirm_doc_edit(instance: PlaybillInstance, *, token: str, actor: Authenti
             repair="Do not repeat this token; its history can no longer be confirmed",
         )
     bodies.store(previous)
-    head = journal.read_head(stream, partition)
-    journal.activate_writer(stream, partition, fencing_token=_FENCE, expected_head=head)
-    ProcedureExhaustWriter(journal=journal, bodies=bodies, fencing_token=_FENCE).append(
-        stream=stream,
-        partition_id=partition,
-        event_kind="doc_edit",
-        accepted_coordinate=pending.coordinate,
-        definition_digest=stream.identity_digest,
-        actor_context=pending.actor,
-        recorded_at=instance.recording_clock(),
-        expected_head=head,
-        payload=payload,
-    )
+    try:
+        head = journal.read_head(stream, partition)
+        journal.activate_writer(stream, partition, fencing_token=_FENCE, expected_head=head)
+        ProcedureExhaustWriter(journal=journal, bodies=bodies, fencing_token=_FENCE).append(
+            stream=stream,
+            partition_id=partition,
+            event_kind="doc_edit",
+            accepted_coordinate=pending.coordinate,
+            definition_digest=stream.identity_digest,
+            actor_context=pending.actor,
+            recorded_at=instance.recording_clock(),
+            expected_head=head,
+            payload=payload,
+        )
+    except JournalConflictError as exc:
+        raise _refuse(
+            "cruxible.doc.confirmation_conflict",
+            "Another confirmation changed this file's history; this token can be retried",
+            repair=f"Retry write with doc_confirmations: [{token!r}]",
+        ) from exc
     _save_pending(path, pending.model_copy(update={"before_content_base64": None}))
 
 
