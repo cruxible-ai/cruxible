@@ -115,6 +115,7 @@ def summarize(records: list[Record]) -> list[dict[str, object]]:
                 else None,
                 **_usage_means("question", questions),
                 "questions_with_token_usage": sum(r.usage.tokens is not None for r in questions),
+                "questions_with_cost": sum(r.usage.cost_usd is not None for r in questions),
                 **_usage_means("session", audits),
                 "amortized_tokens_per_question": _mean(
                     [amortized[(arm, session, r.repetition)][0] for r in audits]
@@ -122,8 +123,11 @@ def summarize(records: list[Record]) -> list[dict[str, object]]:
                 "amortized_cost_per_question": _mean(
                     [amortized[(arm, session, r.repetition)][1] for r in audits]
                 ),
-                "repetitions_with_complete_cost": sum(
+                "repetitions_with_complete_tokens": sum(
                     amortized[(arm, session, r.repetition)][0] is not None for r in audits
+                ),
+                "repetitions_with_complete_cost": sum(
+                    amortized[(arm, session, r.repetition)][1] is not None for r in audits
                 ),
                 "upkeep_tokens_between_questions": _mean(
                     [r.between_questions_tokens for r in audits]
@@ -220,10 +224,21 @@ def summarize_setup(records: list[Record]) -> list[dict[str, object]]:
             runs[record.arm][record.repetition].append(record)
     rows: list[dict[str, object]] = []
     for arm, repetitions in sorted(runs.items()):
-        row: dict[str, object] = {"arm": arm, "repetitions": len(repetitions)}
+        row: dict[str, object] = {
+            "arm": arm,
+            "repetitions": len(repetitions),
+            "setup_steps": _mean([len(steps) for steps in repetitions.values()]),
+        }
         for name, get in USAGE.items():
             row[f"setup_{name}"] = _mean(
                 [_sum([get(r) for r in steps]) for steps in repetitions.values()]
+            )
+        for kind in ("command", "agent"):
+            row[f"setup_{kind}_wall_seconds"] = _mean(
+                [
+                    sum(r.wall_seconds for r in steps if r.setup_kind == kind)
+                    for steps in repetitions.values()
+                ]
             )
         row["runaway_hits"] = sum(
             r.runaway is not None for steps in repetitions.values() for r in steps
@@ -343,7 +358,16 @@ def write_outputs(records: list[Record], directory: Path) -> None:
         handle.write(
             "\n## Setup (off the clock)\n\n"
             + table(
-                ["arm", "repetitions", "setup_tokens", "setup_cost_usd", "setup_wall_seconds"],
+                [
+                    "arm",
+                    "repetitions",
+                    "setup_steps",
+                    "setup_tokens",
+                    "setup_cost_usd",
+                    "setup_wall_seconds",
+                    "setup_command_wall_seconds",
+                    "setup_agent_wall_seconds",
+                ],
                 setup,
             )
         )

@@ -36,11 +36,32 @@ class Usage(Model):
 
     @property
     def total_tokens(self) -> int | None:
-        """Input, output and cache tokens; cache counts as zero when not reported."""
-        tokens = self.tokens
-        if tokens is None:
-            return None
-        return tokens + (self.cache_read_tokens or 0) + (self.cache_write_tokens or 0)
+        """Input, output and cache tokens; unknown unless every counter is reported.
+
+        Known absence of cache use must be reported as an explicit zero.
+        """
+        parts = (
+            self.input_tokens,
+            self.output_tokens,
+            self.cache_read_tokens,
+            self.cache_write_tokens,
+        )
+        return None if any(part is None for part in parts) else sum(p or 0 for p in parts)
+
+    @classmethod
+    def none_used(cls) -> Usage:
+        """Known zero usage: harness work with no model involved."""
+        return cls(
+            input_tokens=0,
+            output_tokens=0,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            turns=0,
+            cost_usd=0,
+            model_calls=0,
+            subagent_calls=0,
+            compute_seconds=0,
+        )
 
 
 class MemoryReport(Model):
@@ -177,10 +198,7 @@ class ScriptedAdapter:
             )
             if key in self.turns:
                 return self.turns[key]
-        return Reply(
-            text="[scripted dry run: no model was called]",
-            usage=Usage(input_tokens=0, output_tokens=0, turns=0, cost_usd=0, compute_seconds=0),
-        )
+        return Reply(text="[scripted dry run: no model was called]", usage=Usage.none_used())
 
     def close(self, context: Context) -> None:
         if self.cleanup is not None:

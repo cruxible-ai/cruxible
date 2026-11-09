@@ -53,6 +53,8 @@ class SizeMetrics(Model):
 class Record(Model):
     version: Literal[2] = 2
     kind: Literal["setup", "session", "question"]
+    # Setup records only: an agent setup prompt, or a harness command (no model).
+    setup_kind: Literal["agent", "command"] | None = None
     run_id: str
     arm: Literal["A", "B", "C"]
     repetition: int = Field(ge=1)
@@ -85,6 +87,8 @@ class Record(Model):
             raise ValueError("only question records carry a question")
         if (self.kind == "setup") != (self.setup_step is not None):
             raise ValueError("only setup records name a setup step")
+        if (self.kind == "setup") != (self.setup_kind is not None):
+            raise ValueError("only setup records name a setup kind")
         if self.kind == "setup" and self.review is not None:
             raise ValueError("setup is off the clock and not reviewed")
         return self

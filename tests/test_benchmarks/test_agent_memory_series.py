@@ -84,6 +84,7 @@ def responder(calls):
                     input_tokens=8 * invocation.session_index,
                     output_tokens=2 * invocation.session_index,
                     cache_read_tokens=100,
+                    cache_write_tokens=0,
                     turns=2,
                     cost_usd=0.001 * invocation.session_index,
                     model_calls=1,
@@ -165,8 +166,9 @@ def _alive(pid: int) -> bool:
 
 def test_dry_run_loop_setup_scheduling_isolation_and_metrics(completed):
     config, output, records, calls = completed
-    # Per repetition: A 6 audits + 7 answers; B and C add one setup agent step each.
-    assert len(records) == len(calls) == 82
+    # Per repetition: 6 audits + 7 answers per arm, plus setup steps
+    # (A: 1 command; B: 2 commands + 1 agent; C: 1 agent). Commands call no adapter.
+    assert len(records) == 88 and len(calls) == 82
     assert records == load_results(output / "results.jsonl")
     manifest = json.loads((output / "manifest.json").read_text())
     assert manifest["status"] == "completed" and manifest["dry_run"] is True
@@ -189,7 +191,18 @@ def test_dry_run_loop_setup_scheduling_isolation_and_metrics(completed):
             assert not _alive(setup[0]["pid"]), "background setup helper must be stopped"
             assert (ctx.feeds_dir / "kev.json").exists()
     setups = [r for r in records if r.kind == "setup"]
-    assert {(r.arm, r.setup_step) for r in setups} == {("B", 2), ("C", 0)}
+    assert {(r.arm, r.setup_step, r.setup_kind) for r in setups} == {
+        ("A", 0, "command"),
+        ("B", 0, "command"),
+        ("B", 1, "command"),
+        ("B", 2, "agent"),
+        ("C", 0, "agent"),
+    }
+    assert all(
+        r.wall_seconds > 0 and r.usage.total_tokens == 0
+        for r in setups
+        if r.setup_kind == "command"
+    )
     for record in records:
         assert record.source.files == 2 and record.runaway is None
         if record.kind == "question" and record.question.kind == "contradiction":
@@ -214,8 +227,15 @@ def test_dry_run_loop_setup_scheduling_isolation_and_metrics(completed):
     third = next(row for row in rows if row["arm"] == "B" and row["session_index"] == 3)
     assert third["upkeep_tokens_between_questions"] == 500
     setup = {row["arm"]: row for row in summarize_setup(records)}
-    assert set(setup) == {"B", "C"}
+    assert set(setup) == {"A", "B", "C"}  # command-only A included
+    assert setup["A"]["setup_steps"] == 1 and setup["A"]["setup_tokens"] == 0
+    assert setup["A"]["setup_command_wall_seconds"] > 0
+    assert setup["A"]["setup_agent_wall_seconds"] == 0
+    assert setup["B"]["setup_steps"] == 3
     assert setup["B"]["setup_tokens"] == 5 and setup["B"]["setup_cost_usd"] == 0.5
+    assert setup["B"]["setup_command_wall_seconds"] > 0
+    assert setup["C"]["setup_command_wall_seconds"] == 0
+    assert "setup_command_wall_seconds" in (output / "summary.md").read_text()
     trend = next(t for t in trends(rows) if t["arm"] == "A" and t["metric"] == "question_tokens")
     assert (trend["first"], trend["last"], trend["change_pct"]) == (10, 60, 500)
     for name in ("summary.csv", "setup.csv", "trend.csv", "summary.md", "plot-status.json"):
@@ -510,7 +530,7 @@ def test_patch_and_feed_inputs_are_frozen_before_any_adapter_call(tmp_path):
         config_directory=tmp_path,
         adapter=ScriptedAdapter(respond=mutate_input),
     )
-    assert len(records) == 82
+    assert len(records) == 88
     frozen = json.loads((tmp_path / "frozen/frozen-config.json").read_text())
     assert frozen["sessions"][2]["changes"][0]["text"] == FIX
     assert frozen["sessions"][5]["changes"][0]["text"] == '{"frozen": true}'
@@ -532,6 +552,7 @@ def test_unknown_usage_and_partial_reviews_remain_missing(completed):
     assert row["question_tokens"] is None and row["questions_with_token_usage"] == 0
     assert row["question_cost_usd"] is None
     assert row["repetitions_with_complete_cost"] == 0
+    assert row["repetitions_with_complete_tokens"] == 0
     assert row["reviewed_answers"] == 0 and row["flagged_answers"] is None
     assert row["wrong"] == 0 and row["stale_as_current"] is None
 
@@ -558,7 +579,7 @@ def test_sparse_question_batches_count_upkeep_once_and_close_each_arm(tmp_path):
     records = run_benchmark(
         config, output=tmp_path / "sparse", adapter=ScriptedAdapter(respond=respond, cleanup=close)
     )
-    assert len(records) == 8 + 9  # A; then B, which adds one setup agent step
+    assert len(records) == 9 + 11  # A (+1 setup command); B (+2 commands, +1 agent step)
     assert events.index(("close", "A")) < events.index(("run", "B"))
     assert events[-1] == ("close", "B")
     for record in records:
@@ -607,3 +628,61 @@ def test_fixture_base_commit_is_pinned(tmp_path):
     config = fixture_config(tmp_path)
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=config.target.git_url)
     assert config.target.base_commit == head.decode().strip()
+
+
+@pytest.mark.parametrize("phase", ["session", "question"])
+def test_an_invocation_that_rewrites_frozen_feeds_fails_the_run(tmp_path, phase):
+    data = fixture_config(tmp_path).model_dump(mode="json")
+    data["arms"] = data["arms"][:2]
+    data["repetitions"] = 1
+    config = BenchmarkConfig.model_validate(data)
+    original = responder([])
+
+    def rewrites(context, invocation):
+        reply = original(context, invocation)
+        if invocation.phase == phase and invocation.session_index == 6:
+            (context.feeds_dir / "kev.json").write_text('{"vulnerabilities": []}')
+        return reply
+
+    with pytest.raises(ValueError, match="modified the frozen advisory feeds"):
+        run_benchmark(config, output=tmp_path / "feeds", adapter=ScriptedAdapter(respond=rewrites))
+    manifest = json.loads((tmp_path / "feeds/manifest.json").read_text())
+    assert manifest["status"] == "failed"
+    assert all(r.arm == "A" for r in load_results(tmp_path / "feeds/results.jsonl"))
+
+
+def test_setup_that_writes_frozen_feeds_fails_the_run(tmp_path):
+    data = fixture_config(tmp_path).model_dump(mode="json")
+    data["arms"][0]["setup"][0]["argv"][3] = "{feeds}/kev.json"
+    with pytest.raises(ValueError, match="setup modified the frozen advisory feeds"):
+        run_benchmark(
+            BenchmarkConfig.model_validate(data),
+            output=tmp_path / "setup-feeds",
+            adapter=ScriptedAdapter(),
+        )
+
+
+def test_total_tokens_needs_every_counter_and_explicit_zero_cache():
+    assert Usage(input_tokens=1, output_tokens=2).total_tokens is None
+    assert Usage(input_tokens=1, output_tokens=2, cache_read_tokens=5).total_tokens is None
+    partial = Usage(input_tokens=1, output_tokens=2, cache_write_tokens=0)
+    assert partial.tokens == 3 and partial.total_tokens is None
+    complete = Usage(input_tokens=1, output_tokens=2, cache_read_tokens=5, cache_write_tokens=0)
+    assert complete.total_tokens == 8
+    assert Usage.none_used().total_tokens == 0
+
+
+def test_cost_completeness_comes_from_cost_not_tokens(completed):
+    _config, _output, records, _calls = completed
+    tokens_only = [
+        record.model_copy(update={"usage": record.usage.model_copy(update={"cost_usd": None})})
+        if record.arm == "A" and record.kind != "setup"
+        else record
+        for record in records
+    ]
+    row = next(r for r in summarize(tokens_only) if r["arm"] == "A" and r["session_index"] == 1)
+    assert row["repetitions_with_complete_tokens"] == 2
+    assert row["repetitions_with_complete_cost"] == 0
+    assert row["amortized_cost_per_question"] is None
+    assert row["amortized_tokens_per_question"] == 110
+    assert row["questions_with_cost"] == 0 and row["questions_with_token_usage"] == 2

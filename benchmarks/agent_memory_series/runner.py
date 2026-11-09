@@ -8,9 +8,9 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, TextIO, cast
 
-from .adapters import AgentAdapter, CLIAdapterStub, Context, Invocation
+from .adapters import AgentAdapter, CLIAdapterStub, Context, Invocation, Usage
 from .config import BenchmarkConfig, Feed, Patch, Question, Session, SetupAgent, digest
 from .grading import export_sheets
 from .results import Record
@@ -177,6 +177,7 @@ def _run_arm(
 
     def invoke(invocation: Invocation, question: Question | None = None) -> Record:
         before = source_snapshot(context)
+        feeds_before = feeds_snapshot(context)
         started = time.perf_counter()
         reply = adapter.run(context, invocation)
         wall = time.perf_counter() - started
@@ -184,6 +185,10 @@ def _run_arm(
             raise ValueError(
                 "agent modified target source; configure all memory/tooling paths explicitly"
             )
+        # Frozen feeds are inputs for every arm: a later invocation must never
+        # read data an earlier one rewrote.
+        if feeds_snapshot(context) != feeds_before:
+            raise ValueError("agent modified the frozen advisory feeds")
         cost = reply.usage.cost_usd
         runaway = reply.stopped_by_guard or (
             "wall_clock"
@@ -196,6 +201,7 @@ def _run_arm(
         )
         return Record(
             kind=invocation.phase,
+            setup_kind="agent" if invocation.phase == "setup" else None,
             run_id=run_id,
             arm=arm.id,
             repetition=repetition,
@@ -240,6 +246,7 @@ def _run_arm(
     initial = source_snapshot(context)
     if snapshots.setdefault(0, initial.digest) != initial.digest:
         raise ValueError("base source snapshots differ between arms/repetitions")
+    initial_feeds = feeds_snapshot(context)
     # Setup is off the clock: recorded as kind="setup", excluded from session metrics.
     setup_logs: list[dict[str, object]] = []
     for step_index, step in enumerate(arm.setup):
@@ -260,9 +267,30 @@ def _run_arm(
         if process is not None:
             background.append(process)
         setup_logs.append(log)
+        # Command steps are setup too: recorded with their wall time and no model usage.
+        append(
+            Record(
+                kind="setup",
+                setup_kind="command",
+                run_id=run_id,
+                arm=arm.id,
+                repetition=repetition,
+                session_index=0,
+                setup_step=step_index,
+                adapter="harness",
+                dry_run=adapter.dry_run,
+                prompt=step.description,
+                output=str(log.get("stdout", "")),
+                usage=Usage.none_used(),
+                wall_seconds=cast(float, log["wall_seconds"]),
+                source=initial,
+            )
+        )
     (context.run_root / "setup.json").write_text(json.dumps(setup_logs, indent=2) + "\n")
     if source_snapshot(context) != initial:
         raise ValueError("setup modified target source; declare installed tooling paths")
+    if feeds_snapshot(context) != initial_feeds:
+        raise ValueError("setup modified the frozen advisory feeds")
     upkeep_tokens: int | float | None = 0
     upkeep_compute: int | float | None = 0
     for index, session in enumerate(config.sessions, 1):
