@@ -244,7 +244,7 @@ def _created_then_retired(tmp_path: Path, spelling: str) -> tuple[str, str, str]
         expected_type = "list<string>{max_items: 4}"
     else:
         field = {"key": "cve_id", "path_row": "path", "subject_id": "subject_id"}[spelling]
-        row = boundary_contract("test.expect-row", {field: "string"})
+        row = boundary_contract(f"test.claims-item-changes.expect-{field}", {field: "string"})
         accept_tree(instance, contract_files(row), name="expect-row")
         expected_type = f"list<{row.ref.spelling}>{{max_items: 4}}"
     raw = claims_spec(subject_create="if_absent").model_dump(mode="python", by_alias=True)

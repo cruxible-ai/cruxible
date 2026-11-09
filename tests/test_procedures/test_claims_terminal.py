@@ -53,7 +53,7 @@ KIND = "security.vulnerability"
 PREDICATE = KIND + ".status"
 ROW = Contract.model_validate(
     {
-        "name": "test.claim-row",
+        "name": "test.claims-terminal.row",
         "version": 1,
         "fields": {"status": "enum[open, closed, unknown]", "note": "string{max_len: 256}?"},
     }
@@ -150,6 +150,7 @@ def claims_spec(
     mappings: list[dict[str, Any]] | None = None,
     steps: list[dict[str, Any]] | None = None,
     subject_create: str = "never",
+    rows: Contract = ROW,
     **extra: Any,
 ) -> Any:
     return procedure_spec(
@@ -187,7 +188,7 @@ def claims_spec(
                 "extract": "entries",
                 "capture": "$steps.doc.capture",
                 "records": "/entries/*",
-                "row": ROW.ref.spelling,
+                "row": rows.ref.spelling,
                 "key": {"cve_id": {"at": "id", "type": f"key_part<{KIND}:cve_id>"}},
                 "fields": {"status": {"at": "status"}, "note": {"at": "note"}},
             },
