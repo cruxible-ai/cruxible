@@ -3025,6 +3025,9 @@ def _state_from_records(
                 inbox=(
                     _run_inbox_postings(instance, run_id)
                     if admission.invocation_origin == "line"
+                    and _run_may_have_posted(
+                        terminal_egress.values(), findings_count=findings_count, terminal=terminal
+                    )
                     else 0
                 ),
             )
@@ -3160,6 +3163,43 @@ def _public_run_receipt(
         exhaust_access_binding_digest=admission.exhaust_access_binding_digest,
         invocation_receipt_digests=invocation_receipt_digests,
         source_capture_associations=source_capture_associations,
+    )
+
+
+#: The run ends that can fall between an inbox post and the journal record
+#: that names it: an unexpected exception, a journal append that failed or
+#: conflicted, an inbox receipt that failed verification, or a record the
+#: fold could not read.
+_POST_WINDOW_TERMINAL_CODES = frozenset(
+    {
+        "unexpected_exception",
+        "journal_append_failed",
+        "journal_conflict",
+        "terminal_egress_unverified",
+        "run_record_invalid",
+    }
+)
+
+
+def _run_may_have_posted(
+    terminal_egress: Iterable[ProcedureTerminalEgress],
+    *,
+    findings_count: int,
+    terminal: ProcedureTerminal | None,
+) -> bool:
+    """Whether a finished Line run's journal leaves room for an inbox posting.
+
+    A run posts at a ``post_inbox`` terminal, whose ``terminal_egress`` record
+    follows the post, or by routing findings, which the node's record counts.
+    A run with neither, that did not end in one of the few exits that can fall
+    between a post and its record, posted nothing: its count is 0 without
+    opening the inbox store.
+    """
+
+    return (
+        findings_count > 0
+        or any(item.kind == "post_inbox" for item in terminal_egress)
+        or getattr(terminal, "code", None) in _POST_WINDOW_TERMINAL_CODES
     )
 
 

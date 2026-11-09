@@ -542,3 +542,57 @@ def test_an_unreadable_inbox_count_keeps_the_journaled_posts_and_needs_attention
     assert state.status == "succeeded", state.terminal
     assert state.counts is not None
     assert (state.counts.inbox, state.counts.needs_attention) == (3, True)
+
+
+def test_a_line_run_that_posts_nothing_counts_zero_without_opening_the_inbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No post_inbox terminal and no findings: the journal proves 0; the store stays shut."""
+
+    from tests.test_procedures.test_procedure_source_runs import _line_world
+
+    instance, root, line = _line_world(tmp_path)
+
+    def opened(self: Any, run_id: str) -> int:
+        raise AssertionError("a run with no posting point opened the inbox store")
+
+    monkeypatch.setattr(LineInboxStore, "posted_by_run", opened)
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "succeeded", state.terminal
+    assert state.findings_count == 0
+    assert all(item.kind != "post_inbox" for item in state.terminal_egress)
+    assert state.counts is not None
+    assert (state.counts.inbox, state.counts.needs_attention) == (0, False)
+
+
+@pytest.mark.parametrize(
+    ("kinds", "findings_count", "code", "consults"),
+    [
+        ((), 0, None, False),
+        (("claims",), 0, None, False),
+        (("post_inbox",), 0, None, True),
+        ((), 2, None, True),
+        # A failure that can fall between a post and its record reads the store.
+        ((), 0, "unexpected_exception", True),
+        ((), 0, "journal_append_failed", True),
+        ((), 0, "terminal_egress_unverified", True),
+        # A provider fence fails before any terminal: the journal stands.
+        ((), 0, "provider_process_lease_invalid", False),
+    ],
+)
+def test_only_a_run_whose_journal_leaves_room_for_a_post_reads_the_inbox_count(
+    kinds: tuple[str, ...], findings_count: int, code: str | None, consults: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from cruxible_core.service.procedures import procedure_runs
+
+    assert (
+        procedure_runs._run_may_have_posted(  # noqa: SLF001
+            [SimpleNamespace(kind=kind) for kind in kinds],  # type: ignore[misc]
+            findings_count=findings_count,
+            terminal=None if code is None else SimpleNamespace(code=code),  # type: ignore[arg-type]
+        )
+        is consults
+    )
