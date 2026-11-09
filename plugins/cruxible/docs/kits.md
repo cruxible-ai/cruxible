@@ -2,14 +2,17 @@
 
 # Kits
 
-A kit is a release of definitions that one instance exports and another
-installs: vocabulary, named queries and Procedures, plus the
-provider packages those Procedures need. A kit is how a vocabulary gets
-shared. Every garage that installs a car parts kit describes parts, vehicles
-and fitments the same way, so the same questions and the same automation work
-everywhere. Installing or upgrading a kit is one change set, previewed first
-and accepted under the instance's approval policy like any other change, and
-your own edits to a kit's definitions are kept or replaced only as you choose.
+A kit is a starting point. One instance exports it and another installs it:
+vocabulary, named queries and Procedures, the provider packages those
+Procedures need, reference pages, and an automation template you tailor. It is
+not a schema you have to adopt. Every garage that starts from a car parts kit
+begins with the same parts, vehicles and fitments, so the same questions and
+automation work on day one. From there the instance is yours to grow: revise
+the kit's definitions, add your own, and adapt or replace its automation, all
+by ordinary authoring. Installing or upgrading a kit is one change set,
+previewed first and accepted under the instance's approval policy like any
+other change. An upgrade names every definition you have edited; the release's
+version replaces your edit unless you keep it.
 
 This page covers using kits, the automation a kit suggests, and building and
 documenting kits. Command details are in the CLI reference.
