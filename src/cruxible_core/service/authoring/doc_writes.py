@@ -5,6 +5,7 @@ import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -16,7 +17,7 @@ from cruxible_client.contracts.declared_blocks import (
     stamped_projection_windows,
 )
 from cruxible_client.contracts.doc_sections import SectionPath, section_digest
-from cruxible_client.contracts.errors import ReadRefusalError
+from cruxible_client.contracts.errors import ReadRefusalError, WriteRefusalError
 from cruxible_client.contracts.get_reads import (
     GET_BODY_DEFAULT_MAX_BYTES,
     GET_HISTORY_DEFAULT_LIMIT,
@@ -32,9 +33,11 @@ from cruxible_client.contracts.proposal_models import AuthenticatedActor
 from cruxible_client.contracts.read_values import ShownObject
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_client.contracts.write import (
+    DocConfirmationOutcome,
     DocEditObservation,
     DocOp,
     WriteOutcome,
+    WriteRefusal,
     WriteRequest,
 )
 from cruxible_core.authoring.registrations import source_projection_blocks
@@ -60,7 +63,8 @@ from cruxible_core.storage.cas import BodyAccessContext
 
 _FENCE = "doc-edit-local-v1"
 _ACCESS = BodyAccessContext(principal_id="doc-history", can_read_body=True)
-_PENDING_LIMIT = 64
+_CONFIRMATION_WINDOW_SECONDS = 24 * 60 * 60
+_EXPIRED_CLEANUP_LIMIT = 500
 
 
 class _EditRecord(BaseModel):
@@ -97,22 +101,16 @@ def _pending_root(instance: PlaybillInstance) -> Path:
 
 def _store_pending(connection: sqlite3.Connection, token: str, pending: _PendingEdit) -> None:
     unconfirmed = pending.before_content_base64 is not None
-    connection.execute(
-        "INSERT INTO pending_edits(token,source_id,unconfirmed,payload) VALUES(?,?,?,?) "
-        "ON CONFLICT(token) DO UPDATE SET "
-        "unconfirmed=excluded.unconfirmed,payload=excluded.payload",
-        (token, pending.edit.source_id, int(unconfirmed), pending.model_dump_json()),
+    expires = (
+        pending.actor.timestamp.timestamp() + _CONFIRMATION_WINDOW_SECONDS if unconfirmed else None
     )
-    if unconfirmed:
-        # At most limit+1 payloads for this source, even during legacy import.
-        # The covering index skips compact receipts and unrelated sources.
-        expired = connection.execute(
-            "SELECT token FROM pending_edits WHERE source_id=? AND unconfirmed=1 "
-            "ORDER BY sequence DESC LIMIT 1 OFFSET ?",
-            (pending.edit.source_id, _PENDING_LIMIT),
-        ).fetchone()
-        if expired is not None:
-            connection.execute("DELETE FROM pending_edits WHERE token=?", expired)
+    connection.execute(
+        "INSERT INTO pending_edits(token,source_id,unconfirmed,payload,expires_at) "
+        "VALUES(?,?,?,?,?) "
+        "ON CONFLICT(token) DO UPDATE SET "
+        "unconfirmed=excluded.unconfirmed,payload=excluded.payload,expires_at=excluded.expires_at",
+        (token, pending.edit.source_id, int(unconfirmed), pending.model_dump_json(), expires),
+    )
 
 
 @contextmanager
@@ -127,22 +125,46 @@ def _pending_store(root: Path) -> Iterator[sqlite3.Connection]:
         connection.execute(
             "CREATE TABLE IF NOT EXISTS pending_edits ("
             "sequence INTEGER PRIMARY KEY AUTOINCREMENT, token TEXT NOT NULL UNIQUE, "
-            "source_id TEXT NOT NULL, unconfirmed INTEGER NOT NULL, payload TEXT NOT NULL)"
+            "source_id TEXT NOT NULL, unconfirmed INTEGER NOT NULL, payload TEXT NOT NULL, "
+            "expires_at REAL)"
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS pending_by_source "
             "ON pending_edits(source_id,unconfirmed,sequence DESC)"
         )
-        if connection.execute("PRAGMA user_version").fetchone()[0] == 0:
-            # One cold format migration: visit old receipts once, retaining only
-            # the newest bounded payloads per source. Normal writes never scan.
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version == 1:
+            # One cold migration of the old count-bounded store. Reconstruct
+            # deadlines from issuance, never from this migration's wall clock.
+            connection.execute("ALTER TABLE pending_edits ADD COLUMN expires_at REAL")
+            for sequence, issued_at in connection.execute(
+                "SELECT sequence,json_extract(payload,'$.actor.timestamp') "
+                "FROM pending_edits WHERE unconfirmed=1"
+            ):
+                connection.execute(
+                    "UPDATE pending_edits SET expires_at=? WHERE sequence=?",
+                    (
+                        datetime.fromisoformat(issued_at).timestamp()
+                        + _CONFIRMATION_WINDOW_SECONDS,
+                        sequence,
+                    ),
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS pending_expiry "
+            "ON pending_edits(source_id,unconfirmed,expires_at)"
+        )
+        if version == 0:
+            # One cold format migration: visit legacy receipts once. Normal
+            # writes never scan the pending namespace.
             for legacy in sorted(root.glob("DCE-*.json"), key=lambda p: p.stat().st_mtime_ns):
                 _store_pending(
                     connection, legacy.stem, _PendingEdit.model_validate_json(legacy.read_bytes())
                 )
-            connection.execute("PRAGMA user_version=1")
+            connection.execute("PRAGMA user_version=2")
             connection.commit()
             connection.execute("BEGIN IMMEDIATE")
+        if version == 1:
+            connection.execute("PRAGMA user_version=2")
         if root.exists():
             # Only after the import commits; retry cleanup after an interrupted migration.
             for legacy in root.glob("DCE-*.json"):
@@ -192,47 +214,61 @@ def prepare_doc_edits(
 ) -> dict[int, str]:
     """Keep pending edits outside history and CAS until the writer confirms its CAS.
 
-    Each token addresses one immutable admitted edit. The latest 64 unconfirmed
-    payloads per source are retained; confirmation receipts stay compact. No
-    instance inventory or pending-record scan runs after the cold format migration.
+    Each immutable token has a 24-hour confirmation window, independent of other
+    writers or request size. An indexed, bounded cleanup visits only expired
+    payloads of sources in this request. Confirmed receipts stay compact.
     """
     confirmations: dict[int, str] = {}
-    for index, edit in enumerate(request.docs):
-        if (
-            not isinstance(edit, DocEditObservation)
-            or edit.op != "replace"
-            or (edit.before_digest == edit.after_digest)
-        ):
-            continue
-        assert edit.before_content_base64 is not None and edit.before_section is not None
-        assert edit.before_digest is not None
-        token = "DCE-" + uuid4().hex
-        now = instance.recording_clock()
-        pending = _PendingEdit(
-            edit=_EditRecord(
-                source_id=edit.source_id,
-                before_section=edit.before_section,
-                section=edit.section,
-                before_digest=edit.before_digest,
-                after_digest=edit.after_digest,
-                status=outcome.status,
-                proposal=None if outcome.proposal is None else outcome.proposal.proposal_id,
-                because=request.because,
-                write_id=token,
-            ),
-            coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-            actor=GovernedActorContext(
-                actor_type="service_account",
-                actor_id=actor.actor_id,
-                org_id=instance.descriptor.instance_id,
-                operation_id=token,
-                timestamp=now,
-            ),
-            before_content_base64=edit.before_content_base64,
-        )
-        root = _pending_root(instance)
-        _save_pending(root / f"{token}.json", pending)
-        confirmations[index] = token
+    edits = [
+        (index, edit)
+        for index, edit in enumerate(request.docs)
+        if isinstance(edit, DocEditObservation)
+        and edit.op == "replace"
+        and edit.before_digest != edit.after_digest
+    ]
+    if not edits:
+        return confirmations
+    now = instance.recording_clock()
+    sources: set[str] = set()
+    with _pending_store(_pending_root(instance)) as connection:
+        for index, edit in edits:
+            assert edit.before_content_base64 is not None and edit.before_section is not None
+            assert edit.before_digest is not None
+            token = "DCE-" + uuid4().hex
+            pending = _PendingEdit(
+                edit=_EditRecord(
+                    source_id=edit.source_id,
+                    before_section=edit.before_section,
+                    section=edit.section,
+                    before_digest=edit.before_digest,
+                    after_digest=edit.after_digest,
+                    status=outcome.status,
+                    proposal=None if outcome.proposal is None else outcome.proposal.proposal_id,
+                    because=request.because,
+                    write_id=token,
+                ),
+                coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+                actor=GovernedActorContext(
+                    actor_type="service_account",
+                    actor_id=actor.actor_id,
+                    org_id=instance.descriptor.instance_id,
+                    operation_id=token,
+                    timestamp=now,
+                ),
+                before_content_base64=edit.before_content_base64,
+            )
+            _store_pending(connection, token, pending)
+            sources.add(edit.source_id)
+            confirmations[index] = token
+        # Work is capped per changed source, never proportional to all pending
+        # edits. Nothing issued by this request can already be expired.
+        for source in sources:
+            connection.execute(
+                "DELETE FROM pending_edits WHERE token IN ("
+                "SELECT token FROM pending_edits WHERE source_id=? AND unconfirmed=1 "
+                "AND expires_at<=? ORDER BY expires_at LIMIT ?)",
+                (source, now.timestamp(), _EXPIRED_CLEANUP_LIMIT),
+            )
     return confirmations
 
 
@@ -243,61 +279,95 @@ def confirm_doc_edits(
     actor: AuthenticatedActor,
 ) -> WriteOutcome:
     """Publish only successful file edits; retries are indexed and idempotent."""
+    from cruxible_core.service.authoring.write_verbs import _refusal
+
+    results = []
+    for token in tokens:
+        try:
+            _confirm_doc_edit(instance, token=token, actor=actor)
+        except WriteRefusalError as error:
+            results.append(DocConfirmationOutcome(confirmation=token, refusal=_refusal(error)))
+        else:
+            results.append(DocConfirmationOutcome(confirmation=token))
+    failed = any(result.refusal is not None for result in results)
+    return WriteOutcome(
+        status="refused" if failed else "accepted",
+        coordinate=compact_coordinate(instance, instance.accepted_coordinate()),
+        doc_confirmations=tuple(results),
+        refusal=(
+            WriteRefusal(
+                code="cruxible.doc.confirmation_incomplete",
+                message="Some edits could not be confirmed; other edits were recorded",
+                repair=(
+                    "Inspect each doc_confirmations result; do not resend unknown or expired tokens"
+                ),
+            )
+            if failed
+            else None
+        ),
+    )
+
+
+def _confirm_doc_edit(instance: PlaybillInstance, *, token: str, actor: AuthenticatedActor) -> None:
     from cruxible_core.service.authoring.write_verbs import _refuse
 
-    for token in tokens:
-        if re.fullmatch(r"DCE-[0-9a-f]{32}", token) is None:
-            raise _refuse("cruxible.doc.confirmation_invalid", "Invalid document confirmation")
-        path = _pending_root(instance) / f"{token}.json"
-        try:
-            pending = _load_pending(path)
-        except FileNotFoundError as exc:
-            raise _refuse(
-                "cruxible.doc.confirmation_unknown", "No admitted edit has this confirmation"
-            ) from exc
-        if pending.actor.actor_id != actor.actor_id:
-            raise _refuse(
-                "cruxible.doc.confirmation_author", "Only the admitted edit's author can confirm it"
-            )
-        if pending.before_content_base64 is None:
-            continue
-        previous = base64.b64decode(pending.before_content_base64, validate=True)
-        if section_digest(previous) != pending.edit.before_digest:
-            raise _refuse("cruxible.doc.previous_bytes_mismatch", "Previous subtree digest differs")
-        bodies = instance.body_store()
-        journal, stream = _journal(instance, create=True)
-        assert journal is not None
-        partition = section_digest(pending.edit.source_id.encode()).removeprefix("sha256:")
-        payload = pending.edit.model_dump(mode="json")
-        # Recover a crash after journal append but before compacting the pending
-        # bytes. This probe is one indexed key, never the source's whole history.
-        if journal.select_records(
-            stream,
-            partition_id=partition,
-            event_kind="doc_edit",
-            payload_digest=payload_digest(payload),
-            limit=1,
-        ):
-            _save_pending(path, pending.model_copy(update={"before_content_base64": None}))
-            continue
-        bodies.store(previous)
-        head = journal.read_head(stream, partition)
-        journal.activate_writer(stream, partition, fencing_token=_FENCE, expected_head=head)
-        ProcedureExhaustWriter(journal=journal, bodies=bodies, fencing_token=_FENCE).append(
-            stream=stream,
-            partition_id=partition,
-            event_kind="doc_edit",
-            accepted_coordinate=pending.coordinate,
-            definition_digest=stream.identity_digest,
-            actor_context=pending.actor,
-            recorded_at=instance.recording_clock(),
-            expected_head=head,
-            payload=payload,
+    if re.fullmatch(r"DCE-[0-9a-f]{32}", token) is None:
+        raise _refuse("cruxible.doc.confirmation_invalid", "Invalid document confirmation")
+    path = _pending_root(instance) / f"{token}.json"
+    try:
+        pending = _load_pending(path)
+    except FileNotFoundError as exc:
+        raise _refuse(
+            "cruxible.doc.confirmation_unknown", "No admitted edit has this confirmation"
+        ) from exc
+    if pending.actor.actor_id != actor.actor_id:
+        raise _refuse(
+            "cruxible.doc.confirmation_author", "Only the admitted edit's author can confirm it"
         )
+    if pending.before_content_base64 is None:
+        return
+    previous = base64.b64decode(pending.before_content_base64, validate=True)
+    if section_digest(previous) != pending.edit.before_digest:
+        raise _refuse("cruxible.doc.previous_bytes_mismatch", "Previous subtree digest differs")
+    bodies = instance.body_store()
+    journal, stream = _journal(instance, create=True)
+    assert journal is not None
+    partition = section_digest(pending.edit.source_id.encode()).removeprefix("sha256:")
+    payload = pending.edit.model_dump(mode="json")
+    # Recover a crash after journal append but before compacting the pending
+    # bytes. This probe is one indexed key, never the source's whole history.
+    if journal.select_records(
+        stream,
+        partition_id=partition,
+        event_kind="doc_edit",
+        payload_digest=payload_digest(payload),
+        limit=1,
+    ):
         _save_pending(path, pending.model_copy(update={"before_content_base64": None}))
-    return WriteOutcome(
-        status="accepted", coordinate=compact_coordinate(instance, instance.accepted_coordinate())
+        return
+    if instance.recording_clock().timestamp() >= (
+        pending.actor.timestamp.timestamp() + _CONFIRMATION_WINDOW_SECONDS
+    ):
+        raise _refuse(
+            "cruxible.doc.confirmation_expired",
+            "The document confirmation window has expired",
+            repair="Do not repeat this token; its history can no longer be confirmed",
+        )
+    bodies.store(previous)
+    head = journal.read_head(stream, partition)
+    journal.activate_writer(stream, partition, fencing_token=_FENCE, expected_head=head)
+    ProcedureExhaustWriter(journal=journal, bodies=bodies, fencing_token=_FENCE).append(
+        stream=stream,
+        partition_id=partition,
+        event_kind="doc_edit",
+        accepted_coordinate=pending.coordinate,
+        definition_digest=stream.identity_digest,
+        actor_context=pending.actor,
+        recorded_at=instance.recording_clock(),
+        expected_head=head,
+        payload=payload,
     )
+    _save_pending(path, pending.model_copy(update={"before_content_base64": None}))
 
 
 def read_doc_edits(
