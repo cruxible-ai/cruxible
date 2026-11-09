@@ -46,9 +46,7 @@ class ContainmentError(ValueError):
     """A path beneath a held root crosses a symbolic link (or leaves the root)."""
 
 
-_DIRECTORY = (
-    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
-)
+_DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 
 
 def _relative_parts(relative: str) -> list[str]:
@@ -74,9 +72,9 @@ class HeldRoot:
 
     def __init__(self, root: Path) -> None:
         self.root = root
-        self._fd = os.open(
-            root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
-        )
+        # The root where the caller's name resolves (a link the caller named is
+        # theirs to name), held once; nothing beneath it is resolved by name again.
+        self._fd = os.open(root.resolve(strict=True), _DIRECTORY)
 
     def close(self) -> None:
         if self._fd >= 0:
