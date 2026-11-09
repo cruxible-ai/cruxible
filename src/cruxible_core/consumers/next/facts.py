@@ -98,7 +98,7 @@ if TYPE_CHECKING:
 
 #: The derivation format. Bump it whenever a row's derivation changes: the
 #: number is part of the schema text, so a new one rebuilds the state (R5).
-FORMAT = 13  # Expiring leads clamped to horizon/4; repair operands; tally `ineligible`.
+FORMAT = 14  # Claims carry is_key; subject/object indexes for the subject-end rule.
 #: The one deadline next arms: the earliest instant a stored fact or row stops holding.
 NEXT_EXPIRE = "next.expire"
 #: The daily evidence sweep: each fire compares every consulted body's file identity,
@@ -131,9 +131,12 @@ CREATE TABLE claim_facts (
  currency TEXT, status TEXT, visible INTEGER, max_support_expiry_us INTEGER,
  set_args_json TEXT, lower_us INTEGER, upper_us INTEGER, error_code TEXT,
  error_detail TEXT, citation_error TEXT, account_captures TEXT,
- pin_targets TEXT NOT NULL
+ pin_targets TEXT NOT NULL, is_key INTEGER
 ) STRICT;
 CREATE INDEX claim_facts_by_slot ON claim_facts(res_slot,claim_id);
+CREATE INDEX claim_facts_by_subject ON claim_facts(subject_path,lifecycle,claim_id);
+CREATE INDEX claim_facts_by_key_object ON claim_facts(object_path,claim_id)
+ WHERE is_key=1 AND object_path IS NOT NULL;
 CREATE INDEX claim_facts_by_support_expiry ON claim_facts(max_support_expiry_us)
  WHERE max_support_expiry_us IS NOT NULL;
 CREATE INDEX claim_facts_with_errors ON claim_facts(lifecycle,path) WHERE error_code IS NOT NULL;
@@ -265,6 +268,7 @@ _FACT_COLUMNS = (
     "citation_error",
     "account_captures",
     "pin_targets",
+    "is_key",
 )
 _CLAIM_PATH = re.compile(r"claims/[0-9a-f]{2}/(CLM-[0-9a-f]{32})\.json")
 _VERDICTS: TypeAdapter[ClaimVerdictResult] = TypeAdapter(ClaimVerdictResult)
@@ -498,6 +502,26 @@ def _citation_row(claim_id: str, commitment: Any) -> tuple[Any, ...]:
     )
 
 
+def _key_part(
+    tree: Mapping[str, bytes], subject_path: str, predicate: str
+) -> tuple[bool, str | None]:
+    """Whether ``predicate`` is a key part of the Subject's kind, and the kind's path read."""
+
+    from cruxible_client.contracts.subject_kinds import (
+        SubjectKindFormatError,
+        live_subject_kind,
+        subject_kind_path,
+    )
+
+    kind = subject_path.removeprefix("subjects/").partition("/")[0]
+    try:
+        kind_path = subject_kind_path(kind)
+        declared = live_subject_kind(tree, kind)
+    except SubjectKindFormatError:
+        return False, None
+    return declared is not None and predicate in declared.keys, kind_path
+
+
 def _claim_facts(
     instance: Any,
     context: ClaimVerdictReadContext,
@@ -555,6 +579,9 @@ def _claim_facts(
     }
     if object_path is not None:
         reads.add(f"path:{object_path}")
+    is_key, kind_path = _key_part(context.tree, subject_path, statement.predicate)
+    if kind_path is not None:
+        reads.add(f"path:{kind_path}")
     door_reads, account_captures = _door_reads(
         instance, context, claim, door_captures=door_captures, stored=stored, digest=digest
     )
@@ -674,6 +701,7 @@ def _claim_facts(
         "citation_error": citation_error,
         "account_captures": None if account_captures is None else _json(account_captures),
         "pin_targets": _json(sorted({pin.target.qualified for pin in claim.pins})),
+        "is_key": int(is_key),
     }
     capture_bodies = dict(recording.capture_bodies)
     store = context.body_store()
@@ -1797,7 +1825,74 @@ def _dirty_keys(
         )
     )
     keys.update((rows.SOURCE, target) for target in targets if target.startswith("Claim:"))
+    keys.update(
+        (rows.SOURCE, claim_id)
+        for claim_id in _subject_end_sources(
+            connection, ((delta.before.get(identity), after.get(identity)) for identity in replaced)
+        )
+    )
     return keys
+
+
+#: What the subject-end rule reads of a Claim (``subject_end_entries``).
+_END_READS = ("lifecycle", "visible", "is_key", "subject_path", "object_path")
+
+
+def _subject_end_sources(
+    connection: sqlite3.Connection,
+    changes: Iterable[tuple[Mapping[str, Any] | None, Mapping[str, Any] | None]],
+) -> set[str]:
+    """The retired observations whose subject-end entries these Claim changes can move.
+
+    A Claim about an end moves whether that end is observed; a key part moves
+    which Subjects an end keys; a Claim about a keyed Subject moves that
+    Subject's ends' dependents. Each reaches only the retired, non-key Claims
+    about the ends involved, read through the post-change indexes: per change,
+    the neighbourhood of the Subjects it names.
+    """
+
+    subjects: set[str] = set()
+    ends: set[str] = set()
+    for old, new in changes:
+        if not _moved(old, new, _END_READS):
+            continue
+        for side in (old, new):
+            if side is None:
+                continue
+            subjects.add(str(side["subject_path"]))
+            if side["is_key"] and side["object_path"] is not None:
+                ends.add(str(side["object_path"]))
+    if not subjects and not ends:
+        return set()
+    # A changed Claim's own Subject, when some live key part names it (it is an end).
+    ends.update(
+        str(row[0])
+        for row in _rows(
+            connection,
+            "SELECT DISTINCT object_path FROM claim_facts WHERE is_key=1 AND lifecycle='live' "
+            "AND object_path IN ({marks})",
+            tuple(sorted(subjects)),
+        )
+    )
+    # The ends of each changed Claim's Subject, when it is keyed by Subjects (a pair).
+    ends.update(
+        str(row[0])
+        for row in _rows(
+            connection,
+            "SELECT DISTINCT object_path FROM claim_facts WHERE is_key=1 AND lifecycle='live' "
+            "AND object_path IS NOT NULL AND subject_path IN ({marks})",
+            tuple(sorted(subjects)),
+        )
+    )
+    return {
+        str(row[0])
+        for row in _rows(
+            connection,
+            "SELECT claim_id FROM claim_facts WHERE lifecycle='retired' AND is_key=0 "
+            "AND subject_path IN ({marks})",
+            tuple(sorted(ends)),
+        )
+    }
 
 
 def _expired_keys(connection: sqlite3.Connection, at: datetime) -> set[tuple[str, str]]:

@@ -396,6 +396,56 @@ def _subscribed_keys(state: World, before: _Snapshot) -> set[tuple[str, str]]:
     return keys
 
 
+_END_COLUMNS = ("lifecycle", "visible", "is_key", "subject_path", "object_path")
+
+
+def _subject_end_keys(
+    old: dict[str, tuple[Any, ...]], new: dict[str, tuple[Any, ...]], claims: set[str]
+) -> set[tuple[str, str]]:
+    """The subject-end rule's sources a change reaches (design: what the rule reads).
+
+    A Claim whose subject-end columns moved names its Subject and, as a key
+    part, the end it keys; an end is every such Subject some live key part
+    names, and every end of such a Subject when it is keyed by Subjects. Each
+    end's retired non-key Claims are the sources whose entries may move.
+    """
+
+    def col(row: tuple[Any, ...], name: str) -> Any:
+        return row[_FACT[name]]
+
+    subjects: set[str] = set()
+    ends: set[str] = set()
+    for claim_id in claims:
+        was, now = old.get(claim_id), new.get(claim_id)
+
+        def end_columns(row: tuple[Any, ...] | None) -> tuple[Any, ...] | None:
+            return None if row is None else tuple(col(row, name) for name in _END_COLUMNS)
+
+        if end_columns(was) == end_columns(now):
+            continue
+        for side in (was, now):
+            if side is not None:
+                subjects.add(col(side, "subject_path"))
+                if col(side, "is_key") and col(side, "object_path") is not None:
+                    ends.add(col(side, "object_path"))
+    live_keys = [
+        row
+        for row in new.values()
+        if col(row, "is_key") == 1
+        and col(row, "lifecycle") == "live"
+        and col(row, "object_path") is not None
+    ]
+    ends |= {col(row, "object_path") for row in live_keys if col(row, "object_path") in subjects}
+    ends |= {col(row, "object_path") for row in live_keys if col(row, "subject_path") in subjects}
+    return {
+        (rows.SOURCE, claim_id)
+        for claim_id, row in new.items()
+        if col(row, "lifecycle") == "retired"
+        and col(row, "is_key") == 0
+        and col(row, "subject_path") in ends
+    }
+
+
 def _expected_keys(
     state: World,
     before: _Snapshot,
@@ -452,6 +502,7 @@ def _expected_keys(
         if digest in digests
     }
     keys |= {(rows.SOURCE, target) for target in targets if target.startswith("Claim:")}
+    keys |= _subject_end_keys(old, new, claims)
     at_us = utc_microseconds(state.at)
     assert at_us is not None
     keys |= {

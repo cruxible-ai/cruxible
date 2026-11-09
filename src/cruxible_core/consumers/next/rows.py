@@ -104,6 +104,9 @@ _FACT_COLUMNS = (
     "lower_us",
     "upper_us",
     "error_code",
+    "subject_path",
+    "object_path",
+    "is_key",
 )
 
 
@@ -551,25 +554,28 @@ def source_key(context: RowContext, claim_id: str) -> KeyRows | None:
     from cruxible_core.service.discovery.next import stale_input_entries
 
     source_fact = context.fact(claim_id)
-    if source_fact is None or source_fact["lineage_digests"] is None:
+    if source_fact is None:
         return None
+    ends = subject_end_contributions(context, claim_id, source_fact)
+    if source_fact["lineage_digests"] is None:
+        return _with_ends(None, claim_id, ends)
     lineage = tuple(json.loads(source_fact["lineage_digests"]))
     candidates = (
         context.claims_by("claim_inputs", "digest", lineage)
         | context.claims_by("claim_pins", "target", (claim_id,))
     ) - {claim_id}
     if not candidates:
-        return None
+        return _with_ends(None, claim_id, ends)
     facts = context.facts(candidates)
     result = KeyRows(SOURCE, claim_id)
     result.lower, result.upper = _intersect(
         (context.interval(source_fact), *(context.interval(fact) for fact in facts.values()))
     )
     if source_fact["visible"] != 1 or source_fact["error_code"] is not None:
-        return result
+        return _with_ends(result, claim_id, ends)
     source_claim = context.claim(claim_id)
     if source_claim is None:
-        return result
+        return _with_ends(result, claim_id, ends)
     identity = source_claim.identity
     path = claim_path(identity.name)
     searched = set(lineage)
@@ -635,7 +641,80 @@ def source_key(context: RowContext, claim_id: str) -> KeyRows | None:
     result.contributions = stale_input_entries(
         identity.qualified, kept, lineage_complete=bool(source_fact["lineage_complete"])
     )
+    return _with_ends(result, claim_id, ends)
+
+
+def _with_ends(
+    result: KeyRows | None, claim_id: str, ends: list[tuple[str, dict[str, object]]]
+) -> KeyRows | None:
+    """A source key's result with its subject-end entries added (a key of its own if none)."""
+
+    if not ends:
+        return result
+    if result is None:
+        result = KeyRows(SOURCE, claim_id)
+    result.contributions = [*result.contributions, *ends]
     return result
+
+
+def subject_end_contributions(
+    context: RowContext, claim_id: str, source_fact: Mapping[str, Any]
+) -> list[tuple[str, dict[str, object]]]:
+    """A retired observation's subject-end entries (``subject_end_entries``), by index.
+
+    Reads the Claims about the observation's Subject (the end), the key parts
+    naming that end, and the Claims about each Subject they key: the end's
+    neighbourhood, never the instance.
+    """
+
+    from cruxible_core.service.discovery.next import SubjectEndClaim, subject_end_entries
+
+    if source_fact["lifecycle"] != "retired" or source_fact["is_key"]:
+        return []
+    end = str(source_fact["subject_path"])
+    pairs = sorted(
+        {
+            str(row[0])
+            for row in context.connection.execute(
+                "SELECT subject_path FROM claim_facts WHERE object_path=? AND is_key=1 "
+                "AND lifecycle='live'",
+                (end,),
+            )
+        }
+    )
+    if not pairs:
+        return []
+
+    def about(subject: str) -> list[SubjectEndClaim]:
+        return [
+            SubjectEndClaim(
+                identity=str(row[0]),
+                lifecycle=str(row[1]),
+                is_key=bool(row[2]),
+                visible=row[3] == 1,
+            )
+            for row in context.connection.execute(
+                "SELECT claim_id,lifecycle,is_key,visible FROM claim_facts WHERE subject_path=?",
+                (subject,),
+            )
+        ]
+
+    source_claim = context.claim(claim_id)
+    source = SubjectEndClaim(
+        identity=claim_id,
+        lifecycle="retired",
+        is_key=False,
+        visible=False,
+        predecessor_digest=(
+            None if source_claim is None else source_claim.lifecycle.predecessor_digest
+        ),
+    )
+    return subject_end_entries(
+        source,
+        end_path=end,
+        end_claims=about(end),
+        pair_claims=[claim for pair in pairs for claim in about(pair)],
+    )
 
 
 def dependency_rows(connection: sqlite3.Connection, dependent: str) -> KeyRows | None:
