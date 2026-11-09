@@ -134,6 +134,17 @@ A section written this way counts as its author's own words, with a location
 people can read, and a later edit to it brings every Claim citing it back for
 review ([Keeping knowledge current](keeping-knowledge-current.md#drift-a-source-changed-under-a-claim)).
 
+Because it counts as your own words, a field that requires captured evidence
+refuses a section the same write produces (`cruxible.write.evidence_required`).
+Use two writes for those fields:
+
+1. Write the note: a write with only the document change (`append_section` or
+   `replace_section`).
+2. Write the Claim, citing the now-existing section by file and heading path
+   (`{kind: section, file: ..., section: [...]}`, not `ref`). That is evidence
+   from a file, as in [Citing what's already written](#citing-whats-already-written),
+   so the field's rules must admit that file's source.
+
 A write can also change documents alone. When it does, Cruxible reminds you
 that nothing cites the text:
 

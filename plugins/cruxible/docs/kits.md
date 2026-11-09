@@ -194,6 +194,12 @@ digest reference installs exactly those bytes even if the tag later moves.
 cruxible kit add ghcr.io/cruxible-ai/kits/car-parts@sha256:<digest>
 ~~~
 
+`kit add` also takes a local kit directory (one holding `cruxible-kit.json`,
+such as a checkout or a `kit pull --out` folder) or an OCI image layout:
+`cruxible kit add /abs/path/kits/security`.
+Until the MCP adapter reads local paths, `cruxible_kit_add` takes only a
+registry reference or an inline bundle.
+
 The preview lists the plan grouped by kind (what each definition does and
 how many dependents it has), each provider package and what happens to it
 (already installed, `satisfied` when builds installed here already serve

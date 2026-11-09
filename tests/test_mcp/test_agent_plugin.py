@@ -77,7 +77,7 @@ def test_plugin_admin_catalog_is_lean_and_start_tools_are_callable() -> None:
         mode=PermissionMode.ADMIN, registered_tools=registered, curation=curation
     )
     assert START_TOOLS <= names
-    assert len(names) == 20 and "cruxible_authoring_submit" not in names
+    assert len(names) == 22 and "cruxible_authoring_submit" not in names
     _install_tool_curation(server, names, mode=PermissionMode.ADMIN, curation=curation)
     tools = asyncio.run(server.list_tools())
     estimate = catalog_model_visible_tokens(tools)
@@ -88,6 +88,8 @@ def test_plugin_admin_catalog_is_lean_and_start_tools_are_callable() -> None:
     )
     assert "cruxible_provider_install" not in team and "cruxible_proposal_approve" not in team
     assert "cruxible_kit_add" in team
+    # next's inbox repair and review-state's attestation stay reachable for authors.
+    assert {"cruxible_inbox_list", "cruxible_claim_attest"} <= team
 
 
 @pytest.mark.parametrize("filename", ["mcp.json", ".mcp.json"])
@@ -130,7 +132,7 @@ def test_plugin_config_starts_mcp_autostarts_scratch_daemon_and_orients(filename
                 await session.initialize()
                 listed = await session.list_tools()
                 names = {tool.name for tool in listed.tools}
-                assert START_TOOLS <= names and len(names) == 20
+                assert START_TOOLS <= names and len(names) == 22
                 for name in sorted(START_TOOLS):
                     # Incomplete arguments may refuse, but the default catalog
                     # must dispatch these names rather than hide them.

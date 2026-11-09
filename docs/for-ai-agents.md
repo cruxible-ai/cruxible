@@ -41,6 +41,27 @@ exactly these settings to `DIR/cruxible.env`. Setup itself (starting a
 daemon, `cruxible init`, adding principals) is operator work on the CLI; MCP
 has no setup tools. See [MCP tools](mcp-tools.md) for every variable.
 
+First setup on one machine, in order:
+
+1. `git init` the project, so `init` can attach it.
+2. Start a daemon (`cruxible server start --socket ~/.cruxible/run/daemon.sock`,
+   or let the MCP server auto-start it there).
+3. `cruxible --server-socket ~/.cruxible/run/daemon.sock init --principal-id owner
+   --key-dir DIR --reviewer-key-dir DIR2`. The CLI needs the socket until the
+   project is bound to the daemon; "use server mode" in a refusal means it had
+   none.
+4. If init reports `workspace_advertisement.status: not_attached`, run
+   `cruxible workspace attach` from the Git worktree. Its
+   `.cruxible/coverage.json` then gives CLI and MCP the daemon and instance.
+5. Give each agent session its principal: `CRUXIBLE_PRINCIPAL_ID`, plus
+   `CRUXIBLE_MCP_KEY_DIR` (the key directory, for `cruxible_proposal_approve`)
+   and `CRUXIBLE_PRINCIPAL_KEY` (the key file, for `cruxible_claim_attest`),
+   copied from that principal's `cruxible.env`. Add more principals with
+   `cruxible principal add NAME --key-dir DIR`.
+
+The agent plugin's README (`plugins/README.md`) walks the same path through to
+installing a kit.
+
 The `default` profile advertises 13 tools, the everyday loop: `orient`,
 `query`, `get`, `next`, `set`, `retire`, `write`, `proposal_list`,
 `proposal_review`, `proposal_approve`, `proposal_activate`, `whoami` and

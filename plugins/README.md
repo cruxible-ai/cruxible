@@ -26,34 +26,81 @@ and install from the supported client's plugin directory. The two catalogs
 have host-specific formats; the skill content and runtime selection are shared.
 
 The released stdio command is `uvx --from cruxible==VERSION cruxible mcp`.
-Install uv first. Keep the matching CLI available for `authoring submit`, kit
-pulls and attestations omitted from the lean MCP catalog; the same pinned
+Install uv first. Keep the matching CLI available for setup (`init`,
+`workspace attach`, `principal add`), `authoring submit`, kit pulls and local
+kit directories, which the lean MCP catalog omits; the same pinned
 `uvx --from cruxible==VERSION cruxible ...` prefix runs those commands.
+
+## First run, step by step
+
+One linear path from an empty project to an installed kit on one machine. The
+CLI does the setup; the plugin's MCP tools do the everyday work afterwards.
+`SOCKET` below is the daemon socket the MCP server auto-starts:
+`$CRUXIBLE_STATE_ROOT/run/daemon.sock`, or `~/.cruxible/run/daemon.sock` when
+`CRUXIBLE_STATE_ROOT` is unset. Use absolute paths throughout, and keep key
+directories outside the project and outside the state root.
+
+**Server mode.** Every Cruxible command runs on a daemon, a long-running
+process that owns the instance's state; the CLI is only its client. "Use
+server mode" in a refusal means the CLI was not told which daemon to talk to.
+Until a project is bound to a daemon (step 3 or 4 writes that binding), pass
+`--server-socket SOCKET` or export `CRUXIBLE_SERVER_SOCKET=SOCKET`; the CLI
+does not yet find the daemon the MCP server started on its own. A socket
+daemon runs with auth off, so do not carry a `CRUXIBLE_SERVER_BEARER_TOKEN`
+from another daemon into this shell: `unset CRUXIBLE_SERVER_BEARER_TOKEN`.
+
+| # | Do | Notes |
+|---|---|---|
+| 1 | `cd /abs/project && git init` | The project must be a Git worktree before `init` for `init` to attach it. |
+| 2 | Start the daemon: call `cruxible_server_info` from the agent once, or run `cruxible server start --socket SOCKET` in its own terminal | MCP auto-start runs the same command detached; `SOCKET`'s directory must be owner-only (the daemon creates it that way). |
+| 3 | `cruxible --server-socket SOCKET init --principal-id owner --key-dir /abs/keys/owner --reviewer-key-dir /abs/keys/reviewer` | Creates the instance with two principals, `owner` and `reviewer`, under the default `self_approval_allowed` policy (`--require-independent-approval` makes approval need the second principal). Each key directory gets `<id>.ed25519` and a `cruxible.env` settings file; the result prints `owner_settings_path` and `reviewer_settings_path`. The CLI remembers the owner and acts as it from then on. |
+| 4 | Check `workspace_advertisement.status` in the init result. `updated`: done. `not_attached`: `git init` if needed, then `cruxible workspace attach` | Attaching writes `.cruxible/coverage.json`, which binds the project to the daemon and instance. From then on CLI commands in the project need no flags, and the MCP server finds the daemon and instance from it. |
+| 5 | Configure the MCP server's environment (below) for the principal this agent session acts as, then call `cruxible_whoami` | `actor_id` should be that principal and `can_author: true`. `actor_id: operator` with `cruxible.identity.principal_unconfigured` means `CRUXIBLE_PRINCIPAL_ID` is not set. |
+| 6 | `cruxible principal add verifier --key-dir /abs/keys/verifier` | Optional third principal, for guidance that asks for a reporter, a verifier and an approver. The CLI signs the registration with the owner's remembered key (`--signer-key /abs/keys/owner/owner.ed25519` otherwise); the verifier's settings land in `/abs/keys/verifier/cruxible.env`. |
+| 7 | `cruxible kit add /abs/kit-dir`, then `cruxible kit add /abs/kit-dir --commit --at OID` | `OID` is the coordinate the preview printed. A local kit directory goes through the CLI: today `cruxible_kit_add` accepts only a registry reference or an inline bundle. A registry release (`NAME:VERSION`) works on either. |
+| 8 | Tailor the kit's automation template, submit it, have a separate session approve it, then preview and run its start Runbook | See [Kits and teams](#kits-and-teams). |
+
+**MCP environment per principal.** The MCP server never reads remembered CLI
+context or `cruxible.env` itself; put the values in the `env` block of the
+host's MCP config (a private, local override, never the plugin). Each agent
+session is one principal, so a reviewer session needs its own config.
+
+| Variable | Value | Used for |
+|---|---|---|
+| `CRUXIBLE_PRINCIPAL_ID` | the principal ID (`CRUXIBLE_PRINCIPAL_ID` in its `cruxible.env`) | every attributed write |
+| `CRUXIBLE_MCP_KEY_DIR` | the principal's key directory, the folder holding `<id>.ed25519` and `cruxible.env` | `cruxible_proposal_approve` signing |
+| `CRUXIBLE_PRINCIPAL_KEY` | the key file (`CRUXIBLE_PRINCIPAL_KEY` in its `cruxible.env`) | `cruxible_claim_attest` signing |
+| `CRUXIBLE_MCP_WORKSPACE_ROOT` | the absolute project root | only when the host starts MCP outside the project |
+| `CRUXIBLE_INSTANCE_ID`, `CRUXIBLE_SERVER_SOCKET` | from `cruxible.env` | only when the project has no `.cruxible/coverage.json` binding |
+
+To stop the daemon: `cruxible --server-socket SOCKET server stop`.
+
+**Two writes when a Claim cites a fresh note.** A section a write produces
+counts as its author's own words. A field that requires captured evidence
+refuses it with `cruxible.write.evidence_required`. Write the note first, then
+cite the existing section by file and heading path in a later write. The
+bundled `docs/documents-and-notes.md` ("Writing notes with the Claims they
+back") covers it.
 
 ## Local use and pre-release testing
 
 With no explicit daemon transport, the adapter finds or auto-starts the local
-daemon. The default tier is **admin**; the pinned 20-tool allowlist still hides
+daemon. The default tier is **admin**; the pinned 22-tool allowlist still hides
 the rest of the catalog. Admin permits endpoints, not unlawful state: evidence,
 principals, Mandates and approval policy still apply. A separate agent session
 (its own principal) reviews the exact candidate; never self-approve, including with auth off. The single
 plugin does not enforce separate identities while auth is off.
 
-The plugin catalog measures 15,083 estimated model-visible tokens (input schemas
-and descriptions, JSON characters/4), pinned below 15,400. The existing MCP
+The plugin catalog measures 17,206 estimated model-visible tokens (input schemas
+and descriptions, JSON characters/4), pinned below 17,500. The existing MCP
 default profile retains its separate 10,400 ceiling; full-catalog registration
 is not what this plugin advertises. Instructions remain below 300 estimated
 tokens, without exhaustive tool lists. Output-schema wire size is separate
 from this estimate; actual host tokenization/tool deferral can differ.
 
-Before there is an instance, `cruxible_server_info` can auto-start its daemon.
-Initialize using that daemon's socket and the matching CLI, for example
-`cruxible --server-socket SOCKET init --principal-id owner --key-dir /absolute/private/owner-keys`.
-Run from the intended project and configure `CRUXIBLE_MCP_WORKSPACE_ROOT` to
-that absolute project root if the host starts MCP elsewhere. Select the
-instance using its workspace binding or `CRUXIBLE_INSTANCE_ID`; configure the
-registered principal and approval key directory outside the plugin. The
-adapter does not use remembered CLI context. Never store keys or tokens here.
+Before there is an instance, `cruxible_server_info` can auto-start its daemon;
+[First run, step by step](#first-run-step-by-step) initializes against it.
+Never store keys or tokens in the plugin.
 
 For a pre-release checkout, override the plugin's server command in a local
 host configuration. Use an existing environment with the checkout's matching
@@ -72,7 +119,10 @@ dependencies; no published package or new virtual environment is required:
         "CRUXIBLE_MCP_WORKSPACE_ROOT": "/absolute/scratch/project",
         "CRUXIBLE_MODE": "admin",
         "CRUXIBLE_MCP_PROFILE": "full",
-        "CRUXIBLE_MCP_TOOLS": "COPY THE GENERATED CONFIG'S EXACT ALLOWLIST"
+        "CRUXIBLE_MCP_TOOLS": "COPY THE GENERATED CONFIG'S EXACT ALLOWLIST",
+        "CRUXIBLE_PRINCIPAL_ID": "owner",
+        "CRUXIBLE_MCP_KEY_DIR": "/absolute/keys/owner",
+        "CRUXIBLE_PRINCIPAL_KEY": "/absolute/keys/owner/owner.ed25519"
       }
     }
   }
