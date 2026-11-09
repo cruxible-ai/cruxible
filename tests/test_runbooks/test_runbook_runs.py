@@ -762,19 +762,22 @@ def test_a_completed_run_names_the_steps_whose_counts_need_attention() -> None:
     assert incomplete.written == 0
     clean = run_counts([claims(3, {}, "settled")])
     assert not clean.needs_attention
+    # An inbox count that could not be read is never "nothing posted".
+    unknown = run_counts([claims(3, {}, "settled")], inbox=None)
+    assert unknown.inbox is None and unknown.needs_attention
 
     def state(counts: Any) -> Any:
         return SimpleNamespace(
             run_id="RUN-x", status="succeeded", terminal_egress=(), counts=counts, terminal=None
         )
 
-    tallies = {"test.a": clean, "test.b": refused, "test.c": incomplete}
+    tallies = {"test.a": clean, "test.b": refused, "test.c": incomplete, "test.d": unknown}
     runbook = Runbook.model_validate(
         {
             "identity": {"kind": "Runbook", "name": "test.rb"},
             "steps": [
                 {"kind": "line", "line": {"target": {"kind": "Line", "name": n}}}
-                for n in ("test.a", "test.b", "test.c")
+                for n in ("test.a", "test.b", "test.c", "test.d")
             ],
         }
     )
@@ -791,8 +794,8 @@ def test_a_completed_run_names_the_steps_whose_counts_need_attention() -> None:
         clock=lambda: datetime(2026, 11, 9, tzinfo=UTC),
     )
     assert result.status == "completed"
-    assert [step.status for step in result.steps] == ["succeeded"] * 3
-    assert result.attention_steps == (2, 3)
+    assert [step.status for step in result.steps] == ["succeeded"] * 4
+    assert result.attention_steps == (2, 3, 4)
     assert RunbookRunResult.model_validate(result.model_dump(mode="json")) == result
 
     # The CLI prints each step's counts and names the steps needing attention.
@@ -806,7 +809,8 @@ def test_a_completed_run_names_the_steps_whose_counts_need_attention() -> None:
         playbill_cli._echo_runbook_run(result)
 
     output = CliRunner().invoke(show).output
-    assert "completed; needs attention: steps 2, 3" in output
+    assert "completed; needs attention: steps 2, 3, 4" in output
+    assert "inbox ?" in output
     assert "! written 2 (settled 2, proposed 0); unchanged 0; refused 9 " in output
     assert "(extract_refused.value_invalid 9); inbox 9" in output
     assert "INCOMPLETE (scores count_mismatch)" in output

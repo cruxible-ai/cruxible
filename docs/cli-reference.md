@@ -3132,12 +3132,12 @@ step (and each `line run`) carries `counts`:
 | `written` | new, revising and inverse Claims (`settled` + `proposed`) |
 | `unchanged`, `retired` | restatements; retirements |
 | `refused` | items not written, with `top_refusals` (code and count) |
-| `inbox` | items the run posted to its Line's inbox |
+| `inbox` | items the run posted to its Line's inbox; null when unreadable and the journal proves none (counts as needing attention) |
 | `complete` | false with `incomplete_reasons` (node and kind) |
 
-`attention_steps` names the steps that were incomplete, refused an item or
-posted to the inbox; the CLI prints it after `completed` and marks each such
-step with `!`.
+`attention_steps` names the steps that were incomplete, refused an item,
+posted to the inbox or could not count its inbox; the CLI prints it after
+`completed` and marks each such step with `!`.
 
 `cruxible runbook preview NAME` shows what each step can read (Queries, and
 the ClaimTypes, kinds and keys behind them, late reads marked), write and

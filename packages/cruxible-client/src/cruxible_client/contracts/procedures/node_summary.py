@@ -265,10 +265,13 @@ class RunCounts(_NodeSummary):
     retirements. ``refused`` counts the items not written (every finding but
     an incomplete source), with ``top_refusals`` naming the most frequent codes
     among the findings the run kept. ``inbox`` counts the items this run posted
-    to its Line's inbox (``None`` when the inbox could not be read).
-    ``complete`` is false when the run recorded incompleteness, with
-    ``incomplete_reasons`` naming each node and kind. ``needs_attention`` is
-    true when the run was incomplete, refused an item, or posted to the inbox.
+    to its Line's inbox; when the inbox could not be read it is the count the
+    run's journaled ``post_inbox`` summaries prove, or ``None`` when they prove
+    none (findings routed to the inbox are not journaled). ``complete`` is
+    false when the run recorded incompleteness, with ``incomplete_reasons``
+    naming each node and kind. ``needs_attention`` is true when the run was
+    incomplete, refused an item, posted to the inbox, or its inbox count is
+    unknown (``None``): an unreadable count never reads as nothing posted.
     """
 
     tag: Literal["cruxible-run-counts-v1"] = "cruxible-run-counts-v1"
@@ -290,11 +293,11 @@ class RunCounts(_NodeSummary):
 
     @model_validator(mode="after")
     def _attention(self) -> RunCounts:
-        expected = not self.complete or self.refused > 0 or bool(self.inbox)
+        expected = not self.complete or self.refused > 0 or self.inbox != 0
         if self.needs_attention != expected:
             raise ValueError(
                 "needs_attention is true exactly when the run was incomplete, "
-                "refused an item, or posted to the inbox"
+                "refused an item, posted to the inbox, or its inbox count is unknown"
             )
         return self
 
@@ -311,8 +314,10 @@ def run_counts(
     Constant work per node: it reads the summaries the run journaled, never a body.
     """
 
-    written = settled = proposed = unchanged = retired = refused = 0
+    written = settled = proposed = unchanged = retired = refused = posted = 0
     for summary in summaries:
+        if isinstance(summary, EgressRunSummary) and summary.kind == "post_inbox":
+            posted += summary.emitted
         if isinstance(summary, ClaimsRunSummary):
             changed = summary.written + summary.revised + summary.inverse_written
             written += changed
@@ -331,6 +336,9 @@ def run_counts(
         if item.kind != "incomplete_source"
     )
     complete = completeness is None or completeness.complete
+    if inbox is None and posted:
+        # The inbox could not be read: the journal still proves these posts.
+        inbox = posted
     return RunCounts(
         complete=complete,
         incomplete_reasons=() if completeness is None else completeness.reasons,
@@ -347,7 +355,7 @@ def run_counts(
             ]
         ),
         inbox=inbox,
-        needs_attention=not complete or refused > 0 or bool(inbox),
+        needs_attention=not complete or refused > 0 or inbox != 0,
     )
 
 
