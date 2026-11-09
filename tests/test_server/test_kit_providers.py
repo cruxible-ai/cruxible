@@ -546,6 +546,10 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
         assert [(item.provider_id, item.state) for item in status.providers] == [
             ("kit-call", "installed")
         ]
+        # An installed build names its live version, not null.
+        assert [item.installed_version for item in status.providers] == [
+            status.providers[0].version
+        ]
         again = _add(consumer, release, dry_run=False)
         assert again.status == "unchanged", again.model_dump_json(indent=2)
         assert [step.action for step in again.providers] == ["unchanged"]

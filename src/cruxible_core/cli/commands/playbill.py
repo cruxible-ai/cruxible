@@ -2260,7 +2260,7 @@ def kit_status(offline: bool, output_json: bool) -> None:
             )
         for provider in kit.providers:
             state: str = provider.state
-            if provider.installed_version is not None:
+            if provider.state == "differs" and provider.installed_version is not None:
                 state += f" (installed: {provider.installed_version})"
             click.echo(
                 f"  provider {provider.provider_id} ({provider.package} {provider.version}): "

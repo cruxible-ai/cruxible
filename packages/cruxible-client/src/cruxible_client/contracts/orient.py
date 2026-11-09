@@ -793,6 +793,9 @@ class OrientResult(_StrictOrientModel):
     # Accepted Contract versions by name then version (section "contracts").
     contracts: tuple[OrientContract, ...] | None = Field(default=None, exclude_if=_is_none)
     queries: tuple[OrientQuery, ...] | None = Field(default=None, exclude_if=_is_none)
+    #: The default map lists the first ``ORIENT_DEFAULT_QUERIES`` queries;
+    #: true when ``artifacts.queries`` counts more (``section="queries"`` lists all).
+    queries_truncated: bool = Field(default=False, exclude_if=lambda value: not value)
     operations: tuple[OrientOperation, ...] | None = Field(default=None, exclude_if=_is_none)
     # Procedure runs, newest admission first (section "runs"), or only the runs
     # still running (section "running"). Runs are operational state, read live.

@@ -1188,6 +1188,7 @@ def service_playbill_orient(
             claims=_claim_counts(instance, coordinate, evaluation_time=moment, heads=heads),
         ),
         queries=state.queries[:ORIENT_DEFAULT_QUERIES],
+        queries_truncated=len(state.queries) > ORIENT_DEFAULT_QUERIES,
         attention=attention,
         truncated=next_cursor is not None,
         next_cursor=next_cursor,

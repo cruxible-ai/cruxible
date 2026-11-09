@@ -43969,6 +43969,19 @@
             "title": "Queries"
           }
         },
+        "queries_truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "queries_truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Queries Truncated",
+            "type": "boolean"
+          }
+        },
         "retention_generations": {
           "default": null,
           "default_json_serializable": true,
@@ -47854,6 +47867,11 @@
             ],
             "default": null,
             "title": "Queries"
+          },
+          "queries_truncated": {
+            "default": false,
+            "title": "Queries Truncated",
+            "type": "boolean"
           },
           "retention_generations": {
             "anyOf": [

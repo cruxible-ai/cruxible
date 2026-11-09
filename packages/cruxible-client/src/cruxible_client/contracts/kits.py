@@ -1149,7 +1149,8 @@ class KitProviderStatus(_Strict):
     wheel_sha256: str
     delivery: KitProviderDelivery = "bundled"
     state: KitProviderInstallState
-    #: The live Provider's package version, when another build of it is installed.
+    #: The live Provider's package version: this build's when ``installed``,
+    #: the other build's when ``differs``; absent when none is live.
     installed_version: str | None = None
 
 
