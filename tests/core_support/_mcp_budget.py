@@ -22,12 +22,13 @@ from typing import Any
 #: retirement, new capabilities, once trims fell short.
 DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS = 10_400
 
-#: The distributed plugin uses full + a pinned 22-tool allowlist. The 2026-11-08
+#: The distributed plugin uses full + a pinned 23-tool allowlist. The 2026-11-08
 #: maintainer ruling adds kit/provider/Line/Runbook startup to the lean catalog;
 #: the fresh-install walkthrough (2026-11-09) adds inbox_list (next's top repair)
-#: and claim_attest (named by review-state), measured at 17,206.
+#: and claim_attest (named by review-state); since (what changed after a named
+#: generation, named by review-state) adds 843.5, measured at 18,077.
 #: This separate ceiling does not widen the existing default profile's budget.
-PLUGIN_PROFILE_MODEL_VISIBLE_TOKENS = 17_500
+PLUGIN_PROFILE_MODEL_VISIBLE_TOKENS = 18_300
 
 
 def model_visible_tokens(tool: Any) -> float:

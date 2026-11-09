@@ -17,6 +17,10 @@ A stored Claim is not automatically supported, and a proposal is not accepted
 state. Name the evidence and coordinate behind a conclusion. Before
 re-deriving one, check whether an accepted Claim already answers the question;
 cite it instead of recomputing, and use `next` to see what changed since.
+`since` lists what was accepted after a generation you name (a coordinate
+carries one): each changed member and how it changed, so the state itself
+answers what happened since last time and no separate end-of-session report
+is needed.
 
 Pair Subjects have immutable ends and facts of their own. Follow served
 pair/backlink cursors; hidden counts do not disclose hidden members. Governed

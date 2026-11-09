@@ -85,14 +85,14 @@ back") covers it.
 ## Local use and pre-release testing
 
 With no explicit daemon transport, the adapter finds or auto-starts the local
-daemon. The default tier is **admin**; the pinned 22-tool allowlist still hides
+daemon. The default tier is **admin**; the pinned 23-tool allowlist still hides
 the rest of the catalog. Admin permits endpoints, not unlawful state: evidence,
 principals, Mandates and approval policy still apply. A separate agent session
 (its own principal) reviews the exact candidate; never self-approve, including with auth off. The single
 plugin does not enforce separate identities while auth is off.
 
-The plugin catalog measures 17,206 estimated model-visible tokens (input schemas
-and descriptions, JSON characters/4), pinned below 17,500. The existing MCP
+The plugin catalog measures 18,077 estimated model-visible tokens (input schemas
+and descriptions, JSON characters/4), pinned below 18,300. The existing MCP
 default profile retains its separate 10,400 ceiling; full-catalog registration
 is not what this plugin advertises. Instructions remain below 300 estimated
 tokens, without exhaustive tool lists. Output-schema wire size is separate

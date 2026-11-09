@@ -10,6 +10,7 @@
     "cruxible_get",
     "cruxible_next",
     "cruxible_inbox_list",
+    "cruxible_since",
     "cruxible_set",
     "cruxible_retire",
     "cruxible_write",
