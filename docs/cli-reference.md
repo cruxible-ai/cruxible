@@ -3117,6 +3117,21 @@ open proposal kept current); later steps report `not_run`. Exits 1 when a
 step failed; a stop for review exits 0. `--dry-run` prints the preview
 instead.
 
+`succeeded` says a step's Line run finished, not what it achieved. Each Line
+step (and each `line run`) carries `counts`:
+
+| Field | What it counts |
+|---|---|
+| `written` | new, revising and inverse Claims (`settled` + `proposed`) |
+| `unchanged`, `retired` | restatements; retirements |
+| `refused` | items not written, with `top_refusals` (code and count) |
+| `inbox` | items the run posted to its Line's inbox |
+| `complete` | false with `incomplete_reasons` (node and kind) |
+
+`attention_steps` names the steps that were incomplete, refused an item or
+posted to the inbox; the CLI prints it after `completed` and marks each such
+step with `!`.
+
 `cruxible runbook preview NAME` shows what each step can read (Queries, and
 the ClaimTypes, kinds and keys behind them, late reads marked), write and
 create, which provider slots it calls and their bindings, what its Mandate

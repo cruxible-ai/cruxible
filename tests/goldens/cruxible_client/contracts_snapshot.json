@@ -64044,6 +64044,25 @@
             "default": null
           }
         },
+        "counts": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "counts",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RunCounts"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "evaluation_time": {
           "has_default": false,
           "has_default_factory": false,
@@ -68600,6 +68619,128 @@
             "title": "RunCompleteness",
             "type": "object"
           },
+          "RunCounts": {
+            "additionalProperties": false,
+            "description": "What one Line run did, in counts: the line a reader checks before \"succeeded\".\n\n``status`` says the run finished; this says what it achieved. ``written``\ncounts new, revising and inverse Claims across the run's claims terminals;\n``settled`` and ``proposed`` split them by how each terminal delivered\n(``proposed`` includes a change still waiting on the Line's open proposal).\n``unchanged`` counts re-observed and no-op restatements, ``retired`` the\nretirements. ``refused`` counts the items not written (every finding but\nan incomplete source), with ``top_refusals`` naming the most frequent codes\namong the findings the run kept. ``inbox`` counts the items this run posted\nto its Line's inbox (``None`` when the inbox could not be read).\n``complete`` is false when the run recorded incompleteness, with\n``incomplete_reasons`` naming each node and kind. ``needs_attention`` is\ntrue when the run was incomplete, refused an item, or posted to the inbox.",
+            "properties": {
+              "complete": {
+                "title": "Complete",
+                "type": "boolean"
+              },
+              "inbox": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": 0,
+                "title": "Inbox"
+              },
+              "incomplete_reasons": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/CompletenessReason"
+                },
+                "maxItems": 20,
+                "title": "Incomplete Reasons",
+                "type": "array"
+              },
+              "needs_attention": {
+                "title": "Needs Attention",
+                "type": "boolean"
+              },
+              "proposed": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Proposed",
+                "type": "integer"
+              },
+              "refused": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Refused",
+                "type": "integer"
+              },
+              "retired": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Retired",
+                "type": "integer"
+              },
+              "settled": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Settled",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "cruxible-run-counts-v1",
+                "default": "cruxible-run-counts-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "top_refusals": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/RunRefusalCount"
+                },
+                "maxItems": 3,
+                "title": "Top Refusals",
+                "type": "array"
+              },
+              "unchanged": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Unchanged",
+                "type": "integer"
+              },
+              "written": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Written",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "complete",
+              "needs_attention"
+            ],
+            "title": "RunCounts",
+            "type": "object"
+          },
+          "RunRefusalCount": {
+            "additionalProperties": false,
+            "description": "One refusal code and how many of the run's findings carried it.\n\n``code`` is the finding kind, with its problem when it names one\n(``extract_refused.value_invalid``).",
+            "properties": {
+              "code": {
+                "title": "Code",
+                "type": "string"
+              },
+              "count": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Count",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "code",
+              "count"
+            ],
+            "title": "RunRefusalCount",
+            "type": "object"
+          },
           "SettleScopeGap": {
             "additionalProperties": false,
             "description": "One reason a settle grant's scope left a change out, so the whole change proposed.\n\n``basis`` is the changed value's evidence basis (``None`` when the change\ncarries none a grant can name).",
@@ -68887,6 +69028,17 @@
             "anyOf": [
               {
                 "$ref": "#/$defs/RunCompleteness"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "counts": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RunCounts"
               },
               {
                 "type": "null"
@@ -100232,6 +100384,357 @@
       },
       "required_fields": [
         "reasons"
+      ]
+    },
+    "RunCounts": {
+      "fields": {
+        "complete": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "complete",
+          "required": true,
+          "schema": {
+            "title": "Complete",
+            "type": "boolean"
+          }
+        },
+        "inbox": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "inbox",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 0,
+            "title": "Inbox"
+          }
+        },
+        "incomplete_reasons": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "incomplete_reasons",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/CompletenessReason"
+            },
+            "maxItems": 20,
+            "title": "Incomplete Reasons",
+            "type": "array"
+          }
+        },
+        "needs_attention": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "needs_attention",
+          "required": true,
+          "schema": {
+            "title": "Needs Attention",
+            "type": "boolean"
+          }
+        },
+        "proposed": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "proposed",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Proposed",
+            "type": "integer"
+          }
+        },
+        "refused": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "refused",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Refused",
+            "type": "integer"
+          }
+        },
+        "retired": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "retired",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Retired",
+            "type": "integer"
+          }
+        },
+        "settled": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "settled",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Settled",
+            "type": "integer"
+          }
+        },
+        "tag": {
+          "default": "cruxible-run-counts-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-run-counts-v1",
+            "default": "cruxible-run-counts-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "top_refusals": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "top_refusals",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/RunRefusalCount"
+            },
+            "maxItems": 3,
+            "title": "Top Refusals",
+            "type": "array"
+          }
+        },
+        "unchanged": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "unchanged",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Unchanged",
+            "type": "integer"
+          }
+        },
+        "written": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "written",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Written",
+            "type": "integer"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "CompletenessReason": {
+            "additionalProperties": false,
+            "properties": {
+              "inputs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "title": "Inputs",
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "incomplete_input",
+                  "count_mismatch",
+                  "invalid_record",
+                  "duplicate_key",
+                  "invalid_field",
+                  "unknown_predicate",
+                  "may_truncate",
+                  "control_incomplete",
+                  "upstream_incomplete"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "node": {
+                "title": "Node",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node",
+              "kind"
+            ],
+            "title": "CompletenessReason",
+            "type": "object"
+          },
+          "RunRefusalCount": {
+            "additionalProperties": false,
+            "description": "One refusal code and how many of the run's findings carried it.\n\n``code`` is the finding kind, with its problem when it names one\n(``extract_refused.value_invalid``).",
+            "properties": {
+              "code": {
+                "title": "Code",
+                "type": "string"
+              },
+              "count": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Count",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "code",
+              "count"
+            ],
+            "title": "RunRefusalCount",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "What one Line run did, in counts: the line a reader checks before \"succeeded\".\n\n``status`` says the run finished; this says what it achieved. ``written``\ncounts new, revising and inverse Claims across the run's claims terminals;\n``settled`` and ``proposed`` split them by how each terminal delivered\n(``proposed`` includes a change still waiting on the Line's open proposal).\n``unchanged`` counts re-observed and no-op restatements, ``retired`` the\nretirements. ``refused`` counts the items not written (every finding but\nan incomplete source), with ``top_refusals`` naming the most frequent codes\namong the findings the run kept. ``inbox`` counts the items this run posted\nto its Line's inbox (``None`` when the inbox could not be read).\n``complete`` is false when the run recorded incompleteness, with\n``incomplete_reasons`` naming each node and kind. ``needs_attention`` is\ntrue when the run was incomplete, refused an item, or posted to the inbox.",
+        "properties": {
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "inbox": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 0,
+            "title": "Inbox"
+          },
+          "incomplete_reasons": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/CompletenessReason"
+            },
+            "maxItems": 20,
+            "title": "Incomplete Reasons",
+            "type": "array"
+          },
+          "needs_attention": {
+            "title": "Needs Attention",
+            "type": "boolean"
+          },
+          "proposed": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Proposed",
+            "type": "integer"
+          },
+          "refused": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Refused",
+            "type": "integer"
+          },
+          "retired": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Retired",
+            "type": "integer"
+          },
+          "settled": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Settled",
+            "type": "integer"
+          },
+          "tag": {
+            "const": "cruxible-run-counts-v1",
+            "default": "cruxible-run-counts-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "top_refusals": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/RunRefusalCount"
+            },
+            "maxItems": 3,
+            "title": "Top Refusals",
+            "type": "array"
+          },
+          "unchanged": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Unchanged",
+            "type": "integer"
+          },
+          "written": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Written",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "complete",
+          "needs_attention"
+        ],
+        "title": "RunCounts",
+        "type": "object"
+      },
+      "required_fields": [
+        "complete",
+        "needs_attention"
       ]
     },
     "RuntimeCredentialBootstrapResult": {

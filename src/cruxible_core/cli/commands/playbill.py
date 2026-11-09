@@ -7490,10 +7490,34 @@ def _cli_repair(repair: Any) -> str:
     return " ".join(parts)
 
 
+def _counts_text(counts: Any) -> str:
+    """A run's counts on one line; incompleteness and refusals named."""
+
+    parts = [
+        f"written {counts.written} (settled {counts.settled}, proposed {counts.proposed})",
+        f"unchanged {counts.unchanged}",
+    ]
+    if counts.retired:
+        parts.append(f"retired {counts.retired}")
+    refused = f"refused {counts.refused}"
+    if counts.top_refusals:
+        refused += " (" + ", ".join(f"{i.code} {i.count}" for i in counts.top_refusals) + ")"
+    parts.append(refused)
+    parts.append(f"inbox {'?' if counts.inbox is None else counts.inbox}")
+    if not counts.complete:
+        reasons = ", ".join(f"{r.node} {r.kind}" for r in counts.incomplete_reasons)
+        parts.append("INCOMPLETE" + (f" ({reasons})" if reasons else ""))
+    return "; ".join(parts)
+
+
 def _echo_run_outcome(result: contracts.ProcedureRunState, label: str) -> None:
     """Lead with the answer: the result on success, the code and repair on refusal."""
 
-    click.echo(f"{label}: {result.status}")
+    counts = getattr(result, "counts", None)
+    attention = counts is not None and counts.needs_attention
+    click.echo(f"{label}: {result.status}" + ("  (needs attention)" if attention else ""))
+    if counts is not None:
+        click.echo("Counts: " + _counts_text(counts))
     if result.status == "succeeded" and result.result is not None:
         click.echo("Result: " + json.dumps(result.result, sort_keys=True))
     terminal = result.terminal
@@ -8623,6 +8647,11 @@ def _echo_runbook_run(result: Any) -> None:
         if result.status == "stopped"
         else "completed"
     )
+    if result.attention_steps:
+        listed = ", ".join(str(item) for item in result.attention_steps)
+        stopped += (
+            f"; needs attention: step{'s' if len(result.attention_steps) > 1 else ''} {listed}"
+        )
     click.echo(f"Runbook {result.runbook}: {stopped}  [{result.run_id}]")
     for step in result.steps:
         extra = [
@@ -8635,6 +8664,9 @@ def _echo_runbook_run(result: Any) -> None:
             f"  {step.step:>2}  {step.status:<11} {_target_text(step.target)}"
             + (f"  ({', '.join(extra)})" if extra else "")
         )
+        if step.counts is not None:
+            mark = "!" if step.counts.needs_attention else " "
+            click.echo(f"    {mark} {_counts_text(step.counts)}")
 
 
 def _echo_runbook_preview(preview: Any) -> None:

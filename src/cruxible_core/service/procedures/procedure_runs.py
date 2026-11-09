@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import sqlite3
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
@@ -90,7 +91,11 @@ from cruxible_client.contracts.procedures.models import (
     caps_budget,
     required_authority,
 )
-from cruxible_client.contracts.procedures.node_summary import NODE_RUN_SUMMARY_ADAPTER
+from cruxible_client.contracts.procedures.node_summary import (
+    NODE_RUN_SUMMARY_ADAPTER,
+    RunCounts,
+    run_counts,
+)
 from cruxible_client.contracts.procedures.reads import effective_read_rows
 from cruxible_client.contracts.procedures.results import (
     InboxPostTruncation,
@@ -773,6 +778,10 @@ class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
     )
     #: Every node that finished, in journal order, with its run summary.
     nodes: tuple[GetRunNode, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: A finished run's counts: written/settled/proposed, refused (top codes),
+    #: inbox postings and completeness. ``status`` says it finished; this says
+    #: what it achieved.
+    counts: RunCounts | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @property
     def coordinate(self) -> AcceptedCoordinate:
@@ -3000,7 +3009,26 @@ def _state_from_records(
             )
         )
     )
+    completeness = (
+        RunCompleteness.model_validate(final["completeness"])
+        if isinstance(final, dict) and final.get("completeness") is not None
+        else None
+    )
     return ProcedureRunStateV2(
+        counts=(
+            None
+            if status == "running"
+            else run_counts(
+                (node.summary for node in nodes),
+                findings=findings,
+                completeness=completeness,
+                inbox=(
+                    _run_inbox_postings(instance, run_id)
+                    if admission.invocation_origin == "line"
+                    else 0
+                ),
+            )
+        ),
         run_id=run_id,
         investigation=admission.investigation,
         trigger_binding=admission.trigger_binding,
@@ -3029,11 +3057,7 @@ def _state_from_records(
         findings=tuple(findings),
         findings_count=findings_count,
         nodes=tuple(nodes),
-        completeness=(
-            RunCompleteness.model_validate(final["completeness"])
-            if isinstance(final, dict) and final.get("completeness") is not None
-            else None
-        ),
+        completeness=completeness,
         source_observations=observations,
         terminal_egress=tuple(
             sorted(
@@ -3137,6 +3161,17 @@ def _public_run_receipt(
         invocation_receipt_digests=invocation_receipt_digests,
         source_capture_associations=source_capture_associations,
     )
+
+
+def _run_inbox_postings(instance: PlaybillInstance, run_id: str) -> int | None:
+    """The items a Line run posted to its inbox, or ``None`` when the inbox is unreadable."""
+
+    from cruxible_core.exhaust.line_inbox import InboxUnavailable, LineInboxStore
+
+    try:
+        return LineInboxStore(instance).posted_by_run(run_id)
+    except (InboxUnavailable, ValueError, sqlite3.Error):
+        return None
 
 
 def _with_prior_refusals(

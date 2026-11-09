@@ -237,6 +237,7 @@ from cruxible_client.contracts.procedures.dispositions import (
 from cruxible_client.contracts.procedures.dispositions import (
     ResolutionDispositionSummary as ResolutionDispositionSummary,
 )
+from cruxible_client.contracts.procedures.node_summary import RunCounts
 from cruxible_client.contracts.procedures.readings import (
     ProcedureMeasurementContractStatus as ProcedureMeasurementContractStatus,
 )
@@ -1576,6 +1577,9 @@ class ProcedureRunState(BaseModel):
     )
     #: Every node that finished, in journal order, with its run summary.
     nodes: list[GetRunNode] = Field(default_factory=list, exclude_if=lambda value: not value)
+    #: A finished run's counts: written/settled/proposed, refused (top codes),
+    #: inbox postings and completeness; ``status`` alone says only that it finished.
+    counts: RunCounts | None = Field(default=None, exclude_if=lambda value: value is None)
     #: C14: the run read Captures of a restricted kind, so its output, findings
     #: and node summaries are withheld from a reader without the key.
     withheld: BodyRestricted | None = Field(default=None, exclude_if=lambda value: value is None)
