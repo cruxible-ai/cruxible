@@ -1,6 +1,6 @@
 # Governance and review
 
-A second agent reviews the exact candidate; never self-approve, including
+A separate agent session (its own principal) reviews the exact candidate; never self-approve, including
 when daemon auth is off or the local policy allows self-approval. This is an
 instruction to agents, not an auth-off isolation boundary. User authorization
 still defines what work may be proposed or executed.

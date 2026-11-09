@@ -16,7 +16,7 @@ import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.server.fastmcp import FastMCP
-from scripts.build_agent_plugin import PACKAGE, ROOT, synchronize
+from scripts.build_agent_plugin import BUNDLED_DOCS, PACKAGE, ROOT, synchronize
 
 from cruxible_core.mcp.curation import advertised_tool_names, resolve_tool_curation
 from cruxible_core.mcp.server import _install_tool_curation
@@ -55,11 +55,15 @@ def test_generated_host_packages_are_current_and_share_the_release() -> None:
     package = ROOT / PACKAGE
     skills = {path.parent.name for path in (package / "skills").glob("*/SKILL.md")}
     assert skills == {"adopt-kit", "create-state", "review-state", "automate-state"}
-    for path in (package / "skills").rglob("*.md"):
+    # Skills link core docs as bundled copies, never as web URLs.
+    bundled = {path.name for path in (package / "docs").glob("*.md")}
+    assert bundled == set(BUNDLED_DOCS)
+    for path in [*(package / "skills").rglob("*.md"), *(package / "docs").glob("*.md")]:
         for link in re.findall(r"\]\(([^)]+)\)", path.read_text()):
+            assert "docs.cruxible.ai" not in link, (path, link)
             if "://" in link:
                 continue
-            target = (path.parent / link).resolve()
+            target = (path.parent / (link.split("#", 1)[0] or path.name)).resolve()
             assert target.is_relative_to(package) and target.is_file(), (path, link)
 
 
