@@ -298,9 +298,12 @@ def confirm_doc_edits(
         }
         connection.commit()
         compacted: dict[str, _PendingEdit] = {}
+        recorded_at = instance.recording_clock()
         for token in tokens:
             try:
-                receipt = _confirm_doc_edit(instance, loaded.get(token), token=token, actor=actor)
+                receipt = _confirm_doc_edit(
+                    instance, loaded.get(token), token=token, actor=actor, recorded_at=recorded_at
+                )
             except WriteRefusalError as error:
                 results.append(DocConfirmationOutcome(confirmation=token, refusal=_refusal(error)))
             else:
@@ -334,6 +337,7 @@ def _confirm_doc_edit(
     *,
     token: str,
     actor: AuthenticatedActor,
+    recorded_at: datetime,
 ) -> _PendingEdit | None:
     """Confirm one token; return the compact receipt to store, if it changed.
 
@@ -360,19 +364,29 @@ def _confirm_doc_edit(
     assert journal is not None
     partition = section_digest(pending.edit.source_id.encode()).removeprefix("sha256:")
     payload = pending.edit.model_dump(mode="json")
-    # Recover a crash after journal append but before compacting the pending
-    # bytes. This probe is one indexed key, never the source's whole history.
-    if journal.select_records(
-        stream,
-        partition_id=partition,
-        event_kind="doc_edit",
-        payload_digest=payload_digest(payload),
-        limit=1,
-    ):
-        return pending.model_copy(update={"before_content_base64": None})
+    receipt = pending.model_copy(update={"before_content_base64": None})
+
+    def recorded() -> bool:
+        # One indexed key, never the source's whole history.
+        return bool(
+            journal.select_records(
+                stream,
+                partition_id=partition,
+                event_kind="doc_edit",
+                payload_digest=payload_digest(payload),
+                limit=1,
+            )
+        )
+
+    # Read the expected head BEFORE the idempotence probe: an append that lands
+    # after this read makes ours conflict, and one that landed before it is
+    # visible to the probe, so the same event is never appended twice. The
+    # probe also recovers a crash after journal append but before compaction.
+    head = journal.read_head(stream, partition)
+    if recorded():
+        return receipt
     bodies.store(previous)
     try:
-        head = journal.read_head(stream, partition)
         journal.activate_writer(stream, partition, fencing_token=_FENCE, expected_head=head)
         ProcedureExhaustWriter(journal=journal, bodies=bodies, fencing_token=_FENCE).append(
             stream=stream,
@@ -381,17 +395,22 @@ def _confirm_doc_edit(
             accepted_coordinate=pending.coordinate,
             definition_digest=stream.identity_digest,
             actor_context=pending.actor,
-            recorded_at=instance.recording_clock(),
+            # Stamps when the history record was written (attribution, one
+            # reading per request); it decides nothing about persisted state.
+            recorded_at=recorded_at,
             expected_head=head,
             payload=payload,
         )
     except JournalConflictError as exc:
+        # A racing confirmation of this same token recorded it: confirmed.
+        if recorded():
+            return receipt
         raise _refuse(
             "cruxible.doc.confirmation_conflict",
             "Another confirmation changed this file's history; this token can be retried",
             repair=f"Retry write with doc_confirmations: [{token!r}]",
         ) from exc
-    return pending.model_copy(update={"before_content_base64": None})
+    return receipt
 
 
 def read_doc_edits(

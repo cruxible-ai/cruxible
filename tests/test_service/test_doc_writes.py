@@ -917,11 +917,15 @@ def test_concurrent_confirmations_return_a_typed_retry_and_never_duplicate_histo
         patch.setattr(LocalJournalBackend, "activate_writer", race_activation)
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(confirm, attempted))
-    assert sorted(result.status for result in results) == ["accepted", "refused"]
-    failed = next(result for result in results if result.refused).doc_confirmations[0]
-    assert failed.refusal.code == "cruxible.doc.confirmation_conflict"
-    assert failed.confirmation in failed.refusal.repair
-    assert "Retry write with doc_confirmations" in failed.refusal.repair
+    if same_token:
+        # The loser's conflict re-probes and finds the winner's record of it.
+        assert [result.status for result in results] == ["accepted", "accepted"]
+    else:
+        assert sorted(result.status for result in results) == ["accepted", "refused"]
+        failed = next(result for result in results if result.refused).doc_confirmations[0]
+        assert failed.refusal.code == "cruxible.doc.confirmation_conflict"
+        assert failed.confirmation in failed.refusal.repair
+        assert "Retry write with doc_confirmations" in failed.refusal.repair
     # A retry after either interleaving records only missing events.
     for token in attempted:
         assert confirm(token).status == "accepted"
@@ -932,3 +936,46 @@ def test_concurrent_confirmations_return_a_typed_retry_and_never_duplicate_histo
     ).history
     assert len(history.revisions) == (1 if same_token else 2)
     assert {entry.value.object["write_id"] for entry in history.revisions} == set(attempted)
+
+
+def test_same_token_confirmed_after_an_empty_probe_is_never_appended_twice(tmp_path, monkeypatch):
+    from cruxible_core.exhaust.backends import LocalJournalBackend
+    from cruxible_core.service.authoring import doc_writes
+
+    instance, _ = seed_write_surface(tmp_path)
+    admitted = service_playbill_write(
+        instance,
+        request=WriteRequest(because="Replace", docs=(_replacement_observation(),)),
+        caller=caller(),
+    )
+    token = admitted.docs[0].confirmation
+    select = LocalJournalBackend.select_records
+    raced = False
+
+    def interleave(self, stream, **filters):
+        nonlocal raced
+        rows = select(self, stream, **filters)
+        if not raced and filters.get("event_kind") == "doc_edit" and filters.get("payload_digest"):
+            assert rows == ()
+            raced = True
+            # Another confirmation of the same token lands after this empty
+            # probe, while no pending-store lock is held.
+            other = doc_writes.confirm_doc_edits(instance, tokens=(token,), actor=caller().actor)
+            assert other.status == "accepted", other
+        return rows
+
+    monkeypatch.setattr(LocalJournalBackend, "select_records", interleave)
+    first = service_playbill_write(
+        instance,
+        request=WriteRequest(because="Landed", doc_confirmations=(token,)),
+        caller=caller(),
+    )
+    monkeypatch.setattr(LocalJournalBackend, "select_records", select)
+    assert raced
+    assert first.status == "accepted", first
+    revisions = service_playbill_get(
+        instance,
+        request=GetRequest(ref="file:repo.notes", detail="history"),
+        access=BodyAccessContext(principal_id="reader"),
+    ).history.revisions
+    assert [entry.value.object["write_id"] for entry in revisions] == [token]
