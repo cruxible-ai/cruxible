@@ -70,45 +70,6 @@ jobs:
       - name: Test
         run: uv run pytest -n auto --dist loadfile --tb=short --timeout 900 --timeout-method=thread
 
-  # TEMPORARY (deep audit, 2026-11-09): per-test coverage + durations as artifacts.
-  # Remove before merging to main.
-  coverage-audit:
-    runs-on: ubuntu-latest
-    timeout-minutes: 240
-    env:
-      CRUXIBLE_PROVIDERS_CHECKOUT: ${{ github.workspace }}/cruxible-providers
-      CRUXIBLE_PROVIDERS_REQUIRED: "1"
-      UV_NO_SYNC: "1"
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          repository: cruxible-ai/cruxible-providers
-          ref: ${{ env.CRUXIBLE_PROVIDERS_COMMIT }}
-          path: cruxible-providers
-      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
-      - name: Set up Python 3.12
-        run: uv python install 3.12
-      - name: Install dependencies
-        run: uv sync --all-packages --all-extras --python 3.12
-      - name: Install the provider runtime and pytest-cov
-        run: uv pip install "$CRUXIBLE_PROVIDERS_CHECKOUT/packages/cruxible-provider-runtime" pytest-cov
-      - name: Test with per-test coverage
-        continue-on-error: true
-        run: >
-          uv run pytest -n auto --dist loadfile --tb=line -q --timeout 1800 --timeout-method=thread
-          --cov=cruxible_core --cov=cruxible_client --cov-context=test --cov-report=
-          --durations=0 -p no:cacheprovider > durations.txt 2>&1
-      - name: Upload audit data
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: coverage-audit
-          path: |
-            .coverage
-            durations.txt
-          include-hidden-files: true
-          retention-days: 14
-
   docker-image-test:
     runs-on: ubuntu-latest
 
