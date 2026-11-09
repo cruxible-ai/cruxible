@@ -1,15 +1,20 @@
 # Kits
 
 A kit is a starting point. One instance exports it and another installs it:
-vocabulary, named queries and Procedures, the provider packages those
-Procedures need, reference pages, and an automation template you tailor. It is
+vocabulary, named queries, Procedures, guidance Documents, the provider
+packages those Procedures need, reference pages, and an automation template
+you tailor. It is
 not a schema you have to adopt. Every garage that starts from a car parts kit
 begins with the same parts, vehicles and fitments, so the same questions and
 automation work on day one. From there the instance is yours to grow: revise
 the kit's definitions, add your own, and adapt or replace its automation, all
-by ordinary authoring. Installing or upgrading a kit is one change set,
-previewed first and accepted under the instance's approval policy like any
-other change. An upgrade names every definition you have edited; the release's
+by ordinary authoring. `kit add` previews first and writes nothing. Its
+commit proceeds in up to three changes, each accepted under the instance's
+approval policy: when bundled providers are missing, first the Contracts their
+operations use, then the provider registrations, then the kit's definitions.
+An earlier change can be accepted before a later one stops: an
+`awaiting_providers` or `blocked` result means the definitions are not in yet,
+not that nothing changed. An upgrade names every definition you have edited; the release's
 version replaces your edit unless you keep it.
 
 This page covers using kits, the automation a kit suggests, and building and
@@ -67,16 +72,17 @@ upgrade over a local edit.
 
 ## What a kit carries
 
-A kit carries definitions from six families:
+A kit carries definitions from seven families:
 
 | Family | What it is |
 |---|---|
 | ClaimTypes | Vocabulary: what a field may hold and what evidence backs it |
+| SubjectKinds | How a kind's Subjects are keyed; travels with its key ClaimTypes |
 | CaptureContracts | What a retained piece of evidence must look like |
+| Contracts | Immutable data shapes that Procedures and provider operations pin |
 | QueryDefinitions | Named queries |
-| Procedures | Runnable graphs with exact providers or interface-typed Provider slots |
-| ProviderInterfaces | The typed contracts provider slots name |
-| SourceAcquisitionPolicies | What a Procedure may read from outside sources |
+| Procedures | Runnable graphs over provider calls |
+| Documents | Governed Documents, such as guidance linked by `guides` |
 
 Beside the definitions, a release can carry inert files for its reader: its
 README, other reference pages, `examples/` and agent skills under
