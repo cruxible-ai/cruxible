@@ -188,6 +188,7 @@ from cruxible_core.cli.commands._common import (
     change_control_options,
     echo_preview_next,
     json_option,
+    no_daemon_message,
 )
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.cli.payloads import (
@@ -1065,7 +1066,7 @@ def init_playbill(
     if workspace_path is None:
         _refuse_tcp_workspace_operation(git_workspace)
     if not (_root_ctx_obj().get("server_url") or _root_ctx_obj().get("server_socket")):
-        raise click.UsageError("Local execution disabled for cruxible init; use server mode.")
+        raise click.UsageError(no_daemon_message("cruxible init"))
     transport = _transport_target(_root_ctx_obj())
     if transport is None:  # pragma: no cover - guarded by _get_client above
         raise click.UsageError("Server mode is required for cruxible init")

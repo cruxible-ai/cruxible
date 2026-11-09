@@ -174,6 +174,23 @@ def _answers(*, server_url: str | None = None, server_socket: str | None = None)
     return response.status_code == 200
 
 
+def answering_default_socket(environ: Mapping[str, str] | None = None) -> str | None:
+    """``<state root>/run/daemon.sock`` when a daemon answers there (step 3), else None.
+
+    The CLI's fallback when nothing names a transport, so it reaches the daemon an
+    MCP adapter found or started under the same ``CRUXIBLE_STATE_ROOT``. Never starts one.
+    """
+
+    env = os.environ if environ is None else environ
+    try:
+        socket_path = default_socket_path(get_server_state_root(env))
+    except ConfigError:
+        return None
+    if not socket_path.exists() or not _answers(server_socket=str(socket_path)):
+        return None
+    return str(socket_path)
+
+
 def _holder_target(transport: str) -> DaemonTarget:
     """The lock record's transport (``unix socket PATH`` or ``HOST:PORT``) as a target."""
 
@@ -458,6 +475,7 @@ __all__ = [
     "DaemonUnavailableError",
     "configured_daemon_target",
     "daemon_child_environment",
+    "answering_default_socket",
     "default_socket_path",
     "ensure_local_daemon",
     "forget_local_daemon",
