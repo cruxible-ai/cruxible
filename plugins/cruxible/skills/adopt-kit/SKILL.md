@@ -18,7 +18,7 @@ kit pull NAME:VERSION --out DIRECTORY` fetches and verifies without installing.
 `cruxible kit add REFERENCE` previews the change. Its guarded commit uses
 `--commit --at OID` with the preview's coordinate. Provider installation
 needs admin authority. A commit can land as several changes (provider
-Contracts, provider registrations, then definitions); a blocked or
+Contracts, one registration per missing provider, then definitions); a blocked or
 awaiting-providers result means earlier changes may be accepted but the
 definitions are not. Report its served repair.
 

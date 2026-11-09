@@ -9,9 +9,10 @@ begins with the same parts, vehicles and fitments, so the same questions and
 automation work on day one. From there the instance is yours to grow: revise
 the kit's definitions, add your own, and adapt or replace its automation, all
 by ordinary authoring. `kit add` previews first and writes nothing. Its
-commit proceeds in up to three changes, each accepted under the instance's
-approval policy: when bundled providers are missing, first the Contracts their
-operations use, then the provider registrations, then the kit's definitions.
+commit proceeds in three phases, each change accepted under the instance's
+approval policy: when bundled providers are missing, first one change with the
+Contracts their operations use, then a separate registration change for each
+missing provider, then one change with the kit's definitions.
 An earlier change can be accepted before a later one stops: an
 `awaiting_providers` or `blocked` result means the definitions are not in yet,
 not that nothing changed. An upgrade names every definition you have edited; the release's
