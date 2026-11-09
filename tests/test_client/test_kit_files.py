@@ -226,3 +226,25 @@ def test_a_bundle_stripped_of_its_files_cannot_write_docs(tmp_path: Path) -> Non
         write_kit_docs(stripped, tmp_path / "docs")
     with pytest.raises(ValueError, match="carries none of their bytes"):
         write_kit_directory(stripped, tmp_path / "kit")
+
+
+def test_containment_resolves_every_component_and_folds_case_where_the_volume_does(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client._safe_files import ContainmentError, _case_folding, contained_path
+
+    root = tmp_path / "Kit"
+    (root / "artifacts").mkdir(parents=True)
+    (root / "artifacts" / "a.json").write_text("{}")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "b.json").write_text("{}")
+    (root / "linked").symlink_to(outside, target_is_directory=True)
+
+    assert contained_path(root, root / "artifacts" / "a.json").name == "a.json"
+    with pytest.raises(ContainmentError):
+        contained_path(root, root / "linked" / "b.json")
+    if _case_folding(root):
+        # The same root named in another case is still the root.
+        swapped = tmp_path / "kIT"
+        assert contained_path(swapped, root / "artifacts" / "a.json").name == "a.json"

@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 import httpx
 from pydantic import ValidationError
 
+from cruxible_client._safe_files import ContainmentError, contained_path, read_contained
 from cruxible_client.artifacts import (
     ArtifactImage,
     ArtifactKind,
@@ -106,8 +107,10 @@ def kit_reference(source: str) -> Reference:
 def read_kit_directory(root: Path) -> KitBundle:
     """Read one kit directory; every file under ``artifacts/`` must be in the manifest."""
 
-    manifest = KitManifest.model_validate_json((root / KIT_MANIFEST_FILE).read_bytes())
+    manifest = KitManifest.model_validate_json(read_contained(root, root / KIT_MANIFEST_FILE))
     artifact_root = root / KIT_ARTIFACT_DIRECTORY
+    # A symlinked directory leading out of the kit is refused before it is listed.
+    contained_path(root, artifact_root)
     present = sorted(
         path.relative_to(artifact_root).as_posix()
         for path in artifact_root.rglob("*")
@@ -126,8 +129,10 @@ def read_kit_directory(root: Path) -> KitBundle:
         path = artifact_root / name
         if path.is_symlink():
             raise ValueError(f"kit artifact {name} is a symbolic link")
-        artifacts.append(KitArtifactBytes.of(name, path.read_bytes()))
+        artifacts.append(KitArtifactBytes.of(name, read_contained(root, path)))
     provider_root = root / KIT_PROVIDER_DIRECTORY
+    if provider_root.exists() or provider_root.is_symlink():
+        contained_path(root, provider_root)
     bundled = sorted(manifest.provider_files())
     held = sorted(
         path.relative_to(provider_root).as_posix()
@@ -146,7 +151,7 @@ def read_kit_directory(root: Path) -> KitBundle:
         path = provider_root / name
         if path.is_symlink():
             raise ValueError(f"kit provider file {name} is a symbolic link")
-        files.append(KitProviderFileBytes.of(name, path.read_bytes()))
+        files.append(KitProviderFileBytes.of(name, read_contained(root, path)))
     return KitBundle(
         manifest=manifest,
         artifacts=tuple(artifacts),
@@ -169,7 +174,7 @@ def _read_document_bodies(
         path = root / KIT_DOCUMENT_BODY_DIRECTORY / digest.partition(":")[2]
         if path.is_symlink() or not path.is_file():
             raise ValueError(f"kit directory {root} lacks the Document body {digest}")
-        body = KitDocumentBody.of(path.read_bytes())
+        body = KitDocumentBody.of(read_contained(root, path))
         if body.digest != digest:
             raise ValueError(f"kit Document body {path.name} differs from its digest")
         bodies.append(body)
@@ -183,7 +188,6 @@ def _read_kit_files(root: Path, manifest: KitManifest) -> tuple[KitFileBytes, ..
     content and are never read.
     """
 
-    resolved_root = root.resolve()
     held = []
     missing = []
     for item in manifest.files:
@@ -193,9 +197,11 @@ def _read_kit_files(root: Path, manifest: KitManifest) -> tuple[KitFileBytes, ..
         if not path.is_file():
             missing.append(item.path)
             continue
-        if not path.resolve().is_relative_to(resolved_root):
-            raise ValueError(f"kit file {item.path} escapes the kit directory")
-        held.append(KitFileBytes.of(item.path, path.read_bytes()))
+        try:
+            content = read_contained(root, path)
+        except ContainmentError as exc:
+            raise ValueError(f"kit file {item.path} escapes the kit directory") from exc
+        held.append(KitFileBytes.of(item.path, content))
     if missing:
         raise ValueError(f"kit directory {root} lacks the manifest's kit files {missing}")
     return tuple(held)
@@ -432,7 +438,10 @@ def _local_kit(path: Path) -> tuple[KitBundle, ArtifactImage | None, str] | None
 
     if path.is_dir():
         if is_layout(path):
-            image = read_layout(path)
+            try:
+                image = read_layout(path)
+            except ContainmentError as exc:
+                raise KitSourceError(f"OCI layout {path}: {exc}") from exc
             return unpack_artifact(KIT_ARTIFACT, image), image, f"{path.name}@{image.digest}"
         if not (path / KIT_MANIFEST_FILE).is_file():
             raise KitSourceError(f"directory {path} holds no {KIT_MANIFEST_FILE}")

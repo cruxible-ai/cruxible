@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generic, TypeVar
 
+from cruxible_client._safe_files import contained_path, read_contained
+
 MANIFEST_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
 INDEX_MEDIA_TYPE = "application/vnd.oci.image.index.v1+json"
 LAYOUT_FILE = "oci-layout"
@@ -196,15 +198,20 @@ def read_layout(root: Path) -> ArtifactImage:
 
     if not (root / LAYOUT_FILE).is_file():
         raise ValueError(f"{root} is not an OCI image layout")
-    index = json.loads((root / "index.json").read_bytes())
+    # Every file is read only once it resolves beneath the layout root: a
+    # symlinked ``blobs`` (or index) leading elsewhere is refused, not followed.
+    contained_path(root, root / LAYOUT_FILE)
+    index = json.loads(read_contained(root, root / "index.json"))
     manifests = index.get("manifests") if isinstance(index, dict) else None
     if not isinstance(manifests, list) or len(manifests) != 1:
         raise ValueError(f"{root} must hold exactly one artifact")
     descriptor = manifests[0]
-    manifest = _blob_path(root, str(descriptor.get("digest"))).read_bytes()
+    manifest = read_contained(root, _blob_path(root, str(descriptor.get("digest"))))
     if sha256_digest(manifest) != descriptor.get("digest"):
         raise ValueError(f"{root} manifest does not match its index digest")
-    return assemble_image(manifest, lambda item: _blob_path(root, str(item["digest"])).read_bytes())
+    return assemble_image(
+        manifest, lambda item: read_contained(root, _blob_path(root, str(item["digest"])))
+    )
 
 
 def is_layout(path: Path) -> bool:

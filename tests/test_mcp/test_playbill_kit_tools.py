@@ -193,3 +193,56 @@ def test_a_registry_miss_on_a_path_like_reference_says_no_local_kit_exists_eithe
     with pytest.raises(RegistryRefusal) as plain:
         handlers.handle_playbill_kit_add("inst", reference="acme:9.9.9")
     assert "either" not in str(plain.value)
+
+
+def test_a_kit_directory_whose_artifacts_lead_outside_it_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A symlinked parent (``artifacts -> ../outside``) is refused, not followed."""
+
+    import shutil
+
+    from cruxible_client.kits import resolve_kit
+
+    kit = tmp_path / "named-kit"
+    write_kit_directory(_bundle(), kit)
+    outside = tmp_path / "outside-artifacts"
+    shutil.move(str(kit / "artifacts"), outside)
+    (kit / "artifacts").symlink_to(outside, target_is_directory=True)
+    client = _RecordingClient()
+    bind_mcp_daemon(monkeypatch, client)
+
+    with pytest.raises(KitSourceError, match="resolves outside"):
+        handlers.handle_playbill_kit_add("inst", reference=str(kit))
+    # The CLI reads through the same shared reader.
+    with pytest.raises(KitSourceError, match="resolves outside"):
+        resolve_kit(str(kit))
+    assert client.sent == []
+
+
+def test_an_oci_layout_whose_blobs_lead_outside_it_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import shutil
+
+    from cruxible_client.artifacts import write_layout
+    from cruxible_client.kits import resolve_kit_image
+
+    outside = tmp_path / "outside-layout"
+    write_layout(pack_artifact(KIT_ARTIFACT, _bundle()), outside)
+    named = tmp_path / "named-layout"
+    named.mkdir()
+    for name in ("oci-layout", "index.json"):
+        shutil.copyfile(outside / name, named / name)
+    (named / "blobs").symlink_to(outside / "blobs", target_is_directory=True)
+    client = _RecordingClient()
+    bind_mcp_daemon(monkeypatch, client)
+
+    with pytest.raises(KitSourceError, match="resolves outside"):
+        handlers.handle_playbill_kit_add("inst", reference=str(named))
+    with pytest.raises(KitSourceError, match="resolves outside"):
+        resolve_kit_image(str(named))
+    assert client.sent == []
+    # A layout whose files all sit beneath it still reads.
+    image, _origin = resolve_kit_image(str(outside))
+    assert image.digest == pack_artifact(KIT_ARTIFACT, _bundle()).digest
