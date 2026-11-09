@@ -221,6 +221,44 @@ def test_a_head_accepted_after_the_pin_check_refuses_at_publication(
     ]
 
 
+def test_a_head_accepted_after_the_evaluation_refuses_a_pinned_commit_as_moved(
+    playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A concurrent acceptance between evaluation and publication is the pin's refusal too.
+
+    Publication finds main moved past the evaluated head; a commit pinned to
+    its preview refuses ``state_moved`` as it would have at entry, not with the
+    proposal service's evaluate-again error.
+    """
+
+    client, instance_id, reviewer_key = playbill_http
+    body = {"principal": _principal(tmp_path, "raced"), "proposal_name": "add-raced"}
+    url = _api(instance_id, "/principals/proposals")
+    at = _ok(client.post(url, json={**body, "dry_run": True}))["accepted_coordinate"]["git_oid"]
+    original = ProposalService._evaluate_admission
+    moved: list[bool] = []
+
+    def evaluate_then_move(self: ProposalService, **kwargs: Any) -> Any:
+        evaluated = original(self, **kwargs)
+        if not moved and kwargs["request"].target_ref.endswith("add-raced"):
+            moved.append(True)
+            _move_head(client, instance_id, reviewer_key)
+        return evaluated
+
+    monkeypatch.setattr(ProposalService, "_evaluate_admission", evaluate_then_move)
+    refused = client.post(url, json={**body, "dry_run": False, "at": at})
+
+    assert moved == [True]
+    _refused(refused, 409, "cruxible.preview.state_moved")
+    assert not [
+        entry
+        for entry in _ok(client.get(_api(instance_id, "/proposals")))["entries"]
+        if entry["target_ref"].endswith("add-raced")
+    ]
+
+
 def test_a_head_accepted_before_the_stamp_refuses_a_pinned_decommission(
     playbill_http: tuple[TestClient, str, Path],
     tmp_path: Path,

@@ -56,6 +56,7 @@ from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProject
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
+    ProposalHeadMovedError,
     ProposalPreview,
     ProposalResult,
 )
@@ -379,13 +380,21 @@ def admit_change_set(
             result=None,
             preview=preview,
         )
-    submitted = service.submit(
-        actor=actor,
-        request=request,
-        candidate_tree=candidate_tree,
-        timestamp=timestamp,
-        confirm_head=mode.confirm_head,
-    )
+    try:
+        submitted = service.submit(
+            actor=actor,
+            request=request,
+            candidate_tree=candidate_tree,
+            timestamp=timestamp,
+            confirm_head=mode.confirm_head,
+        )
+    except ProposalHeadMovedError:
+        # Main moved after the evaluation, before publication (a concurrent
+        # acceptance): a commit pinned to its preview refuses as it would have
+        # at entry; an unpinned one is told to evaluate again.
+        with instance.accepted_head_held() as head_oid:
+            mode.confirm_head(head_oid)
+        raise
     return AdmittedChangeSet(
         previewed=False,
         candidate=submitted.candidate,
