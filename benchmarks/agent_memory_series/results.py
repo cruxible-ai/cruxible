@@ -1,4 +1,4 @@
-"""Append-only raw measurements; unknown usage and ungraded criteria stay unknown."""
+"""Append-only raw measurements; unknown usage and unreviewed answers stay unknown."""
 
 from __future__ import annotations
 
@@ -7,28 +7,32 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from .adapters import MemoryReport, Usage
+from .adapters import MemoryReport, SurfaceAction, Usage
 from .config import Model, Question
 
 
-class CriterionResult(Model):
-    criterion_id: str
-    passed: bool | None = None
+class Review(Model):
+    """The maintainer's eye test of one answer or audit session.
+
+    The three fault flags are the review; `needs_validation_with_blocker` marks
+    an answer that names what is unverified and what blocks verifying it. That
+    is a valid answer, not a missing one.
+    """
+
+    reviewer: str = "manual"
     notes: str = ""
-
-
-class Grade(Model):
-    criteria: tuple[CriterionResult, ...]
-    grader: str
+    stale_as_current: bool | None = None
+    wrong: bool | None = None
+    missing: bool | None = None
+    needs_validation_with_blocker: bool | None = None
 
     @property
     def complete(self) -> bool:
-        return bool(self.criteria) and all(c.passed is not None for c in self.criteria)
+        return None not in (self.stale_as_current, self.wrong, self.missing)
 
-
-class WrongMoves(Model):
-    stale_answer_as_current: bool | None = None
-    lost_finding: bool | None = None
+    @property
+    def flagged(self) -> bool:
+        return bool(self.stale_as_current or self.wrong or self.missing)
 
 
 class SourceSnapshot(Model):
@@ -47,20 +51,26 @@ class SizeMetrics(Model):
 
 
 class Record(Model):
-    version: Literal[1] = 1
+    version: Literal[2] = 2
     kind: Literal["setup", "session", "question"]
+    # Setup records only: an agent setup prompt, or a harness command (no model).
+    setup_kind: Literal["agent", "command"] | None = None
     run_id: str
     arm: Literal["A", "B", "C"]
     repetition: int = Field(ge=1)
     session_index: int = Field(ge=0)
+    setup_step: int | None = Field(default=None, ge=0)
     adapter: str
     dry_run: bool
     prompt: str
     output: str
     usage: Usage
     wall_seconds: float = Field(ge=0)
-    budget_exceeded: bool
+    # The runaway guard is an outcome, not a failure: the run continues.
+    runaway: Literal["wall_clock", "cost"] | None = None
     first_useful_state: bool = False
+    model_id: str | None = None
+    actions: tuple[SurfaceAction, ...] = ()
     source: SourceSnapshot
     size: SizeMetrics | None = None
     upkeep_compute_seconds: float | None = Field(default=None, ge=0)
@@ -69,28 +79,28 @@ class Record(Model):
     between_questions_tokens: int | None = Field(default=None, ge=0)
     between_questions_compute_seconds: float | None = Field(default=None, ge=0)
     question: Question | None = None
-    grade: Grade | None = None
-    wrong_moves: WrongMoves = Field(default_factory=WrongMoves)
+    review: Review | None = None
 
     @model_validator(mode="after")
-    def grading_shape(self) -> Record:
+    def shape(self) -> Record:
         if (self.kind == "question") != (self.question is not None):
-            raise ValueError("only question records carry a question rubric")
-        if self.grade is not None:
-            if self.question is None:
-                raise ValueError("only question records have criterion grades")
-            ids = [c.criterion_id for c in self.grade.criteria]
-            if len(set(ids)) != len(ids) or set(ids) != {c.id for c in self.question.criteria}:
-                raise ValueError("a grade must name every rubric criterion exactly once")
+            raise ValueError("only question records carry a question")
+        if (self.kind == "setup") != (self.setup_step is not None):
+            raise ValueError("only setup records name a setup step")
+        if (self.kind == "setup") != (self.setup_kind is not None):
+            raise ValueError("only setup records name a setup kind")
+        if self.kind == "setup" and self.review is not None:
+            raise ValueError("setup is off the clock and not reviewed")
         return self
 
     @property
-    def key(self) -> tuple[str, str, str, str, str]:
+    def key(self) -> tuple[str, str, str, str, str, str]:
         return (
             self.run_id,
             self.kind,
             str(self.session_index),
             "" if self.question is None else self.question.id,
+            "" if self.setup_step is None else str(self.setup_step),
             str(self.repetition),
         )
 

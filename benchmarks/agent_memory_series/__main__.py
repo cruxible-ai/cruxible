@@ -1,4 +1,4 @@
-"""Run offline fixtures, export/import manual grades, and regenerate summaries."""
+"""Run offline fixtures, export/import review sheets, and regenerate summaries."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pydantic import TypeAdapter
 
 from .adapters import CLIAdapterStub, ScriptedAdapter, ScriptedTurn
 from .config import BenchmarkConfig, load_config, read_data
-from .grading import apply_sheet, export_sheet
+from .grading import apply_sheets, export_sheets
 from .results import load_results, write_results
 from .runner import run_benchmark
 from .summary import write_outputs
@@ -25,16 +25,17 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--output", type=Path, required=True, help="New scratch directory")
     run.add_argument("--adapter", choices=("scripted", "claude-code", "codex"), default="scripted")
     run.add_argument("--script", type=Path, help="Optional YAML/JSON list of scripted replies")
-    export = commands.add_parser("export-grading")
+    export = commands.add_parser("export-review", help="Write per-session review sheets")
     export.add_argument("--results", type=Path, required=True)
-    export.add_argument("--output", type=Path, required=True, help="New CSV file")
+    export.add_argument("--output", type=Path, required=True, help="New directory of CSV sheets")
     export.add_argument("--unblind", action="store_true")
-    grade = commands.add_parser(
-        "grade", help="Import a completed grading sheet into a new result set"
+    review = commands.add_parser("review", help="Import reviewed sheets into a new result set")
+    review.add_argument("--results", type=Path, required=True)
+    review.add_argument(
+        "--sheets", type=Path, nargs="+", required=True, help="CSV files or directories"
     )
-    grade.add_argument("--results", type=Path, required=True)
-    grade.add_argument("--sheet", type=Path, required=True)
-    grade.add_argument(
+    review.add_argument("--reviewer", default="manual")
+    review.add_argument(
         "--output", type=Path, required=True, help="New directory; raw results are preserved"
     )
     summary = commands.add_parser("summarize")
@@ -60,14 +61,15 @@ def main(argv: list[str] | None = None) -> int:
                 config, output=args.output, adapter=adapter, config_directory=args.config.parent
             )
             print(f"Wrote {args.output / 'results.jsonl'} (scripted dry run; no model calls)")
-        elif args.command == "export-grading":
-            export_sheet(load_results(args.results), args.output, blind=not args.unblind)
+        elif args.command == "export-review":
+            args.output.mkdir(parents=True)
+            export_sheets(load_results(args.results), args.output, blind=not args.unblind)
         else:
             records = load_results(args.results)
-            if args.command == "grade":
-                records = apply_sheet(records, args.sheet)
+            if args.command == "review":
+                records = apply_sheets(records, args.sheets, reviewer=args.reviewer)
             args.output.mkdir(parents=True)
-            if args.command == "grade":
+            if args.command == "review":
                 write_results(args.output / "results.jsonl", records)
             write_outputs(records, args.output)
     except (ValueError, OSError, NotImplementedError, RuntimeError) as exc:
