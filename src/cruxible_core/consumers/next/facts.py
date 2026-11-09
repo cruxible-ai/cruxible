@@ -135,7 +135,7 @@ CREATE TABLE claim_facts (
 ) STRICT;
 CREATE INDEX claim_facts_by_slot ON claim_facts(res_slot,claim_id);
 CREATE INDEX claim_facts_by_subject ON claim_facts(subject_path,lifecycle,claim_id);
-CREATE INDEX claim_facts_by_key_object ON claim_facts(object_path,claim_id)
+CREATE INDEX claim_facts_by_key_object ON claim_facts(object_path,lifecycle,subject_path)
  WHERE is_key=1 AND object_path IS NOT NULL;
 CREATE INDEX claim_facts_by_support_expiry ON claim_facts(max_support_expiry_us)
  WHERE max_support_expiry_us IS NOT NULL;
@@ -1878,23 +1878,17 @@ def _subject_end_keys(
             subjects,
         )
     )
-    ends = {
-        str(row[0])
-        for row in _rows(
-            connection,
-            "SELECT DISTINCT object_path FROM claim_facts WHERE is_key=1 AND lifecycle='live' "
-            "AND object_path IN ({marks})",
-            subjects,
-        )
-    }
-    for end in sorted(ends):
-        if _end_entries_moved(connection, end, by_subject[end]):
+    # Whether each changed Subject's entries as an end can move is decided first,
+    # from its own Claims (bounded probes); only then are its pairs read, and an
+    # end observed before and after never touches them.
+    for subject in subjects:
+        if _end_entries_moved(connection, subject, by_subject[subject]):
             links.update(
-                (end, str(row[0]))
+                (subject, str(row[0]))
                 for row in connection.execute(
-                    "SELECT DISTINCT subject_path FROM claim_facts WHERE object_path=? "
-                    "AND is_key=1 AND lifecycle='live'",
-                    (end,),
+                    "SELECT subject_path FROM claim_facts INDEXED BY claim_facts_by_key_object "
+                    "WHERE object_path=? AND lifecycle='live' AND is_key=1",
+                    (subject,),
                 )
             )
     return {(rows.END, rows.end_key(end, pair)) for end, pair in links}

@@ -658,7 +658,8 @@ def end_keys(context: RowContext, keys: Iterable[str]) -> dict[str, KeyRows | No
 
     Per end: one indexed probe for a live observation (an observed end has no
     entries, whatever its pairs hold) and one read of its retired observations;
-    then the pairs in pages of ``END_PAGE``, two queries a page. A key's
+    then the pairs in pages of ``END_PAGE``, one query a page over those pairs'
+    own Claims. A key's
     contributions are the entries of that one pair's Claims, so a change to one
     pair re-derives one key.
     """
@@ -703,31 +704,26 @@ def end_keys(context: RowContext, keys: Iterable[str]) -> dict[str, KeyRows | No
         for start in range(0, len(items), END_PAGE):
             page = items[start : start + END_PAGE]
             pairs = sorted({pair for _key, pair in page})
-            marks = ",".join("?" for _ in pairs)
-            linked = {
-                str(row[0])
-                for row in connection.execute(
-                    "SELECT DISTINCT subject_path FROM claim_facts WHERE object_path=? "
-                    f"AND is_key=1 AND lifecycle='live' AND subject_path IN ({marks})",
-                    (end, *pairs),
-                )
-            }
+            # One read of the page's own Claims, by Subject: each pair's link to
+            # the end comes from its key parts, never from a scan of the end's keys.
+            linked: set[str] = set()
             about: dict[str, list[SubjectEndClaim]] = {}
-            if linked:
-                ordered = sorted(linked)
-                for row in connection.execute(
-                    "SELECT subject_path,claim_id,lifecycle,is_key,visible FROM claim_facts "
-                    f"WHERE subject_path IN ({','.join('?' for _ in ordered)})",
-                    ordered,
-                ):
-                    about.setdefault(str(row[0]), []).append(
-                        SubjectEndClaim(
-                            identity=str(row[1]),
-                            lifecycle=str(row[2]),
-                            is_key=bool(row[3]),
-                            visible=row[4] == 1,
-                        )
+            for row in connection.execute(
+                "SELECT subject_path,claim_id,lifecycle,is_key,visible,object_path "
+                f"FROM claim_facts WHERE subject_path IN ({','.join('?' for _ in pairs)})",
+                pairs,
+            ):
+                pair = str(row[0])
+                if row[3] and row[2] == "live" and row[5] == end:
+                    linked.add(pair)
+                about.setdefault(pair, []).append(
+                    SubjectEndClaim(
+                        identity=str(row[1]),
+                        lifecycle=str(row[2]),
+                        is_key=bool(row[3]),
+                        visible=row[4] == 1,
                     )
+                )
             for key, pair in page:
                 if pair not in linked:
                     continue
