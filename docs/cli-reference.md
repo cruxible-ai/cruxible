@@ -29,6 +29,13 @@ of `.cruxible/files.yaml` when both exist. The global context is only a
 fallback, its remembered instance remains bound to the transport on which it
 was selected, and entering one workspace never retargets another.
 
+When none of these names a daemon, the CLI uses the one answering at
+`<CRUXIBLE_STATE_ROOT>/run/daemon.sock` (the socket the MCP adapter finds or
+starts), reported as `transport=state_root`. It never starts a daemon itself.
+Commands run in server mode: the CLI sends each one to that daemon, which holds
+the state; with no daemon, a command refuses and says how to start one
+(`cruxible server start --socket <state root>/run/daemon.sock`).
+
 `--principal-id` (or `CRUXIBLE_PRINCIPAL_ID`) names the principal this process
 acts as; the CLI, SDK (`Cruxible.connect(principal_id=...)`) and MCP server all
 send it with every request. The daemon checks that it names a registered, active
