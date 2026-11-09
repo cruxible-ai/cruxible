@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from cruxible_core.consumers.next import facts
+from cruxible_core.consumers.next import facts, rows
 from cruxible_core.service.discovery.next import SUBJECT_END_UNOBSERVED
 from tests.core_support._pair_world import (
     APP_EXPOSURE,
@@ -110,5 +110,110 @@ def test_a_judgment_on_a_pair_whose_end_lost_its_observation_resurfaces(tmp_path
     )
     assert len(_stale(instance)) == 1
     accepted(write(instance, {"op": "retire", "target": judgment, "reason": "was-rescinded"}))
+    assert _stale(instance) == []
+    _check(instance)
+
+
+#: The subject-end shape before END keys (FORMAT 14): the key-object index as it was.
+_PRIOR_INDEX = (
+    "CREATE INDEX claim_facts_by_key_object ON claim_facts(object_path,claim_id)\n"
+    " WHERE is_key=1 AND object_path IS NOT NULL;"
+)
+
+
+def _prior_schema() -> str:
+    from cruxible_core.consumers.next.facts import _SCHEMA, FORMAT
+
+    current = (
+        "CREATE INDEX claim_facts_by_key_object ON claim_facts(object_path,lifecycle,"
+        "subject_path)\n WHERE is_key=1 AND object_path IS NOT NULL;"
+    )
+    assert current in _SCHEMA
+    return (
+        _SCHEMA.replace(current, _PRIOR_INDEX)
+        .replace(f"v={FORMAT}", "v=14")
+        .replace(f"VALUES ({FORMAT})", "VALUES (14)")
+    )
+
+
+def test_a_state_built_before_end_keys_rebuilds_once_and_matches_the_fold(
+    tmp_path: Path,
+) -> None:
+    """The reviewer's upgrade: a FORMAT 14 state keeps its subject-end contributions per
+    retired observation and has no END keys; opened by this code it must rebuild, so a
+    re-observation clears the row in the stored queue as in the fold."""
+
+    import json
+    import sqlite3
+
+    from cruxible_core.consumers.next.facts import _STATE, FORMAT
+
+    assert FORMAT > 14
+    instance = pair_world(tmp_path)
+    built = accepted(
+        write(
+            instance,
+            create("c", COMPONENT, "pkg:maven/log4j-core@2.14.1"),
+            create("i", INVENTORY, "web"),
+            create("v", VULN, "CVE-2021-44832"),
+            create("o", OCCURRENCE, {"inventory": {"created": "i"}, "component": {"created": "c"}}),
+            {"op": "set", "subject": {"created": "o"}, "field": "scope", "value": "required"},
+            create(
+                "a",
+                APP_EXPOSURE,
+                {"occurrence": {"created": "o"}, "vulnerability": {"created": "v"}},
+            ),
+            {
+                "op": "set",
+                "subject": {"created": "a"},
+                "field": "justification",
+                "value": "vulnerable_code_not_in_execute_path",
+            },
+        )
+    )
+    scope = _claim(built, "scope")
+    accepted(write(instance, {"op": "retire", "target": scope, "reason": "was-rescinded"}))
+    (row,) = _stale(instance)
+    end = row.detail["stale_inputs"][0]["subject_end"].removeprefix("Subject:")
+
+    # Rewrite the stored state into the prior shape: the prior schema, the same
+    # rows, and the subject-end contribution held under the retired observation.
+    path = _STATE.path(instance)
+    current = path.with_suffix(".current")
+    path.rename(current)
+    prior = sqlite3.connect(path)
+    prior.executescript(_prior_schema())
+    prior.execute("ATTACH DATABASE ? AS cur", (str(current),))
+    tables = [
+        str(name)
+        for (name,) in prior.execute(
+            "SELECT name FROM cur.sqlite_master WHERE type='table' AND name!='format'"
+        )
+    ]
+    for table in tables:
+        prior.execute(f"DELETE FROM main.{table}")
+        prior.execute(f"INSERT INTO main.{table} SELECT * FROM cur.{table}")
+    entries = [
+        (str(entry), str(dependent))
+        for dependent, entry in prior.execute(
+            "SELECT dependent,entry_json FROM dependency_contributions WHERE source LIKE '[%'"
+        )
+    ]
+    assert entries, "the current shape holds the entry under its (end, pair) key"
+    prior.execute("DELETE FROM dependency_contributions WHERE source LIKE '[%'")
+    prior.execute("DELETE FROM row_keys WHERE family=?", (rows.END,))
+    for ordinal, (entry, dependent) in enumerate(entries):
+        source = json.loads(entry)["source_claim_identity"]
+        prior.execute(
+            "INSERT INTO dependency_contributions VALUES (?,?,?,?)",
+            (source, dependent, ordinal, entry),
+        )
+    prior.commit()
+    prior.execute("DETACH DATABASE cur")
+    prior.close()
+    current.unlink()
+
+    # Opened by this code: rebuilt once, then the re-observation clears the row.
+    accepted(write(instance, {"op": "set", "subject": end, "field": "scope", "value": "optional"}))
     assert _stale(instance) == []
     _check(instance)

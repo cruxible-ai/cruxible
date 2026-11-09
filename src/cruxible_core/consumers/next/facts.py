@@ -98,7 +98,9 @@ if TYPE_CHECKING:
 
 #: The derivation format. Bump it whenever a row's derivation changes: the
 #: number is part of the schema text, so a new one rebuilds the state (R5).
-FORMAT = 14  # Claims carry is_key; subject/object indexes for the subject-end rule.
+FORMAT = 15  # Subject-end entries per (end, pair) key; live key-object index. A state
+#: built at 14 holds subject-end contributions per retired observation and no END keys,
+#: so it must rebuild once.
 #: The one deadline next arms: the earliest instant a stored fact or row stops holding.
 NEXT_EXPIRE = "next.expire"
 #: The daily evidence sweep: each fire compares every consulted body's file identity,
