@@ -4060,7 +4060,7 @@ def _claim_dependency_items(
     if (
         claims is not None
         and not any(claim.backing.input_claim_digests for claim in claims)
-        and not _any_retired_claim(instance, coordinate)
+        and not _any_unobserved_pair_end(instance, coordinate)
     ):
         # The skipped retired build would have refused an accepted retired
         # Claim whose adjudication rule no longer reproduces; still refuse.
@@ -4132,15 +4132,49 @@ def _claim_dependency_items(
     )
 
 
-def _any_retired_claim(
+#: Some end of a pair holding a live fact (``pair_units``) has a retired Claim
+#: about it and no live Claim outside the key parts. ``{observed}`` excludes
+#: the key parts (the union over every keyed kind's).
+_UNOBSERVED_PAIR_END_SQL = (
+    "SELECT 1 FROM (SELECT DISTINCT end_path FROM pair_units) AS e "
+    "WHERE NOT EXISTS (SELECT 1 FROM claims AS c INDEXED BY claims_by_subject_predicate "
+    "WHERE c.subject_path=e.end_path AND c.lifecycle='live'{observed}) "
+    "AND EXISTS (SELECT 1 FROM claims AS c INDEXED BY claims_by_subject_predicate "
+    "WHERE c.subject_path=e.end_path AND c.lifecycle='retired') LIMIT 1"
+)
+
+
+def _any_unobserved_pair_end(
     instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
 ) -> bool:
-    """Whether the coordinate holds any retired Claim: one index probe."""
+    """Whether a pair holding a live fact has an end whose observations are all retired.
+
+    The one shape ``subject_end_entries`` turns into an item, read from the pair
+    index (``pair_units``: the ends of every pair holding a live non-key Claim),
+    never by walking retired Claims: an empty index is one probe; otherwise the
+    keyed kinds' key parts are read once and each end costs at most two seeks on its
+    own Claims. It may over-propose (key parts are the union over kinds and
+    visibility is not read), never under-propose.
+    """
 
     with instance.bind_accepted_projection(coordinate) as projection:
+        connection = projection.typed.connection
+        if connection.execute("SELECT 1 FROM pair_units LIMIT 1").fetchone() is None:
+            return False
+        key_parts = sorted(
+            {
+                str(predicate)
+                for (encoded,) in connection.execute(
+                    "SELECT key_predicates FROM subject_kinds WHERE rule='keys'"
+                )
+                for predicate in json.loads(str(encoded))
+            }
+        )
+        marks = ",".join("?" * len(key_parts))
+        observed = f" AND c.predicate NOT IN ({marks})" if key_parts else ""
         return (
-            projection.typed.connection.execute(
-                "SELECT 1 FROM claims WHERE lifecycle='retired' LIMIT 1"
+            connection.execute(
+                _UNOBSERVED_PAIR_END_SQL.format(observed=observed), key_parts
             ).fetchone()
             is not None
         )

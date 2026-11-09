@@ -151,3 +151,114 @@ def test_short_circuit_reproduces_every_retired_rule_without_the_build(
     )
     # Not vacuous: the retired Claim's recorded rule was actually reproduced.
     assert len(reproduced) == len(retired) == 1
+
+
+def test_a_retired_claim_short_circuits_unless_a_pair_end_lost_its_last_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Retired Claims alone keep the short-circuit; a judgment on an unobserved end does not."""
+
+    from cruxible_core.service.discovery.next import SUBJECT_END_UNOBSERVED
+    from tests.core_support._pair_world import (
+        APP_EXPOSURE,
+        COMPONENT,
+        INVENTORY,
+        OCCURRENCE,
+        VULN,
+        accepted,
+        create,
+        pair_world,
+        write,
+    )
+
+    def claim_of(outcome: Any, label_field: str) -> str:
+        return next(
+            item.claim
+            for item in outcome.changes
+            if item.op == "set" and item.field == label_field and item.claim is not None
+        )
+
+    instance = pair_world(tmp_path)
+    judged = accepted(
+        write(
+            instance,
+            create("c", COMPONENT, "pkg:maven/log4j-core@2.14.1"),
+            create("i", INVENTORY, "web"),
+            create("v", VULN, "CVE-2021-44832"),
+            create("o", OCCURRENCE, {"inventory": {"created": "i"}, "component": {"created": "c"}}),
+            {"op": "set", "subject": {"created": "o"}, "field": "scope", "value": "required"},
+            create(
+                "a",
+                APP_EXPOSURE,
+                {"occurrence": {"created": "o"}, "vulnerability": {"created": "v"}},
+            ),
+            {
+                "op": "set",
+                "subject": {"created": "a"},
+                "field": "justification",
+                "value": "vulnerable_code_not_in_execute_path",
+            },
+        )
+    )
+    # A second occurrence no judgment stands on loses its only observation
+    # (the component's create lands on the live one holding its key).
+    other = accepted(
+        write(
+            instance,
+            create("c", COMPONENT, "pkg:maven/log4j-core@2.14.1"),
+            create("i2", INVENTORY, "batch"),
+            create(
+                "o2",
+                OCCURRENCE,
+                {"inventory": {"created": "i2"}, "component": {"created": "c"}},
+            ),
+            {"op": "set", "subject": {"created": "o2"}, "field": "scope", "value": "optional"},
+        )
+    )
+    accepted(
+        write(
+            instance,
+            {"op": "retire", "target": claim_of(other, "scope"), "reason": "was-rescinded"},
+        )
+    )
+
+    def dependency_items() -> tuple[Any, ...]:
+        coordinate = instance.accepted_coordinate()
+        claims = ClaimVerdictReadContext(instance, coordinate).claims()
+        assert any(claim.lifecycle.state == "retired" for claim in claims)
+        assert not any(claim.backing.input_claim_digests for claim in claims)
+        return playbill_next._claim_dependency_items(
+            instance,
+            coordinate=coordinate,
+            evaluation_time=EVALUATION_TIME,
+            access_profile=PROFILE,
+            claims=claims,
+        )
+
+    original = playbill_query._AcceptedQueryFactsRead.build
+    retired_builds: list[bool] = []
+
+    def build(self: Any, *, include_retired: bool = False) -> Any:
+        retired_builds.append(include_retired)
+        return original(self, include_retired=include_retired)
+
+    monkeypatch.setattr(playbill_query._AcceptedQueryFactsRead, "build", build)
+    # Every end of a judged pair is still observed: no retired build.
+    assert dependency_items() == ()
+    assert True not in retired_builds
+
+    # The judged occurrence's scope is retired: its judgment stands on nothing current.
+    accepted(
+        write(
+            instance,
+            {"op": "retire", "target": claim_of(judged, "scope"), "reason": "was-rescinded"},
+        )
+    )
+    (item,) = dependency_items()
+    assert True in retired_builds
+    assert item.reason == "claim_dependency_stale"
+    judgment = claim_of(judged, "justification")
+    assert item.subject_identity == f"Claim:{judgment.removeprefix('Claim:')}"
+    (entry,) = item.detail["stale_inputs"]
+    assert entry["impact_reasons"] == [SUBJECT_END_UNOBSERVED]
+    assert entry["subject_end"].startswith(f"Subject:{OCCURRENCE}/")
