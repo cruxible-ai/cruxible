@@ -454,7 +454,10 @@ def write_workspace(
                 repair_line=(
                     confirmed.refusal.repair
                     if confirmed.refusal is not None
-                    else "Inspect each doc_confirmations result before retrying"
+                    else (
+                        "Inspect each doc_confirmations result, then resend only the "
+                        "tokens still unconfirmed: " + ", ".join(confirmations)
+                    )
                 ),
                 outcome=confirmed,
             )
