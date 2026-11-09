@@ -145,6 +145,10 @@ def test_activation_repairs_a_missing_note_instead_of_stranding_the_proposal(
 
     instance, _owner = initialize_local(tmp_path)
     result = _submit(instance)
+    # Submission queues review-note reconciliation on the workspace advertiser.
+    # Drain that writer before simulating loss; otherwise it can legitimately
+    # restore the note between update-ref and our missing-note assertion.
+    instance.settled_workspace_advertisement()
     ledger = instance._ledger.path
     subprocess.run(
         ["git", f"--git-dir={ledger}", "update-ref", "-d", NOTE_REFS["evaluation"]],
