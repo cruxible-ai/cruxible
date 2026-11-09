@@ -28,6 +28,20 @@ from tests.test_client.test_doc_write_contracts import _edit, _observation
 from tests.test_service.test_write_verbs import _move_to_v7
 
 
+def _load_pending(root: Path, token: str):
+    from cruxible_core.service.authoring import doc_writes
+
+    with doc_writes._pending_store(root) as connection:
+        return doc_writes._load_pending(connection, token)
+
+
+def _save_pending(root: Path, token: str, pending) -> None:
+    from cruxible_core.service.authoring import doc_writes
+
+    with doc_writes._pending_store(root) as connection:
+        doc_writes._store_pending(connection, token, pending)
+
+
 def test_located_own_words_adds_copy_and_retries_without_generation(tmp_path: Path) -> None:
     instance, _ = seed_write_surface(tmp_path)
     request = WriteRequest(
@@ -432,17 +446,17 @@ def test_confirmation_retry_recovers_journal_append_before_pending_receipt(tmp_p
     )
     token = admitted.docs[0].confirmation
     request = WriteRequest(because="File landed", doc_confirmations=(token,))
-    save = doc_writes._save_pending
+    save = doc_writes._store_pending
 
-    def crash(path, pending):
+    def crash(connection, token, pending):
         if pending.before_content_base64 is None:
             raise OSError("crash after history append")
-        save(path, pending)
+        save(connection, token, pending)
 
-    monkeypatch.setattr(doc_writes, "_save_pending", crash)
+    monkeypatch.setattr(doc_writes, "_store_pending", crash)
     with pytest.raises(OSError, match="crash after history append"):
         service_playbill_write(instance, request=request, caller=caller())
-    monkeypatch.setattr(doc_writes, "_save_pending", save)
+    monkeypatch.setattr(doc_writes, "_store_pending", save)
     instance = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert service_playbill_write(instance, request=request, caller=caller()).status == "accepted"
     history = service_playbill_get(
@@ -515,7 +529,9 @@ def test_mixed_file_batch_confirms_only_the_file_whose_cas_succeeded(tmp_path):
 
 
 @pytest.mark.parametrize("count", [65, 500])
-def test_one_request_retains_and_confirms_every_replacement(tmp_path, count):
+def test_one_request_retains_and_confirms_every_replacement(tmp_path, monkeypatch, count):
+    from cruxible_core.service.authoring import doc_writes
+
     instance, _ = seed_write_surface(tmp_path)
     admitted = service_playbill_write(
         instance,
@@ -527,9 +543,20 @@ def test_one_request_retains_and_confirms_every_replacement(tmp_path, count):
     assert admitted.status == "accepted"
     tokens = tuple(doc.confirmation for doc in admitted.docs)
     assert len(set(tokens)) == count and None not in tokens
+    opens = []
+    store = doc_writes._pending_store
+
+    def counted(root):
+        opens.append(root)
+        return store(root)
+
+    monkeypatch.setattr(doc_writes, "_pending_store", counted)
     confirmed = service_playbill_write(
         instance, request=WriteRequest(because="Landed", doc_confirmations=tokens), caller=caller()
     )
+    monkeypatch.setattr(doc_writes, "_pending_store", store)
+    # The pending store opens once per confirmation batch, never per token.
+    assert len(opens) == 1
     assert confirmed.status == "accepted", confirmed
     assert [result.confirmation for result in confirmed.doc_confirmations] == list(tokens)
     assert all(result.refusal is None for result in confirmed.doc_confirmations)
@@ -611,12 +638,12 @@ def test_expired_cleanup_is_source_local_and_unknown_tokens_do_not_strand_valid_
     )
     expired = [admit() for _ in range(3)]
     root = doc_writes._pending_root(instance)
-    pending = doc_writes._load_pending(root / f"{expired[0]}.json")
+    pending = _load_pending(root, expired[0])
     for index in range(unrelated_sources):
         other = pending.model_copy(
             update={"edit": pending.edit.model_copy(update={"source_id": f"other-{index}"})}
         )
-        doc_writes._save_pending(root / f"DCE-{uuid4().hex}.json", other)
+        _save_pending(root, f"DCE-{uuid4().hex}", other)
     now += timedelta(seconds=doc_writes._CONFIRMATION_WINDOW_SECONDS + 1)
 
     def no_scan(*args, **kwargs):
@@ -637,7 +664,7 @@ def test_expired_cleanup_is_source_local_and_unknown_tokens_do_not_strand_valid_
         assert [item.refusal.code for item in result.doc_confirmations if item.refusal] == [
             "cruxible.doc.confirmation_unknown"
         ] * 3
-        assert "do not resend unknown or expired tokens" in result.refusal.repair
+        assert "do not resend unknown tokens" in result.refusal.repair
         # Confirmed receipts remain idempotent after the admission window closes.
         assert (
             service_playbill_write(
@@ -661,7 +688,7 @@ def test_expired_cleanup_is_source_local_and_unknown_tokens_do_not_strand_valid_
         )
 
 
-def test_expired_confirmation_is_reported_without_recording_history(tmp_path):
+def test_token_past_its_deadline_confirms_while_its_row_exists(tmp_path):
     from datetime import timedelta
 
     from cruxible_core.service.authoring import doc_writes
@@ -672,24 +699,23 @@ def test_expired_confirmation_is_reported_without_recording_history(tmp_path):
         request=WriteRequest(because="Replace", docs=(_replacement_observation(),)),
         caller=caller(),
     )
+    token = admitted.docs[0].confirmation
     now = instance.recording_clock() + timedelta(
         seconds=doc_writes._CONFIRMATION_WINDOW_SECONDS + 1
     )
     instance.recording_clock = lambda: now
-    result = service_playbill_write(
+    request = WriteRequest(because="Late", doc_confirmations=(token,))
+    result = service_playbill_write(instance, request=request, caller=caller())
+    # Expiry is garbage collection only; the clock never decides a confirmation.
+    assert result.status == "accepted", result
+    assert result.doc_confirmations[0].refusal is None
+    revisions = service_playbill_get(
         instance,
-        request=WriteRequest(because="Late", doc_confirmations=(admitted.docs[0].confirmation,)),
-        caller=caller(),
-    )
-    assert result.doc_confirmations[0].refusal.code == "cruxible.doc.confirmation_expired"
-    assert (
-        service_playbill_get(
-            instance,
-            request=GetRequest(ref="file:repo.notes", detail="history"),
-            access=BodyAccessContext(principal_id="reader"),
-        ).history.revisions
-        == ()
-    )
+        request=GetRequest(ref="file:repo.notes", detail="history"),
+        access=BodyAccessContext(principal_id="reader"),
+    ).history.revisions
+    assert [entry.value.object["write_id"] for entry in revisions] == [token]
+    assert service_playbill_write(instance, request=request, caller=caller()).status == "accepted"
 
 
 def test_legacy_pending_files_migrate_once_without_evicting_in_flight_tokens(tmp_path):
@@ -702,21 +728,37 @@ def test_legacy_pending_files_migrate_once_without_evicting_in_flight_tokens(tmp
         caller=caller(),
     )
     root = doc_writes._pending_root(instance)
-    pending = doc_writes._load_pending(root / f"{admitted.docs[0].confirmation}.json")
+    pending = _load_pending(root, admitted.docs[0].confirmation)
     (root.parent / "pending.sqlite3").unlink()
     root.mkdir()
     for index in range(65):
         record = pending if index else pending.model_copy(update={"before_content_base64": None})
         (root / f"DCE-{index:032x}.json").write_text(record.model_dump_json())
-    assert doc_writes._load_pending(root / f"DCE-{1:032x}.json") == pending
+    assert _load_pending(root, f"DCE-{1:032x}") == pending
     assert not root.exists()
     with doc_writes._pending_store(root) as connection:
         assert connection.execute("SELECT count(*) FROM pending_edits").fetchone()[0] == 65
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
-    assert doc_writes._load_pending(root / f"DCE-{0:032x}.json").before_content_base64 is None
+    assert _load_pending(root, f"DCE-{0:032x}").before_content_base64 is None
 
 
-def test_count_bounded_sqlite_store_migrates_deadlines_from_issuance_once(tmp_path):
+@pytest.fixture
+def non_utc_host_zone(monkeypatch):
+    """A naive stamp read as host-local time would shift a deadline by hours."""
+    import time
+
+    monkeypatch.setenv("TZ", "America/New_York")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+@pytest.mark.parametrize("naive", [False, True])
+def test_count_bounded_sqlite_store_migrates_deadlines_from_issuance_once(
+    tmp_path, non_utc_host_zone, naive
+):
+    import json
     import sqlite3
 
     from cruxible_core.service.authoring import doc_writes
@@ -729,8 +771,11 @@ def test_count_bounded_sqlite_store_migrates_deadlines_from_issuance_once(tmp_pa
     )
     token = admitted.docs[0].confirmation
     root = doc_writes._pending_root(instance)
-    path = root / f"{token}.json"
-    pending = doc_writes._load_pending(path)
+    pending = _load_pending(root, token)
+    stored = json.loads(pending.model_dump_json())
+    if naive:
+        stored["actor"]["timestamp"] = stored["actor"]["timestamp"].removesuffix("+00:00")
+        assert "+" not in stored["actor"]["timestamp"]
     database = root.parent / "pending.sqlite3"
     database.unlink()
     with sqlite3.connect(database) as connection:
@@ -741,11 +786,11 @@ def test_count_bounded_sqlite_store_migrates_deadlines_from_issuance_once(tmp_pa
         )
         connection.execute(
             "INSERT INTO pending_edits(token,source_id,unconfirmed,payload) VALUES(?,?,1,?)",
-            (token, pending.edit.source_id, pending.model_dump_json()),
+            (token, pending.edit.source_id, json.dumps(stored)),
         )
         connection.execute("PRAGMA user_version=1")
     for _ in range(2):
-        assert doc_writes._load_pending(path) == pending
+        assert _load_pending(root, token) == pending
         with doc_writes._pending_store(root) as connection:
             deadline = connection.execute("SELECT expires_at FROM pending_edits").fetchone()[0]
             assert (
@@ -760,8 +805,6 @@ def test_count_bounded_sqlite_store_migrates_deadlines_from_issuance_once(tmp_pa
 
 
 def test_client_exposes_confirmation_failures_without_repeating_unknown_tokens(tmp_path):
-    from datetime import timedelta
-
     from cruxible_core.service.authoring import doc_writes
 
     instance, _ = seed_write_surface(tmp_path)
@@ -772,16 +815,15 @@ def test_client_exposes_confirmation_failures_without_repeating_unknown_tokens(t
 
     def submit(request):
         if request.doc_confirmations:
-            now = instance.recording_clock() + timedelta(
-                seconds=doc_writes._CONFIRMATION_WINDOW_SECONDS + 1
-            )
-            instance.recording_clock = lambda: now
+            # Garbage collection removed the pending row before the client confirmed.
+            with doc_writes._pending_store(doc_writes._pending_root(instance)) as connection:
+                connection.execute("DELETE FROM pending_edits")
         return service_playbill_write(instance, request=request, caller=caller())
 
     with pytest.raises(WriteRefusalError) as caught:
         write_workspace(
             WriteRequest(
-                because="Landed too late",
+                because="Landed after cleanup",
                 docs=(ReplaceSection(file="notes.md", section=("Reason",), text="# Reason\nnew"),),
             ),
             workspace=workspace,
@@ -790,7 +832,7 @@ def test_client_exposes_confirmation_failures_without_repeating_unknown_tokens(t
     assert path.read_bytes() == b"# Reason\nnew\n"
     assert (
         caught.value.outcome.doc_confirmations[0].refusal.code
-        == "cruxible.doc.confirmation_expired"
+        == "cruxible.doc.confirmation_unknown"
     )
     assert "do not resend" in caught.value.repair_line
     assert "Retry write with doc_confirmations" not in caught.value.repair_line
@@ -875,11 +917,15 @@ def test_concurrent_confirmations_return_a_typed_retry_and_never_duplicate_histo
         patch.setattr(LocalJournalBackend, "activate_writer", race_activation)
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(confirm, attempted))
-    assert sorted(result.status for result in results) == ["accepted", "refused"]
-    failed = next(result for result in results if result.refused).doc_confirmations[0]
-    assert failed.refusal.code == "cruxible.doc.confirmation_conflict"
-    assert failed.confirmation in failed.refusal.repair
-    assert "Retry write with doc_confirmations" in failed.refusal.repair
+    if same_token:
+        # The loser's conflict re-probes and finds the winner's record of it.
+        assert [result.status for result in results] == ["accepted", "accepted"]
+    else:
+        assert sorted(result.status for result in results) == ["accepted", "refused"]
+        failed = next(result for result in results if result.refused).doc_confirmations[0]
+        assert failed.refusal.code == "cruxible.doc.confirmation_conflict"
+        assert failed.confirmation in failed.refusal.repair
+        assert "Retry write with doc_confirmations" in failed.refusal.repair
     # A retry after either interleaving records only missing events.
     for token in attempted:
         assert confirm(token).status == "accepted"
@@ -890,3 +936,46 @@ def test_concurrent_confirmations_return_a_typed_retry_and_never_duplicate_histo
     ).history
     assert len(history.revisions) == (1 if same_token else 2)
     assert {entry.value.object["write_id"] for entry in history.revisions} == set(attempted)
+
+
+def test_same_token_confirmed_after_an_empty_probe_is_never_appended_twice(tmp_path, monkeypatch):
+    from cruxible_core.exhaust.backends import LocalJournalBackend
+    from cruxible_core.service.authoring import doc_writes
+
+    instance, _ = seed_write_surface(tmp_path)
+    admitted = service_playbill_write(
+        instance,
+        request=WriteRequest(because="Replace", docs=(_replacement_observation(),)),
+        caller=caller(),
+    )
+    token = admitted.docs[0].confirmation
+    select = LocalJournalBackend.select_records
+    raced = False
+
+    def interleave(self, stream, **filters):
+        nonlocal raced
+        rows = select(self, stream, **filters)
+        if not raced and filters.get("event_kind") == "doc_edit" and filters.get("payload_digest"):
+            assert rows == ()
+            raced = True
+            # Another confirmation of the same token lands after this empty
+            # probe, while no pending-store lock is held.
+            other = doc_writes.confirm_doc_edits(instance, tokens=(token,), actor=caller().actor)
+            assert other.status == "accepted", other
+        return rows
+
+    monkeypatch.setattr(LocalJournalBackend, "select_records", interleave)
+    first = service_playbill_write(
+        instance,
+        request=WriteRequest(because="Landed", doc_confirmations=(token,)),
+        caller=caller(),
+    )
+    monkeypatch.setattr(LocalJournalBackend, "select_records", select)
+    assert raced
+    assert first.status == "accepted", first
+    revisions = service_playbill_get(
+        instance,
+        request=GetRequest(ref="file:repo.notes", detail="history"),
+        access=BodyAccessContext(principal_id="reader"),
+    ).history.revisions
+    assert [entry.value.object["write_id"] for entry in revisions] == [token]

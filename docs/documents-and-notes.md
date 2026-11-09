@@ -94,10 +94,12 @@ heading paths to find sections:
   digest and the author who replaced it; each entry links to its retained bytes.
   History records an edit only after the file write succeeds; a local file
   conflict leaves history unchanged.
-  The client confirms each landed replacement within 24 hours of admission;
-  other writers cannot evict it during that window. A confirmation batch
-  records valid tokens even if another token is unknown or expired, and
-  reports each result in `doc_confirmations`. Do not resend unknown or expired
+  The client confirms each landed replacement after the file write; a token
+  stays confirmable while its pending record exists, and other writers cannot
+  evict it. Unconfirmed records more than 24 hours old may be removed when the
+  same file is written again, and a removed token reads as unknown. A
+  confirmation batch records valid tokens even if another token is unknown,
+  and reports each result in `doc_confirmations`. Do not resend unknown
   tokens. A client crash after writing the file but before confirmation can
   leave that edit without retained history.
   File overwrite history is live operational state. An `at` pin to an earlier
