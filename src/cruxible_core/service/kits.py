@@ -2122,6 +2122,15 @@ def _add_kit(
     bundle = request.bundle
     manifest = bundle.manifest
     contents = _verify_bundle(bundle)
+    if mode.previewing:
+        # The adapters send Document bytes with previews instead of persisting
+        # them first. change_scope's dry-run body store holds these only in memory.
+        store = instance.body_store()
+        for body in bundle.document_bodies:
+            if store.store(body.content).digest != body.digest:
+                raise DataValidationError(
+                    f"kit Document body {body.digest} differs from its digest"
+                )
     # Every governed Document's body is staged before anything is planned.
     _require_document_bodies(instance, contents)
     tree = instance.immutable_tree_at(mode.head.git_oid)
