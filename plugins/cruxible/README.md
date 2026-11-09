@@ -9,9 +9,12 @@ describe the domain. The plugin contains no kit-specific audit method.
 `plugins/release.json` is the release definition. **0.0.0 is an unpublished
 version placeholder**: replace it with the chosen release version at the bump,
 then run `python scripts/build_agent_plugin.py`. Do not publish the placeholder.
-`--check` checks the generated manifests, catalogs, MCP configs, README and skill
-copies without modifying them. Edit source skills under `skills/`, not the
-generated `plugins/cruxible/skills/` copies.
+`--check` checks the generated manifests, catalogs, MCP configs, README, skill
+copies and bundled docs without modifying them. Edit source skills under
+`skills/`, not the generated `plugins/cruxible/skills/` copies. The core docs the
+skills link are copied into `plugins/cruxible/docs/` from the release's own
+checkout, so they match the pinned runtime; a link to a doc outside the bundle
+keeps only its text.
 
 Claude Code uses `.claude-plugin/marketplace.json` at this repository's root
 and `.claude-plugin/plugin.json` plus `.mcp.json` inside `plugins/cruxible`.
@@ -32,8 +35,8 @@ pulls and attestations omitted from the lean MCP catalog; the same pinned
 With no explicit daemon transport, the adapter finds or auto-starts the local
 daemon. The default tier is **admin**; the pinned 20-tool allowlist still hides
 the rest of the catalog. Admin permits endpoints, not unlawful state: evidence,
-principals, Mandates and approval policy still apply. A second agent reviews
-the exact candidate; never self-approve, including with auth off. The single
+principals, Mandates and approval policy still apply. A separate agent session
+(its own principal) reviews the exact candidate; never self-approve, including with auth off. The single
 plugin does not enforce separate identities while auth is off.
 
 The plugin catalog measures 15,083 estimated model-visible tokens (input schemas
@@ -88,7 +91,7 @@ is another launch option when that checkout already has a synced environment.
 
 Use adopt-kit to preview and install a digest-pinned release with `kit add`.
 A kit's manifest names its inert automation template: tailor, submit and obtain
-second-agent approval/acceptance, then preview and run its start Runbook.
+approval/acceptance from a separate agent session (its own principal), then preview and run its start Runbook.
 Enabling scheduled Lines is a separate decision. A review-stopped run leaves a
 proposal to resolve before an explicit rerun. Report provider/ordering refusals
 as served; do not manually pre-seed Contracts as an onboarding workaround.

@@ -4,10 +4,35 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = Path("plugins/cruxible")
+#: Core docs the skills link, copied into the package so links resolve offline at
+#: the release's own version. A skill links ``../../docs/NAME.md``: the checkout's
+#: docs/ from source, the package's docs/ once installed.
+BUNDLED_DOCS = (
+    "documents-and-notes.md",
+    "evolving-your-vocabulary.md",
+    "kits.md",
+    "lines-and-automation.md",
+)
+_LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+
+
+def bundled_doc(text: str, name: str, version: str) -> bytes:
+    """One core doc as packaged: links to docs left out of the bundle keep only their text."""
+
+    def link(match: re.Match[str]) -> str:
+        target = match.group(2)
+        local = target.split("#", 1)[0]
+        if "://" in target or not local or local in BUNDLED_DOCS:
+            return match.group(0)
+        return match.group(1)
+
+    header = f"<!-- Bundled from cruxible {version} docs/{name}. -->\n\n"
+    return (header + _LINK.sub(link, text)).encode()
 
 
 def plugin_files(root: Path = ROOT) -> dict[Path, bytes]:
@@ -73,6 +98,9 @@ def plugin_files(root: Path = ROOT) -> dict[Path, bytes]:
     }
     for source in sorted((root / "skills").rglob("*.md")):
         files[PACKAGE / source.relative_to(root)] = source.read_bytes()
+    for name in BUNDLED_DOCS:
+        text = (root / "docs" / name).read_text()
+        files[PACKAGE / "docs" / name] = bundled_doc(text, name, release["version"])
     files[PACKAGE / "README.md"] = (root / "plugins/README.md").read_bytes()
     return files
 

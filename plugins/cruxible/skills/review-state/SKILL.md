@@ -14,7 +14,9 @@ does not imply an audit of every kind or permission to repair the instance.
 rows with verdict flags; `get` exposes a reference's summary, evidence, why
 and history. Distinguish an explicit none from an unknown or unexamined value.
 A stored Claim is not automatically supported, and a proposal is not accepted
-state. Name the evidence and coordinate behind a conclusion.
+state. Name the evidence and coordinate behind a conclusion. Before
+re-deriving one, check whether an accepted Claim already answers the question;
+cite it instead of recomputing, and use `next` to see what changed since.
 
 Pair Subjects have immutable ends and facts of their own. Follow served
 pair/backlink cursors; hidden counts do not disclose hidden members. Governed
@@ -28,8 +30,9 @@ passage, a Capture or a contract. Supporting, contradicting and unsure have
 different consequences. An attestation is a signed append, never proposal
 approval; append one only when requested, with what was actually examined.
 
-For proposal review, use the exact candidate digest and a second agent; never
-approve your own proposal, even with auth off. The [governance reference](../_shared/references/governance-flow.md)
+For proposal review, use the exact candidate digest from a separate agent
+session (its own principal); never approve your own proposal, even with auth
+off. The [governance reference](../_shared/references/governance-flow.md)
 covers acceptance and changed candidates. Authorized repairs use
 [guarded edits](../_shared/references/concurrent-edits.md). Report findings with
 references, evidence, repair and limits of what was checked; do not turn

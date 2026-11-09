@@ -20,17 +20,21 @@ not an installed kit; report its served repair.
 
 The manifest's `automation_template` names inert local automation, not an
 assumed examples path. Starting it has two parts: tailor the template's
-sources, names, timing and grants, then submit and obtain a second agent's
-review and approval; after acceptance, inspect `cruxible runbook preview
-<start>` and run `cruxible runbook run <start>` when authorized. A review stop
+sources, names, timing and grants, then submit and obtain review and approval
+from a separate agent session (its own principal); after acceptance, inspect
+`cruxible runbook preview <start>` and run `cruxible runbook run <start>` when
+authorized. A review stop
 leaves a proposal, not permission to approve it yourself. Enabling scheduled
-Lines is separate consent.
+Lines is separate consent. Facts copied from sources settle under a Line's
+Mandate; judgments always need review.
 
 Upgrades expose local divergences and dependent definitions. Preserve or retire
 them deliberately using the preview, rather than overwriting local choices.
-Additional vocabulary uses a local namespace; explain what it adds.
+Installed kit definitions can be revised locally like any definition; new
+vocabulary can also go in a local namespace. Explain what a change adds.
 
-For proposal handling read [governance](../_shared/references/governance-flow.md);
-for guarded edits read [concurrent edits](../_shared/references/concurrent-edits.md).
+The bundled [kits reference](../../docs/kits.md) explains manifests, releases,
+upgrades and kit automation. For proposal handling read
+[governance](../_shared/references/governance-flow.md); for guarded edits read [concurrent edits](../_shared/references/concurrent-edits.md).
 Kit adoption does not itself justify copying external data: apply the
 [copy-in rule](../_shared/references/copy-in.md).
