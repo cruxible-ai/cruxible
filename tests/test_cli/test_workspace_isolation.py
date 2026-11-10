@@ -164,9 +164,9 @@ def test_an_unbound_workspace_never_borrows_a_remembered_local_instance(
     plain.mkdir(parents=True)
     # The previous build's context shape: no folder recorded for the instance.
     local = {
-        "server_socket": "/tmp/daemon.sock",
+        "server_socket": "/nonexistent/run/daemon.sock",
         "instance_id": "inst_a",
-        "instance_transport": f"unix://{Path('/tmp/daemon.sock').resolve()}",
+        "instance_transport": f"unix://{Path('/nonexistent/run/daemon.sock').resolve()}",
     }
 
     inside = resolve_context(environ={}, remembered=local, cwd=inner, home=home)
@@ -195,9 +195,9 @@ def test_an_unbound_workspace_never_borrows_a_remembered_local_instance(
 _REMEMBERED = {
     "none": {},
     "local": {
-        "server_socket": "/tmp/daemon.sock",
+        "server_socket": "/nonexistent/run/daemon.sock",
         "instance_id": "inst_remembered",
-        "instance_transport": f"unix://{Path('/tmp/daemon.sock').resolve()}",
+        "instance_transport": f"unix://{Path('/nonexistent/run/daemon.sock').resolve()}",
     },
     "remote": {"server_url": "https://remote.example.test", "instance_id": "inst_remembered"},
 }
