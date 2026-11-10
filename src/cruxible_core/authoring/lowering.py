@@ -1009,53 +1009,6 @@ class AuthoringDuplicateStatement(FormatError):
     error_code = "cruxible.authoring.duplicate_statement"
 
 
-def _same_predicate_claims(
-    tree: Mapping[str, bytes], statement: ClaimStatement
-) -> tuple[ClaimArtifact, ...]:
-    """Return every live Claim on this statement's (subject, predicate).
-
-    Wider than the contended slot: these are the Claims an author may
-    disposition voluntarily, not the ones the law demands.
-    """
-    claims: list[ClaimArtifact] = []
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("claims/"):
-            continue
-        claim = parse_claim(tree[path], path=path)
-        if (
-            claim.lifecycle.state == "live"
-            and claim.statement.subject == statement.subject
-            and claim.statement.predicate == statement.predicate
-        ):
-            claims.append(claim)
-    return tuple(claims)
-
-
-def _same_slot_claims(
-    tree: Mapping[str, bytes], statement: ClaimStatement
-) -> tuple[ClaimArtifact, ...]:
-    """Return the live Claims contending for this statement's own slot.
-
-    The slot is ``(subject, predicate, qualifier)`` — the same partition the
-    resolution policy and the curation detectors already use. Matching on
-    subject+predicate alone made every distinct qualifier and every
-    cardinality=many sibling demand a disposition it does not contend with.
-    """
-    claims: list[ClaimArtifact] = []
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("claims/"):
-            continue
-        claim = parse_claim(tree[path], path=path)
-        if (
-            claim.lifecycle.state == "live"
-            and claim.statement.subject == statement.subject
-            and claim.statement.predicate == statement.predicate
-            and claim.statement.qualifier == statement.qualifier
-        ):
-            claims.append(claim)
-    return tuple(claims)
-
-
 class _ClaimPredicateIndex:
     """Compatibility cursor over live contenders in one exact staged tree.
 

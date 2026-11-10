@@ -62,9 +62,6 @@ from cruxible_client.contracts.source_references import (
     SourceDereferenceResult,
     SourceHandle,
 )
-from cruxible_client.contracts.subjects import (
-    parse_subject,
-)
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
 from cruxible_core.indexes.claims.projection_claims import ClaimProjectionView
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -72,7 +69,7 @@ from cruxible_core.query.dereference import (
     ExternalSelectionReaderProtocol,
     dereference_source_handle,
 )
-from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
 from cruxible_core.service.claims.retirement_context import (
     ClaimRetirementContextV1,
     claim_retirement_context,
@@ -254,20 +251,6 @@ class PlaybillClaimExplanation(_StrictClaimServiceModel):
     )
 
 
-def _resolve_coordinate(
-    instance: PlaybillInstance,
-    at: AcceptedCoordinate | None,
-) -> AcceptedProjectionCoordinate:
-    if at is None:
-        return instance.accepted_coordinate()
-    return instance.resolve_accepted_coordinate(
-        git_oid=at.git_oid,
-        semantic_root=at.semantic_root,
-        generation_root=at.generation_root,
-        compiler_digest=at.compiler_digest,
-    )
-
-
 def _public_claim(view: ClaimProjectionView) -> PlaybillClaimView:
     if view.coordinate_kind != "canonical" or not isinstance(
         view.coordinate, AcceptedProjectionCoordinate
@@ -381,17 +364,6 @@ def _accepted_claim_ids(
         return tuple(row.identity.removeprefix("Claim:") for row in rows)
 
 
-def _observed_at(timestamp: str) -> datetime:
-    raw = timestamp[:-1] + "+00:00" if timestamp.endswith("Z") else timestamp
-    try:
-        value = datetime.fromisoformat(raw)
-    except ValueError as exc:
-        raise ProposalIntegrityError("authenticated request timestamp is malformed") from exc
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ProposalIntegrityError("authenticated request timestamp must be timezone-aware")
-    return value
-
-
 @positioned_read
 def service_get_playbill_claim(
     instance: PlaybillInstance,
@@ -401,7 +373,7 @@ def service_get_playbill_claim(
     evaluation_time: datetime | None = None,
 ) -> ClaimViewRecord:
     expected = "Claim:CLM-<32 lowercase hex> or CLM-<32 lowercase hex>"
-    coordinate = _resolve_coordinate(instance, at)
+    coordinate = accepted_coordinate_at(instance, at)
     bare = _resolved_claim_id(instance, identity, coordinate=coordinate)
     try:
         path = claim_path(bare)
@@ -481,7 +453,7 @@ def service_list_playbill_claims(
     include_retired: bool = False,
     subject_kind: str | None = None,
 ) -> PlaybillClaimList:
-    coordinate = _resolve_coordinate(instance, at)
+    coordinate = accepted_coordinate_at(instance, at)
     with instance.bind_accepted_projection(coordinate) as projection:
         claims = tuple(
             _public_claim(item)
@@ -1003,7 +975,7 @@ def service_explain_playbill_claim(
         service_evaluate_playbill_claim_verdict,
     )
 
-    coordinate = _resolve_coordinate(instance, at)
+    coordinate = accepted_coordinate_at(instance, at)
     evaluated_at = evaluation_time or datetime.now(UTC)
     read = service_get_playbill_claim(
         instance,
@@ -1184,17 +1156,6 @@ def service_explain_playbill_claim(
     )
 
 
-def _subject_identity(tree: Mapping[str, bytes], path: str) -> str | None:
-    """Return one accepted Subject's identity, or None when it is absent.
-
-    An accepted Claim pins the Subject it is about, so the absent case is
-    defensive rather than reachable.
-    """
-
-    content = tree.get(path)
-    return None if content is None else parse_subject(content, path=path).identity.qualified
-
-
 class _InstanceSourceMaterialResolver:
     """Bind the shared dereference engine to one accepted coordinate's retained bytes."""
 
@@ -1240,7 +1201,7 @@ def service_open_playbill_source(
     coverage, budget, and access laws cannot drift apart by source kind.
     """
 
-    coordinate = _resolve_coordinate(instance, at)
+    coordinate = accepted_coordinate_at(instance, at)
     return dereference_source_handle(
         request,
         access=access,

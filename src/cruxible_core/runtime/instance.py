@@ -197,6 +197,7 @@ from cruxible_core.proposals.settlement import (
 from cruxible_core.runtime.phase_timing import phase
 from cruxible_core.runtime.retention import DEFAULT_RETENTION, RetentionSettings
 from cruxible_core.startup_progress import slow_step
+from cruxible_core.storage import fsync_directory as _fsync_directory
 from cruxible_core.storage.cas import (
     CasObjectMetadata,
     ContentAddressedBodyStore,
@@ -226,14 +227,6 @@ def _resolved(path: Path) -> Path:
 
 def _is_within(candidate: Path, root: Path) -> bool:
     return candidate == root or root in candidate.parents
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _exclusive_write(path: Path, content: bytes, mode: int = 0o600) -> None:
@@ -775,9 +768,6 @@ class PlaybillInstance:
                 "ledger object format differs from descriptor; object-format changes require "
                 "an explicit fork/import"
             )
-        if not is_previewing():
-            # One-time, idempotent move of the pre-rename note refs; O(1) once done.
-            ledger.migrate_legacy_note_refs()
         verified = verify_genesis(
             ledger,
             descriptor.genesis.git_oid,
@@ -3255,4 +3245,20 @@ class PlaybillInstance:
         return activated
 
 
-__all__ = ["DESCRIPTOR_FILE", "PlaybillInstance"]
+def accepted_coordinate_at(
+    instance: PlaybillInstance,
+    at: AcceptedCoordinate | None,
+) -> AcceptedProjectionCoordinate:
+    """The verified accepted coordinate ``at`` names; the current one when ``at`` is None."""
+
+    if at is None:
+        return instance.accepted_coordinate()
+    return instance.resolve_accepted_coordinate(
+        git_oid=at.git_oid,
+        semantic_root=at.semantic_root,
+        generation_root=at.generation_root,
+        compiler_digest=at.compiler_digest,
+    )
+
+
+__all__ = ["DESCRIPTOR_FILE", "PlaybillInstance", "accepted_coordinate_at"]

@@ -140,16 +140,6 @@ def _spelled_fields(value: Mapping[str, ContractField] | None) -> dict[str, obje
     return result
 
 
-def _template_tag(value: Any) -> str:
-    if isinstance(value, Ref) or (isinstance(value, Mapping) and "$ref" in value):
-        return "ref"
-    if isinstance(value, Mapping):
-        return "object"
-    if isinstance(value, list | tuple):
-        return "list"
-    return "scalar"
-
-
 #: A value template: literal JSON whose leaves may be typed references. A
 #: literal string never names a reference (a reference is always a ``Ref``).
 Template = TypeAliasType(

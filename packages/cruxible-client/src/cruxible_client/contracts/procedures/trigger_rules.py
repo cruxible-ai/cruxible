@@ -47,12 +47,6 @@ def trigger_capture_target(
     return node, descriptor
 
 
-def trigger_capture_source(line: LineSpec, procedure: AcceptedProcedure) -> CallNode:
-    """The acquiring call a trigger substitutes (see :func:`trigger_capture_target`)."""
-
-    return trigger_capture_target(line, procedure)[0]
-
-
 def validate_trigger_input(line: LineSpec, procedure: AcceptedProcedure) -> str | None:
     """The Line law's trigger check: ``None`` when it holds, else why it fails."""
     if line.trigger_input is None:
@@ -66,7 +60,6 @@ def validate_trigger_input(line: LineSpec, procedure: AcceptedProcedure) -> str 
 
 __all__ = [
     "TriggerTargetRefused",
-    "trigger_capture_source",
     "trigger_capture_target",
     "validate_trigger_input",
 ]

@@ -542,11 +542,10 @@ def test_kit_mover_discovery_is_flat_with_retained_builds(
 # `cruxible_core.service.discovery.discovery.accepted_provider_interfaces`,
 # both removed with ProviderInterface (B2 noun removal); no replacement
 # resolver with this "resolved + considered candidates" shape exists. The
-# remaining routes exercise mechanisms that are still live.
-@pytest.mark.parametrize("route", ["catalog", "blueprint"])
-def test_read_work_is_flat_with_metadata_history(tmp_path, monkeypatch, package, route):
+# "blueprint" route went with the unused `get._fitting_names` helper. The
+# catalog route exercises a mechanism that is still live.
+def test_read_work_is_flat_with_metadata_history(tmp_path, monkeypatch, package):
     from cruxible_core.indexes.history.history_index import _MEMBER_SCHEMA
-    from cruxible_core.service.discovery.get import _fitting_names
     from cruxible_core.service.procedures.provider_installation import installed_providers
 
     work = []
@@ -575,12 +574,7 @@ def test_read_work_is_flat_with_metadata_history(tmp_path, monkeypatch, package,
         instance.bind_accepted_projection = lambda _: nullcontext(SimpleNamespace(typed=typed))
 
         def read():
-            if route == "catalog":
-                assert len(installed_providers(instance)) == 2
-            else:
-                assert _fitting_names(
-                    SimpleNamespace(typed=typed), (providers[-1].identity.name,)
-                ) == (NAME,)
+            assert len(installed_providers(instance)) == 2
 
         work.append(_work(instance, monkeypatch, read))
         instance.connection.close()

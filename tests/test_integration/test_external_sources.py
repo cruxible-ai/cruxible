@@ -28,7 +28,6 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import render_subject, subject_digest, subject_path
 from cruxible_core.evidence.source_readers import (
     ExternalSourceReadRequestV1,
-    FakeVersionedExternalSourceReader,
     ProducerBindingV1,
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -41,6 +40,7 @@ from tests.core_support._pc_c_support import (
     provider_run,
 )
 from tests.core_support._subject_kind_support import core_assigned
+from tests.support.external_sources import FakeVersionedExternalSourceReader
 from tests.support.procedures import procedure_members
 from tests.support.provider_builds import capture_provider_build
 from tests.test_claims.test_claims import TIMESTAMP, _claim, _claim_type, _subject

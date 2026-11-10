@@ -34,7 +34,7 @@ from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposals import (
     ProposalAdmissionRequest,
 )
-from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
 from cruxible_core.service.authoring.documents import (
     AcceptedCoordinate,
     ProposalInspection,
@@ -57,20 +57,6 @@ class PlaybillClaimTypeView(_StrictClaimTypeServiceModel):
     identity: str
     artifact_digest: str
     envelope: dict[str, object]
-
-
-def _resolve_coordinate(
-    instance: PlaybillInstance,
-    at: AcceptedCoordinate | None,
-) -> AcceptedProjectionCoordinate:
-    if at is None:
-        return instance.accepted_coordinate()
-    return instance.resolve_accepted_coordinate(
-        git_oid=at.git_oid,
-        semantic_root=at.semantic_root,
-        generation_root=at.generation_root,
-        compiler_digest=at.compiler_digest,
-    )
 
 
 def _view(
@@ -103,7 +89,7 @@ def service_propose_playbill_claim_type(
 ) -> ProposalInspection:
     """Submit (or preview) one ClaimType candidate through the generic proposal path."""
 
-    proposed_base = _resolve_coordinate(instance, base)
+    proposed_base = accepted_coordinate_at(instance, base)
     candidate_tree = instance.immutable_tree_at(proposed_base.git_oid).fork()
     candidate_tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
     install_builtin_capture_dependencies(claim_type, candidate_tree)
@@ -140,7 +126,7 @@ def service_propose_playbill_builtin_claim_type(
     """Adopt the daemon's exact builtin bytes, never a caller-supplied envelope."""
 
     claim_type = builtin_claim_type(builtin)
-    coordinate = _resolve_coordinate(instance, base)
+    coordinate = accepted_coordinate_at(instance, base)
     held = instance.immutable_tree_at(coordinate.git_oid).get(claim_type_path(builtin))
     if held is not None:
         raise (
@@ -178,7 +164,7 @@ def service_propose_playbill_claim_type_input(
 ) -> ClaimTypeInputProposalResultV1:
     """Lower and lint one tagless ClaimType input against one captured coordinate."""
 
-    coordinate = _resolve_coordinate(instance, base)
+    coordinate = accepted_coordinate_at(instance, base)
     tree = instance.immutable_tree_at(coordinate.git_oid)
     claim_type = lower_claim_type_input(input, tree=tree)
     path = claim_type_path(claim_type.predicate)
@@ -275,7 +261,7 @@ def service_get_playbill_claim_type(
 ) -> PlaybillClaimTypeView:
     """Return one accepted ClaimType, refusing when the predicate is absent."""
 
-    coordinate = _resolve_coordinate(instance, at)
+    coordinate = accepted_coordinate_at(instance, at)
     path = claim_type_path(predicate)
     with instance.bind_accepted_projection(coordinate) as projection:
         claim_type = projection.typed.source(f"ClaimType:{predicate}")

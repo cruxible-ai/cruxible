@@ -14,7 +14,7 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_path,
 )
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
-from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
 from cruxible_core.service.authoring.documents import (
     AcceptedCoordinate,
 )
@@ -34,20 +34,6 @@ class QueryDefinitionView(_StrictQueryDefinitionServiceModel):
     identity: str
     artifact_digest: str
     envelope: dict[str, object]
-
-
-def _resolve_coordinate(
-    instance: PlaybillInstance,
-    at: AcceptedCoordinate | None,
-) -> AcceptedProjectionCoordinate:
-    if at is None:
-        return instance.accepted_coordinate()
-    return instance.resolve_accepted_coordinate(
-        git_oid=at.git_oid,
-        semantic_root=at.semantic_root,
-        generation_root=at.generation_root,
-        compiler_digest=at.compiler_digest,
-    )
 
 
 def _view(
@@ -108,7 +94,7 @@ def service_get_playbill_query_definition(
 ) -> QueryDefinitionView:
     """Return one accepted QueryDefinition, refusing when the name is absent."""
 
-    coordinate = _resolve_coordinate(instance, at)
+    coordinate = accepted_coordinate_at(instance, at)
     accepted = accepted_query_definition(instance, name=name, coordinate=coordinate)
     return _view(accepted.query, path=accepted.path, coordinate=coordinate)
 

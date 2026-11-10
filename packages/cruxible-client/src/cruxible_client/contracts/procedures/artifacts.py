@@ -489,22 +489,6 @@ def slot_contract_problem(
     return None
 
 
-def provider_occurrences(definition: ProcedureDefinition) -> tuple[tuple[str, object], ...]:
-    """Every call occurrence, repeat bodies included, keyed by occurrence id."""
-
-    occurrences: list[tuple[str, object]] = []
-    for node in definition.nodes:
-        if isinstance(node, CallNode):
-            occurrences.append((node.node_id, node))
-        elif isinstance(node, RepeatNode):
-            occurrences.extend(
-                (f"{node.node_id}.{body.node_id}", body)
-                for body in node.body
-                if body.operation == "call"
-            )
-    return tuple(sorted(occurrences, key=lambda item: item[0].encode("utf-8")))
-
-
 def acquisition_keys(definition: ProcedureDefinition) -> set[str]:
     """Every capture output, ``<alias>.<field>``: what acquisition rules key."""
 
@@ -532,7 +516,6 @@ __all__ = [
     "procedure_artifact_digest",
     "procedure_contract_refs",
     "procedure_path",
-    "provider_occurrences",
     "slot_contract_problem",
     "LineAcquisitionRule",
     "render_procedure",

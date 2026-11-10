@@ -308,7 +308,7 @@ class ProposalIndex:
 
     @staticmethod
     def _write_marker(root: Path, value: dict[str, Any]) -> None:
-        from cruxible_core.proposals.proposal_evidence import _fsync_directory
+        from cruxible_core.storage import fsync_directory as _fsync_directory
 
         target = root / ".proposal-source.json"
         temporary = root / new_id(".proposal-source", length=32)

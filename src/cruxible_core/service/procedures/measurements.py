@@ -140,7 +140,7 @@ from cruxible_core.procedures.resolution import (
     resolution_contract_partition_id,
 )
 from cruxible_core.providers.builds import indexed_exact_provider
-from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
 from cruxible_core.service.discovery.query import (
     PlaybillQueryReceiptJournal,
     service_run_playbill_query,
@@ -1318,7 +1318,6 @@ def _replay_measured_run(
     resolves exact material at admission. A retired build cannot receive new
     credit at the observation coordinate.
     """
-    from cruxible_core.service.procedures.procedure_runs import _resolve_coordinate
 
     receipt = grain.state.receipt
     assert receipt is not None
@@ -1335,7 +1334,7 @@ def _replay_measured_run(
                     "The run's recorded Provider is no longer live at the observation coordinate.",
                     provider=identity.qualified,
                 )
-    coordinate = _resolve_coordinate(instance, grain.state.bound_coordinate)
+    coordinate = accepted_coordinate_at(instance, grain.state.bound_coordinate)
     try:
         with instance.bind_accepted_projection(coordinate) as projection:
 

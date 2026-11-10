@@ -14,7 +14,6 @@ from cruxible_client.contracts import SemanticFieldDelta
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
-    ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
     Sha256Value,
@@ -33,7 +32,6 @@ from cruxible_client.contracts.claims import (
     ClaimRetirementAttribution,
     ClaimRetirementReason,
     ClaimStatement,
-    claim_artifact_digest,
     parse_claim,
     render_claim,
 )
@@ -199,91 +197,6 @@ def _current_generation_timestamp(instance: PlaybillInstance) -> str:
             f"{ClaimTypeMigrationError.code}: no accepted ClaimType can exist at genesis"
         )
     return record.candidate.timestamp
-
-
-def _current_dependents(
-    tree: Mapping[str, bytes],
-    *,
-    identity: str,
-) -> dict[str, tuple[str, ClaimArtifact]]:
-    """Return every live or retired Claim directly governed by one ClaimType."""
-
-    from cruxible_core.derived.derived_state import SnapshotTree
-    from cruxible_core.indexes.evaluated_state import SelectionSpec
-
-    if isinstance(tree, SnapshotTree) and tree._accepted_reader is not None:
-        selection = SelectionSpec(tree._accepted_reader)
-        if tree._parent is not None:
-            selection = selection.overlay(tree._edits)
-        rows = selection.call(lambda selected: selected.claim_type_items(identity))
-        claims = ((path, parse_claim(content, path=path)) for path, content in rows)
-        return {
-            claim.identity.name: (path, claim)
-            for path, claim in claims
-            if _include_migration_dependent(
-                artifact_kind="claim", lifecycle_state=claim.lifecycle.state
-            )
-        }
-
-    result: dict[str, tuple[str, ClaimArtifact]] = {}
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("claims/"):
-            continue
-        claim = parse_claim(tree[path], path=path)
-        if (
-            not _include_migration_dependent(
-                artifact_kind="claim",
-                lifecycle_state=claim.lifecycle.state,
-            )
-            or claim.statement.claim_type.qualified != identity
-        ):
-            continue
-        result[claim.identity.name] = (path, claim)
-    return result
-
-
-def _successor_claim(
-    claim: ClaimArtifact,
-    *,
-    successor_type: ClaimType,
-    disposition: MigrationResultDisposition,
-) -> ClaimArtifact:
-    successor_digest = claim_type_digest(successor_type).tagged
-    statement = claim.statement.model_copy(update={"claim_type_digest": successor_digest})
-    found = False
-    pins: list[ArtifactPin] = []
-    for pin in claim.pins:
-        if pin.target == successor_type.identity and pin.role == "claim-type":
-            pins.append(pin.model_copy(update={"artifact_digest": successor_digest}))
-            found = True
-        else:
-            pins.append(pin)
-    if not found:
-        raise ClaimTypeMigrationError(
-            f"{ClaimTypeMigrationError.code}: dependent {claim.identity.name} lacks its "
-            "ClaimType pin"
-        )
-    pins.sort(
-        key=lambda item: (
-            item.role.encode("utf-8"),
-            item.target.qualified.encode("utf-8"),
-            item.artifact_digest.encode("ascii"),
-        )
-    )
-    return claim.model_copy(
-        update={
-            "statement": statement,
-            "pins": tuple(pins),
-            "lifecycle": ArtifactLifecycle(
-                state=(
-                    "retired"
-                    if claim.lifecycle.state == "retired" or disposition == "retire"
-                    else "live"
-                ),
-                predecessor_digest=claim_artifact_digest(claim).tagged,
-            ),
-        }
-    )
 
 
 def resolve_claim_type_succession(

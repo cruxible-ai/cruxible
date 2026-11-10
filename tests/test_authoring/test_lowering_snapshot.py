@@ -20,6 +20,7 @@ from cruxible_core.derived.derived_state import SnapshotTree, fork_tree
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from tests.core_support._subject_kind_support import without_keys
 from tests.core_support._support import initialize_local
+from tests.support.claim_oracles import same_predicate_claims
 from tests.test_authoring.test_authoring_change_set_intents import (
     _accept,
     _change_set,
@@ -123,4 +124,4 @@ def test_fresh_singleton_lowerings_share_warm_accepted_contenders(
         assert isinstance(result.proposed_tree, SnapshotTree)
         assert len(result.changed_members) == 1
     assert not (set(calls) & set(accepted_claims)), calls
-    assert base.claims_for(statement) == lowering._same_predicate_claims(base, statement)
+    assert base.claims_for(statement) == same_predicate_claims(base, statement)

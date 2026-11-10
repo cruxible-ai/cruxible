@@ -94,20 +94,6 @@ class ProcedureRunIndex:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute(_INDEX_SCHEMA)
         self._conn.execute(_PROVIDER_INVOCATION_SCHEMA)
-        columns = {
-            str(row[1]) for row in self._conn.execute("PRAGMA table_info(procedure_run_index)")
-        }
-        for column in (
-            "provider_invocation_started_count",
-            "provider_invocation_completed_count",
-            "terminal_egress_prepared_count",
-            "terminal_egress_resolved_count",
-        ):
-            if column not in columns:
-                self._conn.execute(
-                    f"ALTER TABLE procedure_run_index ADD COLUMN {column} "
-                    "INTEGER NOT NULL DEFAULT 0"
-                )
         self._conn.commit()
 
     def close(self) -> None:

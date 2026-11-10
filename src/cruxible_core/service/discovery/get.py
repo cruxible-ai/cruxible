@@ -1651,10 +1651,6 @@ def _runtime_policy_card(
     )
 
 
-def _duration_text(microseconds: int) -> str:
-    return f"{microseconds / 1_000_000:g}s"
-
-
 def _provider_card(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -1679,28 +1675,6 @@ def _provider_card(
         ),
         next=(_render_get(surface, resolved.display, "proof"),),
     )
-
-
-def _fitting_names(projection: Any, builds: tuple[str, ...]) -> tuple[str, ...]:
-    """How to bind each fitting build: its provider name when that is the name's
-    most recently registered live build (a bare name resolves to it), otherwise
-    the exact build."""
-
-    from cruxible_core.errors import RequestRefusedError
-    from cruxible_core.providers.builds import indexed_newest_provider
-
-    names = []
-    for name in sorted({build.partition("/")[0] for build in builds}):
-        try:
-            newest = indexed_newest_provider(projection.typed.connection, name)
-        except RequestRefusedError:
-            newest = None
-        fitting = sorted(build for build in builds if build.partition("/")[0] == name)
-        if newest is not None and newest.identity.partition(":")[2] in fitting:
-            names.append(name)
-        else:
-            names.extend(fitting)
-    return tuple(names)
 
 
 def _pin_name(binding: Any) -> str:

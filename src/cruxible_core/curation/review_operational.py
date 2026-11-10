@@ -35,6 +35,7 @@ from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.storage import fsync_directory as _fsync_directory
 from cruxible_core.storage.preview_fence import is_previewing, refuse_write_while_previewing
 
 REVIEW_OPERATIONAL_EVENT_DIGEST_DOMAIN = "playbill-review-operational-event-v1"
@@ -251,14 +252,6 @@ def _payload_digest(payload: dict[str, object]) -> str:
         REVIEW_OPERATIONAL_PAYLOAD_DIGEST_DOMAIN,
         preimage,
     ).tagged
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _exclusive_write(path: Path, content: bytes) -> None:

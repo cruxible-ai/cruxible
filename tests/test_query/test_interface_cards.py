@@ -67,15 +67,14 @@ from cruxible_core.query.cards import (
     build_claim_type_card,
     build_subject_profile,
     claim_predicate_verdicts,
-    claim_type_card_digest,
     descriptor_relations,
-    subject_profile_digest,
 )
 from cruxible_core.query.semantic_discovery import (
     MATCH_BASIS_PRIORITY,
     DiscoveryError,
     build_discovery_vocabulary,
 )
+from tests.support.query_digests import claim_type_card_digest, subject_profile_digest
 from tests.test_claims.test_claim_query_engine import (
     NOW,
     claim_fact,

@@ -82,8 +82,6 @@ def cold_claim_digest_resolver(
 
     The served/delta path supplies C's cutoff-bound lookup. This source-only
     oracle deliberately pays historical traversal and holds no lineage index.
-    Legacy file commitments are checked as files before parsing their original
-    Claim format; they are never reinterpreted as artifact commitments.
     """
     from cruxible_client.contracts.claims import claim_artifact_digest, parse_claim
     from cruxible_core.proposals.settlement import parse_change_set_record
@@ -106,9 +104,8 @@ def cold_claim_digest_resolver(
             for member in record.members:
                 if member.artifact_kind != "claim":
                     continue
-                exact = getattr(member, "candidate_artifact_digest", None)
-                legacy = getattr(member, "artifact_digest", None)
-                if exact != digest and (exact is not None or legacy is None):
+                exact = member.candidate_artifact_digest
+                if exact != digest:
                     continue
                 coordinate = coordinates.get(record.sequence)
                 oid = None if coordinate is None else coordinate.git_oid
@@ -119,13 +116,9 @@ def cold_claim_digest_resolver(
                 content = repository.blob_at(oid, member.path)
                 if content is None:
                     raise ProjectionIntegrityError("historical Claim occurrence source is absent")
-                if exact is None and file_digest(content).tagged != legacy:
-                    raise ProjectionIntegrityError(
-                        "legacy Claim occurrence input differs from retained commitment"
-                    )
                 claim = parse_claim(content, path=member.path)
                 actual = claim_artifact_digest(claim).tagged
-                if exact is not None and actual != exact:
+                if actual != exact:
                     raise ProjectionIntegrityError(
                         "historical Claim occurrence differs from retained artifact commitment"
                     )

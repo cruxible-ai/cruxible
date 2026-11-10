@@ -12,9 +12,7 @@ from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.exhaust import consumption
 from cruxible_core.exhaust.consumption import (
-    CONSUMPTION_EPOCH_PARTITION_ID,
     ConsumptionContextV1,
-    build_consumption_receipt,
     consumption_aggregate,
     consumption_audit_touch_counts,
     fold_consumption_receipts,
@@ -117,47 +115,6 @@ def test_a_read_served_again_after_its_receipt_folded_is_not_counted_twice(
     result = fold_consumption_receipts(instance, now=NOW, days=14)
     assert (result.folded, result.removed_partitions) == (0, 1)
     assert consumption_aggregate(instance).artifacts[0] == after
-
-
-def test_the_legacy_chained_receipts_fold_down_to_the_epoch(tmp_path: Path) -> None:
-    instance, _owner = initialize_local(tmp_path)
-    _read(instance, OLD, "status")  # starts the epoch
-    store = instance.review_operational_store()
-    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    legacy = []
-    for reader in ("legacy-1", "legacy-2"):
-        identity, digest = _artifact("status")
-        receipt = build_consumption_receipt(
-            context=_context(OLD, reader),
-            operation="playbill.claim_type.get",
-            coordinate=coordinate,
-            artifact_identity=identity,
-            artifact_digest=digest,
-        )
-        legacy.append(
-            store.append(
-                family="consumption",
-                partition_id=CONSUMPTION_EPOCH_PARTITION_ID,
-                event_id=receipt.receipt_id,
-                payload=receipt,
-                coordinate=coordinate,
-                generation=0,
-                actor_context=_context(OLD, reader).actor_context,
-                recorded_at=OLD,
-            )
-        )
-    aggregate, audit = consumption_aggregate(instance), consumption_audit_touch_counts(instance)
-    assert aggregate.artifacts[0].total_touch_count == 3
-
-    result = fold_consumption_receipts(instance, now=NOW, days=14)
-
-    assert (result.folded, result.removed_legacy_events) == (3, 2)
-    payloads = store.partition_payloads(
-        family="consumption", partition_id=CONSUMPTION_EPOCH_PARTITION_ID
-    )
-    assert [payload["tag"] for payload in payloads] == ["playbill-consumption-epoch-v1"]
-    assert consumption_aggregate(instance) == aggregate
-    assert consumption_audit_touch_counts(instance) == audit
 
 
 def test_receipts_inside_the_window_are_kept(tmp_path: Path) -> None:

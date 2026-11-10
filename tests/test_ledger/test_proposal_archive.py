@@ -59,19 +59,13 @@ def test_archive_cas_failure_does_not_delete_review_branch(repos, monkeypatch, a
     assert local.mirror_refs()[ARCHIVE] == competitor
 
 
-def test_legacy_local_pins_are_folded_and_removed(repos):
+def test_a_local_per_proposal_pin_refuses(repos):
+    """Per-proposal pins predate the archive and every openable instance; one refuses."""
     local, _ = repos
     base = commit(local, "base")
-    refs(local, **{MAIN: base})
-    candidates = [commit(local, name, base) for name in ("one", "two")]
-    for key, oid in zip(("a", "b"), candidates):
-        refs(local, **{"refs/settled/" + key * 64: oid})
-    local.replace_proposal_review_refs({})
-    inventory = (
-        local._git(["for-each-ref", "--format=%(refname)", "refs/settled/"]).decode().splitlines()
-    )
-    assert inventory == [ARCHIVE]
-    assert all(local.is_ancestor(oid, local.mirror_refs()[ARCHIVE]) for oid in candidates)
+    refs(local, **{MAIN: base, "refs/settled/" + "a" * 64: commit(local, "one", base)})
+    with pytest.raises(GitError, match="unrecognized local proposal archive ref"):
+        local.replace_proposal_review_refs({})
 
 
 def test_archive_is_mirrored_and_retained_after_independent_clone_gc(repos, tmp_path):

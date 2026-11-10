@@ -7612,7 +7612,7 @@ definitions singular.
 
 **`contracts.read_values`** — [WholeValueRead](src/cruxible_client/contracts/read_values.py), [TruncatedText](src/cruxible_client/contracts/read_values.py), [ShownObject](src/cruxible_client/contracts/read_values.py).
 
-**`contracts.records`** — [RecordSchemaError](src/cruxible_client/contracts/records.py), [Record](src/cruxible_client/contracts/records.py), [RecordConstructor](src/cruxible_client/contracts/records.py).
+**`contracts.records`** — [Record](src/cruxible_client/contracts/records.py), [RecordConstructor](src/cruxible_client/contracts/records.py).
 
 **`contracts.repairs`** — [RepairOperation](src/cruxible_client/contracts/repairs.py), [HandEditInstruction](src/cruxible_client/contracts/repairs.py), [HandEditRepair](src/cruxible_client/contracts/repairs.py), [ServedRepairEnvelope](src/cruxible_client/contracts/repairs.py).
 

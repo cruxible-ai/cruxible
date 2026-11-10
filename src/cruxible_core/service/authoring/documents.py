@@ -21,7 +21,6 @@ from cruxible_client.contracts.authoring_landing import AuthoringLanding
 from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.canonical import ProposalDigest
 from cruxible_client.contracts.compiler_upgrade import CompilerUpgrade, CompilerUpgradeNotice
-from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.documents import (
     DocumentShell,
     document_digest,
@@ -59,7 +58,7 @@ from cruxible_core.proposals.proposals import (
     ProposalResult,
 )
 from cruxible_core.proposals.settlement import ChangeActorBinding
-from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
 from cruxible_core.runtime.phase_timing import phase, timed_operation
 from cruxible_core.runtime.request_scope import projection_request
 from cruxible_core.service.change_preview import admit_change_set, change_scope
@@ -176,13 +175,6 @@ class ApprovalReceipt(_StrictServiceModel):
         return self
 
 
-class RefusalInspection(_StrictServiceModel):
-    tag: Literal["playbill-refusal-v1"] = "playbill-refusal-v1"
-    proposal_id: str
-    verdict: Literal["candidate", "refused"]
-    diagnostics: tuple[CompilerDiagnostic, ...]
-
-
 def _public_document(view: DocumentProjectionView) -> PlaybillDocumentView:
     if view.coordinate_kind != "canonical" or not isinstance(
         view.coordinate,
@@ -193,20 +185,6 @@ def _public_document(view: DocumentProjectionView) -> PlaybillDocumentView:
         coordinate=AcceptedCoordinate.from_internal(view.coordinate),
         envelope=view.envelope.model_dump(mode="json"),
         facts=tuple(fact.model_dump(mode="json") for fact in view.facts),
-    )
-
-
-def _resolve_coordinate(
-    instance: PlaybillInstance,
-    at: AcceptedCoordinate | None,
-) -> AcceptedProjectionCoordinate:
-    if at is None:
-        return instance.accepted_coordinate()
-    return instance.resolve_accepted_coordinate(
-        git_oid=at.git_oid,
-        semantic_root=at.semantic_root,
-        generation_root=at.generation_root,
-        compiler_digest=at.compiler_digest,
     )
 
 
@@ -277,7 +255,7 @@ def service_propose_playbill_document(
 ) -> ProposalInspection:
     """Admit and deterministically evaluate one exact Document envelope change."""
 
-    proposed_base = _resolve_coordinate(instance, base)
+    proposed_base = accepted_coordinate_at(instance, base)
     candidate_tree = instance.immutable_tree_at(proposed_base.git_oid).fork()
     candidate_tree[document_path(shell.document_id)] = render_document(shell)
     ref_name = canonical_playbill_proposal_name(proposal_name, family="document")
@@ -312,7 +290,7 @@ def service_propose_playbill_principal_change(
 ) -> ProposalInspection:
     """Use the distinct principal-lifecycle law; never the ordinary Document path."""
 
-    proposed_base = _resolve_coordinate(instance, base)
+    proposed_base = accepted_coordinate_at(instance, base)
     candidate_tree = instance.immutable_tree_at(proposed_base.git_oid).fork()
     candidate_tree[f"principals/{principal.principal_id}.json"] = render_principal(principal)
     ref_name = canonical_playbill_proposal_name(proposal_name, family="principal")
@@ -1052,7 +1030,7 @@ def service_get_playbill_document(
     access: BodyAccessContext,
     at: AcceptedCoordinate | None = None,
 ) -> PlaybillDocumentView:
-    coordinate = _resolve_coordinate(instance, at)
+    coordinate = accepted_coordinate_at(instance, at)
     with instance.bind_accepted_projection(coordinate) as projection:
         document = projection.document(identity, access=access)
     if document is None:
@@ -1066,7 +1044,7 @@ def service_list_playbill_documents(
     access: BodyAccessContext,
     at: AcceptedCoordinate | None = None,
 ) -> PlaybillDocumentList:
-    coordinate = _resolve_coordinate(instance, at)
+    coordinate = accepted_coordinate_at(instance, at)
     with instance.bind_accepted_projection(coordinate) as projection:
         documents = tuple(
             _public_document(item) for item in projection.list_documents(access=access)
@@ -1243,7 +1221,7 @@ def service_propose_compiler_upgrade(
         target = current_compiler_coordinate()
     if proposal_name is None:
         proposal_name = default_upgrade_proposal_name(target)
-    at = _resolve_coordinate(instance, base)
+    at = accepted_coordinate_at(instance, base)
     value = CompilerUpgrade(
         instance_id=at.instance_id,
         base=LawEvaluationCoordinate(
@@ -1290,7 +1268,6 @@ __all__ = [
     "PlaybillDocumentList",
     "PlaybillDocumentView",
     "ProposalInspection",
-    "RefusalInspection",
     "service_activate_playbill_proposal",
     "service_dereference_playbill_document",
     "service_get_playbill_document",

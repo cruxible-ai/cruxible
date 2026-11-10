@@ -32,8 +32,7 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_digest,
 )
 from cruxible_client.contracts.triggers import parse_trigger, trigger_digest
-from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
-from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
 from cruxible_core.service.list_pages import (
     ListCursorMismatch,
     decode_list_cursor,
@@ -41,20 +40,6 @@ from cruxible_core.service.list_pages import (
     list_snapshot,
     page_after_boundary,
 )
-
-
-def _coordinate(
-    instance: PlaybillInstance,
-    at: contracts.AcceptedCoordinate | None,
-) -> AcceptedProjectionCoordinate:
-    if at is None:
-        return instance.accepted_coordinate()
-    return instance.resolve_accepted_coordinate(
-        git_oid=at.git_oid,
-        semantic_root=at.semantic_root,
-        generation_root=at.generation_root,
-        compiler_digest=at.compiler_digest,
-    )
 
 
 def _row(
@@ -127,7 +112,7 @@ def service_playbill_policies_in_force(
                 "coordinate; list the policies again without a cursor"
             )
         at = pinned
-    coordinate = _coordinate(instance, at)
+    coordinate = accepted_coordinate_at(instance, at)
     kinds = (
         "approval-policy",
         "procedure-runtime-policy",

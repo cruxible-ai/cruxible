@@ -25,7 +25,6 @@ from cruxible_core.procedures.egress import (
     TerminalEgressChildReceiptV4,
     TerminalEgressError,
     TerminalEgressReceiptV2,
-    TerminalEgressReceiptV3,
     TerminalEgressReceiptV4,
     TerminalEgressRequestV2,
     require_procedure_mandate,
@@ -293,35 +292,6 @@ def proposal_terminal_ref(actor_id: str, operation_key: str) -> str:
     return f"refs/proposals/{actor_id}/procedure-{operation_key.removeprefix('sha256:')[:64]}"
 
 
-def proposal_terminal_receipt(
-    request: TerminalEgressRequestV2,
-    *,
-    result: ProposalResult,
-    item_paths: Mapping[str, str] | None,
-    unchanged: Mapping[str, UnchangedChildReceipt] | None = None,
-) -> TerminalEgressReceiptV2:
-    """Bind every terminal item to the exact candidate member it lowered into.
-
-    An item that changed nothing (``unchanged``) is reported as such instead.
-    """
-
-    children, candidate = _receipt_children(
-        request, result=result, item_paths=item_paths, unchanged=unchanged
-    )
-    assert request.operation_key is not None  # request shape
-    return TerminalEgressReceiptV3(
-        kind=request.kind,
-        run_id=request.run_id,
-        node_id=request.node_id,
-        disposition="received",
-        children=children,
-        operation_key=request.operation_key,
-        proposal_id=result.admission.proposal_id,
-        candidate_digest=candidate.candidate_digest,
-        target_paths=request.target_paths,
-    )
-
-
 def settle_terminal_receipt(
     request: TerminalEgressRequestV2,
     *,
@@ -417,6 +387,5 @@ __all__ = [
     "EffectfulTerminalError",
     "ProposalDeliveryRefused",
     "ProposalTerminalAdapter",
-    "proposal_terminal_receipt",
     "proposal_terminal_ref",
 ]

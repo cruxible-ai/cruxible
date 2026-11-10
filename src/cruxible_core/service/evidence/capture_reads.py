@@ -319,38 +319,6 @@ class RetainedCaptureInventory:
 
     captures: tuple[RetainedCapture, ...]
     complete: bool
-    nearest: tuple[str, ...] = ()
-
-
-@positioned_read
-def retained_captures(
-    instance: PlaybillInstance,
-    *,
-    budget: int,
-    hex_prefix: str = "",
-    nearest: int = 0,
-) -> RetainedCaptureInventory:
-    """The Captures the instance holds whose digest starts with ``hex_prefix``.
-
-    Cited or not: a Capture is retained as soon as it is stored. At most
-    ``budget`` indexed envelope candidates are examined; if more match, the
-    inventory is incomplete and callers refuse a partial answer. Unrelated
-    bodies do not enter the lookup. Nothing here is verified against a contract;
-    ``verify_accepted_capture`` verifies what a caller keeps.
-    """
-
-    store = instance.body_store()
-    digests, complete = store.capture_envelopes.prefix(hex_prefix, limit=budget)
-    found: list[RetainedCapture] = []
-    for digest in digests:
-        try:
-            envelope = capture_envelope(store, digest, access=_INVENTORY_ACCESS)
-        except (CruxibleError, ValueError):
-            continue
-        found.append(RetainedCapture(digest=digest, envelope=envelope))
-    return RetainedCaptureInventory(
-        captures=tuple(found), complete=complete, nearest=digests[:nearest]
-    )
 
 
 _INVENTORY_ACCESS = BodyAccessContext(principal_id="playbill-capture-inventory", can_read_body=True)

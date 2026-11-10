@@ -252,7 +252,7 @@ def test_contenders_select_complete_address_and_changed_live_members(tmp_path):
         render_claim,
     )
     from cruxible_client.contracts.semantic import SemanticAddress
-    from cruxible_core.authoring.lowering import _same_predicate_claims
+    from tests.support.claim_oracles import same_predicate_claims
     from tests.test_authoring.test_authoring_disposition_slots import _claim_in_slot
 
     claims = []
@@ -291,7 +291,7 @@ def test_contenders_select_complete_address_and_changed_live_members(tmp_path):
         claims[2].model_copy(update={"statement": statement})
     )
     sealed = candidate.snapshot()
-    assert sealed.claims_for(statement) == _same_predicate_claims(dict(sealed), statement)
+    assert sealed.claims_for(statement) == same_predicate_claims(dict(sealed), statement)
     assert len(sealed.claims_for(statement)) == 2
     assert counts["opened"] == counts["closed"]
 
@@ -323,17 +323,19 @@ def test_reverse_closure_keeps_cycles_boundaries_and_first_trigger_order(tmp_pat
 
 def test_migration_claim_type_inventory_uses_required_pin_selection(tmp_path, monkeypatch):
     from cruxible_client.contracts.claims import claim_path, render_claim
-    from cruxible_core.claims.claim_type_migrations import _current_dependents
+    from cruxible_core.claims.claim_type_migrations import claim_type_migration_inventory
     from tests.test_authoring.test_authoring_disposition_slots import _claim_in_slot
 
     claim = _claim_in_slot(claim_id="CLM-" + "1" * 32, qualifier=None)
     sources = {**_tree(), claim_path(claim.identity.name): render_claim(claim)}
     tree, counts, _ = _fixture(tmp_path, sources)
-    expected = _current_dependents(sources, identity=claim.statement.claim_type.qualified)
+    root = claim.statement.claim_type
+    expected = claim_type_migration_inventory(sources, root=root)
     with monkeypatch.context() as patch:
         patch.setattr(SnapshotTree, "__iter__", lambda self: pytest.fail("enumerated source tree"))
-        result = _current_dependents(tree, identity=claim.statement.claim_type.qualified)
+        result = claim_type_migration_inventory(tree, root=root)
     assert result == expected
+    assert [item.identity for item in result] == [claim.identity]
     assert counts["opened"] == counts["closed"]
     assert counts["blobs"] == 1
 

@@ -586,12 +586,6 @@ def held_wire(held: Held) -> dict[str, object]:
     return {"tag": "invalid", "problem": problem}
 
 
-def field_result_wire(result: FieldResult) -> dict[str, object]:
-    if isinstance(result, FieldPresent):
-        return {"tag": "present", "value": wire_value(result.value), "at": result.at}
-    return result.model_dump(mode="json")
-
-
 # -- the cache ------------------------------------------------------------------------
 
 
@@ -1369,7 +1363,6 @@ __all__ = [
     "ExtractRefused",
     "Extractor",
     "clear_extract_cache",
-    "field_result_wire",
     "held_result",
     "held_wire",
     "merge_outcomes",

@@ -275,48 +275,13 @@ def seed(local, remote, **values):
 LEGACY_EVAL = "refs/notes/playbill-eval"
 
 
-def test_legacy_note_refs_move_once_loose_or_packed(repos):
-    """A fixture ledger from before the rename: the move is atomic, O(1) and idempotent."""
-    local, _remote = repos
-    first = commit(local, "first")
-    refs(local, **{MAIN: first, LEGACY_NOTE: first, LEGACY_EVAL: first})
-    local._git(["pack-refs", "--all"])
-    later = commit(local, "later", first)
-    refs(local, **{LEGACY_EVAL: later})  # one loose over its packed entry
-    assert set(git_module.LEGACY_NOTE_REFS) >= {LEGACY_NOTE, LEGACY_EVAL}
-
-    assert set(local.migrate_legacy_note_refs()) == {LEGACY_NOTE, LEGACY_EVAL}
-    assert local._resolve_ref(NOTE_REFS["approval"]) == first
-    assert local._resolve_ref(NOTE_REFS["evaluation"]) == later
-    assert local._resolve_ref(LEGACY_NOTE) is None
-    assert local._resolve_ref(LEGACY_EVAL) is None
-    assert local.migrate_legacy_note_refs() == ()
-    assert local._resolve_ref(NOTE_REFS["approval"]) == first
-
-
-def test_legacy_note_ref_move_finishes_or_leaves_a_divergent_pair(repos):
-    local, _remote = repos
-    first = commit(local, "first")
-    other = commit(local, "other")
-    # A torn earlier move (both names on one commit) is finished by deleting the old name.
-    refs(local, **{LEGACY_NOTE: first, NOTE_REFS["approval"]: first})
-    # A current ref on another commit is never overwritten, and its old name stays.
-    refs(local, **{LEGACY_EVAL: other, NOTE_REFS["evaluation"]: first})
-    assert local.migrate_legacy_note_refs() == (LEGACY_NOTE,)
-    assert local._resolve_ref(LEGACY_NOTE) is None
-    assert local._resolve_ref(NOTE_REFS["approval"]) == first
-    assert local._resolve_ref(LEGACY_EVAL) == other
-    assert local._resolve_ref(NOTE_REFS["evaluation"]) == first
-
-
 def test_mirror_deletes_recorded_legacy_note_refs_under_lease(repos):
     """A mirror published before the rename: the next push renames it remotely."""
     local, remote = repos
     first = commit(local, "first")
-    refs(local, **{MAIN: first, LEGACY_NOTE: first})
+    refs(local, **{MAIN: first, NOTE: first})
     seed(local, remote, **{MAIN: first, LEGACY_NOTE: first})
     recorded = {MAIN: first, LEGACY_NOTE: first}  # mirror state written before the rename
-    local.migrate_legacy_note_refs()
     desired = local.mirror_refs()
     assert desired == {MAIN: first, NOTE: first}
     assert local.push_mirror(str(remote.path), expected_remote=recorded) is None

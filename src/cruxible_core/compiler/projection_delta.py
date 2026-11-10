@@ -64,8 +64,6 @@ _LOCAL_KINDS = frozenset(
         "line",
         "query-definition",
         "provider",
-        "provider-interface",
-        "source-acquisition-policy",
         "procedure-mandate",
         "approval-policy",
         "procedure-runtime-policy",

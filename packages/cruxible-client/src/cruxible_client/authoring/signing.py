@@ -135,16 +135,23 @@ def sign_runtime_credential_mint(
     return RuntimeCredentialPrincipalProof(statement=statement, signature=signature)
 
 
-def _load_private_key(path: Path) -> Ed25519PrivateKey:
-    """Read a nonsymlink 0600 OpenSSH key through a no-follow descriptor."""
+def _load_private_key(
+    path: Path,
+    *,
+    label: str = "client approval key",
+    ed25519_message: str = "Cruxible approval requires an Ed25519 client key",
+) -> Ed25519PrivateKey:
+    """Read a nonsymlink 0600 OpenSSH key through a no-follow descriptor.
+
+    ``label`` names the key in every refusal; ``ed25519_message`` refuses a
+    key of another algorithm.
+    """
 
     if path.parent.is_symlink() or path.is_symlink() or not path.is_file():
-        raise SigningKeyError("client approval key must be a regular nonsymlink file")
+        raise SigningKeyError(f"{label} must be a regular nonsymlink file")
     parent_mode = stat.S_IMODE(path.parent.stat().st_mode)
     if parent_mode & 0o077:
-        raise SigningKeyError(
-            "client approval key directory permissions must exclude group/world access"
-        )
+        raise SigningKeyError(f"{label} directory permissions must exclude group/world access")
     metadata = path.stat()
     # A path can become a FIFO after the pre-open check. Never wait for its writer.
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
@@ -153,26 +160,26 @@ def _load_private_key(path: Path) -> Ed25519PrivateKey:
         descriptor = os.open(path, flags)
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode) or stat.S_IMODE(opened.st_mode) & 0o077:
-            raise SigningKeyError("client approval key permissions must exclude group/world access")
+            raise SigningKeyError(f"{label} permissions must exclude group/world access")
         if opened.st_dev != metadata.st_dev or opened.st_ino != metadata.st_ino:
-            raise SigningKeyError("client approval key changed while it was opened")
+            raise SigningKeyError(f"{label} changed while it was opened")
         content = bytearray()
         while chunk := os.read(descriptor, 64 * 1024):
             content.extend(chunk)
     except OSError as exc:
-        raise SigningKeyError("client approval key is missing or unreadable") from exc
+        raise SigningKeyError(f"{label} is missing or unreadable") from exc
     finally:
         if descriptor is not None:
             os.close(descriptor)
     try:
         private_key = serialization.load_ssh_private_key(bytes(content), password=None)
     except (TypeError, ValueError) as exc:
-        raise SigningKeyError("client approval key is not an unencrypted OpenSSH key") from exc
+        raise SigningKeyError(f"{label} is not an unencrypted OpenSSH key") from exc
     finally:
         for index in range(len(content)):
             content[index] = 0
     if not isinstance(private_key, Ed25519PrivateKey):
-        raise SigningKeyError("Cruxible approval requires an Ed25519 client key")
+        raise SigningKeyError(ed25519_message)
     return private_key
 
 

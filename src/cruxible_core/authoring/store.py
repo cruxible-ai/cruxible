@@ -46,6 +46,7 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
+from cruxible_core.storage import fsync_directory as _fsync_directory
 from cruxible_core.storage.preview_fence import is_previewing
 
 AUTHORING_INTENT_EVENT_DIGEST_DOMAIN = "cruxible-authoring-intent-event-v4"
@@ -336,14 +337,6 @@ def _decode_authoring_intent_event(raw: bytes) -> tuple[AuthoringIntentEvent, by
     event = model.model_validate(payload, context=context)
     assert context.rendered is not None
     return event, context.rendered
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _write_temporary(path: Path, content: bytes) -> None:

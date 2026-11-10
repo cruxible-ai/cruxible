@@ -129,15 +129,6 @@ def admits_object_subject(predicate: str, subject_kinds: tuple[str, ...], kind: 
     return kind in subject_kinds
 
 
-def applies_to_kind(allowed_subject_kinds: tuple[str, ...], kind: str) -> bool:
-    """Whether a ClaimType admitting these kinds states something about ``kind``.
-
-    A descriptor ClaimType admitting ``semantic.subject`` applies to every kind.
-    """
-
-    return kind in allowed_subject_kinds or SEMANTIC_SUBJECT_KIND in allowed_subject_kinds
-
-
 def concrete_subject_kinds(kinds: tuple[str, ...]) -> tuple[str, ...]:
     """The Subject kinds named, without the descriptor pseudo-kinds."""
 
@@ -176,7 +167,6 @@ __all__ = [
     "DESCRIPTOR_KINDS",
     "DESCRIPTOR_PREDICATES",
     "admits_object_subject",
-    "applies_to_kind",
     "concrete_subject_kinds",
     "BuiltinClaimTypeName",
     "SEMANTIC_ALIAS_CLAIM_TYPE",

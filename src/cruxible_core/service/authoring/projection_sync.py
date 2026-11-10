@@ -45,11 +45,10 @@ from cruxible_client.contracts.subjects import parse_subject, subject_digest, su
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.authoring.registrations import projection_block_registered
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
-from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
 from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
 from cruxible_core.service.discovery.query import _AcceptedQueryFactsRead, evaluate_accepted_query
 from cruxible_core.service.discovery.query_definitions import (
-    _resolve_coordinate,
     accepted_query_definition,
 )
 from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
@@ -677,7 +676,7 @@ class ProjectionCheckContext:
                     origin = accepted_query_definition(
                         self.instance,
                         name=backing.identity.name,
-                        coordinate=_resolve_coordinate(self.instance, declared),
+                        coordinate=accepted_coordinate_at(self.instance, declared),
                     )
                     if origin.artifact_digest != backing.definition_digest:
                         issues.append(
@@ -813,7 +812,7 @@ def service_read_playbill_block_sync_backing(
 ) -> BlockSyncReadResult:
     context = ProjectionCheckContext(
         instance,
-        coordinate=_resolve_coordinate(instance, request.at),
+        coordinate=accepted_coordinate_at(instance, request.at),
         evaluation_time=request.evaluation_time or datetime.now(UTC),
         stamps=(request.stamp,),
     )
@@ -826,7 +825,7 @@ def service_check_projection_blocks(
     instant = request.evaluation_time or datetime.now(UTC)
     context = ProjectionCheckContext(
         instance,
-        coordinate=_resolve_coordinate(instance, request.at),
+        coordinate=accepted_coordinate_at(instance, request.at),
         evaluation_time=instant,
         stamps=request.stamps,
     )

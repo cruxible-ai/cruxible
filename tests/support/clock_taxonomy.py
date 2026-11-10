@@ -605,7 +605,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("_ProcessOutcome", "duration_seconds"): "VALIDITY WINDOW",
     ("_RecordedCurationPatternObservedV1", "accepted_generation"): "SETTLEMENT ORDER",
     ("_RunState", "wall_clock_microseconds"): "VALIDITY WINDOW",
-    ("_VersionedRecord", "source_effective_time"): "VALIDITY WINDOW",
 }
 
 # Discovered by name, carrying no clock value: a supplier of instants, a boolean

@@ -278,7 +278,7 @@ from cruxible_core.providers.provider_outcomes import map_provider_refusal
 from cruxible_core.providers.provider_process_leases import (
     PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE,
 )
-from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
 from cruxible_core.runtime.permissions import PermissionMode, get_capability_ceiling
 from cruxible_core.runtime.request_scope import projection_request
 from cruxible_core.service.procedures.nested_runs import ServedNestedProcedureRunner
@@ -356,10 +356,6 @@ class ProcedureNotFound(ProcedureSurfaceError):
 
 class ProcedureRetired(ProcedureSurfaceError):
     code = "cruxible.procedure.retired"
-
-
-class ProcedureProviderInterfaceMismatch(ProcedureSurfaceError):
-    code = "cruxible.procedure.provider_interface_mismatch"
 
 
 class ProcedureRunNotCurrent(ProcedureSurfaceError):
@@ -469,7 +465,7 @@ def procedure_run_target_rung(
     """What a direct run of this Procedure can do: its terminal capability."""
 
     accepted = _accepted_procedure(
-        instance, name=name, coordinate=_resolve_coordinate(instance, at)
+        instance, name=name, coordinate=accepted_coordinate_at(instance, at)
     )
     return int(accepted.procedure.definition.terminal_capability)
 
@@ -508,23 +504,6 @@ class LineRunIdentityMismatch(ProcedureSurfaceError):
 class LineRunEvaluationInstantSkewed(ProcedureSurfaceError):
     code = "cruxible.line.run.evaluation_instant_skewed"
     error_code = "evaluation_instant_skewed"
-
-
-class PinnedAcquisitionPolicyUnresolved(ProcedureSurfaceError):
-    """A Procedure's pinned acquisition policy is not live at this coordinate.
-
-    The closure evaluator already requires a Procedure's `acquisition-policy`
-    pin to resolve, digest-matched and not retired under a live source, so this
-    is the belt to that pin's braces rather than a reachable state of an
-    accepted tree -- the same guard, and the same code, the Line lane keeps.
-    """
-
-    code = "cruxible.procedure.run.artifact_binding_mismatch"
-    error_code = "artifact_binding_mismatch"
-
-    def __init__(self, message: str, *, details: object | None = None) -> None:
-        super().__init__(message)
-        self.details = {} if details is None else details
 
 
 class ProcedureNextOperationV1(_StrictProcedureSurfaceModel):
@@ -806,20 +785,6 @@ def run_node(payload: object, *, sequence: int) -> GetRunNode:
     )
 
 
-def _resolve_coordinate(
-    instance: PlaybillInstance,
-    at: AcceptedCoordinate | None,
-) -> AcceptedProjectionCoordinate:
-    if at is None:
-        return instance.accepted_coordinate()
-    return instance.resolve_accepted_coordinate(
-        git_oid=at.git_oid,
-        semantic_root=at.semantic_root,
-        generation_root=at.generation_root,
-        compiler_digest=at.compiler_digest,
-    )
-
-
 def accepted_key_rules(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -1020,16 +985,6 @@ def direct_run_slot_bindings(
             line_slot_map(procedure.definition, child),
             requested,
         )
-
-
-def line_slot_map_at(
-    instance: PlaybillInstance,
-    coordinate: AcceptedProjectionCoordinate,
-    accepted: AcceptedProcedure,
-) -> dict[str, Any]:
-    """Every slot a Line over ``accepted`` binds, invoked children's included."""
-
-    return _line_shape_at(instance, coordinate, accepted)[0]
 
 
 def _line_shape_at(
@@ -2016,7 +1971,7 @@ def service_playbill_procedure_readiness(
     name: str,
     request: ProcedureReadinessRequestV1,
 ) -> ProcedureReadinessResultV1:
-    coordinate = _resolve_coordinate(instance, request.at)
+    coordinate = accepted_coordinate_at(instance, request.at)
     # A read: a retired Procedure is still readable, though nothing runs it.
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate, allow_retired=True)
     return _readiness(accepted, coordinate=coordinate, instance=instance)
@@ -3591,7 +3546,7 @@ def service_run_playbill_procedure(
     ``evaluation_time``.
     """
     instance.require_writable()
-    coordinate = _resolve_coordinate(instance, request.at)
+    coordinate = accepted_coordinate_at(instance, request.at)
     evaluation_time = request.evaluation_time or ensure_utc(
         (daemon_clock or SystemProcedureClock()).now()
     )

@@ -108,10 +108,6 @@ class _StrictMiddlewareModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class CoverageRuleTagError(CoverageError):
-    """A coverage rule used a tag outside the one frozen rule vocabulary."""
-
-
 # -- workspace configuration -----------------------------------------------
 
 
@@ -795,7 +791,6 @@ __all__ = [
     "CoverageMiddlewareV1",
     "CoveragePathPrefixRuleV1",
     "CoveragePathRuleV1",
-    "CoverageRuleTagError",
     "CoverageWorkspaceConfigV1",
     "CoverageWorkspaceConfigV2",
     "CoverageWorkspaceConfig",

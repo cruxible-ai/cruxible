@@ -55,6 +55,7 @@ from cruxible_core.indexes.projection import (
     projection_manifest_name,
     render_projection_manifest,
 )
+from cruxible_core.storage import fsync_directory as _fsync_directory
 from cruxible_core.storage.cas import BodyAccessContext
 
 # A bound piece is verified whole — a physical SHA-256 over the file, a
@@ -118,14 +119,6 @@ def _record_verified_piece(
 SOURCE_AUTHENTICATION_STAMPS = "source-authenticated.json"
 _SOURCE_AUTHENTICATOR = "playbill-typed-source-authentication-v1"
 _SOURCE_AUTHENTICATION_STAMPS_RETAINED = 8
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _authentication_stamp(accepted: Any, manifest: ProjectionManifest) -> dict[str, object]:

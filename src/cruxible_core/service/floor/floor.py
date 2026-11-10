@@ -81,7 +81,7 @@ from cruxible_core.query.cards import (
     descriptor_relations,
 )
 from cruxible_core.query.semantic_discovery import DiscoveryEntryV1
-from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
 from cruxible_core.service.authoring.documents import (
     AcceptedCoordinate,
 )
@@ -173,20 +173,6 @@ class PlaybillProcedureFloorCardV1(_StrictFloorModel):
     hard_caps: ProcedureHardCaps
     governance: PlaybillProcedureGovernanceV1
     track_record: tuple[PlaybillProcedureTrackRecordEntryV1, ...]
-
-
-def _resolve_coordinate(
-    instance: PlaybillInstance,
-    at: AcceptedCoordinate | None,
-) -> AcceptedProjectionCoordinate:
-    if at is None:
-        return instance.accepted_coordinate()
-    return instance.resolve_accepted_coordinate(
-        git_oid=at.git_oid,
-        semantic_root=at.semantic_root,
-        generation_root=at.generation_root,
-        compiler_digest=at.compiler_digest,
-    )
 
 
 def render_floor_json_v2(payload: object) -> bytes:
@@ -514,7 +500,7 @@ def service_export_playbill_floor(
 
     if at is not None and not isinstance(at, AcceptedCoordinate):
         raise ProposalIntegrityError("floor export accepts only verified accepted coordinates")
-    coordinate = _resolve_coordinate(instance, at)
+    coordinate = accepted_coordinate_at(instance, at)
     accepted = AcceptedCoordinate.from_internal(coordinate)
     body_access = access or BodyAccessContext(principal_id=DEFAULT_FLOOR_PRINCIPAL)
 

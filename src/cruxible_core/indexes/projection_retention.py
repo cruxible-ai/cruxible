@@ -44,6 +44,7 @@ from cruxible_core.indexes.sqlite import (
     lock_piece_shared,
     released_pieces,
 )
+from cruxible_core.storage import fsync_directory as _fsync_directory
 
 RETENTION_LOCK = ".projection-retention.lock"
 _OPEN = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
@@ -63,14 +64,6 @@ def retention_lock(directory: Path) -> Iterator[None]:
         yield
     finally:
         fcntl.flock(descriptor, fcntl.LOCK_UN)
-        os.close(descriptor)
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
         os.close(descriptor)
 
 

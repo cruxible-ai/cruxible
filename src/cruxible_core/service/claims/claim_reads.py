@@ -35,11 +35,10 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
-from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
 from cruxible_core.service.claims.claims import (
     _accepted_generation_time,
     _public_claim,
-    _resolve_coordinate,
     materialize_playbill_claim_view,
 )
 from cruxible_core.service.evidence.body_access import (
@@ -93,7 +92,7 @@ def service_read_claim_batch(
     coordinate = (
         _exact_oid_coordinate(instance, request.at)
         if isinstance(request.at, str)
-        else _resolve_coordinate(
+        else accepted_coordinate_at(
             instance,
             AcceptedCoordinate.model_validate(request.at.model_dump())
             if request.at is not None
@@ -243,7 +242,7 @@ def service_read_claim_backings(
     *,
     request: ClaimBackingsRequest,
 ) -> ClaimBackingsResult:
-    coordinate = _resolve_coordinate(
+    coordinate = accepted_coordinate_at(
         instance, AcceptedCoordinate.model_validate(request.at.model_dump())
     )
     names = tuple(name.removeprefix("Claim:") for name in request.claim_ids)
@@ -289,7 +288,7 @@ def service_read_claim_values(
     from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 
-    coordinate = _resolve_coordinate(
+    coordinate = accepted_coordinate_at(
         instance,
         AcceptedCoordinate.model_validate(request.at.model_dump())
         if request.at is not None

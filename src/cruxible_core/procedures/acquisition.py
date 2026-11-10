@@ -211,21 +211,6 @@ def capture_provenance_grade(contract: CaptureContract) -> EvidenceProvenanceGra
     return "daemon-fetched"
 
 
-def _refusal(
-    node_id: str,
-    input_name: str,
-    outcome: ProcedureAcquisitionOutcomeV1,
-    detail: str,
-) -> ProcedureSourceAcquisitionResultV1:
-    return ProcedureSourceAcquisitionResultV1(
-        node_id=node_id,
-        input_name=input_name,
-        outcome=outcome,
-        reason_code=_OUTCOME_REASONS[outcome],
-        detail=detail,
-    )
-
-
 def capture_selection_failure(
     rule: AcquisitionRule,
     envelope: CaptureEnvelopeAny,

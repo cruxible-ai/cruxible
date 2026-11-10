@@ -46,9 +46,7 @@ from cruxible_core.query.backends import (
     DirectClaimFactIndex,
     SubjectQueryViewV1,
     VisibleClaimRow,
-    render_subject_query_view,
     subject_query_view,
-    subject_query_view_digest,
 )
 from cruxible_core.query.engine import (
     CLAIM_CONFLICT,
@@ -58,6 +56,7 @@ from cruxible_core.query.engine import (
     claim_query_result_digest,
     evaluate_claim_query,
 )
+from tests.support.query_digests import render_subject_query_view, subject_query_view_digest
 from tests.test_claims.test_claim_query_engine import (
     AMOUNT_PREDICATE,
     DUE_PREDICATE,

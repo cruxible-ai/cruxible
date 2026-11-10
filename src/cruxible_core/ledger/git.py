@@ -45,6 +45,7 @@ from cruxible_core.ledger.git_objects import PackStore
 from cruxible_core.ledger.git_signing import load_private, sign_commit
 from cruxible_core.ledger.git_signing import verify_commit as verify_signature
 from cruxible_core.runtime.phase_timing import timed_phase
+from cruxible_core.storage import fsync_directory as _fsync_directory
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _PROPOSAL_REF_RE = re.compile(r"^refs/proposals/[a-z][a-z0-9_.-]{0,127}/[a-z][a-z0-9_.-]{0,127}$")
@@ -69,10 +70,10 @@ NOTE_REFS: Final[Mapping[str, str]] = {
     "approval": "refs/notes/cruxible-approval",
 }
 # The names these refs carried before the public rename, each mapped to its
-# current name. They are read only by the one-time move at instance open
-# (`GitLedger.migrate_legacy_note_refs`) and by mirror publication, which
-# accepts them in a recorded snapshot or a remote advertisement so the next
-# push deletes them under lease. No note is ever read or written under them.
+# current name. Only mirror publication reads them: it accepts them in a
+# recorded snapshot or a remote advertisement so the next push deletes them
+# under lease. No note is ever read or written under them, and no instance this
+# release opens holds them locally (its ledger is younger than the rename).
 LEGACY_NOTE_REFS: Final[Mapping[str, str]] = {
     "refs/notes/playbill-gen": NOTE_REFS["generation"],
     "refs/notes/playbill-eval": NOTE_REFS["evaluation"],
@@ -941,14 +942,9 @@ class GitLedger:
                 raise GitError("proposal ref name is malformed")
             self._validate_oid(oid)
             retired[ref] = oid
-        # One local conversion only: fold old per-proposal pins into the same
-        # chain before deleting them. Unrelated refs in this namespace refuse.
-        for ref, oid in self._refs("refs/settled/").items():
-            if ref == PROPOSAL_ARCHIVE_REF:
-                continue
-            if not _LEGACY_SETTLED_RE.fullmatch(ref):
-                raise GitError("unrecognized local proposal archive ref")
-            retired[ref] = oid
+        # The archive is the namespace's only ref; anything else in it refuses.
+        if any(ref != PROPOSAL_ARCHIVE_REF for ref in self._refs("refs/settled/")):
+            raise GitError("unrecognized local proposal archive ref")
         commands = self._archive_update(tuple(retired.values()))
         commands.extend(
             f"update {ref} {oid} {current.get(ref, '0' * len(oid))}"
@@ -2036,45 +2032,6 @@ class GitLedger:
                 self._validate_oid(fields[2])
                 commits.append(fields[2])
         return tuple(sorted(set(commits)))
-
-    def migrate_legacy_note_refs(self) -> tuple[str, ...]:
-        """Move each pre-rename note ref to its current name, once; return the moved names.
-
-        Runs at instance open. Each move is one atomic ref transaction that
-        creates the current ref (leased absent) at the legacy ref's commit and
-        deletes the legacy ref (leased at that commit), so a concurrent opener
-        that already moved it simply loses the lease and the move is not
-        repeated. A legacy ref whose current ref already names the same commit
-        is a finished move and is deleted; one whose current ref differs is
-        left alone. Cost is a constant number of ref reads.
-        """
-        if all(self._resolve_ref(legacy) is None for legacy in LEGACY_NOTE_REFS):
-            # The common case once moved: three ref reads, no lock, no write.
-            return ()
-        moved: list[str] = []
-        with self._note_lock():
-            for legacy, current in LEGACY_NOTE_REFS.items():
-                old = self._resolve_ref(legacy)
-                if old is None:
-                    continue
-                new = self._resolve_ref(current)
-                if new is None:
-                    commands = [
-                        f"update {current} {old} {'0' * len(old)}",
-                        f"delete {legacy} {old}",
-                    ]
-                elif new == old:
-                    commands = [f"delete {legacy} {old}"]
-                else:
-                    continue
-                try:
-                    self._update_refs(commands)
-                except GitError:
-                    if self._resolve_ref(legacy) == old:
-                        raise
-                    continue
-                moved.append(legacy)
-        return tuple(moved)
 
     def _note_ref(self, kind: str) -> str:
         ref = NOTE_REFS.get(kind)
@@ -3329,14 +3286,6 @@ def _tree_order_key(
         return name.encode("utf-8", errors="surrogateescape") + suffix
 
     return key
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 _CONFIG_READS_CAPACITY = 64
