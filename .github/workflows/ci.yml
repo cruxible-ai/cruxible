@@ -68,7 +68,7 @@ jobs:
         run: uv run mypy src packages/cruxible-client/src
 
       - name: Test
-        run: uv run pytest -n auto --dist loadfile --tb=short --timeout 900 --timeout-method=thread
+        run: uv run pytest -n auto --dist loadfile --tb=short --timeout 900 --timeout-method=thread -o faulthandler_timeout=1200
 
   docker-image-test:
     runs-on: ubuntu-latest
