@@ -592,6 +592,30 @@ def _refuse(
     )
 
 
+def _refuse_retired_source(
+    head: CaptureContractAny | None, *, source_id: str, offending_element: str
+) -> None:
+    """Refuse a new working-selection Capture under a retired source contract.
+
+    Retiring a source's CaptureContract stops new Captures under it; every
+    write-side site that captures a workspace selection gives this one refusal
+    rather than building under the retired version or reinstalling the first.
+    """
+
+    if head is not None and head.lifecycle.state != "live":
+        _refuse(
+            "cruxible.authoring.source_contract_retired",
+            offending_element,
+            f"The workspace source {source_id!r} has a retired CaptureContract; nothing new "
+            "is captured under it.",
+            repair_kind="replace_source",
+            repair_description=(
+                "Cite another source, or accept a live successor of this source's "
+                "CaptureContract first."
+            ),
+        )
+
+
 def _read_existing_capture(store: CaptureObjectStoreProtocol, digest: str) -> CaptureEnvelopeAny:
     """The cited Capture envelope, or the typed refusal for a missing or foreign body."""
 
@@ -1862,6 +1886,7 @@ def _lower_claim(
         )
         head_bytes = candidate_base_tree.get(head_path)
         head = None if head_bytes is None else parse_capture_contract(head_bytes, path=head_path)
+        _refuse_retired_source(head, source_id=source.source_id, offending_element="source")
         if head is not None and head.lifecycle.state == "live":
             successor = builtin_contract_for_write(
                 foreign_source_capture_contract(source.source_id), head
@@ -1984,6 +2009,9 @@ def _lower_claim(
             None
             if previous_contract is None
             else parse_capture_contract(previous_contract, path=located_path)
+        )
+        _refuse_retired_source(
+            located_contract, source_id=location.source_id, offending_element="located_at"
         )
         located_successor = builtin_contract_for_write(
             foreign_source_capture_contract(location.source_id), located_contract
@@ -5856,6 +5884,7 @@ def _stage_note(
         )
         head_bytes = staged_tree.get(head_path)
         head = None if head_bytes is None else parse_capture_contract(head_bytes, path=head_path)
+        _refuse_retired_source(head, source_id=source.source_id, offending_element="source")
         install = True
         if head is not None and head.lifecycle.state == "live":
             successor = builtin_contract_for_write(

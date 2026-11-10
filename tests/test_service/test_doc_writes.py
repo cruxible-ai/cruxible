@@ -2,6 +2,7 @@
 
 import base64
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -72,6 +73,135 @@ def test_located_own_words_adds_copy_and_retries_without_generation(tmp_path: Pa
     retried = service_playbill_write(instance, request=request, caller=caller())
     assert retried.status == "accepted", retried
     assert retried.coordinate == first.coordinate
+
+
+_NOTES_ENTRY = """\
+  - name: repo.notes
+    locator: notes.md
+    document_id: notes
+    document_kind: note
+    title: Notes
+    media_type: text/markdown
+    compiler_profile: document-v1
+    required_tier: governed_write
+    governance_scope: [Document:notes]
+"""
+
+
+def test_a_retired_source_contract_refuses_new_captures_at_every_write_site(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Retiring a source's CaptureContract stops new Captures under it.
+
+    An own-words section (its location) and file evidence on the retired
+    source both refuse with one typed code; neither builds a Capture under the
+    retired version nor reinstalls the source's first version.
+    """
+
+    from cruxible_client.authoring.write_evidence import observe_evidence
+    from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
+    from cruxible_client.contracts.captures import (
+        capture_contract_digest,
+        capture_contract_path,
+        foreign_source_capture_contract,
+        parse_capture_contract,
+    )
+    from cruxible_client.contracts.write import FileEvidence
+    from cruxible_core.authoring import lowering
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from cruxible_core.service.evidence.capture_contracts import service_propose_capture_contract
+    from tests.core_support._write_support import report_evidence
+
+    instance, _ = seed_write_surface(tmp_path)
+    workspace = tmp_path / "workspace"
+    report_evidence(workspace, "three")  # writes the file catalog
+    catalog = workspace / ".cruxible" / "files.yaml"
+    catalog.write_text(catalog.read_text(encoding="utf-8") + _NOTES_ENTRY, encoding="utf-8")
+    (workspace / "notes.md").write_text(
+        "# Notes\n\nfive\n\n## Review\n\nLooked again.\n\n## Second\n\nSecond look.\n",
+        encoding="utf-8",
+    )
+
+    def own_words(heading: str) -> SectionEvidence:
+        observed = observe_evidence(
+            SectionEvidence(file="notes.md", section=("Notes", heading), own_words=True),
+            workspace=workspace,
+        )
+        assert isinstance(observed, SectionEvidence)
+        return observed
+
+    def write(subject: str, field: str, value: object, evidence: Any) -> Any:
+        return service_playbill_write(
+            instance,
+            request=WriteRequest.model_validate(
+                {
+                    "because": "Recorded in prose",
+                    "changes": [
+                        {
+                            "op": "set",
+                            "subject": f"{KIND}/{subject}",
+                            "field": field,
+                            "value": value,
+                            "evidence": evidence.model_dump(mode="json"),
+                        }
+                    ],
+                }
+            ),
+            caller=caller(),
+        )
+
+    # The first own-words location on the source installs its contract.
+    installed = write("wi-2", "title", "Looked again", own_words("Review"))
+    assert installed.status == "accepted", installed
+    name = foreign_source_capture_contract("repo.notes").identity.name
+    path = capture_contract_path(name)
+    retiring = service_propose_capture_contract(
+        instance,
+        input=CaptureContractInputRecord(name=name, lifecycle="retired"),
+        actor_id="owner",
+        proposal_name="retire-notes",
+        timestamp="2026-09-29T12:30:00.000000Z",
+    )
+    assert retiring.proposal.candidate is not None, retiring.proposal.evaluation.diagnostics
+    activated = service_activate_playbill_proposal(
+        instance, proposal_id=retiring.proposal.admission.proposal_id, activated_by="owner"
+    )
+    assert activated.status == "accepted"
+
+    def head() -> Any:
+        return parse_capture_contract(
+            instance.blob_at(instance.accepted_coordinate().git_oid, path), path=path
+        )
+
+    retired = head()
+    assert retired.lifecycle.state == "retired"
+    built_under: list[str] = []
+    real_build = lowering.build_working_selection_capture
+
+    def spy(**kwargs: Any) -> Any:
+        result = real_build(**kwargs)
+        built_under.append(capture_contract_digest(result.contract).tagged)
+        return result
+
+    monkeypatch.setattr(lowering, "build_working_selection_capture", spy)
+    before = instance.accepted_coordinate()
+
+    located = write("wi-3", "title", "Second look", own_words("Second"))
+    cited = write(
+        "wi-3",
+        "measured",
+        5,
+        observe_evidence(FileEvidence(file="notes.md#five"), workspace=workspace),
+    )
+
+    for outcome, element in ((located, "located_at"), (cited, "source")):
+        assert outcome.status == "refused", outcome
+        assert outcome.refusal.code == "cruxible.authoring.source_contract_retired", outcome
+        assert outcome.refusal.field_path.endswith(element), outcome
+    assert built_under == []
+    assert capture_contract_digest(retired).tagged not in built_under
+    assert instance.accepted_coordinate() == before
+    assert head() == retired
 
 
 def test_captured_only_refuses_authored_section_and_docs_only_has_no_generation(
