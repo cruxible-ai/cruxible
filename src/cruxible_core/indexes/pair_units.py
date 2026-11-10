@@ -23,9 +23,10 @@ Two more say which ends a judgment can be left standing on with nothing
 current under it (``next``'s subject-end rule, ``subject_end_entries``):
 
 ``subject_observations(subject_path, live, retired)``
-    Per Subject, its lifecycle-live Claims outside its kind's key parts (its
-    observations) and its retired Claims of any predicate; a Subject with
-    neither has no row.
+    Per Subject with a retired Claim (of any predicate), its retired Claims and
+    its lifecycle-live Claims outside its kind's key parts (its observations).
+    A Subject with no retired Claim cannot be an unobserved end, so it has no
+    row: writing Claims about fresh Subjects writes nothing here.
 ``pair_end_unobserved(end_path)``
     Each end of a pair holding a live fact (a ``pair_units`` end) with no live
     observation and at least one retired Claim: the only ends the rule can
@@ -40,23 +41,25 @@ predicate)`` is read once before the batch overwrites it and once after, and
 the difference of live counts per pair slot is applied. A slot's 0 -> 1 and
 1 -> 0 transitions insert or delete its ``pair_units`` rows by full key, the
 ends read from ``pair_ends``. Retired history in a slot is never read. The
-same difference moves each touched Subject's observation counts, and each
-touched Subject and each end of a touched pair is then re-judged from its
-counts and one ``pair_units`` seek. Cost: O(touched Claims x parts). A
-SubjectKind change recounts that kind's Subjects (its key parts decide what
-an observation is). A full build (``before=None``) reads every pair Subject's
-key and live Claims once, and every Claim's lifecycle once.
+same difference moves the touched Subjects' observation counts; the Subjects
+whose counts moved, and the ends of those that are pairs, are re-judged
+together, in a constant number of statements per accept (keyed reads of the
+moved rows only). Cost: O(touched Claims x parts) slot upkeep, plus a constant
+number of statements for the unobserved ends. A SubjectKind change recounts
+that kind's Subjects (its key parts decide what an observation is). A full
+build (``before=None``) reads every pair Subject's key and live Claims once,
+and every Claim's lifecycle once.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from typing import cast
 
 from cruxible_client.contracts.errors import ProjectionIntegrityError
-from cruxible_core.indexes.sql_batch import insert_rows, select_in
+from cruxible_core.indexes.sql_batch import execute_in, insert_rows, select_in
 
 SCHEMA_STATEMENTS = (
     """CREATE TABLE pair_ends (
@@ -76,7 +79,7 @@ SCHEMA_STATEMENTS = (
     """CREATE TABLE subject_observations (
             subject_path TEXT PRIMARY KEY NOT NULL,
             live INTEGER NOT NULL CHECK(live>=0), retired INTEGER NOT NULL CHECK(retired>=0),
-            CHECK(live>0 OR retired>0)
+            CHECK(retired>0)
         ) STRICT""",
     """CREATE TABLE pair_end_unobserved (end_path TEXT PRIMARY KEY NOT NULL) STRICT""",
 )
@@ -208,11 +211,7 @@ def refresh_pair_index(
         if change:
             _apply(connection, pair, predicate, change, ends_of(pair))
     _refresh_observations(
-        connection,
-        before=before,
-        after=after or {},
-        changed_kinds=frozenset(changed_kinds),
-        ends_of=ends_of,
+        connection, before=before, after=after or {}, changed_kinds=frozenset(changed_kinds)
     )
 
 
@@ -278,10 +277,6 @@ _GROUPS_SQL = (
     "SELECT subject_path,predicate,lifecycle,count(*) FROM main.claims "
     "WHERE subject_path>=? AND subject_path<? GROUP BY subject_path,predicate,lifecycle"
 )
-_UNOBSERVED_SQL = (
-    "SELECT 1 FROM main.subject_observations WHERE subject_path=? AND live=0 AND retired>0 "
-    "AND EXISTS (SELECT 1 FROM main.pair_units WHERE end_path=?)"
-)
 
 
 def _full_observations(connection: sqlite3.Connection) -> None:
@@ -293,7 +288,11 @@ def _full_observations(connection: sqlite3.Connection) -> None:
     insert_rows(
         connection,
         "main.subject_observations",
-        [(subject, live, retired) for subject, (live, retired) in sorted(counts.items())],
+        [
+            (subject, live, retired)
+            for subject, (live, retired) in sorted(counts.items())
+            if retired > 0
+        ],
     )
     connection.execute(
         "INSERT INTO main.pair_end_unobserved SELECT DISTINCT u.end_path FROM main.pair_units AS u "
@@ -308,21 +307,22 @@ def _refresh_observations(
     before: Mapping[str, ClaimState],
     after: Mapping[str, ClaimState],
     changed_kinds: frozenset[str],
-    ends_of: Callable[[str], Mapping[str, str | None]],
 ) -> None:
-    """Apply the touched Claims' count differences, then re-judge every end they can move.
+    """Apply the touched Claims' count differences and re-judge the ends they move, by set.
 
-    An end moves when a Claim about it changes (its counts) or when a pair it
-    ends changes (its ``pair_units`` rows): each is re-judged with one keyed
-    read. A recounted kind re-judges its ends from ``pair_units`` and the table.
+    An end moves when its own counts change, or when a pair it ends gains its
+    first or loses its last live fact (its ``pair_units`` rows), and that pair's
+    counts then change too. So the Subjects whose counts moved, and the ends of
+    those that are pairs, are every end to re-judge. A constant number of
+    statements, whatever the number of Claims: the counts are read once and
+    written once, the moved pairs' ends read once, and the ends re-judged in two.
+    A recounted kind also re-judges its ends and the ends of its pairs.
     """
 
     keys = _KindKeys(connection)
     delta: dict[str, list[int]] = {}
-    touched: set[str] = set()
     for states, sign in ((before, -1), (after, 1)):
         for lifecycle, subject, predicate in states.values():
-            touched.add(subject)
             if subject.startswith(_SUBJECTS) and _kind_of(subject) in changed_kinds:
                 continue  # recounted below
             found = _observation(keys, lifecycle, subject, predicate)
@@ -330,12 +330,18 @@ def _refresh_observations(
                 counted = delta.setdefault(subject, [0, 0])
                 counted[0] += sign * found[0]
                 counted[1] += sign * found[1]
-    for subject, (live, retired) in sorted(delta.items()):
-        if live or retired:
-            _add_counts(connection, subject, live, retired)
-    judged = {subject for subject in touched if subject.startswith(_SUBJECTS)}
-    for subject in sorted(touched):
-        judged.update(end for end in ends_of(subject).values() if end)
+    moved = sorted(subject for subject, (live, retired) in delta.items() if live or retired)
+    _apply_counts(connection, keys, {subject: delta[subject] for subject in moved})
+    judged = set(moved)
+    judged.update(
+        str(row[0])
+        for row in select_in(
+            connection,
+            "SELECT DISTINCT end_path FROM main.pair_ends "
+            "WHERE end_path IS NOT NULL AND pair_path IN ({})",
+            moved,
+        )
+    )
     for kind in sorted(changed_kinds):
         low, high = _kind_range(kind)
         connection.execute(
@@ -350,41 +356,107 @@ def _refresh_observations(
                 for subject, (live, retired) in sorted(
                     _counted(keys, connection.execute(_GROUPS_SQL, (low, high))).items()
                 )
+                if retired > 0
             ],
         )
         for sql in (
             "SELECT DISTINCT end_path FROM main.pair_units WHERE end_path>=? AND end_path<?",
             "SELECT end_path FROM main.pair_end_unobserved WHERE end_path>=? AND end_path<?",
+            "SELECT DISTINCT end_path FROM main.pair_ends "
+            "WHERE pair_path>=? AND pair_path<? AND end_path IS NOT NULL",
         ):
             judged.update(str(row[0]) for row in connection.execute(sql, (low, high)))
-    for end in sorted(judged):
-        if connection.execute(_UNOBSERVED_SQL, (end, end)).fetchone() is None:
-            connection.execute("DELETE FROM main.pair_end_unobserved WHERE end_path=?", (end,))
+    _judge(connection, sorted(judged))
+
+
+def _apply_counts(
+    connection: sqlite3.Connection, keys: _KindKeys, delta: Mapping[str, list[int]]
+) -> None:
+    """Add each Subject's count difference to its row, by set.
+
+    A Subject with a row adds its difference, and loses the row when its last
+    retired Claim goes. A Subject with no row had no retired Claim, so only one
+    gaining one gets a row, counted from its Claims as the batch left them: its
+    retired Claims are this batch's alone, so no retired history is read. One
+    read of the rows, at most one of the Claims, one delete and one upsert.
+    """
+
+    current = {
+        str(subject): (int(live), int(retired))
+        for subject, live, retired in select_in(
+            connection,
+            "SELECT subject_path,live,retired FROM main.subject_observations "
+            "WHERE subject_path IN ({})",
+            list(delta),
+        )
+    }
+    gone: list[str] = []
+    kept: list[tuple[str, int, int]] = []
+    first: list[str] = []
+    for subject, (live, retired) in sorted(delta.items()):
+        if subject not in current:
+            if retired < 0:
+                raise ProjectionIntegrityError("subject observation count would go below zero")
+            if retired > 0:
+                first.append(subject)
+            continue
+        old_live, old_retired = current[subject]
+        new_live, new_retired = old_live + live, old_retired + retired
+        if new_live < 0 or new_retired < 0:
+            raise ProjectionIntegrityError("subject observation count would go below zero")
+        if new_retired == 0:
+            gone.append(subject)
         else:
-            connection.execute(
-                "INSERT INTO main.pair_end_unobserved VALUES (?) ON CONFLICT DO NOTHING", (end,)
-            )
+            kept.append((subject, new_live, new_retired))
+    counted = _counted(
+        keys,
+        select_in(
+            connection,
+            "SELECT subject_path,predicate,lifecycle,count(*) FROM main.claims "
+            "WHERE subject_path IN ({}) GROUP BY subject_path,predicate,lifecycle",
+            first,
+        ),
+    )
+    for subject in first:
+        live, retired = counted.get(subject, [0, 0])
+        kept.append((subject, live, retired))
+    execute_in(connection, "DELETE FROM main.subject_observations WHERE subject_path IN ({})", gone)
+    insert_rows(
+        connection,
+        "main.subject_observations",
+        sorted(kept),
+        suffix=" ON CONFLICT(subject_path) DO UPDATE SET live=excluded.live,"
+        "retired=excluded.retired",
+    )
 
 
-def _add_counts(connection: sqlite3.Connection, subject: str, live: int, retired: int) -> None:
-    row = connection.execute(
-        "SELECT live,retired FROM main.subject_observations WHERE subject_path=?", (subject,)
-    ).fetchone()
-    new_live = live + (0 if row is None else int(row[0]))
-    new_retired = retired + (0 if row is None else int(row[1]))
-    if new_live < 0 or new_retired < 0:
-        raise ProjectionIntegrityError("subject observation count would go below zero")
-    if new_live == 0 and new_retired == 0:
-        connection.execute("DELETE FROM main.subject_observations WHERE subject_path=?", (subject,))
-    elif row is None:
-        connection.execute(
-            "INSERT INTO main.subject_observations VALUES (?,?,?)", (subject, new_live, new_retired)
-        )
-    else:
-        connection.execute(
-            "UPDATE main.subject_observations SET live=?,retired=? WHERE subject_path=?",
-            (new_live, new_retired, subject),
-        )
+def _unobserved(end: str) -> str:
+    """SQL: ``end`` has no live observation, a retired Claim, and ends a pair holding a fact."""
+
+    return (
+        "EXISTS (SELECT 1 FROM main.subject_observations AS o WHERE o.subject_path="
+        f"{end} AND o.live=0 AND o.retired>0 AND EXISTS "
+        f"(SELECT 1 FROM main.pair_units AS u WHERE u.end_path={end}))"
+    )
+
+
+def _judge(connection: sqlite3.Connection, ends: list[str]) -> None:
+    """Re-judge these ends: drop the ones that no longer stand, add the ones that now do."""
+
+    execute_in(
+        connection,
+        "DELETE FROM main.pair_end_unobserved WHERE end_path IN ({}) AND NOT "
+        + _unobserved("pair_end_unobserved.end_path"),
+        ends,
+    )
+    execute_in(
+        connection,
+        "INSERT INTO main.pair_end_unobserved SELECT s.subject_path FROM "
+        "main.subject_observations AS s WHERE s.subject_path IN ({}) AND "
+        + _unobserved("s.subject_path")
+        + " ON CONFLICT DO NOTHING",
+        ends,
+    )
 
 
 def _apply(
