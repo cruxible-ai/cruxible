@@ -576,9 +576,14 @@ def test_a_line_run_that_posts_nothing_counts_zero_without_opening_the_inbox(
         # A failure that can fall between a post and its record reads the store.
         ((), 0, "unexpected_exception", True),
         ((), 0, "journal_append_failed", True),
+        ((), 0, "journal_conflict", True),
+        ((), 0, "journal_integrity_error", True),
         ((), 0, "terminal_egress_unverified", True),
+        ((), 0, "terminal_egress_recovered", True),
+        ((), 0, "run_record_invalid", True),
         # A provider fence fails before any terminal: the journal stands.
         ((), 0, "provider_process_lease_invalid", False),
+        ((), 0, "wall_clock_exhausted", False),
     ],
 )
 def test_only_a_run_whose_journal_leaves_room_for_a_post_reads_the_inbox_count(
@@ -596,3 +601,45 @@ def test_only_a_run_whose_journal_leaves_room_for_a_post_reads_the_inbox_count(
         )
         is consults
     )
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        ("JournalIntegrityError", "journal_integrity_error"),
+        ("JournalConflictError", "journal_conflict"),
+        ("JournalError", "journal_append_failed"),
+    ],
+)
+def test_posts_whose_terminal_record_fails_to_append_still_count_and_need_attention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: str, code: str
+) -> None:
+    """The items are posted, then the run journal refuses their ``terminal_egress`` record.
+
+    Nothing the run journaled names a post, so the count comes from the inbox
+    store because the run ended in a code that can fall between a post and its
+    record.
+    """
+
+    from cruxible_client.contracts import errors as contract_errors
+    from cruxible_core.exhaust.backends import LocalJournalBackend
+
+    instance, root, line = inbox_world(tmp_path)
+    original = LocalJournalBackend.append
+    refused: list[str] = []
+
+    def refuse_terminal_record(self: Any, draft: Any, **kwargs: Any) -> Any:
+        if draft.event_kind == "terminal_egress" and not refused:
+            refused.append(draft.event_kind)
+            raise getattr(contract_errors, error)("terminal record refused after the post")
+        return original(self, draft, **kwargs)
+
+    monkeypatch.setattr(LocalJournalBackend, "append", refuse_terminal_record)
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert refused == ["terminal_egress"]
+    assert state.terminal is not None and state.terminal.code == code  # type: ignore[union-attr]
+    assert state.findings_count == 0 and state.terminal_egress == ()
+    assert LineInboxStore(instance).posted_by_run(state.run_id) == 3
+    assert state.counts is not None
+    assert (state.counts.inbox, state.counts.needs_attention) == (3, True)

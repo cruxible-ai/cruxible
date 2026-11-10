@@ -3166,16 +3166,38 @@ def _public_run_receipt(
     )
 
 
-#: The run ends that can fall between an inbox post and the journal record
-#: that names it: an unexpected exception, a journal append that failed or
-#: conflicted, an inbox receipt that failed verification, or a record the
-#: fold could not read.
+#: Every terminal code a run can end with between an inbox post and the
+#: journal record that names it. A run posts in three places
+#: (``procedures.execution``), and each post is followed by its record before
+#: anything else runs: ``deliver_inbox_egress`` (``post_inbox``), then receipt
+#: verification, then the ``terminal_egress`` append; ``_route_findings`` on a
+#: claims terminal, then its ``terminal_egress`` append; ``_route_findings`` on
+#: an extract node, then its ``node_fired`` append. What can end the run in
+#: between:
+#:
+#: - the record's own append refusing: ``_journal_refusal_code`` maps every
+#:   ``JournalError`` to ``journal_conflict``, ``journal_integrity_error`` or
+#:   ``journal_append_failed``;
+#: - any other exception there -- the inbox store failing after its own journal
+#:   append is durable, the sink building its receipt, the record's reservation
+#:   or body store -- which the executor finalizes as ``unexpected_exception``
+#:   (an untyped exception or a bare ``ExecutionError``);
+#: - a ``post_inbox`` receipt failing verification: ``terminal_egress_unverified``;
+#: - a crash after a claims terminal routed its findings, before its delivered
+#:   record: the terminal was journaled ``prepared``, and recovery finishes the
+#:   run ``terminal_egress_recovered``.
+#:
+#: ``run_record_invalid`` is the fold's own: the final record could not be
+#: read, so nothing it journaled can rule a post out. Every other terminal code
+#: is raised at a node that posts nothing, after any earlier post's record.
 _POST_WINDOW_TERMINAL_CODES = frozenset(
     {
-        "unexpected_exception",
         "journal_append_failed",
         "journal_conflict",
+        "journal_integrity_error",
+        "unexpected_exception",
         "terminal_egress_unverified",
+        "terminal_egress_recovered",
         "run_record_invalid",
     }
 )
