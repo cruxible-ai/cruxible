@@ -125,10 +125,20 @@ def containing_git_workspace_root(workspace_path: Path) -> Path | None:
     return None
 
 
-def workspace_git_object_format(workspace_root: Path) -> GitObjectFormat:
+def workspace_git_object_format(workspace_root: Path) -> GitObjectFormat | None:
+    """The Git object format of a workspace root, or None for a plain folder.
+
+    A folder is a workspace whether or not it is a Git worktree; only a root
+    with no ``.git`` entry at all is plain. A ``.git`` entry that is no usable
+    repository still refuses (``workspace_not_git``, ``workspace_path_invalid``).
+    """
+
     workspace = workspace_root.expanduser()
     if workspace.is_symlink() or not workspace.is_dir():
         raise ValueError("workspace_missing")
+    marker = workspace / ".git"
+    if not marker.exists() and not marker.is_symlink():
+        return None
     try:
         _, common = _repository(workspace.resolve())
         values = [
@@ -291,6 +301,14 @@ def _copy_objects(source: Path, target: Path, roots: tuple[str, ...]) -> None:
     writer.write(objects, durable=False)
 
 
+def not_git_advertisement(workspace_root: Path) -> WorkspaceAdvertisement:
+    """The advertisement of an attached folder that is no Git repository: skipped."""
+
+    return WorkspaceAdvertisement(
+        status="not_git", workspace_path=str(workspace_root.expanduser().resolve(strict=False))
+    )
+
+
 def _advertise_workspace_refs(
     *, workspace_root: Path | None, ledger_path: Path, ledger_object_format: GitObjectFormat
 ) -> WorkspaceAdvertisement:
@@ -305,6 +323,8 @@ def _advertise_workspace_refs(
 
     try:
         workspace_format = workspace_git_object_format(workspace)
+        if workspace_format is None:
+            return not_git_advertisement(workspace)
         if workspace_format != ledger_object_format:
             return failed("object_format_mismatch")
         _, common = _repository(workspace)
@@ -376,5 +396,6 @@ def advertise_workspace_refs(
 __all__ = [
     "advertise_workspace_refs",
     "containing_git_workspace_root",
+    "not_git_advertisement",
     "workspace_git_object_format",
 ]

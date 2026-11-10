@@ -148,7 +148,6 @@ from cruxible_core.exhaust.consumption import (
     note_consumption_unobserved,
     record_consumption,
 )
-from cruxible_core.floor.workspace_advertisement import workspace_git_object_format
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.ledger.ledger_mirror import LedgerMirrorStateV1
@@ -156,7 +155,7 @@ from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.execution_policy import (
     enforce_customer_code_execution_supported,
 )
-from cruxible_core.runtime.host_api import attach_workspace
+from cruxible_core.runtime.host_api import attach_workspace, attachable_workspace
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.permissions import (
     PERMISSION_REQUIREMENTS,
@@ -573,10 +572,7 @@ def playbill_init(
                 "Workspace attachment requires a caller connected directly through the local "
                 "Unix socket"
             )
-        try:
-            workspace_git_object_format(Path(workspace_root))
-        except ValueError as exc:
-            raise ConfigError("Workspace attachment requires one local Git worktree") from exc
+        attachable_workspace(workspace_root, state_root=registry.state_root)
         record = registry.get(instance_id)
         if record is None:
             raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")

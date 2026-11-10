@@ -32,6 +32,7 @@ from cruxible_core.errors import (
 )
 from cruxible_core.floor.workspace_advertisement import (
     advertise_workspace_refs,
+    not_git_advertisement,
     workspace_git_object_format,
 )
 from cruxible_core.providers.provider_process_leases import ProviderProcessRecoveryResultV1
@@ -52,6 +53,15 @@ from cruxible_core.storage import fsync_directory as _fsync_directory
 from cruxible_core.storage.preview_fence import PreviewWriteRefused
 
 _log = structlog.get_logger("cruxible.provider_runtime")
+
+
+def _plain_folder(workspace: Path) -> bool:
+    """Whether an attached workspace has no ``.git`` entry (a broken one is still Git)."""
+
+    try:
+        return workspace_git_object_format(workspace) is None
+    except (OSError, ValueError):
+        return False
 
 
 class PlaybillInstanceManager:
@@ -95,7 +105,21 @@ class PlaybillInstanceManager:
         instance: PlaybillInstance,
         workspaces: tuple[Path, ...],
     ) -> None:
+        """Bind the advisory ledger mirror into the attached folder, if it is Git.
+
+        Whether the folder is a Git repository is decided here, when the host
+        opens or is (re)attached, never on a later write: running ``git init``
+        in an attached folder turns the mirror on at the next ``workspace
+        attach``, not by surprise.
+        """
+
         workspace = workspaces[0] if workspaces else None
+        if workspace is not None and _plain_folder(workspace):
+            plain = workspace
+            instance.bind_workspace_advertiser(
+                lambda: not_git_advertisement(plain), workspace_path=workspace
+            )
+            return
         instance.bind_workspace_advertiser(
             lambda: advertise_workspace_refs(
                 workspace_root=workspace,
@@ -155,13 +179,13 @@ class PlaybillInstanceManager:
                 )
             except ValueError as exc:
                 raise BootstrapError(
-                    "attached workspace must be one exact local Git worktree"
+                    "attached workspace must be a folder, or one exact local Git worktree"
                 ) from exc
-            # An attached workspace's own format wins, because the advisory
-            # remote refuses across formats. With no workspace the ledger is
-            # SHA-1: common Git viewers do not recognize a SHA-256 repository,
-            # and a ledger nobody can open is not evidence anyone can read
-            # (maintainer ruling, 2026-09-03).
+            # An attached Git workspace's own format wins, because the advisory
+            # remote refuses across formats. With no workspace, or a plain
+            # folder, the ledger is SHA-1: common Git viewers do not recognize a
+            # SHA-256 repository, and a ledger nobody can open is not evidence
+            # anyone can read (maintainer ruling, 2026-09-03).
             if (
                 git_object_format is not None
                 and workspace_format is not None
