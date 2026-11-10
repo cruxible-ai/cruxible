@@ -49,4 +49,22 @@ class McpServerInfoResult(BaseModel):
         return self
 
 
-__all__ = ["McpServerInfoResult", "McpWhoAmIResult"]
+class McpInitResult(BaseModel):
+    """What `cruxible_init` made (or found) for the workspace folder; never a key."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["cruxible-mcp-init-v1"] = "cruxible-mcp-init-v1"
+    status: Literal["initialized", "already_initialized"]
+    instance_id: str
+    #: The owner this folder's MCP server and CLI act as (its identity record);
+    #: None for a folder initialized before records existed.
+    principal_id: str | None
+    #: The owner's key directory, outside the project; the key never leaves it.
+    key_dir: str | None
+    approval_policy: Literal["self_approval_allowed", "independent_approval_required"] | None
+    workspace_root: str
+    folder_identity_path: str | None
+
+
+__all__ = ["McpInitResult", "McpServerInfoResult", "McpWhoAmIResult"]

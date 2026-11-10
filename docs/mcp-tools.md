@@ -165,6 +165,7 @@ that starts reaching one more operation moves the pin.
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_server_info` | Return the adapter and daemon versions with daemon metadata; an instance-scoped credential gets its own instance's host and identity instead of a refusal | `READ_ONLY` |
+| `cruxible_init` | Make the workspace folder an instance over the local daemon socket, as `cruxible init`: create the host attached to the folder, the binding, the owner principal (`principal_id`, default your OS username) and its key in the default key directory outside the folder, and the folder identity record; this session then authors as the owner. An initialized folder reports its instance and changes nothing. Returns the instance, principal, key directory and approval policy, never key material | `ADMIN` |
 | `cruxible_whoami` | Name the resolved instance, the credential-derived actor's identity and registration there, whether it can author (and the repair when not), and the adapter and daemon versions | `READ_ONLY` |
 
 ## Host and providers
@@ -296,6 +297,7 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_authoring_bind` | Read an anchored selection of a catalogued workspace file (the stub's `source_id` must be its catalog name; `occurrence` picks one of several anchor matches), derive commitments, and compile | `GOVERNED_WRITE` |
 | `cruxible_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
 | `cruxible_authoring_submit` | Compile and submit a `payload` in one call, submit a staged `intent_id`, or both (revise, then submit); idempotent | `GOVERNED_WRITE` |
+| `cruxible_authoring_submit_file` | Submit the authoring input file at a workspace-relative `path` (YAML or JSON, as `cruxible authoring submit FILE`), read beneath the workspace root without following a link, at most 1 MiB; `accept="never"` keeps the proposal | `GOVERNED_WRITE` |
 | `cruxible_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
 | `cruxible_block_repin` | Stamp or refresh one projection block by its catalog `file` and `block`; the adapter computes the stamp, registers the block and records the page's declared blocks for block-churn detection; `render: true` writes the body as a table or list from its one query backing | `GOVERNED_WRITE` |
 | `cruxible_block_sync` | Check each projection block's backings (the CLI's `block sync --check`); edits no page | `READ_ONLY` |

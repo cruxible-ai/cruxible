@@ -39,9 +39,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "kept on purpose, and (for registry kits) the latest available version."
     ),
     "cruxible_kit_add": (
-        "Use when you want to install or upgrade a kit, by local kit directory, OCI layout, "
-        "registry reference or bundle. It "
-        "always proposes: a definition held differently takes the release's version unless "
+        "Use when you want to install or upgrade a kit. It always proposes: a definition "
+        "held differently takes the release's version unless "
         "kept (keep, keep_local_edits); the plan says what each change does and counts "
         "dependents. It lands at once when the approval policy requires no approval. A kit "
         "bundling provider packages installs them first (admin; a commit stages their files), "
@@ -77,9 +76,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "like approve, it activates a candidate it completes unless hold is set."
     ),
     "cruxible_proposal_approve": (
-        "Use after review to approve a proposal with a local key (the server's "
-        "CRUXIBLE_MCP_KEY_DIR, else the folder owner's); it challenges, signs and submits "
-        "in one call. The approval "
+        "Use after review to approve a proposal with a local key (CRUXIBLE_MCP_KEY_DIR, "
+        "else the folder owner's); it challenges, signs and submits in one call. The approval "
         "that completes the candidate also activates it when your tier may; hold=true "
         "signs only. Pass the reviewed candidate_digest to bind it to what you read."
     ),
@@ -96,9 +94,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "operational family (runs, lines, captures, ...)."
     ),
     "cruxible_whoami": (
-        "Use when you need which instance this server acts on, who you are there (and "
-        "whether that came from the environment or the folder), and whether you can "
-        "author (and the repair when not)."
+        "Use when you need which instance this server acts on, who you are there, and "
+        "whether you can author (and the repair when not)."
     ),
     "cruxible_proposal_list": (
         "Use when you need to find open proposals or inspect terminal proposal outcomes. "
@@ -190,6 +187,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_authoring_submit": (
         "Use when an authoring intent has passed preflight and should become one candidate."
+    ),
+    "cruxible_authoring_submit_file": (
+        "Use to submit a workspace authoring file, such as a tailored kit automation template."
+    ),
+    "cruxible_init": (
+        "Use once in a bare project folder: creates its instance and owner; this session "
+        "then acts as the owner."
     ),
     "cruxible_authoring_status": (
         "Use when you need exactly what still separates an authored candidate from acceptance."

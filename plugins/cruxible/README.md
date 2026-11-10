@@ -34,7 +34,10 @@ kit directories, which the lean MCP catalog omits; the same pinned
 ## First run, step by step
 
 One linear path from an empty project to an installed kit on one machine. The
-CLI does the setup; the plugin's MCP tools do the everyday work afterwards.
+CLI does the setup; the plugin's MCP tools do the everyday work afterwards. An
+agent with no shell calls `cruxible_init` instead of steps 1 to 4 (a single
+owner, `self_approval_allowed`) and `cruxible_authoring_submit_file` to submit a
+file it tailored.
 `SOCKET` below is the daemon socket the MCP server auto-starts:
 `$CRUXIBLE_STATE_ROOT/run/daemon.sock`, or `~/.cruxible/run/daemon.sock` when
 `CRUXIBLE_STATE_ROOT` is unset. Use absolute paths throughout, and keep key
@@ -87,7 +90,7 @@ back") covers it.
 ## Local use and pre-release testing
 
 With no explicit daemon transport, the adapter finds or auto-starts the local
-daemon. The default tier is **admin**; the pinned 23-tool allowlist still hides
+daemon. The default tier is **admin**; the pinned 25-tool allowlist still hides
 the rest of the catalog. Admin permits endpoints, not unlawful state: evidence,
 principals, Mandates and approval policy still apply. A separate agent session
 (its own principal) reviews the exact candidate; never self-approve, including with auth off. The single

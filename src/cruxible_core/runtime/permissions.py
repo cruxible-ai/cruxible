@@ -145,6 +145,9 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_authoring_bind": PermissionMode.GOVERNED_WRITE,
     "cruxible_authoring_preflight": PermissionMode.GOVERNED_WRITE,
     "cruxible_authoring_submit": PermissionMode.GOVERNED_WRITE,
+    "cruxible_authoring_submit_file": PermissionMode.GOVERNED_WRITE,
+    # Also the daemon's init operation: one tier for the tool and the route.
+    "cruxible_init": PermissionMode.ADMIN,
     # The write verbs propose at GOVERNED_WRITE; each activates in the same call
     # only when the caller's tier also admits cruxible_proposal_activate.
     "cruxible_set": PermissionMode.GOVERNED_WRITE,
@@ -177,7 +180,6 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     # Not a tool: every body-reading surface consults it per Capture.
     "cruxible_body_read_restricted": PermissionMode.GOVERNED_WRITE,
     "cruxible_action_run": PermissionMode.GOVERNED_WRITE,
-    "cruxible_init": PermissionMode.ADMIN,
     "cruxible_host_create": PermissionMode.ADMIN,
     "cruxible_host_workspace_detach": PermissionMode.ADMIN,
     "cruxible_host_workspace_attach": PermissionMode.ADMIN,

@@ -112,7 +112,7 @@ from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_MIN_MAX_ROWS,
 )
 from cruxible_core.mcp import handlers
-from cruxible_core.mcp.results import McpServerInfoResult, McpWhoAmIResult
+from cruxible_core.mcp.results import McpInitResult, McpServerInfoResult, McpWhoAmIResult
 from cruxible_core.mcp.target import MCP_INSTANCE_ENV, require_instance_id
 from cruxible_core.mcp.tool_prompts import tool_description
 
@@ -601,6 +601,16 @@ def register_tools(
         return handlers.handle_playbill_activate(require_instance_id(instance_id), proposal_id)
 
     @_tool
+    def cruxible_init(
+        principal_id: Annotated[
+            str | None,
+            Field(description="Owner principal ID (default: your OS username)."),
+        ] = None,
+    ) -> McpInitResult:
+        """Initialize this workspace folder; an initialized one reports its instance."""
+        return handlers.handle_init(principal_id)
+
+    @_tool
     def cruxible_whoami(instance_id: InstanceId = None) -> McpWhoAmIResult:
         """Name the resolved instance, the credential-derived actor, and its registration."""
         return handlers.handle_playbill_whoami(require_instance_id(instance_id))
@@ -1027,6 +1037,18 @@ def register_tools(
             payload=None if payload is None else payload.model_dump(mode="json"),
             intent_id=intent_id,
             accept=accept,
+        )
+
+    @_tool
+    def cruxible_authoring_submit_file(
+        instance_id: InstanceId = None,
+        *,
+        path: Annotated[str, Field(description="Workspace-relative YAML or JSON file.")],
+        accept: AuthoringAccept = "if_allowed",
+    ) -> contracts.AuthoringSubmitResultRecord:
+        """Submit one authoring input file; accept="never" keeps the proposal."""
+        return handlers.handle_playbill_authoring_submit_file(
+            require_instance_id(instance_id), path, accept=accept
         )
 
     @_tool

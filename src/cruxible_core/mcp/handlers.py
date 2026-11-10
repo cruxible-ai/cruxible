@@ -17,6 +17,7 @@ from cruxible_client import (
     contracts,
     observe_next_workspace,
 )
+from cruxible_client._safe_files import ContainmentError, HeldRoot
 from cruxible_client.artifacts import unpack_artifact
 from cruxible_client.authoring.attestations import (
     local_attestation_signer_from_environment,
@@ -78,6 +79,7 @@ from cruxible_client.contracts.get_reads import (
 )
 from cruxible_client.contracts.governance import governance_identifier
 from cruxible_client.contracts.kits import (
+    KIT_AUTOMATION_TEMPLATE_MAX_BYTES,
     KitAddRequest,
     KitBuildRequest,
     KitBuildResult,
@@ -146,7 +148,9 @@ from cruxible_core.mcp.identity import (
     local_identity,
     verified_folder_identity,
 )
-from cruxible_core.mcp.results import McpServerInfoResult, McpWhoAmIResult
+from cruxible_core.mcp.init import run_mcp_init
+from cruxible_core.mcp.permissions import check_permission
+from cruxible_core.mcp.results import McpInitResult, McpServerInfoResult, McpWhoAmIResult
 from cruxible_core.mcp.target import configured_instance_id
 from cruxible_core.mcp.workspace import (
     mcp_approval_key_dir,
@@ -1168,6 +1172,69 @@ def handle_playbill_authoring_submit(
         ),
         operation_name="cruxible_authoring_submit",
     )
+
+
+#: The largest authoring file `cruxible_authoring_submit_file` reads: a kit's
+#: automation template's own cap.
+AUTHORING_FILE_MAX_BYTES = KIT_AUTOMATION_TEMPLATE_MAX_BYTES
+
+
+def handle_playbill_authoring_submit_file(
+    instance_id: str,
+    path: str,
+    *,
+    accept: AuthoringAccept = "if_allowed",
+) -> contracts.AuthoringSubmitResultRecord:
+    """Submit the authoring input file at ``path`` in the workspace, as `authoring submit FILE`.
+
+    The file (YAML or JSON, one tagless authoring input) is read beneath the
+    workspace root through held descriptors: a normalized relative path, no
+    symbolic link anywhere on it, at most ``AUTHORING_FILE_MAX_BYTES``.
+    """
+
+    import yaml
+
+    name = "cruxible_authoring_submit_file"
+    root = mcp_workspace_root()
+    try:
+        with HeldRoot(root) as held:
+            raw = held.read(path, max_bytes=AUTHORING_FILE_MAX_BYTES + 1)
+    except ContainmentError as exc:
+        raise DataValidationError(f"{name}: {exc}") from exc
+    except OSError as exc:
+        raise DataValidationError(
+            f"{name}: {path} is not a readable regular file in the workspace {root}: "
+            f"{exc.strerror or exc}"
+        ) from exc
+    if len(raw) > AUTHORING_FILE_MAX_BYTES:
+        raise DataValidationError(f"{name}: {path} is larger than {AUTHORING_FILE_MAX_BYTES} bytes")
+    try:
+        document = yaml.safe_load(raw.decode("utf-8"))
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise DataValidationError(f"{name}: {path} is not UTF-8 YAML or JSON: {exc}") from exc
+    if not isinstance(document, dict):
+        raise DataValidationError(f"{name}: {path} must contain one mapping")
+    try:
+        _AUTHORING_INPUT.validate_python(document)
+    except ValidationError as exc:
+        raise DataValidationError(
+            f"{name}: {path} is not an authoring input (`cruxible_authoring_example` shows "
+            "each shape)",
+            errors=validation_lines(exc),
+        ) from exc
+    return handle_playbill_authoring_submit(instance_id, payload=document, accept=accept)
+
+
+def handle_init(principal_id: str | None = None) -> McpInitResult:
+    """`cruxible_init`: initialize the MCP workspace folder (`cruxible_core.mcp.init`)."""
+
+    check_permission("cruxible_init")
+    target = resolve_daemon_target()
+
+    def call(fn: Callable[[CruxibleClient], Any], operation: str) -> Any:
+        return _daemon_call(fn, operation_name=operation)
+
+    return run_mcp_init(principal_id=principal_id, target=target, call=call)
 
 
 def handle_playbill_authoring_status(
