@@ -62,8 +62,6 @@ from cruxible_core.query.semantic_discovery import (
     DiscoveryError,
 )
 
-CLAIM_TYPE_CARD_DIGEST_DOMAIN = "playbill-claim-type-card-v1"
-SUBJECT_PROFILE_DIGEST_DOMAIN = "playbill-subject-profile-v1"
 INTERFACE_POLICY_DIGEST_DOMAIN = "playbill-interface-policy-summary-v1"
 
 CLAIM_TYPE_CARD_FACETS: tuple[str, ...] = ("interface", "match_bases", "policies", "usage")
@@ -336,22 +334,6 @@ def _validated_bases(
     if keys != tuple(sorted(set(keys))):
         raise ValueError("interface match bases must follow the frozen priority order, once each")
     return value
-
-
-def claim_type_card_digest(card: ClaimTypeCardV1) -> str:
-    """Digest one card so a rebuild can be compared without re-reading the facts."""
-
-    payload = card.model_dump(mode="json")
-    payload.pop("tag")
-    return typed_digest(Sha256Value, CLAIM_TYPE_CARD_DIGEST_DOMAIN, payload).tagged
-
-
-def subject_profile_digest(profile: SubjectProfileV1) -> str:
-    """Digest one profile so a rebuild can be compared without re-reading the facts."""
-
-    payload = profile.model_dump(mode="json")
-    payload.pop("tag")
-    return typed_digest(Sha256Value, SUBJECT_PROFILE_DIGEST_DOMAIN, payload).tagged
 
 
 # -- policy and schema one-liners -----------------------------------------
@@ -886,10 +868,8 @@ def build_subject_profile(
 
 
 __all__ = [
-    "CLAIM_TYPE_CARD_DIGEST_DOMAIN",
     "CLAIM_TYPE_CARD_FACETS",
     "INTERFACE_POLICY_DIGEST_DOMAIN",
-    "SUBJECT_PROFILE_DIGEST_DOMAIN",
     "SUBJECT_PROFILE_FACETS",
     "ClaimTypeCardV1",
     "ClaimTypeUsageRowV1",
@@ -903,7 +883,5 @@ __all__ = [
     "build_claim_type_card",
     "build_subject_profile",
     "claim_predicate_verdicts",
-    "claim_type_card_digest",
     "descriptor_relations",
-    "subject_profile_digest",
 ]

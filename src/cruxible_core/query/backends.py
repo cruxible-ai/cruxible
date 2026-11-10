@@ -42,7 +42,6 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvidence
-from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.claim_verdicts import (
     CaptureReobservationEvidence,
     CaptureVerdictEvidence,
@@ -61,8 +60,6 @@ from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_client.contracts.query.results import QueryClaimVisibility
 from cruxible_client.contracts.subjects import AcceptedSubject
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
-
-VIEW_DIGEST_DOMAIN = "playbill-subject-query-view-v1"
 
 
 class _StrictQueryBackendModel(BaseModel):
@@ -454,20 +451,6 @@ def adjacency_rows(
     )
 
 
-def render_subject_query_view(view: SubjectQueryViewV1) -> bytes:
-    """Return the canonical wire bytes of one materialized Subject view."""
-
-    return canonical_bytes(view.model_dump(mode="json")) + b"\n"
-
-
-def subject_query_view_digest(view: SubjectQueryViewV1) -> str:
-    """Digest one materialized Subject view for replay and rebuild comparison."""
-
-    payload = view.model_dump(mode="json")
-    payload.pop("tag")
-    return typed_digest(Sha256Value, VIEW_DIGEST_DOMAIN, payload).tagged
-
-
 # -- the backend contract -------------------------------------------------
 
 
@@ -689,7 +672,6 @@ class DirectClaimFactIndex:
 
 
 __all__ = [
-    "VIEW_DIGEST_DOMAIN",
     "ClaimFactRowV1",
     "ClaimQueryBackendFactoryV1",
     "ClaimQueryBackendV1",
@@ -703,8 +685,6 @@ __all__ = [
     "adjacency_rows",
     "claim_row_visibility",
     "claim_view_row",
-    "render_subject_query_view",
     "subject_query_view",
-    "subject_query_view_digest",
     "subject_view_row",
 ]
