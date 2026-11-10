@@ -7,6 +7,7 @@ import functools
 import importlib
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -117,6 +118,79 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("credential", "rotate"): "active",
 }
 
+#: Whether a command runs without the folder binding, from its keyword
+#: arguments and the root context object.
+WorkspaceIndependence = Callable[[dict[str, Any], dict[str, Any]], bool]
+
+
+def _always(kwargs: dict[str, Any], obj: dict[str, Any]) -> bool:
+    return True
+
+
+def _with_option(name: str) -> WorkspaceIndependence:
+    def check(kwargs: dict[str, Any], obj: dict[str, Any]) -> bool:
+        return bool(kwargs.get(name))
+
+    return check
+
+
+def _with_named_transport(kwargs: dict[str, Any], obj: dict[str, Any]) -> bool:
+    return obj.get("target_transport_source") in {"explicit", "environment"}
+
+
+# Commands that run when workspace discovery refuses (a marker in a folder
+# another user owns, an unreadable binding). The CLI root resolves discovery,
+# but holds its refusal back; ``handle_errors`` raises it immediately before a
+# command's callback unless the command is listed here and its condition
+# holds. A listed command never reads the folder binding: not its workspace
+# files, not the instance or daemon it binds. When discovery refused, the root
+# resolves with no workspace and no remembered context, so a remembered
+# instance is never used in its place: only an explicit or environment target
+# (or the daemon answering at the state root's default socket) reaches a
+# command. `cruxible mcp` reads none of this (the root returns early for it),
+# and `--help`/`--version` exit before any callback runs.
+#
+# Conditions:
+# - always: the command acts on a state root, the remembered-context file, a
+#   daemon it reports on, or nothing at all.
+# - with option X: given X, the command reads only its own named target or
+#   prints a local template.
+# - named transport: a daemon lifecycle change runs only on a daemon named by
+#   --server-url/--server-socket or the matching environment variables.
+WORKSPACE_INDEPENDENT_COMMANDS: dict[tuple[str, ...], WorkspaceIndependence] = {
+    ("server", "start"): _always,
+    ("server", "install-service"): _always,
+    ("server", "status"): _always,
+    ("server", "stop"): _with_named_transport,
+    ("server", "restart"): _with_named_transport,
+    ("credential", "recover-admin"): _always,
+    ("context", "connect"): _always,
+    ("context", "use"): _always,
+    ("context", "clear"): _always,
+    ("authoring", "example"): _always,
+    ("document", "propose"): _with_option("template"),
+    ("claim-type", "propose"): _with_option("template"),
+    ("capture-contract", "propose"): _with_option("template"),
+    ("write",): _with_option("schema"),
+    ("console",): _with_option("instance"),
+}
+
+
+def _raise_held_workspace_refusal(
+    ctx: click.Context, command_path: tuple[str, ...], kwargs: dict[str, Any]
+) -> None:
+    """Raise the root's held-back discovery refusal unless this command runs without it."""
+
+    root = ctx.find_root()
+    obj = root.obj if isinstance(root.obj, dict) else {}
+    refusal = obj.get("workspace_refusal")
+    if refusal is None:
+        return
+    independent = WORKSPACE_INDEPENDENT_COMMANDS.get(command_path)
+    if independent is not None and independent(kwargs, obj):
+        return
+    raise click.UsageError(str(refusal))
+
 
 def _command_path(ctx: click.Context) -> tuple[str, ...]:
     """Return the registered command path below the root CLI group."""
@@ -188,6 +262,7 @@ def handle_errors(f: Any) -> Any:
             ctx = click.get_current_context(silent=True)
             if ctx is not None:
                 command_path = _command_path(ctx)
+                _raise_held_workspace_refusal(ctx, command_path, kwargs)
                 target_mode = MUTATING_COMMAND_TARGETS.get(command_path)
                 if command_path in {
                     ("claim-type", "propose"),
@@ -1060,30 +1135,51 @@ def cli(
         # The MCP server reads only its own environment; remembered CLI context,
         # workspace discovery and root options must neither configure nor break it.
         return
+    workspace_refusal: str | None = None
     try:
         stored = load_cli_context()
         try:
+            try:
+                resolved = resolve_context(
+                    server_url=server_url,
+                    server_socket=server_socket,
+                    instance_id=instance_id,
+                    remembered=stored.as_json(),
+                    no_workspace=no_workspace,
+                )
+            except WorkspaceDirectoryConflict as conflict:
+                # An implicitly selected directory that is no workspace (home, a 0.3
+                # instance) still lets the command choose its daemon and instance: it
+                # runs without a workspace, and any workspace read or write refuses by
+                # name. A workspace named by CRUXIBLE_WORKSPACE refuses.
+                if os.environ.get("CRUXIBLE_WORKSPACE"):
+                    raise
+                if conflict.reason != "home":
+                    click.echo(f"warning: {conflict}; continuing without a workspace", err=True)
+                resolved = resolve_context(
+                    server_url=server_url,
+                    server_socket=server_socket,
+                    instance_id=instance_id,
+                    remembered=stored.as_json(),
+                    no_workspace=True,
+                )
+        except (
+            ContextResolutionError,
+            WorkspaceBoundaryRefused,
+            WorkspaceDirectoryConflict,
+        ) as refused:
+            # Discovery refused. Every command that reads the folder binding
+            # refuses with this before its callback (`handle_errors`); only one
+            # listed in WORKSPACE_INDEPENDENT_COMMANDS runs. It sees no workspace
+            # and no remembered context: a refused workspace never falls back to
+            # a remembered instance. A refusal that does not come from discovery
+            # or remembered context (two explicit transports) refuses here.
+            workspace_refusal = str(refused)
             resolved = resolve_context(
                 server_url=server_url,
                 server_socket=server_socket,
                 instance_id=instance_id,
-                remembered=stored.as_json(),
-                no_workspace=no_workspace,
-            )
-        except WorkspaceDirectoryConflict as conflict:
-            # An implicitly selected directory that is no workspace (home, a 0.3
-            # instance) still lets the command choose its daemon and instance: it
-            # runs without a workspace, and any workspace read or write refuses by
-            # name. A workspace named by CRUXIBLE_WORKSPACE refuses here.
-            if os.environ.get("CRUXIBLE_WORKSPACE"):
-                raise
-            if conflict.reason != "home":
-                click.echo(f"warning: {conflict}; continuing without a workspace", err=True)
-            resolved = resolve_context(
-                server_url=server_url,
-                server_socket=server_socket,
-                instance_id=instance_id,
-                remembered=stored.as_json(),
+                remembered={},
                 no_workspace=True,
             )
         settings = resolve_server_settings(
@@ -1096,7 +1192,6 @@ def cli(
         WorkspaceBoundaryRefused,
         WorkspaceDirectoryConflict,
     ) as exc:
-        # A refused or unreadable workspace never falls back to remembered context.
         raise click.UsageError(str(exc)) from exc
     transport_source: str = resolved.transport_source
     if not (settings.server_url or settings.server_socket):
@@ -1142,8 +1237,9 @@ def cli(
                 else str(resolved.workspace_binding_path)
             ),
             "workspace_attached": resolved.workspace_attached,
-            "no_workspace": no_workspace,
+            "no_workspace": no_workspace or workspace_refusal is not None,
             "no_autostart": no_autostart,
+            "workspace_refusal": workspace_refusal,
         }
     )
     _load_remembered_principal(
