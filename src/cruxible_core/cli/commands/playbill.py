@@ -3746,16 +3746,9 @@ def _principal_successor(
     proposal_name: str,
     dry_run: bool | None,
     at: str | None,
-) -> contracts.ProposalInspection:
-    if dry_run:
-        return _preview_principal_change(
-            principal_id=target_id,
-            kind=None,
-            key_dir=Path(key_dir).expanduser(),
-            proposal_name=proposal_name,
-            at=at,
-            refuse_existing=False,
-        )
+    output_json: bool,
+) -> None:
+    """Propose a successor key for ``target_id`` and print it (``rotate`` and ``recover``)."""
 
     def call(client: CruxibleClient, instance_id: str) -> contracts.ProposalInspection:
         matches = principal_records(client, instance_id)
@@ -3776,7 +3769,22 @@ def _principal_successor(
             at=at,
         )
 
-    return _server_call(call, command_name="cruxible principal change")
+    result = (
+        _preview_principal_change(
+            principal_id=target_id,
+            kind=None,
+            key_dir=Path(key_dir).expanduser(),
+            proposal_name=proposal_name,
+            at=at,
+            refuse_existing=False,
+        )
+        if dry_run
+        else _server_call(call, command_name="cruxible principal change")
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        _echo_proposal(result, result.lint)
 
 
 @principal_group.command("rotate")
@@ -3796,17 +3804,14 @@ def rotate_principal(
 ) -> None:
     """Propose a self-rotation; activation requires the actor's key signature."""
 
-    result = _principal_successor(
+    _principal_successor(
         target_id=principal_id,
         key_dir=key_dir,
         proposal_name=proposal_name,
         dry_run=dry_run,
         at=at,
+        output_json=output_json,
     )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-    else:
-        _echo_proposal(result, result.lint)
 
 
 @principal_group.command("recover")
@@ -3826,17 +3831,14 @@ def recover_principal(
 ) -> None:
     """Use recovery identity for a narrowly governed key replacement."""
 
-    result = _principal_successor(
+    _principal_successor(
         target_id=principal_id,
         key_dir=key_dir,
         proposal_name=proposal_name,
         dry_run=dry_run,
         at=at,
+        output_json=output_json,
     )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-    else:
-        _echo_proposal(result, result.lint)
 
 
 @principal_group.command("revoke")

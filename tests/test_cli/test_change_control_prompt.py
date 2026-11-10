@@ -144,7 +144,6 @@ def test_proposal_commands_select_json_or_text_and_preserve_prompt_control(
     # compiler upgrade returns its proposal inside a landing result
     served = CompilerUpgradeResult(proposal=result) if compiler else result
     monkeypatch.setattr(commands, "_server_call", lambda *_a, **_kw: served)
-    monkeypatch.setattr(commands, "_principal_successor", lambda **_kw: result)
     monkeypatch.setattr(commands, "_read_model", lambda *_a: document_example())
     _terminal(monkeypatch, True)
 
