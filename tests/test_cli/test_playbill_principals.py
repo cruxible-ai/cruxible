@@ -150,6 +150,25 @@ def test_cli_principal_add_refuses_daemon_kind() -> None:
     assert "'daemon' is not one of 'ordinary', 'recovery'" in result.output
 
 
+def test_rotate_and_recover_help_say_the_acting_principal_decides() -> None:
+    """Both propose the same key change; the law records it by who is acting."""
+
+    from cruxible_core.cli.main import CLI_COMMANDS
+
+    registry = CLI_COMMANDS["principal"].commands
+    assert registry is not None
+    assert "rotation when that principal acts" in registry["rotate"].help
+    assert "recovery when another principal acts" in registry["recover"].help
+    runner = CliRunner()
+    for command in ("rotate", "recover"):
+        result = runner.invoke(cli, ["principal", command, "--help"], terminal_width=200)
+        assert result.exit_code == 0, result.output
+        text = " ".join(result.output.split())
+        assert "when you are PRINCIPAL_ID" in text and "a rotation" in text
+        assert "a recovery" in text
+        assert "recovery identity" not in text
+
+
 def test_the_global_principal_id_reaches_the_client_and_whoami_says_it_is_a_claim(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

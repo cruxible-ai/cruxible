@@ -3802,7 +3802,12 @@ def rotate_principal(
     at: str | None,
     output_json: bool,
 ) -> None:
-    """Propose a self-rotation; activation requires the actor's key signature."""
+    """Propose a new key for PRINCIPAL_ID; activation needs your own key's signature.
+
+    What the change records depends on who is acting: when you are PRINCIPAL_ID
+    it is a rotation; when another principal proposes it, a recovery.
+    `principal recover` proposes the same change.
+    """
 
     _principal_successor(
         target_id=principal_id,
@@ -3829,7 +3834,13 @@ def recover_principal(
     at: str | None,
     output_json: bool,
 ) -> None:
-    """Use recovery identity for a narrowly governed key replacement."""
+    """Propose a new key for a locked-out or revoked PRINCIPAL_ID, acting as yourself.
+
+    What the change records depends on who is acting: when another principal
+    proposes it, it is a recovery; when you are PRINCIPAL_ID, a rotation. The
+    signature that activates it is yours, never the locked-out principal's.
+    `principal rotate` proposes the same change.
+    """
 
     _principal_successor(
         target_id=principal_id,
