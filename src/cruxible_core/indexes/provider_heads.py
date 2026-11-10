@@ -13,7 +13,6 @@ import sqlite3
 from collections import Counter
 from collections.abc import Callable, Mapping
 
-from cruxible_client.contracts.canonical import file_digest
 from cruxible_client.contracts.providers import parse_provider, provider_build_key, provider_digest
 from cruxible_core.indexes.sql_batch import execute_values, insert_rows, select_in
 from cruxible_core.ledger.git import _proven_blob_entries
@@ -155,16 +154,11 @@ def refresh_provider_heads(
             digest = ""
             if "/" not in name:
                 raw = sources.get(member.path)
-                commitment = getattr(member, "candidate_artifact_digest", None)
-                legacy = getattr(member, "artifact_digest", None)
-
-                def artifact_digest(raw: bytes) -> str:
-                    return provider_digest(parse_provider(raw, path=member.path)).tagged
-
-                matches = raw is not None and (
-                    artifact_digest(raw) == commitment
-                    if commitment is not None
-                    else file_digest(raw).tagged == legacy
+                commitment = member.candidate_artifact_digest
+                matches = (
+                    raw is not None
+                    and commitment is not None
+                    and provider_digest(parse_provider(raw, path=member.path)).tagged == commitment
                 )
                 if not matches:
                     if historical_source is None:
