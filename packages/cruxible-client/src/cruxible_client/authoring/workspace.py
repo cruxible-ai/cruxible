@@ -79,8 +79,13 @@ from cruxible_client.contracts.workspace_layout import (
 )
 
 _CONFIG_PATH = PurePosixPath(".cruxible/coverage.json")
-#: Machine-local files kept out of Git: the client binding and the derived world stub.
-_EXCLUDE_RULES = (b"/.cruxible/coverage.json\n", b"/.cruxible/world.pyi\n")
+#: Machine-local files kept out of Git: the client binding, the folder's identity
+#: record (a principal ID and a local path) and the derived world stub.
+_EXCLUDE_RULES = (
+    b"/.cruxible/coverage.json\n",
+    b"/.cruxible/identity.json\n",
+    b"/.cruxible/world.pyi\n",
+)
 _FLOOR_DOMAIN = FLOOR_FORMAT
 # A workspace's floor_output profile names a format; live workspaces still hold
 # profiles written as v2 or v5, which refresh to the current floor unchanged.
