@@ -38,6 +38,7 @@ from cruxible_client.authoring.compact_query import (
     parse_where,
     render_query_table,
 )
+from cruxible_client.authoring.context import ContextResolutionError, resolve_context
 from cruxible_client.authoring.doc_writes import write_workspace
 from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_FACTORIES,
@@ -1190,20 +1191,10 @@ def init_playbill(
     transport = _transport_target(_root_ctx_obj())
     if transport is None:  # pragma: no cover - guarded by _get_client above
         raise click.UsageError("Server mode is required for cruxible init")
+    if git_workspace is not None:
+        transport = _target_init_folder(git_workspace) or transport
     selected_instance = _root_ctx_obj().get("instance_id")
     instance_source = str(_root_ctx_obj().get("target_instance_source") or "")
-    if (
-        selected_instance is not None
-        and git_workspace is not None
-        and instance_source == "remembered"
-    ):
-        # The remembered host is another folder's; this folder gets its own,
-        # and acts as none of the remembered host's principals.
-        selected_instance = None
-        _root_ctx_obj()["instance_id"] = None
-        forget = _root_ctx_obj().pop("forget_remembered_principal", None)
-        if callable(forget):
-            forget()
     if selected_instance is not None and instance_source == "workspace":
         initialized_here = _initialized_host(str(selected_instance))
         if initialized_here is not None:
@@ -1477,6 +1468,50 @@ def _create_host_for_init(
     _remember_initialized_host(created.instance_id, workspace=workspace)
     click.echo(f"Created Cruxible host {created.instance_id} @ {transport}", err=True)
     return created.instance_id
+
+
+def _target_init_folder(folder: Path) -> str | None:
+    """Make init act on ``folder``'s own instance, or on none; the new transport, if moved.
+
+    The root resolution picked an instance for the current directory: another
+    folder's binding (``init --workspace B`` run from A), or the remembered
+    context, which belongs to another folder. Neither is this folder's, so
+    init drops it and the remembered principal loaded with it, and takes
+    ``folder``'s own binding when it has one (its transport too, unless the
+    transport was named explicitly). An instance named explicitly or by the
+    environment keeps its precedence.
+    """
+
+    obj = _root_ctx_obj()
+    source = str(obj.get("target_instance_source") or "")
+    if obj.get("instance_id") is None or source not in {"workspace", "remembered"}:
+        return None
+    current = obj.get("playbill_workspace")
+    if source == "workspace" and current is not None and Path(current) == folder:
+        return None
+    forget = obj.pop("forget_remembered_principal", None)
+    if callable(forget):
+        forget()
+    obj["instance_id"] = None
+    obj["target_instance_source"] = "local"
+    obj["workspace_binding_path"] = None
+    try:
+        own = resolve_context(workspace=folder, environ={}, remembered={})
+    except (ContextResolutionError, WorkspaceDirectoryConflict) as exc:
+        raise click.UsageError(f"cruxible init: the workspace binding of {folder}: {exc}") from exc
+    if not own.workspace_attached:
+        return None
+    obj["instance_id"] = own.instance_id
+    obj["target_instance_source"] = "workspace"
+    obj["workspace_binding_path"] = (
+        None if own.workspace_binding_path is None else str(own.workspace_binding_path)
+    )
+    if obj.get("target_transport_source") in {"explicit", "environment"}:
+        return None
+    obj["server_url"], obj["server_socket"] = own.server_url, own.server_socket
+    obj["target_transport_source"] = "workspace"
+    obj.pop("_client", None)
+    return _transport_target(obj)
 
 
 def _remember_initialized_host(instance_id: str, *, workspace: Path | None) -> None:

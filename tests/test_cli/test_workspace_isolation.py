@@ -5,8 +5,9 @@ that the SDK/CLI context and the core/MCP resolver share; a binding is read
 only inside the chosen root. Inside a ``.cruxible`` workspace that binds no
 instance, a remembered instance recorded for another folder is not used (the
 command refuses with the repair); a folder with no workspace directory keeps
-the remembered context. The daemon-backed cases run one real daemon the CLI
-starts, and stop it.
+the remembered context. ``init --workspace B`` acts on B, never on the folder
+it runs from. The daemon-backed cases run one real daemon the CLI starts, and
+stop it.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import pytest
 from click.testing import CliRunner
 
 from cruxible_client.authoring.context import resolve_context
+from cruxible_core.cli.commands import playbill
 from cruxible_core.cli.main import cli
 from cruxible_core.workspace_root import resolve_workspace_root
 from tests.test_cli.test_first_run_workspace import _json, _run, first_run  # noqa: F401
@@ -233,4 +235,44 @@ def test_an_empty_inner_cruxible_is_its_own_unbound_workspace(
     assert "already initialized" not in initialized.stdout
     inner_binding = json.loads((inner / ".cruxible" / "coverage.json").read_text())
     assert inner_binding["instance_id"] != instance_a
+    assert _json("whoami")["actor_id"] == "alice"
+
+
+def test_init_workspace_b_from_a_initializes_b_and_leaves_a_alone(
+    first_run: dict[str, Path],  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_a = first_run["folder"]
+    _run("init", "--principal-id", "alice")
+    instance_a = json.loads((project_a / ".cruxible" / "coverage.json").read_text())["instance_id"]
+    context_before = first_run["context"].read_bytes()
+    project_b = first_run["scratch"] / "h" / "B"
+    project_b.mkdir()
+    # Without --principal-id the owner is the OS user, never A's remembered alice.
+    monkeypatch.setattr(playbill.getpass, "getuser", lambda: "carol")
+
+    created = _run("init", "--workspace", str(project_b))
+
+    assert "already initialized" not in created.stdout
+    binding_b = json.loads((project_b / ".cruxible" / "coverage.json").read_text())
+    instance_b = binding_b["instance_id"]
+    assert instance_b != instance_a
+    assert "Owner principal: carol" in created.stdout
+    context = json.loads(first_run["context"].read_text())
+    before = json.loads(context_before)
+    assert context["instance_id"] == instance_a
+    assert (
+        context["principals"][f"{instance_a}@{before['instance_transport']}"]
+        == (before["principals"][f"{instance_a}@{before['instance_transport']}"])
+    )
+    assert context["principals"][f"{instance_b}@{before['instance_transport']}"]["active"] == (
+        "carol"
+    )
+
+    # B already bound: init --workspace B from A reports B, not A.
+    again = _run("init", "--workspace", str(project_b))
+    assert f"already initialized here: host {instance_b}" in again.stdout
+    monkeypatch.chdir(project_b)
+    assert _json("whoami")["actor_id"] == "carol"
+    monkeypatch.chdir(project_a)
     assert _json("whoami")["actor_id"] == "alice"
