@@ -152,7 +152,7 @@ from cruxible_client.contracts.declared_blocks import (
     projection_window_intersecting,
     stamped_projection_windows,
 )
-from cruxible_client.contracts.errors import CruxibleError, FormatError
+from cruxible_client.contracts.errors import CanonicalEncodingError, CruxibleError, FormatError
 from cruxible_client.contracts.notes import (
     Note,
     note_digest,
@@ -590,6 +590,13 @@ def _refuse(
         message=message,
         repairs=(bounded_repair(repair_kind, repair_description, replacement),),
     )
+
+
+# What the source's capture rules raise against a working selection itself: its
+# contract and budget, its canonical encoding, the selector models. A CAS storage
+# or integrity failure (CasError) is the daemon's, never the author's selection,
+# and keeps its server-error classification.
+_WORKING_SELECTION_REFUSALS = (CaptureFormatError, CanonicalEncodingError, ValidationError)
 
 
 def _refuse_retired_source(
@@ -1907,7 +1914,7 @@ def _lower_claim(
                 selector=source.selector.model_dump(mode="json"),
                 selected_content=source.selected_content,
             )
-        except (CruxibleError, ValueError) as exc:
+        except _WORKING_SELECTION_REFUSALS as exc:
             # The capture contracts refusing the observation -- a selector that
             # carries a locator, a selection over its byte budget -- is a
             # refusal of THIS request, and it used to leave as an unhandled
@@ -2032,7 +2039,7 @@ def _lower_claim(
                 selected_content=location.selected_content,
                 accepted_contract=located_contract,
             )
-        except (CruxibleError, ValueError) as exc:
+        except _WORKING_SELECTION_REFUSALS as exc:
             _refuse(
                 "cruxible.authoring.working_selection_refused",
                 "located_at",
@@ -5911,7 +5918,7 @@ def _stage_note(
                 selector=source.selector.model_dump(mode="json"),
                 selected_content=source.selected_content,
             )
-        except (CruxibleError, ValueError) as exc:
+        except _WORKING_SELECTION_REFUSALS as exc:
             _refuse(
                 "cruxible.authoring.working_selection_refused",
                 "source.selector",

@@ -204,6 +204,72 @@ def test_a_retired_source_contract_refuses_new_captures_at_every_write_site(
     assert head() == retired
 
 
+def test_a_cas_write_failure_under_file_evidence_is_not_a_selection_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A storage fault is the daemon's: it propagates, never a revise-your-selection refusal."""
+
+    import errno
+    import hashlib
+    import os
+
+    from cruxible_client.authoring.write_evidence import observe_evidence
+    from cruxible_client.contracts.errors import CasError
+    from cruxible_client.contracts.write import FileEvidence
+    from tests.core_support._write_support import report_evidence
+
+    instance, _ = seed_write_surface(tmp_path)
+    workspace = tmp_path / "workspace"
+    report_evidence(workspace, "three")  # writes the file catalog
+    reports = workspace / "reports.md"
+    reports.write_text(
+        reports.read_text(encoding="utf-8") + "\nA fresh storage observation.\n", encoding="utf-8"
+    )
+    observed = observe_evidence(
+        FileEvidence(file="reports.md#A fresh storage observation."), workspace=workspace
+    )
+    assert isinstance(observed, FileEvidence) and observed.observation is not None
+    body = hashlib.sha256(observed.observation.selected_content).hexdigest()
+    faults: list[str] = []
+    real_open = os.open
+
+    def full_disk(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        # The CAS writes a body through a temporary file named for its digest.
+        if (
+            isinstance(path, str)
+            and path.startswith(f".{body}.")
+            and kwargs.get("dir_fd") is not None
+        ):
+            faults.append(path)
+            raise OSError(errno.ENOSPC, "no space left on device")
+        return real_open(path, flags, *args, **kwargs)
+
+    before = instance.accepted_coordinate()
+    monkeypatch.setattr(os, "open", full_disk)
+    with pytest.raises(CasError):
+        service_playbill_write(
+            instance,
+            request=WriteRequest.model_validate(
+                {
+                    "because": "Measured.",
+                    "changes": [
+                        {
+                            "op": "set",
+                            "subject": f"{KIND}/wi-2",
+                            "field": "measured",
+                            "value": 4,
+                            "evidence": observed.model_dump(mode="json"),
+                        }
+                    ],
+                }
+            ),
+            caller=caller(),
+        )
+    monkeypatch.undo()
+    assert faults, "the CAS temporary-file write was never reached"
+    assert instance.accepted_coordinate() == before
+
+
 def test_captured_only_refuses_authored_section_and_docs_only_has_no_generation(
     tmp_path: Path,
 ) -> None:
