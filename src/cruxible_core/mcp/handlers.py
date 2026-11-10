@@ -50,6 +50,7 @@ from cruxible_client.authoring.workspace import (
     write_workspace_floor_delta,
 )
 from cruxible_client.authoring.write_evidence import observe_evidence
+from cruxible_client.compatibility import check_daemon_compatibility
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
 from cruxible_client.contracts.authoring.models import BlockDetachResult
@@ -213,12 +214,22 @@ def _identity_and_client() -> tuple[McpIdentity, CruxibleClient]:
         if _client_cache is None or _client_cache_key != cache_key:
             if _client_cache is not None:
                 _client_cache.close()
-            _client_cache = CruxibleClient(
+            fresh = CruxibleClient(
                 base_url=target.server_url,
                 socket_path=target.server_socket,
                 token=token,
                 principal_id=principal_id,
             )
+            try:
+                # One /version request per client: a daemon on another contract
+                # refuses before the first real request.
+                check_daemon_compatibility(fresh)
+            except BaseException:
+                fresh.close()
+                _client_cache = None
+                _client_cache_key = None
+                raise
+            _client_cache = fresh
             _client_cache_key = cache_key
         client = _client_cache
     if candidate is None:
@@ -260,12 +271,12 @@ def _daemon_call(
     """Run one operation on the daemon; every MCP tool takes this one path."""
 
     try:
-        client = _get_client()
-    except DaemonUnavailableError:
-        raise
-    except ConfigError as exc:
-        raise ConfigError(f"{exc} Required by {operation_name}.") from exc
-    try:
+        try:
+            client = _get_client()
+        except DaemonUnavailableError:
+            raise
+        except ConfigError as exc:
+            raise ConfigError(f"{exc} Required by {operation_name}.") from exc
         return remote_call(client)
     except ServerUnreachableError as exc:
         configured = configured_daemon_target()

@@ -69,6 +69,17 @@ cache and index URLs, `GIT_SSH_COMMAND`, and daemon configuration. Nothing else
 reaches it: not the server's transport, tier, instance or principal, and no
 credential (Cruxible tokens and keys, API keys, cloud or forge tokens).
 
+The MCP server and the CLI each ask the daemon's `/version` once per process
+before their first real request. What can break a call is the authoring
+contract, so its snapshot digest decides: a different digest refuses with
+`cruxible.sdk.daemon_version_incompatible` in one line naming both versions,
+both digests, where the daemon is and the fix (stop it with `cruxible server
+stop` and rerun, or use the daemon's version); the same digest proceeds
+silently whatever the package versions. `cruxible --version`, `--help`,
+`server stop` and `context show` never refuse. `CRUXIBLE_SKIP_VERSION_CHECK=1`
+skips the check, for development only. `cruxible --version` prints the version,
+the contract digest's first 12 hex and, in a source checkout, the commit.
+
 ## Instances and the adapter environment
 
 Every tool that acts on one instance takes an optional `instance_id`. Omitted,

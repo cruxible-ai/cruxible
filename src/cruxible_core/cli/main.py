@@ -1001,8 +1001,71 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
 }
 
 
+def version_line() -> str:
+    """What ``cruxible --version`` prints: enough to tell two builds apart.
+
+    The package version, the authoring contract digest's first 12 hex (what a
+    daemon must match), and in a source checkout the Git commit, read from the
+    checkout's own files (no Git subprocess). Computed only for ``--version``.
+    """
+
+    from cruxible_client.contracts.authoring.models import (
+        AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
+    )
+    from cruxible_core import __version__
+
+    digest = AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST.removeprefix("sha256:")[:12]
+    commit = _source_checkout_commit()
+    return f"cruxible {__version__} (contract {digest}" + (
+        f", git {commit[:9]})" if commit else ")"
+    )
+
+
+def _source_checkout_commit() -> str | None:
+    """The commit a source checkout's HEAD names, read from its files; None for a wheel."""
+
+    from cruxible_client.contracts.workspace_root import git_repository_directories
+
+    root = Path(__file__).resolve().parents[3]
+    if not (root / "pyproject.toml").is_file() or not (root / ".git").exists():
+        return None
+    try:
+        gitdir, common = git_repository_directories(root)
+        head = (gitdir / "HEAD").read_text(encoding="utf-8").strip()
+        if not head.startswith("ref: "):
+            return head or None
+        ref = head.removeprefix("ref: ")
+        for base in (gitdir, common):
+            loose = base / ref
+            if loose.is_file():
+                return loose.read_text(encoding="utf-8").strip() or None
+        packed = common / "packed-refs"
+        if packed.is_file():
+            for line in packed.read_text(encoding="utf-8").splitlines():
+                oid, _, name = line.partition(" ")
+                if name == ref:
+                    return oid
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return None
+
+
+def _print_version(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
+    if not value or ctx.resilient_parsing:
+        return
+    click.echo(version_line())
+    ctx.exit()
+
+
 @click.group(cls=LazyGroup, lazy_subcommands=CLI_COMMANDS)
-@click.version_option(package_name="cruxible")
+@click.option(
+    "--version",
+    is_flag=True,
+    expose_value=False,
+    is_eager=True,
+    callback=_print_version,
+    help="Show the version, its contract digest (and a checkout's commit) and exit.",
+)
 @click.option("--server-url", default=None, help="Remote Cruxible server base URL.")
 @click.option(
     "--server-socket",
