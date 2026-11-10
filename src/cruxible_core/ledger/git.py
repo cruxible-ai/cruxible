@@ -942,14 +942,9 @@ class GitLedger:
                 raise GitError("proposal ref name is malformed")
             self._validate_oid(oid)
             retired[ref] = oid
-        # One local conversion only: fold old per-proposal pins into the same
-        # chain before deleting them. Unrelated refs in this namespace refuse.
-        for ref, oid in self._refs("refs/settled/").items():
-            if ref == PROPOSAL_ARCHIVE_REF:
-                continue
-            if not _LEGACY_SETTLED_RE.fullmatch(ref):
-                raise GitError("unrecognized local proposal archive ref")
-            retired[ref] = oid
+        # The archive is the namespace's only ref; anything else in it refuses.
+        if any(ref != PROPOSAL_ARCHIVE_REF for ref in self._refs("refs/settled/")):
+            raise GitError("unrecognized local proposal archive ref")
         commands = self._archive_update(tuple(retired.values()))
         commands.extend(
             f"update {ref} {oid} {current.get(ref, '0' * len(oid))}"
