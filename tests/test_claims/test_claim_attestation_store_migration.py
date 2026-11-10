@@ -4,7 +4,7 @@
 head-map delta (base 9c5943085): four appends over three Claims, full head-map
 nodes, and its mutable accelerator file. The format change preserves every
 published-root digest, so heads recorded in readings and continuation tokens
-keep resolving; the only migration step is collecting the accelerator files.
+keep resolving; nothing is rewritten.
 """
 
 from __future__ import annotations
@@ -44,8 +44,6 @@ def _maps(store: ClaimAttestationEvidenceStore) -> list[object]:
 
 def test_a_legacy_store_opens_with_every_head_and_frontier_intact(tmp_path: Path) -> None:
     store = _legacy(tmp_path)
-    assert (store.root / "accelerators" / "current.json").is_file()
-
     assert store.head() == LEGACY_HEADS[-1]
     for count, head in enumerate(LEGACY_HEADS, start=1):
         assert len(store.events(at_head=head)) == count
@@ -55,8 +53,6 @@ def test_a_legacy_store_opens_with_every_head_and_frontier_intact(tmp_path: Path
     first = store.events()[0][0].partition_digest
     assert [pair[0].sequence for pair in store.events(partition_digest=first)] == [1, 2]
     assert len(store.events(at_head=LEGACY_HEADS[0], partition_digest=first)) == 1
-    # Migration: the accelerator cache is collected; nothing else is rewritten.
-    assert not (store.root / "accelerators").exists()
     assert all(isinstance(node, ClaimAttestationHeadMapNode) for node in _maps(store))
 
 
@@ -86,25 +82,6 @@ def test_appends_after_migration_write_deltas_and_old_heads_still_resolve(
     assert reopened.append(
         attestation=fresh, verification_account=_account(fresh)
     ) == appended.model_copy(update={"current_head": appended.current_head})
-
-
-def test_an_interrupted_migration_completes_on_the_next_open(tmp_path: Path) -> None:
-    """Collecting the cache is idempotent: a crash part-way leaves files the next open takes."""
-
-    store = _legacy(tmp_path)
-    (store.root / "accelerators" / f"{'9' * 64}.json").write_bytes(b"legacy per-root cache\n")
-    (store.root / "accelerators" / "current.json").unlink()  # crashed after one unlink
-    assert store.head() == LEGACY_HEADS[-1]
-    assert not (store.root / "accelerators").exists()
-    # Opening an already migrated store changes nothing.
-    again = ClaimAttestationEvidenceStore(tmp_path / "exhaust", instance_id="inst_test")
-    assert again.head() == LEGACY_HEADS[-1]
-    assert sorted(path.name for path in store.root.iterdir()) == [
-        "manifest.json",
-        "objects",
-        "partitions",
-        "published.json",
-    ]
 
 
 def test_a_delta_chained_to_another_map_is_refused(tmp_path: Path) -> None:

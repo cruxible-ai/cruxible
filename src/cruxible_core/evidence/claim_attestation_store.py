@@ -223,7 +223,6 @@ class ClaimAttestationEvidenceStore:
         self._partition_tips_verified = False
         self._partition_tips: dict[str, ClaimAttestationEvent] = {}
         self._unpublished_checked = False
-        self._legacy_accelerators_retired = False
         self._root_children_verified = False
         self._root_children: dict[str, str] = {}
         # Each verified pair with the file identity of every object it was read
@@ -754,34 +753,8 @@ class ClaimAttestationEvidenceStore:
             self._unpublished_checked = True
         pointer = self._load_pointer()
         chain = self._validated_chain(pointer.root_digest)
-        self._retire_legacy_accelerators()
         self._current_frontier(chain)
         return chain.tip
-
-    def _retire_legacy_accelerators(self) -> None:
-        """Remove the accelerator files stores used to keep; idempotent, any crash point.
-
-        They were rebuildable caches, verified against a full recomputation on
-        every cold read and rewritten whole on every append. The reducer
-        frontier now lives in process only, so the files are collected once.
-        """
-
-        if self._legacy_accelerators_retired:
-            return
-        directory = self.root / "accelerators"
-        if directory.is_symlink():
-            raise _error("store_corrupt", "stale attestation cache path is not trustworthy")
-        if directory.is_dir():
-            try:
-                for path in directory.iterdir():
-                    path.unlink()
-                directory.rmdir()
-            except OSError as exc:
-                raise _error(
-                    "store_corrupt", "stale attestation cache could not be collected"
-                ) from exc
-            _fsync_directory(self.root)
-        self._legacy_accelerators_retired = True
 
     def _event_pair(
         self, event_digest: str
