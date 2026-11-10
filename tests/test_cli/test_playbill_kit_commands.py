@@ -606,10 +606,131 @@ def test_kit_build_sends_the_automation_template_and_names_it(
         "automation.json",
         content,
     )
-    assert "automation template: automation.json (never installed" in result.output
+    assert f"automation template: {out / 'automation.json'} (never installed" in result.output
     assert (out / "automation.json").read_text() == content
 
     pulled = CliRunner().invoke(cli, [*BASE, "pull", str(out), "--out", str(tmp_path / "pull")])
     assert pulled.exit_code == 0, pulled.output
-    assert "automation template: automation.json" in pulled.output
+    assert f"automation template: {tmp_path / 'pull' / 'automation.json'}" in pulled.output
     assert (tmp_path / "pull" / "automation.json").read_text() == content
+
+
+TEMPLATE = '{"kind": "change_set", "members": []}\n'
+
+
+def _template_bundle() -> KitBundle:
+    from cruxible_client.contracts.kits import KitFileBytes, kit_file_entry
+
+    plain = _bundle()
+    return KitBundle(
+        manifest=plain.manifest.model_copy(
+            update={
+                "files": (kit_file_entry("automation.json", TEMPLATE.encode()),),
+                "automation_template": "automation.json",
+            }
+        ),
+        artifacts=plain.artifacts,
+        files=(KitFileBytes.of("automation.json", TEMPLATE.encode()),),
+    )
+
+
+class _DaemonLikeClient(_StagingClient):
+    """Answers kit add as the daemon does: it names the template's path, never its text."""
+
+    def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:
+        self.sent.append(request)
+        return KitChangeResult(
+            kit_id="acme",
+            version="1.0.0",
+            status="accepted" if request.dry_run is False else "would_propose",
+            automation_template=request.bundle.manifest.automation_template,
+        )
+
+
+def test_kit_add_returns_a_kit_directorys_automation_template_and_names_its_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from cruxible_client.kits import write_kit_directory
+
+    kit_dir = tmp_path / "acme"
+    write_kit_directory(_template_bundle(), kit_dir)
+    client = _DaemonLikeClient()
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+    runner = CliRunner()
+
+    for extra in ([], ["--commit"]):
+        added = runner.invoke(cli, [*BASE, "add", str(kit_dir), *extra, "--json"])
+        assert added.exit_code == 0, added.output
+        payload = json.loads(added.stdout)
+        assert payload["automation_template"] == "automation.json"
+        assert payload["automation_template_content"] == TEMPLATE
+    text = runner.invoke(cli, [*BASE, "add", str(kit_dir)])
+    assert text.exit_code == 0, text.output
+    on_disk = kit_dir / "automation.json"
+    assert f"automation template: {on_disk} (never installed" in text.output
+    assert TEMPLATE.strip() not in text.output
+    # The text came from the adapter's copy: kit add never sends inert files.
+    assert [request.dry_run for request in client.sent] == [None, False, None]
+    assert all(not request.bundle.files for request in client.sent)
+
+
+def test_kit_add_by_registry_reference_returns_the_template_and_says_how_to_pull_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.artifacts import pack_artifact
+    from cruxible_client.kits import KIT_ARTIFACT
+
+    image = pack_artifact(KIT_ARTIFACT, _template_bundle())
+    pinned = f"ghcr.io/cruxible-ai/kits/acme@{image.digest}"
+    monkeypatch.setattr(
+        "cruxible_client.kits.fetch_kit_image", lambda source, registry=None: (image, pinned)
+    )
+    client = _DaemonLikeClient()
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+    runner = CliRunner()
+
+    added = runner.invoke(cli, [*BASE, "add", "acme:1.0.0", "--json"])
+    assert added.exit_code == 0, added.output
+    assert json.loads(added.stdout)["automation_template_content"] == TEMPLATE
+    text = runner.invoke(cli, [*BASE, "add", "acme:1.0.0"])
+    assert text.exit_code == 0, text.output
+    assert (
+        f"automation template: automation.json (never installed: cruxible kit pull {pinned} "
+        "--out DIR writes it, and --json output carries its content" in text.output
+    )
+
+
+def test_kit_add_of_a_kit_without_a_template_carries_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from cruxible_client.kits import write_kit_directory
+
+    kit_dir = tmp_path / "acme"
+    write_kit_directory(_bundle(), kit_dir)
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client", lambda: _DaemonLikeClient()
+    )
+
+    added = CliRunner().invoke(cli, [*BASE, "add", str(kit_dir), "--json"])
+    assert added.exit_code == 0, added.output
+    payload = json.loads(added.stdout)
+    assert "automation_template" not in payload
+    assert "automation_template_content" not in payload
+
+
+def test_a_kit_directory_whose_template_differs_from_its_manifest_refuses_before_sending(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from cruxible_client.kits import write_kit_directory
+
+    kit_dir = tmp_path / "acme"
+    write_kit_directory(_template_bundle(), kit_dir)
+    (kit_dir / "automation.json").write_text('{"kind": "change_set", "members": [1]}\n')
+    client = _DaemonLikeClient()
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+
+    refused = CliRunner().invoke(cli, [*BASE, "add", str(kit_dir), "--commit"])
+    assert refused.exit_code != 0
+    assert "cruxible.kit.source_invalid" in refused.stderr
+    assert "automation.json differs from its sha256" in refused.stderr
+    assert client.sent == [] and client.stored == []

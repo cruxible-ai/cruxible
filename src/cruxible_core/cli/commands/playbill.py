@@ -24,6 +24,7 @@ from cruxible_client import (
 )
 from cruxible_client._error_base import CoreError, printable
 from cruxible_client.artifacts import (
+    is_layout,
     unpack_artifact,
     write_layout,
 )
@@ -166,9 +167,11 @@ from cruxible_client.errors import DataValidationError
 from cruxible_client.kits import (
     KIT_ARTIFACT,
     check_kit_updates,
+    kit_automation_template,
     resolve_kit,
     resolve_kit_image,
     stage_kit_providers,
+    with_automation_template,
     write_kit_directory,
 )
 from cruxible_core.adapters.block_detach import detach_projection_pages
@@ -2114,15 +2117,45 @@ _KIT_KEEP_TEXT = {
 }
 
 
-def _echo_automation_template(path: str | None) -> None:
-    if path is not None:
+def _echo_automation_template(
+    path: str | None, *, on_disk: Path | None = None, reference: str | None = None
+) -> None:
+    """One line naming the automation template: where it is on disk, or how to get it."""
+
+    if path is None:
+        return
+    if on_disk is not None:
         click.echo(
-            f"automation template: {path} (never installed: tailor it, then "
-            f"cruxible authoring submit {path})"
+            f"automation template: {on_disk} (never installed: tailor it, then "
+            f"cruxible authoring submit {on_disk})"
+        )
+    else:
+        click.echo(
+            f"automation template: {path} (never installed: cruxible kit pull {reference} "
+            f"--out DIR writes it, and --json output carries its content; tailor it, then "
+            f"cruxible authoring submit DIR/{path})"
         )
 
 
-def _echo_kit_change(result: KitChangeResult) -> None:
+def _pull_reference(source: str, origin: str) -> str:
+    """What ``kit pull`` takes for this kit: the pinned reference a registry answered,
+    or the local path as given (a layout's origin names its digest, not a path)."""
+
+    return source if Path(source).expanduser().exists() else origin
+
+
+def _kit_directory_file(source: str, path: str | None) -> Path | None:
+    """Where a kit file is on disk when ``source`` is a kit directory (not a layout)."""
+
+    directory = Path(source).expanduser()
+    if path is None or not directory.is_dir() or is_layout(directory):
+        return None
+    return (directory / path).absolute()
+
+
+def _echo_kit_change(
+    result: KitChangeResult, *, template_on_disk: Path | None = None, source: str | None = None
+) -> None:
     version = "" if result.version is None else f" {result.version}"
     transition = ""
     if result.transition is not None:
@@ -2175,7 +2208,9 @@ def _echo_kit_change(result: KitChangeResult) -> None:
     for refusal in result.refusals:
         click.echo(refusal.code)
         click.echo(f"Next: {printable(refusal.repair)}")
-    _echo_automation_template(result.automation_template)
+    _echo_automation_template(
+        result.automation_template, on_disk=template_on_disk, reference=source
+    )
     for item in result.plan:
         if (
             result.status in {"would_propose", "would_block"}
@@ -2305,7 +2340,8 @@ def build_kit(
             f"{len(bundle.manifest.providers)} provider package(s), "
             f"{bundle.manifest.content_digest}"
         )
-        _echo_automation_template(bundle.manifest.automation_template)
+        template = bundle.manifest.automation_template
+        _echo_automation_template(template, on_disk=_kit_directory_file(str(out), template))
 
 
 @kit_group.command("add")
@@ -2383,6 +2419,8 @@ def add_kit(
     ``--commit --at OID``.
     """
     bundle, origin = resolve_kit(kit)
+    # Checked before the daemon, so a bad template refuses before anything is proposed.
+    template = kit_automation_template(bundle)
 
     def add(client: Any, instance_id: str) -> Any:
         # A commit installs the bundled providers, so it stages their files;
@@ -2405,11 +2443,15 @@ def add_kit(
         )
         return client.add_kit(instance_id, request)
 
-    result = _server_call(add, command_name="cruxible kit add")
+    result = with_automation_template(_server_call(add, command_name="cruxible kit add"), template)
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        _echo_kit_change(result)
+        _echo_kit_change(
+            result,
+            template_on_disk=_kit_directory_file(kit, result.automation_template),
+            source=_pull_reference(kit, origin),
+        )
 
 
 @kit_group.command("pull")
@@ -2446,7 +2488,11 @@ def pull_kit(reference: str, out: Path, layout: bool, output_json: bool) -> None
         )
     else:
         click.echo(f"{origin}: {len(bundle.artifacts)} artifacts")
-        _echo_automation_template(template)
+        _echo_automation_template(
+            template,
+            on_disk=None if layout else _kit_directory_file(str(out), template),
+            reference=_pull_reference(reference, origin),
+        )
 
 
 @kit_group.command("status")

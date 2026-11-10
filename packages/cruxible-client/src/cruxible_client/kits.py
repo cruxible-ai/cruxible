@@ -19,13 +19,15 @@ provider files; under ``files/``, the inert files) as its layer, so rebuilding a
 release gives the same digest. Inert files stay out of the release identity and
 never reach the daemon: ``kit pull`` writes them into the kit directory and
 ``write_kit_docs`` / ``install_kit_skills`` put them where a reader or agent
-looks. A kit can come from a directory, an OCI image layout or a registry
+looks, and ``kit add`` returns the automation template's text
+(``kit_automation_template``). A kit can come from a directory, an OCI image layout or a registry
 reference; either way the daemon receives the bundle, and the bundled provider
 files reach it through its body store (``stage_kit_providers``).
 """
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -48,15 +50,18 @@ from cruxible_client.artifacts import (
     unpack_files,
 )
 from cruxible_client.artifacts.registry import RegistryRefusal
-from cruxible_client.contracts.canonical import pretty_canonical_bytes
+from cruxible_client.contracts.canonical import Sha256Value, pretty_canonical_bytes
 from cruxible_client.contracts.kits import (
     KIT_ARTIFACT_DIRECTORY,
+    KIT_AUTOMATION_TEMPLATE_MAX_BYTES,
     KIT_DOCUMENT_BODY_DIRECTORY,
     KIT_FILE_DIRECTORY,
     KIT_MANIFEST_FILE,
     KIT_PROVIDER_DIRECTORY,
     KitArtifactBytes,
+    KitAutomationTemplate,
     KitBundle,
+    KitChangeResult,
     KitDocumentBody,
     KitFileBytes,
     KitManifest,
@@ -386,6 +391,50 @@ def stage_kit_providers(client: CruxibleClient, instance_id: str, bundle: KitBun
         if client.store_body(instance_id, body.content).digest != body.digest:
             raise ConfigError(f"the daemon stored Document body {body.digest} under another digest")
     return bundle.model_copy(update={"provider_files": (), "document_bodies": ()})
+
+
+def kit_automation_template(bundle: KitBundle) -> KitAutomationTemplate | None:
+    """The kit's automation template with its text, checked against the manifest.
+
+    ``None`` when the kit names no template or the bundle carries no inert file
+    bytes (an inline bundle). Refuses ``cruxible.kit.source_invalid`` when the
+    bytes differ from the manifest's sha256, exceed the template cap, or are not
+    UTF-8. ``kit add`` adapters call it before the daemon, so a bad template
+    refuses before anything is proposed.
+    """
+
+    path = bundle.manifest.automation_template
+    if path is None:
+        return None
+    content = next((item.content for item in bundle.files if item.path == path), None)
+    if content is None:
+        return None
+    if len(content) > KIT_AUTOMATION_TEMPLATE_MAX_BYTES:
+        raise KitSourceError(
+            f"the automation template {path} is over {KIT_AUTOMATION_TEMPLATE_MAX_BYTES} bytes"
+        )
+    if Sha256Value(hashlib.sha256(content).hexdigest()).tagged != bundle.manifest.kit_files()[path]:
+        raise KitSourceError(f"the automation template {path} differs from its manifest sha256")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise KitSourceError(f"the automation template {path} is not UTF-8 text") from exc
+    return KitAutomationTemplate(path=path, content=text)
+
+
+def with_automation_template(
+    result: KitChangeResult, template: KitAutomationTemplate | None
+) -> KitChangeResult:
+    """``result`` carrying the template's path and text, when the adapter read one."""
+
+    if template is None:
+        return result
+    return result.model_copy(
+        update={
+            "automation_template": template.path,
+            "automation_template_content": template.content,
+        }
+    )
 
 
 KIT_ARTIFACT: ArtifactKind[KitBundle] = ArtifactKind(

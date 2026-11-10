@@ -23,7 +23,10 @@ awaiting-providers result means earlier changes may be accepted but the
 definitions are not. Report its served repair.
 
 The manifest's `automation_template` names inert local automation, not an
-assumed examples path. Tailoring it is the normal path: adjust its sources,
+assumed examples path. The `kit add` result carries its text
+(`automation_template_content`) whether the kit came from a directory or a
+registry: write it to a file in the workspace, tailor it and submit that file.
+Tailoring it is the normal path: adjust its sources,
 names, timing and grants, then submit and obtain review and approval from a
 separate agent session (its own principal); after acceptance, inspect
 `cruxible runbook preview <start>` and run `cruxible runbook run <start>` when

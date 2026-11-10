@@ -93,8 +93,8 @@ README, other reference pages, `examples/` and agent skills under
 not part of the release's content digest, so a docs-only fix leaves every
 definition digest and every install receipt as it was (the image digest still
 moves, so a published version takes a patch bump). `kit add` never sends them
-to the daemon; `kit pull` writes them into the kit directory at their own
-paths.
+to the daemon (its result returns only the automation template's text); `kit
+pull` writes them into the kit directory at their own paths.
 
 A kit never carries state or authority: no Subjects or Claims, no Lines or
 Triggers, no mandates, no principals, no approval policy. Those belong to the
@@ -377,8 +377,12 @@ when, and with how much authority is yours to decide. A kit that has
 automation to suggest ships it as one **automation template**: a change set of
 Lines, Triggers, mandates and Runbooks, at the path its `cruxible-kit.json`
 names in `automation_template` (the security kit's is `automation.json`).
-`kit add` and an upgrade never install or submit it; `kit add` and `kit pull`
-name it. The kit's build checked that it authors cleanly against the kit's own
+`kit add` and an upgrade never install or submit it, and `kit add` writes
+nothing to your workspace: its result carries the template's text
+(`automation_template_content`, in a preview and a commit alike, and in
+`--json` output), checked against the manifest's sha256, for you to write to a
+file. `kit pull --out DIR` writes it into the kit directory with the kit's
+other files. The kit's build checked that it authors cleanly against the kit's own
 definitions. The template includes a start Runbook naming its Lines in the
 order their reads and writes imply (the security kit's is `security.start`).
 

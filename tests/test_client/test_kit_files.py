@@ -23,6 +23,7 @@ from cruxible_client.kits import (
     KIT_ARTIFACT,
     KitSourceError,
     install_kit_skills,
+    kit_automation_template,
     read_kit_directory,
     write_kit_directory,
     write_kit_docs,
@@ -175,6 +176,38 @@ def test_kit_add_never_sends_the_files() -> None:
     assert request.bundle.files == ()
     assert request.bundle.manifest == bundle.manifest
     assert "files" not in request.model_dump(mode="json")["bundle"]
+
+
+def _template_bundle(content: bytes) -> KitBundle:
+    """A bundle naming ``automation.json`` as its template; bytes may disagree with the
+    manifest (built unvalidated, as a tampered source would arrive)."""
+
+    entry = kit_file_entry("automation.json", b'{"kind": "change_set", "members": []}\n')
+    return KitBundle.model_construct(
+        manifest=_manifest((entry,)).model_copy(update={"automation_template": entry.path}),
+        artifacts=(KitArtifactBytes.of(ARTIFACT, b'{"x": 1}\n'),),
+        files=(KitFileBytes.of(entry.path, content),),
+    )
+
+
+def test_the_automation_template_comes_back_with_its_text_checked_against_the_manifest() -> None:
+    content = b'{"kind": "change_set", "members": []}\n'
+    template = kit_automation_template(_template_bundle(content))
+    assert template is not None
+    assert (template.path, template.content) == ("automation.json", content.decode())
+    # No template named, or no file bytes carried (an inline bundle): nothing to return.
+    assert kit_automation_template(_bundle()) is None
+    stripped = _template_bundle(content).model_copy(update={"files": ()})
+    assert kit_automation_template(stripped) is None
+
+
+def test_an_automation_template_that_differs_or_is_too_large_is_refused() -> None:
+    from cruxible_client.contracts.kits import KIT_AUTOMATION_TEMPLATE_MAX_BYTES
+
+    with pytest.raises(KitSourceError, match="differs from its manifest sha256"):
+        kit_automation_template(_template_bundle(b'{"kind": "change_set", "members": [1]}\n'))
+    with pytest.raises(KitSourceError, match="is over 1048576 bytes"):
+        kit_automation_template(_template_bundle(b" " * (KIT_AUTOMATION_TEMPLATE_MAX_BYTES + 1)))
 
 
 def test_build_keeps_and_moves_name_lines_because_a_procedure_names_no_build() -> None:

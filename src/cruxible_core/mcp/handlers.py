@@ -118,8 +118,10 @@ from cruxible_client.errors import ServerUnreachableError
 from cruxible_client.kits import (
     KIT_ARTIFACT,
     check_kit_updates,
+    kit_automation_template,
     resolve_kit_image,
     stage_kit_providers,
+    with_automation_template,
 )
 from cruxible_core import __version__
 from cruxible_core.adapters.block_detach import detach_projection_pages
@@ -407,7 +409,9 @@ def handle_playbill_kit_add(
     reference it pulls and verifies.
 
     A commit stages the kit's bundled provider files in the daemon's body store
-    first, so the daemon can install them; a preview sends none.
+    first, so the daemon can install them; a preview sends none. The result
+    carries the automation template's text when the kit's file bytes are here
+    (a reference, or an inline bundle that carries them).
     """
 
     if request is not None:
@@ -423,6 +427,8 @@ def handle_playbill_kit_add(
         bundle = unpack_artifact(KIT_ARTIFACT, image)
     assert bundle is not None
     resolved = bundle
+    # Checked before the daemon, so a bad template refuses before anything is proposed.
+    template = kit_automation_template(resolved)
 
     def add(client: CruxibleClient) -> KitChangeResult:
         staged = (
@@ -445,7 +451,7 @@ def handle_playbill_kit_add(
             ),
         )
 
-    return _daemon_call(add, operation_name="cruxible_kit_add")
+    return with_automation_template(_daemon_call(add, operation_name="cruxible_kit_add"), template)
 
 
 def handle_playbill_kit_remove(instance_id: str, request: KitRemoveRequest) -> KitChangeResult:

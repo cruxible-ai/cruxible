@@ -146,7 +146,8 @@ is another launch option when that checkout already has a synced environment.
 ## Kits and teams
 
 Use adopt-kit to preview and install a digest-pinned release with `kit add`.
-A kit's manifest names its inert automation template: tailor, submit and obtain
+A kit's manifest names its inert automation template, and the `kit add` result
+carries its text: write it to a workspace file, tailor, submit and obtain
 approval/acceptance from a separate agent session (its own principal), then preview and run its start Runbook.
 Enabling scheduled Lines is a separate decision. A review-stopped run leaves a
 proposal to resolve before an explicit rerun. Report provider/ordering refusals

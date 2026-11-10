@@ -1127,6 +1127,15 @@ class KitChangeResult(_Strict):
     #: The release's automation template (its path in the kit), never installed:
     #: tailor it and submit it as your own change (D-R48).
     automation_template: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: That template's text, checked against the manifest's sha256, added by the
+    #: adapter that read the kit (CLI and MCP ``kit add``, preview and commit
+    #: alike): write it to a file, tailor it, submit it. The daemon never receives
+    #: a kit's inert files, so it is absent when the caller sent no file bytes.
+    automation_template_content: str | None = Field(
+        default=None,
+        max_length=KIT_AUTOMATION_TEMPLATE_MAX_BYTES,
+        exclude_if=lambda value: value is None,
+    )
 
 
 #: Whether the adapter looked for a newer release of a registry-sourced kit:
