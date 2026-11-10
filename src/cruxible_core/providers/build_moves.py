@@ -23,9 +23,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections import ChainMap
+from collections.abc import Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import pretty_canonical_bytes
@@ -456,6 +457,16 @@ def settle_changes(
                 procedure=parse_procedure(content, path=path),
                 artifact_digest=new_procedure.artifact_digest,
             )
+    # A carried Line is validated against the tree this change produces: the
+    # accepted tree with exactly the change's own members laid over it, so a
+    # Contract or ClaimType the same change adds (a new params Contract version
+    # the Procedure successor pins, an enum_of target) is visible, and nothing
+    # outside the change is. Only Lines and Mandates are written below, never a
+    # Contract or ClaimType, so the resolvers' memoized reads stay exact.
+    # A read-only view: lookups fall through to the accepted tree, never a copy.
+    final_tree: Mapping[str, bytes] = ChainMap(final, cast("MutableMapping[str, bytes]", tree))
+    final_contracts = tree_contract_resolver(final_tree)
+    final_enums = tree_enum_resolver(final_tree)
     # Moved Lines are live successors too: their Mandates carry to them.
     live_lines: dict[str, str] = {}
     for path in mover_paths:
@@ -489,8 +500,8 @@ def settle_changes(
                             tree[item.path],
                             path=item.path,
                             procedure=final_procedures[procedure_digest],
-                            contracts=tree_contract_resolver(tree),
-                            enum_members=tree_enum_resolver(tree),
+                            contracts=final_contracts,
+                            enum_members=final_enums,
                         )
                         line_content, outcome = carry_line(
                             item.path, tree[item.path], live_procedures
