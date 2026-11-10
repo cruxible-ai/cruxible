@@ -110,6 +110,7 @@ credentials](docs/concepts.md#who-acts) explains both.
 - [MCP tools](docs/mcp-tools.md)
 - [Python SDK](packages/cruxible-client/README.md)
 - [Upgrading](docs/upgrading.md)
+- [Data and network](docs/data-and-network.md)
 
 ## Develop
 
