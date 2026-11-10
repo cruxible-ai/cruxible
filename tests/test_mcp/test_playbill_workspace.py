@@ -174,7 +174,7 @@ def test_explicit_nested_mcp_root_refuses_to_write_outside_its_boundary(
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(scoped_root))
     bind_mcp_daemon(monkeypatch, _StubClient())
 
-    with pytest.raises(ConfigError, match="must name the Git worktree root"):
+    with pytest.raises(ConfigError, match="must name the workspace root"):
         handlers.handle_playbill_floor_export("inst_test", mode="write")
 
     assert not (workspace / ".cruxible/floor").exists()

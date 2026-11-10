@@ -12,6 +12,7 @@ from cruxible_client.authoring.context import (
 )
 from cruxible_core.errors import ConfigError
 from cruxible_core.mcp.workspace import mcp_workspace_root
+from cruxible_core.workspace_root import WorkspaceBoundaryRefused
 
 MCP_INSTANCE_ENV = "CRUXIBLE_INSTANCE_ID"
 _TARGET_ENV = ("CRUXIBLE_SERVER_URL", "CRUXIBLE_SERVER_SOCKET", MCP_INSTANCE_ENV)
@@ -47,6 +48,10 @@ def _workspace_instance_id(env: Mapping[str, str]) -> str | None:
             remembered={},
             workspace=mcp_workspace_root(env),
         )
+    except WorkspaceBoundaryRefused:
+        # A workspace across an ownership or filesystem boundary refuses by
+        # name; it never reads as "no binding".
+        raise
     except (
         ContextResolutionError,
         ConfigError,

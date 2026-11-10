@@ -137,9 +137,9 @@ from cruxible_core.mcp.target import configured_instance_id
 from cruxible_core.mcp.workspace import (
     mcp_approval_key_dir,
     mcp_custody_forbidden_roots,
-    mcp_git_workspace_root,
+    mcp_floor_workspace_root,
     mcp_workspace_root,
-    optional_mcp_git_workspace_root,
+    optional_mcp_workspace_root,
     resolve_workspace_path,
 )
 from cruxible_core.server.config import get_runtime_bearer_token
@@ -608,7 +608,7 @@ def handle_playbill_orient(
         operation_name="cruxible_orient",
     )
     try:
-        workspace = optional_mcp_git_workspace_root()
+        workspace = optional_mcp_workspace_root()
     except ConfigError:
         workspace = None
     return result if workspace is None else workspace_floor_freshness(workspace, result)
@@ -1223,7 +1223,7 @@ def handle_playbill_backlinks(
     from cruxible_client.authoring.backlink_sections import observe_drift, section_source
     from cruxible_client.contracts.backlinks import BacklinksRequest
 
-    workspace = optional_mcp_git_workspace_root()
+    workspace = optional_mcp_workspace_root()
     try:
         request = BacklinksRequest(
             ref=ref,
@@ -2104,7 +2104,7 @@ def handle_playbill_floor_export(
             lambda client: client.head(instance_id), operation_name="cruxible_floor_export"
         )
         return inspect_workspace_floor(
-            mcp_git_workspace_root(),
+            mcp_floor_workspace_root(),
             current_coordinate=contracts.AcceptedCoordinate.model_validate(
                 head.coordinate.model_dump(mode="json")
             ),
@@ -2117,7 +2117,7 @@ def handle_playbill_floor_export(
         )
     # The CLI's write path: export, write, and record the refresh profile with
     # its opt-in parts, naming the daemon this MCP server talks to.
-    workspace = mcp_git_workspace_root()
+    workspace = mcp_floor_workspace_root()
     daemon = resolve_daemon_target()
     transport: dict[str, str | None] = (
         {"server_socket": daemon.server_socket}

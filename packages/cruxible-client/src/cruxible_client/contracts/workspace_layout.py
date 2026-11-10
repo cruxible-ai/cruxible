@@ -1,6 +1,7 @@
-"""Frozen paths in a repository attached to one Cruxible instance, and their guard.
+"""Frozen paths in a folder attached to one Cruxible instance, and their guard.
 
-The workspace directory is ``.cruxible/`` at the worktree root. Other places
+The workspace directory is ``.cruxible/`` at the workspace root, a plain folder
+or a Git worktree. Other places
 use that name, or that directory, for something else: the home directory's
 ``.cruxible`` is the default daemon state root, ``CRUXIBLE_STATE_ROOT`` can put
 the daemon state root anywhere, and a project directory a 0.3 release
@@ -47,8 +48,22 @@ class WorkspaceDirectoryConflict(WorkspaceError):
             self.repair_commands: tuple[str, ...] = ()
             detail = (
                 "the home directory's .cruxible is the daemon state root; run from the "
-                "project's Git worktree instead (or set CRUXIBLE_NO_WORKSPACE=1 when the "
+                "project folder instead (or set CRUXIBLE_NO_WORKSPACE=1 when the "
                 "command needs no workspace)"
+            )
+        elif reason == "filesystem_root":
+            self.repair_commands = ()
+            detail = (
+                f"{workspace} is a filesystem root, which is never a workspace; run from the "
+                "project folder instead (or set CRUXIBLE_NO_WORKSPACE=1 when the command "
+                "needs no workspace)"
+            )
+        elif reason == "control_directory":
+            self.repair_commands = ()
+            detail = (
+                f"{workspace} lies inside a .cruxible directory, which holds Cruxible's own "
+                "files and is never a workspace; run from the project folder that holds "
+                "that .cruxible directory instead"
             )
         elif reason == "state_root":
             self.repair_commands = ()

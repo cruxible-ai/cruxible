@@ -24,7 +24,9 @@ class WorkspaceAdvertisement(BaseModel):
     tag: Literal["playbill-workspace-advertisement-v1"] = "playbill-workspace-advertisement-v1"
     #: ``scheduled`` means a write queued the refresh; it runs after the
     #: response. Proposal inspection waits for it and reports the outcome.
-    status: Literal["updated", "scheduled", "not_attached", "failed"]
+    #: ``not_git`` means the attached folder is no Git repository, so the ledger
+    #: mirror into it is skipped; ``git init`` and a workspace attach turn it on.
+    status: Literal["updated", "scheduled", "not_attached", "not_git", "failed"]
     workspace_path: str | None
     remote_name: Literal["cruxible-ledger"] = "cruxible-ledger"
     advertised_refs: tuple[str, ...] = ()
@@ -44,6 +46,10 @@ class WorkspaceAdvertisement(BaseModel):
             self.workspace_path is not None or self.advertised_refs or self.failure_code is not None
         ):
             raise ValueError("not-attached workspace advertisement has an invalid result shape")
+        if self.status == "not_git" and (
+            self.workspace_path is None or self.advertised_refs or self.failure_code is not None
+        ):
+            raise ValueError("not-git workspace advertisement has an invalid result shape")
         if self.status == "failed" and (self.failure_code is None or self.advertised_refs):
             raise ValueError("failed workspace advertisement has an invalid result shape")
         return self

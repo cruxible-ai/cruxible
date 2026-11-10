@@ -2254,11 +2254,13 @@ class WorkspaceDetachResult(BaseModel):
 
 
 class HostWorkspaceAttachResult(BaseModel):
-    """One daemon host attached to a Git worktree, before or after its init.
+    """One daemon host attached to a folder (Git or not), before or after its init.
 
-    An initialized host attaches when the worktree is in the ledger's own Git
-    object format and holds no part of the host's managed root; nothing is
-    rebuilt. ``would_attach`` answers a preview, which registered nothing.
+    An initialized host attaches a plain folder, or a Git worktree in the
+    ledger's own Git object format, that holds no part of the host's managed
+    root; nothing is rebuilt. ``already_attached`` answers the folder the host
+    already has (its ledger mirror is rebound). ``would_attach`` answers a
+    preview, which registered nothing.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

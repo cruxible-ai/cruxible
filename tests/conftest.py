@@ -309,6 +309,9 @@ def no_mcp_daemon_autostart(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(daemon, "ensure_local_daemon", refuse)
     daemon.forget_local_daemon()
+    # The CLI starts a daemon the same way; it is off for every test, and the
+    # CLI auto-start tests turn it back on under a scratch state root.
+    monkeypatch.setenv("CRUXIBLE_NO_AUTOSTART", "1")
 
 
 @pytest.fixture

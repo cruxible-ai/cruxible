@@ -15,6 +15,10 @@ from cruxible_client.contracts.workspace_advertisement import (
     WorkspaceAdvertisement,
     WorkspaceAdvertisementFailureCode,
 )
+from cruxible_client.contracts.workspace_root import (
+    containing_git_workspace_root,
+    git_repository_directories,
+)
 from cruxible_core.ledger.git import (
     _ASK_GIT,
     LEGACY_NOTE_REFS,
@@ -35,29 +39,7 @@ _SECTION = re.compile(r'^\s*\[\s*([\w.-]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\]\s*(?:
 _KEY = re.compile(r"^\s*([\w-]+)\s*(?:=\s*(.*))?$")
 
 
-def _repository(workspace: Path) -> tuple[Path, Path]:
-    """Resolve ordinary and linked worktrees, without consulting ambient Git variables."""
-    marker = workspace / ".git"
-    if marker.is_symlink():
-        raise ValueError("workspace_path_invalid")
-    if marker.is_file():
-        raw = marker.read_text().strip()
-        if not raw.startswith("gitdir: "):
-            raise ValueError("workspace_not_git")
-        gitdir = (workspace / raw[8:]).resolve(strict=True)
-    elif marker.is_dir():
-        gitdir = marker.resolve(strict=True)
-    else:
-        raise ValueError("workspace_not_git")
-    common_file = gitdir / "commondir"
-    common = (
-        (gitdir / common_file.read_text().strip()).resolve(strict=True)
-        if common_file.is_file()
-        else gitdir
-    )
-    if not (common / "config").is_file() or not (common / "objects").is_dir():
-        raise ValueError("workspace_not_git")
-    return gitdir, common
+_repository = git_repository_directories
 
 
 def _value(raw: str) -> str:
@@ -113,22 +95,20 @@ def _local_url_matches(workspace: Path, raw_url: str, expected_url: str) -> bool
         return False
 
 
-def containing_git_workspace_root(workspace_path: Path) -> Path | None:
-    try:
-        candidate = workspace_path.expanduser().resolve(strict=True)
-        for root in (candidate, *candidate.parents):
-            if (root / ".git").exists():
-                _repository(root)
-                return root
-    except (OSError, RuntimeError, ValueError):
-        pass
-    return None
+def workspace_git_object_format(workspace_root: Path) -> GitObjectFormat | None:
+    """The Git object format of a workspace root, or None for a plain folder.
 
+    A folder is a workspace whether or not it is a Git worktree; only a root
+    with no ``.git`` entry at all is plain. A ``.git`` entry that is no usable
+    repository still refuses (``workspace_not_git``, ``workspace_path_invalid``).
+    """
 
-def workspace_git_object_format(workspace_root: Path) -> GitObjectFormat:
     workspace = workspace_root.expanduser()
     if workspace.is_symlink() or not workspace.is_dir():
         raise ValueError("workspace_missing")
+    marker = workspace / ".git"
+    if not marker.exists() and not marker.is_symlink():
+        return None
     try:
         _, common = _repository(workspace.resolve())
         values = [
@@ -291,6 +271,14 @@ def _copy_objects(source: Path, target: Path, roots: tuple[str, ...]) -> None:
     writer.write(objects, durable=False)
 
 
+def not_git_advertisement(workspace_root: Path) -> WorkspaceAdvertisement:
+    """The advertisement of an attached folder that is no Git repository: skipped."""
+
+    return WorkspaceAdvertisement(
+        status="not_git", workspace_path=str(workspace_root.expanduser().resolve(strict=False))
+    )
+
+
 def _advertise_workspace_refs(
     *, workspace_root: Path | None, ledger_path: Path, ledger_object_format: GitObjectFormat
 ) -> WorkspaceAdvertisement:
@@ -305,6 +293,8 @@ def _advertise_workspace_refs(
 
     try:
         workspace_format = workspace_git_object_format(workspace)
+        if workspace_format is None:
+            return not_git_advertisement(workspace)
         if workspace_format != ledger_object_format:
             return failed("object_format_mismatch")
         _, common = _repository(workspace)
@@ -376,5 +366,6 @@ def advertise_workspace_refs(
 __all__ = [
     "advertise_workspace_refs",
     "containing_git_workspace_root",
+    "not_git_advertisement",
     "workspace_git_object_format",
 ]

@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from cruxible_client import contracts
 from cruxible_client.contracts.change_control import StateCoordinate
@@ -18,7 +18,7 @@ from cruxible_client.contracts.errors import (
     ObjectFormatConflict,
     ReseedRequired,
 )
-from cruxible_client.contracts.workspace_layout import ensure_workspace_directory
+from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_core import __version__
 from cruxible_core.compiler.compiler import (
     CURRENT_COMPILER_REVISION,
@@ -44,6 +44,7 @@ from cruxible_core.server.credentials import get_runtime_credential_store
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 from cruxible_core.service.change_preview import state_change_scope
 from cruxible_core.storage.preview_fence import is_previewing
+from cruxible_core.workspace_root import refuse_unusable_root
 
 
 class _HostCommon(TypedDict):
@@ -236,20 +237,14 @@ def create_playbill_host(
                 "Unix socket"
             )
         if workspace_root is not None:
-            ensure_workspace_directory(
-                Path(workspace_root).expanduser().resolve(), state_root=registry.state_root
-            )
-            try:
-                workspace_git_object_format(Path(workspace_root))
-            except ValueError as exc:
-                raise ConfigError("Workspace attachment requires one local Git worktree") from exc
+            attachable_workspace(workspace_root, state_root=registry.state_root)
             attached = registry.get_governed_instance_by_workspace_root(workspace_root)
             if attached is not None and attached.instance_id != selected:
                 raise ConfigError(
                     f"Workspace {str(Path(workspace_root).expanduser().resolve())!r} is already "
                     f"attached to Cruxible host {attached.instance_id!r}; release it with "
                     f"`cruxible workspace detach --instance-id {attached.instance_id}` "
-                    f"or choose another Git worktree before creating {selected!r}"
+                    f"or choose another folder before creating {selected!r}"
                 )
 
         existing = registry.get(selected)
@@ -279,7 +274,7 @@ def create_playbill_host(
             f"Workspace {registered.record.workspace_root!r} is already attached to Cruxible "
             f"host {registered.record.instance_id!r}; release it with `cruxible "
             f"workspace detach --instance-id {registered.record.instance_id}` or choose "
-            f"another Git worktree before creating {selected!r}"
+            f"another folder before creating {selected!r}"
         )
     return contracts.HostResult(
         instance_id=selected,
@@ -328,6 +323,49 @@ def playbill_host_workspace_registration(
     )
 
 
+def attachable_workspace(
+    workspace_root: str | Path, *, state_root: Path
+) -> tuple[Path, GitObjectFormat | None]:
+    """The folder to attach and its Git object format (None for a plain folder).
+
+    A folder is a workspace with or without Git. Refused before anything is
+    read or registered: a missing path, a filesystem root, the home directory,
+    this daemon's state root (which holds every managed root), a 0.3 instance,
+    a directory inside a ``.cruxible`` directory, and a ``.git`` entry that is
+    no usable repository.
+    """
+
+    try:
+        resolved = Path(workspace_root).expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise ConfigError(
+            f"Workspace attachment requires an existing local folder: {workspace_root}"
+        ) from exc
+    refuse_unusable_root(resolved, state_root=state_root)
+    try:
+        return resolved, workspace_git_object_format(resolved)
+    except (OSError, ValueError) as exc:
+        raise ConfigError(
+            f"Workspace attachment refused {str(resolved)!r}: it has a .git entry that is "
+            "no usable Git repository; repair it, or remove it to attach a plain folder"
+        ) from exc
+
+
+def _refuse_format_mismatch(
+    instance_id: str, instance: Any, workspace_format: GitObjectFormat | None
+) -> None:
+    """A Git workspace must match the ledger's object format; a plain folder always does."""
+
+    ledger_format = instance.descriptor.git_object_format
+    if workspace_format is not None and workspace_format != ledger_format:
+        raise ObjectFormatConflict(
+            f"{ObjectFormatConflict.error_code}: host {instance_id!r} keeps a "
+            f"{ledger_format} ledger and the worktree is {workspace_format}; repair: "
+            f"attach a worktree in {ledger_format}",
+            workspace_format=workspace_format,
+        )
+
+
 def attach_workspace(
     instance_id: str,
     workspace_root: str,
@@ -335,31 +373,26 @@ def attach_workspace(
     observe: Callable[[StateCoordinate], None] | None = None,
     observe_host: Callable[[StateCoordinate], None] | None = None,
 ) -> bool:
-    """Attach one host to a Git worktree, before or after its init; True when newly.
+    """Attach one host to a folder (Git or not), before or after its init; True when newly.
 
-    The one attach path. An initialized host attaches when the worktree is in
-    its ledger's Git object format (the advisory remote refuses across formats)
-    and holds no part of its managed root; nothing is rebuilt, and the open
-    instance starts advertising to the worktree at once. Inside a preview it
-    checks everything and registers nothing. ``observe`` sees the host's
-    binding where the attach writes it (or, previewing, as it reads it).
+    The one attach path. An initialized host attaches a plain folder, or a Git
+    worktree in its ledger's Git object format (the advisory remote refuses
+    across formats), that holds no part of its managed root; nothing is
+    rebuilt, and the open instance starts advertising to a Git worktree at once
+    (a plain folder reports ``not_git``). Attaching the folder a host already
+    has rebinds that mirror, so a folder that became a Git repository since
+    turns it on. Inside a preview it checks everything and registers nothing.
+    ``observe`` sees the host's binding where the attach writes it (or,
+    previewing, as it reads it).
     """
 
     registry = get_registry()
     record = registry.get(instance_id)
     if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
         raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
-    try:
-        resolved = Path(workspace_root).expanduser().resolve(strict=True)
-    except OSError as exc:
-        raise ConfigError("Workspace attachment requires one local Git worktree") from exc
-    # Refuse home, this daemon's own state root and a 0.3 instance before reading
-    # or registering.
-    ensure_workspace_directory(resolved, state_root=registry.state_root)
-    try:
-        workspace_format = workspace_git_object_format(resolved)
-    except (OSError, ValueError) as exc:
-        raise ConfigError("Workspace attachment requires one local Git worktree") from exc
+    resolved, workspace_format = attachable_workspace(
+        workspace_root, state_root=registry.state_root
+    )
     other = registry.get_governed_instance_by_workspace_root(resolved)
     if other is not None and other.instance_id != instance_id:
         raise ConfigError(
@@ -369,11 +402,19 @@ def attach_workspace(
         )
     if record.workspace_root is not None:
         if Path(record.workspace_root) == resolved:
-            # Nothing is written, so a read outside a transaction pins it.
+            # Nothing is registered, so a read outside a transaction pins it.
             if observe is not None:
                 observe(registry.workspace_state(instance_id))
             if observe_host is not None:
                 observe_host(registry.host_state(instance_id))
+            instance = get_playbill_manager().initialized(instance_id)
+            if instance is not None:
+                # The folder may have become a Git repository since it was
+                # attached: the same format check a first attach makes, then the
+                # mirror is rebound so it starts (or stays off) now.
+                _refuse_format_mismatch(instance_id, instance, workspace_format)
+                if not is_previewing():
+                    get_playbill_manager().rebind_workspace(instance_id)
             return False
         raise ConfigError(
             f"Cruxible host {instance_id!r} is attached to {record.workspace_root}; release "
@@ -387,14 +428,7 @@ def attach_workspace(
                 f"Workspace {str(resolved)!r} contains host {instance_id!r}'s managed root; "
                 "an agent workspace may hold no part of it"
             )
-        ledger_format = instance.descriptor.git_object_format
-        if workspace_format != ledger_format:
-            raise ObjectFormatConflict(
-                f"{ObjectFormatConflict.error_code}: host {instance_id!r} keeps a "
-                f"{ledger_format} ledger and the worktree is {workspace_format}; repair: "
-                f"attach a worktree in {ledger_format}",
-                workspace_format=workspace_format,
-            )
+        _refuse_format_mismatch(instance_id, instance, workspace_format)
     if is_previewing():
         if observe is not None:
             observe(registry.workspace_state(instance_id))
@@ -416,7 +450,7 @@ def playbill_host_workspace_attach(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.HostWorkspaceAttachResult:
-    """Attach a host to a Git worktree, including a host already initialized (Q16).
+    """Attach a host to a folder (Git or not), including a host already initialized (Q16).
 
     Local-socket callers only, as for detaching: the daemon must be able to see
     the path it is asked to attach. ``dry_run`` registers nothing (R12); the

@@ -870,6 +870,7 @@
                   "updated",
                   "scheduled",
                   "not_attached",
+                  "not_git",
                   "failed"
                 ],
                 "title": "Status",
@@ -2300,6 +2301,7 @@
                   "updated",
                   "scheduled",
                   "not_attached",
+                  "not_git",
                   "failed"
                 ],
                 "title": "Status",
@@ -17045,6 +17047,7 @@
                   "updated",
                   "scheduled",
                   "not_attached",
+                  "not_git",
                   "failed"
                 ],
                 "title": "Status",
@@ -22461,6 +22464,7 @@
                   "updated",
                   "scheduled",
                   "not_attached",
+                  "not_git",
                   "failed"
                 ],
                 "title": "Status",
@@ -23628,6 +23632,7 @@
                   "updated",
                   "scheduled",
                   "not_attached",
+                  "not_git",
                   "failed"
                 ],
                 "title": "Status",
@@ -30498,7 +30503,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "One daemon host attached to a Git worktree, before or after its init.\n\nAn initialized host attaches when the worktree is in the ledger's own Git\nobject format and holds no part of the host's managed root; nothing is\nrebuilt. ``would_attach`` answers a preview, which registered nothing.",
+        "description": "One daemon host attached to a folder (Git or not), before or after its init.\n\nAn initialized host attaches a plain folder, or a Git worktree in the\nledger's own Git object format, that holds no part of the host's managed\nroot; nothing is rebuilt. ``already_attached`` answers the folder the host\nalready has (its ledger mirror is rebound). ``would_attach`` answers a\npreview, which registered nothing.",
         "properties": {
           "coordinate": {
             "anyOf": [
@@ -34525,6 +34530,7 @@
                   "updated",
                   "scheduled",
                   "not_attached",
+                  "not_git",
                   "failed"
                 ],
                 "title": "Status",
@@ -73108,6 +73114,7 @@
                   "updated",
                   "scheduled",
                   "not_attached",
+                  "not_git",
                   "failed"
                 ],
                 "title": "Status",
@@ -74681,6 +74688,7 @@
                   "updated",
                   "scheduled",
                   "not_attached",
+                  "not_git",
                   "failed"
                 ],
                 "title": "Status",
@@ -106598,6 +106606,7 @@
               "updated",
               "scheduled",
               "not_attached",
+              "not_git",
               "failed"
             ],
             "title": "Status",
@@ -106680,6 +106689,7 @@
               "updated",
               "scheduled",
               "not_attached",
+              "not_git",
               "failed"
             ],
             "title": "Status",

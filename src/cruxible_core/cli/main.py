@@ -23,6 +23,7 @@ from cruxible_client.contracts.repairs import (
     render_served_repair,
 )
 from cruxible_client.contracts.workspace_layout import WorkspaceDirectoryConflict
+from cruxible_client.contracts.workspace_root import WorkspaceBoundaryRefused
 from cruxible_core.cli.context import (
     CliContextState,
     load_cli_context,
@@ -1029,6 +1030,15 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     help="Disable workspace binding discovery (also CRUXIBLE_NO_WORKSPACE=1).",
 )
 @click.option(
+    "--no-autostart",
+    is_flag=True,
+    default=False,
+    help=(
+        "Never start a local daemon; a command with none to talk to refuses instead "
+        "(also CRUXIBLE_NO_AUTOSTART=1)."
+    ),
+)
+@click.option(
     "--json-compact",
     is_flag=True,
     default=None,
@@ -1042,6 +1052,7 @@ def cli(
     instance_id: str | None,
     principal_id: str | None,
     no_workspace: bool,
+    no_autostart: bool,
     json_compact: bool | None,
 ) -> None:
     """Cruxible — hard state for AI agents: governed, queryable, durable, with receipts."""
@@ -1079,12 +1090,19 @@ def cli(
             server_url=resolved.server_url,
             server_socket=resolved.server_socket,
         )
-    except (ConfigError, ContextResolutionError, WorkspaceDirectoryConflict) as exc:
+    except (
+        ConfigError,
+        ContextResolutionError,
+        WorkspaceBoundaryRefused,
+        WorkspaceDirectoryConflict,
+    ) as exc:
+        # A refused or unreadable workspace never falls back to remembered context.
         raise click.UsageError(str(exc)) from exc
     transport_source: str = resolved.transport_source
     if not (settings.server_url or settings.server_socket):
         # Nothing names a daemon: use the one answering at the state root's default
-        # socket, the daemon an MCP adapter finds or starts (never start one here).
+        # socket, the daemon an MCP adapter finds or starts. A command that needs
+        # a daemon starts one there when none answers (`ensure_cli_daemon`).
         from cruxible_core.mcp.daemon import answering_default_socket
 
         found = answering_default_socket()
@@ -1124,6 +1142,8 @@ def cli(
                 else str(resolved.workspace_binding_path)
             ),
             "workspace_attached": resolved.workspace_attached,
+            "no_workspace": no_workspace,
+            "no_autostart": no_autostart,
         }
     )
     _load_remembered_principal(
@@ -1213,8 +1233,16 @@ def _load_remembered_principal(
             else:
                 os.environ[name] = value
 
+    def forget() -> None:
+        # A command that turns out to act on another instance (init in a new
+        # folder) drops the remembered principal it was handed.
+        restore()
+        for key in ("principal_id", "principal_source", "principal_settings"):
+            obj.pop(key, None)
+
     os.environ.update(settings.environment())
     ctx.call_on_close(restore)
     obj["principal_id"] = settings.principal_id
     obj["principal_source"] = "remembered"
     obj["principal_settings"] = str(settings.path)
+    obj["forget_remembered_principal"] = forget

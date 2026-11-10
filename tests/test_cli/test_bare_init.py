@@ -248,7 +248,9 @@ def test_init_of_a_remembered_initialized_host_refuses_before_writing(daemon: Pa
     assert again.exit_code != 0
     assert f"Cruxible host {instance_id}" in again.output
     assert "already" in again.output and "nothing was written" in again.output
-    assert "cruxible context clear" in again.output
+    # The repair never wipes what the CLI remembers (no `context clear`).
+    assert "cruxible context clear" not in again.output
+    assert "cruxible host create" in again.output
     assert "SigningKeyError" not in again.output
     assert sorted(path.name for path in key_dir.iterdir()) == before
     # With no key here (another machine's custody), the daemon's answer refuses it.

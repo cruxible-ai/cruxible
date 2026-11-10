@@ -49,6 +49,8 @@ def context_show(output_json: bool) -> None:
         "reason": "no_instance",
     }
     if obj.get("instance_id"):
+        # A diagnostic read never starts a daemon.
+        obj["no_autostart_here"] = True
         try:
             client = _get_client()
             if client is None:

@@ -38,6 +38,7 @@ from cruxible_client.authoring.compact_query import (
     parse_where,
     render_query_table,
 )
+from cruxible_client.authoring.context import ContextResolutionError, resolve_context
 from cruxible_client.authoring.doc_writes import write_workspace
 from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_FACTORIES,
@@ -147,6 +148,7 @@ from cruxible_client.contracts.temporal import (
 )
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 from cruxible_client.contracts.validation_messages import validation_summary
+from cruxible_client.contracts.workspace_layout import WorkspaceDirectoryConflict
 from cruxible_client.contracts.write import (
     ApprovalNeeded,
     Change,
@@ -187,9 +189,11 @@ from cruxible_core.cli.commands._common import (
     brief_option,
     change_control_options,
     echo_preview_next,
+    ensure_cli_daemon,
     json_option,
     no_daemon_message,
 )
+from cruxible_core.cli.context import load_cli_context
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.cli.payloads import (
     PayloadFile,
@@ -248,6 +252,13 @@ from cruxible_core.service.proposals.review import (
     render_playbill_approval_summary,
     render_playbill_proposal_review,
     render_playbill_proposal_review_pointer,
+)
+from cruxible_core.workspace_root import (
+    WorkspaceBoundaryRefused,
+    WorkspaceRoot,
+    WorkspaceRootSource,
+    refuse_unusable_root,
+    resolve_workspace_root,
 )
 
 ResultT = TypeVar("ResultT")
@@ -355,11 +366,17 @@ class _GitWorkspaceEnvironmentNote:
 
 
 @dataclass(frozen=True)
-class _LocalGitWorkspaceResult:
-    """The CWD-selected worktree and any ignored ambient-repository advisory."""
+class _LocalWorkspaceResult:
+    """The workspace root this command runs in, and any ignored ambient-repository advisory.
+
+    ``git_root`` is the Git worktree the start directory lies in, whether or not
+    the workspace root is that worktree (a TCP daemon cannot attach one).
+    """
 
     workspace_root: Path | None
     note: _GitWorkspaceEnvironmentNote | None
+    source: WorkspaceRootSource | None = None
+    git_root: Path | None = None
 
 
 def _inherited_git_workspace_root() -> Path | None:
@@ -384,18 +401,23 @@ def _inherited_git_workspace_root() -> Path | None:
         return None
 
 
-def _explicit_git_workspace_root(value: str) -> Path:
+def _explicit_workspace_root(value: str) -> Path:
+    """``--workspace PATH``: the workspace root PATH resolves to; any folder, Git or not."""
+
     try:
         selected = Path(value).expanduser().resolve(strict=True)
     except OSError as exc:
         raise click.UsageError(f"--workspace is not an accessible directory: {value}") from exc
-    workspace_root = containing_git_workspace_root(selected)
-    if workspace_root is None:
-        raise click.UsageError("--workspace must select a path inside one Git worktree")
-    return workspace_root
+    try:
+        found = resolve_workspace_root(selected)
+    except WorkspaceDirectoryConflict as exc:
+        raise click.UsageError(f"--workspace {value}: {exc}") from exc
+    assert found is not None
+    return found.root
 
 
 def _workspace_config_transport() -> dict[str, str]:
+    ensure_cli_daemon()
     obj = _root_ctx_obj()
     if obj.get("server_socket"):
         return {"server_socket": str(obj["server_socket"])}
@@ -404,28 +426,91 @@ def _workspace_config_transport() -> dict[str, str]:
     raise click.UsageError("Server mode is required to attach a workspace")
 
 
-def _local_git_workspace_root() -> _LocalGitWorkspaceResult:
-    """Resolve the CWD worktree without trusting an inherited repository selector."""
+def _workspace_discovery_off() -> bool:
+    if _root_ctx_obj().get("no_workspace"):
+        return True
+    return os.environ.get("CRUXIBLE_NO_WORKSPACE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
-    repository_selectors = ("GIT_DIR", "GIT_WORK_TREE")
-    inherited_selector = any(name in os.environ for name in repository_selectors)
-    workspace_root = containing_git_workspace_root(Path.cwd())
-    inherited_root = _inherited_git_workspace_root() if inherited_selector else workspace_root
-    note = None
-    if (
-        workspace_root is not None
-        and inherited_root is not None
-        and inherited_root != workspace_root
-    ):
-        note = _GitWorkspaceEnvironmentNote(
-            code="inherited_git_workspace_ignored",
-            cwd_workspace_root=workspace_root,
-            inherited_workspace_root=inherited_root,
+
+def _local_workspace_root(
+    *,
+    fallback_to_start: bool = True,
+    required: str | None = None,
+    custody: bool = False,
+) -> _LocalWorkspaceResult:
+    """Resolve this command's workspace root from the CWD (`cruxible_core.workspace_root`).
+
+    The nearest ancestor holding ``.cruxible/``, else the enclosing Git worktree,
+    else (with ``fallback_to_start``) the CWD itself. An inherited repository
+    selector (``GIT_DIR``) never chooses it. A root that is no workspace (home, a
+    filesystem root, the state root) is None, or with ``required`` (the command
+    name) a refusal naming why; so is any root while workspace discovery is off,
+    except for ``custody``: keys stay out of a workspace whether or not this
+    command uses it.
+    """
+
+    if _workspace_discovery_off() and not custody:
+        if required is not None:
+            raise click.UsageError(
+                f"{required} needs a workspace folder, but workspace discovery is off "
+                "(--no-workspace or CRUXIBLE_NO_WORKSPACE)"
+            )
+        return _LocalWorkspaceResult(workspace_root=None, note=None)
+    named = os.environ.get("CRUXIBLE_WORKSPACE")
+    try:
+        start = Path(named).expanduser() if named else Path.cwd()
+    except OSError as exc:
+        if required is not None:
+            raise click.UsageError(f"{required} needs a workspace folder: {exc}") from exc
+        return _LocalWorkspaceResult(workspace_root=None, note=None)
+    git_root = containing_git_workspace_root(start)
+    try:
+        # CRUXIBLE_WORKSPACE names the root itself: trusted whoever owns it.
+        found = resolve_workspace_root(
+            start,
+            fallback_to_start=fallback_to_start or bool(named),
+            trust=start if named else None,
         )
-    return _LocalGitWorkspaceResult(workspace_root=workspace_root, note=note)
+        if named and found is not None and found.root != start.resolve():
+            found = WorkspaceRoot(refuse_unusable_root(start.resolve()), "directory")
+    except OSError as exc:
+        if required is not None:
+            raise click.UsageError(f"{required} needs a workspace folder: {exc}") from exc
+        return _LocalWorkspaceResult(workspace_root=None, note=None, git_root=git_root)
+    except WorkspaceBoundaryRefused as exc:
+        if required is not None or not custody:
+            raise click.UsageError(str(exc)) from exc
+        # Keys stay out of the untrusted workspace too.
+        return _LocalWorkspaceResult(
+            workspace_root=Path(exc.workspace), note=None, git_root=git_root
+        )
+    except WorkspaceDirectoryConflict as exc:
+        if required is not None:
+            raise click.UsageError(f"{required} needs a workspace folder: {exc}") from exc
+        return _LocalWorkspaceResult(workspace_root=None, note=None, git_root=git_root)
+    if found is None:
+        return _LocalWorkspaceResult(workspace_root=None, note=None, git_root=git_root)
+    repository_selectors = ("GIT_DIR", "GIT_WORK_TREE")
+    note = None
+    if found.source == "git" and any(name in os.environ for name in repository_selectors):
+        inherited_root = _inherited_git_workspace_root()
+        if inherited_root is not None and inherited_root != found.root:
+            note = _GitWorkspaceEnvironmentNote(
+                code="inherited_git_workspace_ignored",
+                cwd_workspace_root=found.root,
+                inherited_workspace_root=inherited_root,
+            )
+    return _LocalWorkspaceResult(
+        workspace_root=found.root, note=note, source=found.source, git_root=git_root
+    )
 
 
-def _emit_git_workspace_note(resolution: _LocalGitWorkspaceResult) -> None:
+def _emit_git_workspace_note(resolution: _LocalWorkspaceResult) -> None:
     _root_ctx_obj()["git_workspace_note"] = (
         None
         if resolution.note is None
@@ -445,12 +530,23 @@ def _emit_git_workspace_note(resolution: _LocalGitWorkspaceResult) -> None:
     )
 
 
-def _custody_workspace_root() -> Path | None:
-    """Resolve the one workspace boundary shared by every custody operation."""
+def _existing_workspace_root() -> Path | None:
+    """An existing workspace root around the CWD (``.cruxible/`` or Git), quietly."""
 
-    resolution = _local_git_workspace_root()
+    resolution = _local_workspace_root(fallback_to_start=False, custody=True)
+    return resolution.workspace_root or resolution.git_root
+
+
+def _custody_workspace_root() -> Path | None:
+    """Resolve the one workspace boundary shared by every custody operation.
+
+    An existing workspace (a folder holding ``.cruxible/``, or a Git worktree);
+    a plain folder becomes one when init or attach writes its ``.cruxible/``.
+    """
+
+    resolution = _local_workspace_root(fallback_to_start=False, custody=True)
     _emit_git_workspace_note(resolution)
-    return resolution.workspace_root
+    return resolution.workspace_root or resolution.git_root
 
 
 def _with_git_workspace_note(result: Any) -> Any:
@@ -484,6 +580,34 @@ def _refuse_tcp_workspace_operation(git_workspace: Path | None) -> None:
             "attach a daemon-local workspace. Use --server-socket for local attachment, or "
             "run from outside the worktree for an intentionally unattached remote host."
         )
+
+
+def _creation_workspace(
+    workspace_path: str | None, *, fallback_to_start: bool
+) -> _LocalWorkspaceResult:
+    """The workspace a host create or init attaches, and the TCP refusal it needs.
+
+    ``--workspace PATH`` is taken as given (a remote host keeps it client-local).
+    Otherwise it is found from the CWD; over TCP a Git worktree refuses (a remote
+    daemon cannot attach it) and a plain folder stays unattached.
+    """
+
+    if workspace_path is not None:
+        return _LocalWorkspaceResult(
+            workspace_root=_explicit_workspace_root(workspace_path), note=None
+        )
+    tcp = bool(_root_ctx_obj().get("server_url"))
+    resolution = _local_workspace_root(
+        fallback_to_start=fallback_to_start and not tcp,
+        required=(
+            None if tcp or not fallback_to_start or _workspace_discovery_off() else "cruxible init"
+        ),
+    )
+    _emit_git_workspace_note(resolution)
+    _refuse_tcp_workspace_operation(resolution.git_root)
+    if tcp:
+        return _LocalWorkspaceResult(workspace_root=None, note=resolution.note)
+    return resolution
 
 
 def _init_resume_marker(target: ClientPrincipalKeyTarget) -> Path:
@@ -705,18 +829,21 @@ def attach_workspace(
     at: str | None,
     output_json: bool,
 ) -> None:
-    """Attach this Git worktree to a daemon host, initialized or not.
+    """Attach this folder (Git or not) to a daemon host, initialized or not.
 
-    A host with no worktree registers this one (an initialized host included,
-    as long as the worktree is in its ledger's Git object format); a host
-    registered to this worktree just gets the client config.
+    The folder is the nearest one holding .cruxible/, else the enclosing Git
+    worktree, else the current directory. A host with no workspace registers
+    this one (an initialized host included, as long as a Git worktree is in its
+    ledger's Git object format); a host registered to this folder gets the
+    client config, and its ledger mirror is rebound: after `git init` in a plain
+    folder, attaching again turns the mirror on.
     """
 
-    resolution = _local_git_workspace_root()
+    resolution = _local_workspace_root(required="cruxible workspace attach")
     _emit_git_workspace_note(resolution)
     workspace = resolution.workspace_root
-    if workspace is None:
-        raise click.UsageError("cruxible workspace attach must run inside one Git worktree")
+    assert workspace is not None
+    ensure_cli_daemon()
     if not _root_ctx_obj().get("server_socket"):
         raise click.UsageError(
             "cruxible workspace attach requires a local --server-socket so the daemon can "
@@ -731,7 +858,11 @@ def attach_workspace(
     )
     assert isinstance(registration, contracts.HostWorkspaceRegistration)
     registered = registration.workspace_path
-    if registration.status != "registered":
+    if registration.status != "registered" or (
+        registered is not None and Path(registered).resolve(strict=False) == workspace
+    ):
+        # Attaching the folder a host already has registers nothing and rebinds
+        # its ledger mirror (a folder that became a Git repository turns it on).
         attached = _dispatch_cli(
             lambda client: client.host_workspace_attach(
                 selected, workspace_root=str(workspace), dry_run=dry_run, at=at
@@ -761,6 +892,7 @@ def attach_workspace(
     if dry_run:
         click.echo(f"{workspace} is already attached to Cruxible host {selected}; nothing changes")
         return
+    mirror = _ledger_mirror_off_line(workspace)
     transport_values = _workspace_config_transport()
     transport = str(next(iter(transport_values.values())))
     _echo_active_write_target(
@@ -792,6 +924,8 @@ def attach_workspace(
         return
     click.echo(f"Attached workspace {workspace} to Cruxible host {selected}")
     click.echo(f"Config: {config_path}")
+    if mirror is not None:
+        click.echo(mirror)
 
 
 @workspace_group.command("detach")
@@ -802,12 +936,12 @@ def attach_workspace(
 def detach_workspace(
     instance_id: str | None, dry_run: bool | None, at: str | None, output_json: bool
 ) -> None:
-    """Release a daemon host from the Git worktree it is registered against.
+    """Release a daemon host from the folder it is registered against.
 
-    The registry allows one host per worktree, so re-binding a worktree to a
-    second host needs the first one released. Nothing governed changes: the host
-    keeps its ledger and every read it has ever served, and stops being the host
-    of this directory. Attach the worktree to the new host afterwards.
+    The registry allows one host per folder, so re-binding a folder to a second
+    host needs the first one released. Nothing governed changes: the host keeps
+    its ledger and every read it has ever served, and stops being the host of
+    this directory. Attach the folder to the new host afterwards.
     """
 
     selected = instance_id or _require_instance_id()
@@ -833,6 +967,20 @@ def detach_workspace(
         echo_preview_next(result.status, result.coordinate)
         return
     click.echo(f"Detached {result.workspace_root} from Cruxible host {selected}")
+
+
+#: What init and attach print when the attached folder is no Git repository.
+LEDGER_MIRROR_OFF = (
+    "Ledger mirror: off, because this folder is not a Git repository (Cruxible works "
+    "the same without one). To turn it on, run `git init` here, then "
+    "`cruxible workspace attach`."
+)
+
+
+def _ledger_mirror_off_line(workspace: Path) -> str | None:
+    """The plain line saying the ledger mirror is off, when the folder is not Git."""
+
+    return None if containing_git_workspace_root(workspace) == workspace else LEDGER_MIRROR_OFF
 
 
 def _write_world_stub(workspace: Path, instance_id: str) -> None:
@@ -902,7 +1050,7 @@ def show_host(instance_id: str, output_json: bool) -> None:
     "workspace_path",
     default=None,
     type=click.Path(exists=True, file_okay=False),
-    help="Explicit Git workspace to configure; remote paths stay client-local.",
+    help="Explicit workspace folder (Git or not) to configure; remote paths stay client-local.",
 )
 @click.option("--replace", is_flag=True, help="Replace a differing workspace config.")
 @change_control_options
@@ -918,14 +1066,7 @@ def create_host(
 ) -> None:
     """Allocate an empty host and remember it as the active instance."""
 
-    git_workspace: Path | None
-    if workspace_path is not None:
-        git_workspace = _explicit_git_workspace_root(workspace_path)
-    else:
-        workspace_resolution = _local_git_workspace_root()
-        _emit_git_workspace_note(workspace_resolution)
-        git_workspace = workspace_resolution.workspace_root
-        _refuse_tcp_workspace_operation(git_workspace)
+    git_workspace = _creation_workspace(workspace_path, fallback_to_start=False).workspace_root
     workspace_root = (
         str(git_workspace)
         if git_workspace is not None and _root_ctx_obj().get("server_socket")
@@ -1005,7 +1146,7 @@ def create_host(
     "workspace_path",
     default=None,
     type=click.Path(exists=True, file_okay=False),
-    help="Explicit Git workspace to configure; remote paths stay client-local.",
+    help="Explicit workspace folder (Git or not) to configure; remote paths stay client-local.",
 )
 @click.option("--replace", is_flag=True, help="Replace a differing workspace config.")
 @click.option(
@@ -1054,26 +1195,40 @@ def init_playbill(
 
     With daemon auth off, the owner principal ID is the identity this process
     claims for the init request; no bootstrap secret is needed.
+
+    The folder is the workspace, Git or not: over the local socket init attaches
+    the nearest folder holding .cruxible/, else the enclosing Git worktree, else
+    the current directory, and writes .cruxible/coverage.json there. Safe to run
+    again: in a folder whose instance is already initialized it reports that
+    instance and changes nothing. The host a remembered context names belongs to
+    another folder, so it is never initialized here and never replaced.
     """
 
-    git_workspace = (
-        _explicit_git_workspace_root(workspace_path)
-        if workspace_path is not None
-        else _custody_workspace_root()
-    )
     if require_independent_approval and reviewer_key_dir is None:
         raise click.UsageError("--require-independent-approval requires --reviewer-key-dir")
-    if workspace_path is None:
-        _refuse_tcp_workspace_operation(git_workspace)
-    if not (_root_ctx_obj().get("server_url") or _root_ctx_obj().get("server_socket")):
+    if not ensure_cli_daemon():
         raise click.UsageError(no_daemon_message("cruxible init"))
+    git_workspace = _creation_workspace(workspace_path, fallback_to_start=True).workspace_root
     transport = _transport_target(_root_ctx_obj())
     if transport is None:  # pragma: no cover - guarded by _get_client above
         raise click.UsageError("Server mode is required for cruxible init")
+    if git_workspace is not None:
+        transport = _target_init_folder(git_workspace) or transport
+    selected_instance = _root_ctx_obj().get("instance_id")
+    instance_source = str(_root_ctx_obj().get("target_instance_source") or "")
+    if selected_instance is not None and instance_source == "workspace":
+        initialized_here = _initialized_host(str(selected_instance))
+        if initialized_here is not None:
+            _echo_already_initialized(
+                initialized_here,
+                workspace=git_workspace,
+                transport=transport,
+                output_json=output_json,
+            )
+            return
     configured = _root_ctx_obj().get("principal_id")
     if principal_id is None:
         principal_id = configured if configured is not None else _os_principal_id()
-    selected_instance = _root_ctx_obj().get("instance_id")
     config_transport = _workspace_config_transport() if git_workspace is not None else {}
     if git_workspace is not None:
         validate_workspace_config_write(
@@ -1093,7 +1248,11 @@ def init_playbill(
         # credential the credential decides who acts, so no claim is sent.
         _root_ctx_obj()["principal_id"] = principal_id
     workspace = git_workspace
-    custody_roots = _init_custody_roots(workspace)
+    # Keys stay out of every workspace, attached or not: over TCP an enclosing
+    # Git worktree (or .cruxible folder) is still forbidden custody.
+    custody_roots = _init_custody_roots(
+        workspace if workspace is not None else _existing_workspace_root()
+    )
     # Every explicit custody directory is checked before a host is allocated or
     # a key generated; the default one as soon as the host names it.
     for role, flag, explicit in (
@@ -1143,6 +1302,9 @@ def init_playbill(
                 if git_workspace is not None and _root_ctx_obj().get("server_socket")
                 else None
             ),
+            workspace=git_workspace,
+            replace=replace,
+            config_transport=config_transport,
         )
     )
     owner_key_dir = (
@@ -1198,7 +1360,7 @@ def init_playbill(
         )
     for marker in markers:
         marker.unlink()
-    _activate_server_instance(result.instance_id)
+    _remember_initialized_host(result.instance_id, workspace=git_workspace)
     owner_token = _mint_owner_credential(owner, principal_id=principal_id)
     # The reviewer gets what `principal add` gives a principal: a settings file
     # and, with auth on, its own graph_write credential, so `context use
@@ -1252,6 +1414,8 @@ def init_playbill(
     click.echo(f"Workspace refs: {result.workspace_advertisement.status}")
     if result.workspace_advertisement.failure_code is not None:
         click.echo(f"Workspace ref failure: {result.workspace_advertisement.failure_code}")
+    if result.workspace_advertisement.status == "not_git":
+        click.echo(LEDGER_MIRROR_OFF)
     click.echo(f"Owner public key: {owner.principal.public_key}")
     click.echo(f"Owner private key retained locally at: {owner.private_key_path}")
     click.echo(f"Owner principal: {principal_id}")
@@ -1289,13 +1453,22 @@ def _os_principal_id() -> str:
     return name
 
 
-def _create_host_for_init(transport: str, *, workspace_root: str | None) -> str:
+def _create_host_for_init(
+    transport: str,
+    *,
+    workspace_root: str | None,
+    workspace: Path | None = None,
+    replace: bool = False,
+    config_transport: Mapping[str, str] | None = None,
+) -> str:
     """Allocate the host a bare init initializes, and select it before anything else.
 
     Selecting it first means a retry after a failed init initializes this same
-    host instead of allocating another. The host is created attached to the
-    worktree init will attach (on a local socket), so a worktree already
-    attached to another host refuses here, before any host exists.
+    host instead of allocating another: the folder's .cruxible/coverage.json
+    names it at once (and with no folder, the remembered context does). The
+    host is created attached to the folder init will attach (on a local
+    socket), so a folder already attached to another host refuses here, before
+    any host exists.
     """
 
     _echo_creation_write_target({})
@@ -1306,9 +1479,139 @@ def _create_host_for_init(transport: str, *, workspace_root: str | None) -> str:
         command_name="cruxible init",
     )
     assert isinstance(created, contracts.HostResult)
-    _activate_server_instance(created.instance_id)
+    if workspace is not None:
+        write_workspace_config(
+            workspace,
+            instance_id=created.instance_id,
+            replace=replace,
+            **dict(config_transport or {}),
+        )
+    _remember_initialized_host(created.instance_id, workspace=workspace)
     click.echo(f"Created Cruxible host {created.instance_id} @ {transport}", err=True)
     return created.instance_id
+
+
+def _target_init_folder(folder: Path) -> str | None:
+    """Make init act on ``folder``'s own instance, or on none; the new transport, if moved.
+
+    The root resolution chose for the current directory: another folder's
+    binding (``init --workspace B`` run from A), the remembered context (another
+    folder's), or nothing. None of that is this folder's, so init drops it and
+    the remembered principal loaded with it, and takes ``folder``'s own binding
+    when it has one (its transport too, unless the transport was named
+    explicitly). An instance named explicitly or by the environment keeps its
+    precedence.
+    """
+
+    obj = _root_ctx_obj()
+    source = str(obj.get("target_instance_source") or "")
+    if obj.get("instance_id") is not None and source in {"explicit", "environment"}:
+        return None
+    current = obj.get("playbill_workspace")
+    if source == "workspace" and current is not None and Path(current) == folder:
+        return None
+    forget = obj.pop("forget_remembered_principal", None)
+    if callable(forget):
+        forget()
+    obj["instance_id"] = None
+    obj["target_instance_source"] = "local"
+    obj["workspace_binding_path"] = None
+    try:
+        own = resolve_context(workspace=folder, environ={}, remembered={})
+    except (ContextResolutionError, WorkspaceDirectoryConflict) as exc:
+        raise click.UsageError(f"cruxible init: the workspace binding of {folder}: {exc}") from exc
+    if not own.workspace_attached:
+        return None
+    obj["instance_id"] = own.instance_id
+    obj["target_instance_source"] = "workspace"
+    obj["workspace_binding_path"] = (
+        None if own.workspace_binding_path is None else str(own.workspace_binding_path)
+    )
+    if obj.get("target_transport_source") in {"explicit", "environment"}:
+        return None
+    obj["server_url"], obj["server_socket"] = own.server_url, own.server_socket
+    obj["target_transport_source"] = "workspace"
+    obj.pop("_client", None)
+    return _transport_target(obj)
+
+
+def _remember_initialized_host(instance_id: str, *, workspace: Path | None) -> None:
+    """Add the host init made to the remembered context, never replacing another.
+
+    An empty context (or one naming this host) remembers it as the active
+    instance. A context naming another host keeps it: in a bound folder the
+    folder's .cruxible/coverage.json selects the new host; elsewhere the
+    command says how to select it. Remembered principals are always kept.
+    """
+
+    remembered = load_cli_context().instance_id
+    if remembered is None or remembered == instance_id:
+        _activate_server_instance(instance_id)
+        return
+    _root_ctx_obj()["instance_id"] = instance_id
+    if _root_ctx_obj().get("cruxible_kept_context_note") == instance_id:
+        return
+    _root_ctx_obj()["cruxible_kept_context_note"] = instance_id
+    where = (
+        "this folder's .cruxible/coverage.json selects it here"
+        if workspace is not None
+        else f"select it with --instance-id {instance_id} or `cruxible context use {instance_id}`"
+    )
+    click.echo(
+        f"note: the CLI context still remembers host {remembered}; host {instance_id} was "
+        f"added beside it ({where})",
+        err=True,
+    )
+
+
+def _initialized_host(instance_id: str) -> contracts.HostInspection | None:
+    """The host's inspection when the daemon reports it initialized, else None."""
+
+    try:
+        inspection = _dispatch_cli(
+            lambda client: client.show_host(instance_id),
+            lambda: None,
+            allow_local=False,
+            command_name="cruxible init",
+        )
+    except (CoreError, click.ClickException):
+        return None
+    if (
+        isinstance(inspection, contracts.HostInspection)
+        and inspection.compatibility != "uninitialized"
+    ):
+        return inspection
+    return None
+
+
+def _echo_already_initialized(
+    inspection: contracts.HostInspection,
+    *,
+    workspace: Path | None,
+    transport: str,
+    output_json: bool,
+) -> None:
+    """Report the instance a folder already has; init changes nothing there."""
+
+    binding = _root_ctx_obj().get("workspace_binding_path")
+    if output_json:
+        _emit_json(
+            {
+                "tag": "cruxible-init-already-initialized-v1",
+                "status": "already_initialized",
+                "instance_id": inspection.instance_id,
+                "transport": transport,
+                "workspace_root": None if workspace is None else str(workspace),
+                "workspace_binding_path": binding,
+                "compatibility": inspection.compatibility,
+            }
+        )
+        return
+    click.echo(
+        f"Cruxible is already initialized here: host {inspection.instance_id} @ {transport} "
+        f"(selected by {binding or '.cruxible/coverage.json'}); nothing changed."
+    )
+    click.echo("Next: `cruxible orient` maps it; `cruxible whoami` shows who you act as.")
 
 
 def _refuse_reinit(
@@ -1324,8 +1627,10 @@ def _refuse_reinit(
 
     source = str(_root_ctx_obj().get("target_instance_source") or "context")
     repair = (
-        "Repair: to start a new project, `cruxible context clear` (or select no host) and run "
-        f"`cruxible init` again; to act on {instance_id}, use its settings "
+        "Repair: to start a new project, run `cruxible init` in that project's folder over "
+        "the local socket (its .cruxible/coverage.json then selects the new host, and "
+        "nothing the CLI remembers is replaced), or allocate one first with `cruxible host "
+        f"create`; to act on {instance_id}, use its settings "
         f"(`cruxible context use --principal ID`)"
     )
     target = validate_client_principal_key_target(
@@ -3109,7 +3414,7 @@ def _file_catalog_and_root(
     if repository_root is not None:
         root = Path(repository_root).expanduser().resolve()
     else:
-        resolution = _local_git_workspace_root()
+        resolution = _local_workspace_root()
         _emit_git_workspace_note(resolution)
         root = resolution.workspace_root or Path.cwd().resolve()
     if portable_catalog is not None:
@@ -3204,10 +3509,9 @@ def check_files(
 def _catalog_edit_root(repository_root: str | None) -> Path:
     if repository_root is not None:
         return Path(repository_root).expanduser().resolve()
-    resolution = _local_git_workspace_root()
+    resolution = _local_workspace_root(required="cruxible files add/remove")
     _emit_git_workspace_note(resolution)
-    if resolution.workspace_root is None:
-        raise click.UsageError("cruxible files add/remove must run inside one Git worktree")
+    assert resolution.workspace_root is not None
     return resolution.workspace_root
 
 
@@ -3263,7 +3567,7 @@ def _echo_catalog_edit(result: FileCatalogEdit, *, output_json: bool) -> None:
     "--root",
     "repository_root",
     default=None,
-    help="Workspace root the catalog belongs to (default: this worktree).",
+    help="Workspace root the catalog belongs to (default: this workspace folder).",
 )
 @json_option
 @handle_errors
@@ -3290,7 +3594,7 @@ def add_file(
     to cite and a page to project blocks into, just not a Document. The
     whole catalog is validated before the file is rewritten: an existing NAME
     refuses unless --replace, and a partial Document or a duplicate Document
-    target refuses. Writes only the catalog file; commit it with Git.
+    target refuses. Writes only the catalog file (commit it with Git, if you use Git).
     """
 
     fields: dict[str, object] = {
@@ -3325,7 +3629,7 @@ def add_file(
     "--root",
     "repository_root",
     default=None,
-    help="Workspace root the catalog belongs to (default: this worktree).",
+    help="Workspace root the catalog belongs to (default: this workspace folder).",
 )
 @json_option
 @handle_errors
@@ -4780,7 +5084,7 @@ def bind_authoring_selection(
     if workspace_root is not None:
         workspace = Path(workspace_root).expanduser().resolve()
     else:
-        resolution = _local_git_workspace_root()
+        resolution = _local_workspace_root()
         _emit_git_workspace_note(resolution)
         workspace = resolution.workspace_root or Path.cwd().resolve()
     parsed_input = _read_authoring_input(payload_file)
@@ -9923,7 +10227,7 @@ def orient(
         ),
         command_name="cruxible orient",
     )
-    workspace_root = containing_git_workspace_root(Path.cwd())
+    workspace_root = _local_workspace_root(fallback_to_start=False).workspace_root
     if workspace_root is not None:
         result = workspace_floor_freshness(workspace_root, result)
     rendered = result.model_dump(mode="json")
@@ -9996,11 +10300,10 @@ def export_floor(
     """Write the accepted greppable floor to a deterministic local tree."""
 
     include: tuple[contracts.FloorExportPart, ...] = ("discovery",) if with_discovery else ()
-    workspace_resolution = _local_git_workspace_root()
+    workspace_resolution = _local_workspace_root(required="cruxible floor export")
     _emit_git_workspace_note(workspace_resolution)
     workspace_root = workspace_resolution.workspace_root
-    if workspace_root is None:
-        raise click.UsageError("cruxible floor export must run inside one Git worktree")
+    assert workspace_root is not None
     transport = _workspace_config_transport()
     if include:
         # The discovery cards are a full export's; they never travel in a delta.
@@ -10067,6 +10370,7 @@ def floor_delivery(state: str, instance_id: str | None, output_json: bool) -> No
     Needs the local --server-socket the workspace was attached through.
     """
 
+    ensure_cli_daemon()
     if not _root_ctx_obj().get("server_socket"):
         raise click.UsageError("floor delivery requires a local --server-socket")
     selected = instance_id or _require_instance_id()
@@ -10236,7 +10540,7 @@ def resolve_coverage(
     if root is not None:
         working_root = Path(root).expanduser().resolve()
     else:
-        resolution = _local_git_workspace_root()
+        resolution = _local_workspace_root()
         _emit_git_workspace_note(resolution)
         working_root = resolution.workspace_root or Path.cwd().resolve()
     bindings = _coverage_bindings(working_root, bind_values, bindings_path)

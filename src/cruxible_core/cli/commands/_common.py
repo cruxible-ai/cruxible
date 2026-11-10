@@ -37,6 +37,11 @@ SERVER_MODE_REQUIRED_MESSAGE = (
 )
 
 
+#: Set to 1/true/yes/on to stop the CLI from starting a local daemon (also
+#: ``--no-autostart``); tests and CI set it globally.
+NO_AUTOSTART_ENV = "CRUXIBLE_NO_AUTOSTART"
+
+
 def no_daemon_message(command_name: str) -> str:
     """Why a command that needs a daemon found none, and how to give it one."""
 
@@ -53,9 +58,90 @@ def no_daemon_message(command_name: str) -> str:
         "Cruxible daemon, which holds the state; nothing runs in this process. No daemon "
         "was found: no --server-socket/--server-url, no CRUXIBLE_SERVER_SOCKET/"
         f"CRUXIBLE_SERVER_URL, no remembered context, and none answering at {socket}. "
-        f"Start one with `cruxible server start --socket {socket}` (an MCP adapter starts "
-        "one there by itself), or pass --server-socket PATH."
+        f"Start one with `cruxible server start --socket {socket}` (the CLI and an MCP "
+        f"adapter start one there by themselves unless --no-autostart or {NO_AUTOSTART_ENV} "
+        "turns that off), or pass --server-socket PATH."
     )
+
+
+def autostart_disabled() -> bool:
+    """Whether this invocation may not start a local daemon (``--no-autostart`` or env)."""
+
+    if _root_ctx_obj().get("no_autostart"):
+        return True
+    return os.environ.get(NO_AUTOSTART_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _same_socket(left: str, right: Path) -> bool:
+    try:
+        return Path(left).expanduser().resolve(strict=False) == right.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return False
+
+
+def ensure_cli_daemon() -> bool:
+    """Give this invocation a daemon: start the local one when it targets nothing answering.
+
+    Only the default local socket (``<state root>/run/daemon.sock``) is ever
+    started, and only when nothing names another transport: a ``--server-url``
+    or TCP target, or a socket that is not the default, keeps today's refusal.
+    The start is the MCP adapter's (`cruxible_core.mcp.daemon.ensure_local_daemon`:
+    reuse a live daemon holding the state root, else the installed user
+    service, else ``cruxible server start`` detached), and one line on standard
+    error says so; ``cruxible server stop`` stops it. Returns whether a
+    transport is selected afterwards. Commands that need a daemon call this
+    (``_get_client`` does); ``cruxible console`` can too.
+    """
+
+    obj = _root_ctx_obj()
+    if obj.get("server_url"):
+        return True
+    socket = obj.get("server_socket")
+    if click.get_current_context(silent=True) is None:
+        return bool(socket)
+    if obj.get("_daemon_ensured"):
+        return bool(socket)
+    obj["_daemon_ensured"] = True
+    from cruxible_core.errors import CoreError
+    from cruxible_core.mcp import daemon
+    from cruxible_core.server.config import get_server_state_root
+
+    try:
+        state_root = get_server_state_root()
+    except CoreError:
+        return bool(socket)
+    default = daemon.default_socket_path(state_root)
+    if socket and not _same_socket(str(socket), default):
+        return True
+    if autostart_disabled():
+        return bool(socket)
+    if socket and (
+        obj.get("target_transport_source") == "state_root"
+        or daemon._answers(server_socket=str(socket))
+    ):
+        return True
+    try:
+        target = daemon.ensure_local_daemon(state_root, environ=os.environ)
+    except daemon.DaemonUnavailableError as exc:
+        raise click.UsageError(str(exc)) from exc
+    obj["server_url"] = target.server_url
+    obj["server_socket"] = target.server_socket
+    if target.source == "started":
+        obj["target_transport_source"] = "autostart"
+        click.echo(
+            f"Started a Cruxible daemon on {target.label} (state root {state_root}); "
+            "`cruxible server stop` stops it.",
+            err=True,
+        )
+    elif target.source == "service":
+        obj["target_transport_source"] = "autostart"
+        click.echo(
+            f"Started the installed Cruxible service on {target.label} (state root {state_root}).",
+            err=True,
+        )
+    else:
+        obj["target_transport_source"] = "state_root"
+    return True
 
 
 json_option = click.option(
@@ -326,6 +412,8 @@ def _echo_explicit_write_target(instance_id: str, location: str | Path) -> None:
 
 def _get_client() -> CruxibleClient | None:
     obj = _root_ctx_obj()
+    if not obj.get("no_autostart_here"):
+        ensure_cli_daemon()
     server_url = obj.get("server_url")
     server_socket = obj.get("server_socket")
     if not server_url and not server_socket:
@@ -424,6 +512,7 @@ class ActiveInstanceChange:
 
 
 def _activate_server_instance(instance_id: str) -> ActiveInstanceChange | None:
+
     state = _current_cli_context()
     if not state.server_url and not state.server_socket:
         return None

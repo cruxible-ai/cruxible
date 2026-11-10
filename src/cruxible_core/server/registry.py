@@ -336,7 +336,7 @@ class InstanceRegistry:
                     f"Workspace {resolved_workspace_root!r} is already attached to Cruxible "
                     f"host {attached.instance_id!r}; release it with `cruxible "
                     f"workspace detach --instance-id {attached.instance_id}` or choose "
-                    f"another Git worktree before creating {instance_id!r}"
+                    f"another folder before creating {instance_id!r}"
                 )
         relative = self.relative_location(location)
         stored = relative.as_posix() if relative is not None else location

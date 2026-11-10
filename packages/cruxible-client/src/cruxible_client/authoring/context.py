@@ -16,7 +16,12 @@ from cruxible_client.contracts.workspace_layout import (
     WORKSPACE_DIRECTORY,
     WorkspaceDirectoryConflict,
     ensure_workspace_directory,
+    same_directory,
     workspace_directory_conflict,
+)
+from cruxible_client.contracts.workspace_root import (
+    holds_workspace_directory,
+    resolve_workspace_root,
 )
 
 TargetSource = Literal["explicit", "environment", "workspace", "remembered", "local"]
@@ -74,6 +79,8 @@ class ResolvedContext:
     workspace_binding_path: Path | None
     workspace_attached: bool
     warnings: tuple[str, ...] = ()
+    #: Why the remembered instance was not used: it is bound to another
+    #: transport, or it is a local instance and this workspace binds none.
     instance_transport_mismatch: str | None = None
 
 
@@ -123,39 +130,6 @@ def _workspace_binding(root: Path) -> tuple[WorkspaceBinding | None, Path | None
         ) from exc
 
 
-def _walk_roots(start: Path, *, home: Path) -> tuple[Path, ...]:
-    device = next(
-        (candidate.stat().st_dev for candidate in (start, *start.parents) if candidate.exists()),
-        None,
-    )
-    if device is None:
-        raise ContextResolutionError(f"workspace discovery cannot inspect {start}")
-    if start.is_relative_to(home):
-        ceiling = home
-    else:
-        ceiling = start.parent if start.parent.parent != start.parent else start
-        for candidate in (start, *start.parents):
-            if candidate.parent == candidate:
-                break
-            try:
-                if (candidate / ".git").exists():
-                    ceiling = candidate
-                    break
-            except OSError:
-                break
-    roots: list[Path] = []
-    for root in (start, *start.parents):
-        try:
-            if root.stat().st_dev != device:
-                break
-        except OSError:
-            break
-        roots.append(root)
-        if root == ceiling:
-            break
-    return tuple(roots)
-
-
 def _file_catalog_path(root: Path) -> Path | None:
     refuse_legacy_file_catalogs(root)
     return next(
@@ -175,7 +149,12 @@ def _file_catalog_path(root: Path) -> Path | None:
 def _binding_conflict(*, binding_path: Path | None, file_catalog_path: Path | None) -> None:
     if binding_path is None or file_catalog_path is None:
         return
-    if binding_path.parent.parent == file_catalog_path.parent.parent:
+    catalog_root = (
+        file_catalog_path.parent.parent
+        if file_catalog_path.parent.name == WORKSPACE_DIRECTORY
+        else file_catalog_path.parent
+    )
+    if binding_path.parent.parent == catalog_root:
         return
     raise ContextResolutionError(
         "workspace_binding_conflict: "
@@ -185,6 +164,18 @@ def _binding_conflict(*, binding_path: Path | None, file_catalog_path: Path | No
     )
 
 
+@dataclass(frozen=True)
+class _SelectedWorkspace:
+    root: Path
+    source: WorkspaceSource
+    binding: WorkspaceBinding | None
+    binding_path: Path | None
+    warnings: tuple[str, ...] = ()
+    #: The root holds a real ``.cruxible`` workspace directory (whether or not
+    #: it binds an instance).
+    marked: bool = False
+
+
 def _selected_workspace(
     *,
     explicit: str | Path | None,
@@ -192,13 +183,14 @@ def _selected_workspace(
     cwd: Path,
     no_workspace: bool,
     home: Path,
-) -> tuple[
-    Path,
-    WorkspaceSource,
-    WorkspaceBinding | None,
-    Path | None,
-    tuple[str, ...],
-]:
+) -> _SelectedWorkspace:
+    """Choose the workspace boundary first, then read a binding only inside it.
+
+    The boundary is the shared resolver's (`cruxible_client.contracts.
+    workspace_root`), the same root the CLI and the MCP adapter act on. No
+    binding beyond a nearer workspace directory is ever followed.
+    """
+
     start = cwd.expanduser().resolve()
     if no_workspace or environ.get("CRUXIBLE_NO_WORKSPACE", "").strip().lower() in {
         "1",
@@ -206,46 +198,48 @@ def _selected_workspace(
         "yes",
         "on",
     }:
-        return start, "local", None, None, ()
+        return _SelectedWorkspace(start, "local", None, None)
     if explicit is not None:
         root = ensure_workspace_directory(Path(explicit).expanduser().resolve())
         binding, path = _workspace_binding(root)
-        return root, "explicit", binding, path, ()
+        return _SelectedWorkspace(
+            root, "explicit", binding, path, marked=holds_workspace_directory(root)
+        )
     if raw := environ.get("CRUXIBLE_WORKSPACE"):
         root = ensure_workspace_directory(Path(raw).expanduser().resolve())
         binding, path = _workspace_binding(root)
-        return root, "environment", binding, path, ()
-
-    warnings: list[str] = []
-    selected: tuple[Path, WorkspaceBinding, Path] | None = None
-    file_catalog_path: Path | None = None
-    for root in _walk_roots(start, home=home):
-        file_catalog_path = file_catalog_path or _file_catalog_path(root)
-        try:
-            binding, path = _workspace_binding(root)
-        except (ContextResolutionError, WorkspaceDirectoryConflict) as exc:
-            if root == start:
-                raise
-            warnings.append(f"skipped invalid ancestor workspace binding: {exc}")
-            continue
-        if path is not None:
-            assert binding is not None
-            selected = (root, binding, path)
-            break
-    if selected is None:
-        # Nothing bound: the start directory itself is returned as the workspace,
-        # so it is guarded like any selected root (ancestors were skipped above).
-        ensure_workspace_directory(start)
-        return start, "local", None, None, tuple(warnings)
-    root, binding, path = selected
-    if file_catalog_path is None:
-        remaining = _walk_roots(root, home=home)
-        file_catalog_path = next(
-            (candidate for item in remaining if (candidate := _file_catalog_path(item))),
-            None,
+        return _SelectedWorkspace(
+            root, "environment", binding, path, marked=holds_workspace_directory(root)
         )
-    _binding_conflict(binding_path=path, file_catalog_path=file_catalog_path)
-    return root, "workspace", binding, path, tuple(warnings)
+
+    try:
+        boundary = resolve_workspace_root(start, home=home)
+    except (OSError, RuntimeError):
+        # A start that is gone selects no workspace.
+        return _SelectedWorkspace(start, "local", None, None)
+    except WorkspaceDirectoryConflict as conflict:
+        if same_directory(Path(conflict.workspace), start):
+            raise
+        # The boundary is an ancestor that is no workspace (a 0.3 instance, say):
+        # nothing here is a workspace, and nothing beyond it is searched.
+        return _SelectedWorkspace(
+            start, "local", None, None, (f"skipped a directory that is no workspace: {conflict}",)
+        )
+    assert boundary is not None
+    root = boundary.root
+    marked = boundary.source == "cruxible_directory"
+    binding, path = _workspace_binding(root) if marked else (None, None)
+    # A catalog nearer than the boundary names another root for the same files.
+    for directory in (start, *start.parents):
+        if not directory.is_relative_to(root):
+            break
+        catalog = _file_catalog_path(directory)
+        if catalog is not None:
+            _binding_conflict(binding_path=path, file_catalog_path=catalog)
+            break
+    if path is not None:
+        return _SelectedWorkspace(root, "workspace", binding, path, marked=True)
+    return _SelectedWorkspace(root, "local", None, None, marked=marked)
 
 
 def _transport(
@@ -275,6 +269,34 @@ def _instance(value: object, *, source: TargetSource) -> tuple[str, TargetSource
     return value, source
 
 
+def _remembered_local_in_unbound_workspace(stored: Mapping[str, object], root: Path) -> str | None:
+    """Why the remembered instance is not used in workspace ``root``, or None.
+
+    The invariant: a remembered instance stands in only when discovery finished
+    normally and found no workspace marker, or when it is remote. ``root`` holds
+    a real ``.cruxible`` workspace directory that binds no instance, so a
+    remembered LOCAL instance (a Unix socket on this machine, which could be
+    another folder's) is refused here; a remembered remote host (a URL) still
+    applies, as for a remote host with a local file catalog.
+    """
+
+    instance = stored.get("instance_id")
+    if not isinstance(instance, str):
+        return None
+    recorded = stored.get("instance_transport")
+    if not isinstance(recorded, str) or not recorded:
+        recorded = _normalized_transport(stored.get("server_url"), stored.get("server_socket"))
+    if isinstance(recorded, str) and recorded and not recorded.startswith("unix://"):
+        return None
+    return (
+        f"workspace_unbound: {root} is a Cruxible workspace whose .cruxible/ binds no "
+        f"instance, so the remembered local instance {instance} (another folder's, as far "
+        "as this one knows) is not used here; repair: `cruxible init` here gives this "
+        "folder its own instance, `cruxible workspace attach --instance-id ID` binds an "
+        "existing one, or pass --instance-id ID"
+    )
+
+
 def resolve_context(
     *,
     server_url: str | None = None,
@@ -293,17 +315,27 @@ def resolve_context(
     eligible only when its coverage config names both one transport and an
     instance; incomplete coverage-only configs remain valid but do not retarget
     commands.
+
+    A remembered instance is used only when discovery finished normally and
+    found no ``.cruxible`` workspace marker, or when it is remote (a URL). In a
+    workspace whose ``.cruxible`` binds no instance a remembered local instance
+    is refused (the reason is in ``instance_transport_mismatch``); a marker that
+    cannot be read, or one across an ownership or filesystem boundary, refuses
+    the whole resolution (``ContextResolutionError``, ``WorkspaceBoundaryRefused``).
     """
 
     env = os.environ if environ is None else environ
     stored: Mapping[str, object] = {} if remembered is None else remembered
-    root, workspace_source, binding, binding_path, resolution_warnings = _selected_workspace(
+    selection = _selected_workspace(
         explicit=workspace,
         environ=env,
         cwd=Path.cwd() if cwd is None else cwd,
         no_workspace=no_workspace,
         home=(Path.home() if home is None else home).expanduser().resolve(),
     )
+    root, workspace_source = selection.root, selection.source
+    binding, binding_path = selection.binding, selection.binding_path
+    resolution_warnings = selection.warnings
     attached = binding is not None and binding.attached
 
     raw_transport_layers: tuple[tuple[object, object, TargetSource], ...] = (
@@ -347,6 +379,11 @@ def resolve_context(
     for raw_instance, source in raw_instance_layers:
         if raw_instance is None:
             continue
+        if source == "remembered" and selection.marked and not attached:
+            withheld = _remembered_local_in_unbound_workspace(stored, root)
+            if withheld is not None:
+                instance_transport_mismatch = withheld
+                continue
         if source == "remembered":
             selected_transport_coordinate = _normalized_transport(resolved_url, resolved_socket)
             recorded_transport_coordinate = stored.get("instance_transport")
