@@ -12,7 +12,7 @@ Source prefixes:
 | `client:` | `packages/cruxible-client/src/cruxible_client/` in this repository |
 | `runtime:` | the `cruxible_provider_runtime` package, version 0.2.0 (the version `uv.lock` pins; the cited lines are the same in 0.4.0, which the security kit bundles) |
 | `kit:` | `kits/security/source/` in the [cruxible-kits](https://github.com/cruxible-ai/cruxible-kits) repository |
-| `osv:` | `security_osv_provider/osv.py` inside `kits/security/providers/security_osv_provider-0.1.0.dev0-py3-none-any.whl` in the same repository |
+| `osv:` | `kits/security/source/providers/security-osv-provider/src/security_osv_provider/osv.py` in the same repository (identical to the copy in the shipped wheel) |
 
 Line numbers were checked against the source before the 0.5.0 tag. They can
 drift in later releases.
