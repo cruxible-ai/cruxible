@@ -939,10 +939,10 @@ def _record_capture(
     from cruxible_client.contracts.captures import capture_components
     from cruxible_core.evidence.source_readers import (
         ExternalSourceReadRequestV1,
-        FakeVersionedExternalSourceReader,
         ProducerBindingV1,
     )
     from tests.core_support._pc_c_support import NOW, digest, provider_run
+    from tests.support.external_sources import FakeVersionedExternalSourceReader
 
     components = capture_components(contract)
     kind, subject_id = subject.split("/", 1)

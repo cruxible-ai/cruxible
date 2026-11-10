@@ -14,7 +14,6 @@ from cruxible_client.contracts.procedures.acquisition_rules import (
 )
 from cruxible_core.evidence.source_readers import (
     ExternalSourceReadRequestV1,
-    FakeVersionedExternalSourceReader,
     ProducerBindingV1,
 )
 from cruxible_core.procedures.acquisition import (
@@ -29,6 +28,7 @@ from tests.core_support._pc_c_support import (
     provider,
     provider_run,
 )
+from tests.support.external_sources import FakeVersionedExternalSourceReader
 from tests.test_procedures import test_procedure_source_runs as source
 
 # A test double for the unit-level `apply_acquisition_result` checks below: a
