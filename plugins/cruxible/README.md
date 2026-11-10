@@ -96,7 +96,7 @@ principals, Mandates and approval policy still apply. A separate agent session
 (its own principal) reviews the exact candidate; never self-approve, including with auth off. The single
 plugin does not enforce separate identities while auth is off.
 
-The plugin catalog measures 18,106 estimated model-visible tokens (input schemas
+The plugin catalog measures 18,287 estimated model-visible tokens (input schemas
 and descriptions, JSON characters/4), pinned below 18,300. The existing MCP
 default profile retains its separate 10,400 ceiling; full-catalog registration
 is not what this plugin advertises. Instructions remain below 300 estimated

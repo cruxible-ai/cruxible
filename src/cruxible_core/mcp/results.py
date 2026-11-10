@@ -67,4 +67,26 @@ class McpInitResult(BaseModel):
     folder_identity_path: str | None
 
 
-__all__ = ["McpInitResult", "McpServerInfoResult", "McpWhoAmIResult"]
+class McpConsoleResult(BaseModel):
+    """The console listener this MCP server runs for one instance; never its token.
+
+    The tool opens the browser on the one-time sign-in link itself.
+    ``bootstrap_link`` is set only when no browser could be opened
+    (``browser_opened`` false), for the user to open by hand.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["cruxible-mcp-console-v1"] = "cruxible-mcp-console-v1"
+    status: Literal["started", "running", "stopped", "not_running"]
+    instance_id: str
+    #: ``http://127.0.0.1:<port>/i/<instance>``: the console once signed in.
+    address: str | None
+    port: int | None
+    browser_opened: bool
+    bootstrap_link: str | None
+    #: How to stop it, while it runs.
+    stop: str | None
+
+
+__all__ = ["McpConsoleResult", "McpInitResult", "McpServerInfoResult", "McpWhoAmIResult"]

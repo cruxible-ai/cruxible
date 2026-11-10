@@ -130,6 +130,8 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_coverage_resolve": PermissionMode.READ_ONLY,
     "cruxible_files_compile": PermissionMode.READ_ONLY,
     "cruxible_whoami": PermissionMode.READ_ONLY,
+    # Serves only the console's read routes, forwarded to the daemon.
+    "cruxible_console": PermissionMode.READ_ONLY,
     "cruxible_orient": PermissionMode.READ_ONLY,
     "cruxible_proposal_list": PermissionMode.READ_ONLY,
     "cruxible_authoring_get": PermissionMode.READ_ONLY,

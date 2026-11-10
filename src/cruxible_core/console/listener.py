@@ -35,6 +35,7 @@ import json
 import mimetypes
 import secrets
 import socket
+import threading
 from collections.abc import Awaitable, Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -172,6 +173,13 @@ class ConsoleListener:
         self._core_identity = dict(core_identity)
         self._transport = transport
         self._client: httpx.AsyncClient | None = None
+
+    def renew_bootstrap(self) -> str:
+        """A fresh one-time sign-in token, replacing a spent or unused one."""
+
+        self._bootstrap_token = secrets.token_urlsafe(32)
+        self._bootstrap_spent = False
+        return self._bootstrap_token
 
     # -- ASGI -------------------------------------------------------------
 
@@ -512,7 +520,13 @@ def serve(app: ConsoleListener, sock: socket.socket) -> None:
 
     import uvicorn
 
-    config = uvicorn.Config(
+    uvicorn.Server(_uvicorn_config(app)).run(sockets=[sock])
+
+
+def _uvicorn_config(app: ConsoleListener) -> Any:
+    import uvicorn
+
+    return uvicorn.Config(
         app,
         # The bootstrap URL carries the one-time token: no access log prints it.
         access_log=False,
@@ -521,4 +535,39 @@ def serve(app: ConsoleListener, sock: socket.socket) -> None:
         server_header=False,
         proxy_headers=False,
     )
-    uvicorn.Server(config).run(sockets=[sock])
+
+
+class BackgroundConsole:
+    """A listener served on a daemon thread of this process (the MCP adapter's).
+
+    The thread dies with the process, so the listener never outlives it;
+    ``stop`` ends it earlier.
+    """
+
+    def __init__(self, app: ConsoleListener, sock: socket.socket) -> None:
+        import uvicorn
+
+        self._server = uvicorn.Server(_uvicorn_config(app))
+        self._sock = sock
+        self._thread = threading.Thread(
+            target=self._server.run,
+            kwargs={"sockets": [sock]},
+            name=f"cruxible-console-{app.port}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    @property
+    def alive(self) -> bool:
+        return self._thread.is_alive() and not self._server.should_exit
+
+    def stop(self, timeout: float = 5.0) -> None:
+        self._server.should_exit = True
+        self._thread.join(timeout)
+        self._sock.close()
+
+
+def serve_in_background(app: ConsoleListener, sock: socket.socket) -> BackgroundConsole:
+    """Serve ``app`` on the bound socket from a daemon thread; returns its handle."""
+
+    return BackgroundConsole(app, sock)

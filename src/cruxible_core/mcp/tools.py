@@ -112,7 +112,12 @@ from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_MIN_MAX_ROWS,
 )
 from cruxible_core.mcp import handlers
-from cruxible_core.mcp.results import McpInitResult, McpServerInfoResult, McpWhoAmIResult
+from cruxible_core.mcp.results import (
+    McpConsoleResult,
+    McpInitResult,
+    McpServerInfoResult,
+    McpWhoAmIResult,
+)
 from cruxible_core.mcp.target import MCP_INSTANCE_ENV, require_instance_id
 from cruxible_core.mcp.tool_prompts import tool_description
 
@@ -609,6 +614,15 @@ def register_tools(
     ) -> McpInitResult:
         """Initialize this workspace folder; an initialized one reports its instance."""
         return handlers.handle_init(principal_id)
+
+    @_tool
+    def cruxible_console(
+        instance_id: InstanceId = None,
+        *,
+        stop: Annotated[bool, Field(description="Stop the running console.")] = False,
+    ) -> McpConsoleResult:
+        """Open the read-only console in the user's browser; one listener per instance."""
+        return handlers.handle_console(require_instance_id(instance_id), stop=stop)
 
     @_tool
     def cruxible_whoami(instance_id: InstanceId = None) -> McpWhoAmIResult:

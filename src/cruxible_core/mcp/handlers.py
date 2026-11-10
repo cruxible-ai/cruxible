@@ -150,7 +150,12 @@ from cruxible_core.mcp.identity import (
 )
 from cruxible_core.mcp.init import run_mcp_init
 from cruxible_core.mcp.permissions import check_permission
-from cruxible_core.mcp.results import McpInitResult, McpServerInfoResult, McpWhoAmIResult
+from cruxible_core.mcp.results import (
+    McpConsoleResult,
+    McpInitResult,
+    McpServerInfoResult,
+    McpWhoAmIResult,
+)
 from cruxible_core.mcp.target import configured_instance_id
 from cruxible_core.mcp.workspace import (
     mcp_approval_key_dir,
@@ -1223,6 +1228,24 @@ def handle_playbill_authoring_submit_file(
             errors=validation_lines(exc),
         ) from exc
     return handle_playbill_authoring_submit(instance_id, payload=document, accept=accept)
+
+
+def handle_console(instance_id: str, *, stop: bool = False) -> McpConsoleResult:
+    """`cruxible_console`: start, reuse or stop this process's listener (`mcp.console`)."""
+
+    from cruxible_core.mcp.console import open_console, stop_console
+
+    if stop:
+        return stop_console(instance_id)
+    identity = _mcp_identity()
+    # Fail here, in the tool result, when the instance cannot be read at all.
+    _daemon_call(lambda reader: reader.head(instance_id), operation_name="cruxible_console")
+    return open_console(
+        instance_id,
+        target=resolve_daemon_target(),
+        token=get_runtime_bearer_token(),
+        principal_id=identity.principal_id,
+    )
 
 
 def handle_init(principal_id: str | None = None) -> McpInitResult:

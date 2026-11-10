@@ -191,6 +191,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_authoring_submit_file": (
         "Use to submit a workspace authoring file, such as a tailored kit automation template."
     ),
+    "cruxible_console": ("Use to open the read-only console in the user's browser."),
     "cruxible_init": (
         "Use once in a bare project folder: creates its instance and owner; this session "
         "then acts as the owner."
@@ -251,8 +252,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_query": (
         "Use to answer any question over accepted state in one call. Compact: kind "
         '(e.g. "project.work_item") with where filters such as '
-        '{"field": "status", "eq": "ready"} (also ne, lt, lte, gt, gte, in, '
-        "exists, contains), select, follow and order_by; contains alone searches every "
+        '{"field": "status", "eq": "ready"}, select, follow and order_by; contains alone '
+        "searches every "
         "Claim value; a definition kind (ClaimType, Procedure, Trigger, Line, SubjectKind, "
         "CaptureContract, ProcedureMandate, QueryDefinition) lists those definitions with "
         "typed columns. Or pass a query name "
