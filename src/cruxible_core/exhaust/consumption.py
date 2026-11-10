@@ -619,8 +619,6 @@ class _Tally:
     spent: dict[str, set[str]] = field(default_factory=dict)
     # Partition directory -> its partition id, for the receipts a fold removes.
     partition_ids: dict[str, str] = field(default_factory=dict)
-    legacy_unfolded: int = 0
-    legacy_events: int = 0
     identities: dict[str, ArtifactIdentity] = field(default_factory=dict)
     operations: dict[str, Counter[str]] = field(default_factory=dict)
     audit: dict[str, Counter[str]] = field(default_factory=dict)
@@ -719,8 +717,6 @@ class _Tally:
             self._raw_contribution(raw.receipt, -1)
             for partition in raw.partitions:
                 self.spent.setdefault(partition, set()).add(receipt_id)
-                if self.partition_ids.get(partition) == CONSUMPTION_EPOCH_PARTITION_ID:
-                    self.legacy_unfolded -= 1
         for item in fold.artifacts:
             key = item.artifact_identity.qualified
             for operation, count in item.touches_by_operation:
@@ -733,8 +729,6 @@ class _Tally:
     ) -> None:
         receipt_id = receipt.receipt_id
         self.held.setdefault(name, []).append(receipt_id)
-        legacy = event.partition_id == CONSUMPTION_EPOCH_PARTITION_ID
-        self.legacy_events += int(legacy)
         if receipt_id in self.folded_ids:
             self.spent.setdefault(name, set()).add(receipt_id)
             return
@@ -746,7 +740,6 @@ class _Tally:
             self._raw_contribution(receipt, 1)
             heapq.heappush(self.expiry, (event.recorded_at, receipt_id))
         raw.partitions.add(name)
-        self.legacy_unfolded += int(legacy)
 
     def removed(self, name: str) -> None:
         """A partition went away: forget the receipts it stored."""
@@ -851,11 +844,10 @@ def consumption_audit_touch_counts(instance: PlaybillInstance) -> dict[str, int]
 
 @dataclass(frozen=True)
 class ConsumptionFoldResult:
-    """What one retention pass did: receipts folded, raw partitions and legacy events removed."""
+    """What one retention pass did: receipts folded and raw partitions removed."""
 
     folded: int = 0
     removed_partitions: int = 0
-    removed_legacy_events: int = 0
 
 
 _FOLD_LOCKS: dict[str, threading.RLock] = {}
@@ -903,10 +895,9 @@ def fold_consumption_receipts(
     the folds partition still ends where the receipts were chosen
     (compare-and-swap); a fold that loses re-reads and chooses again, so no
     receipt is ever counted by two folds. Counters are appended first; only
-    receipts a fold durably names are removed: their singleton partitions,
-    and the legacy chained ``receipts`` partition cut back to its epoch once
-    every receipt in it is folded. A crash in between leaves raw receipts a
-    fold already counted, which every reader skips and the next pass removes.
+    receipts a fold durably names are removed: their singleton partitions. A
+    crash in between leaves raw receipts a fold already counted, which every
+    reader skips and the next pass removes.
     """
 
     store = instance.review_operational_store()
@@ -938,24 +929,8 @@ def fold_consumption_receipts(
                 for name, receipts in tally.spent.items()
                 if receipts and tally.partition_ids.get(name, "").startswith("event:")
             )
-            legacy_done = tally.legacy_events > 0 and tally.legacy_unfolded == 0
         removed = store.remove_partitions(family="consumption", partition_ids=singletons)
-        legacy = 0
-        first = store.first_payload(
-            family="consumption", partition_id=CONSUMPTION_EPOCH_PARTITION_ID
-        )
-        if (
-            legacy_done
-            and first is not None
-            and first.get("tag") == "playbill-consumption-epoch-v1"
-        ):
-            # Every receipt the legacy chain holds is folded: keep only its epoch.
-            legacy = store.truncate_partition(
-                family="consumption", partition_id=CONSUMPTION_EPOCH_PARTITION_ID, keep=1
-            )
-    return ConsumptionFoldResult(
-        folded=folded, removed_partitions=removed, removed_legacy_events=legacy
-    )
+    return ConsumptionFoldResult(folded=folded, removed_partitions=removed)
 
 
 def _append_folds(
