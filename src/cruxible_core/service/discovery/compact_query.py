@@ -32,7 +32,6 @@ from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from pathlib import PurePosixPath
 from typing import Any, Literal, cast
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
@@ -2120,19 +2119,6 @@ def _subject_value(value: object) -> object:
     if isinstance(value, str) and value.startswith("Subject:"):
         return value.removeprefix("Subject:")
     return value
-
-
-def _engine_selected(row: Any, ref: QueryClaimValueRef) -> frozenset[str]:
-    """The Claim identities the engine read for one projected claim-value field."""
-
-    subject = next(
-        (item.subject_identity for item in row.bindings if item.binding == ref.binding), None
-    )
-    return frozenset(
-        "Claim:" + PurePosixPath(item.claim_path).stem
-        for item in row.read_claims
-        if item.predicate == ref.predicate and item.subject_identity == subject
-    )
 
 
 def _subject_path_of(row: Any, binding: str) -> str | None:

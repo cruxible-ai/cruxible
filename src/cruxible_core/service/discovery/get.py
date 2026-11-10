@@ -1651,10 +1651,6 @@ def _runtime_policy_card(
     )
 
 
-def _duration_text(microseconds: int) -> str:
-    return f"{microseconds / 1_000_000:g}s"
-
-
 def _provider_card(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,

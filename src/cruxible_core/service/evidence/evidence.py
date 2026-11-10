@@ -142,16 +142,6 @@ def _resolve_coordinate(
     )
 
 
-def _accepted_claim(tree: Mapping[str, bytes], identity: str) -> AcceptedClaim:
-    name = identity.removeprefix("Claim:")
-    path = claim_path(name)
-    content = tree.get(path)
-    if content is None:
-        raise ClaimNotFoundError(identity)
-    claim = parse_claim(content, path=path)
-    return _accepted_claim_artifact(claim)
-
-
 def _accepted_claim_artifact(claim: ClaimArtifact) -> AcceptedClaim:
     return AcceptedClaim(
         path=claim_path(claim.identity.name),

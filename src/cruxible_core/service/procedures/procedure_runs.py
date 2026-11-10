@@ -1022,16 +1022,6 @@ def direct_run_slot_bindings(
         )
 
 
-def line_slot_map_at(
-    instance: PlaybillInstance,
-    coordinate: AcceptedProjectionCoordinate,
-    accepted: AcceptedProcedure,
-) -> dict[str, Any]:
-    """Every slot a Line over ``accepted`` binds, invoked children's included."""
-
-    return _line_shape_at(instance, coordinate, accepted)[0]
-
-
 def _line_shape_at(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,

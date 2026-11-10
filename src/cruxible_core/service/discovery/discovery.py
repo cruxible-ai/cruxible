@@ -29,7 +29,6 @@ from cruxible_core.query.semantic_discovery import (
     build_discovery_vocabulary,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.claims.claim_types import CLAIM_TYPE_PATH_PREFIX
 from cruxible_core.service.discovery.query import build_accepted_query_facts
 from cruxible_core.service.discovery.query_definitions import QUERY_DEFINITION_PATH_PREFIX
@@ -76,20 +75,6 @@ def accepted_provider_operations(
         for operation in build.operations
     ]
     return tuple(sorted(rows, key=lambda item: (item.build, item.operation)))
-
-
-def _resolve_coordinate(
-    instance: PlaybillInstance,
-    at: AcceptedCoordinate | None,
-) -> AcceptedProjectionCoordinate:
-    if at is None:
-        return instance.accepted_coordinate()
-    return instance.resolve_accepted_coordinate(
-        git_oid=at.git_oid,
-        semantic_root=at.semantic_root,
-        generation_root=at.generation_root,
-        compiler_digest=at.compiler_digest,
-    )
 
 
 def accepted_claim_types(tree: Mapping[str, bytes]) -> tuple[ClaimType, ...]:

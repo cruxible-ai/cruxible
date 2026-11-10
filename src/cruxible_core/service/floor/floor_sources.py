@@ -133,20 +133,6 @@ def capture_sources(
 SourceContribution = tuple[str, int, tuple[tuple[str, str, str], ...]]
 
 
-def claim_source_pairs(
-    instance: PlaybillInstance,
-    claim: ClaimArtifact,
-    contracts: Mapping[str, CaptureContract],
-) -> tuple[tuple[str, str, str], ...]:
-    """Each (source, contract label, locator) a live Claim's cited Captures give.
-
-    ``contracts`` maps a contract digest to the accepted contract. Self-source
-    Captures, under the coordinator's own contract, name no evidence source.
-    """
-
-    return _claim_sources(instance, claim, contracts)[0]
-
-
 def _claim_sources(
     instance: PlaybillInstance,
     claim: ClaimArtifact,
@@ -457,7 +443,6 @@ __all__ = [
     "SourcesLedgerState",
     "build_sources_ledger",
     "capture_sources",
-    "claim_source_pairs",
     "document_ref",
     "update_sources_ledger",
 ]

@@ -58,10 +58,6 @@ class ClaimRetirementContextV1(_StrictRetirementContextModel):
     shared_with_retired: tuple[ClaimRetiredRelationV1, ...] = Field(min_length=1)
 
 
-def _bounded(values: Iterable[str]) -> tuple[str, ...]:
-    return tuple(sorted(set(values), key=lambda value: value.encode("utf-8"))[:_WITNESS_LIMIT])
-
-
 def _digest_value(value: object) -> str | None:
     if isinstance(value, Mapping) and isinstance(value.get("$digest"), str):
         value = value["$digest"]

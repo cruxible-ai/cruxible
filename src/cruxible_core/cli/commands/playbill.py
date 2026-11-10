@@ -10156,14 +10156,6 @@ def _coverage_observations(
     )
 
 
-def _resolved_coverage(
-    observations: tuple[WorkingSourceObservation, ...],
-    *,
-    command_name: str,
-) -> CoverageResultV3:
-    return _resolved_coverage_answer(observations, command_name=command_name)[0]
-
-
 def _resolved_coverage_answer(
     observations: tuple[WorkingSourceObservation, ...],
     *,

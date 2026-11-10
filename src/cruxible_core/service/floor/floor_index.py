@@ -997,22 +997,6 @@ def _patch_floor_inputs(
     )
 
 
-def patch_floor_inputs(
-    instance: PlaybillInstance,
-    history: HistoryReader,
-    inputs: FloorInputs,
-    target: AcceptedGenerationLocation,
-) -> FloorInputs:
-    """The inputs at ``target``: ``inputs`` with every path touched in between re-read.
-
-    Works in either direction. The touched paths are the history index's
-    member paths between the two generations; each is read at ``target`` (or
-    is absent there) and its latest sequence is taken at ``target``.
-    """
-
-    return _patch_floor_inputs(instance, history, inputs, target)[0]
-
-
 # -- the stamps ---------------------------------------------------------------------
 
 
@@ -1741,7 +1725,6 @@ __all__ = [
     "build_floor_inputs",
     "floor_render_at",
     "floor_render_from",
-    "patch_floor_inputs",
     "recent_floor_render",
     "render_floor",
 ]

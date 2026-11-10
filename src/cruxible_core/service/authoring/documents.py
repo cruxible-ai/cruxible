@@ -21,7 +21,6 @@ from cruxible_client.contracts.authoring_landing import AuthoringLanding
 from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.canonical import ProposalDigest
 from cruxible_client.contracts.compiler_upgrade import CompilerUpgrade, CompilerUpgradeNotice
-from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.documents import (
     DocumentShell,
     document_digest,
@@ -174,13 +173,6 @@ class ApprovalReceipt(_StrictServiceModel):
         if (self.approvals_remaining > 0) != (self.not_activated == "approvals_remaining"):
             raise ValueError("approvals_remaining is counted exactly when approvals remain")
         return self
-
-
-class RefusalInspection(_StrictServiceModel):
-    tag: Literal["playbill-refusal-v1"] = "playbill-refusal-v1"
-    proposal_id: str
-    verdict: Literal["candidate", "refused"]
-    diagnostics: tuple[CompilerDiagnostic, ...]
 
 
 def _public_document(view: DocumentProjectionView) -> PlaybillDocumentView:
@@ -1290,7 +1282,6 @@ __all__ = [
     "PlaybillDocumentList",
     "PlaybillDocumentView",
     "ProposalInspection",
-    "RefusalInspection",
     "service_activate_playbill_proposal",
     "service_dereference_playbill_document",
     "service_get_playbill_document",

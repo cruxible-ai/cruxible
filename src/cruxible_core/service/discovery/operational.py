@@ -155,10 +155,6 @@ def _from_microseconds(value: int) -> datetime:
     return _EPOCH + timedelta(microseconds=value)
 
 
-def _short(digest: str) -> str:
-    return digest.removeprefix("sha256:")[:12]
-
-
 # -- references ------------------------------------------------------------------------
 
 

@@ -62,9 +62,6 @@ from cruxible_client.contracts.source_references import (
     SourceDereferenceResult,
     SourceHandle,
 )
-from cruxible_client.contracts.subjects import (
-    parse_subject,
-)
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
 from cruxible_core.indexes.claims.projection_claims import ClaimProjectionView
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -379,17 +376,6 @@ def _accepted_claim_ids(
     with instance.bind_accepted_projection(coordinate) as projection:
         rows = projection.typed.envelopes(kind="claim")
         return tuple(row.identity.removeprefix("Claim:") for row in rows)
-
-
-def _observed_at(timestamp: str) -> datetime:
-    raw = timestamp[:-1] + "+00:00" if timestamp.endswith("Z") else timestamp
-    try:
-        value = datetime.fromisoformat(raw)
-    except ValueError as exc:
-        raise ProposalIntegrityError("authenticated request timestamp is malformed") from exc
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ProposalIntegrityError("authenticated request timestamp must be timezone-aware")
-    return value
 
 
 @positioned_read
@@ -1182,17 +1168,6 @@ def service_explain_playbill_claim(
         attestation_accounts=attestation_accounts,
         retirement_context=retirement_context,
     )
-
-
-def _subject_identity(tree: Mapping[str, bytes], path: str) -> str | None:
-    """Return one accepted Subject's identity, or None when it is absent.
-
-    An accepted Claim pins the Subject it is about, so the absent case is
-    defensive rather than reachable.
-    """
-
-    content = tree.get(path)
-    return None if content is None else parse_subject(content, path=path).identity.qualified
 
 
 class _InstanceSourceMaterialResolver:
