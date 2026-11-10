@@ -9,10 +9,7 @@ from cruxible_client.contracts.claims import (
     render_claim,
 )
 from cruxible_client.contracts.claims import claim_path as claim_artifact_path
-from cruxible_core.authoring.lowering import (
-    _same_predicate_claims,
-    _same_slot_claims,
-)
+from tests.support.claim_oracles import same_predicate_claims, same_slot_claims
 from tests.test_claims.test_claims import _claim
 
 CAPTURE_DIGEST = "sha256:" + "ab" * 32
@@ -42,7 +39,7 @@ def test_the_demanded_set_is_only_the_statements_own_qualifier_slot() -> None:
     unqualified = _claim_in_slot(claim_id="CLM-" + "3" * 32, qualifier=None)
     tree = _tree(primary, secondary, unqualified)
 
-    demanded = _same_slot_claims(tree, primary.statement)
+    demanded = same_slot_claims(tree, primary.statement)
 
     assert [claim.identity.name for claim in demanded] == [primary.identity.name]
 
@@ -52,7 +49,7 @@ def test_an_unqualified_statement_does_not_contend_with_qualified_siblings() -> 
     unqualified = _claim_in_slot(claim_id="CLM-" + "3" * 32, qualifier=None)
     tree = _tree(primary, unqualified)
 
-    demanded = _same_slot_claims(tree, unqualified.statement)
+    demanded = same_slot_claims(tree, unqualified.statement)
 
     assert [claim.identity.name for claim in demanded] == [unqualified.identity.name]
 
@@ -63,7 +60,7 @@ def test_a_many_cardinality_sibling_in_the_same_slot_is_still_demanded() -> None
     second = _claim_in_slot(claim_id="CLM-" + "2" * 32, qualifier=None)
     tree = _tree(first, second)
 
-    demanded = _same_slot_claims(tree, first.statement)
+    demanded = same_slot_claims(tree, first.statement)
 
     assert {claim.identity.name for claim in demanded} == {
         first.identity.name,
@@ -76,7 +73,7 @@ def test_every_qualifier_stays_voluntarily_dispositionable() -> None:
     secondary = _claim_in_slot(claim_id="CLM-" + "2" * 32, qualifier="secondary")
     tree = _tree(primary, secondary)
 
-    offerable = _same_predicate_claims(tree, primary.statement)
+    offerable = same_predicate_claims(tree, primary.statement)
 
     assert {claim.identity.name for claim in offerable} == {
         primary.identity.name,
@@ -99,16 +96,16 @@ def test_a_retired_claim_in_the_slot_is_neither_demanded_nor_offerable() -> None
     )
     tree = _tree(live, retired)
 
-    assert [claim.identity.name for claim in _same_slot_claims(tree, live.statement)] == [
+    assert [claim.identity.name for claim in same_slot_claims(tree, live.statement)] == [
         live.identity.name
     ]
-    assert [claim.identity.name for claim in _same_predicate_claims(tree, live.statement)] == [
+    assert [claim.identity.name for claim in same_predicate_claims(tree, live.statement)] == [
         live.identity.name
     ]
 
 
 def _dispositionable(tree: dict[str, bytes], statement: ClaimStatement) -> set[str]:
-    return {claim.identity.name for claim in _same_predicate_claims(tree, statement)}
+    return {claim.identity.name for claim in same_predicate_claims(tree, statement)}
 
 
 def test_the_same_slot_still_refuses_without_its_dispositions() -> None:
@@ -117,7 +114,7 @@ def test_the_same_slot_still_refuses_without_its_dispositions() -> None:
     second = _claim_in_slot(claim_id="CLM-" + "2" * 32, qualifier="primary")
     tree = _tree(first, second)
 
-    demanded = {claim.identity.name for claim in _same_slot_claims(tree, second.statement)}
+    demanded = {claim.identity.name for claim in same_slot_claims(tree, second.statement)}
 
     # Authoring into this slot must disposition both live occupants; supplying
     # none leaves a nonempty required set, which is what the law refuses on.
@@ -131,7 +128,7 @@ def test_a_cross_slot_disposition_is_accepted_and_recorded() -> None:
     secondary = _claim_in_slot(claim_id="CLM-" + "2" * 32, qualifier="secondary")
     tree = _tree(primary, secondary)
 
-    demanded = {claim.identity.name for claim in _same_slot_claims(tree, secondary.statement)}
+    demanded = {claim.identity.name for claim in same_slot_claims(tree, secondary.statement)}
     offerable = _dispositionable(tree, secondary.statement)
 
     # The other qualifier is not demanded ...

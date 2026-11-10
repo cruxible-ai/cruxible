@@ -14,7 +14,6 @@ from cruxible_client.contracts.claims import claim_path, render_claim
 from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_client.contracts.subject_kinds import SubjectKeyPart
 from cruxible_client.contracts.subjects import render_subject
-from cruxible_core.authoring.lowering import _same_predicate_claims
 from cruxible_core.derived.derived_state import SnapshotTree
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
@@ -23,6 +22,7 @@ from cruxible_core.proposals.proposals import (
     build_tree_state,
 )
 from tests.core_support._support import initialize_local
+from tests.support.claim_oracles import same_predicate_claims
 from tests.test_authoring.test_authoring_change_set_intents import _accept, _coordinator
 from tests.test_authoring.test_authoring_disposition_slots import _claim_in_slot
 from tests.test_authoring.test_authoring_preflight import TIMESTAMP, _seed_claim_surface
@@ -73,10 +73,10 @@ def test_cold_candidate_contenders_read_final_bytes_before_invalid_parent(operat
     else:
         del candidate[path]
     sealed = candidate.snapshot()
-    assert sealed.claims_for(claim.statement) == _same_predicate_claims(sealed, claim.statement)
+    assert sealed.claims_for(claim.statement) == same_predicate_claims(sealed, claim.statement)
     # Repairing one candidate never repairs its accepted parent or a sibling.
     with pytest.raises(Exception) as oracle:
-        _same_predicate_claims(malformed, claim.statement)
+        same_predicate_claims(malformed, claim.statement)
     with pytest.raises(type(oracle.value)) as retained:
         malformed.claims_for(claim.statement)
     assert str(retained.value) == str(oracle.value)

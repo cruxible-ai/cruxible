@@ -252,7 +252,7 @@ def test_contenders_select_complete_address_and_changed_live_members(tmp_path):
         render_claim,
     )
     from cruxible_client.contracts.semantic import SemanticAddress
-    from cruxible_core.authoring.lowering import _same_predicate_claims
+    from tests.support.claim_oracles import same_predicate_claims
     from tests.test_authoring.test_authoring_disposition_slots import _claim_in_slot
 
     claims = []
@@ -291,7 +291,7 @@ def test_contenders_select_complete_address_and_changed_live_members(tmp_path):
         claims[2].model_copy(update={"statement": statement})
     )
     sealed = candidate.snapshot()
-    assert sealed.claims_for(statement) == _same_predicate_claims(dict(sealed), statement)
+    assert sealed.claims_for(statement) == same_predicate_claims(dict(sealed), statement)
     assert len(sealed.claims_for(statement)) == 2
     assert counts["opened"] == counts["closed"]
 

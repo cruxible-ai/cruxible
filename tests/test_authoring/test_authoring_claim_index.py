@@ -9,6 +9,7 @@ import pytest
 
 import cruxible_core.authoring.lowering as lowering
 import cruxible_core.derived.derived_state as derived_state
+import tests.support.claim_oracles as claim_oracles
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
     AuthoringExistingClaimDisposition,
@@ -29,6 +30,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from tests.core_support._subject_kind_support import fixture_claim_paths
 from tests.core_support._support import initialize_local
+from tests.support.claim_oracles import same_predicate_claims, same_slot_claims
 from tests.test_authoring.test_authoring_change_set_intents import (
     _accept,
     _change_set,
@@ -75,10 +77,10 @@ def _retired(claim: ClaimArtifact) -> ClaimArtifact:
 def _assert_lookup_matches(index, tree: dict[str, bytes], *statements: ClaimStatement) -> None:
     for statement in statements:
         actual = index.claims_for(statement)
-        assert actual == lowering._same_predicate_claims(tree, statement)
+        assert actual == same_predicate_claims(tree, statement)
         assert tuple(
             claim for claim in actual if claim.statement.qualifier == statement.qualifier
-        ) == lowering._same_slot_claims(tree, statement)
+        ) == same_slot_claims(tree, statement)
 
 
 def test_index_matches_live_predicates_and_qualifier_slots_in_path_order() -> None:
@@ -170,7 +172,7 @@ def test_unused_index_does_not_parse_a_malformed_base_claim() -> None:
     index = lowering._ClaimPredicateIndex(malformed)
     index.advance(malformed, tuple(malformed))
     with pytest.raises(Exception) as uncached:
-        lowering._same_predicate_claims(malformed, claim.statement)
+        same_predicate_claims(malformed, claim.statement)
     with pytest.raises(type(uncached.value)) as indexed:
         index.claims_for(claim.statement)
     assert str(indexed.value) == str(uncached.value)
@@ -186,7 +188,7 @@ class _UncachedIndex:
         self.tree = tree
 
     def claims_for(self, statement):
-        return lowering._same_predicate_claims(self.tree, statement)
+        return same_predicate_claims(self.tree, statement)
 
 
 def _compare_lowering(monkeypatch, instance, intent):
@@ -211,6 +213,7 @@ def _compare_lowering(monkeypatch, instance, intent):
         with monkeypatch.context() as patch:
             patch.setattr(lowering, "parse_claim", counted)
             patch.setattr(derived_state, "parse_claim", counted)
+            patch.setattr(claim_oracles, "parse_claim", counted)
             patch.setattr(lowering, "_ClaimPredicateIndex", make_index)
             try:
                 result = lowering.lower_authoring(instance, intent=intent, actor_id="owner")
