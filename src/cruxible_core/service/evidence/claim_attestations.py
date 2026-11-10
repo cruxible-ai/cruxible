@@ -237,8 +237,8 @@ def service_prepare_claim_attestation_evidence(
                     repair="Cite the file once in a write (it installs the source's contract), "
                     "then attest",
                 )
-            digests.add(
-                build_working_selection_capture(
+            try:
+                built = build_working_selection_capture(
                     accepted_contract=builtin_contract_for_write(
                         foreign_source_capture_contract(source), accepted
                     ),
@@ -252,8 +252,20 @@ def service_prepare_claim_attestation_evidence(
                     coordinate=observation.coordinate.model_dump(mode="json"),
                     selector=observation.selector.model_dump(mode="json"),
                     selected_content=observation.selected_content,
-                ).capture_digest
-            )
+                )
+            except (CruxibleError, ValueError) as exc:
+                # The source's capture rules refusing the observation (a secret
+                # in the anchor, a selection over the byte budget) refuse this
+                # request, as they do for write; never an unhandled server fault.
+                _refuse_evidence(
+                    "working_selection_refused",
+                    f"evidence.observation.selector: the working selection cannot be "
+                    f"captured: {exc}",
+                    repair="Anchor on prose the source rules admit and grow the window with "
+                    "surrounding lines; a URL may appear in an anchor but never in another "
+                    "selector field",
+                )
+            digests.add(built.capture_digest)
     elif isinstance(evidence, CaptureEvidence | ContractEvidence):
         planner = _Planner(
             instance,
