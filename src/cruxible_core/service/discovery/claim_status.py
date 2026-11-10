@@ -27,11 +27,10 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_core.claims.claim_slots import ClaimSlotClassification, classify_claim_slot
 from cruxible_core.derived.memo import memo_clear, memo_get, memo_put
-from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
 from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.claims.claims import (
     PlaybillClaimGroupResolution,
-    _resolve_coordinate,
     resolve_playbill_claim_group,
 )
 from cruxible_core.service.claims.verdict_memo import (
@@ -209,7 +208,7 @@ def claim_resolution_statuses(
         else:
             live_groups[_resolution_key(claim)].append(claim)
 
-    coordinate = _resolve_coordinate(instance, at)
+    coordinate = accepted_coordinate_at(instance, at)
     read_context = read_context or ClaimVerdictReadContext(instance, coordinate)
     root = str(instance.root)
     compiler = coordinate.compiler.rule_digest

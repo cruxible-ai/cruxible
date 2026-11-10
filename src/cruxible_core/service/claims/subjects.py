@@ -21,7 +21,7 @@ from cruxible_client.contracts.subjects import (
 from cruxible_core.indexes.claims.projection_claims import ClaimProjectionView
 from cruxible_core.indexes.claims.projection_subjects import SubjectProjectionView
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
-from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
 from cruxible_core.service.authoring.documents import (
     AcceptedCoordinate,
 )
@@ -172,27 +172,13 @@ def _incoming_groups(
     )
 
 
-def _resolve_coordinate(
-    instance: PlaybillInstance,
-    at: AcceptedCoordinate | None,
-) -> AcceptedProjectionCoordinate:
-    if at is None:
-        return instance.accepted_coordinate()
-    return instance.resolve_accepted_coordinate(
-        git_oid=at.git_oid,
-        semantic_root=at.semantic_root,
-        generation_root=at.generation_root,
-        compiler_digest=at.compiler_digest,
-    )
-
-
 def service_get_playbill_subject(
     instance: PlaybillInstance,
     *,
     identity: str,
     at: AcceptedCoordinate | None = None,
 ) -> PlaybillSubjectView:
-    coordinate = _resolve_coordinate(instance, at)
+    coordinate = accepted_coordinate_at(instance, at)
     with instance.bind_accepted_projection(coordinate) as projection:
         subject = projection.subject(identity)
         if subject is None:

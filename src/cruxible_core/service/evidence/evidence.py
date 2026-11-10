@@ -77,7 +77,7 @@ from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
 from cruxible_core.indexes.history.history_index import HistoryReader, RetainedRecordReader
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.settlement import ChangeSetRecord
-from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
 from cruxible_core.storage.capture_metadata import capture_envelope
 from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.read_positions import (
@@ -126,20 +126,6 @@ class PlaybillClaimVerdictQuery(_StrictEvidenceServiceModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("Claim verdict evaluation time must be timezone-aware")
         return value
-
-
-def _resolve_coordinate(
-    instance: PlaybillInstance,
-    at: AcceptedCoordinate | None,
-) -> AcceptedProjectionCoordinate:
-    if at is None:
-        return instance.accepted_coordinate()
-    return instance.resolve_accepted_coordinate(
-        git_oid=at.git_oid,
-        semantic_root=at.semantic_root,
-        generation_root=at.generation_root,
-        compiler_digest=at.compiler_digest,
-    )
 
 
 def _accepted_claim_artifact(claim: ClaimArtifact) -> AcceptedClaim:
@@ -1240,7 +1226,7 @@ def service_evaluate_playbill_claim_verdict(
         # The context was built from this exact resolved coordinate.
         coordinate = read_context.coordinate
     else:
-        coordinate = _resolve_coordinate(instance, at)
+        coordinate = accepted_coordinate_at(instance, at)
     if read_context is not None and (
         read_context.instance is not instance or read_context.coordinate != coordinate
     ):

@@ -75,7 +75,7 @@ from cruxible_core.query.engine import (
     query_execution_receipt,
     resolve_query_parameters,
 )
-from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
 from cruxible_core.service.discovery.query_definitions import accepted_query_definition
 from cruxible_core.service.discovery.query_pushdown import select_query_facts
 from cruxible_core.service.evidence.evidence import (
@@ -113,20 +113,6 @@ class PlaybillQueryRunV1(_StrictQueryRunModel):
     result: ClaimQueryResult
     receipt: QueryExecutionReceipt
     journal_record_digest: str | None = None
-
-
-def _resolve_coordinate(
-    instance: PlaybillInstance,
-    at: AcceptedCoordinate | None,
-) -> AcceptedProjectionCoordinate:
-    if at is None:
-        return instance.accepted_coordinate()
-    return instance.resolve_accepted_coordinate(
-        git_oid=at.git_oid,
-        semantic_root=at.semantic_root,
-        generation_root=at.generation_root,
-        compiler_digest=at.compiler_digest,
-    )
 
 
 def _accepted_subjects(
@@ -1070,7 +1056,7 @@ def service_run_playbill_query(
 
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
         raise DataValidationError("query evaluation_time must be timezone-aware")
-    coordinate = _resolve_coordinate(instance, at)
+    coordinate = accepted_coordinate_at(instance, at)
     definition = accepted_query_definition(instance, name=name, coordinate=coordinate)
     result = evaluate_accepted_query(
         instance,

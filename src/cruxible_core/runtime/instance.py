@@ -3255,4 +3255,20 @@ class PlaybillInstance:
         return activated
 
 
-__all__ = ["DESCRIPTOR_FILE", "PlaybillInstance"]
+def accepted_coordinate_at(
+    instance: PlaybillInstance,
+    at: AcceptedCoordinate | None,
+) -> AcceptedProjectionCoordinate:
+    """The verified accepted coordinate ``at`` names; the current one when ``at`` is None."""
+
+    if at is None:
+        return instance.accepted_coordinate()
+    return instance.resolve_accepted_coordinate(
+        git_oid=at.git_oid,
+        semantic_root=at.semantic_root,
+        generation_root=at.generation_root,
+        compiler_digest=at.compiler_digest,
+    )
+
+
+__all__ = ["DESCRIPTOR_FILE", "PlaybillInstance", "accepted_coordinate_at"]

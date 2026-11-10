@@ -505,13 +505,13 @@ def check_upload_procedure(
     so a contract that forbids keeping it could never import the upload.
     """
 
+    from cruxible_core.runtime.instance import accepted_coordinate_at
     from cruxible_core.service.procedures.procedure_runs import (
         _accepted_capture_contracts,
         _accepted_procedure,
-        _resolve_coordinate,
     )
 
-    coordinate = _resolve_coordinate(instance, at)
+    coordinate = accepted_coordinate_at(instance, at)
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate, bind_references=True)
     from cruxible_client.contracts.provider_operations import operation_signature_digest
 

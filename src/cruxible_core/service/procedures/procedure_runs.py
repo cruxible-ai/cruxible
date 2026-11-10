@@ -278,7 +278,7 @@ from cruxible_core.providers.provider_outcomes import map_provider_refusal
 from cruxible_core.providers.provider_process_leases import (
     PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE,
 )
-from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
 from cruxible_core.runtime.permissions import PermissionMode, get_capability_ceiling
 from cruxible_core.runtime.request_scope import projection_request
 from cruxible_core.service.procedures.nested_runs import ServedNestedProcedureRunner
@@ -465,7 +465,7 @@ def procedure_run_target_rung(
     """What a direct run of this Procedure can do: its terminal capability."""
 
     accepted = _accepted_procedure(
-        instance, name=name, coordinate=_resolve_coordinate(instance, at)
+        instance, name=name, coordinate=accepted_coordinate_at(instance, at)
     )
     return int(accepted.procedure.definition.terminal_capability)
 
@@ -782,20 +782,6 @@ def run_node(payload: object, *, sequence: int) -> GetRunNode:
         verdict=None if values.get("verdict") is None else str(values["verdict"]),
         sequence=sequence,
         summary=None if summary is None else NODE_RUN_SUMMARY_ADAPTER.validate_python(summary),
-    )
-
-
-def _resolve_coordinate(
-    instance: PlaybillInstance,
-    at: AcceptedCoordinate | None,
-) -> AcceptedProjectionCoordinate:
-    if at is None:
-        return instance.accepted_coordinate()
-    return instance.resolve_accepted_coordinate(
-        git_oid=at.git_oid,
-        semantic_root=at.semantic_root,
-        generation_root=at.generation_root,
-        compiler_digest=at.compiler_digest,
     )
 
 
@@ -1985,7 +1971,7 @@ def service_playbill_procedure_readiness(
     name: str,
     request: ProcedureReadinessRequestV1,
 ) -> ProcedureReadinessResultV1:
-    coordinate = _resolve_coordinate(instance, request.at)
+    coordinate = accepted_coordinate_at(instance, request.at)
     # A read: a retired Procedure is still readable, though nothing runs it.
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate, allow_retired=True)
     return _readiness(accepted, coordinate=coordinate, instance=instance)
@@ -3560,7 +3546,7 @@ def service_run_playbill_procedure(
     ``evaluation_time``.
     """
     instance.require_writable()
-    coordinate = _resolve_coordinate(instance, request.at)
+    coordinate = accepted_coordinate_at(instance, request.at)
     evaluation_time = request.evaluation_time or ensure_utc(
         (daemon_clock or SystemProcedureClock()).now()
     )

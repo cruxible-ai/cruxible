@@ -105,7 +105,7 @@ def test_latest_batch_resolves_once_and_returns_the_resolved_coordinate(seeded, 
         calls.append(at)
         return next(coordinates)
 
-    monkeypatch.setattr(playbill_claim_reads, "_resolve_coordinate", resolve)
+    monkeypatch.setattr(playbill_claim_reads, "accepted_coordinate_at", resolve)
     req = ClaimReadBatchRequest(subject_paths=PATHS, predicates=STATED, evaluation_time=TIME)
     first = service_read_claim_batch(seeded, request=req)
     second = service_read_claim_batch(seeded, request=req)
@@ -127,13 +127,13 @@ def test_latest_page_continuation_is_bound_to_returned_coordinate(seeded, monkey
     )
     first = service_read_claim_batch(seeded, request=req)
     assert first.truncated and first.cursor
-    original = playbill_claim_reads._resolve_coordinate
+    original = playbill_claim_reads.accepted_coordinate_at
 
     def pinned_only(instance, at):
         assert at is not None, "a continuation must not discover a newer head"
         return original(instance, at)
 
-    monkeypatch.setattr(playbill_claim_reads, "_resolve_coordinate", pinned_only)
+    monkeypatch.setattr(playbill_claim_reads, "accepted_coordinate_at", pinned_only)
     continuation = req.model_copy(update={"at": first.coordinate, "cursor": first.cursor})
     second = service_read_claim_batch(seeded, request=continuation)
     assert second.coordinate == first.coordinate
@@ -164,7 +164,7 @@ def test_cursor_without_coordinate_is_rejected_before_source_work(seeded, monkey
     def forbidden(*args, **kwargs):
         raise AssertionError("invalid continuation must fail before resolving accepted state")
 
-    monkeypatch.setattr(playbill_claim_reads, "_resolve_coordinate", forbidden)
+    monkeypatch.setattr(playbill_claim_reads, "accepted_coordinate_at", forbidden)
     # Internal callers using model_copy/model_construct receive the same guard.
     req = ClaimReadBatchRequest(subject_paths=PATHS, predicates=STATED).model_copy(
         update={"cursor": "cursor"}
