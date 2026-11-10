@@ -2894,6 +2894,11 @@ def playbill_next(
     # The caller's principal comes from the authenticated transport, as
     # `whoami` resolves it, so no request can ask for another signer's work.
     actor = _actor_context()
+    try:
+        workspace_file_reader = get_playbill_manager().workspace_file_reader(instance_id)
+    except WorkspaceFileReadRefused:
+        # No reader: no workspace-file row can be checked.
+        workspace_file_reader = None
     result = service_playbill_next(
         get_playbill_manager().get(instance_id),
         request=validate_playbill_next_request(request),
@@ -2906,6 +2911,7 @@ def playbill_next(
         consumers_running=get_playbill_manager().consumer_runner.running,
         caller_rung=get_current_mode().value - 1,
         caller_authoring_refusal=_caller_authoring_refusal(instance_id),
+        workspace_file_reader=workspace_file_reader,
     )
     return contracts.NextResult.model_validate(result.model_dump(mode="json"))
 

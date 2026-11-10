@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -115,7 +116,8 @@ def test_cli_next_observes_locally_then_calls_one_queue_route(
 
     assert result.exit_code == 0, result.output
     assert "No repair work" in result.output
-    assert "Unobserved: workspace_sources, workspace_projections" in result.output
+    # No file catalog in the workspace: nothing there to observe, so nothing named.
+    assert "Unobserved" not in result.output
     assert calls[0]["workspace_observation"] == observation
     assert calls[0]["evaluation_time"] == expected_time
     assert calls[0]["expiring_within"] == {"microseconds": expected_microseconds}
@@ -462,9 +464,24 @@ def test_cli_next_default_names_each_rows_repair_and_findings(
         "  also: warning  projection_backing_stale  Block:docs/runbook.md#b",
         "warning  claim_conflicted  Claim:c  next=hand_edit",
         "  repair: hand edit Claim:c: revise_claims_into_distinct_qualifiers",
-        "Unobserved: workspace_floor, workspace_sources, workspace_projections",
+        "Unobserved: workspace_floor",
     ]
     assert "long rendered body" not in output
+
+
+def test_cli_next_says_why_a_workspace_domain_went_unobserved(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _stub_pages(monkeypatch, total=2, next_cursor=None)
+    (tmp_path / "files.yaml").write_text("entries: [not, a, catalog\n")
+
+    output = _invoke_next("--workspace-root", str(tmp_path))
+
+    assert output.splitlines()[-1] == (
+        "Unobserved: workspace_floor; "
+        "workspace_sources (the file catalog could not be read); "
+        "workspace_projections (the file catalog could not be read)"
+    )
 
 
 @pytest.mark.parametrize("brief", [False, True])

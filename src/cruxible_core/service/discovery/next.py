@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
 
 if TYPE_CHECKING:
     from cruxible_core.consumers.next.facts import CitationRequest, ReadHeads, ServedRows
+    from cruxible_core.documents.workspace_file import WorkspaceFileReader
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -5119,6 +5120,77 @@ def _line_run_failure_items(
     return tuple(items)
 
 
+def _line_input_items(
+    instance: PlaybillInstance,
+    *,
+    workspace_file_reader: WorkspaceFileReader | None,
+    access_profile: CoverageAccessProfile,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Workspace files that enabled or Runbook-named Lines read and that are not there.
+
+    From the index the line-inputs fold keeps as definitions are accepted, one
+    no-follow stat per indexed input with the daemon's own reader: never a
+    workspace scan, never run history. A Line that never ran is setup (the
+    file was never supplied); one that ran is repair (the file vanished).
+    """
+
+    if workspace_file_reader is None or not access_profile.permits("instance"):
+        return ()
+    from cruxible_core.consumers.next.line_inputs import needed_workspace_inputs
+    from cruxible_core.consumers.next.run_failures import lines_that_ran
+    from cruxible_core.documents.workspace_file import WorkspaceFileReadRefused
+    from cruxible_core.procedures.execution import (
+        WorkspaceInputContext,
+        workspace_input_repair,
+    )
+
+    missing = []
+    for needed in needed_workspace_inputs(instance):
+        try:
+            state, _path_class = workspace_file_reader.presence(
+                needed.relative_path, workspace=needed.workspace, max_bytes=needed.max_bytes
+            )
+        except WorkspaceFileReadRefused:
+            continue  # no root to read under: environment status, not this row
+        if state == "absent":
+            missing.append(needed)
+    ran = lines_that_ran(instance, (needed.line for needed in missing))
+    items = []
+    for needed in missing:
+        context = WorkspaceInputContext(
+            relative_path=needed.relative_path,
+            parameter=needed.parameter,
+            description=needed.description,
+        )
+        change = workspace_input_repair("missing", context)
+        assert change is not None
+        after_run = needed.line in ran
+        items.append(
+            _item(
+                severity="repair" if after_run else "setup",
+                reason="line_input_missing",
+                subject_identity=needed.line,
+                detail={
+                    "node_id": needed.node_id,
+                    "relative_path": needed.relative_path,
+                    "parameter": needed.parameter,
+                    "description": needed.description,
+                    "detail": (
+                        "the file this Line reads is gone since it last ran"
+                        if after_run
+                        else "the file this Line reads is not in the workspace yet"
+                    ),
+                },
+                repair=PlaybillNextRepairV1(
+                    operation="hand_edit",
+                    target=f"workspace file {needed.relative_path}",
+                    required_change=change,
+                ),
+            )
+        )
+    return tuple(items)
+
+
 def _line_attention_items(
     instance: PlaybillInstance,
     *,
@@ -6928,6 +7000,7 @@ def _next_queue(
     read_context: ClaimVerdictReadContext | None = None,
     caller_authoring_refusal: AuthoringRefusal | None = None,
     heads: ReadHeads | None = None,
+    workspace_file_reader: WorkspaceFileReader | None = None,
 ) -> _NextQueue:
     """The single fold for full next and its bounded attention summary: a point-in-time read.
 
@@ -6976,6 +7049,7 @@ def _next_queue(
             caller_rung=caller_rung,
             read_context=read_context,
             caller_authoring_refusal=caller_authoring_refusal,
+            workspace_file_reader=workspace_file_reader,
         )
 
 
@@ -6990,6 +7064,7 @@ def _queue_at(
     caller_rung: int | None,
     read_context: ClaimVerdictReadContext | None,
     caller_authoring_refusal: AuthoringRefusal | None,
+    workspace_file_reader: WorkspaceFileReader | None = None,
 ) -> _NextQueue:
     """The queue at one read's recorded heads (``_next_queue``)."""
 
@@ -7148,6 +7223,11 @@ def _queue_at(
         ),
         *line_upgrade_items,
         *_line_run_failure_items(instance, access_profile=request.access_profile),
+        *_line_input_items(
+            instance,
+            workspace_file_reader=workspace_file_reader,
+            access_profile=request.access_profile,
+        ),
         *_line_inbox_items(instance, access_profile=request.access_profile),
         *_kit_resume_items(instance, access_profile=request.access_profile),
     )
@@ -7372,6 +7452,7 @@ def service_playbill_next(
     caller_principal_id: str | None = None,
     caller_rung: int | None = None,
     caller_authoring_refusal: AuthoringRefusal | None = None,
+    workspace_file_reader: WorkspaceFileReader | None = None,
 ) -> PlaybillNextResultV2:
     """Fold accepted state and explicit client observations into one repair queue.
 
@@ -7385,6 +7466,9 @@ def service_playbill_next(
     `caller_authoring_refusal` is why that caller cannot author here (whoami's
     refusal, less the tier, which `caller_rung` already gates): every repair
     that writes is then withheld with it, since running it would be refused.
+    `workspace_file_reader` is the daemon's own reader: with it, each workspace
+    file an enabled or Runbook-named Line reads is stat'ed once, and an absent
+    one is a ``line_input_missing`` row.
     """
 
     continuation = None if request.cursor is None else _continuation_of(request.cursor)
@@ -7400,6 +7484,7 @@ def service_playbill_next(
         caller_principal_id=caller_principal_id,
         caller_rung=caller_rung,
         caller_authoring_refusal=caller_authoring_refusal,
+        workspace_file_reader=workspace_file_reader,
     )
     coordinate = queue.coordinate
     public_coordinate = AcceptedCoordinate.from_internal(coordinate)

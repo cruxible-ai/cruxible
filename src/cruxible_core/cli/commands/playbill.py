@@ -9289,7 +9289,7 @@ def next_work(
             click.echo(row + (f"  next={item.repair.command}" if item.repair.command else ""))
             continue
         click.echo(f"{row}  next={item.repair.operation}")
-        for line in _next_run_failure_lines(item):
+        for line in (*_next_run_failure_lines(item), *_next_input_lines(item)):
             click.echo(f"  {line}")
         click.echo(f"  repair: {_next_repair_hint(item.repair)}")
         for alternative in item.repair.alternatives:
@@ -9306,8 +9306,9 @@ def next_work(
             )
         for finding in item.findings:
             click.echo(f"  also: {finding.severity}  {finding.reason}  {finding.subject_identity}")
-    if result.unobserved_domains and not output_brief:
-        click.echo("Unobserved: " + ", ".join(result.unobserved_domains))
+    unobserved = _next_unobserved_reasons(result.unobserved_domains, Path(workspace_root))
+    if unobserved and not output_brief:
+        click.echo("Unobserved: " + "; ".join(unobserved))
     if result.next_cursor is not None:
         click.echo(
             f"Showing {len(result.items)} of {result.total_items} rows. "
@@ -9321,6 +9322,59 @@ _NEXT_OPERAND_PLACEHOLDER_TEXT: dict[str, str] = {
     "file": "FILE#ANCHOR (the file and anchor holding the new text)",
     "capture": "CAP (the fresh Capture's handle)",
 }
+
+
+def _next_unobserved_reasons(domains: Sequence[str], workspace_root: Path) -> list[str]:
+    """Each unobserved domain with why, leaving out a domain there is nothing to observe in.
+
+    Workspace sources are observed through the file catalog (``files.yaml``)
+    and projections through the markers its entries carry: with no catalog,
+    neither has anything to observe and neither is named.
+    """
+
+    from cruxible_client.authoring.selectors import WorkspaceFiles
+    from cruxible_client.contracts.workspace_layout import workspace_path
+
+    workspace = workspace_root.expanduser()
+    catalog_present = any(
+        path.is_file()
+        for path in (workspace_path(workspace, "files.yaml"), workspace / "files.yaml")
+    )
+    sources: Any = None
+    if catalog_present:
+        try:
+            sources = WorkspaceFiles(workspace)
+        except (OSError, ValueError):
+            sources = None
+    reasons = []
+    for domain in domains:
+        if domain not in ("workspace_sources", "workspace_projections"):
+            reasons.append(domain)
+        elif not catalog_present:
+            continue
+        elif sources is None:
+            reasons.append(f"{domain} (the file catalog could not be read)")
+        elif domain == "workspace_sources":
+            reasons.append(f"{domain} (the access profile does not cover instance sources)")
+        elif sources.file_entries or sources.procedure_projection_entries:
+            reasons.append(f"{domain} (no projection markers were read at this coordinate)")
+    return reasons
+
+
+def _next_input_lines(item: contracts.NextItem) -> list[str]:
+    """A missing Line input's row: the file, its parameter, its description as written."""
+
+    detail = item.detail if isinstance(item.detail, dict) else {}
+    if item.reason != "line_input_missing" or not isinstance(detail.get("relative_path"), str):
+        return []
+    parameter = detail.get("parameter")
+    lines = [
+        f"needs file {detail['relative_path']}"
+        + (f" (parameter {parameter})" if isinstance(parameter, str) else "")
+    ]
+    if isinstance(detail.get("description"), str):
+        lines.append(f"  {detail['description']}")
+    return lines
 
 
 def _next_run_failure_lines(item: contracts.NextItem) -> list[str]:

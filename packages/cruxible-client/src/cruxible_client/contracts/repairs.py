@@ -163,6 +163,8 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "line_run_failed": "read_the_failed_run_fix_its_cause_then_let_the_line_run_again",
     # Items a Line posted for judgment: read them, then ack, dismiss or link each.
     "line_inbox_unread": "judge_the_lines_unread_inbox_items",
+    # A workspace file an enabled or Runbook-named Line reads is not there.
+    "line_input_missing": "place_the_file_the_line_reads_at_the_path_the_row_names",
     "evidence_unavailable": "restore_the_capture_from_backup_or_recapture_and_recite_its_claims",
     # A Claim whose cited Captures' bodies were erased moves onto a fresh
     # observation by a re-bind; revising or retiring it carries the erased ones.

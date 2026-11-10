@@ -137,6 +137,8 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "line_settled_prior_refusals",
         # A Line's unread inbox items, one row per Line with its volume.
         "line_inbox_unread",
+        # A workspace file an enabled or Runbook-named Line reads is not there.
+        "line_input_missing",
         # Live Subjects of a kind no SubjectKind declares (identity D6).
         "subject_kind_undeclared",
         # A recorded kit add whose resume refused at the head it ran on.
