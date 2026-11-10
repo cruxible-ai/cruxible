@@ -1141,6 +1141,51 @@ def test_a_release_travels_as_a_directory_through_the_http_client(
         read_kit_directory(directory)
 
 
+def test_an_unpinned_kit_add_whose_head_moves_after_evaluation_refuses_typed_and_retries(
+    worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A concurrent acceptance between evaluation and publication of a commit with no
+    ``at``: the add refuses ``state_moved`` with the add itself as its repair, publishes
+    nothing, and the caller's second add lands."""
+
+    from cruxible_client.contracts.repairs import RepairOperation
+    from cruxible_core.proposals.proposals import ProposalService
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    release = publisher.build("1.0.0")
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = consumer.http  # type: ignore[assignment]
+    original = ProposalService._evaluate_admission
+    moved: list[bool] = []
+
+    def evaluate_then_move(self: ProposalService, **kwargs: typing.Any) -> typing.Any:
+        evaluated = original(self, **kwargs)
+        if not moved and "/kit-acme-" in kwargs["request"].target_ref:
+            moved.append(True)
+            consumer.author(_claim_type(UNOWNED, {"type": "boolean"}))
+        return evaluated
+
+    monkeypatch.setattr(ProposalService, "_evaluate_admission", evaluate_then_move)
+    with pytest.raises(Exception) as refused:
+        transport.add_kit(
+            consumer.instance_id, KitAddRequest(bundle=release, source="test", dry_run=False)
+        )
+
+    assert moved == [True]
+    assert getattr(refused.value, "error_code", None) == "cruxible.preview.state_moved"
+    assert getattr(refused.value, "repair", None) == RepairOperation(
+        operation="cruxible.kit.add", arguments={"dry_run": False}
+    )
+    proposals = consumer.http.get(f"/api/v1/{consumer.instance_id}/proposals").json()
+    assert not [entry for entry in proposals["entries"] if "/kit-acme-" in entry["target_ref"]]
+    assert _path(SEATS) not in consumer.tree()
+    assert playbill_api.playbill_kit_status(consumer.instance_id).kits == ()
+    # The caller runs it again, at the moved head.
+    assert consumer.add(release).status == "accepted"
+    assert _path(SEATS) in consumer.tree()
+
+
 def test_a_build_with_nothing_owned_is_refused(worlds: tuple[_World, _World]) -> None:
     publisher, _consumer = worlds
     publisher.author(_claim_type(SEATS, {"type": "integer"}))

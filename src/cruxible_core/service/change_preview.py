@@ -50,6 +50,7 @@ from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.change_control import ChangeKind, StateCoordinate
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.get_reads import GetCoordinate
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.errors import ChangeRefusedError
 from cruxible_core.indexes.history.history_index import detached_history_reads
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -138,6 +139,27 @@ class ChangeMode:
             kind=self._kind,
             operation=self._operation,
             describe=self._describe,
+        )
+
+    def refuse_moved_head(self, head_oid: str | None) -> None:
+        """Refuse a commit whose accepted head moved after it was evaluated.
+
+        Called when publication finds main moved past the evaluated head, before
+        anything was published. A pinned commit refuses as it would have at entry
+        (``confirm_head``). An unpinned derived change refuses ``state_moved`` too,
+        its repair the same commit run again: it evaluates at the new head. A
+        direct change returns, and its caller re-raises the head-moved error.
+        """
+
+        self.confirm_head(head_oid)
+        if self.previewing or self._kind != "derived":
+            return
+        raise ChangeRefusedError(
+            "cruxible.preview.state_moved",
+            f"{self._describe} was evaluated at accepted state that moved before it could "
+            "publish; nothing was published, so run it again",
+            operation=self._operation,
+            repair=RepairOperation(operation=self._operation, arguments={"dry_run": False}),
         )
 
 
@@ -390,10 +412,10 @@ def admit_change_set(
         )
     except ProposalHeadMovedError:
         # Main moved after the evaluation, before publication (a concurrent
-        # acceptance): a commit pinned to its preview refuses as it would have
-        # at entry; an unpinned one is told to evaluate again.
+        # acceptance), and nothing was published: a pinned commit or an unpinned
+        # derived change refuses state_moved; a direct one re-raises.
         with instance.accepted_head_held() as head_oid:
-            mode.confirm_head(head_oid)
+            mode.refuse_moved_head(head_oid)
         raise
     return AdmittedChangeSet(
         previewed=False,
