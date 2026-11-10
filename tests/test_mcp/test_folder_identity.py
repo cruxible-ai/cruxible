@@ -274,6 +274,29 @@ def test_an_unusable_record_refuses_with_its_typed_error(
     assert json.loads(result.stdout)["actor_id"] == "operator"
 
 
+def test_a_custody_change_mid_session_refuses_the_next_call(world: dict[str, Path]) -> None:
+    instance_id = _init(world, world["folder"])["instance_id"]
+    record = read_folder_identity(world["folder"])
+    assert record is not None
+    key, directory = record.private_key_path, record.private_key_path.parent
+    assert handlers.handle_playbill_whoami(instance_id).identity_source == "folder"
+
+    # Same MCP session, no cache reset: a chmod keeps the key's inode and mtime.
+    for item, mode, restore in (
+        (key, 0o000, 0o600),
+        (key, 0o640, 0o600),
+        (directory, 0o750, 0o700),
+    ):
+        item.chmod(mode)
+        try:
+            with pytest.raises(FolderIdentityRefused) as refused:
+                handlers.handle_playbill_whoami(instance_id)
+            assert refused.value.error_code == "cruxible.identity.folder_key_unavailable"
+        finally:
+            item.chmod(restore)
+    assert handlers.handle_playbill_whoami(instance_id).identity.actor_id == "owner"
+
+
 def test_the_cli_in_the_folder_acts_as_the_record_and_explicit_flags_win(
     world: dict[str, Path],
 ) -> None:

@@ -216,24 +216,63 @@ def write_folder_identity(
     return path, "written"
 
 
-def require_folder_key(identity: FolderIdentity, *, path: Path) -> Path:
-    """The record's private key path, after the local checks that need no daemon."""
+def folder_key_custody(identity: FolderIdentity, *, path: Path) -> tuple[int, ...]:
+    """Check the key's current custody with one ``lstat`` each of it and its directory.
+
+    Both must be real (no symbolic link), owned by this user and closed to group
+    and world, and the key readable by this process. Cheap enough to run before
+    every use; the returned stamp changes whenever the key file or its custody
+    does, so a cached public-key match is never reused across such a change.
+    """
 
     directory = Path(identity.key_dir)
-    if directory.is_symlink() or not directory.is_dir():
-        raise FolderIdentityRefused(
-            "cruxible.identity.folder_key_unavailable",
-            path=path,
-            detail=f"key directory {directory} is missing or not a real directory",
-        )
     key = identity.private_key_path
-    if key.is_symlink() or not key.is_file():
-        raise FolderIdentityRefused(
-            "cruxible.identity.folder_key_unavailable",
-            path=path,
-            detail=f"key directory {directory} holds no {key.name}",
+
+    def refuse(detail: str) -> FolderIdentityRefused:
+        return FolderIdentityRefused(
+            "cruxible.identity.folder_key_unavailable", path=path, detail=detail
         )
-    return key
+
+    try:
+        held = directory.lstat()
+    except OSError:
+        raise refuse(f"key directory {directory} is missing or not a real directory") from None
+    if not stat.S_ISDIR(held.st_mode):
+        raise refuse(f"key directory {directory} is missing or not a real directory")
+    try:
+        status = key.lstat()
+    except OSError:
+        raise refuse(f"key directory {directory} holds no {key.name}") from None
+    if not stat.S_ISREG(status.st_mode):
+        raise refuse(f"key directory {directory} holds no {key.name}")
+    owner = _owner_uid()
+    for item, item_status in ((directory, held), (key, status)):
+        if owner is not None and item_status.st_uid != owner:
+            raise refuse(f"{item} is owned by another user (uid {item_status.st_uid})")
+        if stat.S_IMODE(item_status.st_mode) & 0o077:
+            raise refuse(f"{item} permissions must exclude group/world access")
+    if not os.access(key, os.R_OK):
+        raise refuse(f"key {key} is not readable by this process")
+    return (
+        held.st_dev,
+        held.st_ino,
+        held.st_mode,
+        held.st_uid,
+        status.st_dev,
+        status.st_ino,
+        status.st_mode,
+        status.st_uid,
+        status.st_size,
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+    )
+
+
+def require_folder_key(identity: FolderIdentity, *, path: Path) -> Path:
+    """The record's private key path, after the custody checks that need no daemon."""
+
+    folder_key_custody(identity, path=path)
+    return identity.private_key_path
 
 
 @dataclass(frozen=True)
@@ -315,6 +354,7 @@ __all__ = [
     "IdentitySource",
     "VerifiedFolderIdentity",
     "folder_identity_path",
+    "folder_key_custody",
     "read_folder_identity",
     "require_folder_key",
     "verify_folder_identity",

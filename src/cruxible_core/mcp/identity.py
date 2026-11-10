@@ -33,6 +33,7 @@ from cruxible_client.authoring.folder_identity import (
     IdentitySource,
     VerifiedFolderIdentity,
     folder_identity_path,
+    folder_key_custody,
     read_folder_identity,
     verify_folder_identity,
 )
@@ -158,16 +159,6 @@ def forget_verified_identities() -> None:
         _verified.clear()
 
 
-def _cache_key(candidate: FolderCandidate, target: DaemonTarget) -> tuple[object, ...]:
-    key = candidate.record.private_key_path
-    try:
-        status = key.stat()
-        stamp: tuple[object, ...] = (status.st_dev, status.st_ino, status.st_mtime_ns)
-    except OSError:
-        stamp = ()
-    return (target.server_socket, candidate.path, candidate.record, *stamp)
-
-
 def verified_folder_identity(
     candidate: FolderCandidate,
     *,
@@ -175,9 +166,16 @@ def verified_folder_identity(
     principals: Callable[[str], Sequence[PrincipalRecord]],
     environ: Mapping[str, str] | None = None,
 ) -> VerifiedFolderIdentity:
-    """Check the record once per adapter process (and again when its key file changes)."""
+    """Check the key's custody on every call; its public-key match once per custody state.
 
-    cache_key = _cache_key(candidate, target)
+    The custody check (`folder_key_custody`) is one ``lstat`` of the key and
+    one of its directory, so a key made unreadable, or opened to group or world,
+    or handed to another owner refuses on the next tool call. Only the registry
+    read and the public-key comparison are cached, keyed on that custody stamp.
+    """
+
+    stamp = folder_key_custody(candidate.record, path=candidate.path)
+    cache_key = (target.server_socket, candidate.path, candidate.record, *stamp)
     with _verified_lock:
         cached = _verified.get(cache_key)
     if cached is not None:

@@ -11,6 +11,7 @@ import pytest
 from cruxible_client.authoring.folder_identity import (
     FOLDER_IDENTITY_PATH,
     FolderIdentityRefused,
+    folder_key_custody,
     read_folder_identity,
     require_folder_key,
     write_folder_identity,
@@ -116,3 +117,36 @@ def test_a_missing_key_directory_or_key_refuses_by_name(folder: Path, tmp_path: 
     (tmp_path / "gone").mkdir()
     with pytest.raises(FolderIdentityRefused, match="holds no owner.ed25519"):
         require_folder_key(record, path=path)
+
+
+def test_the_key_custody_check_reads_current_modes_and_its_stamp_follows_them(
+    folder: Path, tmp_path: Path
+) -> None:
+    keys = tmp_path / "keys"
+    keys.mkdir(mode=0o700)
+    key = keys / "owner.ed25519"
+    key.write_text("not parsed here", encoding="utf-8")
+    key.chmod(0o600)
+    path, _ = write_folder_identity(
+        folder, instance_id="inst_a", principal_id="owner", key_dir=keys
+    )
+    record = read_folder_identity(folder)
+    assert record is not None
+    stamp = folder_key_custody(record, path=path)
+    assert folder_key_custody(record, path=path) == stamp
+
+    for item, mode, detail in (
+        (key, 0o000, "not readable"),
+        (key, 0o640, "exclude group/world"),
+        (keys, 0o755, "exclude group/world"),
+    ):
+        restore = 0o700 if item == keys else 0o600
+        item.chmod(mode)
+        try:
+            with pytest.raises(FolderIdentityRefused, match=detail) as refused:
+                folder_key_custody(record, path=path)
+            assert refused.value.error_code == "cruxible.identity.folder_key_unavailable"
+        finally:
+            item.chmod(restore)
+    # A chmod there and back still moves the stamp (ctime), so no cached match survives it.
+    assert folder_key_custody(record, path=path) != stamp
