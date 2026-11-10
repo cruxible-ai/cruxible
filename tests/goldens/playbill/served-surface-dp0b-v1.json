@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "first-run-plain-folder",
-    "surface_digest": "sha256:8bfb8257dc4f3837914751c0c408975ad8e5f3197f97382de278bf217b15e328"
+    "register_entry": "runbook-preview-inputs",
+    "surface_digest": "sha256:390ccbd5e58bbf3ace9cd59ae123d493a077849b0b580ad9f92bc8ef73a88a62"
   },
   "surface": {
     "cli_leaves": [
@@ -1655,7 +1655,7 @@
         "request_model": "cruxible_core.server.playbill_request_models.NextRequest",
         "request_schema_digest": "sha256:14d072eede4cb2410b6556b1c72f72f8a62476ce192771692a1530eb499fe73b",
         "response_model": "cruxible_client.contracts.NextResult",
-        "response_schema_digest": "sha256:fe798411356054e831f2cc720009a7d0905a8d140a5909046f47cf680c34bbc4"
+        "response_schema_digest": "sha256:cb1b6fe8757ff9b4e33c528521726d52ee9c91104d5b7a9a20503db6b0704a0c"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.orient",
@@ -2003,7 +2003,7 @@
         "request_model": null,
         "request_schema_digest": null,
         "response_model": "cruxible_client.contracts.runbooks.RunbookPreview",
-        "response_schema_digest": "sha256:f0f7e83f912f976511dfe89ae107db6c850b6e8ec672caf690d2d75f80a90b5a"
+        "response_schema_digest": "sha256:1ab7a6477feb2182b6f8d81db0626a2e242fdc980b97fcee3dfa212002526dfe"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.run_runbook",
@@ -2642,7 +2642,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_next",
         "input_schema_digest": "sha256:822dc04c16064413474f2632b8758500c7aa6db30bbe675a5ea7584518b5602f",
         "name": "cruxible_next",
-        "output_schema_digest": "sha256:80d597b2934279b9ea7b4f381bf6d07054a9f4da21432a71012930778c131e68",
+        "output_schema_digest": "sha256:4594b3559c27f56527748d5dab749e7c0ccbe1020161b5c3c58510a758e107c1",
         "permission": "READ_ONLY"
       },
       {
@@ -2903,7 +2903,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_runbook_preview",
         "input_schema_digest": "sha256:969fc97a23094626699e0fde63cd83c89cd48337f2f1a02a33e985c056993d85",
         "name": "cruxible_runbook_preview",
-        "output_schema_digest": "sha256:ab5717c06787ed9fe900a0a94b8be60366aabee83fe47baff19c45d349034d63",
+        "output_schema_digest": "sha256:06fe7a75417c4f03f0a5aef382f15b82d5e0db99a1a375e1edf0ec0170837851",
         "permission": "READ_ONLY"
       },
       {

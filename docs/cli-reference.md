@@ -3195,6 +3195,30 @@ or outside the Runbook. Order problems name a read of what only a later step
 writes, or of what no Line writes. It is composed from accepted definitions
 only: nothing runs and no outcome is predicted.
 
+Each step also lists what its run needs from outside accepted state, one
+`needs` line per input: a workspace `file`, the `files` a glob matches, a
+`fetch`, or a `capture` its Trigger hands over. Each names where it reads (the
+path, glob or URL, resolved from the Line's parameters), the CaptureContract's
+format and limits, and the Line parameter it comes from. The parameter's
+description, when the params Contract gives one, follows on its own line as
+written. A workspace file also says whether it is there now, checked with the
+daemon's own workspace reader: `present`, `absent`, `refused` with the reason
+a run would refuse it (a symbolic link, a path outside the workspace, a file
+over the byte limit), or `no_workspace` when no workspace is attached. That
+check stats each path component and reads no byte of the file. A fetch lists
+the origins the Line permits. `--json` (and the MCP `cruxible_runbook_preview`
+tool) carries the same list as each step's `inputs`.
+
+~~~text
+   1  Line:security.sbom-import.app  Procedure:security.sbom-import
+      needs  file sbom.cdx.json (json, at most 1 MiB, parameter relative_path): absent
+        The CycloneDX JSON SBOM of the application, exported by your build.
+~~~
+
+A run that cannot find the file refuses `workspace_file_read_refused` with the
+path in its message, and its details name the `relative_path`, the
+`parameter` and its `description`. Its repair says where to place the file.
+
 ## inbox
 
 ~~~text
@@ -3239,6 +3263,14 @@ Reading needs read permission; dispositions need governed write.
 `cruxible next` reports one `line_inbox_unread` row per Line with unread items,
 with the count (the Line's volume) and the `cruxible inbox list --line LINE
 --status unread` that shows them; the row clears once each item is judged.
+
+`cruxible next` reports a `line_input_missing` row for each workspace file that
+an enabled Line, or a Line that a live Runbook runs, reads and that is not in
+the workspace. The row names the path, the parameter and its description, and
+its repair says where to place the file. It is `setup` while the Line has never
+run, and `repair` once a run read the file and it was then removed. The files
+come from an index kept as Line and Runbook definitions are accepted, and each
+is checked with one stat: `next` never scans the workspace.
 
 ## prediction
 
@@ -3624,6 +3656,12 @@ perform, the repair is dropped and the facet carries `repair_hidden: true` and
 renders for the caller's surface: a CLI command here, an MCP tool call on
 `cruxible_next`.
 Empty `items` means only that no work exists in the explicitly observed domains.
+The text output ends with `Unobserved:` naming each domain it could not observe
+and why (the file catalog could not be read, the access profile does not cover
+instance sources, no projection markers were read). A domain with nothing to
+observe is left out: with no file catalog (`files.yaml`), neither workspace
+sources nor projections are named. `--json` keeps the full `unobserved_domains`
+list.
 
 Rows are typed: each carries `severity`, `reason`, `subject_identity`,
 `related_identities`, `detail`, a `repair` (with a runnable `command` when the
