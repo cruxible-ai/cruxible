@@ -14,7 +14,6 @@ from cruxible_client.contracts import SemanticFieldDelta
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
-    ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
     Sha256Value,
@@ -33,7 +32,6 @@ from cruxible_client.contracts.claims import (
     ClaimRetirementAttribution,
     ClaimRetirementReason,
     ClaimStatement,
-    claim_artifact_digest,
     parse_claim,
     render_claim,
 )
@@ -240,50 +238,6 @@ def _current_dependents(
             continue
         result[claim.identity.name] = (path, claim)
     return result
-
-
-def _successor_claim(
-    claim: ClaimArtifact,
-    *,
-    successor_type: ClaimType,
-    disposition: MigrationResultDisposition,
-) -> ClaimArtifact:
-    successor_digest = claim_type_digest(successor_type).tagged
-    statement = claim.statement.model_copy(update={"claim_type_digest": successor_digest})
-    found = False
-    pins: list[ArtifactPin] = []
-    for pin in claim.pins:
-        if pin.target == successor_type.identity and pin.role == "claim-type":
-            pins.append(pin.model_copy(update={"artifact_digest": successor_digest}))
-            found = True
-        else:
-            pins.append(pin)
-    if not found:
-        raise ClaimTypeMigrationError(
-            f"{ClaimTypeMigrationError.code}: dependent {claim.identity.name} lacks its "
-            "ClaimType pin"
-        )
-    pins.sort(
-        key=lambda item: (
-            item.role.encode("utf-8"),
-            item.target.qualified.encode("utf-8"),
-            item.artifact_digest.encode("ascii"),
-        )
-    )
-    return claim.model_copy(
-        update={
-            "statement": statement,
-            "pins": tuple(pins),
-            "lifecycle": ArtifactLifecycle(
-                state=(
-                    "retired"
-                    if claim.lifecycle.state == "retired" or disposition == "retire"
-                    else "live"
-                ),
-                predecessor_digest=claim_artifact_digest(claim).tagged,
-            ),
-        }
-    )
 
 
 def resolve_claim_type_succession(

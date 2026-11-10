@@ -396,22 +396,6 @@ def creation_order(
     return (depth, kind, key_order(key), member)
 
 
-def _value_clause(value: SubjectKeyValue) -> tuple[str, tuple[object, ...]]:
-    # Every column up to the value is constrained, so each form is one seek.
-    if isinstance(value, bool):
-        return (
-            "literal_type='boolean' AND literal_text IS NULL AND literal_integer_text IS NULL "
-            "AND literal_boolean=?",
-            (int(value),),
-        )
-    if isinstance(value, int):
-        return (
-            "literal_type='integer' AND literal_text IS NULL AND literal_integer_text=?",
-            (str(value),),
-        )
-    return "literal_type='string' AND literal_text=?", (value,)
-
-
 # ``+lifecycle`` keeps the planner on ``claims_by_subject_predicate`` (see
 # ``typed_state.LIVE_SLOT_CLAIMS_SQL``). A key part is a literal or (a pair
 # kind's end) a Subject; a literal key ClaimType never holds a Subject object,
@@ -940,20 +924,6 @@ def assign_creation_id(
         key_values(key),
         taken=lambda candidate: candidate in names or view.taken(kind, candidate),
     )
-
-
-def single_key_holders(
-    connection: sqlite3.Connection, tree: Mapping[str, bytes], kind: str, text: str
-) -> tuple[str, ...]:
-    """The live Subjects whose single key ``text`` spells, by path (none, one, or several)."""
-
-    found = single_key(tree, kind)
-    if found is None:
-        return ()
-    value = single_key_value(found, text)
-    if value is None:
-        return ()
-    return subjects_with_key(connection, kind, ((found.predicate, value),))
 
 
 def key_ambiguous_message(kind: str, holders: Sequence[str]) -> str:
@@ -2605,7 +2575,6 @@ __all__ = [
     "live_key_claims",
     "single_key",
     "key_ambiguous_message",
-    "single_key_holders",
     "single_key_value",
     "subject_creation_shape",
     "write_create_change_shape",

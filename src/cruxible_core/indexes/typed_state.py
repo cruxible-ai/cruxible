@@ -883,11 +883,7 @@ def vocabulary_terms(source: Any, *, path: str) -> tuple[tuple[str, str, str, st
         ClaimArtifact,
     )
     from cruxible_client.contracts.discovery import normalize_discovery_term as normal
-    from cruxible_client.contracts.semantic import SemanticAddress
     from cruxible_client.contracts.subjects import SubjectShell, subject_reuse_signature
-
-    def whole(address: SemanticAddress) -> bool:
-        return address == SemanticAddress.whole_artifact(address.artifact_path)
 
     rows: set[tuple[str, str, str, str, str]] = set()
     if isinstance(source, ClaimType):
