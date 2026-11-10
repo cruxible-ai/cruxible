@@ -913,16 +913,6 @@ def ordered_key_values(
     return tuple((predicate, found[predicate]) for predicate in subject_kind.keys)
 
 
-def ordered_key_parts(
-    subject_kind: SubjectKind, key: Mapping[str, SubjectKeyValue]
-) -> tuple[SubjectKeyPart, ...]:
-    """The public typed parts, over the same canonical key validation."""
-    return tuple(
-        SubjectKeyPart(predicate=predicate, value=value)  # type: ignore[arg-type]
-        for predicate, value in ordered_key_values(subject_kind, key)
-    )
-
-
 __all__ = [
     "MAX_ID_ATTEMPTS",
     "MAX_KEY_DEPTH",
@@ -959,7 +949,6 @@ __all__ = [
     "key_value_problem",
     "live_subject_kind",
     "minted_subject_id",
-    "ordered_key_parts",
     "parse_subject_kind",
     "render_key_part",
     "render_key_slug",

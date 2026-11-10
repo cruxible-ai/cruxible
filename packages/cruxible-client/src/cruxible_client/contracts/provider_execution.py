@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from cruxible_client.contracts.canonical import (
     Sha256Value,
-    composed_canonical_digest,
     normalize_canonical,
     typed_digest,
 )
@@ -583,19 +582,6 @@ def provider_invocation_output_digest(output: object) -> str:
         Sha256Value,
         PROVIDER_INVOCATION_OUTPUT_DOMAIN,
         {"output": normalize_canonical(output)},
-    ).tagged
-
-
-def provider_invocation_output_digest_of_bytes(encoded: bytes) -> str:
-    """``provider_invocation_output_digest`` of the value whose exact canonical bytes these are.
-
-    A Source's output is often already held as its verified canonical bytes (the
-    Capture material); the digest composes them instead of encoding the value
-    again. The caller must have checked that ``encoded`` is canonical.
-    """
-
-    return Sha256Value(
-        composed_canonical_digest(PROVIDER_INVOCATION_OUTPUT_DOMAIN, {}, {"output": encoded})
     ).tagged
 
 

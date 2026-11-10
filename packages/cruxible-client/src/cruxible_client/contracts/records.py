@@ -19,10 +19,6 @@ from cruxible_client.contracts.shapes import (
 )
 
 
-class RecordSchemaError(ValueError):
-    """The named Contract needed by a record is unavailable."""
-
-
 def record_field_names(schema: Contract) -> dict[str, str]:
     """Python alias -> exact wire name, shared by constructors, values and stubs."""
     reserved = set(dir(Record)) | set(dir(RecordConstructor))

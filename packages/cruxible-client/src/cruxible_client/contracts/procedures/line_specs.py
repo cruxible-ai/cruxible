@@ -46,7 +46,6 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureHardCaps,
 )
 from cruxible_client.contracts.procedures.trigger_rules import (
-    trigger_capture_source,
     validate_trigger_input,
 )
 from cruxible_client.contracts.procedures.windows import (
@@ -702,5 +701,4 @@ __all__ = [
     "line_spec_path",
     "parse_line_spec",
     "render_line_spec",
-    "trigger_capture_source",
 ]

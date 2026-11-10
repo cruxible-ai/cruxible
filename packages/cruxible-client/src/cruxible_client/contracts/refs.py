@@ -15,7 +15,6 @@ graph decompiles to the typed form and lowers back to the same bytes.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -111,12 +110,6 @@ def input_ref(*path: str) -> Ref:
     return make_ref("input", *path)
 
 
-def param_ref(name: str, *path: str) -> Ref:
-    """``$params.<name>``: one Line parameter."""
-
-    return make_ref("param", name, *path)
-
-
 def step_ref(step: str, *path: str) -> Ref:
     """``$steps.<step>.<path>``: an earlier step's output (or a member of it)."""
 
@@ -146,12 +139,6 @@ def ref_from_graph_text(text: str) -> Ref | None:
     return make_ref(root, *members)  # type: ignore[arg-type]
 
 
-def is_ref_data(value: object) -> bool:
-    """Whether authored JSON names a reference (an object with a ``$ref`` key)."""
-
-    return isinstance(value, dict) and "$ref" in value
-
-
 def concise(value: object) -> object:
     """A review rendering of authored JSON: each ``{"$ref": ...}`` as its ``$...`` text.
 
@@ -171,36 +158,14 @@ def concise(value: object) -> object:
     return value
 
 
-def iter_refs(value: object) -> Iterator[Ref]:
-    """Every :class:`Ref` nested in a typed value (models, mappings, sequences)."""
-
-    if isinstance(value, Ref):
-        yield value
-        return
-    if isinstance(value, BaseModel):
-        for name in type(value).model_fields:
-            yield from iter_refs(getattr(value, name))
-        return
-    if isinstance(value, dict):
-        for member in value.values():
-            yield from iter_refs(member)
-        return
-    if isinstance(value, list | tuple):
-        for member in value:
-            yield from iter_refs(member)
-
-
 __all__ = [
     "GRAPH_PREFIX",
     "Ref",
     "RefRoot",
     "concise",
     "input_ref",
-    "is_ref_data",
     "item_ref",
-    "iter_refs",
     "make_ref",
-    "param_ref",
     "ref_from_graph_text",
     "step_ref",
 ]

@@ -1487,14 +1487,6 @@ ResultValue: TypeAlias = Annotated[
 ]
 
 
-class RefusalValue(_Shape):
-    """``refusal<C>``: one operation refusal code with its typed body."""
-
-    code: str
-    contract: ContractRef
-    body: dict[str, Any]
-
-
 ContractResolver = Callable[[ContractRef], "Contract | None"]
 EnumResolver = Callable[[str], "tuple[str, ...] | None"]
 
@@ -2598,7 +2590,6 @@ __all__ = [
     "RecordType",
     "RecordValue",
     "RefusalType",
-    "RefusalValue",
     "ResultType",
     "ResultValue",
     "StringType",

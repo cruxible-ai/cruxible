@@ -74,7 +74,6 @@ INBOX_ITEM_SELECTOR_PATTERN = r"^INB-[0-9a-f]{12,64}$"
 INBOX_SUBJECT_REF_PATTERN = (
     r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/[^\x00-\x1f\x7f]{1,1024}$"
 )
-_ITEM_ID = re.compile(INBOX_ITEM_ID_PATTERN)
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 InboxItemStatus: TypeAlias = Literal["unread", "acknowledged", "dismissed", "linked"]
@@ -322,10 +321,6 @@ def inbox_payload_preview(payload: CanonicalValue) -> ShownValue:
     return summary_value(payload)
 
 
-def is_inbox_item_id(value: str) -> bool:
-    return _ITEM_ID.fullmatch(value) is not None
-
-
 __all__ = [
     "INBOX_ITEM_ID_PATTERN",
     "INBOX_ITEM_MAX_BYTES",
@@ -357,5 +352,4 @@ __all__ = [
     "InboxSighting",
     "inbox_item_id",
     "inbox_payload_preview",
-    "is_inbox_item_id",
 ]

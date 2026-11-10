@@ -690,15 +690,6 @@ def capture_list_fields(contract: Contract) -> tuple[tuple[str, str, int], ...]:
     )
 
 
-def refusal_detail_contract(
-    operation: ProviderOperation, code: str, contracts: Mapping[str, Contract]
-) -> Contract | None:
-    refusal = operation.refusals.get(code)
-    if refusal is None or refusal.contract.digest is None:
-        return None
-    return contracts.get(refusal.contract.digest)
-
-
 # -- compiler typing views -------------------------------------------------------------
 
 
@@ -722,7 +713,6 @@ __all__ = [
     "closure_lookup",
     "contract_closure",
     "operation_signature_digest",
-    "refusal_detail_contract",
     "validate_operation_value",
     "validate_typed_number_encoding",
     "validate_operations",
