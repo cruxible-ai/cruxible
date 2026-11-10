@@ -2167,21 +2167,79 @@ class _RunRefusal(Exception):
         )
 
 
+@dataclass(frozen=True)
+class WorkspaceInputContext:
+    """What a refused workspace read was for: its path, parameter and the author's description."""
+
+    relative_path: str | None
+    parameter: str | None
+    description: str | None
+
+    def details(self) -> dict[str, object]:
+        return {
+            key: value
+            for key, value in (
+                ("relative_path", self.relative_path),
+                ("parameter", self.parameter),
+                ("description", self.description),
+            )
+            if value is not None
+        }
+
+
+def workspace_input_repair(path_class: str, context: WorkspaceInputContext) -> str | None:
+    """Where to put the file a ``missing`` or ``binding`` refusal could not read; else None."""
+
+    if context.relative_path is None or path_class not in ("missing", "binding"):
+        return None
+    about = ""
+    if context.parameter is not None:
+        about = f" (parameter {context.parameter}" + (
+            f": {context.description})" if context.description else ")"
+        )
+    where = (
+        "in the attached workspace"
+        if path_class == "missing"
+        else "in a workspace attached to this instance (or an operationally allowed root)"
+    )
+    return (
+        f"Place the file this Line reads at {context.relative_path} {where}{about}, "
+        "then run it again."
+    )
+
+
 def _workspace_refusal(
-    exc: ValidationError | WorkspaceFileReadRefused, *, node_id: str
+    exc: ValidationError | WorkspaceFileReadRefused,
+    *,
+    node_id: str,
+    context: WorkspaceInputContext | None = None,
 ) -> _RunRefusal:
-    """A workspace Source refusal, typed to its path class and naming its repair."""
+    """A workspace Source refusal, typed to its path class and naming its repair.
+
+    With ``context``, the refusal names the path the Line reads, the parameter
+    it comes from and that parameter's description; a ``missing`` or
+    ``binding`` refusal's first repair says where to place the file.
+    """
 
     if isinstance(exc, WorkspaceFileReadRefused):
+        context = context or WorkspaceInputContext(None, None, None)
+        placement = workspace_input_repair(exc.path_class, context)
         details: dict[str, object] = {
             "path_class": exc.path_class,
-            "repair_commands": list(exc.repair_commands),
+            "repair_commands": [
+                *([] if placement is None else [placement]),
+                *exc.repair_commands,
+            ],
+            **context.details(),
         }
         if exc.workspace_names:
             details["workspace_names"] = list(exc.workspace_names)
+        message = str(exc)
+        if context.relative_path is not None and exc.path_class in ("missing", "binding"):
+            message = f"{message}: {context.relative_path}"
         return _RunRefusal(
             "workspace_file_read_refused",
-            str(exc),
+            message,
             node_id=node_id,
             detail_code=exc.path_class,
             details=details,
@@ -2547,6 +2605,7 @@ class ProcedureExecutor:
         # A sink harness told whether each sink's value is complete (the law's
         # real sinks belong to the Claims terminal).
         self.completeness_probe = completeness_probe
+        self.parameter_contract: ArtifactNameRef | None = None
 
     def _use_plan(self, accepted: AcceptedProcedure) -> ProcedureExecutionPlan:
         """Run against ``accepted``'s execution plan: its references resolve through it."""
@@ -2572,6 +2631,8 @@ class ProcedureExecutor:
         plan = self._use_plan(accepted)
         self._verify_correspondence(admission, accepted, prepared.accepted_state_materials)
         self.slot_bindings = {item.slot: item for item in plan.slot_bindings}
+        # A workspace refusal names the parameter's description from it.
+        self.parameter_contract = accepted.procedure.definition.parameter_contract
         try:
             existing_records = self.journal.select_records(
                 admission.journal_stream,
@@ -3843,20 +3904,70 @@ class ProcedureExecutor:
             AliasProvenanceV1(whole=extra) if current is None else current.merged(extra)
         )
 
+    def _workspace_input_context(
+        self, node: CallNode, resolved_request: object
+    ) -> WorkspaceInputContext:
+        """The path a workspace call reads, its Line parameter and that parameter's description.
+
+        Read only when a read refuses: one params Contract resolution at the
+        admitted coordinate, never on the run's ordinary path.
+        """
+
+        from cruxible_client.contracts.shapes import contract_ref_for_identity
+        from cruxible_core.procedures.declared_inputs import (
+            parameter_description,
+            parameter_reference,
+            workspace_location_key,
+        )
+
+        authored = node.input if isinstance(node.input, dict) else {}
+        key = workspace_location_key(authored)
+        resolved = resolved_request.get(key) if isinstance(resolved_request, dict) else None
+        parameter = parameter_reference(authored.get(key))
+        description = None
+        if (
+            parameter is not None
+            and self.parameter_contract is not None
+            and self.contract_resolver is not None
+        ):
+            try:
+                contract = self.contract_resolver(
+                    contract_ref_for_identity(self.parameter_contract.target)
+                )
+            except ValueError:
+                contract = None
+            description = parameter_description(contract, parameter)
+        return WorkspaceInputContext(
+            relative_path=resolved if isinstance(resolved, str) else None,
+            parameter=parameter,
+            description=description,
+        )
+
     def _executed_workspace_request(
         self, node: CallNode, resolved_request: object
     ) -> ExecutedWorkspaceFileSourceRequestV2:
         """The authored workspace request as the daemon executes it, or a typed refusal."""
 
         if self.workspace_file_reader is None:
+            context = self._workspace_input_context(node, resolved_request)
+            placement = workspace_input_repair("binding", context)
             raise _RunRefusal(
                 "workspace_file_read_refused",
-                "No daemon-local workspace reader is available.",
+                "No daemon-local workspace reader is available."
+                + (
+                    ""
+                    if context.relative_path is None
+                    else f" The Line reads {context.relative_path}."
+                ),
                 node_id=node.node_id,
                 detail_code="binding",
                 details={
                     "path_class": "binding",
-                    "repair_commands": ["attach a workspace or configure an allowed root"],
+                    "repair_commands": [
+                        *([] if placement is None else [placement]),
+                        "attach a workspace or configure an allowed root",
+                    ],
+                    **context.details(),
                 },
             )
         try:
@@ -3880,7 +3991,11 @@ class ProcedureExecutor:
         try:
             return self.workspace_file_reader.resolve(authored)
         except WorkspaceFileReadRefused as exc:
-            raise _workspace_refusal(exc, node_id=node.node_id) from exc
+            raise _workspace_refusal(
+                exc,
+                node_id=node.node_id,
+                context=self._workspace_input_context(node, resolved_request),
+            ) from exc
 
     def _authored_workspace_glob(
         self, node: CallNode, resolved_request: object
@@ -4248,7 +4363,11 @@ class ProcedureExecutor:
                         read_at=self.clock.now(),
                     )
                 except (ValidationError, WorkspaceFileReadRefused) as exc:
-                    raise _workspace_refusal(exc, node_id=node.node_id) from exc
+                    raise _workspace_refusal(
+                        exc,
+                        node_id=node.node_id,
+                        context=self._workspace_input_context(node, resolved_request),
+                    ) from exc
                 provider_payload = workspace_read.provider_input
                 source_read_receipt = workspace_read.receipt
                 self._append_event(
