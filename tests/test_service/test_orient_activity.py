@@ -269,7 +269,10 @@ def test_every_source_lists_its_events_merged_newest_first(world) -> None:  # ty
     assert landed.contract.startswith("CaptureContract:") and landed.unavailable
     sequences = [row.sequence for row in rows[9:]]
     assert sequences == list(range(sequences[0], -1, -1))
-    assert rows[-1].ref is None and rows[-2].ref == rows[-2].proposal is not None
+    # Every generation but genesis records its accepting admission in its header
+    # (the world's helpers accept as settlement does), so each names its proposal.
+    assert rows[-1].ref is None
+    assert all(row.ref == row.proposal is not None for row in rows[9:-1])
     # The first row with a get-readable ref is the next read.
     assert answer.next[0] == f"cruxible get {line}"
     # The wire form (what HTTP, the SDK and MCP carry) reads back as the same rows.

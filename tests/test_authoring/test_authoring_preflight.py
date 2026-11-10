@@ -42,6 +42,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.store import AuthoringIntentStore
+from cruxible_core.ledger.generation_facts import AcceptingAdmission
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
@@ -138,6 +139,7 @@ def _seed_claim_surface(
         actor_binding=ChangeActorBinding(actor_id="owner"),
         proposal_actor_id="owner",
         sequence=1,
+        accepting_admission=AcceptingAdmission.of(proposed.admission),
     )
     publisher = instance.activation_publisher()
     projection = publisher.prebuild(bundle, base=base)
