@@ -3188,8 +3188,10 @@ and the item's 10 most recent dispositions, newest first, with
 Dispositions are yours, never automatic: `ack` (seen, owed nothing), `dismiss --reason` (recorded verbatim), or `link` to the
 proposal you wrote or to an accepted Subject such as a note. Repeating the
 item's current decision records nothing. Posting the same dedupe key again
-creates no new item: it counts the sighting, and an item you already decided is
-`unread` again with that decision still shown, so you judge it again.
+creates no new item: it counts the sighting (`occurrences`, and
+`recurred_since_disposition` once decided), and the item keeps its status and
+decision. The same key is the same payload, so a re-sighting is not new work;
+a changed payload is a new key and a new `unread` item.
 Reading needs read permission; dispositions need governed write.
 
 `cruxible next` reports one `line_inbox_unread` row per Line with unread items,

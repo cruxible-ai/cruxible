@@ -5195,7 +5195,8 @@ def _line_inbox_items(
 
     The count is the Line's volume, read from a maintained per-Line tally, so
     the row costs the same however long the inbox's history is. An item that
-    recurs after a disposition counts as unread again.
+    recurs after a disposition keeps its status and decision (a re-sighting
+    of the same payload is not new work), so it does not count as unread again.
     """
 
     if not access_profile.permits("instance"):
