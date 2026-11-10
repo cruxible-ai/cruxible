@@ -23,6 +23,7 @@
     "cruxible_init",
     "cruxible_whoami",
     "cruxible_server_info",
+    "cruxible_console",
     "cruxible_kit_status",
     "cruxible_kit_add",
     "cruxible_provider_install",

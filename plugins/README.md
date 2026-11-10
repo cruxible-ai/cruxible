@@ -90,14 +90,14 @@ back") covers it.
 ## Local use and pre-release testing
 
 With no explicit daemon transport, the adapter finds or auto-starts the local
-daemon. The default tier is **admin**; the pinned 25-tool allowlist still hides
+daemon. The default tier is **admin**; the pinned 26-tool allowlist still hides
 the rest of the catalog. Admin permits endpoints, not unlawful state: evidence,
 principals, Mandates and approval policy still apply. A separate agent session
 (its own principal) reviews the exact candidate; never self-approve, including with auth off. The single
 plugin does not enforce separate identities while auth is off.
 
-The plugin catalog measures 18,287 estimated model-visible tokens (input schemas
-and descriptions, JSON characters/4), pinned below 18,300. The existing MCP
+The plugin catalog measures 18,387.75 estimated model-visible tokens (input
+schemas and descriptions, JSON characters/4), pinned below 18,400. The existing MCP
 default profile retains its separate 10,400 ceiling; full-catalog registration
 is not what this plugin advertises. Instructions remain below 300 estimated
 tokens, without exhaustive tool lists. Output-schema wire size is separate
@@ -105,7 +105,8 @@ from this estimate; actual host tokenization/tool deferral can differ.
 
 Before there is an instance, `cruxible_server_info` can auto-start its daemon;
 [First run, step by step](#first-run-step-by-step) initializes against it.
-Never store keys or tokens in the plugin.
+`cruxible_console` opens the read-only console in the user's browser, no CLI
+needed. Never store keys or tokens in the plugin.
 
 For a pre-release checkout, override the plugin's server command in a local
 host configuration. Use an existing environment with the checkout's matching
