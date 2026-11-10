@@ -187,10 +187,10 @@ def test_an_unbound_workspace_never_borrows_a_remembered_local_instance(
 
 # -- the invariant, row by row --------------------------------------------------
 #
-# A remembered instance is used only when discovery finished normally and found
-# no workspace marker, or the remembered instance is remote. It is never used
-# because discovery was cut short or because a marker was found but could not be
-# read.
+# A remembered instance is used only when discovery found no workspace marker,
+# or the remembered instance is remote. Discovery never stops short: it finds a
+# trusted marker, refuses at an untrusted one (another user's directory) or at
+# one it cannot read, or completes with none.
 
 _REMEMBERED = {
     "none": {},
@@ -202,7 +202,7 @@ _REMEMBERED = {
     "remote": {"server_url": "https://remote.example.test", "instance_id": "inst_remembered"},
 }
 _ROWS = [
-    (marker, binding, remembered, walk)
+    (marker, binding, remembered, marker_owner, between)
     for marker, bindings in (
         ("none", ("none",)),
         ("git", ("none",)),
@@ -210,17 +210,19 @@ _ROWS = [
     )
     for binding in bindings
     for remembered in _REMEMBERED
-    for walk in ("normal", "other_owner_at_marker", "other_owner_below_marker")
-    if not (marker == "none" and walk == "other_owner_at_marker")
+    for marker_owner in (("self",) if marker == "none" else ("self", "other"))
+    # An other-owned, marker-free folder between the start and the marker.
+    for between in ("no", "yes")
 ]
 
 
-def _expected(marker: str, binding: str, remembered: str, walk: str) -> str:
-    if walk == "other_owner_at_marker":
+def _expected(marker: str, binding: str, remembered: str, marker_owner: str) -> str:
+    """The outcome the invariant allows; the folder in between never changes it."""
+
+    if marker != "none" and marker_owner == "other":
         return "refused"
-    if walk == "other_owner_below_marker" or marker != "cruxible":
-        # The walk ended normally (an other-owned folder with no marker is its
-        # ceiling) with no .cruxible marker in reach.
+    if marker != "cruxible":
+        # Discovery completed and found no .cruxible marker.
         return "none" if remembered == "none" else "remembered"
     if binding == "invalid":
         return "refused"
@@ -240,14 +242,15 @@ def _outcome(**kwargs: object) -> str:
     return "refused" if mismatch.startswith("workspace_unbound") else "none"
 
 
-@pytest.mark.parametrize(("marker", "binding", "remembered", "walk"), _ROWS)
+@pytest.mark.parametrize(("marker", "binding", "remembered", "marker_owner", "between"), _ROWS)
 def test_the_remembered_instance_invariant(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     marker: str,
     binding: str,
     remembered: str,
-    walk: str,
+    marker_owner: str,
+    between: str,
 ) -> None:
     home = tmp_path / "home"
     project = home / "project"
@@ -262,20 +265,20 @@ def test_the_remembered_instance_invariant(
             _bind(project, "inst_bound")
         if binding == "invalid":
             (project / ".cruxible" / "coverage.json").write_text("{not json", encoding="utf-8")
-    other_owned = {
-        "normal": set(),
-        "other_owner_at_marker": {project.resolve()},
-        "other_owner_below_marker": {(project / "mid").resolve()},
-    }[walk]
+    other_owned = set()
+    if marker_owner == "other":
+        other_owned.add(project.resolve())
+    if between == "yes":
+        other_owned.add((project / "mid").resolve())
     monkeypatch.setattr(
         workspace_root_contract, "_owned_by_user", lambda path, _status: path not in other_owned
     )
 
     outcome = _outcome(environ={}, remembered=_REMEMBERED[remembered], cwd=start, home=home)
 
-    assert outcome == _expected(marker, binding, remembered, walk)
+    assert outcome == _expected(marker, binding, remembered, marker_owner)
     if outcome == "remembered":
-        assert marker != "cruxible" or walk != "normal" or remembered == "remote"
+        assert marker != "cruxible" or remembered == "remote"
 
 
 # -- daemon-backed: two projects, one daemon ----------------------------------
@@ -477,3 +480,26 @@ def test_init_workspace_b_already_bound_from_an_unrelated_folder_with_no_context
     assert "Created Cruxible host" not in again.stderr
     assert (project_b / ".cruxible" / "coverage.json").read_bytes() == coverage
     assert not first_run["context"].exists()
+
+
+def test_an_other_owned_folder_inside_b_never_hands_commands_to_a(
+    first_run: dict[str, Path],  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round 3: a root-created B/mid has no marker, so it never ends the walk."""
+
+    _run("init", "--principal-id", "alice")
+    project_b = first_run["scratch"] / "outside" / "B"
+    (project_b / "mid" / "sub").mkdir(parents=True)
+    monkeypatch.chdir(project_b)
+    _run("init", "--principal-id", "bob")
+    instance_b = _binding(project_b)["instance_id"]
+    other_owned = {(project_b / "mid").resolve()}
+    monkeypatch.setattr(
+        workspace_root_contract, "_owned_by_user", lambda path, _status: path not in other_owned
+    )
+    monkeypatch.chdir(project_b / "mid" / "sub")
+
+    shown = _json("context", "show")
+    assert (shown["instance_id"], shown["instance_source"]) == (instance_b, "workspace")
+    assert _json("whoami")["actor_id"] == "bob"
