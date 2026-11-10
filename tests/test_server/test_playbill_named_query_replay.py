@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import Cruxible, CruxibleClient
-from cruxible_client.authoring.blocks import _query_backing
+from cruxible_client.authoring.blocks import _evaluated_query_backing
 from cruxible_client.contracts.compact_query import QueryRequest, QueryResultRecord
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDefinitionSpec
@@ -207,22 +207,22 @@ def test_a_block_backing_pins_an_explicit_null_binding(
     served: tuple[CruxibleClient, str, Any],
 ) -> None:
     client, instance_id, instance = served
-    backing = _query_backing(
+    backing = _evaluated_query_backing(
         client,
         instance_id,
         name=f"QueryDefinition:{BY_STATUS}",
         parameters={"optional_status": None},
         coordinate=_coordinate(instance),
         evaluation_time=WHEN,
-    )
-    defaulted = _query_backing(
+    )[0]
+    defaulted = _evaluated_query_backing(
         client,
         instance_id,
         name=f"QueryDefinition:{BY_STATUS}",
         parameters={},
         coordinate=_coordinate(instance),
         evaluation_time=WHEN,
-    )
+    )[0]
     assert [(item.name, item.value) for item in backing.resolved_parameter_bindings] == [
         ("optional_status", None)
     ]
@@ -270,14 +270,14 @@ def test_a_block_backing_repins_a_query_past_the_surface_ceiling(
     client, instance_id, instance = served
 
     def backing() -> Any:
-        return _query_backing(
+        return _evaluated_query_backing(
             client,
             instance_id,
             name=f"QueryDefinition:{QUERY_NAME}",
             parameters={},
             coordinate=_coordinate(instance),
             evaluation_time=WHEN,
-        )
+        )[0]
 
     uncapped = backing()
     monkeypatch.setattr(compact_module, "COMPACT_QUERY_MAX_RESULTS", 1)

@@ -279,25 +279,6 @@ def _claim_backings(
     return result
 
 
-def _query_backing(
-    client: CruxibleClient,
-    instance_id: str,
-    *,
-    name: str,
-    parameters: Mapping[str, object],
-    coordinate: AcceptedCoordinate,
-    evaluation_time: datetime,
-) -> ProjectionQueryBacking:
-    return _evaluated_query_backing(
-        client,
-        instance_id,
-        name=name,
-        parameters=parameters,
-        coordinate=coordinate,
-        evaluation_time=evaluation_time,
-    )[0]
-
-
 def _escaped(text: str) -> str:
     return " ".join(text.split()).replace("|", "\\|")
 
