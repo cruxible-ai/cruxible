@@ -30,7 +30,11 @@ from cruxible_client.contracts.providers import (
     provider_expected_implementation_records,
     provider_manifest_digest,
 )
-from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
+from cruxible_client.contracts.repairs import (
+    HandEditInstruction,
+    HandEditRepair,
+    RepairOperation,
+)
 from cruxible_client.contracts.shapes import ContractRef
 from cruxible_core.errors import RequestRefusedError
 from cruxible_core.providers.provider_runtime_contract import (
@@ -103,29 +107,20 @@ class PackageRegistrationDocumentV1(_Strict):
     def pinned_operations(self, digests: ContractDigests) -> tuple[ProviderOperation, ...]:
         """Every operation with each Contract pinned to its accepted digest.
 
-        Refuses ``cruxible.provider.operation_contract_unresolved`` naming the
-        first Contract version not accepted at the install base.
+        Refuses ``cruxible.provider.operation_contract_unresolved`` when any
+        Contract version the operations pin is not accepted at the install base
+        (counting them and naming the first), or when a pinned digest differs
+        from the accepted one.
         """
 
+        self._refuse_unaccepted_contracts(digests)
         pinned: list[ProviderOperation] = []
         for operation in sorted(self.operations, key=lambda item: item.name.encode("utf-8")):
 
             def pin(ref: ContractRef, *, owner: str = operation.name) -> ContractRef:
                 digest = digests(ref)
-                if digest is None:
-                    raise RequestRefusedError(
-                        "cruxible.provider.operation_contract_unresolved",
-                        f"Operation {owner!r} pins {ref.spelling}, which is not accepted here.",
-                        repair=HandEditRepair(
-                            hand_edit=HandEditInstruction(
-                                target=f"Contract {ref.spelling}",
-                                required_change=(
-                                    "Accept the Contract versions the package's operations "
-                                    "pin before installing it (a kit ships them)."
-                                ),
-                            )
-                        ),
-                    )
+                if digest is None:  # pragma: no cover - refused by the closure check above
+                    raise AssertionError(f"{ref.spelling} is unaccepted after the closure check")
                 if ref.digest is not None and ref.digest != digest:
                     raise RequestRefusedError(
                         "cruxible.provider.operation_contract_unresolved",
@@ -153,6 +148,38 @@ class PackageRegistrationDocumentV1(_Strict):
                 )
             )
         return tuple(pinned)
+
+    def _refuse_unaccepted_contracts(self, digests: ContractDigests) -> None:
+        """Refuse once, counting every pinned Contract version not accepted here.
+
+        A provider's Contracts arrive with a kit, so the usual cause is installing
+        the package by name on an instance where no kit that uses it was added.
+        """
+
+        refs = {
+            ref.spelling: ref
+            for operation in self.operations
+            for ref in (
+                operation.in_,
+                operation.out,
+                *(refusal.contract for refusal in operation.refusals.values()),
+            )
+        }
+        missing = sorted(
+            (spelling for spelling, ref in refs.items() if digests(ref) is None),
+            key=lambda spelling: spelling.encode("utf-8"),
+        )
+        if not missing:
+            return
+        raise RequestRefusedError(
+            "cruxible.provider.operation_contract_unresolved",
+            f"{self.manifest.distribution.name} cannot be installed here yet: "
+            f"{len(missing)} of the {len(refs)} Contract versions its operations use are "
+            f"not accepted on this instance (first: {missing[0]}). A provider's Contracts "
+            "arrive with a kit: add a kit that uses this provider (cruxible kit add), which "
+            "installs the provider too, or install the provider after such a kit is added.",
+            repair=RepairOperation(operation="cruxible.kit.add"),
+        )
 
     def provider_definition(
         self,
