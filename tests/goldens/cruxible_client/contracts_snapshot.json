@@ -68639,7 +68639,7 @@
           },
           "RunCounts": {
             "additionalProperties": false,
-            "description": "What one Line run did, in counts: the line a reader checks before \"succeeded\".\n\n``status`` says the run finished; this says what it achieved. ``written``\ncounts new, revising and inverse Claims across the run's claims terminals;\n``settled`` and ``proposed`` split them by how each terminal delivered\n(``proposed`` includes a change still waiting on the Line's open proposal).\n``unchanged`` counts re-observed and no-op restatements, ``retired`` the\nretirements. ``refused`` counts the items not written (every finding but\nan incomplete source), with ``top_refusals`` naming the most frequent codes\namong the findings the run kept. ``inbox`` counts the items this run posted\nto its Line's inbox; when the inbox could not be read it is the count the\nrun's journaled ``post_inbox`` summaries prove, or ``None`` when they prove\nnone (findings routed to the inbox are not journaled). ``complete`` is\nfalse when the run recorded incompleteness, with ``incomplete_reasons``\nnaming each node and kind. ``needs_attention`` is true when the run was\nincomplete, refused an item, posted to the inbox, or its inbox count is\nunknown (``None``): an unreadable count never reads as nothing posted.",
+            "description": "What one Line run did, in counts: the line a reader checks before \"succeeded\".\n\n``status`` says the run finished; this says what it achieved. ``written``\ncounts new, revising and inverse Claims across the run's claims terminals;\n``settled`` and ``proposed`` split them by how each terminal delivered\n(``proposed`` includes a change still waiting on the Line's open proposal).\n``unchanged`` counts re-observed and no-op restatements, ``retired`` the\nretirements. ``refused`` counts the items not written (every finding but\nan incomplete source), with ``top_refusals`` naming the most frequent codes\namong the findings the run kept. ``inbox`` counts the items this run posted\nto its Line's inbox; when the inbox could not be read it is the count the\nrun's journaled ``post_inbox`` summaries prove, or ``None`` when they prove\nnone (findings routed to the inbox are not journaled). It splits into\n``inbox_new``, the postings that made a new item, and ``inbox_seen_again``,\nthe re-sightings of an item already there (which keep its status and\ndecision); both are ``None`` when the split is unknown (the inbox could\nnot be read, or the counts were recorded before the split existed).\n``inbox_unposted`` counts the items an inbox cap left out of this run's\nposts. ``complete`` is false when the run recorded incompleteness, with\n``incomplete_reasons`` naming each node and kind. ``needs_attention`` is\ntrue when the run was incomplete, refused an item, posted a new inbox item,\nleft items out under an inbox cap (they may be new: nothing posted them),\nor posted to the inbox without a known split: an unreadable count never\nreads as nothing new. A run whose posts were all re-sightings does not\nneed attention for them.",
             "properties": {
               "complete": {
                 "title": "Complete",
@@ -68658,6 +68658,41 @@
                 ],
                 "default": 0,
                 "title": "Inbox"
+              },
+              "inbox_new": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Inbox New"
+              },
+              "inbox_seen_again": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Inbox Seen Again"
+              },
+              "inbox_unposted": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Inbox Unposted",
+                "type": "integer"
               },
               "incomplete_reasons": {
                 "default": [],
@@ -100438,6 +100473,65 @@
             "title": "Inbox"
           }
         },
+        "inbox_new": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "inbox_new",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Inbox New"
+          }
+        },
+        "inbox_seen_again": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "inbox_seen_again",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Inbox Seen Again"
+          }
+        },
+        "inbox_unposted": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "inbox_unposted",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Inbox Unposted",
+            "type": "integer"
+          }
+        },
         "incomplete_reasons": {
           "default": [],
           "default_json_serializable": true,
@@ -100652,7 +100746,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "What one Line run did, in counts: the line a reader checks before \"succeeded\".\n\n``status`` says the run finished; this says what it achieved. ``written``\ncounts new, revising and inverse Claims across the run's claims terminals;\n``settled`` and ``proposed`` split them by how each terminal delivered\n(``proposed`` includes a change still waiting on the Line's open proposal).\n``unchanged`` counts re-observed and no-op restatements, ``retired`` the\nretirements. ``refused`` counts the items not written (every finding but\nan incomplete source), with ``top_refusals`` naming the most frequent codes\namong the findings the run kept. ``inbox`` counts the items this run posted\nto its Line's inbox; when the inbox could not be read it is the count the\nrun's journaled ``post_inbox`` summaries prove, or ``None`` when they prove\nnone (findings routed to the inbox are not journaled). ``complete`` is\nfalse when the run recorded incompleteness, with ``incomplete_reasons``\nnaming each node and kind. ``needs_attention`` is true when the run was\nincomplete, refused an item, posted to the inbox, or its inbox count is\nunknown (``None``): an unreadable count never reads as nothing posted.",
+        "description": "What one Line run did, in counts: the line a reader checks before \"succeeded\".\n\n``status`` says the run finished; this says what it achieved. ``written``\ncounts new, revising and inverse Claims across the run's claims terminals;\n``settled`` and ``proposed`` split them by how each terminal delivered\n(``proposed`` includes a change still waiting on the Line's open proposal).\n``unchanged`` counts re-observed and no-op restatements, ``retired`` the\nretirements. ``refused`` counts the items not written (every finding but\nan incomplete source), with ``top_refusals`` naming the most frequent codes\namong the findings the run kept. ``inbox`` counts the items this run posted\nto its Line's inbox; when the inbox could not be read it is the count the\nrun's journaled ``post_inbox`` summaries prove, or ``None`` when they prove\nnone (findings routed to the inbox are not journaled). It splits into\n``inbox_new``, the postings that made a new item, and ``inbox_seen_again``,\nthe re-sightings of an item already there (which keep its status and\ndecision); both are ``None`` when the split is unknown (the inbox could\nnot be read, or the counts were recorded before the split existed).\n``inbox_unposted`` counts the items an inbox cap left out of this run's\nposts. ``complete`` is false when the run recorded incompleteness, with\n``incomplete_reasons`` naming each node and kind. ``needs_attention`` is\ntrue when the run was incomplete, refused an item, posted a new inbox item,\nleft items out under an inbox cap (they may be new: nothing posted them),\nor posted to the inbox without a known split: an unreadable count never\nreads as nothing new. A run whose posts were all re-sightings does not\nneed attention for them.",
         "properties": {
           "complete": {
             "title": "Complete",
@@ -100671,6 +100765,41 @@
             ],
             "default": 0,
             "title": "Inbox"
+          },
+          "inbox_new": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Inbox New"
+          },
+          "inbox_seen_again": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Inbox Seen Again"
+          },
+          "inbox_unposted": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Inbox Unposted",
+            "type": "integer"
           },
           "incomplete_reasons": {
             "default": [],

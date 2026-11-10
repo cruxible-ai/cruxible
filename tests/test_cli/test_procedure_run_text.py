@@ -106,3 +106,32 @@ def test_a_succeeded_line_run_with_an_incomplete_source_says_it_needs_attention(
         "Counts: written 0 (settled 0, proposed 0); unchanged 0; refused 0; inbox 0; "
         "INCOMPLETE (scores count_mismatch)",
     ]
+
+
+def test_a_run_that_only_sees_inbox_items_again_says_so_and_needs_no_attention(capsys) -> None:
+    from cruxible_client.contracts.procedures.node_summary import EgressRunSummary, run_counts
+
+    post = EgressRunSummary(kind="post_inbox", emitted=100)
+    resighted = run_counts([post], inbox=100, inbox_new=0)
+    out = _echo(capsys, status="succeeded", counts=resighted, next_operation={"kind": "done"})
+    assert out.splitlines()[:2] == [
+        "audit.sign-line: succeeded",
+        "Counts: written 0 (settled 0, proposed 0); unchanged 0; refused 0; "
+        "inbox 0 new, 100 seen again",
+    ]
+    mixed = run_counts([post], inbox=100, inbox_new=4)
+    assert mixed.needs_attention and mixed.inbox_seen_again == 96
+
+
+def test_counts_recorded_before_the_split_still_read_and_keep_their_flag() -> None:
+    """A stored Runbook step from before the split: the total alone, flagged as it was."""
+
+    from cruxible_client.contracts.procedures.node_summary import RunCounts
+    from cruxible_core.cli.commands.playbill import _counts_text
+
+    legacy = RunCounts.model_validate({"complete": True, "inbox": 100, "needs_attention": True})
+    assert (legacy.inbox_new, legacy.inbox_seen_again) == (None, None)
+    assert _counts_text(legacy).endswith("; inbox 100")
+    quiet = RunCounts.model_validate({"complete": True, "inbox": 0, "needs_attention": False})
+    assert not quiet.needs_attention
+    assert RunCounts.model_validate(legacy.model_dump(mode="json")) == legacy

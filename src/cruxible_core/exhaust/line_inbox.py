@@ -78,7 +78,9 @@ _PREVIEW: TypeAdapter[ShownValue] = TypeAdapter(ShownValue)
 #: from the journal, which it only ever caches.
 #: 4: an identical re-sighting keeps its decision; older projections replay once.
 #: 5: the activity rows (new items and decisions, by journal position).
-_SCHEMA_VERSION = 5
+#: 6: each posting says whether it made a new item (``created``); a layout-5
+#: projection gains the column in place, its earlier rows unknown (NULL).
+_SCHEMA_VERSION = 6
 _TABLES = ("progress", "items", "postings", "unread", "dispositions", "incomplete", "activity")
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS incomplete (singleton INTEGER PRIMARY KEY, payload_digest TEXT NOT NULL);
@@ -93,9 +95,11 @@ CREATE INDEX IF NOT EXISTS items_recent ON items(last_seen, item_id);
 CREATE INDEX IF NOT EXISTS items_status ON items(status, last_seen, item_id);
 CREATE INDEX IF NOT EXISTS items_line ON items(line, last_seen, item_id);
 CREATE INDEX IF NOT EXISTS items_line_status ON items(line, status, last_seen, item_id);
+-- created: 1 when the posting made a new item, 0 for a re-sighting, NULL when
+-- the projection recorded it before it kept the difference.
 CREATE TABLE IF NOT EXISTS postings (
  run_id TEXT NOT NULL, node_id TEXT NOT NULL, item_key TEXT NOT NULL, item_id TEXT NOT NULL,
- PRIMARY KEY(run_id, node_id, item_key)) WITHOUT ROWID;
+ created INTEGER, PRIMARY KEY(run_id, node_id, item_key)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS unread (line TEXT PRIMARY KEY, count INTEGER NOT NULL);
 -- What the activity feed lists: each new item and each decision, by journal
 -- position (a posting batch's items in order), newest first through activity_recent.
@@ -299,7 +303,11 @@ class LineInboxStore:
             conn = self._open_projection()
             conn.row_factory = sqlite3.Row
             try:
-                if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
+                version = conn.execute("PRAGMA user_version").fetchone()[0]
+                if version == 5:
+                    # Additive: keep the projection rather than replay the journal.
+                    self._add_created_column(conn)
+                elif version != _SCHEMA_VERSION:
                     # Disposable: drop it and replay the journal from the start.
                     for table in _TABLES:
                         conn.execute(f"DROP TABLE IF EXISTS {table}")
@@ -349,6 +357,25 @@ class LineInboxStore:
                 conn.commit()
             finally:
                 conn.close()
+
+    @staticmethod
+    def _add_created_column(conn: sqlite3.Connection) -> None:
+        """Layout 5 to 6 in one transaction: the column and the version move together.
+
+        Idempotent as well: a column an earlier stopped upgrade left behind is
+        kept, not added twice.
+        """
+
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(postings)")}
+            if "created" not in columns:
+                conn.execute("ALTER TABLE postings ADD COLUMN created INTEGER")
+            conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+        except BaseException:
+            conn.rollback()
+            raise
+        conn.commit()
 
     # -- projection --------------------------------------------------------
 
@@ -401,9 +428,13 @@ class LineInboxStore:
         """Apply one posting; ``True`` when it made a new item, not a sighting of one."""
 
         item_id = posting["item_id"]
+        row = conn.execute(
+            "SELECT envelope,status FROM items WHERE item_id=?", (item_id,)
+        ).fetchone()
+        # The posting row keeps what applying it learns: a new item or a sighting.
         cursor = conn.execute(
-            "INSERT OR IGNORE INTO postings VALUES(?,?,?,?)",
-            (posting["run_id"], posting["node_id"], posting["item_key"], item_id),
+            "INSERT OR IGNORE INTO postings VALUES(?,?,?,?,?)",
+            (posting["run_id"], posting["node_id"], posting["item_key"], item_id, int(row is None)),
         )
         if cursor.rowcount == 0:
             return False  # The same run delivered this item already.
@@ -412,9 +443,6 @@ class LineInboxStore:
             posted_at=_instant(posting["posted_at"]),
             source_capture_digests=tuple(posting["source_capture_digests"]),
         )
-        row = conn.execute(
-            "SELECT envelope,status FROM items WHERE item_id=?", (item_id,)
-        ).fetchone()
         if row is None:
             envelope = InboxItemEnvelope(
                 item_id=item_id,
@@ -795,14 +823,24 @@ class LineInboxStore:
             for row in rows
         )
 
-    def posted_by_run(self, run_id: str) -> int:
-        """How many items one run posted (new items and re-sightings): one index range."""
+    def posted_by_run(self, run_id: str) -> tuple[int, int | None]:
+        """How many items one run posted, and how many of them were new items.
+
+        The rest re-sighted an item already in the inbox. The second count is
+        ``None`` when a posting predates the projection keeping the difference.
+        One index range, the same one the total reads.
+        """
 
         if not self.root.is_dir():
-            return 0
+            return 0, 0
         with self.locked() as conn:
-            row = conn.execute("SELECT COUNT(*) FROM postings WHERE run_id=?", (run_id,)).fetchone()
-        return int(row[0])
+            row = conn.execute(
+                "SELECT COUNT(*), COUNT(created), COALESCE(SUM(created), 0) "
+                "FROM postings WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+        total, known, new = int(row[0]), int(row[1]), int(row[2])
+        return total, new if known == total else None
 
     def unread_by_line(self) -> tuple[tuple[str, int], ...]:
         """Each Line with unread items and how many, by Line."""

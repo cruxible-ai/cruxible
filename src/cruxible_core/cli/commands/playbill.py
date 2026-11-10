@@ -7491,6 +7491,19 @@ def _cli_repair(repair: Any) -> str:
     return " ".join(parts)
 
 
+def _inbox_counts_text(counts: Any) -> str:
+    """``inbox 0 new, 100 seen again``: new items apart from re-sightings, when known."""
+
+    new, again = counts.inbox_new, counts.inbox_seen_again
+    if counts.inbox is None:
+        text = "inbox ?"
+    elif counts.inbox == 0 or new is None or again is None:
+        text = f"inbox {counts.inbox}"
+    else:
+        text = f"inbox {new} new" + (f", {again} seen again" if again else "")
+    return text + (f", {counts.inbox_unposted} over the cap" if counts.inbox_unposted else "")
+
+
 def _counts_text(counts: Any) -> str:
     """A run's counts on one line; incompleteness and refusals named."""
 
@@ -7504,7 +7517,7 @@ def _counts_text(counts: Any) -> str:
     if counts.top_refusals:
         refused += " (" + ", ".join(f"{i.code} {i.count}" for i in counts.top_refusals) + ")"
     parts.append(refused)
-    parts.append(f"inbox {'?' if counts.inbox is None else counts.inbox}")
+    parts.append(_inbox_counts_text(counts))
     if not counts.complete:
         reasons = ", ".join(f"{r.node} {r.kind}" for r in counts.incomplete_reasons)
         parts.append("INCOMPLETE" + (f" ({reasons})" if reasons else ""))

@@ -258,7 +258,7 @@ def test_proposal_refusal_projects_as_a_repairable_public_node_terminal(
         lambda _instance, _run_id: records,
     )
     # The stand-in instance has no inbox to count.
-    monkeypatch.setattr(procedure_run_service, "_run_inbox_postings", lambda *_args: 0)
+    monkeypatch.setattr(procedure_run_service, "_run_inbox_postings", lambda *_args: (0, 0))
     state = procedure_run_service._state_from_records(  # noqa: SLF001
         SimpleNamespace(body_store=lambda: fixture.bodies),  # type: ignore[arg-type]
         run_id=prepared.admission.run_id,

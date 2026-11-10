@@ -3133,11 +3133,16 @@ step (and each `line run`) carries `counts`:
 | `unchanged`, `retired` | restatements; retirements |
 | `refused` | items not written, with `top_refusals` (code and count) |
 | `inbox` | items the run posted to its Line's inbox; null when unreadable and the journal proves none (counts as needing attention) |
+| `inbox_new`, `inbox_seen_again` | `inbox` split into postings that made a new item and re-sightings of an item already there; null when the split is unknown (an unreadable inbox, or a run recorded before the split) |
+| `inbox_unposted` | items an inbox cap left out of the run's posts |
 | `complete` | false with `incomplete_reasons` (node and kind) |
 
 `attention_steps` names the steps that were incomplete, refused an item,
-posted to the inbox or could not count its inbox; the CLI prints it after
-`completed` and marks each such step with `!`.
+posted a new inbox item, left items out under an inbox cap (nothing posted
+them, so some may be new), or posted to the inbox without a known split. A
+step whose posts were all re-sightings is not among them. The CLI prints the
+list after `completed`, marks each such step with `!`, and shows the inbox as
+`inbox 0 new, 100 seen again` (with `, N over the cap` when a cap cut items).
 
 `cruxible runbook preview NAME` shows what each step can read (Queries, and
 the ClaimTypes, kinds and keys behind them, late reads marked), write and
@@ -3183,8 +3188,10 @@ and the item's 10 most recent dispositions, newest first, with
 Dispositions are yours, never automatic: `ack` (seen, owed nothing), `dismiss --reason` (recorded verbatim), or `link` to the
 proposal you wrote or to an accepted Subject such as a note. Repeating the
 item's current decision records nothing. Posting the same dedupe key again
-creates no new item: it counts the sighting, and an item you already decided is
-`unread` again with that decision still shown, so you judge it again.
+creates no new item: it counts the sighting (`occurrences`, and
+`recurred_since_disposition` once decided), and the item keeps its status and
+decision. The same key is the same payload, so a re-sighting is not new work;
+a changed payload is a new key and a new `unread` item.
 Reading needs read permission; dispositions need governed write.
 
 `cruxible next` reports one `line_inbox_unread` row per Line with unread items,
