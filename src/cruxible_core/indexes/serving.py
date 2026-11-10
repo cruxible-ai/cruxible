@@ -32,6 +32,7 @@ from cruxible_core.indexes.sqlite import (
     retain_serving_head_stamp_locked,
     stamp_ring_guard,
 )
+from cruxible_core.storage import fsync_directory as _fsync_directory
 from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 
 SERVING_MANIFEST_FILE = "serving.json"
@@ -116,14 +117,6 @@ class ServingManifest(BaseModel):
         if self.schema_version != 1:
             raise ValueError("serving projection schema version is unsupported")
         return self
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _file_digest(path: Path) -> str:

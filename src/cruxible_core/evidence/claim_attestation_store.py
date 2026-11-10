@@ -44,6 +44,7 @@ from cruxible_client.contracts.claim_attestations import (
 )
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_core.storage import fsync_directory as _fsync_directory
 
 STORE_DIRECTORY = "claim-attestations-v1"
 LOCK_FILE = ".claim-attestations-v1.lock"
@@ -64,14 +65,6 @@ def _error(suffix: str, message: str) -> ClaimAttestationStoreError:
 
 def _render(value: BaseModel) -> bytes:
     return canonical_bytes(value.model_dump(mode="json")) + b"\n"
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _exclusive_write(path: Path, content: bytes) -> None:

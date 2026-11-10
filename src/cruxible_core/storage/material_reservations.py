@@ -22,6 +22,7 @@ from cruxible_core.exhaust.records import (
     JournalEventKindV1,
     StoredProcedureJournalRecordV1,
 )
+from cruxible_core.storage import fsync_directory as _fsync_directory
 from cruxible_core.storage.cas import (
     BodyAccessContext,
     CasObjectMetadata,
@@ -283,14 +284,6 @@ def reserve_admission_material_body(
                 store.release_locked(reservation.reservation_id)
             raise
     return reservation
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 class ProcedureMaterialReservationStore:

@@ -48,17 +48,10 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 from cruxible_core.service.proposals.proposal_receive import load_proposal_receive_config
 from cruxible_core.service.uploads import CaptureUploadRefused, CaptureUploadStore, UploadLimits
+from cruxible_core.storage import fsync_directory as _fsync_directory
 from cruxible_core.storage.preview_fence import PreviewWriteRefused
 
 _log = structlog.get_logger("cruxible.provider_runtime")
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 class PlaybillInstanceManager:

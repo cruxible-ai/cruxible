@@ -38,6 +38,7 @@ from cruxible_core.indexes.sqlite import (
     record_source_built_piece,
 )
 from cruxible_core.ledger.protocols import LedgerRepositoryProtocol
+from cruxible_core.storage import fsync_directory as _fsync_directory
 from cruxible_core.storage.cas import BodyProjectionProtocol
 
 if TYPE_CHECKING:
@@ -105,14 +106,6 @@ def _write_all(descriptor: int, content: bytes) -> None:
         if written <= 0:  # pragma: no cover - defensive OS contract
             raise ProjectionPublicationError("projection write made no progress")
         view = view[written:]
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _fsync_file(path: Path) -> None:

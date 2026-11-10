@@ -60,17 +60,10 @@ from cruxible_core.proposals.proposals import (
     ProposalEvaluationRecord,
     ProposalWithdrawalRecord,
 )
+from cruxible_core.storage import fsync_directory as _fsync_directory
 from cruxible_core.storage.preview_fence import is_previewing, refuse_write_while_previewing
 
 _EvidenceModelT = TypeVar("_EvidenceModelT", bound=BaseModel)
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _exclusive_canonical_write(path: Path, payload: bytes, *, durable: bool = True) -> None:

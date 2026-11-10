@@ -45,6 +45,7 @@ from cruxible_core.ledger.git_objects import PackStore
 from cruxible_core.ledger.git_signing import load_private, sign_commit
 from cruxible_core.ledger.git_signing import verify_commit as verify_signature
 from cruxible_core.runtime.phase_timing import timed_phase
+from cruxible_core.storage import fsync_directory as _fsync_directory
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _PROPOSAL_REF_RE = re.compile(r"^refs/proposals/[a-z][a-z0-9_.-]{0,127}/[a-z][a-z0-9_.-]{0,127}$")
@@ -3329,14 +3330,6 @@ def _tree_order_key(
         return name.encode("utf-8", errors="surrogateescape") + suffix
 
     return key
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 _CONFIG_READS_CAPACITY = 64

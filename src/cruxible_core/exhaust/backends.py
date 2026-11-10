@@ -33,6 +33,7 @@ from cruxible_core.exhaust.records import (
     journal_stream_strings,
     verify_journal_range,
 )
+from cruxible_core.storage import fsync_directory as _fsync_directory
 
 _FRAME_HEADER_BYTES = 8
 _MAX_RECORD_BYTES = 16 * 1024 * 1024
@@ -89,14 +90,6 @@ class JournalWriterStateV1(_StrictBackendModel):
         if not value or len(value) > 256 or value != value.strip():
             raise ValueError("journal fencing token must be nonblank canonical text")
         return value
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _atomic_write(path: Path, content: bytes, *, mode: int = 0o600) -> None:

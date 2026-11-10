@@ -197,6 +197,7 @@ from cruxible_core.proposals.settlement import (
 from cruxible_core.runtime.phase_timing import phase
 from cruxible_core.runtime.retention import DEFAULT_RETENTION, RetentionSettings
 from cruxible_core.startup_progress import slow_step
+from cruxible_core.storage import fsync_directory as _fsync_directory
 from cruxible_core.storage.cas import (
     CasObjectMetadata,
     ContentAddressedBodyStore,
@@ -226,14 +227,6 @@ def _resolved(path: Path) -> Path:
 
 def _is_within(candidate: Path, root: Path) -> bool:
     return candidate == root or root in candidate.parents
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _exclusive_write(path: Path, content: bytes, mode: int = 0o600) -> None:
