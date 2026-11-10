@@ -994,6 +994,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         attr="server_group",
     ),
     "mcp": _command("mcp", "mcp_cmd", "Serve the MCP tools over stdio."),
+    "console": _command(
+        "console", "console_cmd", "Open the read-only console in a browser (loopback only)."
+    ),
 }
 
 

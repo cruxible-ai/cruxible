@@ -41,3 +41,7 @@ playbill-history/
 
 # Generated, credential-free plugin transport; personal MCP configs stay ignored.
 !/plugins/cruxible/.mcp.json
+
+# The built console `cruxible console` serves (scripts/build_console.py); release
+# builds create it, and the wheel ships it through hatch artifacts.
+/src/cruxible_core/console_dist/

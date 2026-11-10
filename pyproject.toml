@@ -98,6 +98,13 @@ Repository = "https://github.com/cruxible-ai/cruxible"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cruxible_core"]
+# The built console (scripts/build_console.py) is Git-ignored, so hatch would
+# leave it out; artifacts ship it whenever it exists at build time.
+artifacts = ["src/cruxible_core/console_dist/**"]
+
+[tool.hatch.build.targets.sdist]
+# `uv build` makes the wheel from the sdist, so the sdist must carry it too.
+artifacts = ["src/cruxible_core/console_dist/**"]
 
 [tool.uv.workspace]
 members = ["packages/cruxible-client"]
