@@ -1082,7 +1082,7 @@ def create_host(
             replace=replace,
             **config_transport,
         )
-    _activate_server_instance(result.instance_id)
+    _activate_server_instance(result.instance_id, workspace=git_workspace)
     if output_json:
         _emit_json(_json_receipt(result))
         return
@@ -1348,7 +1348,7 @@ def init_playbill(
         )
     for marker in markers:
         marker.unlink()
-    _remember_initialized_host(result.instance_id, workspace_bound=git_workspace is not None)
+    _remember_initialized_host(result.instance_id, workspace=git_workspace)
     owner_token = _mint_owner_credential(owner, principal_id=principal_id)
     # The reviewer gets what `principal add` gives a principal: a settings file
     # and, with auth on, its own graph_write credential, so `context use
@@ -1474,12 +1474,12 @@ def _create_host_for_init(
             replace=replace,
             **dict(config_transport or {}),
         )
-    _remember_initialized_host(created.instance_id, workspace_bound=workspace is not None)
+    _remember_initialized_host(created.instance_id, workspace=workspace)
     click.echo(f"Created Cruxible host {created.instance_id} @ {transport}", err=True)
     return created.instance_id
 
 
-def _remember_initialized_host(instance_id: str, *, workspace_bound: bool) -> None:
+def _remember_initialized_host(instance_id: str, *, workspace: Path | None) -> None:
     """Add the host init made to the remembered context, never replacing another.
 
     An empty context (or one naming this host) remembers it as the active
@@ -1490,7 +1490,7 @@ def _remember_initialized_host(instance_id: str, *, workspace_bound: bool) -> No
 
     remembered = load_cli_context().instance_id
     if remembered is None or remembered == instance_id:
-        _activate_server_instance(instance_id)
+        _activate_server_instance(instance_id, workspace=workspace)
         return
     _root_ctx_obj()["instance_id"] = instance_id
     if _root_ctx_obj().get("cruxible_kept_context_note") == instance_id:
@@ -1498,7 +1498,7 @@ def _remember_initialized_host(instance_id: str, *, workspace_bound: bool) -> No
     _root_ctx_obj()["cruxible_kept_context_note"] = instance_id
     where = (
         "this folder's .cruxible/coverage.json selects it here"
-        if workspace_bound
+        if workspace is not None
         else f"select it with --instance-id {instance_id} or `cruxible context use {instance_id}`"
     )
     click.echo(

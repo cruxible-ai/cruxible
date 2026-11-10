@@ -61,7 +61,26 @@ def mcp_floor_workspace_root(environ: Mapping[str, str] | None = None) -> Path:
     as "no workspace".
     """
 
-    return mcp_workspace_root(environ)
+    env = os.environ if environ is None else environ
+    root = mcp_workspace_root(env)
+    if MCP_WORKSPACE_ROOT_ENV in env:
+        _refuse_nested_configured_root(root)
+    return root
+
+
+def _refuse_nested_configured_root(root: Path) -> None:
+    """A configured root must be the workspace root the shared resolver finds from it.
+
+    A directory inside a Git worktree or below a folder holding ``.cruxible/``
+    is not a second workspace: floor operations there would write a nested one.
+    """
+
+    found = resolve_workspace_root(root)
+    if found is not None and found.root != root:
+        raise ConfigError(
+            "CRUXIBLE_MCP_WORKSPACE_ROOT must name the workspace root for floor operations "
+            f"(the Git worktree root, or the folder holding .cruxible/): {found.root}"
+        )
 
 
 def optional_mcp_workspace_root(environ: Mapping[str, str] | None = None) -> Path | None:
@@ -73,7 +92,9 @@ def optional_mcp_workspace_root(environ: Mapping[str, str] | None = None) -> Pat
 
     env = os.environ if environ is None else environ
     if MCP_WORKSPACE_ROOT_ENV in env:
-        return mcp_workspace_root(env)
+        root = mcp_workspace_root(env)
+        _refuse_nested_configured_root(root)
+        return root
     try:
         return mcp_workspace_root(env)
     except WorkspaceDirectoryConflict:

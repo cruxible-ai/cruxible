@@ -15,6 +15,10 @@ from cruxible_client.contracts.workspace_advertisement import (
     WorkspaceAdvertisement,
     WorkspaceAdvertisementFailureCode,
 )
+from cruxible_client.contracts.workspace_root import (
+    containing_git_workspace_root,
+    git_repository_directories,
+)
 from cruxible_core.ledger.git import (
     _ASK_GIT,
     LEGACY_NOTE_REFS,
@@ -35,29 +39,7 @@ _SECTION = re.compile(r'^\s*\[\s*([\w.-]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\]\s*(?:
 _KEY = re.compile(r"^\s*([\w-]+)\s*(?:=\s*(.*))?$")
 
 
-def _repository(workspace: Path) -> tuple[Path, Path]:
-    """Resolve ordinary and linked worktrees, without consulting ambient Git variables."""
-    marker = workspace / ".git"
-    if marker.is_symlink():
-        raise ValueError("workspace_path_invalid")
-    if marker.is_file():
-        raw = marker.read_text().strip()
-        if not raw.startswith("gitdir: "):
-            raise ValueError("workspace_not_git")
-        gitdir = (workspace / raw[8:]).resolve(strict=True)
-    elif marker.is_dir():
-        gitdir = marker.resolve(strict=True)
-    else:
-        raise ValueError("workspace_not_git")
-    common_file = gitdir / "commondir"
-    common = (
-        (gitdir / common_file.read_text().strip()).resolve(strict=True)
-        if common_file.is_file()
-        else gitdir
-    )
-    if not (common / "config").is_file() or not (common / "objects").is_dir():
-        raise ValueError("workspace_not_git")
-    return gitdir, common
+_repository = git_repository_directories
 
 
 def _value(raw: str) -> str:
@@ -111,18 +93,6 @@ def _local_url_matches(workspace: Path, raw_url: str, expected_url: str) -> bool
         return str(candidate.resolve()) == expected_url
     except (OSError, RuntimeError, ValueError):
         return False
-
-
-def containing_git_workspace_root(workspace_path: Path) -> Path | None:
-    try:
-        candidate = workspace_path.expanduser().resolve(strict=True)
-        for root in (candidate, *candidate.parents):
-            if (root / ".git").exists():
-                _repository(root)
-                return root
-    except (OSError, RuntimeError, ValueError):
-        pass
-    return None
 
 
 def workspace_git_object_format(workspace_root: Path) -> GitObjectFormat | None:

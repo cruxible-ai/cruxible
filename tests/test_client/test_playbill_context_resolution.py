@@ -10,7 +10,6 @@ from click.testing import CliRunner
 from cruxible_client import Cruxible, contracts
 from cruxible_client.authoring.context import (
     ContextResolutionError,
-    _walk_roots,
     resolve_context,
 )
 from cruxible_client.authoring.sdk import SDK_CONTRACT_SNAPSHOT_DIGEST
@@ -74,8 +73,13 @@ entries:
 
 def test_missing_workspace_start_stops_walk_without_probing_parents(tmp_path: Path) -> None:
     missing = tmp_path / "missing" / "cwd"
+    _attach(tmp_path, instance_id="inst_parent", server_url="https://parent.example.test")
 
-    assert _walk_roots(missing, home=tmp_path / "home") == ()
+    resolved = resolve_context(environ={}, remembered={}, cwd=missing, home=tmp_path / "home")
+
+    assert resolved.workspace == missing
+    assert resolved.workspace_source == "local"
+    assert resolved.instance_id is None
 
 
 def test_two_cwds_resolve_their_own_workspace_before_one_global_slot(tmp_path: Path) -> None:
@@ -232,21 +236,34 @@ def test_workspace_walk_stops_at_home(tmp_path: Path) -> None:
     assert resolved.workspace_source == "local"
 
 
-def test_workspace_walk_outside_home_stops_at_the_containing_repository(tmp_path: Path) -> None:
+def test_outside_home_an_inner_repository_never_hides_the_enclosing_workspace(
+    tmp_path: Path,
+) -> None:
+    """F-001: a Git checkout inside a bound plain folder acts on that folder's instance."""
+
     home = tmp_path / "home"
-    repository = tmp_path / "external" / "repository"
-    nested = repository / "packages" / "one"
     home.mkdir()
+    project = tmp_path / "external" / "project"
+    _attach(project, instance_id="inst_project", server_url="https://project.example.test")
+    repository = project / "vendor" / "repo"
+    nested = repository / "src" / "pkg"
     nested.mkdir(parents=True)
     (repository / ".git").mkdir()
+    (repository / ".git" / "config").write_text("[core]\n", encoding="utf-8")
+    (repository / ".git" / "objects").mkdir()
 
-    roots = _walk_roots(nested.resolve(), home=home.resolve())
+    resolved = resolve_context(
+        remembered={"server_url": "https://other.example.test", "instance_id": "inst_other"},
+        environ={},
+        cwd=nested,
+        home=home,
+    )
 
-    assert roots == (nested.resolve(), nested.parent.resolve(), repository.resolve())
-    assert Path(nested.anchor) not in roots
+    assert resolved.workspace == project.resolve()
+    assert (resolved.instance_id, resolved.instance_source) == ("inst_project", "workspace")
 
 
-def test_invalid_ancestor_binding_is_skipped_with_a_warning(tmp_path: Path) -> None:
+def test_the_home_directory_binding_is_never_read(tmp_path: Path) -> None:
     home = tmp_path / "home"
     project = home / "a" / "b" / "c"
     project.mkdir(parents=True)
@@ -263,9 +280,9 @@ def test_invalid_ancestor_binding_is_skipped_with_a_warning(tmp_path: Path) -> N
         home=home,
     )
 
+    # The home directory's .cruxible is the daemon state root: never read.
     assert resolved.instance_id == "inst_mine"
-    assert len(resolved.warnings) == 1
-    assert "skipped invalid ancestor workspace binding" in resolved.warnings[0]
+    assert resolved.warnings == ()
 
 
 def test_invalid_binding_at_cwd_is_still_a_refusal(tmp_path: Path) -> None:
@@ -273,7 +290,7 @@ def test_invalid_binding_at_cwd_is_still_a_refusal(tmp_path: Path) -> None:
     (tmp_path / ".cruxible" / "coverage.json").write_text("{not json", encoding="utf-8")
 
     with pytest.raises(ContextResolutionError, match="not valid JSON"):
-        resolve_context(environ={}, cwd=tmp_path, home=tmp_path)
+        resolve_context(environ={}, cwd=tmp_path, home=tmp_path / "home")
 
 
 def test_no_workspace_escape_uses_the_remembered_context(tmp_path: Path) -> None:
@@ -297,7 +314,7 @@ def test_no_workspace_escape_uses_the_remembered_context(tmp_path: Path) -> None
     assert resolved.instance_id == "inst_global"
 
 
-def test_cli_warns_when_skipping_an_invalid_ancestor_binding(
+def test_cli_never_reads_the_home_directory_binding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _clear_target_env(monkeypatch)
@@ -319,7 +336,7 @@ def test_cli_warns_when_skipping_an_invalid_ancestor_binding(
     result = CliRunner().invoke(cli, ["context", "show", "--json"])
 
     assert result.exit_code == 0, result.output
-    assert "warning: skipped invalid ancestor workspace binding" in result.stderr
+    assert "warning" not in result.stderr
     assert json.loads(result.stdout)["instance_id"] == "inst_global"
 
 
@@ -349,7 +366,7 @@ def test_cli_no_workspace_option_bypasses_an_attachment(
     assert payload["workspace_attached"] is False
 
 
-def test_disagreeing_coverage_and_catalog_roots_refuse(tmp_path: Path) -> None:
+def test_no_binding_beyond_a_nearer_workspace_directory_is_followed(tmp_path: Path) -> None:
     coverage_root = tmp_path / "coverage-root"
     sources_root = coverage_root / "sources-root"
     project = sources_root / "project"
@@ -365,13 +382,36 @@ def test_disagreeing_coverage_and_catalog_roots_refuse(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
+    resolved = resolve_context(environ={}, remembered={}, cwd=project, home=tmp_path)
+
+    assert resolved.workspace == sources_root
+    assert resolved.workspace_binding_path is None
+    assert resolved.instance_id is None
+
+
+def test_disagreeing_coverage_and_catalog_roots_refuse(tmp_path: Path) -> None:
+    coverage_root = tmp_path / "coverage-root"
+    project = coverage_root / "sources-root" / "project"
+    project.mkdir(parents=True)
+    _attach(
+        coverage_root,
+        instance_id="inst_coverage",
+        server_url="https://coverage.example.test",
+    )
+    # A root-level catalog nearer than the binding names another workspace root.
+    catalog = coverage_root / "sources-root" / "files.yaml"
+    catalog.write_text(
+        "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries: []\n",
+        encoding="utf-8",
+    )
+
     with pytest.raises(ContextResolutionError) as raised:
         resolve_context(environ={}, cwd=project, home=tmp_path)
 
     message = str(raised.value)
     assert "workspace_binding_conflict" in message
     assert str(coverage_root / ".cruxible" / "coverage.json") in message
-    assert str(sources_root / ".cruxible" / "files.yaml") in message
+    assert str(catalog) in message
     assert "repair:" in message
 
 
