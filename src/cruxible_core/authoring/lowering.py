@@ -152,7 +152,7 @@ from cruxible_client.contracts.declared_blocks import (
     projection_window_intersecting,
     stamped_projection_windows,
 )
-from cruxible_client.contracts.errors import CruxibleError, FormatError
+from cruxible_client.contracts.errors import CanonicalEncodingError, CruxibleError, FormatError
 from cruxible_client.contracts.notes import (
     Note,
     note_digest,
@@ -590,6 +590,37 @@ def _refuse(
         message=message,
         repairs=(bounded_repair(repair_kind, repair_description, replacement),),
     )
+
+
+# What the source's capture rules raise against a working selection itself: its
+# contract and budget, its canonical encoding, the selector models. A CAS storage
+# or integrity failure (CasError) is the daemon's, never the author's selection,
+# and keeps its server-error classification.
+_WORKING_SELECTION_REFUSALS = (CaptureFormatError, CanonicalEncodingError, ValidationError)
+
+
+def _refuse_retired_source(
+    head: CaptureContractAny | None, *, source_id: str, offending_element: str
+) -> None:
+    """Refuse a new working-selection Capture under a retired source contract.
+
+    Retiring a source's CaptureContract stops new Captures under it; every
+    write-side site that captures a workspace selection gives this one refusal
+    rather than building under the retired version or reinstalling the first.
+    """
+
+    if head is not None and head.lifecycle.state != "live":
+        _refuse(
+            "cruxible.authoring.source_contract_retired",
+            offending_element,
+            f"The workspace source {source_id!r} has a retired CaptureContract; nothing new "
+            "is captured under it.",
+            repair_kind="replace_source",
+            repair_description=(
+                "Cite another source, or accept a live successor of this source's "
+                "CaptureContract first."
+            ),
+        )
 
 
 def _read_existing_capture(store: CaptureObjectStoreProtocol, digest: str) -> CaptureEnvelopeAny:
@@ -1862,6 +1893,7 @@ def _lower_claim(
         )
         head_bytes = candidate_base_tree.get(head_path)
         head = None if head_bytes is None else parse_capture_contract(head_bytes, path=head_path)
+        _refuse_retired_source(head, source_id=source.source_id, offending_element="source")
         if head is not None and head.lifecycle.state == "live":
             successor = builtin_contract_for_write(
                 foreign_source_capture_contract(source.source_id), head
@@ -1882,7 +1914,7 @@ def _lower_claim(
                 selector=source.selector.model_dump(mode="json"),
                 selected_content=source.selected_content,
             )
-        except (CruxibleError, ValueError) as exc:
+        except _WORKING_SELECTION_REFUSALS as exc:
             # The capture contracts refusing the observation -- a selector that
             # carries a locator, a selection over its byte budget -- is a
             # refusal of THIS request, and it used to leave as an unhandled
@@ -1985,6 +2017,9 @@ def _lower_claim(
             if previous_contract is None
             else parse_capture_contract(previous_contract, path=located_path)
         )
+        _refuse_retired_source(
+            located_contract, source_id=location.source_id, offending_element="located_at"
+        )
         located_successor = builtin_contract_for_write(
             foreign_source_capture_contract(location.source_id), located_contract
         )
@@ -2004,7 +2039,7 @@ def _lower_claim(
                 selected_content=location.selected_content,
                 accepted_contract=located_contract,
             )
-        except (CruxibleError, ValueError) as exc:
+        except _WORKING_SELECTION_REFUSALS as exc:
             _refuse(
                 "cruxible.authoring.working_selection_refused",
                 "located_at",
@@ -5856,6 +5891,7 @@ def _stage_note(
         )
         head_bytes = staged_tree.get(head_path)
         head = None if head_bytes is None else parse_capture_contract(head_bytes, path=head_path)
+        _refuse_retired_source(head, source_id=source.source_id, offending_element="source")
         install = True
         if head is not None and head.lifecycle.state == "live":
             successor = builtin_contract_for_write(
@@ -5882,7 +5918,7 @@ def _stage_note(
                 selector=source.selector.model_dump(mode="json"),
                 selected_content=source.selected_content,
             )
-        except (CruxibleError, ValueError) as exc:
+        except _WORKING_SELECTION_REFUSALS as exc:
             _refuse(
                 "cruxible.authoring.working_selection_refused",
                 "source.selector",

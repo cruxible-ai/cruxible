@@ -934,9 +934,15 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         "Govern owner, reviewer, and recovery public keys.",
         {
             "add": _command("playbill", "add_principal", "Propose an owner-approved principal."),
-            "rotate": _command("playbill", "rotate_principal", "Self-rotate a principal key."),
+            "rotate": _command(
+                "playbill",
+                "rotate_principal",
+                "Propose a new principal key (rotation when that principal acts).",
+            ),
             "recover": _command(
-                "playbill", "recover_principal", "Recover a principal key narrowly."
+                "playbill",
+                "recover_principal",
+                "Propose a new principal key (recovery when another principal acts).",
             ),
             "revoke": _command("playbill", "revoke_principal", "Propose principal revocation."),
         },

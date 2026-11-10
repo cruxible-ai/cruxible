@@ -295,6 +295,159 @@ def test_a_source_with_no_accepted_contract_refuses(tmp_path: Path) -> None:
     assert refused.value.error_code == "cruxible.claim_attestation.source_contract_unaccepted"
 
 
+_REFUSED_SELECTIONS = {
+    # The anchor quotes credential material the source rules never admit.
+    "secret_anchor": ("Rotated Bearer abc123token today", "Bearer abc123token", "secrets"),
+    # The selection is over the source contract's byte budget.
+    "oversize": ("x" * (1024 * 1024 + 10), "x" * (1024 * 1024 + 10), "byte budget"),
+}
+
+
+def _refused_selection(workspace: Path, case: str) -> tuple[FileEvidence, str]:
+    from cruxible_client.authoring.write_evidence import observe_evidence
+
+    line, anchor, detail = _REFUSED_SELECTIONS[case]
+    reports = workspace / "reports.md"
+    reports.write_text(reports.read_text(encoding="utf-8") + f"\n{line}\n", encoding="utf-8")
+    observed = observe_evidence(FileEvidence(file=f"reports.md#{anchor}"), workspace=workspace)
+    assert isinstance(observed, FileEvidence)
+    return observed, detail
+
+
+@pytest.mark.parametrize("case", sorted(_REFUSED_SELECTIONS))
+def test_a_selection_the_source_rules_refuse_is_a_typed_refusal(tmp_path: Path, case: str) -> None:
+    """The capture rules' refusals reach the attester typed, as write's do."""
+
+    instance, claim, _signer, workspace = _world(tmp_path)
+    observed, detail = _refused_selection(workspace, case)
+    events = instance.claim_attestation_evidence_store().events()
+    with pytest.raises(ClaimAttestationRefusal) as refused:
+        service_prepare_claim_attestation_evidence(
+            instance,
+            request=ClaimAttestationEvidenceRequest(claim_id=claim, evidence=observed),
+            actor_id="owner",
+        )
+    assert refused.value.error_code == "cruxible.claim_attestation.working_selection_refused"
+    assert "evidence.observation.selector" in str(refused.value)
+    assert detail in str(refused.value)
+    assert instance.claim_attestation_evidence_store().events() == events
+
+
+def _post_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    instance: Any,
+    request: ClaimAttestationEvidenceRequest,
+    *,
+    fail_body: str | None = None,
+) -> tuple[Any, list[str]]:
+    """POST the evidence step through the HTTP route; optionally fail one CAS body write."""
+
+    import errno
+    import os
+
+    from fastapi.testclient import TestClient
+
+    from cruxible_core.runtime import playbill_api
+    from cruxible_core.runtime.permissions import reset_permissions
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+    from cruxible_core.server.app import create_app
+    from cruxible_core.server.registry import get_registry, reset_registry
+
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
+    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    reset_permissions()
+    reset_registry()
+    get_playbill_manager().clear()
+    faults: list[str] = []
+    real_open = os.open
+
+    def full_disk(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        # The CAS writes a body through a temporary file named for its digest.
+        if (
+            fail_body is not None
+            and isinstance(path, str)
+            and path.startswith(f".{fail_body}.")
+            and kwargs.get("dir_fd") is not None
+        ):
+            faults.append(path)
+            raise OSError(errno.ENOSPC, "no space left on device")
+        return real_open(path, flags, *args, **kwargs)
+
+    try:
+        get_registry().create_governed_instance_with_id(instance.descriptor.instance_id)
+        get_playbill_manager().register(instance.descriptor.instance_id, instance)
+        monkeypatch.setattr(playbill_api, "_actor_id", lambda _instance_id: "owner")
+        with TestClient(create_app(), raise_server_exceptions=False) as client:
+            with monkeypatch.context() as patch:
+                patch.setattr(os, "open", full_disk)
+                response = client.post(
+                    f"/api/v1/{instance.descriptor.instance_id}/claim-attestations/evidence",
+                    json=request.model_dump(mode="json"),
+                )
+    finally:
+        get_playbill_manager().clear()
+        reset_registry()
+        reset_permissions()
+    return response, faults
+
+
+@pytest.mark.parametrize("case", sorted(_REFUSED_SELECTIONS))
+def test_the_route_answers_a_refused_selection_with_a_coded_400(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    world = tmp_path / "world"
+    world.mkdir()
+    instance, claim, _signer, workspace = _world(world)
+    observed, _detail = _refused_selection(workspace, case)
+    events = instance.claim_attestation_evidence_store().events()
+    response, _faults = _post_evidence(
+        tmp_path,
+        monkeypatch,
+        instance,
+        ClaimAttestationEvidenceRequest(claim_id=claim, evidence=observed),
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error_code"] == "cruxible.claim_attestation.working_selection_refused"
+    assert instance.claim_attestation_evidence_store().events() == events
+
+
+def test_a_cas_write_failure_stays_a_server_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A storage fault is the daemon's: never a refusal telling the caller to revise prose."""
+
+    import hashlib
+
+    from cruxible_client.authoring.write_evidence import observe_evidence
+
+    world = tmp_path / "world"
+    world.mkdir()
+    instance, claim, _signer, workspace = _world(world)
+    reports = workspace / "reports.md"
+    reports.write_text(
+        reports.read_text(encoding="utf-8") + "\nA fresh storage observation.\n", encoding="utf-8"
+    )
+    observed = observe_evidence(
+        FileEvidence(file="reports.md#A fresh storage observation."), workspace=workspace
+    )
+    assert isinstance(observed, FileEvidence) and observed.observation is not None
+    body = hashlib.sha256(observed.observation.selected_content).hexdigest()
+    events = instance.claim_attestation_evidence_store().events()
+    response, faults = _post_evidence(
+        tmp_path,
+        monkeypatch,
+        instance,
+        ClaimAttestationEvidenceRequest(claim_id=claim, evidence=observed),
+        fail_body=body,
+    )
+    assert faults, "the CAS temporary-file write was never reached"
+    assert response.status_code == 500, response.text
+    assert response.json()["error_code"] != ("cruxible.claim_attestation.working_selection_refused")
+    assert instance.claim_attestation_evidence_store().events() == events
+
+
 def test_the_evidence_step_and_append_are_flat_in_unrelated_claims(tmp_path: Path) -> None:
     counts: dict[int, Any] = {}
     wholes: dict[int, Any] = {}

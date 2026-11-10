@@ -5,10 +5,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import NoReturn
 
+from pydantic import ValidationError
+
 from cruxible_client.contracts.attestation_evidence import (
     ClaimAttestationEvidenceRequest,
     ClaimAttestationEvidenceResult,
 )
+from cruxible_client.contracts.captures import CaptureFormatError
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequest,
     ClaimAttestationAppendResult,
@@ -20,7 +23,7 @@ from cruxible_client.contracts.claims import (
     claim_artifact_digest,
     claim_path,
 )
-from cruxible_client.contracts.errors import CruxibleError
+from cruxible_client.contracts.errors import CanonicalEncodingError, CruxibleError
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.evidence.attestation_verification import (
     ClaimAttestationRefusal,
@@ -123,6 +126,13 @@ def service_append_claim_attestation(
 
 def _refuse_evidence(code: str, message: str, *, repair: str) -> NoReturn:
     raise ClaimAttestationRefusal(code, f"{message}. {repair}")
+
+
+# What the source's capture rules raise against the observation itself: its
+# contract and budget, its canonical encoding, the selector models. A CAS
+# storage or integrity failure (CasError) is the daemon's, never the caller's
+# selection, and keeps its server-error classification.
+_SELECTION_REFUSALS = (CaptureFormatError, CanonicalEncodingError, ValidationError)
 
 
 def service_prepare_claim_attestation_evidence(
@@ -237,8 +247,8 @@ def service_prepare_claim_attestation_evidence(
                     repair="Cite the file once in a write (it installs the source's contract), "
                     "then attest",
                 )
-            digests.add(
-                build_working_selection_capture(
+            try:
+                built = build_working_selection_capture(
                     accepted_contract=builtin_contract_for_write(
                         foreign_source_capture_contract(source), accepted
                     ),
@@ -252,8 +262,20 @@ def service_prepare_claim_attestation_evidence(
                     coordinate=observation.coordinate.model_dump(mode="json"),
                     selector=observation.selector.model_dump(mode="json"),
                     selected_content=observation.selected_content,
-                ).capture_digest
-            )
+                )
+            except _SELECTION_REFUSALS as exc:
+                # The source's capture rules refusing the observation (a secret
+                # in the anchor, a selection over the byte budget) refuse this
+                # request, as they do for write; never an unhandled server fault.
+                _refuse_evidence(
+                    "working_selection_refused",
+                    f"evidence.observation.selector: the working selection cannot be "
+                    f"captured: {exc}",
+                    repair="Anchor on prose the source rules admit and grow the window with "
+                    "surrounding lines; a URL may appear in an anchor but never in another "
+                    "selector field",
+                )
+            digests.add(built.capture_digest)
     elif isinstance(evidence, CaptureEvidence | ContractEvidence):
         planner = _Planner(
             instance,
