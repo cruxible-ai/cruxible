@@ -19,9 +19,12 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from cruxible_client.authoring.context import resolve_context
+from cruxible_client.authoring.context import ContextResolutionError, resolve_context
+from cruxible_client.contracts import workspace_root as workspace_root_contract
+from cruxible_client.contracts.workspace_root import WorkspaceBoundaryRefused
 from cruxible_core.cli.commands import playbill
 from cruxible_core.cli.main import cli
+from cruxible_core.mcp.daemon import default_socket_path
 from cruxible_core.workspace_root import resolve_workspace_root
 from tests.test_cli.test_first_run_workspace import _json, _run, first_run  # noqa: F401
 
@@ -149,7 +152,7 @@ def test_a_state_root_shaped_cruxible_binds_nothing(
     assert resolved.workspace_binding_path is None
 
 
-def test_an_unbound_workspace_never_borrows_another_folders_remembered_instance(
+def test_an_unbound_workspace_never_borrows_a_remembered_local_instance(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -159,14 +162,14 @@ def test_an_unbound_workspace_never_borrows_another_folders_remembered_instance(
     (inner / ".cruxible").mkdir(parents=True)
     plain = home / "plain"
     plain.mkdir(parents=True)
-    remembered = {
+    # The previous build's context shape: no folder recorded for the instance.
+    local = {
         "server_socket": "/tmp/daemon.sock",
         "instance_id": "inst_a",
         "instance_transport": f"unix://{Path('/tmp/daemon.sock').resolve()}",
-        "instance_workspace": str(project),
     }
 
-    inside = resolve_context(environ={}, remembered=remembered, cwd=inner, home=home)
+    inside = resolve_context(environ={}, remembered=local, cwd=inner, home=home)
     assert inside.workspace == inner
     assert inside.instance_id is None
     assert inside.instance_transport_mismatch is not None
@@ -174,13 +177,105 @@ def test_an_unbound_workspace_never_borrows_another_folders_remembered_instance(
     assert "cruxible init" in inside.instance_transport_mismatch
 
     # No workspace directory at all: the remembered context applies, as before.
-    elsewhere = resolve_context(environ={}, remembered=remembered, cwd=plain, home=home)
+    elsewhere = resolve_context(environ={}, remembered=local, cwd=plain, home=home)
     assert elsewhere.instance_id == "inst_a"
-    # A remembered instance with no recorded folder (a remote host) applies too.
-    remote = {key: value for key, value in remembered.items() if key != "instance_workspace"}
-    assert resolve_context(environ={}, remembered=remote, cwd=inner, home=home).instance_id == (
-        "inst_a"
+    # A remembered remote host applies in the unbound workspace (a local catalog).
+    remote = {"server_url": "https://remote.example.test", "instance_id": "inst_remote"}
+    in_remote = resolve_context(environ={}, remembered=remote, cwd=inner, home=home)
+    assert (in_remote.instance_id, in_remote.instance_source) == ("inst_remote", "remembered")
+
+
+# -- the invariant, row by row --------------------------------------------------
+#
+# A remembered instance is used only when discovery finished normally and found
+# no workspace marker, or the remembered instance is remote. It is never used
+# because discovery was cut short or because a marker was found but could not be
+# read.
+
+_REMEMBERED = {
+    "none": {},
+    "local": {
+        "server_socket": "/tmp/daemon.sock",
+        "instance_id": "inst_remembered",
+        "instance_transport": f"unix://{Path('/tmp/daemon.sock').resolve()}",
+    },
+    "remote": {"server_url": "https://remote.example.test", "instance_id": "inst_remembered"},
+}
+_ROWS = [
+    (marker, binding, remembered, walk)
+    for marker, bindings in (
+        ("none", ("none",)),
+        ("git", ("none",)),
+        ("cruxible", ("none", "attached", "invalid")),
     )
+    for binding in bindings
+    for remembered in _REMEMBERED
+    for walk in ("normal", "other_owner_at_marker", "other_owner_below_marker")
+    if not (marker == "none" and walk == "other_owner_at_marker")
+]
+
+
+def _expected(marker: str, binding: str, remembered: str, walk: str) -> str:
+    if walk == "other_owner_at_marker":
+        return "refused"
+    if walk == "other_owner_below_marker" or marker != "cruxible":
+        # The walk ended normally (an other-owned folder with no marker is its
+        # ceiling) with no .cruxible marker in reach.
+        return "none" if remembered == "none" else "remembered"
+    if binding == "invalid":
+        return "refused"
+    if binding == "attached":
+        return "workspace"
+    return {"none": "none", "local": "refused", "remote": "remembered"}[remembered]
+
+
+def _outcome(**kwargs: object) -> str:
+    try:
+        resolved = resolve_context(**kwargs)  # type: ignore[arg-type]
+    except (ContextResolutionError, WorkspaceBoundaryRefused):
+        return "refused"
+    if resolved.instance_source in {"workspace", "remembered"}:
+        return resolved.instance_source
+    mismatch = resolved.instance_transport_mismatch or ""
+    return "refused" if mismatch.startswith("workspace_unbound") else "none"
+
+
+@pytest.mark.parametrize(("marker", "binding", "remembered", "walk"), _ROWS)
+def test_the_remembered_instance_invariant(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    marker: str,
+    binding: str,
+    remembered: str,
+    walk: str,
+) -> None:
+    home = tmp_path / "home"
+    project = home / "project"
+    start = project / "mid" / "sub"
+    start.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    if marker == "git":
+        _git(project)
+    if marker == "cruxible":
+        (project / ".cruxible").mkdir()
+        if binding == "attached":
+            _bind(project, "inst_bound")
+        if binding == "invalid":
+            (project / ".cruxible" / "coverage.json").write_text("{not json", encoding="utf-8")
+    other_owned = {
+        "normal": set(),
+        "other_owner_at_marker": {project.resolve()},
+        "other_owner_below_marker": {(project / "mid").resolve()},
+    }[walk]
+    monkeypatch.setattr(
+        workspace_root_contract, "_owned_by_user", lambda path, _status: path not in other_owned
+    )
+
+    outcome = _outcome(environ={}, remembered=_REMEMBERED[remembered], cwd=start, home=home)
+
+    assert outcome == _expected(marker, binding, remembered, walk)
+    if outcome == "remembered":
+        assert marker != "cruxible" or walk != "normal" or remembered == "remote"
 
 
 # -- daemon-backed: two projects, one daemon ----------------------------------
@@ -276,3 +371,109 @@ def test_init_workspace_b_from_a_initializes_b_and_leaves_a_alone(
     assert _json("whoami")["actor_id"] == "carol"
     monkeypatch.chdir(project_a)
     assert _json("whoami")["actor_id"] == "alice"
+
+
+# -- review round 2 repros ------------------------------------------------------
+
+
+def _binding(folder: Path) -> dict[str, str]:
+    return json.loads((folder / ".cruxible" / "coverage.json").read_text(encoding="utf-8"))
+
+
+def test_a_marked_unbound_folder_never_acts_as_the_remembered_local_instance(
+    first_run: dict[str, Path],  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The previous build's context shape (nothing records A's folder) still refuses in B."""
+
+    _run("init", "--principal-id", "alice")
+    instance_a = _binding(first_run["folder"])["instance_id"]
+    context = json.loads(first_run["context"].read_text(encoding="utf-8"))
+    assert context["instance_id"] == instance_a
+    assert set(context) <= {
+        "server_url",
+        "server_socket",
+        "instance_id",
+        "instance_transport",
+        "principals",
+    }
+    project_b = first_run["scratch"] / "outside" / "B"
+    (project_b / ".cruxible").mkdir(parents=True)
+    monkeypatch.chdir(project_b)
+
+    refused = CliRunner().invoke(cli, ["whoami", "--json"])
+
+    assert refused.exit_code == 2, refused.output
+    assert "workspace_unbound" in refused.output
+    assert "alice" not in refused.stdout
+
+
+def test_an_other_owned_workspace_is_refused_by_name_and_used_once_named(
+    first_run: dict[str, Path],  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_a = first_run["folder"]
+    _run("init", "--principal-id", "alice")
+    project_b = first_run["scratch"] / "h" / "B"
+    (project_b / "sub").mkdir(parents=True)
+    monkeypatch.chdir(project_b)
+    _run("init", "--principal-id", "bob")
+    instance_b = _binding(project_b)["instance_id"]
+    repository = first_run["scratch"] / "h" / "G"
+    (repository / "sub").mkdir(parents=True)
+    _git(repository)
+    # Model a root-owned mount: B and the Git worktree G belong to another user.
+    other_owned = {project_b.resolve(), repository.resolve()}
+    monkeypatch.setattr(
+        workspace_root_contract, "_owned_by_user", lambda path, _status: path not in other_owned
+    )
+
+    def refused_from(folder: Path) -> None:
+        monkeypatch.chdir(folder)
+        result = CliRunner().invoke(cli, ["whoami", "--json"])
+        assert result.exit_code == 2, result.output
+        assert "cruxible.workspace.boundary_untrusted" in result.output
+        assert "owned by another user" in result.output
+        assert "CRUXIBLE_WORKSPACE=" in result.output
+        assert "alice" not in result.stdout
+
+    for folder in (project_b, project_b / "sub", repository / "sub"):
+        refused_from(folder)
+    # Without a remembered A it is the same named refusal, not "--instance-id is required".
+    context = json.loads(first_run["context"].read_text(encoding="utf-8"))
+    context.pop("instance_id")
+    context.pop("instance_transport", None)
+    first_run["context"].write_text(json.dumps(context), encoding="utf-8")
+    refused_from(project_b)
+
+    # Named explicitly, B is used: its own instance, as bob.
+    monkeypatch.setenv("CRUXIBLE_WORKSPACE", str(project_b))
+    monkeypatch.chdir(project_b / "sub")
+    shown = _json("context", "show")
+    assert (shown["instance_id"], shown["instance_source"]) == (instance_b, "workspace")
+    assert _json("whoami")["actor_id"] == "bob"
+    monkeypatch.delenv("CRUXIBLE_WORKSPACE")
+    monkeypatch.chdir(project_a)
+    assert _json("whoami")["actor_id"] == "alice"
+
+
+def test_init_workspace_b_already_bound_from_an_unrelated_folder_with_no_context(
+    first_run: dict[str, Path],  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_b = first_run["folder"]
+    _run("init", "--principal-id", "bob")
+    instance_b = _binding(project_b)["instance_id"]
+    coverage = (project_b / ".cruxible" / "coverage.json").read_bytes()
+    first_run["context"].unlink()
+    unrelated = first_run["scratch"] / "h" / "unrelated"
+    unrelated.mkdir()
+    monkeypatch.chdir(unrelated)
+    socket = str(default_socket_path(first_run["state"]))
+
+    again = _run("--server-socket", socket, "init", "--workspace", str(project_b))
+
+    assert f"already initialized here: host {instance_b}" in again.stdout
+    assert "Created Cruxible host" not in again.stderr
+    assert (project_b / ".cruxible" / "coverage.json").read_bytes() == coverage
+    assert not first_run["context"].exists()

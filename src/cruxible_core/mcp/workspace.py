@@ -12,7 +12,7 @@ from cruxible_client.contracts.workspace_layout import (
 )
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.floor.workspace_advertisement import containing_git_workspace_root
-from cruxible_core.workspace_root import resolve_workspace_root
+from cruxible_core.workspace_root import WorkspaceBoundaryRefused, resolve_workspace_root
 
 MCP_WORKSPACE_ROOT_ENV = "CRUXIBLE_MCP_WORKSPACE_ROOT"
 MCP_KEY_DIR_ENV = "CRUXIBLE_MCP_KEY_DIR"
@@ -45,7 +45,7 @@ def mcp_workspace_root(environ: Mapping[str, str] | None = None, *, guard: bool 
         return ensure_workspace_directory(root) if guard else root
     try:
         found = resolve_workspace_root(root)
-    except WorkspaceDirectoryConflict:
+    except (WorkspaceDirectoryConflict, WorkspaceBoundaryRefused):
         if guard:
             raise
         return root

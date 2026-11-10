@@ -1,8 +1,10 @@
 """The one workspace-root resolver: the CLI, the SDK context and the MCP adapter.
 
 The folder is the workspace; Git is optional. From a start directory the walk
-goes up, never past the home directory, a filesystem root, a device boundary
-or a directory this user does not own, and the root is the first of:
+goes up, never past the home directory or a filesystem root. A directory this
+user does not own, or one on another filesystem, ends the walk when it holds no
+marker and refuses (``WorkspaceBoundaryRefused``) when it holds one. The root is
+the first of:
 
 1. the nearest ancestor holding a real ``.cruxible/`` workspace directory (the
    home directory's, any daemon state root's, and one holding a state root's
@@ -30,6 +32,7 @@ from typing import Literal
 from cruxible_client.contracts.workspace_layout import (
     WORKSPACE_DIRECTORY,
     WorkspaceDirectoryConflict,
+    WorkspaceError,
     daemon_state_root,
     same_directory,
     workspace_directory_conflict,
@@ -147,9 +150,48 @@ def refuse_unusable_root(root: Path, *, state_root: Path | None = None) -> Path:
     return root
 
 
+class WorkspaceBoundaryRefused(WorkspaceError):
+    """A workspace marker lies in a directory discovery may not trust by itself.
+
+    The directory is owned by another user, or lies on another filesystem than
+    the start: as with Git's ``safe.directory``, such a ``.cruxible`` or ``.git``
+    is neither used nor skipped silently. The caller names it explicitly to use it.
+    """
+
+    error_code = "cruxible.workspace.boundary_untrusted"
+
+    def __init__(self, *, workspace: Path, marker: str, reason: str, detail: str) -> None:
+        self.workspace = str(workspace)
+        self.marker = marker
+        self.reason = reason
+        super().__init__(
+            f"{self.error_code}: {workspace} holds {marker}, but {detail}; a workspace found "
+            "across that boundary is not used unless it is named. Repair: "
+            f"CRUXIBLE_WORKSPACE={workspace} names it for this environment (for an MCP "
+            f"server, CRUXIBLE_MCP_WORKSPACE_ROOT={workspace}), or run from another folder"
+        )
+
+
 def _owner() -> int | None:
     getuid = getattr(os, "getuid", None)
     return None if getuid is None else int(getuid())
+
+
+def _owned_by_user(path: Path, status: os.stat_result) -> bool:
+    """Whether this user owns ``path`` (always, where the platform has no UIDs)."""
+
+    owner = _owner()
+    return owner is None or status.st_uid == owner
+
+
+def _ceiling(candidate: Path, status: os.stat_result, device: int) -> str | None:
+    """Why ``candidate`` is a discovery ceiling (another owner or device), or None."""
+
+    if status.st_dev != device:
+        return "it is on another filesystem than the starting folder"
+    if not _owned_by_user(candidate, status):
+        return f"it is owned by another user (uid {status.st_uid}, not {_owner()})"
+    return None
 
 
 def resolve_workspace_root(
@@ -158,9 +200,14 @@ def resolve_workspace_root(
     fallback_to_start: bool = True,
     state_root: Path | None = None,
     home: Path | None = None,
+    trust: Path | None = None,
 ) -> WorkspaceRoot | None:
     """The workspace root for ``start``, refused when it is no usable root.
 
+    Each directory's own markers are read before any ceiling applies: a
+    directory owned by another user, or on another filesystem, stops the walk
+    when it holds no marker, and refuses with ``WorkspaceBoundaryRefused`` when
+    it holds one (unless it is ``trust``, the directory the caller named).
     ``fallback_to_start=False`` answers None instead of choosing a plain start
     directory that holds no ``.cruxible`` and lies in no Git worktree (callers
     that only need to know about an existing workspace, such as custody's
@@ -170,7 +217,7 @@ def resolve_workspace_root(
     daemon_root = daemon_state_root() if state_root is None else state_root
     selected = start.expanduser().resolve(strict=True)
     home_root = (Path.home() if home is None else home).expanduser()
-    owner = _owner()
+    trusted = None if trust is None else trust.expanduser().resolve(strict=False)
     device = selected.stat().st_dev
     git_root: Path | None = None
     found: WorkspaceRoot | None = None
@@ -181,14 +228,23 @@ def resolve_workspace_root(
             status = candidate.stat()
         except OSError:
             break
-        # Another device, or a directory someone else owns (a shared /tmp), is
-        # the ceiling: nothing planted above it can become this workspace.
-        if status.st_dev != device or (owner is not None and status.st_uid != owner):
+        marked = holds_workspace_directory(candidate, state_root=daemon_root)
+        git = not marked and git_root is None and _is_git_root(candidate)
+        ceiling = None if candidate == trusted else _ceiling(candidate, status, device)
+        if ceiling is not None:
+            if marked or git:
+                raise WorkspaceBoundaryRefused(
+                    workspace=candidate,
+                    marker=f"a {WORKSPACE_DIRECTORY} workspace" if marked else "a Git worktree",
+                    reason="device" if status.st_dev != device else "owner",
+                    detail=ceiling,
+                )
+            # Nothing planted above it (a shared /tmp, another mount) is searched.
             break
-        if holds_workspace_directory(candidate, state_root=daemon_root):
+        if marked:
             found = WorkspaceRoot(candidate, "cruxible_directory")
             break
-        if git_root is None and _is_git_root(candidate):
+        if git:
             git_root = candidate
     if found is None:
         if git_root is not None:
@@ -203,6 +259,7 @@ def resolve_workspace_root(
 
 __all__ = [
     "STATE_ROOT_MARKERS",
+    "WorkspaceBoundaryRefused",
     "WorkspaceRoot",
     "WorkspaceRootSource",
     "containing_git_workspace_root",

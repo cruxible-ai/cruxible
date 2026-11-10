@@ -511,10 +511,7 @@ class ActiveInstanceChange:
     current: str
 
 
-def _activate_server_instance(
-    instance_id: str, *, workspace: Path | None = None
-) -> ActiveInstanceChange | None:
-    """Remember ``instance_id`` as the active instance (and the folder it is for)."""
+def _activate_server_instance(instance_id: str) -> ActiveInstanceChange | None:
 
     state = _current_cli_context()
     if not state.server_url and not state.server_socket:
@@ -525,7 +522,6 @@ def _activate_server_instance(
             server_url=state.server_url,
             server_socket=state.server_socket,
             instance_id=instance_id,
-            instance_workspace=None if workspace is None else str(workspace),
             instance_transport=(
                 state.server_url.rstrip("/")
                 if state.server_url
@@ -557,7 +553,6 @@ def _persist_cli_context(
             server_socket=server_socket,
             instance_id=instance_id,
             instance_transport=instance_transport,
-            instance_workspace=None,
         )
     )
 

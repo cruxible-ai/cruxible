@@ -8,6 +8,7 @@ import; this module names it for core callers.
 from __future__ import annotations
 
 from cruxible_client.contracts.workspace_root import (
+    WorkspaceBoundaryRefused,
     WorkspaceRoot,
     WorkspaceRootSource,
     refuse_unusable_root,
@@ -15,6 +16,7 @@ from cruxible_client.contracts.workspace_root import (
 )
 
 __all__ = [
+    "WorkspaceBoundaryRefused",
     "WorkspaceRoot",
     "WorkspaceRootSource",
     "refuse_unusable_root",

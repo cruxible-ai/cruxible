@@ -23,6 +23,7 @@ from cruxible_client.contracts.repairs import (
     render_served_repair,
 )
 from cruxible_client.contracts.workspace_layout import WorkspaceDirectoryConflict
+from cruxible_client.contracts.workspace_root import WorkspaceBoundaryRefused
 from cruxible_core.cli.context import (
     CliContextState,
     load_cli_context,
@@ -1086,7 +1087,13 @@ def cli(
             server_url=resolved.server_url,
             server_socket=resolved.server_socket,
         )
-    except (ConfigError, ContextResolutionError, WorkspaceDirectoryConflict) as exc:
+    except (
+        ConfigError,
+        ContextResolutionError,
+        WorkspaceBoundaryRefused,
+        WorkspaceDirectoryConflict,
+    ) as exc:
+        # A refused or unreadable workspace never falls back to remembered context.
         raise click.UsageError(str(exc)) from exc
     transport_source: str = resolved.transport_source
     if not (settings.server_url or settings.server_socket):

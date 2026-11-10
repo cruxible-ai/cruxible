@@ -59,9 +59,6 @@ class CliContextState:
     server_socket: str | None = None
     instance_id: str | None = None
     instance_transport: str | None = None
-    #: The workspace folder the remembered instance was initialized or attached
-    #: for, when one was; in another unbound workspace it does not stand in.
-    instance_workspace: str | None = None
     #: Per ``principal_binding(transport, instance)``: the principal settings
     #: files the CLI knows for that instance on that daemon, and the active one.
     principals: Mapping[str, RememberedPrincipals] = field(default_factory=dict)
@@ -82,8 +79,6 @@ class CliContextState:
             bound_transport = self.bound_instance_transport()
             if bound_transport:
                 payload["instance_transport"] = bound_transport
-            if self.instance_workspace:
-                payload["instance_workspace"] = self.instance_workspace
         if self.principals:
             payload["principals"] = {
                 instance: entry.as_json() for instance, entry in sorted(self.principals.items())
@@ -142,13 +137,11 @@ def load_cli_context(environ: Mapping[str, str] | None = None) -> CliContextStat
     server_socket = payload.get("server_socket")
     instance_id = payload.get("instance_id")
     instance_transport = payload.get("instance_transport")
-    instance_workspace = payload.get("instance_workspace")
     for key, value in (
         ("server_url", server_url),
         ("server_socket", server_socket),
         ("instance_id", instance_id),
         ("instance_transport", instance_transport),
-        ("instance_workspace", instance_workspace),
     ):
         if value is not None and not isinstance(value, str):
             raise ConfigError(f"CLI context field '{key}' must be a string when set")
@@ -157,7 +150,6 @@ def load_cli_context(environ: Mapping[str, str] | None = None) -> CliContextStat
         server_socket=server_socket,
         instance_id=instance_id,
         instance_transport=instance_transport,
-        instance_workspace=instance_workspace,
         principals=_load_principals(payload.get("principals"), path),
     )
 

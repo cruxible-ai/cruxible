@@ -80,7 +80,7 @@ class ResolvedContext:
     workspace_attached: bool
     warnings: tuple[str, ...] = ()
     #: Why the remembered instance was not used: it is bound to another
-    #: transport, or it belongs to another workspace folder than this unbound one.
+    #: transport, or it is a local instance and this workspace binds none.
     instance_transport_mismatch: str | None = None
 
 
@@ -269,29 +269,31 @@ def _instance(value: object, *, source: TargetSource) -> tuple[str, TargetSource
     return value, source
 
 
-def _remembered_for_another_workspace(stored: Mapping[str, object], root: Path) -> str | None:
+def _remembered_local_in_unbound_workspace(stored: Mapping[str, object], root: Path) -> str | None:
     """Why the remembered instance is not used in workspace ``root``, or None.
 
-    ``root`` holds a real ``.cruxible`` workspace directory but binds no
-    instance. A remembered instance recorded for another workspace folder (init
-    records it) is that folder's: it never stands in for this one. A remembered
-    instance with no recorded folder (a remote host, ``host create``,
-    ``context connect``) still applies, as it does in a folder with no
-    workspace directory at all.
+    The invariant: a remembered instance stands in only when discovery finished
+    normally and found no workspace marker, or when it is remote. ``root`` holds
+    a real ``.cruxible`` workspace directory that binds no instance, so a
+    remembered LOCAL instance (a Unix socket on this machine, which could be
+    another folder's) is refused here; a remembered remote host (a URL) still
+    applies, as for a remote host with a local file catalog.
     """
 
-    recorded = stored.get("instance_workspace")
     instance = stored.get("instance_id")
-    if not isinstance(recorded, str) or not recorded or not isinstance(instance, str):
+    if not isinstance(instance, str):
         return None
-    if same_directory(Path(recorded), root):
+    recorded = stored.get("instance_transport")
+    if not isinstance(recorded, str) or not recorded:
+        recorded = _normalized_transport(stored.get("server_url"), stored.get("server_socket"))
+    if isinstance(recorded, str) and recorded and not recorded.startswith("unix://"):
         return None
     return (
         f"workspace_unbound: {root} is a Cruxible workspace whose .cruxible/ binds no "
-        f"instance, and the remembered instance {instance} belongs to {recorded}, so it is "
-        f"not used here; repair: `cruxible init` here gives this folder its own instance, "
-        "`cruxible workspace attach --instance-id ID` binds an existing one, or pass "
-        "--instance-id ID"
+        f"instance, so the remembered local instance {instance} (another folder's, as far "
+        "as this one knows) is not used here; repair: `cruxible init` here gives this "
+        "folder its own instance, `cruxible workspace attach --instance-id ID` binds an "
+        "existing one, or pass --instance-id ID"
     )
 
 
@@ -312,9 +314,14 @@ def resolve_context(
     Transport and instance are selected independently. The workspace binding is
     eligible only when its coverage config names both one transport and an
     instance; incomplete coverage-only configs remain valid but do not retarget
-    commands. In a workspace whose ``.cruxible`` binds no instance, a remembered
-    instance recorded for another workspace folder is not used (the reason is in
-    ``instance_transport_mismatch``); one with no recorded folder still is.
+    commands.
+
+    A remembered instance is used only when discovery finished normally and
+    found no ``.cruxible`` workspace marker, or when it is remote (a URL). In a
+    workspace whose ``.cruxible`` binds no instance a remembered local instance
+    is refused (the reason is in ``instance_transport_mismatch``); a marker that
+    cannot be read, or one across an ownership or filesystem boundary, refuses
+    the whole resolution (``ContextResolutionError``, ``WorkspaceBoundaryRefused``).
     """
 
     env = os.environ if environ is None else environ
@@ -373,7 +380,7 @@ def resolve_context(
         if raw_instance is None:
             continue
         if source == "remembered" and selection.marked and not attached:
-            withheld = _remembered_for_another_workspace(stored, root)
+            withheld = _remembered_local_in_unbound_workspace(stored, root)
             if withheld is not None:
                 instance_transport_mismatch = withheld
                 continue

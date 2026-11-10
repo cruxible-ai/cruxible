@@ -235,10 +235,6 @@ def context_use(instance_id: str | None, principal_id: str | None) -> None:
             state,
             instance_id=instance_id,
             instance_transport=existing.bound_instance_transport(),
-            # Chosen by hand, not for one folder: it applies wherever nothing binds.
-            instance_workspace=(
-                existing.instance_workspace if instance_id == existing.instance_id else None
-            ),
         )
     binding: str | None = None
     if principal_id is not None:

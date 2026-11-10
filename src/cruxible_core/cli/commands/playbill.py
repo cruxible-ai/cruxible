@@ -253,7 +253,13 @@ from cruxible_core.service.proposals.review import (
     render_playbill_proposal_review,
     render_playbill_proposal_review_pointer,
 )
-from cruxible_core.workspace_root import WorkspaceRootSource, resolve_workspace_root
+from cruxible_core.workspace_root import (
+    WorkspaceBoundaryRefused,
+    WorkspaceRoot,
+    WorkspaceRootSource,
+    refuse_unusable_root,
+    resolve_workspace_root,
+)
 
 ResultT = TypeVar("ResultT")
 
@@ -455,19 +461,34 @@ def _local_workspace_root(
                 "(--no-workspace or CRUXIBLE_NO_WORKSPACE)"
             )
         return _LocalWorkspaceResult(workspace_root=None, note=None)
+    named = os.environ.get("CRUXIBLE_WORKSPACE")
     try:
-        start = Path.cwd()
+        start = Path(named).expanduser() if named else Path.cwd()
     except OSError as exc:
         if required is not None:
             raise click.UsageError(f"{required} needs a workspace folder: {exc}") from exc
         return _LocalWorkspaceResult(workspace_root=None, note=None)
     git_root = containing_git_workspace_root(start)
     try:
-        found = resolve_workspace_root(start, fallback_to_start=fallback_to_start)
+        # CRUXIBLE_WORKSPACE names the root itself: trusted whoever owns it.
+        found = resolve_workspace_root(
+            start,
+            fallback_to_start=fallback_to_start or bool(named),
+            trust=start if named else None,
+        )
+        if named and found is not None and found.root != start.resolve():
+            found = WorkspaceRoot(refuse_unusable_root(start.resolve()), "directory")
     except OSError as exc:
         if required is not None:
             raise click.UsageError(f"{required} needs a workspace folder: {exc}") from exc
         return _LocalWorkspaceResult(workspace_root=None, note=None, git_root=git_root)
+    except WorkspaceBoundaryRefused as exc:
+        if required is not None or not custody:
+            raise click.UsageError(str(exc)) from exc
+        # Keys stay out of the untrusted workspace too.
+        return _LocalWorkspaceResult(
+            workspace_root=Path(exc.workspace), note=None, git_root=git_root
+        )
     except WorkspaceDirectoryConflict as exc:
         if required is not None:
             raise click.UsageError(f"{required} needs a workspace folder: {exc}") from exc
@@ -1083,7 +1104,7 @@ def create_host(
             replace=replace,
             **config_transport,
         )
-    _activate_server_instance(result.instance_id, workspace=git_workspace)
+    _activate_server_instance(result.instance_id)
     if output_json:
         _emit_json(_json_receipt(result))
         return
@@ -1473,18 +1494,18 @@ def _create_host_for_init(
 def _target_init_folder(folder: Path) -> str | None:
     """Make init act on ``folder``'s own instance, or on none; the new transport, if moved.
 
-    The root resolution picked an instance for the current directory: another
-    folder's binding (``init --workspace B`` run from A), or the remembered
-    context, which belongs to another folder. Neither is this folder's, so
-    init drops it and the remembered principal loaded with it, and takes
-    ``folder``'s own binding when it has one (its transport too, unless the
-    transport was named explicitly). An instance named explicitly or by the
-    environment keeps its precedence.
+    The root resolution chose for the current directory: another folder's
+    binding (``init --workspace B`` run from A), the remembered context (another
+    folder's), or nothing. None of that is this folder's, so init drops it and
+    the remembered principal loaded with it, and takes ``folder``'s own binding
+    when it has one (its transport too, unless the transport was named
+    explicitly). An instance named explicitly or by the environment keeps its
+    precedence.
     """
 
     obj = _root_ctx_obj()
     source = str(obj.get("target_instance_source") or "")
-    if obj.get("instance_id") is None or source not in {"workspace", "remembered"}:
+    if obj.get("instance_id") is not None and source in {"explicit", "environment"}:
         return None
     current = obj.get("playbill_workspace")
     if source == "workspace" and current is not None and Path(current) == folder:
@@ -1525,7 +1546,7 @@ def _remember_initialized_host(instance_id: str, *, workspace: Path | None) -> N
 
     remembered = load_cli_context().instance_id
     if remembered is None or remembered == instance_id:
-        _activate_server_instance(instance_id, workspace=workspace)
+        _activate_server_instance(instance_id)
         return
     _root_ctx_obj()["instance_id"] = instance_id
     if _root_ctx_obj().get("cruxible_kept_context_note") == instance_id:
