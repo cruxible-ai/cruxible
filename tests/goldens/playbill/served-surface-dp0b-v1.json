@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "first-run-plain-folder",
-    "surface_digest": "sha256:e62d1fc59bfb4f7eb1a57aa34a212437881c56bf155ec536e29d2b16d5deeb1d"
+    "surface_digest": "sha256:8bfb8257dc4f3837914751c0c408975ad8e5f3197f97382de278bf217b15e328"
   },
   "surface": {
     "cli_leaves": [
@@ -171,6 +171,13 @@
         ],
         "command": "compiler upgrade",
         "delegate": "cruxible_core.cli.commands.playbill.propose_compiler_upgrade"
+      },
+      {
+        "client_operations": [
+          "get"
+        ],
+        "command": "console",
+        "delegate": "cruxible_core.cli.commands.console.console_cmd"
       },
       {
         "client_operations": [],
