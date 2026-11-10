@@ -275,6 +275,8 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
             "pair_ends",
             "pair_slot_live",
             "pair_units",
+            "subject_observations",
+            "pair_end_unobserved",
             "provider_registration_order",
             "provider_heads",
             "provider_control_domains",
@@ -606,6 +608,7 @@ def replace_rows(
                 for row in parsed.envelopes
                 if row.kind == "subject" and row.path not in held_subjects
             ],
+            changed_kinds=key_kinds,
         )
     if bodies is not None:
         published = {

@@ -308,14 +308,18 @@ def held(sources: Mapping[str, bytes], *, path: Any = None) -> HeldTree:
 
 
 PAIR_TABLES = ("pair_ends", "pair_slot_live", "pair_units")
+#: The unobserved-end tables the pair index keeps beside it (``next``'s subject-end gate).
+OBSERVATION_TABLES = ("subject_observations", "pair_end_unobserved")
 
 
-def pair_rows(connection: Any) -> dict[str, list[tuple[object, ...]]]:
+def pair_rows(
+    connection: Any, tables: tuple[str, ...] = PAIR_TABLES
+) -> dict[str, list[tuple[object, ...]]]:
     return {
         table: sorted(
             (tuple(row) for row in connection.execute(f"SELECT * FROM {table}")), key=repr
         )
-        for table in PAIR_TABLES
+        for table in tables
     }
 
 
@@ -330,6 +334,7 @@ __all__ = [
     "E_VULN",
     "KINDS",
     "NOTE",
+    "OBSERVATION_TABLES",
     "OWNED",
     "O_FACT",
     "O_OWNER",

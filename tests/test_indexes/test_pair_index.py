@@ -32,6 +32,7 @@ from tests.core_support._pair_support import (
     O_FACT,
     O_OWNER,
     O_SERIAL,
+    OBSERVATION_TABLES,
     OWNED,
     SCOPE,
     VULN,
@@ -76,6 +77,9 @@ class World:
         cold = projection(self.tree)
         try:
             assert rows == pair_rows(cold), "incremental pair index differs from a full build"
+            assert pair_rows(self.connection, OBSERVATION_TABLES) == pair_rows(
+                cold, OBSERVATION_TABLES
+            ), "incremental unobserved-end tables differ from a full build"
         finally:
             cold.close()
         return rows
@@ -358,6 +362,119 @@ def _counts(facts: list[ClaimArtifact]) -> dict[str, int]:
     return found
 
 
+# -- unobserved ends: next's subject-end gate (``pair_end_unobserved``) -------------------
+
+
+def _unobserved(connection: Any) -> list[str]:
+    return [
+        str(row[0])
+        for row in connection.execute("SELECT end_path FROM pair_end_unobserved ORDER BY 1")
+    ]
+
+
+def test_unobserved_ends_follow_observations_and_pair_facts_after_randomized_sequences() -> None:
+    """An end is listed exactly while it ends a pair holding a live fact, has no live
+    observation (a non-key fact about it, ``NOTE`` here) and has a retired one; the
+    incremental tables equal a full build at every step."""
+
+    for seed in range(6):
+        _randomized_observations(random.Random(seed))
+
+
+def _randomized_observations(rng: random.Random) -> None:
+    tree = definitions()
+    number = 1
+    ends: dict[str, list[ClaimArtifact]] = {}  # end path -> its live observations
+    for kind, subject_id in (
+        (COMPONENT, "c0"),
+        (COMPONENT, "c1"),
+        (COMPONENT, "c2"),
+        (VULN, "v0"),
+        (VULN, "v1"),
+    ):
+        put(tree, *end(kind, subject_id, number))
+        ends[path_of(kind, subject_id)] = []
+        number += 1
+    pairs: dict[str, tuple[str, str]] = {}  # pair path -> its two ends
+    for component in ("c0", "c1", "c2"):
+        for vuln in ("v0", "v1"):
+            put(tree, *exposure(component, vuln, number))
+            number += 2
+            pairs[path_of(EXPOSURE, f"{component}--{vuln}")] = (
+                path_of(COMPONENT, component),
+                path_of(VULN, vuln),
+            )
+    world = World(tree)
+    facts: dict[str, list[ClaimArtifact]] = {pair: [] for pair in pairs}
+    retired: dict[str, int] = dict.fromkeys(ends, 0)
+
+    def fresh(subject: str) -> ClaimArtifact:
+        nonlocal number
+        number += 1
+        return claim(10_000 + number, NOTE, literal(f"x{number}"), subject=subject)
+
+    for _step in range(30):
+        op = rng.choice(("fact", "unfact", "observe", "unobserve", "revise"))
+        held = sorted(item for item in ends if ends[item])
+        if op == "fact":
+            pair = rng.choice(sorted(pairs))
+            facts[pair].append(fresh(pair))
+            world.accept(facts[pair][-1])
+        elif op == "unfact" and any(facts.values()):
+            pair = rng.choice(sorted(item for item in facts if facts[item]))
+            world.accept(retired_claim(facts[pair].pop(rng.randrange(len(facts[pair])))))
+        elif op == "observe":
+            subject = rng.choice(sorted(ends))
+            ends[subject].append(fresh(subject))
+            world.accept(ends[subject][-1])
+        elif op in ("unobserve", "revise") and held:
+            subject = rng.choice(held)
+            gone = retired_claim(ends[subject].pop(rng.randrange(len(ends[subject]))))
+            retired[subject] += 1
+            if op == "revise":
+                ends[subject].append(fresh(subject))
+                world.accept(gone, ends[subject][-1])
+            else:
+                world.accept(gone)
+        expected = sorted(
+            item
+            for item in ends
+            if not ends[item]
+            and retired[item]
+            and any(facts[pair] for pair, both in pairs.items() if item in both)
+        )
+        assert _unobserved(world.connection) == expected
+
+
+def test_a_kind_change_recounts_its_subjects_observations_alike() -> None:
+    """A SubjectKind the batch writes is recounted under its current key parts."""
+
+    tree = _ends()
+    put(tree, *exposure("c1", "v1", 10))
+    world = World(tree)
+    world.accept(claim(20, SCOPE, literal("required"), subject=E11))
+    observation = claim(21, NOTE, literal("seen"), subject=C1)
+    world.accept(observation)
+    world.accept(retired_claim(observation))
+    assert _unobserved(world.connection) == [C1]
+    retiring = successor_kind(
+        KINDS[COMPONENT],
+        lifecycle=ArtifactLifecycle(
+            state="retired", predecessor_digest=subject_kind_digest(KINDS[COMPONENT]).tagged
+        ),
+    )
+    changes = {kind_path(COMPONENT): render_subject_kind(retiring)}
+    publish(world.connection, changes, changed=changes)
+    world.tree.update(changes)
+    cold = projection(world.tree)
+    try:
+        assert pair_rows(world.connection, OBSERVATION_TABLES) == pair_rows(
+            cold, OBSERVATION_TABLES
+        )
+    finally:
+        cold.close()
+
+
 # -- storage v31 -> v32: the obsolete projection rebuilds from authority -----------------
 
 
@@ -366,7 +483,13 @@ def _pair_tables(connection: Any) -> dict[str, list[tuple[object, ...]]]:
         table: sorted(
             (tuple(row) for row in connection.execute(f"SELECT * FROM {table}")), key=repr
         )
-        for table in ("pair_ends", "pair_slot_live", "pair_units", "subject_keys")
+        for table in (
+            "pair_ends",
+            "pair_slot_live",
+            "pair_units",
+            "subject_keys",
+            *OBSERVATION_TABLES,
+        )
     }
 
 
@@ -378,7 +501,7 @@ def test_a_v31_projection_recovers_to_v32_rows_equal_to_a_fresh_build(tmp_path: 
     from cruxible_core.runtime.instance import PlaybillInstance
     from tests.core_support._pair_real import pair_instance
 
-    assert PROJECTION_STORAGE_SCHEMA_VERSION == 35
+    assert PROJECTION_STORAGE_SCHEMA_VERSION == 36
     instance, facts = pair_instance(tmp_path, pairs=2)
     head = instance.accepted_coordinate()
     with instance.bind_accepted_projection(head) as published:
@@ -413,6 +536,6 @@ def test_a_v31_projection_recovers_to_v32_rows_equal_to_a_fresh_build(tmp_path: 
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert reopened.accepted_coordinate() == head
     with reopened.bind_accepted_projection(head) as rebuilt:
-        assert rebuilt.manifest.storage_schema_version == 35
+        assert rebuilt.manifest.storage_schema_version == 36
         assert _pair_tables(rebuilt.typed.connection) == maintained
     assert set(facts) == {row[0] for row in maintained["pair_slot_live"]}
