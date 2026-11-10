@@ -54,3 +54,4 @@ judgment; Cruxible checks it, records it and serves it back.
 - [Upgrading](upgrading.md)
 - [Isolated deployment](isolated-deployment.md)
 - [Hosted runtime image](hosted-runtime-image.md)
+- [Data and network](data-and-network.md)

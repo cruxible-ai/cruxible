@@ -49,23 +49,29 @@ dependencies = [
     # PyJWT (via mcp) 2.15.0 fixes CVE-2026-32597, -48522..-48526, -101917,
     # -101918, -102267..-102275, -103001.
     "pyjwt>=2.15.0",
+    # certifi (via httpx) 2026.10.18 removes the emSign ECC Root CA - G3 root
+    # (PYSEC-2026-4320 / GHSA-6q48-6c7w-9gw2).
+    "certifi>=2026.10.18",
     "uvicorn[standard]>=0.20",
     # The MCP server (`cruxible mcp`, `cruxible-mcp`) ships in the base install,
     # so `uvx cruxible mcp` works without an extra. <2: mcp 2.0.0 removed the
     # bundled mcp.server.fastmcp the tools are built on; the SDK-2.0 migration
     # is tracked separately (wi-mcp-sdk-2-migration).
-    # >=1.28.1: 1.27.2 fixes CVE-2026-52869 (session/principal binding) and
+    # >=1.30.0: 1.27.2 fixes CVE-2026-52869 (session/principal binding) and
     # -52870 (experimental task scoping); 1.28.1 fixes CVE-2026-59950 (WebSocket
-    # Host/Origin validation).
-    "mcp>=1.28.1,<2",
+    # Host/Origin validation); 1.30.0 fixes CVE-2026-59951 (Streamable HTTP
+    # session reclamation), -116684 (bearer-token audience), -116685 (client
+    # transport redirects) and -116686 (client outputSchema validation).
+    "mcp>=1.30.0,<2",
     # Provider installs materialize environments with the provider runtime toolchain
     # (providers/package_materialization.py imports it); core never runs provider code.
     "cruxible-provider-runtime>=0.2.0",
     # The provider runtime materializes environments with uv (`uv pip sync`, `uv
     # build`); the PyPI package ships the binary beside the interpreter, so a pip
     # install and the runtime image both have it (providers/package_materialization.py
-    # uv_executable).
-    "uv>=0.8",
+    # uv_executable). 0.13.4 removes the emSign ECC Root CA - G3 root from uv's
+    # vendored TLS roots (PYSEC-2026-4321 / GHSA-hq85-5cpj-mr62).
+    "uv>=0.13.4",
 ]
 
 [project.optional-dependencies]
