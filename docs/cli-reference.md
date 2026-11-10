@@ -709,9 +709,11 @@ What it does and refuses:
   `/version`) and refuses every other route with 403 before it reaches the
   daemon.
 - **One browser per run.** The printed link carries a one-time token. Opening
-  it sets a session cookie (HttpOnly, SameSite=Strict) and moves to a clean
-  URL; every API call needs that cookie. Run the command again for another
-  browser.
+  it stores a second session token in that browser's storage for this exact
+  address (port included) and moves to a clean URL; the console sends it with
+  every API call. No cookie is used: cookies reach every server on
+  `127.0.0.1`, whatever its port. Other tabs of the same browser work; run the
+  command again for another browser, and an old run's session stops working.
 - **This machine only.** Requests must name `127.0.0.1:<port>` or
   `localhost:<port>` as their host and, when the browser says, come from that
   same origin. It sends no CORS headers. The daemon credential never reaches

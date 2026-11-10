@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import socket
+import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -22,6 +25,8 @@ from cruxible_core.console.bundle import (
     write_manifest,
 )
 from cruxible_core.console.listener import (
+    SESSION_HEADER,
+    SESSION_STORAGE_KEY,
     ConsoleListener,
     PortUnavailable,
     Upstream,
@@ -95,14 +100,24 @@ def _browser(app: ConsoleListener) -> TestClient:
     return TestClient(app, base_url=ORIGIN, follow_redirects=False)
 
 
+def _stored_session(response: httpx.Response) -> str:
+    """The session token the bootstrap page writes to localStorage."""
+
+    assert response.status_code == 200, response.text
+    found = re.search(
+        r'localStorage\.setItem\("' + re.escape(SESSION_STORAGE_KEY) + r'","([A-Za-z0-9_-]+)"\)',
+        response.text,
+    )
+    assert found, response.text
+    return found.group(1)
+
+
 def _signed_in(app: ConsoleListener) -> tuple[TestClient, str]:
-    """A browser after the bootstrap link, and its session cookie value."""
+    """A browser after the bootstrap link, sending its session header, and the token."""
 
     browser = _browser(app)
-    response = browser.get(f"/__console/bootstrap?token={BOOTSTRAP}")
-    assert response.status_code == 303, response.text
-    session = response.cookies[app.cookie_name]
-    browser.cookies.set(app.cookie_name, session)
+    session = _stored_session(browser.get(f"/__console/bootstrap?token={BOOTSTRAP}"))
+    browser.headers[SESSION_HEADER] = session
     return browser, session
 
 
@@ -191,27 +206,46 @@ def test_a_manifest_naming_a_symlink_or_a_changed_file_is_refused(tmp_path: Path
 # -- session ---------------------------------------------------------------
 
 
-def test_the_bootstrap_link_signs_one_browser_in_once(tmp_path: Path) -> None:
+def test_the_bootstrap_link_stores_a_session_once_and_sets_no_cookie(tmp_path: Path) -> None:
     app = _listener(tmp_path, Daemon())
 
     wrong = _browser(app).get("/__console/bootstrap?token=guess")
-    assert wrong.status_code == 403 and app.cookie_name not in wrong.cookies
+    assert wrong.status_code == 403 and "set-cookie" not in wrong.headers
+    assert "localStorage" not in wrong.text
 
-    browser = _browser(app)
-    first = browser.get(f"/__console/bootstrap?token={BOOTSTRAP}")
-    assert first.status_code == 303
-    assert first.headers["location"] == f"/i/{INSTANCE}"
-    cookie = first.headers["set-cookie"]
-    assert "HttpOnly" in cookie and "samesite=strict" in cookie.lower() and "Path=/" in cookie
-    session = first.cookies[app.cookie_name]
-    assert session != BOOTSTRAP and BOOTSTRAP not in cookie
+    first = _browser(app).get(f"/__console/bootstrap?token={BOOTSTRAP}")
+    session = _stored_session(first)
+    assert session != BOOTSTRAP and BOOTSTRAP not in first.text
+    assert "set-cookie" not in first.headers
+    assert f'location.replace("/i/{INSTANCE}")' in first.text
+    assert first.headers["cache-control"] == "no-store"
+    # The inline script runs only by this response's nonce.
+    policies = first.headers.get_list("content-security-policy")
+    [nonce_policy] = [policy for policy in policies if "script-src" in policy]
+    nonce = re.search(r"'nonce-([A-Za-z0-9_-]+)'", nonce_policy)
+    assert nonce and f'<script nonce="{nonce.group(1)}">' in first.text
+    assert "default-src 'none'" in nonce_policy
+    # Built files get no script allowance.
+    assert all(
+        "script-src" not in p
+        for p in _browser(app).get("/").headers.get_list("content-security-policy")
+    )
 
-    # Spent: a second browser (no cookie) is refused; the signed-in one is redirected.
+    # Spent: the link works once.
     assert _browser(app).get(f"/__console/bootstrap?token={BOOTSTRAP}").status_code == 403
-    again = _browser(app)
-    again.cookies.set(app.cookie_name, session)
-    replay = again.get(f"/__console/bootstrap?token={BOOTSTRAP}")
-    assert replay.status_code == 303 and "set-cookie" not in replay.headers
+
+
+def test_the_bootstrap_page_escapes_what_it_embeds(tmp_path: Path) -> None:
+    app = ConsoleListener(
+        bundle=load_bundle(_dist(tmp_path)),
+        upstream=Upstream(label="x", socket_path="/x"),
+        instance_id='a</script><script>alert(1)</script>"',
+        port=PORT,
+        bootstrap_token=BOOTSTRAP,
+        core_identity={},
+    )
+    page = _browser(app).get(f"/__console/bootstrap?token={BOOTSTRAP}").text
+    assert page.count("<script") == 1 and page.count("</script>") == 1
 
 
 def test_config_needs_the_session_and_names_instance_and_builds(tmp_path: Path) -> None:
@@ -246,18 +280,37 @@ def test_api_calls_without_the_session_never_reach_the_daemon(tmp_path: Path) ->
     assert anonymous.get(f"/api/v1/{INSTANCE}/head").status_code == 401
     assert anonymous.get("/version").status_code == 401
     forged = _browser(app)
-    forged.cookies.set(app.cookie_name, BOOTSTRAP)  # the URL token is not the session
+    forged.headers[SESSION_HEADER] = BOOTSTRAP  # the URL token is not the session
     assert forged.get(f"/api/v1/{INSTANCE}/head").status_code == 401
+    assert forged.get("/__console/config").status_code == 401
     assert daemon.requests == []
 
 
-def test_another_local_apps_odd_cookies_do_not_hide_the_session(tmp_path: Path) -> None:
-    app = _listener(tmp_path, Daemon())
+def test_a_cookie_never_authenticates_even_holding_the_session_token(tmp_path: Path) -> None:
+    """Cookies reach every server on 127.0.0.1, whatever its port: they are not a credential."""
+
+    daemon = Daemon()
+    app = _listener(tmp_path, daemon)
     _, session = _signed_in(app)
     browser = _browser(app)
-    cookie = f'weird="a\\"b; bad cookie=; =x; {app.cookie_name}={session}; after=1'
-    response = browser.get("/__console/config", headers={"cookie": cookie})
-    assert response.status_code == 200, response.text
+    for cookie in (
+        f"{SESSION_HEADER}={session}",
+        f"{SESSION_STORAGE_KEY}={session}",
+        f"cruxible_console_{PORT}={session}",
+        f"session={session}",
+    ):
+        for path in (f"/api/v1/{INSTANCE}/head", "/__console/config"):
+            assert browser.get(path, headers={"cookie": cookie}).status_code == 401
+    assert daemon.requests == []
+
+
+def test_a_session_header_sent_twice_is_refused(tmp_path: Path) -> None:
+    app = _listener(tmp_path, Daemon())
+    _, session = _signed_in(app)
+    scope_headers = [(SESSION_HEADER.encode(), session.encode())] * 2
+    browser = _browser(app)
+    response = browser.get("/__console/config", headers=httpx.Headers(scope_headers))
+    assert response.status_code == 401
 
 
 # -- host, origin ----------------------------------------------------------
@@ -292,7 +345,7 @@ def test_localhost_under_the_same_port_is_the_listener(tmp_path: Path) -> None:
         {"origin": f"http://127.0.0.1:{PORT + 1}"},
         {"origin": f"https://127.0.0.1:{PORT}"},
         {"sec-fetch-site": "cross-site"},
-        # Another localhost port is the same *site*: SameSite=Strict would send the cookie.
+        # Another localhost port is the same *site* as this one.
         {"sec-fetch-site": "same-site"},
     ],
 )
@@ -368,6 +421,7 @@ def test_allowed_reads_carry_the_daemon_credential_and_nothing_of_the_browser(
     app = _listener(tmp_path, daemon)
     browser, session = _signed_in(app)
     browser.cookies.set("other_app", "other-cookie")
+    assert browser.headers[SESSION_HEADER] == session
     response = browser.post(
         f"/api/v1/{INSTANCE}/query?limit=5&cursor=a%2Fb",
         json={"kind": "Trigger"},
@@ -388,7 +442,14 @@ def test_allowed_reads_carry_the_daemon_credential_and_nothing_of_the_browser(
     assert sent.content == b'{"kind":"Trigger"}'
     assert sent.headers["authorization"] == f"Bearer {DAEMON_CREDENTIAL}"
     assert sent.headers["content-type"] == "application/json"
-    for name in ("cookie", "origin", "referer", "x-cruxible-principal-id", "x-forwarded-for"):
+    for name in (
+        "cookie",
+        SESSION_HEADER,
+        "origin",
+        "referer",
+        "x-cruxible-principal-id",
+        "x-forwarded-for",
+    ):
         assert name not in sent.headers, name
     wire = repr(dict(sent.headers)) + str(sent.url) + sent.content.decode()
     for secret in (session, BOOTSTRAP, "other-cookie", "browser-supplied"):
@@ -491,7 +552,7 @@ def test_large_responses_stream_through_chunk_by_chunk(tmp_path: Path) -> None:
         "query_string": b"",
         "headers": [
             (b"host", f"127.0.0.1:{PORT}".encode()),
-            (b"cookie", f"{app.cookie_name}={session}".encode()),
+            (SESSION_HEADER.encode(), session.encode()),
         ],
     }
 
@@ -519,6 +580,55 @@ def test_port_zero_binds_a_free_loopback_port_and_a_taken_port_says_so() -> None
             bind_loopback(port)
     finally:
         sock.close()
+
+
+@pytest.mark.parametrize("address", ["0.0.0.0", "127.0.0.1"])
+def test_a_port_another_service_listens_on_is_refused(address: str) -> None:
+    holder = socket.socket()
+    holder.bind((address, 0))
+    holder.listen(1)
+    try:
+        port = holder.getsockname()[1]
+        with pytest.raises(PortUnavailable, match="already in use"):
+            bind_loopback(port)
+    finally:
+        holder.close()
+
+
+def test_a_fixed_port_rebinds_right_after_a_run_that_served_connections(tmp_path: Path) -> None:
+    """A served keep-alive connection leaves TIME_WAIT behind; --port N must still restart."""
+
+    import uvicorn
+
+    sock = bind_loopback(0)
+    port = sock.getsockname()[1]
+    app = ConsoleListener(
+        bundle=load_bundle(_dist(tmp_path)),
+        upstream=Upstream(label="x", socket_path="/x"),
+        instance_id=INSTANCE,
+        port=port,
+        bootstrap_token=BOOTSTRAP,
+        core_identity={},
+    )
+    server = uvicorn.Server(
+        uvicorn.Config(app, access_log=False, log_level="critical", lifespan="on")
+    )
+    thread = threading.Thread(target=lambda: server.run(sockets=[sock]), daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert server.started
+    with httpx.Client() as client:
+        for _ in range(3):
+            assert client.get(f"http://127.0.0.1:{port}/").status_code == 200
+        server.should_exit = True
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+    sock.close()
+
+    again = bind_loopback(port)
+    again.close()
 
 
 @pytest.fixture

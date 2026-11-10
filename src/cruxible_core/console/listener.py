@@ -7,13 +7,17 @@ the same order:
    rebound DNS name cannot reach the listener under its own origin).
 2. **Origin**, when a browser sends one, must be the listener's own, and
    ``Sec-Fetch-Site``, when sent, must not say cross-site or same-site (another
-   localhost port is the same *site* as this one, so SameSite alone does not
-   keep it out). No CORS headers are ever sent.
+   localhost port is the same *site* as this one). No CORS headers are ever
+   sent, so no other origin's page can send the session header (a custom
+   header forces a preflight the listener never approves).
 3. **Session**: ``/__console/bootstrap?token=…`` takes the per-run token the
-   opened URL carries, once, sets an HttpOnly SameSite=Strict cookie holding a
-   second, never-printed session token, and redirects to a clean URL. The
-   config endpoint and every API call need that cookie; built files do not
-   (they are public code).
+   opened URL carries, once, and answers a tiny page that stores a second,
+   never-printed session token in ``localStorage`` and replaces itself with
+   the clean ``/i/<instance>`` URL. Web storage is scoped to the full origin,
+   port included; a cookie is not (every server on 127.0.0.1 would receive
+   it), so no cookie is set and cookies are never read. The config endpoint
+   and every API call need the token in the ``X-Cruxible-Console-Session``
+   header; built files do not (they are public code).
 4. **Allow-list**: an API call that is not one of the console's read routes
    (``routes.READ_ROUTES``) is refused with 403 here and never reaches the
    daemon.
@@ -27,6 +31,7 @@ from __future__ import annotations
 
 import errno
 import hmac
+import json
 import mimetypes
 import secrets
 import socket
@@ -36,7 +41,7 @@ from typing import Any
 from urllib.parse import parse_qs, quote
 
 import httpx
-from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from cruxible_core.console.bundle import MANIFEST_NAME, ConsoleBundle
 from cruxible_core.console.routes import is_read_route
@@ -50,6 +55,10 @@ BOOTSTRAP_PATH = "/__console/bootstrap"
 CONFIG_PATH = "/__console/config"
 MANIFEST_PATH = f"/__console/{MANIFEST_NAME}"
 CONFIG_TAG = "cruxible-console-config-v1"
+#: The request header that carries the session token, and the localStorage key
+#: the bootstrap page stores it under (the console reads both names).
+SESSION_HEADER = "x-cruxible-console-session"
+SESSION_STORAGE_KEY = "cruxible.console.session"
 
 #: The console's request bodies are small JSON reads; anything bigger is refused unread.
 MAX_REQUEST_BODY_BYTES = 1 << 20
@@ -155,9 +164,9 @@ class ConsoleListener:
         self.port = port
         self._bootstrap_token = bootstrap_token
         self._bootstrap_spent = False
-        #: Never printed and never in a URL: only the cookie carries it.
+        #: Never printed and never in a URL: the bootstrap page hands it to the
+        #: origin's localStorage, and the page sends it in SESSION_HEADER.
         self._session_token = secrets.token_urlsafe(32)
-        self.cookie_name = f"cruxible_console_{port}"
         self._hosts = frozenset({f"127.0.0.1:{port}", f"localhost:{port}"})
         self._origins = frozenset(f"http://{host}" for host in self._hosts)
         self._core_identity = dict(core_identity)
@@ -215,16 +224,15 @@ class ConsoleListener:
         return values[0] if len(values) == 1 else "\x00sent-twice"
 
     def _has_session(self, scope: Scope) -> bool:
-        # Split by hand: cookies are shared across every localhost port, and one
-        # odd cookie from another app must not hide this one (SimpleCookie stops
-        # at the first it cannot parse).
-        expected = self._session_token.encode()
-        for header in self._headers(scope, "cookie"):
-            for pair in header.split(";"):
-                name, _, value = pair.strip().partition("=")
-                if name == self.cookie_name and hmac.compare_digest(value.encode(), expected):
-                    return True
-        return False
+        """Whether the request carries this run's session token in the session header.
+
+        Cookies are never consulted: they are scoped to the host, not the port.
+        """
+
+        offered = self._single(scope, SESSION_HEADER)
+        return offered is not None and hmac.compare_digest(
+            offered.encode("latin-1"), self._session_token.encode()
+        )
 
     def _refusal(self, scope: Scope, *, api: bool) -> Response | None:
         """Why this request may not proceed (Host, Origin, fetch site), else None."""
@@ -284,29 +292,44 @@ class ConsoleListener:
     def _bootstrap(self, scope: Scope) -> Response:
         query = parse_qs(scope.get("query_string", b"").decode("latin-1"))
         offered = (query.get("token") or [""])[0]
-        landing = f"/i/{quote(self.instance_id, safe='')}"
-        redirect = RedirectResponse(landing, status_code=303, headers={"cache-control": "no-store"})
         fresh = not self._bootstrap_spent and hmac.compare_digest(
-            offered.encode(), self._bootstrap_token.encode()
+            offered.encode("latin-1"), self._bootstrap_token.encode()
         )
-        if fresh:
-            self._bootstrap_spent = True
-            redirect.set_cookie(
-                self.cookie_name,
-                self._session_token,
-                path="/",
-                httponly=True,
-                samesite="strict",
+        if not fresh:
+            return HTMLResponse(
+                "<!doctype html><title>Cruxible console</title>"
+                "<p>This console link was already used, or is not this run's link. "
+                "Run <code>cruxible console</code> again for a new one.</p>",
+                status_code=403,
+                headers={"cache-control": "no-store"},
             )
-            return redirect
-        if self._has_session(scope):
-            return redirect
+        self._bootstrap_spent = True
+        nonce = secrets.token_urlsafe(16)
+        landing = f"/i/{quote(self.instance_id, safe='')}"
+
+        def js(value: str) -> str:
+            return json.dumps(value).replace("<", "\\u003c").replace(">", "\\u003e")
+
+        script = (
+            "try{"
+            f"localStorage.setItem({js(SESSION_STORAGE_KEY)},{js(self._session_token)});"
+            f"location.replace({js(landing)});"
+            "}catch(e){document.body.textContent="
+            f"{js('This browser would not store the console session (is site storage blocked?).')}"
+            "}"
+        )
         return HTMLResponse(
-            "<!doctype html><title>Cruxible console</title>"
-            "<p>This console link was already used, or is not this run's link. "
-            "Run <code>cruxible console</code> again for a new one.</p>",
-            status_code=403,
-            headers={"cache-control": "no-store"},
+            "<!doctype html><meta charset=utf-8><title>Cruxible console</title><body>"
+            f'<script nonce="{nonce}">{script}</script>'
+            "<noscript>The console needs JavaScript.</noscript>",
+            headers={
+                "cache-control": "no-store",
+                # Only this response may run an inline script, and only this one.
+                "content-security-policy": (
+                    f"default-src 'none'; script-src 'nonce-{nonce}'; base-uri 'none'; "
+                    "form-action 'none'; frame-ancestors 'none'"
+                ),
+            },
         )
 
     def _config(self, scope: Scope) -> Response:
@@ -445,11 +468,34 @@ class PortUnavailable(Exception):
     """The requested loopback port could not be bound."""
 
 
-def bind_loopback(port: int) -> socket.socket:
-    """A listening TCP socket on ``127.0.0.1:port`` (``0`` picks a free port)."""
+def _something_answers(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
 
+
+def bind_loopback(port: int) -> socket.socket:
+    """A listening TCP socket on ``127.0.0.1:port`` (``0`` picks a free port).
+
+    SO_REUSEADDR lets a fixed ``--port`` restart while the previous run's
+    connections sit in TIME_WAIT. On BSD/macOS it would also let this socket
+    shadow another service listening on the wildcard address, so a port where
+    something already answers is refused before binding.
+    """
+
+    def unavailable(reason: str) -> PortUnavailable:
+        return PortUnavailable(
+            f"cannot listen on 127.0.0.1:{port}: {reason}. Pass --port 0 for a free "
+            "port, or another --port."
+        )
+
+    if port and _something_answers(port):
+        raise unavailable("it is already in use")
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("127.0.0.1", port))
         sock.listen(128)
     except OSError as exc:
@@ -457,10 +503,7 @@ def bind_loopback(port: int) -> socket.socket:
         reason = (
             "it is already in use" if exc.errno == errno.EADDRINUSE else (exc.strerror or str(exc))
         )
-        raise PortUnavailable(
-            f"cannot listen on 127.0.0.1:{port}: {reason}. Pass --port 0 for a free "
-            "port, or another --port."
-        ) from exc
+        raise unavailable(reason) from exc
     return sock
 
 
