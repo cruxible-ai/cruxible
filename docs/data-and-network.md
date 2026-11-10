@@ -60,8 +60,8 @@ drift in later releases.
 
 ## Outbound network
 
-**Core makes no outbound calls unless an operator or agent asks for one of the
-actions below.** The source has no telemetry, analytics, crash reporting or
+**The `cruxible` package makes no outbound calls unless an operator or agent
+asks for one of the actions below.** The source has no telemetry, analytics, crash reporting or
 update pings: a word search for sentry, posthog, analytics, opentelemetry and
 datadog finds nothing. The `telemetry summary` counters from 0.3.2 are no
 longer in the source, and they only ever counted locally

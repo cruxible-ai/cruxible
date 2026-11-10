@@ -40,7 +40,7 @@ crediting the reporter unless they ask not to be named.
 
 This policy covers:
 
-- **Core**: the `cruxible` package, including the daemon (`cruxible server
+- **Cruxible**: the `cruxible` package, including the daemon (`cruxible server
   start`) and the MCP server (`cruxible mcp`, `cruxible-mcp`)
 - **Client**: the `cruxible-client` package (Python SDK and typed HTTP client)
 - **Provider runtime**: the `cruxible-provider-runtime` package
