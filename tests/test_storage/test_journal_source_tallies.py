@@ -21,8 +21,6 @@ import pytest
 from cruxible_core.exhaust.journal_index import (
     _SCHEMA,
     _SCHEMA_VERSION,
-    _TABLES,
-    _rebuild_schema,
     _statements,
     source_landing_page,
 )
@@ -170,107 +168,6 @@ def test_a_page_walks_the_tallies_and_seeks_each_latest_landing() -> None:
     )
     assert seek.startswith("SEARCH c USING ") and "capture_source_latest" in seek, seek
     assert "TEMP B-TREE" not in " ".join(_join)
-
-
-def _selectors_to_version_8(conn: sqlite3.Connection) -> None:
-    """Strip capture_selectors back to its version 8 shape: no landing columns or objects."""
-
-    for (trigger,) in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='capture_selectors'"
-    ).fetchall():
-        conn.execute(f"DROP TRIGGER {trigger}")
-    conn.execute("DROP INDEX capture_source_latest")
-    for column in ("source_lost", "landed_at", "stream"):
-        conn.execute(f"ALTER TABLE capture_selectors DROP COLUMN {column}")
-    conn.execute("PRAGMA user_version=8")
-
-
-def _version_8_rows(conn: sqlite3.Connection) -> None:
-    for record_id, source in ((1, "kev"), (2, "kev"), (3, None), (5, "pypi")):
-        _record(conn, record_id, at=f"2026-10-0{record_id}T00:00:00Z")
-        conn.execute(
-            "INSERT INTO capture_selectors(record_id,contract_digest,logical_source) "
-            "VALUES (?,?,?)",
-            (record_id, "c1", source),
-        )
-    _record(conn, 4, at="2026-10-04T00:00:00Z")  # skipped by the projection: payload lost
-    _record(conn, 6, at="2026-10-06T00:00:00Z")  # not projected yet
-    conn.execute("INSERT INTO capture_progress VALUES (?, 5)", (STREAM,))
-
-
-def _assert_migrated(conn: sqlite3.Connection) -> None:
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == _SCHEMA_VERSION
-    assert (
-        _tallies(conn)
-        == _recount(conn)
-        == [
-            (STREAM, "", "", 1),
-            (STREAM, "kev", "c1", 2),
-            (STREAM, "pypi", "c1", 1),
-        ]
-    )
-    assert [tuple(row) for row in conn.execute("SELECT * FROM capture_unattributed")] == [
-        (4, STREAM)
-    ]
-    page = source_landing_page(conn, STREAM, limit=5, after=None)
-    assert [(item.source, item.latest.record_id) for item in page.sources] == [
-        ("kev", 2),
-        ("pypi", 5),
-    ]
-    # Every landing object a fresh index has, the migrated one has too.
-    fresh = _index()
-    expected = {
-        row[0]
-        for row in fresh.execute(
-            "SELECT type || ':' || name FROM sqlite_master WHERE name LIKE 'capture_%'"
-        )
-    }
-    assert expected == {
-        row[0]
-        for row in conn.execute(
-            "SELECT type || ':' || name FROM sqlite_master WHERE name LIKE 'capture_%'"
-        )
-    }
-
-
-def test_schema_8_gains_the_tallies_from_its_own_rows_and_keeps_its_identity() -> None:
-    conn = _index()
-    conn.execute("INSERT INTO index_identity VALUES (1, 'kept')")
-    conn.execute("DROP TABLE capture_source_tallies")
-    conn.execute("DROP TABLE capture_unattributed")
-    _selectors_to_version_8(conn)
-    _version_8_rows(conn)
-
-    _rebuild_schema(conn)
-
-    assert conn.execute("SELECT identity FROM index_identity").fetchone()[0] == "kept"
-    _assert_migrated(conn)
-
-
-def test_a_9_to_8_to_9_round_trip_rederives_the_stale_landing_objects() -> None:
-    """An older binary rebuilds a version 9 file as 8, dropping only the tables it knows.
-
-    The landing tables survive it, tallying rows that are gone; migrating to 9
-    again recreates them from the rows, instead of colliding with them.
-    """
-
-    conn = _index()
-    _land(conn, 1, "kev", "c1", at="2026-10-01T00:00:00Z")
-    _land(conn, 7, "kev", "c1", at="2026-10-07T00:00:00Z")
-    _record(conn, 8, at="2026-10-08T00:00:00Z")
-    conn.execute("INSERT INTO capture_unattributed VALUES (8, ?)", (STREAM,))
-    # The version 8 binary's rebuild: its own tables dropped and recreated.
-    for table in _TABLES:
-        if table not in {"capture_source_tallies", "capture_unattributed"}:
-            conn.execute(f"DROP TABLE IF EXISTS {table}")
-    _statements(conn, _SCHEMA)
-    _selectors_to_version_8(conn)
-    assert _tallies(conn), "the stale tallies survive the older rebuild"
-    _version_8_rows(conn)
-
-    _rebuild_schema(conn)
-
-    _assert_migrated(conn)
 
 
 def _assert_guarded(conn: sqlite3.Connection) -> None:
@@ -463,31 +360,3 @@ def test_concurrent_opens_of_an_old_index_all_install_its_guards(
             }
         finally:
             check.close()
-
-
-def test_schema_9_queues_every_retained_proof_record_and_its_new_ones() -> None:
-    """Version 9 to 10: proof records already indexed are pending, without a body read.
-
-    Each is projected the first time a lookup reads its run; the recreated
-    insert trigger queues every proof record indexed after.
-    """
-
-    conn = _index()
-    _record(conn, 1, at="2026-10-01T00:00:00Z")
-    _record(conn, 2, at="2026-10-02T00:00:00Z")
-    # The version 9 shape: no proof objects, and the insert trigger before them.
-    conn.execute("DROP TABLE proof_pending")
-    conn.execute("DROP TABLE proof_locators")
-    conn.execute("DROP TRIGGER records_inserted")
-    conn.execute("PRAGMA user_version=9")
-
-    _rebuild_schema(conn)
-
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == _SCHEMA_VERSION
-    pending = "SELECT record_id, stream, run_id FROM proof_pending ORDER BY record_id"
-    assert [tuple(row) for row in conn.execute(pending)] == [
-        (1, STREAM, "RUN-1"),
-        (2, STREAM, "RUN-2"),
-    ]
-    _record(conn, 3, at="2026-10-03T00:00:00Z")
-    assert [tuple(row) for row in conn.execute(pending)][-1] == (3, STREAM, "RUN-3")

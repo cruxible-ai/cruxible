@@ -203,64 +203,6 @@ def test_exact_event_and_window_refuse_a_different_source(tmp_path):
             )
 
 
-def test_v6_index_migration_preserves_rows_and_progress_without_backfill(tmp_path, monkeypatch):
-    from cruxible_core.exhaust import capture_selectors
-    from cruxible_core.indexes.resident import close_idle_connections
-
-    instance, _line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
-    old = _landing(instance, procedure, "sarif.log", partition="run:old")
-    journal, _ = _journal(instance)
-    index = journal.index
-    args = dict(
-        bodies=instance.body_store(),
-        contract_digest=capture_contract_digest(TRIGGER_CONTRACT).tagged,
-        since=None,
-        until=READ_TIME + timedelta(seconds=2),
-        limit=10,
-    )
-    assert index.captures(_stream(instance), **args)[0] == (old,)
-    with index.connection() as conn:
-        identity = conn.execute("SELECT identity FROM index_identity").fetchone()[0]
-        progress = tuple(conn.execute("SELECT * FROM capture_progress").fetchone())
-        # Remove every v9- and v8-only object before simulating the actual v6 schema.
-        for (trigger,) in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='trigger' AND "
-            "(name LIKE 'capture_landing%' OR name LIKE 'capture_unattributed%')"
-        ).fetchall():
-            conn.execute(f"DROP TRIGGER {trigger}")
-        conn.execute("DROP INDEX capture_source_latest")
-        conn.execute("DROP TABLE capture_source_tallies")
-        conn.execute("DROP TABLE capture_unattributed")
-        for column in ("source_lost", "landed_at", "stream"):
-            conn.execute(f"ALTER TABLE capture_selectors DROP COLUMN {column}")
-        conn.execute("DROP INDEX capture_name")
-        conn.execute("DROP TABLE capture_contract_names")
-        conn.execute("DROP TABLE capture_name_progress")
-        conn.execute("ALTER TABLE capture_selectors DROP COLUMN contract_identity")
-        conn.execute("DROP INDEX capture_contract_source")
-        conn.execute("ALTER TABLE capture_selectors DROP COLUMN logical_source")
-        conn.execute("PRAGMA user_version=6")
-    close_idle_connections()
-    with monkeypatch.context() as patch:
-        patch.setattr(
-            capture_selectors,
-            "capture_envelope",
-            lambda *a, **k: pytest.fail("historical envelope backfill"),
-        )
-        with index.connection() as conn:
-            assert conn.execute("SELECT identity FROM index_identity").fetchone()[0] == identity
-            assert tuple(conn.execute("SELECT * FROM capture_progress").fetchone()) == progress
-            assert (
-                conn.execute("SELECT logical_source FROM capture_selectors").fetchone()[0] is None
-            )
-        assert index.captures(_stream(instance), **args, logical_sources=("sarif.log",))[0] == ()
-        assert index.captures(_stream(instance), **args)[0] == (old,)
-    new = _landing(
-        instance, procedure, "sarif.log", partition="run:new", at=READ_TIME + timedelta(seconds=1)
-    )
-    assert index.captures(_stream(instance), **args, logical_sources=("sarif.log",))[0] == (new,)
-
-
 @pytest.mark.parametrize("size", [10, 100])
 def test_landing_projection_handles_only_the_new_envelope_at_two_sizes(tmp_path, monkeypatch, size):
     from cruxible_core.exhaust import capture_selectors

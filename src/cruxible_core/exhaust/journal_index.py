@@ -377,48 +377,6 @@ def _install_landing_guards(conn: sqlite3.Connection) -> None:
     _statements(conn, _LANDING_GUARDS)
 
 
-def _add_landing_tallies(conn: sqlite3.Connection) -> None:
-    """Version 8 to 9: landings by logical source, derived once from the index's own rows.
-
-    Every projected landing gains its stream and landing instant from its
-    record, the tallies are counted once from those rows, and each landing the
-    projection skipped for a lost payload is recorded as unattributed. No body
-    is read: an envelope that was lost when its landing was projected reads as
-    no source, as before.
-    """
-
-    # A file this version wrote and an older binary rebuilt keeps the landing
-    # objects that binary does not know, tallying rows it has since dropped:
-    # they are derived state, recreated here from the rows below.
-    for kind, name in (
-        ("TABLE", "capture_source_tallies"),
-        ("TABLE", "capture_unattributed"),
-        ("INDEX", "capture_source_latest"),
-    ):
-        conn.execute(f"DROP {kind} IF EXISTS {name}")
-    for column in ("stream TEXT", "landed_at TEXT", "source_lost INTEGER NOT NULL DEFAULT 0"):
-        conn.execute(f"ALTER TABLE capture_selectors ADD COLUMN {column}")
-    conn.execute(
-        "UPDATE capture_selectors SET (stream, landed_at) = "
-        "(SELECT r.stream, r.recorded_at FROM records r WHERE r.id=capture_selectors.record_id)"
-    )
-    _statements(conn, _LANDING_SCHEMA)
-    conn.execute(
-        "INSERT INTO capture_source_tallies SELECT stream, logical_source, contract_digest, "
-        "count(*) FROM capture_selectors WHERE logical_source IS NOT NULL AND stream IS NOT NULL "
-        "GROUP BY stream, logical_source, contract_digest"
-    )
-    conn.execute(
-        "INSERT INTO capture_unattributed SELECT r.id, r.stream FROM records r "
-        "JOIN capture_progress p ON p.stream=r.stream "
-        "WHERE r.event_kind='produced_capture' AND r.id<=p.record_id "
-        "AND NOT EXISTS(SELECT 1 FROM capture_selectors c WHERE c.record_id=r.id)"
-    )
-
-
-_PROOF_KINDS_SQL = ",".join(f"'{kind}'" for kind in sorted(PROOF_LOCATOR_KINDS))
-
-
 def _cited_rows(
     conn: sqlite3.Connection, key: str, run_id: str, locators: tuple[str, ...]
 ) -> list[sqlite3.Row]:
@@ -492,68 +450,19 @@ def _landing_head(bodies: Any) -> str | None:
         return None
 
 
-def _add_proof_locators(conn: sqlite3.Connection) -> None:
-    """Version 9 to 10: proof-record locators, every retained proof record pending.
-
-    The insert trigger is recreated to queue new proof records; the records
-    already indexed are queued once here, without reading a body, and each is
-    projected the first time a lookup reads its run.
-    """
-
-    conn.execute("DROP TRIGGER IF EXISTS records_inserted")
-    for name in ("proof_pending", "proof_locators"):
-        conn.execute(f"DROP TABLE IF EXISTS {name}")
-    _statements(conn, _PROOF_SCHEMA)
-    _statements(conn, _SCHEMA[_SCHEMA.index("CREATE TRIGGER IF NOT EXISTS records_inserted") :])
-    conn.execute(
-        "INSERT INTO proof_pending SELECT id, stream, run_id, NULL FROM records "
-        f"WHERE run_id IS NOT NULL AND event_kind IN ({_PROOF_KINDS_SQL})"
-    )
-
-
 def _rebuild_schema(conn: sqlite3.Connection) -> None:
-    """Add source metadata without backfilling; rebuild unsupported older schemas.
+    """Rebuild an index file of any other schema version from the retained journal.
 
-    Versions 6 to 8 keep their identity, rows and progress cursors. Source-filtered
-    Triggers start after their acceptance, so old NULL rows are never eligible.
-    The retained journal refills unsupported older schemas. One immediate
-    transaction re-checks the version, so concurrent openers migrate or rebuild
-    once. Only a rebuild changes identity and invalidates existing page keys.
+    The index is derived: its tables are dropped and recreated, and the
+    journal refills them. One immediate transaction re-checks the version, so
+    concurrent openers rebuild once. A rebuild changes the index identity and
+    so invalidates existing page keys.
     """
 
     conn.execute("BEGIN IMMEDIATE")
     try:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if version == 9:
-            _add_proof_locators(conn)
-            conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
-        elif version == 8:
-            _add_landing_tallies(conn)
-            _add_proof_locators(conn)
-            conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
-        elif version in {6, 7}:
-            if version == 6:
-                conn.execute("ALTER TABLE capture_selectors ADD COLUMN logical_source TEXT")
-                conn.execute(
-                    "CREATE INDEX capture_contract_source ON capture_selectors"
-                    "(contract_digest, logical_source, record_id) WHERE logical_source IS NOT NULL"
-                )
-            conn.execute("ALTER TABLE capture_selectors ADD COLUMN contract_identity TEXT")
-            conn.execute(
-                "CREATE TABLE capture_contract_names (digest TEXT PRIMARY KEY, identity TEXT)"
-            )
-            conn.execute(
-                "CREATE TABLE capture_name_progress "
-                "(stream TEXT PRIMARY KEY, record_id INTEGER NOT NULL)"
-            )
-            conn.execute(
-                "CREATE INDEX capture_name ON capture_selectors"
-                "(contract_identity,logical_source,record_id)"
-            )
-            _add_landing_tallies(conn)
-            _add_proof_locators(conn)
-            conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
-        elif version != _SCHEMA_VERSION:
+        if version != _SCHEMA_VERSION:
             for table in _TABLES:
                 conn.execute(f"DROP TABLE IF EXISTS {table}")
             _statements(conn, _SCHEMA)
