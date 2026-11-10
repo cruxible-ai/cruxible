@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -19,6 +20,7 @@ from cruxible_client import (
 from cruxible_client.artifacts import unpack_artifact
 from cruxible_client.authoring.attestations import (
     local_attestation_signer_from_environment,
+    principal_records,
 )
 from cruxible_client.authoring.bind import bind_catalogued_selection_input
 from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
@@ -28,6 +30,10 @@ from cruxible_client.authoring.files import (
     compile_client_file_context,
     load_file_catalog,
     mapped_root_aliases,
+)
+from cruxible_client.authoring.folder_identity import (
+    FolderIdentityRefused,
+    VerifiedFolderIdentity,
 )
 from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
 from cruxible_client.authoring.sdk_types import SourceSelectionError
@@ -103,6 +109,7 @@ from cruxible_client.contracts.write import (
     WriteOutcome,
     WriteRequest,
 )
+from cruxible_client.errors import CoreError as ClientCoreError
 from cruxible_client.errors import DaemonOperationScopeError as ClientDaemonOperationScopeError
 from cruxible_client.errors import ServerUnreachableError
 from cruxible_client.kits import (
@@ -111,7 +118,6 @@ from cruxible_client.kits import (
     resolve_kit_image,
     stage_kit_providers,
 )
-from cruxible_client.transport.http import configured_principal_id
 from cruxible_core import __version__
 from cruxible_core.adapters.block_detach import detach_projection_pages
 from cruxible_core.claims.claim_type_inputs import (
@@ -131,6 +137,14 @@ from cruxible_core.mcp.daemon import (
     configured_daemon_target,
     forget_local_daemon,
     resolve_daemon_target,
+)
+from cruxible_core.mcp.identity import (
+    McpIdentity,
+    environment_names_identity,
+    folder_candidate,
+    forget_verified_identities,
+    local_identity,
+    verified_folder_identity,
 )
 from cruxible_core.mcp.results import McpServerInfoResult, McpWhoAmIResult
 from cruxible_core.mcp.target import configured_instance_id
@@ -170,15 +184,21 @@ def reset_client_cache() -> None:
         _client_cache = None
         _client_cache_key = None
         forget_local_daemon()
+        forget_verified_identities()
 
 
-def _get_client() -> CruxibleClient:
-    """The daemon client: configured, found, or started (`cruxible_core.mcp.daemon`)."""
+def _identity_and_client() -> tuple[McpIdentity, CruxibleClient]:
+    """The daemon client and who it acts as (`cruxible_core.mcp.identity`).
+
+    The daemon is configured, found, or started (`cruxible_core.mcp.daemon`).
+    The principal is the environment's, else the bound folder's record, checked
+    against the daemon's principal registry before any call acts as it.
+    """
 
     global _client_cache, _client_cache_key
     target = resolve_daemon_target()
     token = get_runtime_bearer_token()
-    principal_id = configured_principal_id()
+    source, principal_id, candidate = local_identity(target=target, token=token)
     cache_key = (target.server_url, target.server_socket, token, principal_id)
     with _client_cache_lock:
         if _client_cache is None or _client_cache_key != cache_key:
@@ -191,7 +211,36 @@ def _get_client() -> CruxibleClient:
                 principal_id=principal_id,
             )
             _client_cache_key = cache_key
-        return _client_cache
+        client = _client_cache
+    if candidate is None:
+        return McpIdentity(source=source, principal_id=principal_id), client
+    try:
+        verified = verified_folder_identity(
+            candidate,
+            target=target,
+            principals=lambda instance_id: principal_records(client, instance_id),
+        )
+    except (FolderIdentityRefused, ServerUnreachableError):
+        raise
+    except ClientCoreError as exc:
+        raise FolderIdentityRefused(
+            "cruxible.identity.folder_principal_unknown",
+            path=candidate.path,
+            detail=f"the daemon's principal registry could not be read ({exc})",
+        ) from exc
+    return McpIdentity(source="folder", principal_id=principal_id, folder=verified), client
+
+
+def _get_client() -> CruxibleClient:
+    """The daemon client: configured, found, or started (`cruxible_core.mcp.daemon`)."""
+
+    return _identity_and_client()[1]
+
+
+def _mcp_identity() -> McpIdentity:
+    """Who this adapter acts as; a folder record is checked against its daemon first."""
+
+    return _identity_and_client()[0]
 
 
 def _daemon_call(
@@ -495,8 +544,14 @@ def handle_playbill_approve(
     never enter a result or a log line.
     """
 
-    key_dir = mcp_approval_key_dir()
-    signer = signer_id if signer_id is not None else _sole_approval_signer(key_dir)
+    key_dir, default_signer = _approval_key_dir()
+    signer = (
+        signer_id
+        if signer_id is not None
+        else default_signer
+        if default_signer is not None
+        else _sole_approval_signer(key_dir)
+    )
     try:
         governance_identifier(signer, label="signer_id")
     except ValueError as exc:
@@ -543,6 +598,34 @@ def handle_playbill_approve(
     return result
 
 
+def _approval_key_dir() -> tuple[Path, str | None]:
+    """The local approval key directory and the signer it defaults to, if one.
+
+    ``CRUXIBLE_MCP_KEY_DIR`` when the environment names the identity; else the
+    folder record's key directory, signing as the folder's principal.
+    """
+
+    folder = _folder_identity()
+    if folder is not None:
+        return folder.key_dir, folder.principal_id
+    return mcp_approval_key_dir(), None
+
+
+def _folder_identity() -> VerifiedFolderIdentity | None:
+    """The bound folder's checked identity, when the environment names none.
+
+    Only a configured daemon (the environment's or the binding's) can carry a
+    folder record, so this never starts one to find out there is none.
+    """
+
+    if environment_names_identity(os.environ, token=get_runtime_bearer_token()):
+        return None
+    target = configured_daemon_target()
+    if target is None or folder_candidate(os.environ, target=target) is None:
+        return None
+    return _mcp_identity().folder
+
+
 def _sole_approval_signer(key_dir: Path) -> str:
     signers = sorted(path.name.removesuffix(".ed25519") for path in key_dir.glob("*.ed25519"))
     if len(signers) != 1:
@@ -570,11 +653,17 @@ def _playbill_whoami(instance_id: str) -> contracts.WhoAmI:
 
 
 def handle_playbill_whoami(instance_id: str) -> McpWhoAmIResult:
+    if environment_names_identity(os.environ, token=get_runtime_bearer_token()):
+        source: Literal["environment", "folder", "none"] = "environment"
+    else:
+        # A folder record that cannot be used refuses here, before whoami answers.
+        source = "folder" if _folder_identity() is not None else "none"
     return McpWhoAmIResult(
         instance_id=instance_id,
         adapter_version=__version__,
         daemon_version=_daemon_version(),
         identity=_playbill_whoami(instance_id),
+        identity_source=source,
     )
 
 
@@ -936,11 +1025,13 @@ def handle_playbill_claim_attest(
         ) from exc
 
     def call(client: Any) -> ClaimAttestationAppendResult:
+        folder = _folder_identity()
         signer = local_attestation_signer_from_environment(
             client,
             instance_id,
             # A forbidden root for key custody; nothing under it is read.
             workspace_root=mcp_workspace_root(guard=False),
+            private_key_path=None if folder is None else folder.private_key_path,
         )
         return attest_claim(
             client,

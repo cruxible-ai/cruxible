@@ -53,7 +53,10 @@ First setup on one machine, in order:
 4. If init reports `workspace_advertisement.status: not_attached`, run
    `cruxible workspace attach` from the Git worktree. Its
    `.cruxible/coverage.json` then gives CLI and MCP the daemon and instance.
-5. Give each agent session its principal: `CRUXIBLE_PRINCIPAL_ID`, plus
+5. An agent started in the project acts as its owner with no configuration:
+   init's `.cruxible/identity.json` names the owner (see
+   [MCP tools](mcp-tools.md#instances-and-the-adapter-environment)). Give a
+   session that should be another principal its own: `CRUXIBLE_PRINCIPAL_ID`, plus
    `CRUXIBLE_MCP_KEY_DIR` (the key directory, for `cruxible_proposal_approve`)
    and `CRUXIBLE_PRINCIPAL_KEY` (the key file, for `cruxible_claim_attest`),
    copied from that principal's `cruxible.env`. Add more principals with

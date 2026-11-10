@@ -69,8 +69,9 @@ def principal_refusal(
             "cruxible.identity.principal_unconfigured",
             "this process names no principal, and the local operator identity "
             f"'{LOCAL_OPERATOR_ACTOR_ID}' is not a registered principal on {instance_id}; "
-            "repair: set CRUXIBLE_PRINCIPAL_ID (or pass --principal-id) to your "
-            f"registered principal ID (active principals: {named})",
+            "repair: run `cruxible init` in the project folder (an MCP server or CLI "
+            "started there acts as its owner), or set CRUXIBLE_PRINCIPAL_ID (or pass "
+            f"--principal-id) to your registered principal ID (active principals: {named})",
             repair=RepairOperation(
                 operation="cruxible.orient",
                 arguments={"section": "principals", "configure": "CRUXIBLE_PRINCIPAL_ID"},

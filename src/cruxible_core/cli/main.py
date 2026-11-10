@@ -1151,6 +1151,7 @@ def cli(
         stored,
         resolved.instance_id,
         normalized_transport(settings.server_url, settings.server_socket),
+        folder=resolved.workspace if resolved.instance_source == "workspace" else None,
     )
 
 
@@ -1159,6 +1160,8 @@ def _load_remembered_principal(
     stored: CliContextState,
     instance_id: str | None,
     transport: str | None,
+    *,
+    folder: Path | None = None,
 ) -> None:
     """Act as the principal the context remembers for this instance, as if its file was sourced.
 
@@ -1171,6 +1174,11 @@ def _load_remembered_principal(
     Settings are remembered per instance on one daemon endpoint, and the file
     must name that same endpoint: a credential is never offered to another
     daemon, whichever way (flag, environment or workspace) the command chose it.
+
+    When the context remembers no principal for this instance, the bound
+    ``folder``'s identity record (`.cruxible/identity.json`, written by `init`)
+    names the default, as it does for the MCP server started there: over a local
+    socket only, never with a bearer credential.
     """
 
     obj = ctx.obj
@@ -1188,6 +1196,9 @@ def _load_remembered_principal(
         return
     entry = stored.principals.get(principal_binding(transport, instance_id))
     if entry is None or entry.active is None or entry.active not in entry.settings:
+        if folder is not None and transport.startswith("unix://"):
+            if _load_folder_principal(ctx, folder, instance_id):
+                return
         elsewhere = sorted(
             key.partition("@")[2]
             for key, item in stored.principals.items()
@@ -1223,6 +1234,26 @@ def _load_remembered_principal(
             err=True,
         )
         return
+    _act_as(
+        ctx,
+        settings.environment(),
+        principal_id=settings.principal_id,
+        source="remembered",
+        settings_path=str(settings.path),
+    )
+
+
+def _act_as(
+    ctx: click.Context,
+    environment: dict[str, str],
+    *,
+    principal_id: str,
+    source: str,
+    settings_path: str | None,
+) -> None:
+    """Act as ``principal_id`` for this command, as if its settings were sourced."""
+
+    obj = ctx.obj
     variables = (PRINCIPAL_ID_ENV, PRINCIPAL_KEY_ENV, PRINCIPAL_TOKEN_ENV)
     previous = {name: os.environ.get(name) for name in variables}
 
@@ -1240,9 +1271,53 @@ def _load_remembered_principal(
         for key in ("principal_id", "principal_source", "principal_settings"):
             obj.pop(key, None)
 
-    os.environ.update(settings.environment())
+    os.environ.update(environment)
     ctx.call_on_close(restore)
-    obj["principal_id"] = settings.principal_id
-    obj["principal_source"] = "remembered"
-    obj["principal_settings"] = str(settings.path)
+    obj["principal_id"] = principal_id
+    obj["principal_source"] = source
+    obj["principal_settings"] = settings_path
     obj["forget_remembered_principal"] = forget
+
+
+def _load_folder_principal(ctx: click.Context, folder: Path, instance_id: str) -> bool:
+    """Act as the bound folder's default principal (`.cruxible/identity.json`), if it names one.
+
+    The MCP server started in this folder acts as the same principal. A record
+    that cannot be used warns and acts as no principal, so every command (a
+    `server stop` included) still runs; a write then refuses as unconfigured.
+    """
+
+    from cruxible_client.authoring.folder_identity import (
+        FolderIdentityRefused,
+        folder_identity_path,
+        read_folder_identity,
+        require_folder_key,
+    )
+
+    path = folder_identity_path(folder)
+    try:
+        record = read_folder_identity(folder)
+        if record is None:
+            return False
+        if record.instance_id != instance_id:
+            click.echo(
+                f"warning: {path} names instance {record.instance_id}, not this folder's "
+                f"{instance_id}; acting as no principal. Repair: rerun `cruxible init` or "
+                "`cruxible workspace attach` here",
+                err=True,
+            )
+            return False
+        key = require_folder_key(record, path=path)
+    except FolderIdentityRefused as refused:
+        click.echo(f"warning: {refused}; acting as no principal", err=True)
+        return False
+    settings = Path(record.key_dir) / "cruxible.env"
+    _act_as(
+        ctx,
+        # The record names a principal and its key only; a token is never loaded from it.
+        {PRINCIPAL_ID_ENV: record.principal_id, PRINCIPAL_KEY_ENV: str(key)},
+        principal_id=record.principal_id,
+        source="folder",
+        settings_path=str(settings) if settings.is_file() else None,
+    )
+    return True

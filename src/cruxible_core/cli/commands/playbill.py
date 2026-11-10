@@ -57,6 +57,7 @@ from cruxible_client.authoring.files import (
     remove_catalog_entry,
     root_aliases,
 )
+from cruxible_client.authoring.folder_identity import write_folder_identity
 from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
 from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.authoring.selectors import WorkspaceFiles
@@ -912,6 +913,19 @@ def attach_workspace(
         command_name="cruxible workspace attach",
     )
     _write_world_stub(workspace, selected)
+    acting = _acting_principal_key_dir()
+    identity_path = (
+        None
+        if acting is None
+        else _record_folder_identity(
+            workspace,
+            instance_id=selected,
+            principal_id=acting[0],
+            key_dir=acting[1],
+            token=get_runtime_bearer_token(),
+            replace=replace,
+        )
+    )
     result = contracts.WorkspaceAttachResult(
         instance_id=selected,
         workspace_root=str(workspace),
@@ -920,10 +934,17 @@ def attach_workspace(
     )
     result = _with_git_workspace_note(result)
     if output_json:
-        _emit_json(_json_receipt(result))
+        _emit_json(
+            {
+                **_json_receipt(result),
+                **({} if identity_path is None else {"folder_identity_path": str(identity_path)}),
+            }
+        )
         return
     click.echo(f"Attached workspace {workspace} to Cruxible host {selected}")
     click.echo(f"Config: {config_path}")
+    if identity_path is not None and acting is not None:
+        click.echo(f"Folder identity: {identity_path} (agents started here act as {acting[0]})")
     if mirror is not None:
         click.echo(mirror)
 
@@ -1396,6 +1417,14 @@ def init_playbill(
         )
     if git_workspace is not None:
         _write_world_stub(git_workspace, result.instance_id)
+    identity_path = _record_folder_identity(
+        git_workspace,
+        instance_id=result.instance_id,
+        principal_id=principal_id,
+        key_dir=owner_key_dir,
+        token=owner_token,
+        replace=replace,
+    )
     if output_json:
         _emit_json(
             {
@@ -1406,6 +1435,7 @@ def init_playbill(
                     if reviewer_settings is None
                     else {"reviewer_settings_path": str(reviewer_settings)}
                 ),
+                **({} if identity_path is None else {"folder_identity_path": str(identity_path)}),
             }
         )
         return
@@ -1431,11 +1461,70 @@ def init_playbill(
             "authentication: every process of this OS user is equally trusted."
         )
     )
+    if identity_path is not None:
+        click.echo(
+            f"Folder identity: {identity_path} (an MCP server or CLI started in this folder "
+            f"acts as {principal_id} unless its environment names another principal)"
+        )
     if reviewer is not None:
         click.echo(f"Reviewer public key: {reviewer.principal.public_key}")
         click.echo(f"Reviewer private key retained locally at: {reviewer.private_key_path}")
         click.echo(f"Reviewer settings: {reviewer_settings}")
         click.echo("Act as the reviewer with: cruxible context use --principal reviewer")
+
+
+def _record_folder_identity(
+    workspace: Path | None,
+    *,
+    instance_id: str,
+    principal_id: str,
+    key_dir: Path,
+    token: str | None,
+    replace: bool,
+) -> Path | None:
+    """Record the folder's default principal (`.cruxible/identity.json`), local socket only.
+
+    Only over a local socket with daemon auth off: with a bearer credential the
+    credential decides who acts, and a TCP daemon's folder is not this one. The
+    record names a principal ID and its key directory, never a key or a token.
+    """
+
+    if workspace is None or token is not None or not _root_ctx_obj().get("server_socket"):
+        return None
+    path, status = write_folder_identity(
+        workspace,
+        instance_id=instance_id,
+        principal_id=principal_id,
+        key_dir=key_dir,
+        replace=replace,
+    )
+    if status == "kept":
+        click.echo(
+            f"note: {path} keeps naming another principal of {instance_id} as this "
+            "folder's default; rerun with --replace to make it "
+            f"{principal_id}",
+            err=True,
+        )
+        return None
+    return path
+
+
+def _acting_principal_key_dir() -> tuple[str, Path] | None:
+    """The principal this process acts as and its key directory, when both are known.
+
+    Known when the CLI acts as a principal and its key is ``<id>.ed25519`` in a
+    directory: the remembered settings' (or the folder record's) key, or one
+    named by CRUXIBLE_PRINCIPAL_KEY.
+    """
+
+    principal_id = _root_ctx_obj().get("principal_id")
+    raw_key = os.environ.get(PRINCIPAL_KEY_ENV)
+    if not isinstance(principal_id, str) or not raw_key:
+        return None
+    key = Path(raw_key).expanduser()
+    if not key.is_absolute() or key.name != f"{principal_id}.ed25519" or not key.is_file():
+        return None
+    return principal_id, key.parent
 
 
 def _os_principal_id() -> str:

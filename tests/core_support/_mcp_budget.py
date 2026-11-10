@@ -26,7 +26,8 @@ DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS = 10_400
 #: maintainer ruling adds kit/provider/Line/Runbook startup to the lean catalog;
 #: the fresh-install walkthrough (2026-11-09) adds inbox_list (next's top repair)
 #: and claim_attest (named by review-state); since (what changed after a named
-#: generation, named by review-state) adds 843.5, measured at 18,077.
+#: generation, named by review-state) adds 843.5; the folder-identity wording on
+#: approve and whoami adds 29, measured at 18,106.
 #: This separate ceiling does not widen the existing default profile's budget.
 PLUGIN_PROFILE_MODEL_VISIBLE_TOKENS = 18_300
 

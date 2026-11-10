@@ -53,17 +53,19 @@ from another daemon into this shell: `unset CRUXIBLE_SERVER_BEARER_TOKEN`.
 |---|---|---|
 | 1 | `cd /abs/project && git init` | The project must be a Git worktree before `init` for `init` to attach it. |
 | 2 | Start the daemon: call `cruxible_server_info` from the agent once, or run `cruxible server start --socket SOCKET` in its own terminal | MCP auto-start runs the same command detached; `SOCKET`'s directory must be owner-only (the daemon creates it that way). |
-| 3 | `cruxible --server-socket SOCKET init --principal-id owner --key-dir /abs/keys/owner --reviewer-key-dir /abs/keys/reviewer` | Creates the instance with two principals, `owner` and `reviewer`, under the default `self_approval_allowed` policy (`--require-independent-approval` makes approval need the second principal). Each key directory gets `<id>.ed25519` and a `cruxible.env` settings file; the result prints `owner_settings_path` and `reviewer_settings_path`. The CLI remembers the owner and acts as it from then on. |
+| 3 | `cruxible --server-socket SOCKET init --principal-id owner --key-dir /abs/keys/owner --reviewer-key-dir /abs/keys/reviewer` | Creates the instance with two principals, `owner` and `reviewer`, under the default `self_approval_allowed` policy (`--require-independent-approval` makes approval need the second principal). Each key directory gets `<id>.ed25519` and a `cruxible.env` settings file; the result prints `owner_settings_path` and `reviewer_settings_path`. The CLI remembers the owner and acts as it from then on, and `.cruxible/identity.json` records the owner as the folder's default principal (a principal ID and the key directory's path; no key, no token). |
 | 4 | Check `workspace_advertisement.status` in the init result. `updated`: done. `not_attached`: `git init` if needed, then `cruxible workspace attach` | Attaching writes `.cruxible/coverage.json`, which binds the project to the daemon and instance. From then on CLI commands in the project need no flags, and the MCP server finds the daemon and instance from it. |
-| 5 | Configure the MCP server's environment (below) for the principal this agent session acts as, then call `cruxible_whoami` | `actor_id` should be that principal and `can_author: true`. `actor_id: operator` with `cruxible.identity.principal_unconfigured` means `CRUXIBLE_PRINCIPAL_ID` is not set. |
+| 5 | Call `cruxible_whoami` from the agent started in the project | `identity_source: folder`, `actor_id` the owner and `can_author: true`: the MCP server acts as the folder's owner with no config edit, for writes, approvals and attestations. `identity_source: none` with `cruxible.identity.principal_unconfigured` means the folder has no record: run `init` there. A session that should be another principal sets the environment below. |
 | 6 | `cruxible principal add verifier --key-dir /abs/keys/verifier` | Optional third principal, for guidance that asks for a reporter, a verifier and an approver. The CLI signs the registration with the owner's remembered key (`--signer-key /abs/keys/owner/owner.ed25519` otherwise); the verifier's settings land in `/abs/keys/verifier/cruxible.env`. |
 | 7 | `cruxible kit add /abs/kit-dir`, then `cruxible kit add /abs/kit-dir --commit --at OID` | `OID` is the coordinate the preview printed. `cruxible_kit_add` takes the same local kit directory, layout or registry release (`NAME:VERSION`). |
 | 8 | Tailor the kit's automation template, submit it, have a separate session approve it, then preview and run its start Runbook | See [Kits and teams](#kits-and-teams). |
 
-**MCP environment per principal.** The MCP server never reads remembered CLI
-context or `cruxible.env` itself; put the values in the `env` block of the
-host's MCP config (a private, local override, never the plugin). Each agent
-session is one principal, so a reviewer session needs its own config.
+**MCP environment per principal.** Solo on one machine, the folder record is
+enough. A session that acts as another principal (a reviewer, a teammate's
+agent) puts the values in the `env` block of the host's MCP config (a private,
+local override, never the plugin); any of the three identity variables takes
+precedence over the folder record. The MCP server never reads remembered CLI
+context or `cruxible.env` itself.
 
 | Variable | Value | Used for |
 |---|---|---|
@@ -91,7 +93,7 @@ principals, Mandates and approval policy still apply. A separate agent session
 (its own principal) reviews the exact candidate; never self-approve, including with auth off. The single
 plugin does not enforce separate identities while auth is off.
 
-The plugin catalog measures 18,077 estimated model-visible tokens (input schemas
+The plugin catalog measures 18,106 estimated model-visible tokens (input schemas
 and descriptions, JSON characters/4), pinned below 18,300. The existing MCP
 default profile retains its separate 10,400 ceiling; full-catalog registration
 is not what this plugin advertises. Instructions remain below 300 estimated

@@ -150,7 +150,8 @@ def mcp_approval_key_dir(environ: Mapping[str, str] | None = None) -> Path:
     raw = env.get(MCP_KEY_DIR_ENV)
     if not raw:
         raise ConfigError(
-            "cruxible_proposal_approve has no local approval key: set "
+            "cruxible_proposal_approve has no local approval key: run `cruxible init` in "
+            "this folder (an MCP server started there signs as its owner), or set "
             f"{MCP_KEY_DIR_ENV} in this MCP server's environment (the env block of the MCP "
             "client config) to an absolute directory outside the workspace holding "
             "<signer_id>.ed25519, as `cruxible principal add --key-dir` writes it. "

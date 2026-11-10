@@ -19,6 +19,9 @@ class McpWhoAmIResult(BaseModel):
     adapter_version: str
     daemon_version: str
     identity: contracts.WhoAmI
+    #: Where this server's principal came from: its environment, the folder's
+    #: record (`.cruxible/identity.json`, written by `cruxible init`), or none.
+    identity_source: Literal["environment", "folder", "none"]
 
 
 class McpServerInfoResult(BaseModel):
