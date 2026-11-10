@@ -2128,40 +2128,6 @@ def _exhaust_promotion_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
-class _ArtifactDigestIdentities(dict[str, str]):
-    """Every candidate artifact digest maps to itself, looked up on demand.
-
-    Slot closure only asks ``get(bound digest)``; answering from the digest
-    index keeps a Line's law independent of how many artifacts exist. Explicit
-    entries (a provider's interface digest) take precedence, as before.
-    """
-
-    def __init__(self, has_digest: Callable[[str], bool]) -> None:
-        super().__init__()
-        self._has_digest = has_digest
-
-    def __missing__(self, key: str) -> str:
-        if self._has_digest(key):
-            return key
-        raise KeyError(key)
-
-    def get(self, key: str, default: Any = None) -> Any:
-        try:
-            return self[key]
-        except KeyError:
-            return default
-
-
-def _artifact_digest_identities(
-    states: Mapping[str, ArtifactDependencyStateV1],
-) -> dict[str, str]:
-    owner = getattr(states, "owner", None)
-    if owner is not None and hasattr(owner, "has_artifact_digest"):
-        return _ArtifactDigestIdentities(owner.has_artifact_digest)
-    # Cold replay's in-memory oracle: enumerate the complete state.
-    return {state.artifact_digest: state.artifact_digest for state in states.values()}
-
-
 def _line_trigger_input(line: LineSpec) -> TriggerInputRecord:
     """The event a Line accepts: exactly its declared one when it binds its Capture."""
 
