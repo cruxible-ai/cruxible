@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import os
-import stat
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from cruxible_client.authoring.signing import _load_private_key as _load_key_file
 from cruxible_client.contracts.attestation_evidence import ClaimAttestationEvidenceRequest
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestation,
@@ -78,46 +77,11 @@ def _outside_roots(path: Path, roots: Sequence[Path]) -> None:
 
 
 def _load_private_key(path: Path) -> Ed25519PrivateKey:
-    if path.parent.is_symlink() or path.is_symlink() or not path.is_file():
-        raise SigningKeyError("client ClaimAttestationV1 key must be a regular nonsymlink file")
-    if stat.S_IMODE(path.parent.stat().st_mode) & 0o077:
-        raise SigningKeyError(
-            "client ClaimAttestationV1 key directory permissions must exclude group/world access"
-        )
-    metadata = path.stat()
-    descriptor: int | None = None
-    content = bytearray()
-    try:
-        # The pre-open regular-file check cannot prevent a replacement by a FIFO.
-        descriptor = os.open(
-            path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-        )
-        opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode) or stat.S_IMODE(opened.st_mode) & 0o077:
-            raise SigningKeyError(
-                "client ClaimAttestationV1 key permissions must exclude group/world access"
-            )
-        if opened.st_dev != metadata.st_dev or opened.st_ino != metadata.st_ino:
-            raise SigningKeyError("client ClaimAttestationV1 key changed while it was opened")
-        while chunk := os.read(descriptor, 64 * 1024):
-            content.extend(chunk)
-    except OSError as exc:
-        raise SigningKeyError("client ClaimAttestationV1 key is missing or unreadable") from exc
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
-    try:
-        private_key = serialization.load_ssh_private_key(bytes(content), password=None)
-    except (TypeError, ValueError) as exc:
-        raise SigningKeyError(
-            "client ClaimAttestationV1 key is not an unencrypted OpenSSH key"
-        ) from exc
-    finally:
-        for index in range(len(content)):
-            content[index] = 0
-    if not isinstance(private_key, Ed25519PrivateKey):
-        raise SigningKeyError("ClaimAttestationV1 signing requires an Ed25519 client key")
-    return private_key
+    return _load_key_file(
+        path,
+        label="client ClaimAttestationV1 key",
+        ed25519_message="ClaimAttestationV1 signing requires an Ed25519 client key",
+    )
 
 
 @dataclass(frozen=True)
