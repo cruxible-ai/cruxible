@@ -53,6 +53,7 @@ from cruxible_client.contracts.triggers import (
     InternalActionSpec,
     LineTarget,
 )
+from cruxible_client.contracts.workspace_file import WorkspaceFilePathClass
 
 RUNBOOK_ARTIFACT_FORMAT: Final = "cruxible-runbook-v1"
 #: Steps one Runbook may list: a bound on its run and on its preview.
@@ -408,6 +409,70 @@ class RunbookPreviewCall(_StrictRunbookModel):
     captures: tuple[str, ...] = ()
 
 
+#: What an external input is: a workspace file a person or agent supplies, the
+#: files a workspace glob matches, a fetch the run makes, or the Capture a
+#: Trigger hands the run.
+RunbookInputKind: TypeAlias = Literal[
+    "workspace_file", "workspace_glob", "fetch", "trigger_capture"
+]
+#: Whether a workspace file is there now, checked with the daemon reader's own
+#: rules (a no-follow stat; no byte read): ``refused`` names the path class the
+#: reader would refuse with, ``no_workspace`` means no workspace is attached.
+RunbookInputState: TypeAlias = Literal["present", "absent", "refused", "no_workspace"]
+
+
+class RunbookPreviewInputLimits(_StrictRunbookModel):
+    """The limits the input's CaptureContract declares (and a glob's file cap)."""
+
+    #: The most bytes one read takes (the CaptureContract's selection budget).
+    max_bytes: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: The decoding limits: decoded bytes, nesting depth and records.
+    decoded_bytes: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    depth: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    records: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: The most files a glob read takes.
+    max_files: int | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class RunbookPreviewInput(_StrictRunbookModel):
+    """One input the step's run takes from outside accepted state, as declared.
+
+    ``location`` is the path, glob or URL, resolved from the Line's parameters
+    (null when the run computes it). ``description`` is the params Contract
+    field's description for ``parameter``, as the author wrote it (null when
+    none is written). ``state`` is reported for a workspace file only.
+    """
+
+    node_id: str
+    kind: RunbookInputKind
+    location: str | None
+    parameter: str | None
+    description: str | None
+    #: The workspace a workspace read names, when it names one.
+    workspace: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    capture_contract: str | None
+    #: The CaptureContract's declared decoding format.
+    format: Literal["json", "csv", "text", "bytes"] | None = None
+    limits: RunbookPreviewInputLimits = RunbookPreviewInputLimits()
+    #: A fetch's permitted origins from the Line's acquisition rule (absent: any).
+    origins: tuple[str, ...] | None = Field(default=None, exclude_if=lambda value: value is None)
+    state: RunbookInputState | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: The path class a read would refuse with (``state: refused`` only).
+    refused: WorkspaceFilePathClass | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def _state(self) -> RunbookPreviewInput:
+        if (self.refused is not None) != (self.state == "refused"):
+            raise ValueError("a refused input names its path class, and only a refused one")
+        if self.state is not None and self.kind != "workspace_file":
+            raise ValueError("presence is reported for a workspace file only")
+        if self.origins is not None and self.kind != "fetch":
+            raise ValueError("origins belong to a fetch")
+        return self
+
+
 class RunbookSettleChange(_StrictRunbookModel):
     """One change kind a settle grant covers, and the evidence bases it settles on."""
 
@@ -495,6 +560,8 @@ class RunbookPreviewStep(_StrictRunbookModel):
     reads: tuple[RunbookPreviewRead, ...] = ()
     writes: tuple[RunbookPreviewWrite, ...] = ()
     calls: tuple[RunbookPreviewCall, ...] = ()
+    #: What the step's run takes from outside accepted state.
+    inputs: tuple[RunbookPreviewInput, ...] = ()
     authority: RunbookPreviewAuthority | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -520,7 +587,9 @@ class RunbookPreview(_StrictRunbookModel):
 
     It never executes a step, reads no Claims, Captures or journals, and
     predicts no outcome: no record counts, no value changes, no whether a
-    proposal happens. It says what each step can do.
+    proposal happens. It says what each step can do, and what each step's run
+    needs from outside: the one thing it checks beyond definitions is whether
+    each workspace file a step reads is there (a stat; no byte is read).
     """
 
     tag: Literal["cruxible-runbook-preview-v1"] = "cruxible-runbook-preview-v1"
@@ -539,6 +608,8 @@ __all__ = [
     "AcceptedRunbook",
     "Runbook",
     "RunbookFormatError",
+    "RunbookInputKind",
+    "RunbookInputState",
     "RunbookLawResult",
     "RunbookLineState",
     "RunbookOrderProblem",
@@ -546,6 +617,8 @@ __all__ = [
     "RunbookPreviewAuthority",
     "RunbookPreviewCall",
     "RunbookPreviewCascade",
+    "RunbookPreviewInput",
+    "RunbookPreviewInputLimits",
     "RunbookPreviewRead",
     "RunbookPreviewStep",
     "RunbookPreviewWrite",

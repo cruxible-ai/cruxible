@@ -2840,13 +2840,25 @@ def playbill_runbook_run(instance_id: str, name: str) -> RunbookRunResult:
 
 
 def playbill_runbook_preview(instance_id: str, name: str) -> RunbookPreview:
-    """The Runbook's static preview: definitions only, nothing executed (D-R36)."""
+    """The Runbook's static preview: definitions only, nothing executed (D-R36).
+
+    Beyond definitions it stats each workspace file a step reads, with the
+    daemon's own reader: present, absent or refused, never a byte read.
+    """
 
     from cruxible_core.service.runbook_preview import service_preview_runbook
 
     check_permission("cruxible_runbook_preview", instance_id=instance_id)
+    manager = get_playbill_manager()
+    try:
+        workspace_file_reader = manager.workspace_file_reader(instance_id)
+    except WorkspaceFileReadRefused:
+        # No reader: each workspace-file input reports no_workspace.
+        workspace_file_reader = None
     return service_preview_runbook(
-        get_playbill_manager().get(instance_id), name=RunbookRunRequest(runbook=name).runbook
+        manager.get(instance_id),
+        name=RunbookRunRequest(runbook=name).runbook,
+        workspace_file_reader=workspace_file_reader,
     )
 
 

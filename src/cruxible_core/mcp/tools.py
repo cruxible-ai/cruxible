@@ -1724,7 +1724,9 @@ def register_tools(
 
         Composed from accepted definitions only: nothing runs and no outcome is
         predicted. order_problems names reads of what only a later step, or no
-        Line, writes.
+        Line, writes. Each step's inputs name what its run needs from outside:
+        the workspace file (path, parameter, description, format, limits, and
+        whether it is there now), glob, fetch URL or triggering Capture.
         """
         return handlers.handle_playbill_runbook_preview(require_instance_id(instance_id), runbook)
 

@@ -9000,8 +9000,58 @@ def _echo_runbook_run(result: Any) -> None:
             click.echo(f"    {mark} {_counts_text(step.counts)}")
 
 
+def _byte_size_text(size: int) -> str:
+    """``1 MiB``, ``64 KiB``, ``300 bytes``: a byte count in the largest exact unit."""
+
+    for unit, scale in (("GiB", 1 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10)):
+        if size >= scale and size % scale == 0:
+            return f"{size // scale} {unit}"
+    return f"{size} bytes"
+
+
+_RUNBOOK_INPUT_NOUNS = {
+    "workspace_file": "file",
+    "workspace_glob": "files",
+    "fetch": "fetch",
+    "trigger_capture": "capture",
+}
+
+
+def _runbook_input_lines(item: Any) -> list[str]:
+    """One step input: what, where, its format and limits, presence; its description as written."""
+
+    where = item.location
+    if item.kind == "trigger_capture":
+        where = f"{item.capture_contract} (handed over by its Trigger)"
+    elif where is None:
+        where = "(set by the run)"
+    facts = [item.format] if item.format else []
+    limits = item.limits
+    if limits.max_files is not None:
+        facts.append(f"at most {limits.max_files} files")
+    if limits.max_bytes is not None:
+        each = " each" if limits.max_files is not None else ""
+        facts.append(f"at most {_byte_size_text(limits.max_bytes)}{each}")
+    if item.parameter is not None:
+        facts.append(f"parameter {item.parameter}")
+    text = f"needs  {_RUNBOOK_INPUT_NOUNS[item.kind]} {where}"
+    if facts:
+        text += f" ({', '.join(facts)})"
+    if item.state is not None:
+        text += f": {item.state}" + (f" ({item.refused})" if item.refused else "")
+    lines = [text]
+    if item.origins is not None:
+        lines.append(f"  origins {', '.join(item.origins)}")
+    if item.description is not None:
+        lines.append(f"  {item.description}")
+    return lines
+
+
 def _echo_runbook_preview(preview: Any) -> None:
-    click.echo(f"Runbook {preview.runbook} (preview: definitions only; nothing ran)")
+    click.echo(
+        f"Runbook {preview.runbook} "
+        "(preview: definitions, and whether each workspace file is there; nothing ran)"
+    )
     for step in preview.steps:
         head = f"  {step.step:>2}  {_target_text(step.target)}"
         if step.unavailable:
@@ -9020,6 +9070,9 @@ def _echo_runbook_preview(preview: Any) -> None:
         for call in step.calls:
             bound = f" -> {call.build} {call.operation}" if call.build else ""
             click.echo(f"      calls  {call.slot}{bound}")
+        for item in step.inputs:
+            for line in _runbook_input_lines(item):
+                click.echo(f"      {line}")
         if step.authority is not None:
             authority = step.authority
             settles = ", ".join(item.claim_type for item in authority.settles) or "nothing"
