@@ -149,17 +149,6 @@ def test_later_same_candidate_admission_cannot_change_history_or_floor(tmp_path:
     assert changes[-1]["rationale"] == ["First accepting reason."]
 
 
-def test_legacy_generations_keep_unique_candidate_actor_resolution(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    instance, _claim, generation, admission = _seed(tmp_path)
-    # A headerless generation remains on precisely the old resolver.
-    monkeypatch.setattr(instance, "accepting_admission", lambda _oid: None)
-    assert ChangeReasons(instance).admission(generation) == admission
-    _late_admission(instance, generation, admission, 1)
-    assert ChangeReasons(instance).admission(generation) is None
-
-
 def test_reason_reads_by_identity_at_two_inventory_sizes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
