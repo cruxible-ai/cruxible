@@ -188,6 +188,7 @@ from cruxible_core.cli.commands._common import (
     brief_option,
     change_control_options,
     echo_preview_next,
+    ensure_cli_daemon,
     json_option,
     no_daemon_message,
 )
@@ -409,6 +410,7 @@ def _explicit_workspace_root(value: str) -> Path:
 
 
 def _workspace_config_transport() -> dict[str, str]:
+    ensure_cli_daemon()
     obj = _root_ctx_obj()
     if obj.get("server_socket"):
         return {"server_socket": str(obj["server_socket"])}
@@ -819,6 +821,7 @@ def attach_workspace(
     _emit_git_workspace_note(resolution)
     workspace = resolution.workspace_root
     assert workspace is not None
+    ensure_cli_daemon()
     if not _root_ctx_obj().get("server_socket"):
         raise click.UsageError(
             "cruxible workspace attach requires a local --server-socket so the daemon can "
@@ -1181,7 +1184,7 @@ def init_playbill(
 
     if require_independent_approval and reviewer_key_dir is None:
         raise click.UsageError("--require-independent-approval requires --reviewer-key-dir")
-    if not (_root_ctx_obj().get("server_url") or _root_ctx_obj().get("server_socket")):
+    if not ensure_cli_daemon():
         raise click.UsageError(no_daemon_message("cruxible init"))
     git_workspace = _creation_workspace(workspace_path, fallback_to_start=True).workspace_root
     transport = _transport_target(_root_ctx_obj())
@@ -10311,6 +10314,7 @@ def floor_delivery(state: str, instance_id: str | None, output_json: bool) -> No
     Needs the local --server-socket the workspace was attached through.
     """
 
+    ensure_cli_daemon()
     if not _root_ctx_obj().get("server_socket"):
         raise click.UsageError("floor delivery requires a local --server-socket")
     selected = instance_id or _require_instance_id()

@@ -1026,6 +1026,15 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     help="Disable workspace binding discovery (also CRUXIBLE_NO_WORKSPACE=1).",
 )
 @click.option(
+    "--no-autostart",
+    is_flag=True,
+    default=False,
+    help=(
+        "Never start a local daemon; a command with none to talk to refuses instead "
+        "(also CRUXIBLE_NO_AUTOSTART=1)."
+    ),
+)
+@click.option(
     "--json-compact",
     is_flag=True,
     default=None,
@@ -1039,6 +1048,7 @@ def cli(
     instance_id: str | None,
     principal_id: str | None,
     no_workspace: bool,
+    no_autostart: bool,
     json_compact: bool | None,
 ) -> None:
     """Cruxible — hard state for AI agents: governed, queryable, durable, with receipts."""
@@ -1081,7 +1091,8 @@ def cli(
     transport_source: str = resolved.transport_source
     if not (settings.server_url or settings.server_socket):
         # Nothing names a daemon: use the one answering at the state root's default
-        # socket, the daemon an MCP adapter finds or starts (never start one here).
+        # socket, the daemon an MCP adapter finds or starts. A command that needs
+        # a daemon starts one there when none answers (`ensure_cli_daemon`).
         from cruxible_core.mcp.daemon import answering_default_socket
 
         found = answering_default_socket()
@@ -1122,6 +1133,7 @@ def cli(
             ),
             "workspace_attached": resolved.workspace_attached,
             "no_workspace": no_workspace,
+            "no_autostart": no_autostart,
         }
     )
     _load_remembered_principal(
