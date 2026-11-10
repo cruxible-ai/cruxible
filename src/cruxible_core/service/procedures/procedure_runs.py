@@ -358,10 +358,6 @@ class ProcedureRetired(ProcedureSurfaceError):
     code = "cruxible.procedure.retired"
 
 
-class ProcedureProviderInterfaceMismatch(ProcedureSurfaceError):
-    code = "cruxible.procedure.provider_interface_mismatch"
-
-
 class ProcedureRunNotCurrent(ProcedureSurfaceError):
     code = "cruxible.procedure.run.not_current"
 
@@ -508,23 +504,6 @@ class LineRunIdentityMismatch(ProcedureSurfaceError):
 class LineRunEvaluationInstantSkewed(ProcedureSurfaceError):
     code = "cruxible.line.run.evaluation_instant_skewed"
     error_code = "evaluation_instant_skewed"
-
-
-class PinnedAcquisitionPolicyUnresolved(ProcedureSurfaceError):
-    """A Procedure's pinned acquisition policy is not live at this coordinate.
-
-    The closure evaluator already requires a Procedure's `acquisition-policy`
-    pin to resolve, digest-matched and not retired under a live source, so this
-    is the belt to that pin's braces rather than a reachable state of an
-    accepted tree -- the same guard, and the same code, the Line lane keeps.
-    """
-
-    code = "cruxible.procedure.run.artifact_binding_mismatch"
-    error_code = "artifact_binding_mismatch"
-
-    def __init__(self, message: str, *, details: object | None = None) -> None:
-        super().__init__(message)
-        self.details = {} if details is None else details
 
 
 class ProcedureNextOperationV1(_StrictProcedureSurfaceModel):
