@@ -682,6 +682,46 @@ it. Every tool runs on a daemon: with no transport configured, the server reuses
 the local daemon on `~/.cruxible/run/daemon.sock` or starts one (see
 [MCP tools](mcp-tools.md#the-daemon)).
 
+## console
+
+```text
+cruxible console [--port N] [--no-open] [--instance ID]
+```
+
+Opens the read-only console in your browser, served by this install: no Node,
+no checkout, no settings file. It listens on `127.0.0.1` only, in the
+foreground, until Ctrl-C. `--port` defaults to `0`, a free port; a port in use
+is refused by name. `--instance` defaults to the instance the CLI context
+names (`--instance-id`, `cruxible context use`). `--no-open` prints the link
+without opening a browser.
+
+It reads through the daemon the CLI context names (`--server-socket`,
+`--server-url`, `CRUXIBLE_SERVER_SOCKET`, remembered context, else the default
+socket), with the same credential the CLI would send (for a TCP daemon,
+`CRUXIBLE_SERVER_BEARER_TOKEN`; a read-only one is enough). It does not start a
+daemon: with none answering it says so and how to start one.
+
+What it does and refuses:
+
+- **Reads only.** It forwards the console's read routes (`head`, `orient`,
+  `get`, `get-batch`, `query`, `next`, `since`, proposal review, inbox, run and
+  Procedure readings, Runbook preview, `kits`, `providers`, `host`, `whoami`,
+  `/version`) and refuses every other route with 403 before it reaches the
+  daemon.
+- **One browser per run.** The printed link carries a one-time token. Opening
+  it sets a session cookie (HttpOnly, SameSite=Strict) and moves to a clean
+  URL; every API call needs that cookie. Run the command again for another
+  browser.
+- **This machine only.** Requests must name `127.0.0.1:<port>` or
+  `localhost:<port>` as their host and, when the browser says, come from that
+  same origin. It sends no CORS headers. The daemon credential never reaches
+  the page, and the browser's cookies never reach the daemon.
+
+The built console ships inside release wheels. An install without it (a
+source checkout) says so; build one into the package with
+`python scripts/build_console.py --console PATH --commit SHA`, or run the
+console's own dev server from a cruxible-app checkout.
+
 ## host and workspace
 
 ~~~text

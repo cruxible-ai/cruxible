@@ -96,6 +96,18 @@ but not known to be exploited. Here langflow 1.2.0 is exploited in the wild
 and runs on an internet-facing host of a critical service: upgrade it first.
 `cruxible next` lists what needs attention as the daily checks run.
 
+## 7. Look around in the console
+
+~~~bash
+cruxible console
+~~~
+
+This opens a read-only console in your browser: the dashboard, what each kind
+of thing holds, open proposals, the Lines and their runs, the ledger. It runs
+on your machine only (`127.0.0.1`), reads from the daemon you started in step 1,
+and cannot change anything; approving and the like stay on the command line.
+The link it prints signs one browser in, once; Ctrl-C stops it.
+
 ## If something goes wrong
 
 - **`server start` prints `Warning: Provider lane unavailable`.** The daemon
