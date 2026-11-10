@@ -145,7 +145,7 @@ def test_mcp_orient_reports_the_mcp_workspace_floor(monkeypatch, tmp_path) -> No
     monkeypatch.setattr(
         handlers, "_get_client", lambda: SimpleNamespace(orient=lambda *_a, **_k: _answer())
     )
-    monkeypatch.setattr(handlers, "optional_mcp_git_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(handlers, "optional_mcp_workspace_root", lambda: tmp_path)
 
     result = handlers.handle_playbill_orient("inst")
 

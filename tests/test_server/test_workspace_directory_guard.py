@@ -29,9 +29,9 @@ from cruxible_core.cli.context import CliContextState, save_cli_context
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp.workspace import (
     MCP_WORKSPACE_ROOT_ENV,
-    mcp_git_workspace_root,
+    mcp_floor_workspace_root,
     mcp_workspace_root,
-    optional_mcp_git_workspace_root,
+    optional_mcp_workspace_root,
     resolve_workspace_path,
 )
 from cruxible_core.runtime import host_api
@@ -165,14 +165,14 @@ def test_mcp_workspace_resolution_refuses_every_conflicted_root(
             resolve_workspace_path(".cruxible", kind="directory")
         # The required worktree refuses whether configured or implicit.
         with pytest.raises(WorkspaceDirectoryConflict):
-            mcp_git_workspace_root(explicit)
+            mcp_floor_workspace_root(explicit)
         with pytest.raises(WorkspaceDirectoryConflict):
-            mcp_git_workspace_root({})
+            mcp_floor_workspace_root({})
         # The optional worktree: a configured conflict refuses, an implicit one
         # means "no workspace".
         with pytest.raises(WorkspaceDirectoryConflict):
-            optional_mcp_git_workspace_root(explicit)
-        assert optional_mcp_git_workspace_root({}) is None, label
+            optional_mcp_workspace_root(explicit)
+        assert optional_mcp_workspace_root({}) is None, label
         # Callers that only list forbidden roots or observe optionally opt out.
         assert same_directory(mcp_workspace_root({}, guard=False), root)
         assert observe_next_workspace(root)["floor_status"] == "not_configured"
@@ -287,7 +287,7 @@ def test_a_relocated_daemon_state_root_is_no_workspace(
             lambda: resolve_context(environ={}, cwd=project, home=tmp_path),
             lambda: resolve_context(workspace=spelled, environ={}, cwd=project, home=tmp_path),
             lambda: mcp_workspace_root({MCP_WORKSPACE_ROOT_ENV: str(spelled)}),
-            lambda: mcp_git_workspace_root({MCP_WORKSPACE_ROOT_ENV: str(project)}),
+            lambda: mcp_floor_workspace_root({MCP_WORKSPACE_ROOT_ENV: str(project)}),
             lambda: resolve_workspace_path(".", root=project, kind="directory"),
             lambda: WorkspaceFiles(project),
         ):

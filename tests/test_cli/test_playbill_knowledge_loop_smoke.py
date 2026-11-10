@@ -40,7 +40,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
-from cruxible_core.cli.commands.playbill import _local_git_workspace_root
+from cruxible_core.cli.commands.playbill import _local_workspace_root
 from cruxible_core.cli.main import cli
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -324,7 +324,9 @@ def test_cli_init_adopts_only_its_transport_bound_response_loss_orphan(
     refused_reuse = CliRunner().invoke(cli, args)
     assert refused_reuse.exit_code == 2
     assert "so init already ran for it; nothing was written" in refused_reuse.output
-    assert "cruxible context clear" in refused_reuse.output
+    # The ways forward never wipe what the CLI remembers (no `context clear`).
+    assert "cruxible context clear" not in refused_reuse.output
+    assert "cruxible host create" in refused_reuse.output
     assert calls == 2
 
 
@@ -470,7 +472,7 @@ def test_local_git_workspace_ignores_inherited_repository_selection(
     monkeypatch.setenv("GIT_WORK_TREE", str(inherited_workspace))
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(cwd_workspace))
 
-    resolution = _local_git_workspace_root()
+    resolution = _local_workspace_root()
 
     assert resolution.workspace_root == cwd_workspace.resolve()
     assert resolution.note is not None

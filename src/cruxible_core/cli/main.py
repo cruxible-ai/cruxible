@@ -1121,6 +1121,7 @@ def cli(
                 else str(resolved.workspace_binding_path)
             ),
             "workspace_attached": resolved.workspace_attached,
+            "no_workspace": no_workspace,
         }
     )
     _load_remembered_principal(
@@ -1210,8 +1211,16 @@ def _load_remembered_principal(
             else:
                 os.environ[name] = value
 
+    def forget() -> None:
+        # A command that turns out to act on another instance (init in a new
+        # folder) drops the remembered principal it was handed.
+        restore()
+        for key in ("principal_id", "principal_source", "principal_settings"):
+            obj.pop(key, None)
+
     os.environ.update(settings.environment())
     ctx.call_on_close(restore)
     obj["principal_id"] = settings.principal_id
     obj["principal_source"] = "remembered"
     obj["principal_settings"] = str(settings.path)
+    obj["forget_remembered_principal"] = forget

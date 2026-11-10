@@ -7,23 +7,29 @@ from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 
 from cruxible_client.contracts.workspace_layout import (
+    WorkspaceDirectoryConflict,
     ensure_workspace_directory,
-    workspace_directory_conflict,
 )
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.floor.workspace_advertisement import containing_git_workspace_root
+from cruxible_core.workspace_root import resolve_workspace_root
 
 MCP_WORKSPACE_ROOT_ENV = "CRUXIBLE_MCP_WORKSPACE_ROOT"
 MCP_KEY_DIR_ENV = "CRUXIBLE_MCP_KEY_DIR"
 
 
 def mcp_workspace_root(environ: Mapping[str, str] | None = None, *, guard: bool = True) -> Path:
-    """Resolve the adapter workspace; absence deliberately means process cwd.
+    """Resolve the adapter workspace: ``CRUXIBLE_MCP_WORKSPACE_ROOT``, else found from cwd.
 
-    The root is refused when it is the home directory or holds a 0.3 instance
+    With no configured root the process cwd is the start, resolved the way the
+    CLI resolves it (`cruxible_core.workspace_root`): the nearest ancestor
+    holding ``.cruxible/``, else the enclosing Git worktree, else cwd itself.
+    The root is refused when it is the home directory, a filesystem root, the
+    state root, a 0.3 instance or inside a ``.cruxible`` directory
     (``WorkspaceDirectoryConflict``). ``guard=False`` is only for a caller that
     reads nothing under the root's ``.cruxible`` and handles a conflicting root
-    itself (an optional observation, a forbidden-root list).
+    itself (an optional observation, a forbidden-root list); it gets the bare
+    cwd when nothing usable is found.
     """
 
     env = os.environ if environ is None else environ
@@ -35,45 +41,43 @@ def mcp_workspace_root(environ: Mapping[str, str] | None = None, *, guard: bool 
         raise ConfigError(f"MCP workspace root is unavailable: {candidate}: {exc}") from exc
     if not root.is_dir():
         raise ConfigError(f"MCP workspace root is not a directory: {root}")
-    return ensure_workspace_directory(root) if guard else root
+    if raw is not None:
+        return ensure_workspace_directory(root) if guard else root
+    try:
+        found = resolve_workspace_root(root)
+    except WorkspaceDirectoryConflict:
+        if guard:
+            raise
+        return root
+    assert found is not None
+    return found.root
 
 
-def mcp_git_workspace_root(environ: Mapping[str, str] | None = None) -> Path:
-    """Resolve the canonical worktree without escaping an explicit MCP root.
+def mcp_floor_workspace_root(environ: Mapping[str, str] | None = None) -> Path:
+    """The workspace floor operations write under; any folder, Git or not.
 
-    Required, so a worktree that is no workspace (the home directory, a 0.3
-    instance) refuses with ``WorkspaceDirectoryConflict`` rather than reading as
-    "no worktree".
+    Required, so a root that is no workspace (the home directory, a 0.3
+    instance) refuses with ``WorkspaceDirectoryConflict`` rather than reading
+    as "no workspace".
+    """
+
+    return mcp_workspace_root(environ)
+
+
+def optional_mcp_workspace_root(environ: Mapping[str, str] | None = None) -> Path | None:
+    """The MCP workspace, or None when the implicit (cwd) start is no usable root.
+
+    A configured root that is no workspace is refused; an implicit one means
+    there is no workspace here.
     """
 
     env = os.environ if environ is None else environ
-    configured_root = mcp_workspace_root(env)
-    git_root = containing_git_workspace_root(configured_root)
-    if git_root is None:
-        raise ConfigError("MCP workspace floor export must run inside one Git worktree")
-    if MCP_WORKSPACE_ROOT_ENV in env and git_root != configured_root:
-        raise ConfigError(
-            "CRUXIBLE_MCP_WORKSPACE_ROOT must name the Git worktree root for floor operations"
-        )
-    return ensure_workspace_directory(git_root)
-
-
-def optional_mcp_git_workspace_root(environ: Mapping[str, str] | None = None) -> Path | None:
-    """Resolve the canonical worktree, or None when the MCP root is in no Git worktree."""
-
-    env = os.environ if environ is None else environ
-    explicit = MCP_WORKSPACE_ROOT_ENV in env
-    configured_root = mcp_workspace_root(env, guard=explicit)
-    git_root = containing_git_workspace_root(configured_root)
-    if git_root is None:
+    if MCP_WORKSPACE_ROOT_ENV in env:
+        return mcp_workspace_root(env)
+    try:
+        return mcp_workspace_root(env)
+    except WorkspaceDirectoryConflict:
         return None
-    if explicit and git_root != configured_root:
-        raise ConfigError(
-            "CRUXIBLE_MCP_WORKSPACE_ROOT must name the Git worktree root for floor operations"
-        )
-    # An implicit (process cwd) root that is no workspace means no workspace here;
-    # a configured one was refused above.
-    return None if workspace_directory_conflict(git_root) is not None else git_root
 
 
 def resolve_workspace_path(
@@ -107,9 +111,9 @@ def resolve_workspace_path(
 
 __all__ = [
     "MCP_WORKSPACE_ROOT_ENV",
-    "mcp_git_workspace_root",
+    "mcp_floor_workspace_root",
     "mcp_workspace_root",
-    "optional_mcp_git_workspace_root",
+    "optional_mcp_workspace_root",
     "resolve_workspace_path",
 ]
 

@@ -25,6 +25,15 @@ def test_local_workspace_delivery_controls(tmp_path, monkeypatch, command):
                 workspace_path=str(workspace.resolve()),
             )
 
+        def host_workspace_attach(self, instance_id, *, workspace_root, dry_run=None, at=None):
+            # The folder the host already has: nothing registers, the mirror rebinds.
+            return contracts.HostWorkspaceAttachResult(
+                instance_id=instance_id,
+                status="already_attached",
+                workspace_root=workspace_root,
+                initialized=True,
+            )
+
         def set_floor_delivery(self, instance_id, *, enabled):
             calls.append((instance_id, enabled))
             return self.host_workspace_registration(instance_id).model_copy(

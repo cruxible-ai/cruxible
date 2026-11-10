@@ -141,6 +141,14 @@ def _walk_roots(start: Path, *, home: Path) -> tuple[Path, ...]:
                 if (candidate / ".git").exists():
                     ceiling = candidate
                     break
+                # A plain folder is a workspace too: its .cruxible directory
+                # bounds discovery from any depth below it.
+                if (candidate / WORKSPACE_DIRECTORY).is_dir() and candidate not in (
+                    start,
+                    start.parent,
+                ):
+                    ceiling = candidate
+                    break
             except OSError:
                 break
     roots: list[Path] = []

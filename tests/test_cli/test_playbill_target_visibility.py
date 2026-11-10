@@ -560,6 +560,17 @@ def test_workspace_attach_writes_config_only_after_exact_daemon_registration(
                 workspace_path=str(workspace.resolve()),
             )
 
+        def host_workspace_attach(
+            self, instance_id: str, *, workspace_root: str, dry_run=None, at=None
+        ) -> contracts.HostWorkspaceAttachResult:
+            # Re-attaching the registered folder registers nothing (it rebinds the mirror).
+            return contracts.HostWorkspaceAttachResult(
+                instance_id=instance_id,
+                status="already_attached",
+                workspace_root=workspace_root,
+                initialized=True,
+            )
+
         def set_floor_delivery(self, instance_id: str, *, enabled: bool):
             assert enabled
             return self.host_workspace_registration(instance_id)
@@ -619,6 +630,17 @@ def test_workspace_attach_marks_a_remembered_target_as_remembered(
                 instance_id=instance_id,
                 status="registered",
                 workspace_path=str(workspace.resolve()),
+            )
+
+        def host_workspace_attach(
+            self, instance_id: str, *, workspace_root: str, dry_run=None, at=None
+        ) -> contracts.HostWorkspaceAttachResult:
+            # Re-attaching the registered folder registers nothing (it rebinds the mirror).
+            return contracts.HostWorkspaceAttachResult(
+                instance_id=instance_id,
+                status="already_attached",
+                workspace_root=workspace_root,
+                initialized=True,
             )
 
         def set_floor_delivery(self, instance_id: str, *, enabled: bool):
