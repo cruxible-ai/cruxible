@@ -42,7 +42,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from cruxible_client import contracts
 from cruxible_client.contracts.actor_types import TransportCapability
@@ -83,12 +83,20 @@ class ChangeMode:
         kind: ChangeKind = "direct",
         operation: str = "",
         describe: str = "",
+        retry_arguments: Mapping[str, Any] | None = None,
     ) -> None:
         self.previewing = previewing
         self.at = at
         self._kind = kind
         self._operation = operation
         self._describe = describe
+        # What runs the same change again: a commit, for every change_scope
+        # operation. One with another commit switch (a migration's
+        # ``mode="submit"``) names it, and has no preview to pin with ``at``.
+        self._retry_arguments = (
+            {"dry_run": False} if retry_arguments is None else dict(retry_arguments)
+        )
+        self._pinnable = retry_arguments is None
         self._instance = instance
         self._head: AcceptedProjectionCoordinate | None = None
         self._coordinate: GetCoordinate | None = None
@@ -146,20 +154,26 @@ class ChangeMode:
 
         Called when publication finds main moved past the evaluated head, before
         anything was published. A pinned commit refuses as it would have at entry
-        (``confirm_head``). An unpinned derived change refuses ``state_moved`` too,
-        its repair the same commit run again: it evaluates at the new head. A
-        direct change returns, and its caller re-raises the head-moved error.
+        (``confirm_head``). An unpinned change, direct or derived, refuses
+        ``state_moved`` too, its repair the same commit run again: it evaluates
+        at the new head. A mode with no operation (an internal readmission with
+        no caller's verb to repair) returns, and its caller re-raises.
         """
 
         self.confirm_head(head_oid)
-        if self.previewing or self._kind != "derived":
+        if self.previewing or not self._operation:
             return
+        pin = (
+            ", or preview it and commit with at=<its coordinate> to pin the state it commits at"
+            if self._pinnable
+            else ""
+        )
         raise ChangeRefusedError(
             "cruxible.preview.state_moved",
             f"{self._describe} was evaluated at accepted state that moved before it could "
-            "publish; nothing was published, so run it again",
+            f"publish; nothing was published, so run it again{pin}",
             operation=self._operation,
-            repair=RepairOperation(operation=self._operation, arguments={"dry_run": False}),
+            repair=RepairOperation(operation=self._operation, arguments=self._retry_arguments),
         )
 
 
@@ -343,6 +357,25 @@ def state_change_scope(
         yield StateChange(previewing=active, at=at, operation=operation, describe=describe)
 
 
+@contextmanager
+def refusing_moved_head(instance: PlaybillInstance, mode: ChangeMode) -> Iterator[None]:
+    """Turn a proposal submission's moved-head error into ``mode``'s typed refusal.
+
+    Wrap the one ``ProposalService.submit`` call of a change. Main moved after
+    the evaluation, before publication (a concurrent acceptance), and nothing
+    was published: a pinned commit, or any unpinned change with an operation,
+    refuses ``cruxible.preview.state_moved`` (``ChangeMode.refuse_moved_head``);
+    a mode with no operation re-raises.
+    """
+
+    try:
+        yield
+    except ProposalHeadMovedError:
+        with instance.accepted_head_held() as head_oid:
+            mode.refuse_moved_head(head_oid)
+        raise
+
+
 @dataclass(frozen=True)
 class AdmittedChangeSet:
     """A change set admitted as a proposal, or evaluated as one by a preview."""
@@ -402,7 +435,7 @@ def admit_change_set(
             result=None,
             preview=preview,
         )
-    try:
+    with refusing_moved_head(instance, mode):
         submitted = service.submit(
             actor=actor,
             request=request,
@@ -410,13 +443,6 @@ def admit_change_set(
             timestamp=timestamp,
             confirm_head=mode.confirm_head,
         )
-    except ProposalHeadMovedError:
-        # Main moved after the evaluation, before publication (a concurrent
-        # acceptance), and nothing was published: a pinned commit or an unpinned
-        # derived change refuses state_moved; a direct one re-raises.
-        with instance.accepted_head_held() as head_oid:
-            mode.refuse_moved_head(head_oid)
-        raise
     return AdmittedChangeSet(
         previewed=False,
         candidate=submitted.candidate,
@@ -438,5 +464,6 @@ __all__ = [
     "preview_guards",
     "previews",
     "previews_by_default",
+    "refusing_moved_head",
     "state_change_scope",
 ]

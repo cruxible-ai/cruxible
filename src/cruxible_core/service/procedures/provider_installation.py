@@ -9,7 +9,7 @@ import os
 import subprocess
 import tempfile
 import tomllib
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -81,7 +81,12 @@ from cruxible_core.runtime.provider_runtime import (
     ProviderRuntimeOperator,
 )
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
-from cruxible_core.service.change_preview import ChangeMode, admit_change_set, change_scope
+from cruxible_core.service.change_preview import (
+    ChangeMode,
+    admit_change_set,
+    change_scope,
+    refusing_moved_head,
+)
 from cruxible_core.service.proposals.proposals import open_proposal_at_target
 from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 
@@ -667,7 +672,7 @@ def service_install_provider(
                 timestamp,
                 source,
                 release,
-                confirm_head=mode.confirm_head,
+                mode=mode,
                 expected_build=expected_build,
             )
         finally:
@@ -830,7 +835,7 @@ def _install_locked(
     source: str | dict[str, str] | None,
     release: IndexRelease | None,
     *,
-    confirm_head: Callable[[str], None],
+    mode: ChangeMode,
     expected_build: ExpectedProviderBuild | None = None,
 ) -> ProviderInstallResult:
     prepared_path = directory / "prepared.json"
@@ -966,13 +971,16 @@ def _install_locked(
         target = f"refs/proposals/{actor_id}/provider-install-{suffix}"
         pending = open_proposal_at_target(instance, target)
         if pending is None:
-            submitted = instance.proposal_service().submit(
-                actor=AuthenticatedActor(actor_id=actor_id),
-                request=ProposalAdmissionRequest(target_ref=target, proposed_base_oid=base.git_oid),
-                candidate_tree=candidate_tree,
-                timestamp=timestamp,
-                confirm_head=confirm_head,
-            )
+            with refusing_moved_head(instance, mode):
+                submitted = instance.proposal_service().submit(
+                    actor=AuthenticatedActor(actor_id=actor_id),
+                    request=ProposalAdmissionRequest(
+                        target_ref=target, proposed_base_oid=base.git_oid
+                    ),
+                    candidate_tree=candidate_tree,
+                    timestamp=timestamp,
+                    confirm_head=mode.confirm_head,
+                )
             if (
                 submitted.evaluation.verdict != "candidate"
                 or submitted.evaluation.candidate_digest is None

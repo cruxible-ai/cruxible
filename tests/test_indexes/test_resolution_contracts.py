@@ -46,6 +46,7 @@ from cruxible_core.exhaust import (
 )
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.ledger.generation_facts import AcceptingAdmission
 from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.procedures.resolution import (
     ProcedureProofReferenceV1,
@@ -437,6 +438,7 @@ def _accept_tree(instance, owner, tree, *, timestamp: str, proposal_name: str) -
         actor_binding=ChangeActorBinding(actor_id="owner"),
         proposal_actor_id="owner",
         sequence=len(instance.accepted_history()),
+        accepting_admission=AcceptingAdmission.of(proposed.admission),
     )
     publisher = instance.activation_publisher()
     projection = publisher.prebuild(bundle, base=base)

@@ -1153,3 +1153,59 @@ def test_automatic_migration_never_rewrites_a_procedure_dependent() -> None:
             supplied=None,
             successor_type=_claim_type(),
         )
+
+
+def test_a_migration_whose_head_moves_before_publication_refuses_typed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A concurrent acceptance between a migration's evaluation and its publication:
+    the submit refuses ``state_moved`` (409) with the migration itself as its repair,
+    publishes nothing, and the same request run again is admitted at the new head."""
+
+    from cruxible_client.contracts.repairs import RepairOperation
+    from cruxible_core.errors import ChangeRefusedError
+    from cruxible_core.proposals.proposals import ProposalService
+
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    request = ClaimTypeMigrationRequest(
+        mode="submit",
+        successor=_successor(instance),
+        dependents=(
+            ClaimTypeDependentDisposition(
+                identity=ArtifactIdentity(kind="Claim", name=claim_id),
+                disposition="successor",
+            ),
+        ),
+    )
+    original = ProposalService._evaluate_admission
+    moved: list[str] = []
+
+    def evaluate_then_move(self: ProposalService, **kwargs: object) -> object:
+        evaluated = original(self, **kwargs)  # type: ignore[arg-type]
+        target_ref = kwargs["request"].target_ref  # type: ignore[attr-defined]
+        if not moved and "/claim-type-migration-" in target_ref:
+            moved.append(target_ref)
+            tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+            other = _subject().model_copy(
+                update={
+                    "identity": ArtifactIdentity(kind="Subject", name="project.work_item/wi-7"),
+                    "subject_id": "wi-7",
+                }
+            )
+            tree[subject_path(other.subject_kind, other.subject_id)] = render_subject(other)
+            _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="mover")
+        return evaluated
+
+    monkeypatch.setattr(ProposalService, "_evaluate_admission", evaluate_then_move)
+    actor = AuthenticatedActor(actor_id="owner")
+    with pytest.raises(ChangeRefusedError) as refused:
+        service_migrate_claim_type(instance, request=request, actor=actor)
+
+    assert len(moved) == 1
+    assert refused.value.error_code == "cruxible.preview.state_moved"
+    assert refused.value.http_status == 409
+    assert refused.value.repair == RepairOperation(operation="cruxible.claim-type.migrate")
+    assert "nothing was published, so run it again" in str(refused.value)
+    assert instance.proposal_ref_target(moved[0]) is None
+    retried = service_migrate_claim_type(instance, request=request, actor=actor)
+    assert retried.proposal.proposal.candidate is not None

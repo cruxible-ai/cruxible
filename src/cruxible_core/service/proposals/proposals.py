@@ -31,6 +31,7 @@ from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
+    ProposalHeadMovedError,
     ProposalResult,
     ProposalWithdrawalRecord,
 )
@@ -40,7 +41,7 @@ from cruxible_core.service.authoring.documents import (
     AcceptedCoordinate,
     ProposalInspection,
 )
-from cruxible_core.service.change_preview import ChangeMode, change_scope
+from cruxible_core.service.change_preview import ChangeMode, change_scope, refusing_moved_head
 from cruxible_core.service.identity import authoring_refusal, principal_standing
 from cruxible_core.service.list_pages import (
     decode_list_cursor,
@@ -1305,15 +1306,16 @@ def _readmit_exact_bytes(
                     accepted_coordinate=coordinate,
                 ),
             )
-        result = instance.proposal_service().submit(
-            actor=actor,
-            request=request,
-            candidate_tree=candidate_tree,
-            timestamp=generation.record.candidate.timestamp,
-            readmits=link,
-            originating_line=source.admission.originating_line,
-            confirm_head=mode.confirm_head,
-        )
+        with refusing_moved_head(instance, mode):
+            result = instance.proposal_service().submit(
+                actor=actor,
+                request=request,
+                candidate_tree=candidate_tree,
+                timestamp=generation.record.candidate.timestamp,
+                readmits=link,
+                originating_line=source.admission.originating_line,
+                confirm_head=mode.confirm_head,
+            )
     return PlaybillProposalReadmitResultV1(
         source_proposal_id=proposal_id,
         operation_digest=operation_digest,
@@ -1359,13 +1361,18 @@ def land_exact_bytes(
             and any(member.artifact_kind == "claim-type" for member in source.candidate.members)
         ):
             raise ProposalReadmitRequiresResubmission()
-        readmitted = _readmit_exact_bytes(
-            instance,
-            ChangeMode(instance, previewing=False) if mode is None else mode,
-            source,
-            proposal_id=source_id,
-            actor_id=source.admission.actor_id,
-        )
+        try:
+            readmitted = _readmit_exact_bytes(
+                instance,
+                ChangeMode(instance, previewing=False) if mode is None else mode,
+                source,
+                proposal_id=source_id,
+                actor_id=source.admission.actor_id,
+            )
+        except ProposalHeadMovedError as exc:
+            # An internal landing (no caller's readmit to repair): the source
+            # stays stale, as a recompilation that lost the same race refuses.
+            raise ProposalStale(source_id, reason="head_moved") from exc
         assert readmitted.proposal is not None
         successor = readmitted.proposal.proposal
         assert isinstance(successor, ProposalResult)

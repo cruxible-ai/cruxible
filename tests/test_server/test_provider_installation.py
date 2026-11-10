@@ -789,6 +789,53 @@ def test_install_retry_reuses_pending_registration_until_approval(
     assert accepted.status == "ready" and accepted.registered
 
 
+def test_an_install_whose_head_moves_before_registration_publishes_refuses_typed(
+    installer_http, tmp_path, monkeypatch, provider_checkout
+):
+    """A concurrent acceptance between the registration's evaluation and its
+    publication: the install refuses ``state_moved`` (409) with the install itself as
+    its repair, publishes no registration, and the same install run again proposes it.
+    (The status is the refusal's own, as the document and principal races assert.)"""
+
+    from cruxible_client.contracts.repairs import RepairOperation
+    from cruxible_core.proposals.proposals import ProposalService
+    from tests.support.provider_installation import build_local_call
+    from tests.test_server.test_exact_preview import _move_head
+
+    http, instance_id, reviewer = installer_http
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = http
+    wheel, lock = build_local_call(tmp_path, provider_checkout.repository)
+    arguments = dict(
+        wheel=wheel,
+        lock=lock,
+        dependency_wheels=(next(provider_checkout.wheels.glob("cruxible_provider_runtime-*.whl")),),
+    )
+    original = ProposalService._evaluate_admission
+    moved: list[str] = []
+
+    def evaluate_then_move(self, **kwargs):
+        evaluated = original(self, **kwargs)
+        target_ref = kwargs["request"].target_ref
+        if not moved and "/provider-install-" in target_ref:
+            moved.append(target_ref)
+            _move_head(http, instance_id, reviewer, "install-mover")
+        return evaluated
+
+    monkeypatch.setattr(ProposalService, "_evaluate_admission", evaluate_then_move)
+    with pytest.raises(Exception) as refused:
+        install_provider_wheel(client, instance_id, **arguments)
+
+    assert len(moved) == 1
+    assert getattr(refused.value, "error_code", None) == "cruxible.preview.state_moved"
+    assert getattr(refused.value, "repair", None) == RepairOperation(
+        operation="cruxible.provider.install", arguments={"dry_run": False}
+    )
+    assert get_playbill_manager().get(instance_id).proposal_ref_target(moved[0]) is None
+    again = install_provider_wheel(client, instance_id, **arguments)
+    assert again.status == "ready" and again.registered, again
+
+
 def test_repository_catalog_install_and_retry(installer_http, monkeypatch):
     from cruxible_client.contracts.provider_installation import ProviderInstallRequest
     from cruxible_core.service.procedures import provider_installation as service
@@ -1051,6 +1098,7 @@ def test_a_transferred_wheel_resolves_registry_dependencies_from_the_default_ind
         ProviderWheelObject,
     )
     from cruxible_core.providers.package_index import DEFAULT_PROVIDER_INDEX_URLS
+    from cruxible_core.service.change_preview import ChangeMode
     from cruxible_core.service.procedures import provider_installation as service
 
     zero = "sha256:" + "0" * 64
@@ -1101,7 +1149,7 @@ def test_a_transferred_wheel_resolves_registry_dependencies_from_the_default_ind
                 "2026-10-08T00:00:00.000000Z",
                 None,
                 None,
-                confirm_head=lambda oid: None,
+                mode=ChangeMode(None, previewing=False),
             )
     assert seen == [DEFAULT_PROVIDER_INDEX_URLS, configured, (), configured]
 
