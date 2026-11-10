@@ -306,8 +306,7 @@ class LineInboxStore:
                 version = conn.execute("PRAGMA user_version").fetchone()[0]
                 if version == 5:
                     # Additive: keep the projection rather than replay the journal.
-                    conn.execute("ALTER TABLE postings ADD COLUMN created INTEGER")
-                    conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+                    self._add_created_column(conn)
                 elif version != _SCHEMA_VERSION:
                     # Disposable: drop it and replay the journal from the start.
                     for table in _TABLES:
@@ -358,6 +357,25 @@ class LineInboxStore:
                 conn.commit()
             finally:
                 conn.close()
+
+    @staticmethod
+    def _add_created_column(conn: sqlite3.Connection) -> None:
+        """Layout 5 to 6 in one transaction: the column and the version move together.
+
+        Idempotent as well: a column an earlier stopped upgrade left behind is
+        kept, not added twice.
+        """
+
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(postings)")}
+            if "created" not in columns:
+                conn.execute("ALTER TABLE postings ADD COLUMN created INTEGER")
+            conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+        except BaseException:
+            conn.rollback()
+            raise
+        conn.commit()
 
     # -- projection --------------------------------------------------------
 

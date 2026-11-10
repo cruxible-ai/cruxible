@@ -419,12 +419,7 @@ def test_a_layout_5_projection_gains_the_split_in_place_with_earlier_postings_un
 
     _instance, store, write = _world(tmp_path)
     store.post([_posting({"a": 1}, run_id="RUN-1")], **write)  # type: ignore[arg-type]
-    # What layout 5 kept: the postings without the created column.
-    connection = sqlite3.connect(store.path)
-    connection.execute("ALTER TABLE postings DROP COLUMN created")
-    connection.execute("PRAGMA user_version=5")
-    connection.commit()
-    connection.close()
+    _layout_5(store)
 
     store.post([_posting({"a": 1}, run_id="RUN-2")], **write)  # type: ignore[arg-type]
 
@@ -433,3 +428,69 @@ def test_a_layout_5_projection_gains_the_split_in_place_with_earlier_postings_un
     connection = sqlite3.connect(store.path)
     assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
     connection.close()
+
+
+def _layout_5(store: LineInboxStore) -> None:
+    """Rewind a projection to what layout 5 kept: postings without the created column."""
+
+    import sqlite3
+
+    connection = sqlite3.connect(store.path)
+    connection.execute("ALTER TABLE postings DROP COLUMN created")
+    connection.execute("PRAGMA user_version=5")
+    connection.commit()
+    connection.close()
+
+
+def test_an_upgrade_stopped_before_its_version_moves_leaves_layout_5_and_reopens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The column and the version move in one transaction: a stop between them undoes both."""
+
+    import sqlite3
+
+    _instance, store, write = _world(tmp_path)
+    store.post([_posting({"a": 1}, run_id="RUN-1")], **write)  # type: ignore[arg-type]
+    _layout_5(store)
+    open_projection = store._open_projection  # noqa: SLF001
+
+    def stopped_before_the_version(*_args: object) -> int:
+        action, first, second = _args[:3]
+        if action == sqlite3.SQLITE_PRAGMA and first == "user_version" and second == "6":
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    def interrupted() -> sqlite3.Connection:
+        conn = open_projection()
+        conn.set_authorizer(stopped_before_the_version)
+        return conn
+
+    monkeypatch.setattr(store, "_open_projection", interrupted)
+    with pytest.raises(sqlite3.DatabaseError):
+        store.posted_by_run("RUN-1")
+    monkeypatch.undo()
+    with sqlite3.connect(f"file:{store.path}?mode=ro", uri=True) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(postings)")}
+    assert "created" not in columns
+
+    assert store.posted_by_run("RUN-1") == (1, None)
+    assert store.posted_by_run("RUN-1") == (1, None)
+
+
+def test_a_column_an_earlier_upgrade_left_at_layout_5_is_kept_not_added_twice(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+
+    _instance, store, write = _world(tmp_path)
+    store.post([_posting({"a": 1}, run_id="RUN-1")], **write)  # type: ignore[arg-type]
+    _layout_5(store)
+    connection = sqlite3.connect(store.path)
+    connection.execute("ALTER TABLE postings ADD COLUMN created INTEGER")
+    connection.commit()
+    connection.close()
+
+    assert store.posted_by_run("RUN-1") == (1, None)
+    store.post([_posting({"a": 1}, run_id="RUN-2")], **write)  # type: ignore[arg-type]
+    assert store.posted_by_run("RUN-2") == (1, 0)
