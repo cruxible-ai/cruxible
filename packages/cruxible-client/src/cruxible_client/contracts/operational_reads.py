@@ -69,10 +69,6 @@ def _omit_none(value: object) -> bool:
     return value is None
 
 
-def _omit_empty(value: object) -> bool:
-    return not value
-
-
 class _StrictOperationalModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

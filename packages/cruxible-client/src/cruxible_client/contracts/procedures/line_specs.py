@@ -72,11 +72,6 @@ class _StrictLineModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-def _artifact_digest(value: str) -> str:
-    ArtifactDigest.from_tagged(value)
-    return value
-
-
 def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
     return (
         pin.role.encode("utf-8"),
@@ -112,15 +107,6 @@ def _canonical_object(value: object) -> object:
     if not isinstance(normalized, dict):
         raise ValueError("LineSpec parameters must be a canonical object")
     return normalized
-
-
-def _sorted_pins(value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
-    if value != tuple(sorted(value, key=_pin_key)):
-        raise ValueError("LineSpec pins must be canonically sorted")
-    keys = tuple((pin.role, pin.target.qualified) for pin in value)
-    if len(set(keys)) != len(keys):
-        raise ValueError("LineSpec pins must be unique by role and target")
-    return value
 
 
 LineAuthority = AuthorityVerb
