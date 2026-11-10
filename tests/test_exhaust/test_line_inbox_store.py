@@ -389,3 +389,47 @@ def test_a_projection_under_the_reopening_rule_replays_once_under_the_new_one(
     envelope = store.get(item_id).envelope
     assert (envelope.status, envelope.occurrences) == ("dismissed", 2)
     assert store.unread_by_line() == ()
+
+
+def test_a_run_count_splits_new_items_from_re_sightings(tmp_path: Path) -> None:
+    """What applying each posting learned (insert or update) is the run's split."""
+
+    _instance, store, write = _world(tmp_path)
+    store.post([_posting({"a": 1}, run_id="RUN-1")], **write)  # type: ignore[arg-type]
+
+    store.post(  # type: ignore[arg-type]
+        [
+            _posting({"a": 1}, run_id="RUN-2", item_key="item-0"),
+            _posting({"b": 2}, run_id="RUN-2", item_key="item-1"),
+        ],
+        **write,
+    )
+
+    assert store.posted_by_run("RUN-1") == (1, 1)
+    assert store.posted_by_run("RUN-2") == (2, 1)
+    assert store.posted_by_run("RUN-none") == (0, 0)
+
+
+def test_a_layout_5_projection_gains_the_split_in_place_with_earlier_postings_unknown(
+    tmp_path: Path,
+) -> None:
+    """Additive: the column is added without a replay; rows it predates read unknown."""
+
+    import sqlite3
+
+    _instance, store, write = _world(tmp_path)
+    store.post([_posting({"a": 1}, run_id="RUN-1")], **write)  # type: ignore[arg-type]
+    # What layout 5 kept: the postings without the created column.
+    connection = sqlite3.connect(store.path)
+    connection.execute("ALTER TABLE postings DROP COLUMN created")
+    connection.execute("PRAGMA user_version=5")
+    connection.commit()
+    connection.close()
+
+    store.post([_posting({"a": 1}, run_id="RUN-2")], **write)  # type: ignore[arg-type]
+
+    assert store.posted_by_run("RUN-1") == (1, None)
+    assert store.posted_by_run("RUN-2") == (1, 0)
+    connection = sqlite3.connect(store.path)
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+    connection.close()

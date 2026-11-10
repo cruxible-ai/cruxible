@@ -181,6 +181,7 @@ def test_a_line_posts_each_item_as_is_with_its_capture_attached(tmp_path: Path) 
     # The run counts its postings: a "succeeded" run that left inbox items.
     assert state.counts is not None
     assert (state.counts.inbox, state.counts.needs_attention) == (3, True)
+    assert (state.counts.inbox_new, state.counts.inbox_seen_again) == (3, 0)
     # Posting is inert: the accepted head did not move.
     assert instance.accepted_coordinate() == head
 
@@ -204,6 +205,35 @@ def test_a_run_posts_at_most_its_cap_and_reports_the_truncation(tmp_path: Path) 
     posted = sorted((item.payload for item in _entries(instance)), key=lambda row: row["cve"])
     assert posted == ROWS[:2]
     assert instance.accepted_coordinate() == head
+    assert state.counts is not None
+    assert (
+        state.counts.inbox,
+        state.counts.inbox_new,
+        state.counts.inbox_unposted,
+        state.counts.needs_attention,
+    ) == (2, 2, 1, True)
+
+
+def test_a_capped_run_that_only_sees_items_again_still_needs_attention(tmp_path: Path) -> None:
+    """Nothing posted the item the cap cut, so it may be new: the cut keeps the flag."""
+
+    from cruxible_core.cli.commands.playbill import _counts_text
+
+    instance, root, line = inbox_world(tmp_path, max_items=2)
+    manual_run(instance, line, at=NOW, root=root)
+
+    again = manual_run(instance, line, at=NOW + timedelta(hours=1), root=root)
+
+    assert again.status == "succeeded", again.terminal
+    assert again.counts is not None
+    assert (
+        again.counts.inbox,
+        again.counts.inbox_new,
+        again.counts.inbox_seen_again,
+        again.counts.inbox_unposted,
+        again.counts.needs_attention,
+    ) == (2, 0, 2, 1, True)
+    assert _counts_text(again.counts).endswith("; inbox 0 new, 2 seen again, 1 over the cap")
 
 
 def test_fields_without_for_each_are_one_item(tmp_path: Path) -> None:
@@ -246,6 +276,51 @@ def test_an_hourly_reread_of_identical_rows_is_one_item_per_row_seen_each_hour(
             (capture,) for capture in reversed(captures)
         ]
     assert LineInboxStore(instance).unread_by_line() == ((line.identity.qualified, len(ROWS)),)
+
+
+def test_an_identical_second_run_counts_re_sightings_and_needs_no_attention(
+    tmp_path: Path,
+) -> None:
+    """The second run's posts all land on items already there: nothing new to judge."""
+
+    from cruxible_core.cli.commands.playbill import _counts_text
+
+    instance, root, line = inbox_world(tmp_path)
+    first = manual_run(instance, line, at=NOW, root=root)
+
+    second = manual_run(instance, line, at=NOW + timedelta(hours=1), root=root)
+
+    assert first.counts is not None and second.counts is not None
+    assert (first.counts.inbox_new, first.counts.inbox_seen_again) == (3, 0)
+    assert first.counts.needs_attention
+    assert (
+        second.counts.inbox,
+        second.counts.inbox_new,
+        second.counts.inbox_seen_again,
+        second.counts.needs_attention,
+    ) == (3, 0, 3, False)
+    assert _counts_text(second.counts).endswith("; inbox 0 new, 3 seen again")
+    assert _counts_text(first.counts).endswith("; inbox 3 new")
+    assert LineInboxStore(instance).posted_by_run(second.run_id) == (3, 0)
+
+
+def test_a_run_with_one_new_row_among_re_sightings_needs_attention(tmp_path: Path) -> None:
+    from tests.test_procedures.test_procedure_source_runs import RELATIVE_PATH
+
+    instance, root, line = inbox_world(tmp_path)
+    manual_run(instance, line, at=NOW, root=root)
+    (root / RELATIVE_PATH).write_bytes(_feed({"rows": [*ROWS, {"cve": "CVE-2026-0004"}]}))
+
+    mixed = manual_run(instance, line, at=NOW + timedelta(hours=1), root=root)
+
+    assert mixed.status == "succeeded", mixed.terminal
+    assert mixed.counts is not None
+    assert (
+        mixed.counts.inbox,
+        mixed.counts.inbox_new,
+        mixed.counts.inbox_seen_again,
+        mixed.counts.needs_attention,
+    ) == (4, 1, 3, True)
 
 
 def test_the_same_item_again_keeps_its_disposition(tmp_path: Path) -> None:
@@ -533,7 +608,7 @@ def test_an_unreadable_inbox_count_keeps_the_journaled_posts_and_needs_attention
 
     instance, root, line = inbox_world(tmp_path)
 
-    def unreadable(self: Any, run_id: str) -> int:
+    def unreadable(self: Any, run_id: str) -> tuple[int, int | None]:
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(LineInboxStore, "posted_by_run", unreadable)
@@ -542,6 +617,8 @@ def test_an_unreadable_inbox_count_keeps_the_journaled_posts_and_needs_attention
     assert state.status == "succeeded", state.terminal
     assert state.counts is not None
     assert (state.counts.inbox, state.counts.needs_attention) == (3, True)
+    # The journal proves the posts, not which were new.
+    assert (state.counts.inbox_new, state.counts.inbox_seen_again) == (None, None)
 
 
 def test_a_line_run_that_posts_nothing_counts_zero_without_opening_the_inbox(
@@ -553,7 +630,7 @@ def test_a_line_run_that_posts_nothing_counts_zero_without_opening_the_inbox(
 
     instance, root, line = _line_world(tmp_path)
 
-    def opened(self: Any, run_id: str) -> int:
+    def opened(self: Any, run_id: str) -> tuple[int, int | None]:
         raise AssertionError("a run with no posting point opened the inbox store")
 
     monkeypatch.setattr(LineInboxStore, "posted_by_run", opened)
@@ -640,6 +717,6 @@ def test_posts_whose_terminal_record_fails_to_append_still_count_and_need_attent
     assert refused == ["terminal_egress"]
     assert state.terminal is not None and state.terminal.code == code  # type: ignore[union-attr]
     assert state.findings_count == 0 and state.terminal_egress == ()
-    assert LineInboxStore(instance).posted_by_run(state.run_id) == 3
+    assert LineInboxStore(instance).posted_by_run(state.run_id) == (3, 3)
     assert state.counts is not None
     assert (state.counts.inbox, state.counts.needs_attention) == (3, True)

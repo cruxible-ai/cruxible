@@ -3133,11 +3133,16 @@ step (and each `line run`) carries `counts`:
 | `unchanged`, `retired` | restatements; retirements |
 | `refused` | items not written, with `top_refusals` (code and count) |
 | `inbox` | items the run posted to its Line's inbox; null when unreadable and the journal proves none (counts as needing attention) |
+| `inbox_new`, `inbox_seen_again` | `inbox` split into postings that made a new item and re-sightings of an item already there; null when the split is unknown (an unreadable inbox, or a run recorded before the split) |
+| `inbox_unposted` | items an inbox cap left out of the run's posts |
 | `complete` | false with `incomplete_reasons` (node and kind) |
 
 `attention_steps` names the steps that were incomplete, refused an item,
-posted to the inbox or could not count its inbox; the CLI prints it after
-`completed` and marks each such step with `!`.
+posted a new inbox item, left items out under an inbox cap (nothing posted
+them, so some may be new), or posted to the inbox without a known split. A
+step whose posts were all re-sightings is not among them. The CLI prints the
+list after `completed`, marks each such step with `!`, and shows the inbox as
+`inbox 0 new, 100 seen again` (with `, N over the cap` when a cap cut items).
 
 `cruxible runbook preview NAME` shows what each step can read (Queries, and
 the ClaimTypes, kinds and keys behind them, late reads marked), write and

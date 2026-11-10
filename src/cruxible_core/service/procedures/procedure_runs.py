@@ -3014,6 +3014,15 @@ def _state_from_records(
         if isinstance(final, dict) and final.get("completeness") is not None
         else None
     )
+    inbox, inbox_new = (
+        _run_inbox_postings(instance, run_id)
+        if status != "running"
+        and admission.invocation_origin == "line"
+        and _run_may_have_posted(
+            terminal_egress.values(), findings_count=findings_count, terminal=terminal
+        )
+        else (0, 0)
+    )
     return ProcedureRunStateV2(
         counts=(
             None
@@ -3022,14 +3031,8 @@ def _state_from_records(
                 (node.summary for node in nodes),
                 findings=findings,
                 completeness=completeness,
-                inbox=(
-                    _run_inbox_postings(instance, run_id)
-                    if admission.invocation_origin == "line"
-                    and _run_may_have_posted(
-                        terminal_egress.values(), findings_count=findings_count, terminal=terminal
-                    )
-                    else 0
-                ),
+                inbox=inbox,
+                inbox_new=inbox_new,
             )
         ),
         run_id=run_id,
@@ -3225,15 +3228,19 @@ def _run_may_have_posted(
     )
 
 
-def _run_inbox_postings(instance: PlaybillInstance, run_id: str) -> int | None:
-    """The items a Line run posted to its inbox, or ``None`` when the inbox is unreadable."""
+def _run_inbox_postings(instance: PlaybillInstance, run_id: str) -> tuple[int | None, int | None]:
+    """The items a Line run posted to its inbox and how many were new items.
+
+    Both are ``None`` when the inbox is unreadable; the second alone is
+    ``None`` when the inbox did not record which postings were new.
+    """
 
     from cruxible_core.exhaust.line_inbox import InboxUnavailable, LineInboxStore
 
     try:
         return LineInboxStore(instance).posted_by_run(run_id)
     except (InboxUnavailable, ValueError, sqlite3.Error):
-        return None
+        return None, None
 
 
 def _with_prior_refusals(

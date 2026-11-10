@@ -267,11 +267,19 @@ class RunCounts(_NodeSummary):
     among the findings the run kept. ``inbox`` counts the items this run posted
     to its Line's inbox; when the inbox could not be read it is the count the
     run's journaled ``post_inbox`` summaries prove, or ``None`` when they prove
-    none (findings routed to the inbox are not journaled). ``complete`` is
-    false when the run recorded incompleteness, with ``incomplete_reasons``
-    naming each node and kind. ``needs_attention`` is true when the run was
-    incomplete, refused an item, posted to the inbox, or its inbox count is
-    unknown (``None``): an unreadable count never reads as nothing posted.
+    none (findings routed to the inbox are not journaled). It splits into
+    ``inbox_new``, the postings that made a new item, and ``inbox_seen_again``,
+    the re-sightings of an item already there (which keep its status and
+    decision); both are ``None`` when the split is unknown (the inbox could
+    not be read, or the counts were recorded before the split existed).
+    ``inbox_unposted`` counts the items an inbox cap left out of this run's
+    posts. ``complete`` is false when the run recorded incompleteness, with
+    ``incomplete_reasons`` naming each node and kind. ``needs_attention`` is
+    true when the run was incomplete, refused an item, posted a new inbox item,
+    left items out under an inbox cap (they may be new: nothing posted them),
+    or posted to the inbox without a known split: an unreadable count never
+    reads as nothing new. A run whose posts were all re-sightings does not
+    need attention for them.
     """
 
     tag: Literal["cruxible-run-counts-v1"] = "cruxible-run-counts-v1"
@@ -289,17 +297,42 @@ class RunCounts(_NodeSummary):
         default=(), max_length=RUN_COUNTS_TOP_REFUSALS_MAX, exclude_if=lambda value: not value
     )
     inbox: SummaryCount | None = 0
+    inbox_new: SummaryCount | None = None
+    inbox_seen_again: SummaryCount | None = None
+    inbox_unposted: SummaryCount = Field(default=0, exclude_if=lambda value: value == 0)
     needs_attention: bool
 
     @model_validator(mode="after")
     def _attention(self) -> RunCounts:
-        expected = not self.complete or self.refused > 0 or self.inbox != 0
-        if self.needs_attention != expected:
+        new, again = self.inbox_new, self.inbox_seen_again
+        if (new is None) != (again is None):
+            raise ValueError("inbox_new and inbox_seen_again are known together or not at all")
+        if new is not None and again is not None and new + again != self.inbox:
+            raise ValueError("inbox_new and inbox_seen_again split the inbox count")
+        if self.needs_attention != _needs_attention(
+            complete=self.complete,
+            refused=self.refused,
+            inbox=self.inbox,
+            inbox_new=new,
+            unposted=self.inbox_unposted,
+        ):
             raise ValueError(
-                "needs_attention is true exactly when the run was incomplete, "
-                "refused an item, posted to the inbox, or its inbox count is unknown"
+                "needs_attention is true exactly when the run was incomplete, refused an "
+                "item, posted a new inbox item, left items out under an inbox cap, or "
+                "posted to the inbox without a known split"
             )
         return self
+
+
+def _needs_attention(
+    *, complete: bool, refused: int, inbox: int | None, inbox_new: int | None, unposted: int
+) -> bool:
+    if not complete or refused > 0 or unposted > 0:
+        return True
+    if inbox_new is None:
+        # Unknown split: any post (or an unreadable count) may be new.
+        return inbox != 0
+    return inbox_new > 0
 
 
 def run_counts(
@@ -308,16 +341,21 @@ def run_counts(
     findings: Iterable[ClaimsDiagnostic] = (),
     completeness: RunCompleteness | None = None,
     inbox: int | None = 0,
+    inbox_new: int | None = None,
 ) -> RunCounts:
     """Fold a run's node summaries, kept findings and completeness into one RunCounts.
 
-    Constant work per node: it reads the summaries the run journaled, never a body.
+    ``inbox`` is the run's inbox postings and ``inbox_new`` how many of them
+    made a new item, as the inbox recorded when each was posted (``None``:
+    not known). Constant work per node: it reads the summaries the run
+    journaled, never a body.
     """
 
-    written = settled = proposed = unchanged = retired = refused = posted = 0
+    written = settled = proposed = unchanged = retired = refused = posted = unposted = 0
     for summary in summaries:
         if isinstance(summary, EgressRunSummary) and summary.kind == "post_inbox":
             posted += summary.emitted
+            unposted += summary.unposted
         if isinstance(summary, ClaimsRunSummary):
             changed = summary.written + summary.revised + summary.inverse_written
             written += changed
@@ -336,9 +374,12 @@ def run_counts(
         if item.kind != "incomplete_source"
     )
     complete = completeness is None or completeness.complete
-    if inbox is None and posted:
-        # The inbox could not be read: the journal still proves these posts.
-        inbox = posted
+    if inbox is None:
+        # The inbox could not be read: the journal still proves these posts,
+        # but not which of them were new.
+        inbox, inbox_new = (posted or None), None
+    elif inbox == 0:
+        inbox_new = 0
     return RunCounts(
         complete=complete,
         incomplete_reasons=() if completeness is None else completeness.reasons,
@@ -355,7 +396,16 @@ def run_counts(
             ]
         ),
         inbox=inbox,
-        needs_attention=not complete or refused > 0 or inbox != 0,
+        inbox_new=inbox_new,
+        inbox_seen_again=None if inbox is None or inbox_new is None else inbox - inbox_new,
+        inbox_unposted=unposted,
+        needs_attention=_needs_attention(
+            complete=complete,
+            refused=refused,
+            inbox=inbox,
+            inbox_new=inbox_new,
+            unposted=unposted,
+        ),
     )
 
 
