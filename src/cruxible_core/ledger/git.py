@@ -70,10 +70,10 @@ NOTE_REFS: Final[Mapping[str, str]] = {
     "approval": "refs/notes/cruxible-approval",
 }
 # The names these refs carried before the public rename, each mapped to its
-# current name. They are read only by the one-time move at instance open
-# (`GitLedger.migrate_legacy_note_refs`) and by mirror publication, which
-# accepts them in a recorded snapshot or a remote advertisement so the next
-# push deletes them under lease. No note is ever read or written under them.
+# current name. Only mirror publication reads them: it accepts them in a
+# recorded snapshot or a remote advertisement so the next push deletes them
+# under lease. No note is ever read or written under them, and no instance this
+# release opens holds them locally (its ledger is younger than the rename).
 LEGACY_NOTE_REFS: Final[Mapping[str, str]] = {
     "refs/notes/playbill-gen": NOTE_REFS["generation"],
     "refs/notes/playbill-eval": NOTE_REFS["evaluation"],
@@ -2037,45 +2037,6 @@ class GitLedger:
                 self._validate_oid(fields[2])
                 commits.append(fields[2])
         return tuple(sorted(set(commits)))
-
-    def migrate_legacy_note_refs(self) -> tuple[str, ...]:
-        """Move each pre-rename note ref to its current name, once; return the moved names.
-
-        Runs at instance open. Each move is one atomic ref transaction that
-        creates the current ref (leased absent) at the legacy ref's commit and
-        deletes the legacy ref (leased at that commit), so a concurrent opener
-        that already moved it simply loses the lease and the move is not
-        repeated. A legacy ref whose current ref already names the same commit
-        is a finished move and is deleted; one whose current ref differs is
-        left alone. Cost is a constant number of ref reads.
-        """
-        if all(self._resolve_ref(legacy) is None for legacy in LEGACY_NOTE_REFS):
-            # The common case once moved: three ref reads, no lock, no write.
-            return ()
-        moved: list[str] = []
-        with self._note_lock():
-            for legacy, current in LEGACY_NOTE_REFS.items():
-                old = self._resolve_ref(legacy)
-                if old is None:
-                    continue
-                new = self._resolve_ref(current)
-                if new is None:
-                    commands = [
-                        f"update {current} {old} {'0' * len(old)}",
-                        f"delete {legacy} {old}",
-                    ]
-                elif new == old:
-                    commands = [f"delete {legacy} {old}"]
-                else:
-                    continue
-                try:
-                    self._update_refs(commands)
-                except GitError:
-                    if self._resolve_ref(legacy) == old:
-                        raise
-                    continue
-                moved.append(legacy)
-        return tuple(moved)
 
     def _note_ref(self, kind: str) -> str:
         ref = NOTE_REFS.get(kind)

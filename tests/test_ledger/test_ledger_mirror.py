@@ -151,8 +151,8 @@ def _git_dir(path: Path, *args: str) -> str:
     ).stdout.decode()
 
 
-def test_reopen_moves_pre_rename_note_refs_in_the_ledger_and_its_mirror(tmp_path: Path) -> None:
-    """An instance and mirror from before the note ref rename: reopening renames both, once."""
+def test_reopen_renames_pre_rename_note_refs_in_the_mirror(tmp_path: Path) -> None:
+    """A mirror published before the note ref rename: the next publication renames it."""
 
     instance, remote = _mirrored(tmp_path)
     _submit(instance)
@@ -161,11 +161,10 @@ def test_reopen_moves_pre_rename_note_refs_in_the_ledger_and_its_mirror(tmp_path
     renamed = {current: legacy for legacy, current in LEGACY_NOTE_REFS.items()}
     present = {ref: oid for ref, oid in instance._ledger.mirror_refs().items() if ref in renamed}
     assert NOTE_REFS["evaluation"] in present
-    # Rewrite the fixture back to the old names: ledger, remote and recorded mirror state.
-    for repository in (ledger, remote):
-        for current, oid in present.items():
-            _git_dir(repository, "update-ref", renamed[current], oid)
-            _git_dir(repository, "update-ref", "-d", current)
+    # Rewrite the remote and the recorded mirror state back to the old names.
+    for current, oid in present.items():
+        _git_dir(remote, "update-ref", renamed[current], oid)
+        _git_dir(remote, "update-ref", "-d", current)
     state = read_mirror_state(instance.root)
     assert state is not None
     write_mirror_state(
@@ -192,8 +191,6 @@ def test_reopen_moves_pre_rename_note_refs_in_the_ledger_and_its_mirror(tmp_path
     assert all(ref in remote_refs for ref in present)
     assert not any(ref in remote_refs for ref in LEGACY_NOTE_REFS)
     assert set(published.published_refs).isdisjoint(LEGACY_NOTE_REFS)
-    # Idempotent: a second open finds nothing to move.
-    assert reopened._ledger.migrate_legacy_note_refs() == ()
 
 
 def test_activation_moves_main_and_removes_the_closed_branch(
