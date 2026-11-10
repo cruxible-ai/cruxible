@@ -881,15 +881,28 @@ def _service_migrate_claim_type(
         f"refs/proposals/{actor.actor_id}/claim-type-migration-"
         f"{operation_digest.removeprefix('sha256:')}"
     )
-    proposal = instance.proposal_service().submit(
-        actor=actor,
-        request=ProposalAdmissionRequest(
-            target_ref=target_ref,
-            proposed_base_oid=current.git_oid,
-        ),
-        candidate_tree=candidate_tree,
-        timestamp=timestamp,
+    # A runtime import: the change-control module imports the service layer.
+    from cruxible_core.service.change_preview import ChangeMode, refusing_moved_head
+
+    # A migration has no dry_run or at: its preflight is the preview, and the
+    # same submit run again evaluates at whatever head it then finds.
+    mode = ChangeMode(
+        instance,
+        previewing=False,
+        operation="cruxible.claim-type.migrate",
+        describe=f"migrating ClaimType {successor.identity.name}",
+        retry_arguments={},
     )
+    with refusing_moved_head(instance, mode):
+        proposal = instance.proposal_service().submit(
+            actor=actor,
+            request=ProposalAdmissionRequest(
+                target_ref=target_ref,
+                proposed_base_oid=current.git_oid,
+            ),
+            candidate_tree=candidate_tree,
+            timestamp=timestamp,
+        )
     return ClaimTypeMigrationResult(
         operation_digest=operation_digest,
         semantic_delta=delta,

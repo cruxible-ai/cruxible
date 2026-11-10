@@ -110,15 +110,17 @@ def _document(client: TestClient, instance_id: str, name: str) -> dict[str, Any]
     ).model_dump(mode="json")
 
 
-def _move_head(client: TestClient, instance_id: str, reviewer_key: Path) -> None:
+def _move_head(
+    client: TestClient, instance_id: str, reviewer_key: Path, name: str = "head-mover"
+) -> None:
     """Accept one ordinary Document change, so the accepted head moves."""
 
     proposed = _ok(
         client.post(
             _api(instance_id, "/documents/proposals"),
             json={
-                "shell": _document(client, instance_id, "head-mover"),
-                "proposal_name": "head-mover",
+                "shell": _document(client, instance_id, name),
+                "proposal_name": name,
                 "accept": "never",
             },
         )
@@ -257,6 +259,177 @@ def test_a_head_accepted_after_the_evaluation_refuses_a_pinned_commit_as_moved(
         for entry in _ok(client.get(_api(instance_id, "/proposals")))["entries"]
         if entry["target_ref"].endswith("add-raced")
     ]
+
+
+def _move_after_evaluating(
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    instance_id: str,
+    reviewer_key: Path,
+    *,
+    when: Any,
+) -> list[bool]:
+    """Accept another change right after the first submission ``when`` matches evaluates."""
+
+    original = ProposalService._evaluate_admission
+    moved: list[bool] = []
+
+    def evaluate_then_move(self: ProposalService, **kwargs: Any) -> Any:
+        evaluated = original(self, **kwargs)
+        if not moved and when(kwargs):
+            moved.append(True)
+            _move_head(client, instance_id, reviewer_key, "racing-mover")
+        return evaluated
+
+    monkeypatch.setattr(ProposalService, "_evaluate_admission", evaluate_then_move)
+    return moved
+
+
+def _moved_under_unpinned(response: Any, operation: str) -> None:
+    """The typed refusal an unpinned direct change gets when its head moved: run it again."""
+
+    assert response.status_code == 409, response.text
+    body = dict(response.json())
+    assert body["error_code"] == "cruxible.preview.state_moved", body
+    assert body["repair"] == {"operation": operation, "arguments": {"dry_run": False}}, body
+    assert "nothing was published, so run it again" in body["message"]
+    assert "at=" in body["message"]
+
+
+def _proposals_at(client: TestClient, instance_id: str, suffix: str) -> list[Any]:
+    entries = _ok(client.get(_api(instance_id, "/proposals")))["entries"]
+    return [entry for entry in entries if entry["target_ref"].endswith(suffix)]
+
+
+def test_an_unpinned_principal_change_whose_head_moves_refuses_typed_and_retries(
+    playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, instance_id, reviewer_key = playbill_http
+    body = {"principal": _principal(tmp_path, "unpinned"), "proposal_name": "add-unpinned"}
+    url = _api(instance_id, "/principals/proposals")
+    moved = _move_after_evaluating(
+        monkeypatch,
+        client,
+        instance_id,
+        reviewer_key,
+        when=lambda kwargs: kwargs["request"].target_ref.endswith("add-unpinned"),
+    )
+
+    refused = client.post(url, json={**body, "dry_run": False})
+
+    assert moved == [True]
+    _moved_under_unpinned(refused, "cruxible.principal.add")
+    assert not _proposals_at(client, instance_id, "add-unpinned")
+    # Run again, it evaluates at the moved head and is admitted.
+    assert _ok(client.post(url, json={**body, "dry_run": False}))["status"] == "admitted"
+
+
+def test_an_unpinned_document_proposal_whose_head_moves_refuses_typed(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, instance_id, reviewer_key = playbill_http
+    body = {
+        "shell": _document(client, instance_id, "raced-doc"),
+        "proposal_name": "raced-doc",
+        "accept": "never",
+    }
+    moved = _move_after_evaluating(
+        monkeypatch,
+        client,
+        instance_id,
+        reviewer_key,
+        when=lambda kwargs: kwargs["request"].target_ref.endswith("raced-doc"),
+    )
+
+    refused = client.post(_api(instance_id, "/documents/proposals"), json=body)
+
+    assert moved == [True]
+    _moved_under_unpinned(refused, "cruxible.document.propose")
+    assert not _proposals_at(client, instance_id, "raced-doc")
+
+
+def test_an_unpinned_readmission_whose_head_moves_refuses_typed(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.core_support._support import every_moved_base_overlaps
+
+    every_moved_base_overlaps(monkeypatch)
+    client, instance_id, reviewer_key = playbill_http
+    proposed = _ok(
+        client.post(
+            _api(instance_id, "/documents/proposals"),
+            json={
+                "shell": _document(client, instance_id, "gamma"),
+                "proposal_name": "gamma",
+                "accept": "never",
+            },
+        )
+    )
+    proposal_id = proposed["proposal"]["admission"]["proposal_id"]
+    _move_head(client, instance_id, reviewer_key)  # the proposal is stale now
+    before = len(_ok(client.get(_api(instance_id, "/proposals")))["entries"])
+    moved = _move_after_evaluating(
+        monkeypatch,
+        client,
+        instance_id,
+        reviewer_key,
+        when=lambda kwargs: kwargs["readmits"] is not None,
+    )
+
+    refused = client.post(
+        _api(instance_id, f"/proposals/{proposal_id}/readmit"),
+        json={"tag": "playbill-proposal-readmit-request-v1", "dry_run": False},
+    )
+
+    assert moved == [True]
+    _moved_under_unpinned(refused, "cruxible.proposal.readmit")
+    # Only the head mover's own proposal was added: no readmission published.
+    assert len(_ok(client.get(_api(instance_id, "/proposals")))["entries"]) == before + 1
+
+
+def test_an_internal_landing_whose_head_moves_leaves_the_proposal_stale(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A landing with no caller's verb to repair (review landing a moved proposal by its
+    bytes) refuses as a recompilation that lost the same race does: the proposal stays
+    stale, its repair readmit or withdraw."""
+
+    from cruxible_client.contracts.errors import ProposalStale
+    from cruxible_core.service.proposals.proposals import _proposal_result, land_exact_bytes
+
+    client, instance_id, reviewer_key = playbill_http
+    proposed = _ok(
+        client.post(
+            _api(instance_id, "/documents/proposals"),
+            json={
+                "shell": _document(client, instance_id, "delta"),
+                "proposal_name": "delta",
+                "accept": "never",
+            },
+        )
+    )
+    proposal_id = proposed["proposal"]["admission"]["proposal_id"]
+    _move_head(client, instance_id, reviewer_key)
+    instance = get_playbill_manager().get(instance_id)
+    moved = _move_after_evaluating(
+        monkeypatch,
+        client,
+        instance_id,
+        reviewer_key,
+        when=lambda kwargs: kwargs["readmits"] is not None,
+    )
+
+    with pytest.raises(ProposalStale) as refused:
+        land_exact_bytes(instance, _proposal_result(instance, proposal_id))
+
+    assert moved == [True]
+    assert refused.value.reason == "head_moved"
+    assert refused.value.proposal_id == proposal_id
 
 
 def test_a_head_accepted_before_the_stamp_refuses_a_pinned_decommission(
