@@ -19,7 +19,7 @@ the same evidence; different bytes are a new question and match nothing.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Annotated, Literal, TypeAlias
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -73,34 +73,6 @@ def _path_matches(claim_id: str, path: str) -> None:
         raise ValueError("a refused Claim's path is its own Claim path")
 
 
-class RefusedClaimKeyV1(_StrictRefusalModel):
-    """A refused Claim recorded by its match key alone (the first, unreleased shape).
-
-    The key binds the key domain it was computed under and cannot be recomputed
-    from the record. A rebuild under another domain re-derives the key from the
-    rejected candidate while its objects are retained, and drops it otherwise.
-    """
-
-    tag: Literal["cruxible-refused-claim-v1"] = "cruxible-refused-claim-v1"
-    claim_id: str
-    path: str
-    match_key: str
-    producer: ArtifactPin | None = None
-
-    _claim = field_validator("claim_id")(_claim_id)
-
-    @field_validator("match_key")
-    @classmethod
-    def _key(cls, value: str) -> str:
-        Sha256Value.from_tagged(value)
-        return value
-
-    @model_validator(mode="after")
-    def _path(self) -> "RefusedClaimKeyV1":
-        _path_matches(self.claim_id, self.path)
-        return self
-
-
 class RefusedClaim(_StrictRefusalModel):
     """One Claim of a rejected proposal, recorded by the inputs of its match key.
 
@@ -132,9 +104,6 @@ class RefusedClaim(_StrictRefusalModel):
     def _path(self) -> "RefusedClaim":
         _path_matches(self.claim_id, self.path)
         return self
-
-
-RefusedClaimAny: TypeAlias = Annotated[RefusedClaimKeyV1 | RefusedClaim, Field(discriminator="tag")]
 
 
 PriorRefusalKind = Literal["claim_retired", "proposal_rejected"]
@@ -206,8 +175,6 @@ __all__ = [
     "PriorRefusalKind",
     "PriorRefusalReceipt",
     "RefusedClaim",
-    "RefusedClaimAny",
-    "RefusedClaimKeyV1",
     "claim_producer",
     "claim_refusal_match_key",
 ]

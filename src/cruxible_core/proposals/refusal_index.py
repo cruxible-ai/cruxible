@@ -68,7 +68,6 @@ from cruxible_client.contracts.refusal_receipts import (
     PriorRefusalCoverage,
     PriorRefusalReceipt,
     RefusedClaim,
-    RefusedClaimKeyV1,
     claim_producer,
     claim_refusal_match_key,
 )
@@ -266,49 +265,27 @@ def candidate_refused_claims(
 
 def _rejection_keys(
     instance: PlaybillInstance, record: ProposalWithdrawalRecord
-) -> tuple[tuple[RefusedClaim | RefusedClaimKeyV1, str], ...]:
+) -> tuple[tuple[RefusedClaim, str], ...]:
     """Each refused Claim of a rejection with its key under the current domain.
 
-    A recorded statement and its Captures are keyed afresh. A key-only entry
-    (the first, unreleased record shape) is re-derived from the rejected
-    candidate while its objects are retained; when they are not, it cannot be
-    keyed in this domain and is dropped with a logged note.
+    A recorded statement and its Captures are keyed afresh; one whose Captures
+    cannot be read is dropped with a logged note.
     """
 
     bodies = instance.body_store()
-    candidate: dict[str, str] | None = None
-    keyed: list[tuple[RefusedClaim | RefusedClaimKeyV1, str]] = []
+    keyed: list[tuple[RefusedClaim, str]] = []
     for item in record.refused_claims:
-        if isinstance(item, RefusedClaim):
-            try:
-                contents = {capture_evidence_content(bodies, d) for d in item.capture_digests}
-            except CruxibleError as exc:
-                _log.warning(
-                    "refusal_index_rejection_unkeyable",
-                    proposal_id=record.proposal_id,
-                    claim_id=item.claim_id,
-                    reason=str(exc),
-                )
-                continue
-            keyed.append((item, claim_refusal_match_key(item.statement, contents)))
-            continue
-        if candidate is None:
-            claims = _candidate_claims(instance, record.proposal_id)
-            candidate = (
-                {}
-                if claims is None
-                else {path: claim_refusal_key(instance, claim) for path, claim in claims}
-            )
-        key = candidate.get(item.path)
-        if key is None:
+        try:
+            contents = {capture_evidence_content(bodies, d) for d in item.capture_digests}
+        except CruxibleError as exc:
             _log.warning(
-                "refusal_index_rejection_dropped",
+                "refusal_index_rejection_unkeyable",
                 proposal_id=record.proposal_id,
                 claim_id=item.claim_id,
-                reason="key-only record and its rejected candidate is no longer retained",
+                reason=str(exc),
             )
             continue
-        keyed.append((item, key))
+        keyed.append((item, claim_refusal_match_key(item.statement, contents)))
     return tuple(keyed)
 
 
