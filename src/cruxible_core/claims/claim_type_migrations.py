@@ -199,47 +199,6 @@ def _current_generation_timestamp(instance: PlaybillInstance) -> str:
     return record.candidate.timestamp
 
 
-def _current_dependents(
-    tree: Mapping[str, bytes],
-    *,
-    identity: str,
-) -> dict[str, tuple[str, ClaimArtifact]]:
-    """Return every live or retired Claim directly governed by one ClaimType."""
-
-    from cruxible_core.derived.derived_state import SnapshotTree
-    from cruxible_core.indexes.evaluated_state import SelectionSpec
-
-    if isinstance(tree, SnapshotTree) and tree._accepted_reader is not None:
-        selection = SelectionSpec(tree._accepted_reader)
-        if tree._parent is not None:
-            selection = selection.overlay(tree._edits)
-        rows = selection.call(lambda selected: selected.claim_type_items(identity))
-        claims = ((path, parse_claim(content, path=path)) for path, content in rows)
-        return {
-            claim.identity.name: (path, claim)
-            for path, claim in claims
-            if _include_migration_dependent(
-                artifact_kind="claim", lifecycle_state=claim.lifecycle.state
-            )
-        }
-
-    result: dict[str, tuple[str, ClaimArtifact]] = {}
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("claims/"):
-            continue
-        claim = parse_claim(tree[path], path=path)
-        if (
-            not _include_migration_dependent(
-                artifact_kind="claim",
-                lifecycle_state=claim.lifecycle.state,
-            )
-            or claim.statement.claim_type.qualified != identity
-        ):
-            continue
-        result[claim.identity.name] = (path, claim)
-    return result
-
-
 def resolve_claim_type_succession(
     tree: Mapping[str, bytes],
     value: ClaimTypeInputRecord | ClaimType,
