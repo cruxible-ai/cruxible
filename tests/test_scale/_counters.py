@@ -82,6 +82,17 @@ the guardrail below). A statement traced
 on the measuring thread on a connection that took no handler is recorded in
 ``unexplained``, which fails the window: its work would go uncounted.
 
+No other thread may run SQL on a traced connection while a window installs or
+removes its progress handlers. ``set_progress_handler`` holds the GIL while it
+waits for the connection's mutex, and a thread inside a statement holds that
+mutex while it waits for the GIL to run the guard's trace callback or progress
+handler: the two deadlock, on every Python version, and pytest-timeout cannot
+fire. The workspace advertiser is the product's background SQL thread (it reads
+the history index after every write), so ``trace_sqlite`` keeps it from starting
+and ``counting`` waits for one already running before it installs anything. A
+refresh a write queues stays pending; ``_worlds.settle_advertisement`` runs it
+on the measuring thread where a guard wants it counted.
+
 One instruction is one step whatever it does inside: a B-tree seek is one step
 at any table size, which is what lets a per-key lookup stay flat, but so is
 ``OP_Count`` (``SELECT count(*) FROM t`` with no ``WHERE`` counts the table's
@@ -585,14 +596,43 @@ def trace_sqlite(root: Path) -> Iterator[None]:
             _count_steps(connection, _WINDOW)
         return connection
 
+    from cruxible_core.runtime.instance import PlaybillInstance
+
     global _TRACING_CONNECT
+    start_advertiser = PlaybillInstance.__dict__["_start_advertiser_locked"]
     sqlite3.connect = sqlite3.dbapi2.connect = connect  # type: ignore[assignment]
     _TRACING_CONNECT = connect
+    PlaybillInstance._start_advertiser_locked = _no_advertiser_thread  # type: ignore[method-assign]
     try:
         yield
     finally:
+        PlaybillInstance._start_advertiser_locked = start_advertiser  # type: ignore[method-assign]
         _TRACING_CONNECT = None
         sqlite3.connect = sqlite3.dbapi2.connect = _ORIGINAL_CONNECT
+
+
+#: The name every workspace advertiser thread starts with (``PlaybillInstance``).
+ADVERTISER_THREAD = "workspace-advertiser-"
+#: How long a window waits for a running advertiser to finish its queued refreshes.
+ADVERTISER_JOIN_SECONDS = 120.0
+
+
+def _no_advertiser_thread(self: Any) -> None:
+    """Start no advertiser thread: its SQL would race a window's handler installs."""
+
+
+def _await_advertisers() -> None:
+    """Wait for advertiser threads started before tracing; fail if one keeps running."""
+
+    for thread in threading.enumerate():
+        if thread is threading.current_thread() or not thread.name.startswith(ADVERTISER_THREAD):
+            continue
+        thread.join(ADVERTISER_JOIN_SECONDS)
+        if thread.is_alive():
+            raise AssertionError(
+                f"{thread.name} still runs SQL: a window installing its step counters beside it"
+                " would deadlock (start the instance inside trace_sqlite)"
+            )
 
 
 def _untraced_entry_points() -> list[str]:
@@ -861,6 +901,7 @@ def counting(root: Path) -> Iterator[Window]:
 
     global _WINDOW, _REBINDER, _ATTRIBUTING
     assert _WINDOW is None, "measured windows do not nest"
+    _await_advertisers()
     _install_audit_hook()
     if _REBINDER is None:
         _REBINDER = _Rebinder()
