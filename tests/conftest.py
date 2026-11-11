@@ -13,6 +13,7 @@ from tests.support.provider_checkout import (  # noqa: F401 - shared fixtures
     provider_checkout,
     provider_runtime,
 )
+from tests.support.sharding import ShardPlugin
 
 _PROCESS_TEMPORARY_ENV = "CRUXIBLE_TEST_PROCESS_TMPDIR"
 
@@ -79,6 +80,11 @@ def world_templates(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     stats = os.environ.get(WORLD_STATS_ENV)
     if stats:
         TEMPLATES.report(Path(stats))
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    # CI shards (CRUXIBLE_TEST_SHARD=i/N); without the variable it deselects nothing.
+    config.pluginmanager.register(ShardPlugin(config), "cruxible-test-shards")
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

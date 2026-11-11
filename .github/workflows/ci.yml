@@ -20,15 +20,24 @@ env:
 
 jobs:
   test:
+    name: test (${{ matrix.python-version }}, shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 45
     strategy:
-      # Finish every Python version even when one fails, so one CI run reports them all.
+      # Finish every job even when one fails, so one CI run reports them all.
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
+        # The suite runs as 4 jobs per Python, split by test file
+        # (tests/support/sharding.py). Changing the count: edit this list and
+        # the 4 in CRUXIBLE_TEST_SHARD and the job name.
+        shard: [1, 2, 3, 4]
 
     env:
+      CRUXIBLE_TEST_SHARD: ${{ matrix.shard }}/4
+      # Per-file seconds of this shard, uploaded below to rebalance the shards
+      # (tests/support/shard_durations.json).
+      CRUXIBLE_TEST_DURATIONS_OUT: ${{ github.workspace }}/test-durations.json
       CRUXIBLE_PROVIDERS_CHECKOUT: ${{ github.workspace }}/cruxible-providers
       # The checkout is mandatory here: its tests fail rather than skip.
       CRUXIBLE_PROVIDERS_REQUIRED: "1"
@@ -61,17 +70,30 @@ jobs:
       - name: Install the provider runtime from the providers checkout
         run: uv pip install "$CRUXIBLE_PROVIDERS_CHECKOUT/packages/cruxible-provider-runtime"
 
+      # Lint, format and type checks do not depend on the shard: run them once per Python.
       - name: Lint
+        if: matrix.shard == 1
         run: uv run ruff check src packages/cruxible-client/src tests
 
       - name: Format check
+        if: matrix.shard == 1
         run: uv run ruff format --check src packages/cruxible-client/src tests
 
       - name: Type check
+        if: matrix.shard == 1
         run: uv run mypy src packages/cruxible-client/src
 
       - name: Test
         run: uv run pytest -n auto --dist loadfile --tb=short --timeout 900 --timeout-method=thread -o faulthandler_timeout=1200
+
+      - name: Upload per-file test seconds
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-durations-py${{ matrix.python-version }}-shard${{ matrix.shard }}
+          path: test-durations.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   docker-image-test:
     runs-on: ubuntu-latest

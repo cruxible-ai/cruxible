@@ -13,9 +13,23 @@ uv sync --all-packages --all-extras
 ## Running Tests
 
 ```bash
-uv run pytest -n auto --dist loadfile   # the whole suite, as CI runs it
+uv run pytest -n auto --dist loadfile   # the whole suite
 uv run pytest tests/test_claims -v      # a selection
 ```
+
+CI splits the suite into parallel jobs by test file. `CRUXIBLE_TEST_SHARD=i/N`
+(1-based) keeps only the files of shard `i` of `N`; unset, nothing is left out.
+Each file lands in exactly one shard, balanced by the per-file seconds in
+`tests/support/shard_durations.json` when that table exists, else by test
+count. To rerun one CI shard locally:
+
+```bash
+CRUXIBLE_TEST_SHARD=2/4 uv run pytest -n auto --dist loadfile
+```
+
+CI also writes each shard's per-file seconds (`CRUXIBLE_TEST_DURATIONS_OUT`)
+and uploads them; `tests/support/sharding.py` shows how to merge them into a
+new table.
 
 The provider-runtime tests (provider installation, package index) run against
 a [cruxible-providers](https://github.com/cruxible-ai/cruxible-providers)
