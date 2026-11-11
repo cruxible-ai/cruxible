@@ -22,13 +22,19 @@ from typing import Any
 #: retirement, new capabilities, once trims fell short.
 DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS = 10_400
 
-#: The distributed plugin uses full + a pinned 23-tool allowlist. The 2026-11-08
+#: The distributed plugin uses full + a pinned 26-tool allowlist. The 2026-11-08
 #: maintainer ruling adds kit/provider/Line/Runbook startup to the lean catalog;
 #: the fresh-install walkthrough (2026-11-09) adds inbox_list (next's top repair)
 #: and claim_attest (named by review-state); since (what changed after a named
-#: generation, named by review-state) adds 843.5, measured at 18,077.
+#: generation, named by review-state) adds 843.5; cruxible_init and
+#: cruxible_authoring_submit_file (a bare folder by tools alone, 2026-11-10) add
+#: about 230 after redundancy-only trims elsewhere, measured at 18,287. The
+#: 2026-11-10 maintainer ruling raises it to 18,400 so the plugin is complete on
+#: its own: cruxible_console (the read-only console without the CLI) joins the
+#: allowlist, measured at 18,387.75. The ceiling exists so each addition is a
+#: deliberate decision, not drift.
 #: This separate ceiling does not widen the existing default profile's budget.
-PLUGIN_PROFILE_MODEL_VISIBLE_TOKENS = 18_300
+PLUGIN_PROFILE_MODEL_VISIBLE_TOKENS = 18_400
 
 
 def model_visible_tokens(tool: Any) -> float:

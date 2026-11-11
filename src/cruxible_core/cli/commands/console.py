@@ -10,18 +10,16 @@ from typing import TYPE_CHECKING, Any
 import click
 import httpx
 
-from cruxible_core.cli.commands._common import _root_ctx_obj, no_daemon_message
+from cruxible_core.cli.commands._common import (
+    _get_client,
+    _root_ctx_obj,
+    ensure_cli_daemon,
+    no_daemon_message,
+)
 from cruxible_core.cli.main import handle_errors, long_running_command
 
 if TYPE_CHECKING:
     from cruxible_core.console.listener import Upstream
-
-_NO_BUNDLE = (
-    "This install has no built console (nothing in {root}). Release wheels include "
-    "it. From a source checkout, build it into the package with `python "
-    "scripts/build_console.py --console PATH --commit SHA`, or run the console's dev "
-    "server instead (`pnpm dev` in a cruxible-app checkout, as its README says)."
-)
 
 
 def _upstream(obj: dict[str, Any]) -> Upstream:
@@ -136,6 +134,7 @@ def console_cmd(port: int, no_open: bool, instance: str | None) -> None:
     )
     from cruxible_core import __version__
     from cruxible_core.console.bundle import (
+        NO_BUNDLE_MESSAGE,
         ConsoleBundleInvalid,
         ConsoleBundleMissing,
         default_dist_dir,
@@ -151,11 +150,16 @@ def console_cmd(port: int, no_open: bool, instance: str | None) -> None:
     try:
         bundle = load_bundle()
     except ConsoleBundleMissing as exc:
-        raise click.ClickException(_NO_BUNDLE.format(root=default_dist_dir())) from exc
+        raise click.ClickException(NO_BUNDLE_MESSAGE.format(root=default_dist_dir())) from exc
     except ConsoleBundleInvalid as exc:
         raise click.ClickException(f"the installed console build is damaged: {exc}") from exc
 
+    # The daemon the CLI context names, else the local one, started if need be.
+    ensure_cli_daemon()
     obj = _root_ctx_obj()
+    if obj.get("folder_identity") is not None or obj.get("folder_identity_refused") is not None:
+        # Reading as the folder's principal takes the check every daemon call does.
+        _get_client()
     upstream = _upstream(obj)
     instance_id = instance or obj.get("instance_id")
     if not instance_id:

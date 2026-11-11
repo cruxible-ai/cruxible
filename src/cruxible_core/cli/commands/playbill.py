@@ -24,6 +24,7 @@ from cruxible_client import (
 )
 from cruxible_client._error_base import CoreError, printable
 from cruxible_client.artifacts import (
+    is_layout,
     unpack_artifact,
     write_layout,
 )
@@ -57,6 +58,7 @@ from cruxible_client.authoring.files import (
     remove_catalog_entry,
     root_aliases,
 )
+from cruxible_client.authoring.folder_identity import write_folder_identity
 from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
 from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.authoring.selectors import WorkspaceFiles
@@ -107,7 +109,6 @@ from cruxible_client.contracts.duplicates import (
 )
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
-    SigningKeyError,
     SinceRequestInvalid,
 )
 from cruxible_client.contracts.file_catalog import FileCatalog, FileCompilationBundle
@@ -166,9 +167,11 @@ from cruxible_client.errors import DataValidationError
 from cruxible_client.kits import (
     KIT_ARTIFACT,
     check_kit_updates,
+    kit_automation_template,
     resolve_kit,
     resolve_kit_image,
     stage_kit_providers,
+    with_automation_template,
     write_kit_directory,
 )
 from cruxible_core.adapters.block_detach import detach_projection_pages
@@ -185,6 +188,7 @@ from cruxible_core.cli.commands._common import (
     _remember_principal_settings,
     _require_instance_id,
     _root_ctx_obj,
+    _set_aside_folder_identity,
     _transport_target,
     brief_option,
     change_control_options,
@@ -233,10 +237,9 @@ from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_MIN_MAX_ROWS,
 )
 from cruxible_core.floor.workspace_advertisement import containing_git_workspace_root
+from cruxible_core.governance.init_custody import init_resume_marker, prepare_init_custody
 from cruxible_core.governance.keys import (
-    ClientPrincipalKeyTarget,
     GeneratedKeyMaterial,
-    adopt_client_principal_key,
     generate_client_principal_key,
     preview_client_principal,
     validate_client_principal_key_target,
@@ -610,157 +613,6 @@ def _creation_workspace(
     return resolution
 
 
-def _init_resume_marker(target: ClientPrincipalKeyTarget) -> Path:
-    return target.directory / f".cruxible-init-resume-{target.principal.principal_id}.json"
-
-
-def _init_resume_payload(
-    target: ClientPrincipalKeyTarget,
-    *,
-    transport: str,
-    instance_id: str,
-    public_key: str,
-) -> dict[str, str]:
-    return {
-        "tag": "playbill-init-key-resume-v1",
-        "transport": transport,
-        "instance_id": instance_id,
-        "principal_id": target.principal.principal_id,
-        "kind": target.principal.kind,
-        "public_key": public_key,
-    }
-
-
-def _read_init_resume_marker(path: Path) -> dict[str, object]:
-    try:
-        payload = json.loads(path.read_bytes())
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise SigningKeyError(
-            f"Cruxible init retry marker is missing or malformed: {path}"
-        ) from exc
-    if not isinstance(payload, dict):
-        raise SigningKeyError(f"Cruxible init retry marker is missing or malformed: {path}")
-    return payload
-
-
-def _write_init_resume_marker(path: Path, payload: Mapping[str, str]) -> None:
-    try:
-        with path.open("xb") as handle:
-            handle.write(canonical_bytes(dict(payload)) + b"\n")
-        path.chmod(0o600)
-    except FileExistsError as exc:
-        raise SigningKeyError(f"refusing to replace Cruxible init retry marker: {path}") from exc
-
-
-def _adopt_init_retry_key(
-    target: ClientPrincipalKeyTarget,
-    *,
-    forbidden_roots: tuple[Path, ...],
-    transport: str,
-    instance_id: str,
-) -> GeneratedKeyMaterial:
-    marker = _init_resume_marker(target)
-    if not marker.is_file() or marker.is_symlink():
-        raise SigningKeyError(
-            "Cruxible is already initialized for this custody, or the existing key material "
-            "was provisioned independently; refusing to reuse it without this init's retry "
-            f"marker: {marker}"
-        )
-    material = adopt_client_principal_key(
-        target.directory,
-        principal_id=target.principal.principal_id,
-        kind=target.principal.kind,
-        forbidden_roots=forbidden_roots,
-    )
-    expected = _init_resume_payload(
-        target,
-        transport=transport,
-        instance_id=instance_id,
-        public_key=material.principal.public_key,
-    )
-    if _read_init_resume_marker(marker) != expected:
-        raise SigningKeyError(
-            f"existing key material belongs to a different Cruxible init target: {marker}"
-        )
-    return material
-
-
-def _prepare_init_custody(
-    *,
-    transport: str,
-    instance_id: str,
-    specifications: tuple[tuple[Path, str, PrincipalKind], ...],
-    forbidden_roots: tuple[Path, ...],
-) -> tuple[tuple[GeneratedKeyMaterial, ...], tuple[Path, ...]]:
-    targets = tuple(
-        validate_client_principal_key_target(
-            directory,
-            principal_id=principal_id,
-            kind=kind,
-            forbidden_roots=forbidden_roots,
-        )
-        for directory, principal_id, kind in specifications
-    )
-    if len({target.principal.principal_id for target in targets}) != len(targets):
-        raise SigningKeyError("Cruxible init principal IDs must be distinct")
-    key_paths = tuple(
-        path for target in targets for path in (target.private_key_path, target.public_key_path)
-    )
-    if len(set(key_paths)) != len(key_paths):
-        raise SigningKeyError("Cruxible init custody key paths must be distinct")
-
-    prepared: list[GeneratedKeyMaterial | None] = []
-    for target in targets:
-        private_exists = target.private_key_path.exists()
-        public_exists = target.public_key_path.exists()
-        marker = _init_resume_marker(target)
-        if private_exists != public_exists:
-            raise SigningKeyError(
-                f"Cruxible init retry requires a complete key pair for "
-                f"{target.principal.principal_id}"
-            )
-        if private_exists:
-            prepared.append(
-                _adopt_init_retry_key(
-                    target,
-                    forbidden_roots=forbidden_roots,
-                    transport=transport,
-                    instance_id=instance_id,
-                )
-            )
-        else:
-            if marker.exists():
-                raise SigningKeyError(
-                    f"Cruxible init retry marker has no complete key pair: {marker}"
-                )
-            prepared.append(None)
-
-    materials: list[GeneratedKeyMaterial] = []
-    markers: list[Path] = []
-    for target, existing in zip(targets, prepared, strict=True):
-        material = existing
-        marker = _init_resume_marker(target)
-        if material is None:
-            material = generate_client_principal_key(
-                target.directory,
-                principal_id=target.principal.principal_id,
-                kind=target.principal.kind,
-                forbidden_roots=forbidden_roots,
-            )
-            _write_init_resume_marker(
-                marker,
-                _init_resume_payload(
-                    target,
-                    transport=transport,
-                    instance_id=instance_id,
-                    public_key=material.principal.public_key,
-                ),
-            )
-        materials.append(material)
-        markers.append(marker)
-    return tuple(materials), tuple(markers)
-
-
 def _write_bundle(path: str, bundle: FileCompilationBundle) -> None:
     output = Path(path).expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -912,6 +764,19 @@ def attach_workspace(
         command_name="cruxible workspace attach",
     )
     _write_world_stub(workspace, selected)
+    acting = _acting_principal_key_dir()
+    identity_path = (
+        None
+        if acting is None
+        else _record_folder_identity(
+            workspace,
+            instance_id=selected,
+            principal_id=acting[0],
+            key_dir=acting[1],
+            token=get_runtime_bearer_token(),
+            replace=replace,
+        )
+    )
     result = contracts.WorkspaceAttachResult(
         instance_id=selected,
         workspace_root=str(workspace),
@@ -920,10 +785,17 @@ def attach_workspace(
     )
     result = _with_git_workspace_note(result)
     if output_json:
-        _emit_json(_json_receipt(result))
+        _emit_json(
+            {
+                **_json_receipt(result),
+                **({} if identity_path is None else {"folder_identity_path": str(identity_path)}),
+            }
+        )
         return
     click.echo(f"Attached workspace {workspace} to Cruxible host {selected}")
     click.echo(f"Config: {config_path}")
+    if identity_path is not None and acting is not None:
+        click.echo(f"Folder identity: {identity_path} (agents started here act as {acting[0]})")
     if mirror is not None:
         click.echo(mirror)
 
@@ -1214,11 +1086,16 @@ def init_playbill(
         raise click.UsageError("Server mode is required for cruxible init")
     if git_workspace is not None:
         transport = _target_init_folder(git_workspace) or transport
+    # Only once the target folder is resolved (retargeting drops another folder's
+    # record): init repairs a folder, so its record's refusal is reported, not raised.
+    folder_refusal = _set_aside_folder_identity()
     selected_instance = _root_ctx_obj().get("instance_id")
     instance_source = str(_root_ctx_obj().get("target_instance_source") or "")
     if selected_instance is not None and instance_source == "workspace":
         initialized_here = _initialized_host(str(selected_instance))
         if initialized_here is not None:
+            if folder_refusal is not None:
+                click.echo(f"warning: {folder_refusal}", err=True)
             _echo_already_initialized(
                 initialized_here,
                 workspace=git_workspace,
@@ -1326,7 +1203,7 @@ def init_playbill(
         specifications.append(
             (Path(recovery_key_dir).expanduser(), recovery_principal_id, "recovery")
         )
-    materials, markers = _prepare_init_custody(
+    materials, markers = prepare_init_custody(
         transport=transport,
         instance_id=selected,
         specifications=tuple(specifications),
@@ -1396,6 +1273,14 @@ def init_playbill(
         )
     if git_workspace is not None:
         _write_world_stub(git_workspace, result.instance_id)
+    identity_path = _record_folder_identity(
+        git_workspace,
+        instance_id=result.instance_id,
+        principal_id=principal_id,
+        key_dir=owner_key_dir,
+        token=owner_token,
+        replace=replace,
+    )
     if output_json:
         _emit_json(
             {
@@ -1406,6 +1291,7 @@ def init_playbill(
                     if reviewer_settings is None
                     else {"reviewer_settings_path": str(reviewer_settings)}
                 ),
+                **({} if identity_path is None else {"folder_identity_path": str(identity_path)}),
             }
         )
         return
@@ -1431,11 +1317,70 @@ def init_playbill(
             "authentication: every process of this OS user is equally trusted."
         )
     )
+    if identity_path is not None:
+        click.echo(
+            f"Folder identity: {identity_path} (an MCP server or CLI started in this folder "
+            f"acts as {principal_id} unless its environment names another principal)"
+        )
     if reviewer is not None:
         click.echo(f"Reviewer public key: {reviewer.principal.public_key}")
         click.echo(f"Reviewer private key retained locally at: {reviewer.private_key_path}")
         click.echo(f"Reviewer settings: {reviewer_settings}")
         click.echo("Act as the reviewer with: cruxible context use --principal reviewer")
+
+
+def _record_folder_identity(
+    workspace: Path | None,
+    *,
+    instance_id: str,
+    principal_id: str,
+    key_dir: Path,
+    token: str | None,
+    replace: bool,
+) -> Path | None:
+    """Record the folder's default principal (`.cruxible/identity.json`), local socket only.
+
+    Only over a local socket with daemon auth off: with a bearer credential the
+    credential decides who acts, and a TCP daemon's folder is not this one. The
+    record names a principal ID and its key directory, never a key or a token.
+    """
+
+    if workspace is None or token is not None or not _root_ctx_obj().get("server_socket"):
+        return None
+    path, status = write_folder_identity(
+        workspace,
+        instance_id=instance_id,
+        principal_id=principal_id,
+        key_dir=key_dir,
+        replace=replace,
+    )
+    if status == "kept":
+        click.echo(
+            f"note: {path} keeps naming another principal of {instance_id} as this "
+            "folder's default; rerun with --replace to make it "
+            f"{principal_id}",
+            err=True,
+        )
+        return None
+    return path
+
+
+def _acting_principal_key_dir() -> tuple[str, Path] | None:
+    """The principal this process acts as and its key directory, when both are known.
+
+    Known when the CLI acts as a principal and its key is ``<id>.ed25519`` in a
+    directory: the remembered settings' (or the folder record's) key, or one
+    named by CRUXIBLE_PRINCIPAL_KEY.
+    """
+
+    principal_id = _root_ctx_obj().get("principal_id")
+    raw_key = os.environ.get(PRINCIPAL_KEY_ENV)
+    if not isinstance(principal_id, str) or not raw_key:
+        return None
+    key = Path(raw_key).expanduser()
+    if not key.is_absolute() or key.name != f"{principal_id}.ed25519" or not key.is_file():
+        return None
+    return principal_id, key.parent
 
 
 def _os_principal_id() -> str:
@@ -1636,7 +1581,7 @@ def _refuse_reinit(
     target = validate_client_principal_key_target(
         key_dir, principal_id=principal_id, kind="ordinary", forbidden_roots=custody_roots
     )
-    if _init_resume_marker(target).exists():
+    if init_resume_marker(target).exists():
         return
     if target.private_key_path.exists():
         raise click.UsageError(
@@ -2178,15 +2123,45 @@ _KIT_KEEP_TEXT = {
 }
 
 
-def _echo_automation_template(path: str | None) -> None:
-    if path is not None:
+def _echo_automation_template(
+    path: str | None, *, on_disk: Path | None = None, reference: str | None = None
+) -> None:
+    """One line naming the automation template: where it is on disk, or how to get it."""
+
+    if path is None:
+        return
+    if on_disk is not None:
         click.echo(
-            f"automation template: {path} (never installed: tailor it, then "
-            f"cruxible authoring submit {path})"
+            f"automation template: {on_disk} (never installed: tailor it, then "
+            f"cruxible authoring submit {on_disk})"
+        )
+    else:
+        click.echo(
+            f"automation template: {path} (never installed: cruxible kit pull {reference} "
+            f"--out DIR writes it, and --json output carries its content; tailor it, then "
+            f"cruxible authoring submit DIR/{path})"
         )
 
 
-def _echo_kit_change(result: KitChangeResult) -> None:
+def _pull_reference(source: str, origin: str) -> str:
+    """What ``kit pull`` takes for this kit: the pinned reference a registry answered,
+    or the local path as given (a layout's origin names its digest, not a path)."""
+
+    return source if Path(source).expanduser().exists() else origin
+
+
+def _kit_directory_file(source: str, path: str | None) -> Path | None:
+    """Where a kit file is on disk when ``source`` is a kit directory (not a layout)."""
+
+    directory = Path(source).expanduser()
+    if path is None or not directory.is_dir() or is_layout(directory):
+        return None
+    return (directory / path).absolute()
+
+
+def _echo_kit_change(
+    result: KitChangeResult, *, template_on_disk: Path | None = None, source: str | None = None
+) -> None:
     version = "" if result.version is None else f" {result.version}"
     transition = ""
     if result.transition is not None:
@@ -2239,7 +2214,9 @@ def _echo_kit_change(result: KitChangeResult) -> None:
     for refusal in result.refusals:
         click.echo(refusal.code)
         click.echo(f"Next: {printable(refusal.repair)}")
-    _echo_automation_template(result.automation_template)
+    _echo_automation_template(
+        result.automation_template, on_disk=template_on_disk, reference=source
+    )
     for item in result.plan:
         if (
             result.status in {"would_propose", "would_block"}
@@ -2369,7 +2346,8 @@ def build_kit(
             f"{len(bundle.manifest.providers)} provider package(s), "
             f"{bundle.manifest.content_digest}"
         )
-        _echo_automation_template(bundle.manifest.automation_template)
+        template = bundle.manifest.automation_template
+        _echo_automation_template(template, on_disk=_kit_directory_file(str(out), template))
 
 
 @kit_group.command("add")
@@ -2447,6 +2425,8 @@ def add_kit(
     ``--commit --at OID``.
     """
     bundle, origin = resolve_kit(kit)
+    # Checked before the daemon, so a bad template refuses before anything is proposed.
+    template = kit_automation_template(bundle)
 
     def add(client: Any, instance_id: str) -> Any:
         # A commit installs the bundled providers, so it stages their files;
@@ -2469,11 +2449,15 @@ def add_kit(
         )
         return client.add_kit(instance_id, request)
 
-    result = _server_call(add, command_name="cruxible kit add")
+    result = with_automation_template(_server_call(add, command_name="cruxible kit add"), template)
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        _echo_kit_change(result)
+        _echo_kit_change(
+            result,
+            template_on_disk=_kit_directory_file(kit, result.automation_template),
+            source=_pull_reference(kit, origin),
+        )
 
 
 @kit_group.command("pull")
@@ -2510,7 +2494,11 @@ def pull_kit(reference: str, out: Path, layout: bool, output_json: bool) -> None
         )
     else:
         click.echo(f"{origin}: {len(bundle.artifacts)} artifacts")
-        _echo_automation_template(template)
+        _echo_automation_template(
+            template,
+            on_disk=None if layout else _kit_directory_file(str(out), template),
+            reference=_pull_reference(reference, origin),
+        )
 
 
 @kit_group.command("status")

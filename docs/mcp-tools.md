@@ -69,6 +69,17 @@ cache and index URLs, `GIT_SSH_COMMAND`, and daemon configuration. Nothing else
 reaches it: not the server's transport, tier, instance or principal, and no
 credential (Cruxible tokens and keys, API keys, cloud or forge tokens).
 
+The MCP server and the CLI each ask the daemon's `/version` once per process
+before their first real request. What can break a call is the authoring
+contract, so its snapshot digest decides: a different digest refuses with
+`cruxible.sdk.daemon_version_incompatible` in one line naming both versions,
+both digests, where the daemon is and the fix (stop it with `cruxible server
+stop` and rerun, or use the daemon's version); the same digest proceeds
+silently whatever the package versions. `cruxible --version`, `--help`,
+`server stop` and `context show` never refuse. `CRUXIBLE_SKIP_VERSION_CHECK=1`
+skips the check, for development only. `cruxible --version` prints the version,
+the contract digest's first 12 hex and, in a source checkout, the commit.
+
 ## Instances and the adapter environment
 
 Every tool that acts on one instance takes an optional `instance_id`. Omitted,
@@ -88,6 +99,34 @@ it is a claim of identity, not authentication (`authenticated: false` in
 `whoami`): every process of the same OS user is equally trusted. `whoami` also
 reports `can_author` and, when false, the `authoring_refusal` (code, detail and
 repair) that authoring would return.
+
+**The folder's identity record.** On one machine the person and an agent started
+in their project folder cannot be told apart, so `cruxible init` (and
+`cruxible workspace attach`, when the CLI knows who acts) writes
+`.cruxible/identity.json` beside the binding: the owner's principal ID, its
+instance ID and the absolute path of its key directory, which stays outside the
+project. It never holds a key or a token; committed by accident it reveals a
+principal ID, an instance ID and one local path (it is in Git's `info/exclude`
+like the binding). With none of `CRUXIBLE_PRINCIPAL_ID`, `CRUXIBLE_PRINCIPAL_KEY`,
+`CRUXIBLE_MCP_KEY_DIR` or a bearer token in its environment, the MCP server
+started in that folder acts as that principal for attributed writes,
+`cruxible_proposal_approve` and `cruxible_claim_attest`, and the CLI there does
+the same when its remembered context names no principal for the instance. Any
+of those variables takes precedence, so each agent session of a team can still
+be its own principal. The record is read only at the workspace root the shared
+resolver chooses and only over a local daemon socket; a TCP daemon ignores it.
+Before acting on it the server checks the principal is active on the instance and
+the key in that directory is its registered key; otherwise it refuses with
+`cruxible.identity.folder_record_invalid`, `folder_key_unavailable`,
+`folder_key_mismatch` or `folder_principal_unknown` and the repair, never falling
+back to `operator`. The repair fits the case: restore a missing or exposed key at
+the recorded path (mode 0600, in a 0700 directory); for a key or principal the
+instance does not hold, record the right principal by attaching with it and its
+key (`CRUXIBLE_PRINCIPAL_ID=ID CRUXIBLE_PRINCIPAL_KEY=/abs/keys/ID.ed25519 cruxible
+workspace attach --replace`) or remove the record;
+for a record that is not this folder's, remove it or record it again. The
+environment variables above override the record in every case. `whoami`'s `identity_source` says which applied:
+`environment`, `folder` or `none`.
 
 `CRUXIBLE_MCP_WORKSPACE_ROOT` selects the client-owned workspace for tools that
 read or write local files. The stdio MCP process is the client-side adapter; the
@@ -143,6 +182,8 @@ that starts reaching one more operation moves the pin.
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_server_info` | Return the adapter and daemon versions with daemon metadata; an instance-scoped credential gets its own instance's host and identity instead of a refusal | `READ_ONLY` |
+| `cruxible_init` | Make the workspace folder an instance over the local daemon socket, as `cruxible init`: create the host attached to the folder, the binding, the owner principal (`principal_id`, default your OS username) and its key in the default key directory outside the folder, and the folder identity record; this session then authors as the owner. An initialized folder reports its instance and changes nothing. Returns the instance, principal, key directory and approval policy, never key material | `ADMIN` |
+| `cruxible_console` | Open the read-only console for the instance in the user's browser: the same loopback listener `cruxible console` serves, run on a background thread of this MCP server (one per instance; it ends with the server, or `stop=true` stops it). The tool opens the one-time sign-in link itself and returns only the address `http://127.0.0.1:<port>/i/<instance>`; the link is never returned. When no browser can be opened (`browser_opened: false`), a listener the call started is stopped (`status: no_browser`) and `message` tells the user to run `cruxible console` in their own terminal, which prints the link to them only. A second call reuses the running listener and opens a fresh link | `READ_ONLY` |
 | `cruxible_whoami` | Name the resolved instance, the credential-derived actor's identity and registration there, whether it can author (and the repair when not), and the adapter and daemon versions | `READ_ONLY` |
 
 ## Host and providers
@@ -182,7 +223,7 @@ template is an authoring preview performed as the caller's principal.
 |---|---|---|
 | `cruxible_kit_build` | Export the definitions under owned identity prefixes as one kit release; `providers` names provider packages staged with `cruxible_body_store`, bundled or (`delivery: index`) as a default installed by name (every Provider a carried Procedure pins must be named, and every carried ProviderInterface must be what a named wheel registers) | `GOVERNED_WRITE` |
 | `cruxible_kit_status` | List installed kits, paths edited since install, kept divergences, provenance, provider packages with their delivery and install state, and (for registry kits) the latest available version (`offline` skips the check) | `READ_ONLY` |
-| `cruxible_kit_add` | Install or upgrade a kit by `reference` (a kit directory or layout the adapter reads, or a registry reference it pulls) or `bundle`; always proposes, `keep`/`keep_local_edits`/`retire_dependents`/`allow_downgrade` decide divergences; lands at once when policy requires no approval; a commit stages and installs bundled providers, and a default provider nothing here implements, first (`ADMIN` for the install) | `GOVERNED_WRITE` |
+| `cruxible_kit_add` | Install or upgrade a kit by `reference` (a kit directory or layout the adapter reads, or a registry reference it pulls) or `bundle`; always proposes, `keep`/`keep_local_edits`/`retire_dependents`/`allow_downgrade` decide divergences; lands at once when policy requires no approval; a commit stages and installs bundled providers, and a default provider nothing here implements, first (`ADMIN` for the install); the result carries the kit's automation template text (`automation_template_content`) when the adapter holds the kit's files (any `reference`), never installed | `GOVERNED_WRITE` |
 | `cruxible_kit_remove` | Retire the definitions a kit owns (never what it only carried, nor its provider packages); a definition edited since install, or live Claims or definitions that depend on what it would retire, block it; lands at once when policy requires no approval | `GOVERNED_WRITE` |
 
 ## Documents and proposals
@@ -274,6 +315,7 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_authoring_bind` | Read an anchored selection of a catalogued workspace file (the stub's `source_id` must be its catalog name; `occurrence` picks one of several anchor matches), derive commitments, and compile | `GOVERNED_WRITE` |
 | `cruxible_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
 | `cruxible_authoring_submit` | Compile and submit a `payload` in one call, submit a staged `intent_id`, or both (revise, then submit); idempotent | `GOVERNED_WRITE` |
+| `cruxible_authoring_submit_file` | Submit the authoring input file at a workspace-relative `path` (YAML or JSON, as `cruxible authoring submit FILE`), read beneath the workspace root without following a link, at most 1 MiB; `accept="never"` keeps the proposal | `GOVERNED_WRITE` |
 | `cruxible_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
 | `cruxible_block_repin` | Stamp or refresh one projection block by its catalog `file` and `block`; the adapter computes the stamp, registers the block and records the page's declared blocks for block-churn detection; `render: true` writes the body as a table or list from its one query backing | `GOVERNED_WRITE` |
 | `cruxible_block_sync` | Check each projection block's backings (the CLI's `block sync --check`); edits no page | `READ_ONLY` |

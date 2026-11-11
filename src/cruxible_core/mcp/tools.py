@@ -112,7 +112,12 @@ from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_MIN_MAX_ROWS,
 )
 from cruxible_core.mcp import handlers
-from cruxible_core.mcp.results import McpServerInfoResult, McpWhoAmIResult
+from cruxible_core.mcp.results import (
+    McpConsoleResult,
+    McpInitResult,
+    McpServerInfoResult,
+    McpWhoAmIResult,
+)
 from cruxible_core.mcp.target import MCP_INSTANCE_ENV, require_instance_id
 from cruxible_core.mcp.tool_prompts import tool_description
 
@@ -564,7 +569,8 @@ def register_tools(
             Field(
                 description=(
                     "Principal to sign as; its key is <signer_id>.ed25519 in the server's "
-                    "CRUXIBLE_MCP_KEY_DIR. Omit when that directory holds exactly one key."
+                    "CRUXIBLE_MCP_KEY_DIR. Omit to sign as the folder's owner, or when "
+                    "that directory holds exactly one key."
                 )
             ),
         ] = None,
@@ -598,6 +604,25 @@ def register_tools(
         activation use get or query at the receipt's coordinate.
         """
         return handlers.handle_playbill_activate(require_instance_id(instance_id), proposal_id)
+
+    @_tool
+    def cruxible_init(
+        principal_id: Annotated[
+            str | None,
+            Field(description="Owner principal ID (default: your OS username)."),
+        ] = None,
+    ) -> McpInitResult:
+        """Initialize this workspace folder; an initialized one reports its instance."""
+        return handlers.handle_init(principal_id)
+
+    @_tool
+    def cruxible_console(
+        instance_id: InstanceId = None,
+        *,
+        stop: Annotated[bool, Field(description="Stop the running console.")] = False,
+    ) -> McpConsoleResult:
+        """Open the read-only console in the user's browser; one listener per instance."""
+        return handlers.handle_console(require_instance_id(instance_id), stop=stop)
 
     @_tool
     def cruxible_whoami(instance_id: InstanceId = None) -> McpWhoAmIResult:
@@ -1026,6 +1051,18 @@ def register_tools(
             payload=None if payload is None else payload.model_dump(mode="json"),
             intent_id=intent_id,
             accept=accept,
+        )
+
+    @_tool
+    def cruxible_authoring_submit_file(
+        instance_id: InstanceId = None,
+        *,
+        path: Annotated[str, Field(description="Workspace-relative YAML or JSON file.")],
+        accept: AuthoringAccept = "if_allowed",
+    ) -> contracts.AuthoringSubmitResultRecord:
+        """Submit one authoring input file; accept="never" keeps the proposal."""
+        return handlers.handle_playbill_authoring_submit_file(
+            require_instance_id(instance_id), path, accept=accept
         )
 
     @_tool

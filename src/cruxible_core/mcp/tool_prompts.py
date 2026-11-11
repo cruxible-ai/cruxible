@@ -39,9 +39,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "kept on purpose, and (for registry kits) the latest available version."
     ),
     "cruxible_kit_add": (
-        "Use when you want to install or upgrade a kit, by local kit directory, OCI layout, "
-        "registry reference or bundle. It "
-        "always proposes: a definition held differently takes the release's version unless "
+        "Use when you want to install or upgrade a kit. It always proposes: a definition "
+        "held differently takes the release's version unless "
         "kept (keep, keep_local_edits); the plan says what each change does and counts "
         "dependents. It lands at once when the approval policy requires no approval. A kit "
         "bundling provider packages installs them first (admin; a commit stages their files), "
@@ -77,8 +76,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "like approve, it activates a candidate it completes unless hold is set."
     ),
     "cruxible_proposal_approve": (
-        "Use after review to approve a proposal with a local key from the server's "
-        "CRUXIBLE_MCP_KEY_DIR; it challenges, signs and submits in one call. The approval "
+        "Use after review to approve a proposal with a local key (CRUXIBLE_MCP_KEY_DIR, "
+        "else the folder owner's); it challenges, signs and submits in one call. The approval "
         "that completes the candidate also activates it when your tier may; hold=true "
         "signs only. Pass the reviewed candidate_digest to bind it to what you read."
     ),
@@ -189,6 +188,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_authoring_submit": (
         "Use when an authoring intent has passed preflight and should become one candidate."
     ),
+    "cruxible_authoring_submit_file": (
+        "Use to submit a workspace authoring file, such as a tailored kit automation template."
+    ),
+    "cruxible_console": ("Use to open the read-only console in the user's browser."),
+    "cruxible_init": (
+        "Use once in a bare project folder: creates its instance and owner; this session "
+        "then acts as the owner."
+    ),
     "cruxible_authoring_status": (
         "Use when you need exactly what still separates an authored candidate from acceptance."
     ),
@@ -245,8 +252,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_query": (
         "Use to answer any question over accepted state in one call. Compact: kind "
         '(e.g. "project.work_item") with where filters such as '
-        '{"field": "status", "eq": "ready"} (also ne, lt, lte, gt, gte, in, '
-        "exists, contains), select, follow and order_by; contains alone searches every "
+        '{"field": "status", "eq": "ready"}, select, follow and order_by; contains alone '
+        "searches every "
         "Claim value; a definition kind (ClaimType, Procedure, Trigger, Line, SubjectKind, "
         "CaptureContract, ProcedureMandate, QueryDefinition) lists those definitions with "
         "typed columns. Or pass a query name "

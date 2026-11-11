@@ -135,14 +135,23 @@ def local_attestation_signer_from_environment(
     instance_id: str,
     *,
     workspace_root: Path | None = None,
+    private_key_path: Path | None = None,
 ) -> LocalEd25519ClaimAttestationSigner:
-    """Resolve the authenticated actor and its local key without wire disclosure."""
+    """Resolve the authenticated actor and its local key without wire disclosure.
 
-    raw = os.environ.get(PRINCIPAL_KEY_ENV)
+    The key is ``private_key_path`` when the caller resolved one (the MCP
+    server's folder identity), else ``CRUXIBLE_PRINCIPAL_KEY``.
+    """
+
+    raw = (
+        str(private_key_path) if private_key_path is not None else os.environ.get(PRINCIPAL_KEY_ENV)
+    )
     if raw is None:
         raise LocalClaimAttestationKeyUnavailable(
             f"{LocalClaimAttestationKeyUnavailable.error_code}: "
-            f"set {PRINCIPAL_KEY_ENV} to the caller's local Ed25519 key"
+            f"set {PRINCIPAL_KEY_ENV} to the caller's local Ed25519 key, or run "
+            "`cruxible init` in this folder: the MCP server and CLI started there act as "
+            "its owner"
         )
     path = Path(raw)
     if not path.is_absolute():

@@ -718,3 +718,17 @@ def test_a_taken_port_is_a_clear_cli_error(cli_env: Path, monkeypatch: pytest.Mo
         holder.close()
     assert result.exit_code == 1
     assert f"cannot listen on 127.0.0.1:{port}: it is already in use" in result.output
+
+
+def test_the_command_gives_itself_a_daemon_first(
+    cli_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.cli.commands import console as console_command
+
+    dist = _dist(cli_env)
+    monkeypatch.setattr(bundle_module, "default_dist_dir", lambda: dist)
+    ensured: list[bool] = []
+    monkeypatch.setattr(console_command, "ensure_cli_daemon", lambda: ensured.append(True))
+    result = _run_cli("--instance-id", "i", "console", "--no-open")
+    assert ensured == [True]
+    assert "cruxible console needs server mode" in result.output

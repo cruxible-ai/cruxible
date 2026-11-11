@@ -418,9 +418,17 @@ def _get_client() -> CruxibleClient | None:
     server_socket = obj.get("server_socket")
     if not server_url and not server_socket:
         return None
+    refused = obj.get("folder_identity_refused")
+    if refused is not None:
+        raise refused
     client = obj.get("_client")
     if isinstance(client, CruxibleClient):
-        return client
+        if obj.get("_client_principal_id") == obj.get("principal_id"):
+            return client
+        # The command now acts as another principal (init retargeted to another
+        # folder): a client never carries the previous one's identity.
+        client.close()
+        obj.pop("_client", None)
     client = CruxibleClient(
         base_url=server_url,
         socket_path=server_socket,
@@ -429,11 +437,68 @@ def _get_client() -> CruxibleClient | None:
     )
     try:
         client_compatibility.check_daemon_compatibility(client)
+        _verify_folder_identity(obj, client)
     except Exception:
         client.close()
         raise
     obj["_client"] = client
+    obj["_client_principal_id"] = obj.get("principal_id")
     return client
+
+
+def _verify_folder_identity(obj: dict[str, Any], client: CruxibleClient) -> None:
+    """Check the folder record this command acts by, before its first daemon call.
+
+    The MCP server's check (`check_folder_identity`): key custody, the daemon's
+    principal registry, the key's public half. A refusal sticks for the rest of
+    the command, so no later call acts as the record's principal either.
+    """
+
+    pending = obj.get("folder_identity")
+    if pending is None:
+        return
+    from cruxible_client.authoring.folder_identity import (
+        FolderIdentityRefused,
+        check_folder_identity,
+    )
+    from cruxible_client.contracts.workspace_root import containing_git_workspace_root
+
+    record, path, folder = pending
+    git_root = containing_git_workspace_root(folder)
+    roots = (folder,) if git_root is None or git_root == folder else (folder, git_root)
+    try:
+        check_folder_identity(record, path=path, client=client, forbidden_roots=roots)
+    except FolderIdentityRefused as refused:
+        obj["folder_identity_refused"] = refused
+        raise
+    obj.pop("folder_identity", None)
+
+
+def _set_aside_folder_identity() -> Exception | None:
+    """For `cruxible init`, which repairs a folder: check its record, never refuse on it.
+
+    Returns the record's refusal (to report), or None when there is no record
+    or it checks out. Later daemon calls in this command no longer check it.
+    """
+
+    obj = _root_ctx_obj()
+    refused = obj.pop("folder_identity_refused", None)
+    pending = obj.pop("folder_identity", None)
+    if refused is not None or pending is None:
+        return cast("Exception | None", refused)
+    client = _get_client()
+    if client is None:
+        return None
+    from cruxible_client.authoring.folder_identity import FolderIdentityRefused
+
+    obj["folder_identity"] = pending
+    try:
+        _verify_folder_identity(obj, client)
+    except FolderIdentityRefused as refusal:
+        obj.pop("folder_identity_refused", None)
+        obj.pop("folder_identity", None)
+        return refusal
+    return None
 
 
 def _get_lifecycle_client(state_root: Path | None = None) -> DaemonLifecycleClient | None:

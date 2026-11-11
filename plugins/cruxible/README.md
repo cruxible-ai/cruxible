@@ -36,7 +36,10 @@ kit directories, which the lean MCP catalog omits; the same pinned
 ## First run, step by step
 
 One linear path from an empty project to an installed kit on one machine. The
-CLI does the setup; the plugin's MCP tools do the everyday work afterwards.
+CLI does the setup; the plugin's MCP tools do the everyday work afterwards. An
+agent with no shell calls `cruxible_init` instead of steps 1 to 4 (a single
+owner, `self_approval_allowed`) and `cruxible_authoring_submit_file` to submit a
+file it tailored.
 `SOCKET` below is the daemon socket the MCP server auto-starts:
 `$CRUXIBLE_STATE_ROOT/run/daemon.sock`, or `~/.cruxible/run/daemon.sock` when
 `CRUXIBLE_STATE_ROOT` is unset. Use absolute paths throughout, and keep key
@@ -55,17 +58,19 @@ from another daemon into this shell: `unset CRUXIBLE_SERVER_BEARER_TOKEN`.
 |---|---|---|
 | 1 | `cd /abs/project && git init` | The project must be a Git worktree before `init` for `init` to attach it. |
 | 2 | Start the daemon: call `cruxible_server_info` from the agent once, or run `cruxible server start --socket SOCKET` in its own terminal | MCP auto-start runs the same command detached; `SOCKET`'s directory must be owner-only (the daemon creates it that way). |
-| 3 | `cruxible --server-socket SOCKET init --principal-id owner --key-dir /abs/keys/owner --reviewer-key-dir /abs/keys/reviewer` | Creates the instance with two principals, `owner` and `reviewer`, under the default `self_approval_allowed` policy (`--require-independent-approval` makes approval need the second principal). Each key directory gets `<id>.ed25519` and a `cruxible.env` settings file; the result prints `owner_settings_path` and `reviewer_settings_path`. The CLI remembers the owner and acts as it from then on. |
+| 3 | `cruxible --server-socket SOCKET init --principal-id owner --key-dir /abs/keys/owner --reviewer-key-dir /abs/keys/reviewer` | Creates the instance with two principals, `owner` and `reviewer`, under the default `self_approval_allowed` policy (`--require-independent-approval` makes approval need the second principal). Each key directory gets `<id>.ed25519` and a `cruxible.env` settings file; the result prints `owner_settings_path` and `reviewer_settings_path`. The CLI remembers the owner and acts as it from then on, and `.cruxible/identity.json` records the owner as the folder's default principal (a principal ID and the key directory's path; no key, no token). |
 | 4 | Check `workspace_advertisement.status` in the init result. `updated`: done. `not_attached`: `git init` if needed, then `cruxible workspace attach` | Attaching writes `.cruxible/coverage.json`, which binds the project to the daemon and instance. From then on CLI commands in the project need no flags, and the MCP server finds the daemon and instance from it. |
-| 5 | Configure the MCP server's environment (below) for the principal this agent session acts as, then call `cruxible_whoami` | `actor_id` should be that principal and `can_author: true`. `actor_id: operator` with `cruxible.identity.principal_unconfigured` means `CRUXIBLE_PRINCIPAL_ID` is not set. |
+| 5 | Call `cruxible_whoami` from the agent started in the project | `identity_source: folder`, `actor_id` the owner and `can_author: true`: the MCP server acts as the folder's owner with no config edit, for writes, approvals and attestations. `identity_source: none` with `cruxible.identity.principal_unconfigured` means the folder has no record: run `init` there. A session that should be another principal sets the environment below. |
 | 6 | `cruxible principal add verifier --key-dir /abs/keys/verifier` | Optional third principal, for guidance that asks for a reporter, a verifier and an approver. The CLI signs the registration with the owner's remembered key (`--signer-key /abs/keys/owner/owner.ed25519` otherwise); the verifier's settings land in `/abs/keys/verifier/cruxible.env`. |
 | 7 | `cruxible kit add /abs/kit-dir`, then `cruxible kit add /abs/kit-dir --commit --at OID` | `OID` is the coordinate the preview printed. `cruxible_kit_add` takes the same local kit directory, layout or registry release (`NAME:VERSION`). |
 | 8 | Tailor the kit's automation template, submit it, have a separate session approve it, then preview and run its start Runbook | See [Kits and teams](#kits-and-teams). |
 
-**MCP environment per principal.** The MCP server never reads remembered CLI
-context or `cruxible.env` itself; put the values in the `env` block of the
-host's MCP config (a private, local override, never the plugin). Each agent
-session is one principal, so a reviewer session needs its own config.
+**MCP environment per principal.** Solo on one machine, the folder record is
+enough. A session that acts as another principal (a reviewer, a teammate's
+agent) puts the values in the `env` block of the host's MCP config (a private,
+local override, never the plugin); any of the three identity variables takes
+precedence over the folder record. The MCP server never reads remembered CLI
+context or `cruxible.env` itself.
 
 | Variable | Value | Used for |
 |---|---|---|
@@ -87,14 +92,14 @@ back") covers it.
 ## Local use and pre-release testing
 
 With no explicit daemon transport, the adapter finds or auto-starts the local
-daemon. The default tier is **admin**; the pinned 23-tool allowlist still hides
+daemon. The default tier is **admin**; the pinned 26-tool allowlist still hides
 the rest of the catalog. Admin permits endpoints, not unlawful state: evidence,
 principals, Mandates and approval policy still apply. A separate agent session
 (its own principal) reviews the exact candidate; never self-approve, including with auth off. The single
 plugin does not enforce separate identities while auth is off.
 
-The plugin catalog measures 18,077 estimated model-visible tokens (input schemas
-and descriptions, JSON characters/4), pinned below 18,300. The existing MCP
+The plugin catalog measures 18,387.75 estimated model-visible tokens (input
+schemas and descriptions, JSON characters/4), pinned below 18,400. The existing MCP
 default profile retains its separate 10,400 ceiling; full-catalog registration
 is not what this plugin advertises. Instructions remain below 300 estimated
 tokens, without exhaustive tool lists. Output-schema wire size is separate
@@ -102,7 +107,10 @@ from this estimate; actual host tokenization/tool deferral can differ.
 
 Before there is an instance, `cruxible_server_info` can auto-start its daemon;
 [First run, step by step](#first-run-step-by-step) initializes against it.
-Never store keys or tokens in the plugin.
+`cruxible_console` opens the read-only console in the user's browser, no CLI
+needed. It never returns the sign-in link: when it cannot open a browser it
+says to run `cruxible console` in your own terminal, which prints the link for
+you only. Never store keys or tokens in the plugin.
 
 For a pre-release checkout, override the plugin's server command in a local
 host configuration. Use an existing environment with the checkout's matching
@@ -142,7 +150,8 @@ is another launch option when that checkout already has a synced environment.
 ## Kits and teams
 
 Use adopt-kit to preview and install a digest-pinned release with `kit add`.
-A kit's manifest names its inert automation template: tailor, submit and obtain
+A kit's manifest names its inert automation template, and the `kit add` result
+carries its text: write it to a workspace file, tailor, submit and obtain
 approval/acceptance from a separate agent session (its own principal), then preview and run its start Runbook.
 Enabling scheduled Lines is a separate decision. A review-stopped run leaves a
 proposal to resolve before an explicit rerun. Report provider/ordering refusals

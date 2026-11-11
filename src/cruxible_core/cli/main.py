@@ -1076,8 +1076,71 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
 }
 
 
+def version_line() -> str:
+    """What ``cruxible --version`` prints: enough to tell two builds apart.
+
+    The package version, the authoring contract digest's first 12 hex (what a
+    daemon must match), and in a source checkout the Git commit, read from the
+    checkout's own files (no Git subprocess). Computed only for ``--version``.
+    """
+
+    from cruxible_client.contracts.authoring.models import (
+        AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
+    )
+    from cruxible_core import __version__
+
+    digest = AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST.removeprefix("sha256:")[:12]
+    commit = _source_checkout_commit()
+    return f"cruxible {__version__} (contract {digest}" + (
+        f", git {commit[:9]})" if commit else ")"
+    )
+
+
+def _source_checkout_commit() -> str | None:
+    """The commit a source checkout's HEAD names, read from its files; None for a wheel."""
+
+    from cruxible_client.contracts.workspace_root import git_repository_directories
+
+    root = Path(__file__).resolve().parents[3]
+    if not (root / "pyproject.toml").is_file() or not (root / ".git").exists():
+        return None
+    try:
+        gitdir, common = git_repository_directories(root)
+        head = (gitdir / "HEAD").read_text(encoding="utf-8").strip()
+        if not head.startswith("ref: "):
+            return head or None
+        ref = head.removeprefix("ref: ")
+        for base in (gitdir, common):
+            loose = base / ref
+            if loose.is_file():
+                return loose.read_text(encoding="utf-8").strip() or None
+        packed = common / "packed-refs"
+        if packed.is_file():
+            for line in packed.read_text(encoding="utf-8").splitlines():
+                oid, _, name = line.partition(" ")
+                if name == ref:
+                    return oid
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return None
+
+
+def _print_version(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
+    if not value or ctx.resilient_parsing:
+        return
+    click.echo(version_line())
+    ctx.exit()
+
+
 @click.group(cls=LazyGroup, lazy_subcommands=CLI_COMMANDS)
-@click.version_option(package_name="cruxible")
+@click.option(
+    "--version",
+    is_flag=True,
+    expose_value=False,
+    is_eager=True,
+    callback=_print_version,
+    help="Show the version, its contract digest (and a checkout's commit) and exit.",
+)
 @click.option("--server-url", default=None, help="Remote Cruxible server base URL.")
 @click.option(
     "--server-socket",
@@ -1247,6 +1310,7 @@ def cli(
         stored,
         resolved.instance_id,
         normalized_transport(settings.server_url, settings.server_socket),
+        folder=resolved.workspace if resolved.instance_source == "workspace" else None,
     )
 
 
@@ -1255,6 +1319,8 @@ def _load_remembered_principal(
     stored: CliContextState,
     instance_id: str | None,
     transport: str | None,
+    *,
+    folder: Path | None = None,
 ) -> None:
     """Act as the principal the context remembers for this instance, as if its file was sourced.
 
@@ -1267,6 +1333,11 @@ def _load_remembered_principal(
     Settings are remembered per instance on one daemon endpoint, and the file
     must name that same endpoint: a credential is never offered to another
     daemon, whichever way (flag, environment or workspace) the command chose it.
+
+    When the context remembers no principal for this instance, the bound
+    ``folder``'s identity record (`.cruxible/identity.json`, written by `init`)
+    names the default, as it does for the MCP server started there: over a local
+    socket only, never with a bearer credential.
     """
 
     obj = ctx.obj
@@ -1284,6 +1355,9 @@ def _load_remembered_principal(
         return
     entry = stored.principals.get(principal_binding(transport, instance_id))
     if entry is None or entry.active is None or entry.active not in entry.settings:
+        if folder is not None and transport.startswith("unix://"):
+            if _load_folder_principal(ctx, folder, instance_id):
+                return
         elsewhere = sorted(
             key.partition("@")[2]
             for key, item in stored.principals.items()
@@ -1319,6 +1393,26 @@ def _load_remembered_principal(
             err=True,
         )
         return
+    _act_as(
+        ctx,
+        settings.environment(),
+        principal_id=settings.principal_id,
+        source="remembered",
+        settings_path=str(settings.path),
+    )
+
+
+def _act_as(
+    ctx: click.Context,
+    environment: dict[str, str],
+    *,
+    principal_id: str,
+    source: str,
+    settings_path: str | None,
+) -> None:
+    """Act as ``principal_id`` for this command, as if its settings were sourced."""
+
+    obj = ctx.obj
     variables = (PRINCIPAL_ID_ENV, PRINCIPAL_KEY_ENV, PRINCIPAL_TOKEN_ENV)
     previous = {name: os.environ.get(name) for name in variables}
 
@@ -1333,12 +1427,57 @@ def _load_remembered_principal(
         # A command that turns out to act on another instance (init in a new
         # folder) drops the remembered principal it was handed.
         restore()
-        for key in ("principal_id", "principal_source", "principal_settings"):
+        for key in (
+            "principal_id",
+            "principal_source",
+            "principal_settings",
+            "folder_identity",
+            "folder_identity_refused",
+        ):
             obj.pop(key, None)
 
-    os.environ.update(settings.environment())
+    os.environ.update(environment)
     ctx.call_on_close(restore)
-    obj["principal_id"] = settings.principal_id
-    obj["principal_source"] = "remembered"
-    obj["principal_settings"] = str(settings.path)
+    obj["principal_id"] = principal_id
+    obj["principal_source"] = source
+    obj["principal_settings"] = settings_path
     obj["forget_remembered_principal"] = forget
+
+
+def _load_folder_principal(ctx: click.Context, folder: Path, instance_id: str) -> bool:
+    """Act as the bound folder's default principal (`.cruxible/identity.json`), if it names one.
+
+    The MCP server started in this folder acts as the same principal, after the
+    same check (`cruxible_client.authoring.folder_identity.check_folder_identity`):
+    key custody, then the daemon's principal registry and the key's public half.
+    That check needs the daemon, so it runs before this command's first daemon
+    call (`_common._get_client`), not here: a command that never calls the daemon
+    (`server stop`, `context show`'s local half) still runs. A record that cannot
+    be used is kept as its typed refusal, raised by that first daemon call.
+    """
+
+    from cruxible_client.authoring.folder_identity import (
+        FolderIdentityRefused,
+        folder_identity_path,
+        read_bound_folder_identity,
+    )
+
+    path = folder_identity_path(folder)
+    try:
+        record = read_bound_folder_identity(folder, instance_id=instance_id)
+    except FolderIdentityRefused as refused:
+        ctx.obj["folder_identity_refused"] = refused
+        return True
+    if record is None:
+        return False
+    settings = Path(record.key_dir) / "cruxible.env"
+    _act_as(
+        ctx,
+        # The record names a principal and its key only; a token is never loaded from it.
+        {PRINCIPAL_ID_ENV: record.principal_id, PRINCIPAL_KEY_ENV: str(record.private_key_path)},
+        principal_id=record.principal_id,
+        source="folder",
+        settings_path=str(settings) if settings.is_file() else None,
+    )
+    ctx.obj["folder_identity"] = (record, path, folder)
+    return True

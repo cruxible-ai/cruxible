@@ -32,10 +32,12 @@ def test_registered_schema_catalog_matches_permission_catalog() -> None:
     assert set(_schemas()) == set(TOOL_PERMISSIONS)
 
 
-def test_get_publishes_its_protocol_enums_and_setup_stays_off_mcp() -> None:
+def test_get_publishes_its_protocol_enums_and_init_takes_only_a_principal() -> None:
     schemas = _schemas()
-    # Setup (host creation and init) is an operator step on the CLI and HTTP.
-    assert "cruxible_init" not in schemas
+    # A bare folder starts by tool alone (maintainer ruling 2026-11-10); host
+    # creation stays an operator step on the CLI and HTTP.
+    assert set(schemas["cruxible_init"].inputSchema["properties"]) == {"principal_id"}
+    assert "cruxible_host_create" not in schemas
 
     get = schemas["cruxible_get"].inputSchema
     assert get["properties"]["detail"]["enum"] == [

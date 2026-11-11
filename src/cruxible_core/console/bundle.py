@@ -28,6 +28,16 @@ MANIFEST_TAG = "cruxible-console-bundle-v1"
 _SAFE_RELATIVE = re.compile(r"^(?!.*(?:^|/)\.{1,2}(?:/|$))[A-Za-z0-9._@+\-][A-Za-z0-9._@+\-/]*$")
 
 
+#: What every surface says when the install carries no console build (``{root}``
+#: is where it looked).
+NO_BUNDLE_MESSAGE = (
+    "This install has no built console (nothing in {root}). Release wheels include "
+    "it. From a source checkout, build it into the package with `python "
+    "scripts/build_console.py --console PATH --commit SHA`, or run the console's dev "
+    "server instead (`pnpm dev` in a cruxible-app checkout, as its README says)."
+)
+
+
 class ConsoleBundleMissing(Exception):
     """No built console is installed where the listener looks."""
 

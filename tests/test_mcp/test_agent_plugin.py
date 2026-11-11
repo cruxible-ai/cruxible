@@ -77,7 +77,8 @@ def test_plugin_admin_catalog_is_lean_and_start_tools_are_callable() -> None:
         mode=PermissionMode.ADMIN, registered_tools=registered, curation=curation
     )
     assert START_TOOLS <= names
-    assert len(names) == 23 and "cruxible_authoring_submit" not in names
+    assert len(names) == 26 and "cruxible_authoring_submit" not in names
+    assert {"cruxible_init", "cruxible_authoring_submit_file", "cruxible_console"} <= names
     _install_tool_curation(server, names, mode=PermissionMode.ADMIN, curation=curation)
     tools = asyncio.run(server.list_tools())
     estimate = catalog_model_visible_tokens(tools)
@@ -132,7 +133,7 @@ def test_plugin_config_starts_mcp_autostarts_scratch_daemon_and_orients(filename
                 await session.initialize()
                 listed = await session.list_tools()
                 names = {tool.name for tool in listed.tools}
-                assert START_TOOLS <= names and len(names) == 23
+                assert START_TOOLS <= names and len(names) == 26
                 for name in sorted(START_TOOLS):
                     # Incomplete arguments may refuse, but the default catalog
                     # must dispatch these names rather than hide them.

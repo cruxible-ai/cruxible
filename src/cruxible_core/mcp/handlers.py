@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -16,6 +17,7 @@ from cruxible_client import (
     contracts,
     observe_next_workspace,
 )
+from cruxible_client._safe_files import ContainmentError, HeldRoot
 from cruxible_client.artifacts import unpack_artifact
 from cruxible_client.authoring.attestations import (
     local_attestation_signer_from_environment,
@@ -28,6 +30,9 @@ from cruxible_client.authoring.files import (
     compile_client_file_context,
     load_file_catalog,
     mapped_root_aliases,
+)
+from cruxible_client.authoring.folder_identity import (
+    VerifiedFolderIdentity,
 )
 from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
 from cruxible_client.authoring.sdk_types import SourceSelectionError
@@ -43,6 +48,7 @@ from cruxible_client.authoring.workspace import (
     write_workspace_floor_delta,
 )
 from cruxible_client.authoring.write_evidence import observe_evidence
+from cruxible_client.compatibility import check_daemon_compatibility
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
 from cruxible_client.contracts.authoring.models import BlockDetachResult
@@ -72,6 +78,7 @@ from cruxible_client.contracts.get_reads import (
 )
 from cruxible_client.contracts.governance import governance_identifier
 from cruxible_client.contracts.kits import (
+    KIT_AUTOMATION_TEMPLATE_MAX_BYTES,
     KitAddRequest,
     KitBuildRequest,
     KitBuildResult,
@@ -108,10 +115,11 @@ from cruxible_client.errors import ServerUnreachableError
 from cruxible_client.kits import (
     KIT_ARTIFACT,
     check_kit_updates,
+    kit_automation_template,
     resolve_kit_image,
     stage_kit_providers,
+    with_automation_template,
 )
-from cruxible_client.transport.http import configured_principal_id
 from cruxible_core import __version__
 from cruxible_core.adapters.block_detach import detach_projection_pages
 from cruxible_core.claims.claim_type_inputs import (
@@ -132,7 +140,22 @@ from cruxible_core.mcp.daemon import (
     forget_local_daemon,
     resolve_daemon_target,
 )
-from cruxible_core.mcp.results import McpServerInfoResult, McpWhoAmIResult
+from cruxible_core.mcp.identity import (
+    McpIdentity,
+    environment_names_identity,
+    folder_candidate,
+    forget_verified_identities,
+    local_identity,
+    verified_folder_identity,
+)
+from cruxible_core.mcp.init import run_mcp_init
+from cruxible_core.mcp.permissions import check_permission
+from cruxible_core.mcp.results import (
+    McpConsoleResult,
+    McpInitResult,
+    McpServerInfoResult,
+    McpWhoAmIResult,
+)
 from cruxible_core.mcp.target import configured_instance_id
 from cruxible_core.mcp.workspace import (
     mcp_approval_key_dir,
@@ -170,28 +193,60 @@ def reset_client_cache() -> None:
         _client_cache = None
         _client_cache_key = None
         forget_local_daemon()
+        forget_verified_identities()
 
 
-def _get_client() -> CruxibleClient:
-    """The daemon client: configured, found, or started (`cruxible_core.mcp.daemon`)."""
+def _identity_and_client() -> tuple[McpIdentity, CruxibleClient]:
+    """The daemon client and who it acts as (`cruxible_core.mcp.identity`).
+
+    The daemon is configured, found, or started (`cruxible_core.mcp.daemon`).
+    The principal is the environment's, else the bound folder's record, checked
+    against the daemon's principal registry before any call acts as it.
+    """
 
     global _client_cache, _client_cache_key
     target = resolve_daemon_target()
     token = get_runtime_bearer_token()
-    principal_id = configured_principal_id()
+    source, principal_id, candidate = local_identity(target=target, token=token)
     cache_key = (target.server_url, target.server_socket, token, principal_id)
     with _client_cache_lock:
         if _client_cache is None or _client_cache_key != cache_key:
             if _client_cache is not None:
                 _client_cache.close()
-            _client_cache = CruxibleClient(
+            fresh = CruxibleClient(
                 base_url=target.server_url,
                 socket_path=target.server_socket,
                 token=token,
                 principal_id=principal_id,
             )
+            try:
+                # One /version request per client: a daemon on another contract
+                # refuses before the first real request.
+                check_daemon_compatibility(fresh)
+            except BaseException:
+                fresh.close()
+                _client_cache = None
+                _client_cache_key = None
+                raise
+            _client_cache = fresh
             _client_cache_key = cache_key
-        return _client_cache
+        client = _client_cache
+    if candidate is None:
+        return McpIdentity(source=source, principal_id=principal_id), client
+    verified = verified_folder_identity(candidate, target=target, client=client)
+    return McpIdentity(source="folder", principal_id=principal_id, folder=verified), client
+
+
+def _get_client() -> CruxibleClient:
+    """The daemon client: configured, found, or started (`cruxible_core.mcp.daemon`)."""
+
+    return _identity_and_client()[1]
+
+
+def _mcp_identity() -> McpIdentity:
+    """Who this adapter acts as; a folder record is checked against its daemon first."""
+
+    return _identity_and_client()[0]
 
 
 def _daemon_call(
@@ -202,12 +257,12 @@ def _daemon_call(
     """Run one operation on the daemon; every MCP tool takes this one path."""
 
     try:
-        client = _get_client()
-    except DaemonUnavailableError:
-        raise
-    except ConfigError as exc:
-        raise ConfigError(f"{exc} Required by {operation_name}.") from exc
-    try:
+        try:
+            client = _get_client()
+        except DaemonUnavailableError:
+            raise
+        except ConfigError as exc:
+            raise ConfigError(f"{exc} Required by {operation_name}.") from exc
         return remote_call(client)
     except ServerUnreachableError as exc:
         configured = configured_daemon_target()
@@ -338,7 +393,9 @@ def handle_playbill_kit_add(
     reference it pulls and verifies.
 
     A commit stages the kit's bundled provider files in the daemon's body store
-    first, so the daemon can install them; a preview sends none.
+    first, so the daemon can install them; a preview sends none. The result
+    carries the automation template's text; a bundle that declares a template
+    without its bytes refuses before the daemon is called.
     """
 
     if request is not None:
@@ -354,6 +411,8 @@ def handle_playbill_kit_add(
         bundle = unpack_artifact(KIT_ARTIFACT, image)
     assert bundle is not None
     resolved = bundle
+    # Checked before the daemon, so a bad template refuses before anything is proposed.
+    template = kit_automation_template(resolved)
 
     def add(client: CruxibleClient) -> KitChangeResult:
         staged = (
@@ -376,7 +435,7 @@ def handle_playbill_kit_add(
             ),
         )
 
-    return _daemon_call(add, operation_name="cruxible_kit_add")
+    return with_automation_template(_daemon_call(add, operation_name="cruxible_kit_add"), template)
 
 
 def handle_playbill_kit_remove(instance_id: str, request: KitRemoveRequest) -> KitChangeResult:
@@ -495,8 +554,14 @@ def handle_playbill_approve(
     never enter a result or a log line.
     """
 
-    key_dir = mcp_approval_key_dir()
-    signer = signer_id if signer_id is not None else _sole_approval_signer(key_dir)
+    key_dir, default_signer = _approval_key_dir()
+    signer = (
+        signer_id
+        if signer_id is not None
+        else default_signer
+        if default_signer is not None
+        else _sole_approval_signer(key_dir)
+    )
     try:
         governance_identifier(signer, label="signer_id")
     except ValueError as exc:
@@ -543,6 +608,34 @@ def handle_playbill_approve(
     return result
 
 
+def _approval_key_dir() -> tuple[Path, str | None]:
+    """The local approval key directory and the signer it defaults to, if one.
+
+    ``CRUXIBLE_MCP_KEY_DIR`` when the environment names the identity; else the
+    folder record's key directory, signing as the folder's principal.
+    """
+
+    folder = _folder_identity()
+    if folder is not None:
+        return folder.key_dir, folder.principal_id
+    return mcp_approval_key_dir(), None
+
+
+def _folder_identity() -> VerifiedFolderIdentity | None:
+    """The bound folder's checked identity, when the environment names none.
+
+    Only a configured daemon (the environment's or the binding's) can carry a
+    folder record, so this never starts one to find out there is none.
+    """
+
+    if environment_names_identity(os.environ, token=get_runtime_bearer_token()):
+        return None
+    target = configured_daemon_target()
+    if target is None or folder_candidate(os.environ, target=target) is None:
+        return None
+    return _mcp_identity().folder
+
+
 def _sole_approval_signer(key_dir: Path) -> str:
     signers = sorted(path.name.removesuffix(".ed25519") for path in key_dir.glob("*.ed25519"))
     if len(signers) != 1:
@@ -570,11 +663,17 @@ def _playbill_whoami(instance_id: str) -> contracts.WhoAmI:
 
 
 def handle_playbill_whoami(instance_id: str) -> McpWhoAmIResult:
+    if environment_names_identity(os.environ, token=get_runtime_bearer_token()):
+        source: Literal["environment", "folder", "none"] = "environment"
+    else:
+        # A folder record that cannot be used refuses here, before whoami answers.
+        source = "folder" if _folder_identity() is not None else "none"
     return McpWhoAmIResult(
         instance_id=instance_id,
         adapter_version=__version__,
         daemon_version=_daemon_version(),
         identity=_playbill_whoami(instance_id),
+        identity_source=source,
     )
 
 
@@ -936,11 +1035,13 @@ def handle_playbill_claim_attest(
         ) from exc
 
     def call(client: Any) -> ClaimAttestationAppendResult:
+        folder = _folder_identity()
         signer = local_attestation_signer_from_environment(
             client,
             instance_id,
             # A forbidden root for key custody; nothing under it is read.
             workspace_root=mcp_workspace_root(guard=False),
+            private_key_path=None if folder is None else folder.private_key_path,
         )
         return attest_claim(
             client,
@@ -1077,6 +1178,87 @@ def handle_playbill_authoring_submit(
         ),
         operation_name="cruxible_authoring_submit",
     )
+
+
+#: The largest authoring file `cruxible_authoring_submit_file` reads: a kit's
+#: automation template's own cap.
+AUTHORING_FILE_MAX_BYTES = KIT_AUTOMATION_TEMPLATE_MAX_BYTES
+
+
+def handle_playbill_authoring_submit_file(
+    instance_id: str,
+    path: str,
+    *,
+    accept: AuthoringAccept = "if_allowed",
+) -> contracts.AuthoringSubmitResultRecord:
+    """Submit the authoring input file at ``path`` in the workspace, as `authoring submit FILE`.
+
+    The file (YAML or JSON, one tagless authoring input) is read beneath the
+    workspace root through held descriptors: a normalized relative path, no
+    symbolic link anywhere on it, at most ``AUTHORING_FILE_MAX_BYTES``.
+    """
+
+    import yaml
+
+    name = "cruxible_authoring_submit_file"
+    root = mcp_workspace_root()
+    try:
+        with HeldRoot(root) as held:
+            raw = held.read(path, max_bytes=AUTHORING_FILE_MAX_BYTES + 1)
+    except ContainmentError as exc:
+        raise DataValidationError(f"{name}: {exc}") from exc
+    except OSError as exc:
+        raise DataValidationError(
+            f"{name}: {path} is not a readable regular file in the workspace {root}: "
+            f"{exc.strerror or exc}"
+        ) from exc
+    if len(raw) > AUTHORING_FILE_MAX_BYTES:
+        raise DataValidationError(f"{name}: {path} is larger than {AUTHORING_FILE_MAX_BYTES} bytes")
+    try:
+        document = yaml.safe_load(raw.decode("utf-8"))
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise DataValidationError(f"{name}: {path} is not UTF-8 YAML or JSON: {exc}") from exc
+    if not isinstance(document, dict):
+        raise DataValidationError(f"{name}: {path} must contain one mapping")
+    try:
+        _AUTHORING_INPUT.validate_python(document)
+    except ValidationError as exc:
+        raise DataValidationError(
+            f"{name}: {path} is not an authoring input (`cruxible_authoring_example` shows "
+            "each shape)",
+            errors=validation_lines(exc),
+        ) from exc
+    return handle_playbill_authoring_submit(instance_id, payload=document, accept=accept)
+
+
+def handle_console(instance_id: str, *, stop: bool = False) -> McpConsoleResult:
+    """`cruxible_console`: start, reuse or stop this process's listener (`mcp.console`)."""
+
+    from cruxible_core.mcp.console import open_console, stop_console
+
+    if stop:
+        return stop_console(instance_id)
+    identity = _mcp_identity()
+    # Fail here, in the tool result, when the instance cannot be read at all.
+    _daemon_call(lambda reader: reader.head(instance_id), operation_name="cruxible_console")
+    return open_console(
+        instance_id,
+        target=resolve_daemon_target(),
+        token=get_runtime_bearer_token(),
+        principal_id=identity.principal_id,
+    )
+
+
+def handle_init(principal_id: str | None = None) -> McpInitResult:
+    """`cruxible_init`: initialize the MCP workspace folder (`cruxible_core.mcp.init`)."""
+
+    check_permission("cruxible_init")
+    target = resolve_daemon_target()
+
+    def call(fn: Callable[[CruxibleClient], Any], operation: str) -> Any:
+        return _daemon_call(fn, operation_name=operation)
+
+    return run_mcp_init(principal_id=principal_id, target=target, call=call)
 
 
 def handle_playbill_authoring_status(

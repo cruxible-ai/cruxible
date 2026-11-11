@@ -66,10 +66,10 @@ def test_playbill_permission_tiers_separate_inert_proposal_approval_and_activati
     assert TOOL_PERMISSIONS["cruxible_proposal_approve_submit"] == PermissionMode.GRAPH_WRITE
     assert TOOL_PERMISSIONS["cruxible_proposal_activate"] == PermissionMode.GRAPH_WRITE
     assert TOOL_PERMISSIONS["cruxible_get"] == PermissionMode.READ_ONLY
-    # Setup is an operator step: init is not an MCP tool, but its HTTP and CLI
-    # route stays ADMIN-gated.
-    assert "cruxible_init" not in TOOL_PERMISSIONS
-    assert RUNTIME_OPERATION_PERMISSIONS["cruxible_init"] == PermissionMode.ADMIN
+    # Init is an MCP tool and the daemon's route alike, ADMIN-gated on both.
+    assert TOOL_PERMISSIONS["cruxible_init"] == PermissionMode.ADMIN
+    assert "cruxible_init" not in RUNTIME_OPERATION_PERMISSIONS
+    assert TOOL_PERMISSIONS["cruxible_authoring_submit_file"] == PermissionMode.GOVERNED_WRITE
 
 
 def test_playbill_handlers_decode_bytes_and_submit_only_public_attestation(monkeypatch) -> None:

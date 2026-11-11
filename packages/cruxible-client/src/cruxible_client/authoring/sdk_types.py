@@ -538,6 +538,7 @@ class IncompatibleDaemonVersion(SdkError):
         daemon_version: str,
         expected_snapshot_digest: str,
         actual_snapshot_digest: str,
+        daemon_label: str | None = None,
     ) -> None:
         self.client_version = client_version
         self.daemon_version = daemon_version
@@ -545,13 +546,19 @@ class IncompatibleDaemonVersion(SdkError):
         self.actual_snapshot_digest = actual_snapshot_digest
         self.client_snapshot_digest = expected_snapshot_digest
         self.daemon_snapshot_digest = actual_snapshot_digest
+        self.daemon_label = daemon_label
+        where = f" at {daemon_label}" if daemon_label else ""
+        # One line: both versions, both contract digests, and the fix.
         super().__init__(
-            "Client and daemon authoring contracts are incompatible: "
-            f"client_version={client_version}, daemon_version={daemon_version}, "
+            f"this client is cruxible {client_version}; the daemon{where} is cruxible "
+            f"{daemon_version}, and their authoring contracts differ "
+            f"(client_version={client_version}, daemon_version={daemon_version}, "
             f"client_snapshot_digest={expected_snapshot_digest}, "
-            f"daemon_snapshot_digest={actual_snapshot_digest}. "
+            f"daemon_snapshot_digest={actual_snapshot_digest}). "
             "Repair: upgrade the client or daemon so both use the same authoring "
-            "contract snapshot."
+            "contract snapshot: stop that daemon with `cruxible server stop` and rerun "
+            "(a local daemon then starts at this version), or use cruxible "
+            f"{daemon_version}."
         )
 
 
