@@ -278,15 +278,17 @@ class WorkspaceFileReader:
         workspace: str | None = None,
         max_bytes: int | None = None,
     ) -> WorkspaceFilePresence:
-        """Whether a read of ``relative_path`` would find a file, from no-follow stats only.
+        """Whether a read of ``relative_path`` would find a file, reading none of it.
 
         The same rules as ``read`` decide: the root the request resolves to,
         the path grammar, the never-readable paths and managed roots, no
-        symbolic link on the way, a regular file with one hard link, and the
-        byte budget when ``max_bytes`` is given. One no-follow stat per path
-        component, walked through directory descriptors; no directory is
-        listed and no byte of the file is read. A refusal of the root itself
-        (no workspace attached, several unnamed) raises as ``resolve`` does.
+        symbolic link on the way, read access to the leaf, a regular file
+        with one hard link, and the byte budget when ``max_bytes`` is given.
+        One no-follow stat per path component, walked through directory
+        descriptors, then the leaf opened no-follow from its parent's
+        descriptor and closed: no directory is listed and no byte of the file
+        is read. A refusal of the root itself (no workspace attached, several
+        unnamed) raises as ``resolve`` does.
         """
 
         root = self._resolve_root(workspace)
@@ -301,6 +303,7 @@ class WorkspaceFileReader:
         except WorkspaceFileReadRefused as exc:
             return "refused", exc.path_class
         flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        leaf_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
         descriptors: list[int] = []
         try:
             descriptors.append(os.open(root, flags))
@@ -312,6 +315,14 @@ class WorkspaceFileReader:
                     return "refused", "non_regular"
                 descriptors.append(os.open(component, flags, dir_fd=descriptors[-1]))
             status = os.stat(parts[-1], dir_fd=descriptors[-1], follow_symlinks=False)
+            if stat.S_ISLNK(status.st_mode):
+                return "refused", "symlink"
+            if stat.S_ISREG(status.st_mode) or stat.S_ISDIR(status.st_mode):
+                # Read access is decided as ``read`` decides it: the same
+                # no-follow open from the parent's descriptor, closed at once
+                # with no byte read. Only a file or directory is opened (a
+                # device or FIFO is refused without touching it).
+                os.close(os.open(parts[-1], leaf_flags, dir_fd=descriptors[-1]))
         except FileNotFoundError:
             return "absent", None
         except PermissionError:
@@ -323,8 +334,6 @@ class WorkspaceFileReader:
         finally:
             for descriptor in reversed(descriptors):
                 os.close(descriptor)
-        if stat.S_ISLNK(status.st_mode):
-            return "refused", "symlink"
         if not stat.S_ISREG(status.st_mode):
             return "refused", "non_regular"
         if status.st_nlink != 1:

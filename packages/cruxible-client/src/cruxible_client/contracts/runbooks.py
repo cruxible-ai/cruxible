@@ -416,8 +416,9 @@ RunbookInputKind: TypeAlias = Literal[
     "workspace_file", "workspace_glob", "fetch", "trigger_capture"
 ]
 #: Whether a workspace file is there now, checked with the daemon reader's own
-#: rules (a no-follow stat; no byte read): ``refused`` names the path class the
-#: reader would refuse with, ``no_workspace`` means no workspace is attached.
+#: rules (no-follow stats and a read-access open; no byte read): ``refused``
+#: names the path class the reader would refuse with, ``no_workspace`` means no
+#: workspace is attached.
 RunbookInputState: TypeAlias = Literal["present", "absent", "refused", "no_workspace"]
 
 

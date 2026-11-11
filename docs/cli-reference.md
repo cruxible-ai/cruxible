@@ -3204,8 +3204,9 @@ description, when the params Contract gives one, follows on its own line as
 written. A workspace file also says whether it is there now, checked with the
 daemon's own workspace reader: `present`, `absent`, `refused` with the reason
 a run would refuse it (a symbolic link, a path outside the workspace, a file
-over the byte limit), or `no_workspace` when no workspace is attached. That
-check stats each path component and reads no byte of the file. A fetch lists
+over the byte limit or one it may not read), or `no_workspace` when no
+workspace is attached. That check stats each path component and opens the
+file to confirm read access, reading no byte of it. A fetch lists
 the origins the Line permits. `--json` (and the MCP `cruxible_runbook_preview`
 tool) carries the same list as each step's `inputs`.
 

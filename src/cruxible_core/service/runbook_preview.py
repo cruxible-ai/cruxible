@@ -24,7 +24,8 @@ Trigger hands it, each with its location (resolved from the Line's
 parameters), the parameter and its authored description, and the
 CaptureContract's format and limits. The one read beyond definitions is
 whether each workspace file is there, by the daemon reader's own rules: a
-no-follow stat per path component, never a listing, never a byte of the file.
+no-follow stat per path component and a no-follow open of the file closed
+unread (read access), never a listing, never a byte of the file.
 """
 
 from __future__ import annotations
@@ -256,8 +257,9 @@ def _presence(
     """``(state, refused path class)`` for one workspace-file input; none for other kinds.
 
     The one read beyond definitions (approved as consistent with D-R36): a
-    no-follow stat per path component through the daemon's reader, counted in
-    ``work``; never a listing, never a byte of the file.
+    no-follow stat per path component and an unread open of the file through
+    the daemon's reader, counted in ``work``; never a listing, never a byte of
+    the file.
     """
 
     from cruxible_core.documents.workspace_file import WorkspaceFileReadRefused

@@ -609,6 +609,11 @@ def test_presence_stats_each_path_component_and_lists_nothing(
     monkeypatch.setattr(os, "stat", counted)
     monkeypatch.setattr(os, "listdir", no_listing)
     monkeypatch.setattr(os, "scandir", no_listing)
+
+    def no_read(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("presence read a byte of the file")
+
+    monkeypatch.setattr(os, "read", no_read)
     assert reader.presence("data/a/b/deep.json") == ("present", None)
     # One no-follow stat per component, nothing else.
     assert stats == ["data", "a", "b", "deep.json"]

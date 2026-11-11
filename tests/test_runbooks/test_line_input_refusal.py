@@ -7,8 +7,11 @@ where to place the file.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from cruxible_client import contracts
 from cruxible_client.contracts.repairs import HandEditRepair
@@ -107,3 +110,29 @@ def test_a_refusal_with_no_workspace_names_the_path_and_an_undescribed_parameter
         "Place the file this Line reads at data/missing.json in a workspace attached"
     )
     assert "(parameter path)" in details["repair_commands"][0]
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="root reads a mode-000 file, so no read access is denied",
+)
+def test_preview_and_a_real_run_agree_on_a_file_without_read_access(tmp_path: Path) -> None:
+    from cruxible_core.service.runbook_preview import service_preview_runbook
+    from tests.support.runbooks import author_runbook, line_steps
+
+    instance, root = runbook_world(tmp_path)
+    _described(instance)
+    author_runbook(instance, "test.rb", line_steps(DESCRIBED_LINE))
+    source = root / "data" / "doc.json"
+    source.chmod(0)
+    try:
+        reader = readers(instance, root)["workspace_file_reader"]
+        assert reader.presence("data/doc.json") == ("refused", "unreadable")
+        preview = service_preview_runbook(instance, name="test.rb", workspace_file_reader=reader)
+        (item,) = preview.steps[0].inputs
+        assert (item.state, item.refused) == ("refused", "unreadable")
+        state = _run(instance, root, DESCRIBED_LINE)
+        assert state.status == "node_refused"
+        assert state.terminal.details["path_class"] == "unreadable"
+    finally:
+        source.chmod(0o600)
