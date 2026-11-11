@@ -119,7 +119,13 @@ Before acting on it the server checks the principal is active on the instance an
 the key in that directory is its registered key; otherwise it refuses with
 `cruxible.identity.folder_record_invalid`, `folder_key_unavailable`,
 `folder_key_mismatch` or `folder_principal_unknown` and the repair, never falling
-back to `operator`. `whoami`'s `identity_source` says which applied:
+back to `operator`. The repair fits the case: restore a missing or exposed key at
+the recorded path (mode 0600, in a 0700 directory); for a key or principal the
+instance does not hold, record the right principal by attaching with it and its
+key (`CRUXIBLE_PRINCIPAL_ID=ID CRUXIBLE_PRINCIPAL_KEY=/abs/keys/ID.ed25519 cruxible
+workspace attach --replace`) or remove the record;
+for a record that is not this folder's, remove it or record it again. The
+environment variables above override the record in every case. `whoami`'s `identity_source` says which applied:
 `environment`, `folder` or `none`.
 
 `CRUXIBLE_MCP_WORKSPACE_ROOT` selects the client-owned workspace for tools that

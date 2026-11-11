@@ -101,7 +101,7 @@ def test_the_record_is_never_a_symlink_and_never_holds_a_secret(
         with pytest.raises(FolderIdentityRefused) as refused:
             read_folder_identity(folder)
         assert refused.value.error_code == "cruxible.identity.folder_record_invalid"
-        assert "cruxible init" in str(refused.value)
+        assert refused.value.repair_commands[0] == f"rm {path}"
 
 
 def test_a_missing_key_directory_or_key_refuses_by_name(folder: Path, tmp_path: Path) -> None:
@@ -150,3 +150,34 @@ def test_the_key_custody_check_reads_current_modes_and_its_stamp_follows_them(
             item.chmod(restore)
     # A chmod there and back still moves the stamp (ctime), so no cached match survives it.
     assert folder_key_custody(record, path=path) != stamp
+
+
+def test_each_refusal_names_what_repairs_it(tmp_path: Path) -> None:
+    record = tmp_path / ".cruxible" / "identity.json"
+    key = tmp_path / "keys" / "owner.ed25519"
+    attach = (
+        "CRUXIBLE_PRINCIPAL_ID=ID CRUXIBLE_PRINCIPAL_KEY=/abs/keys/ID.ed25519 "
+        "cruxible workspace attach --replace",
+    )
+
+    missing = FolderIdentityRefused(
+        "cruxible.identity.folder_key_unavailable", path=record, detail="gone", key=key
+    )
+    assert missing.repair_commands == attach
+    assert f"restore the key {key} at the recorded path" in str(missing)
+    assert "CRUXIBLE_PRINCIPAL_KEY" in str(missing)
+
+    for code in (
+        "cruxible.identity.folder_key_mismatch",
+        "cruxible.identity.folder_principal_unknown",
+    ):
+        wrong = FolderIdentityRefused(code, path=record, detail="not held")  # type: ignore[arg-type]
+        assert wrong.repair_commands == (*attach, f"rm {record}")
+        assert "workspace attach --replace" in str(wrong) and "restore" not in str(wrong)
+
+    stale = FolderIdentityRefused(
+        "cruxible.identity.folder_record_invalid", path=record, detail="another instance"
+    )
+    assert stale.repair_commands == (f"rm {record}", *attach)
+    for refusal in (missing, wrong, stale):
+        assert "cruxible init" not in str(refusal)

@@ -96,19 +96,67 @@ class FolderIdentity(BaseModel):
         return Path(self.key_dir) / f"{self.principal_id}.ed25519"
 
 
-class FolderIdentityRefused(WorkspaceError):
-    """The folder's identity record cannot be used; the message leads with the code."""
+#: Record the right principal for this folder: attach with that principal and its key.
+_RECORD_COMMAND = (
+    "CRUXIBLE_PRINCIPAL_ID=ID CRUXIBLE_PRINCIPAL_KEY=/abs/keys/ID.ed25519 "
+    "cruxible workspace attach --replace"
+)
+_RECORD_PRINCIPAL = (_RECORD_COMMAND,)
+_RECORD_PRINCIPAL_PROSE = (
+    "record the principal this folder should act as by attaching with it and its key "
+    f"(`{_RECORD_COMMAND}`)"
+)
+_ENVIRONMENT_PROSE = (
+    "or set CRUXIBLE_PRINCIPAL_ID and CRUXIBLE_PRINCIPAL_KEY (CRUXIBLE_MCP_KEY_DIR for the "
+    "MCP server), which take precedence over the record"
+)
 
-    def __init__(self, code: FolderIdentityRefusalCode, *, path: Path, detail: str) -> None:
+
+class FolderIdentityRefused(WorkspaceError):
+    """The folder's identity record cannot be used; the message leads with the code.
+
+    ``repair_commands`` (and the message's Repair) name what fixes this case:
+    a missing or exposed key is restored at its recorded path; a key or
+    principal the instance does not hold is replaced by recording the right
+    principal; a record that is not this folder's is removed or recorded again.
+    """
+
+    def __init__(
+        self,
+        code: FolderIdentityRefusalCode,
+        *,
+        path: Path,
+        detail: str,
+        key: Path | None = None,
+    ) -> None:
         self.error_code = code
         self.path = str(path)
         self.detail = detail
-        super().__init__(
-            f"{code}: {path}: {detail}. Repair: rerun `cruxible init` in this folder (or "
-            "`cruxible workspace attach` as the principal it should act as), delete "
-            f"{path} to act as no principal, or set CRUXIBLE_PRINCIPAL_ID, "
-            "CRUXIBLE_PRINCIPAL_KEY and CRUXIBLE_MCP_KEY_DIR, which take precedence"
-        )
+        remove = f"rm {path}"
+        if code == "cruxible.identity.folder_key_unavailable":
+            where = "the key" if key is None else f"the key {key}"
+            self.repair_commands: tuple[str, ...] = _RECORD_PRINCIPAL
+            repair = (
+                f"restore {where} at the recorded path, readable only by you (mode 0600) in a "
+                f"directory only you can open (mode 0700); or {_RECORD_PRINCIPAL_PROSE}; "
+                f"{_ENVIRONMENT_PROSE}"
+            )
+        elif code in {
+            "cruxible.identity.folder_key_mismatch",
+            "cruxible.identity.folder_principal_unknown",
+        }:
+            self.repair_commands = (*_RECORD_PRINCIPAL, remove)
+            repair = (
+                f"{_RECORD_PRINCIPAL_PROSE}; or remove the record (`{remove}`) to act as no "
+                f"principal; {_ENVIRONMENT_PROSE}"
+            )
+        else:
+            self.repair_commands = (remove, *_RECORD_PRINCIPAL)
+            repair = (
+                f"remove the record (`{remove}`) to act as no principal, or "
+                f"{_RECORD_PRINCIPAL_PROSE}; {_ENVIRONMENT_PROSE}"
+            )
+        super().__init__(f"{code}: {path}: {detail}. Repair: {repair}")
 
 
 def folder_identity_path(root: Path) -> Path:
@@ -246,7 +294,7 @@ def folder_key_custody(identity: FolderIdentity, *, path: Path) -> tuple[int, ..
 
     def refuse(detail: str) -> FolderIdentityRefused:
         return FolderIdentityRefused(
-            "cruxible.identity.folder_key_unavailable", path=path, detail=detail
+            "cruxible.identity.folder_key_unavailable", path=path, detail=detail, key=key
         )
 
     try:
@@ -348,6 +396,7 @@ def verify_folder_identity(
             "cruxible.identity.folder_key_unavailable",
             path=path,
             detail=f"key {key} cannot be used ({exc})",
+            key=key,
         ) from exc
     if public_key != principal.public_key:
         raise FolderIdentityRefused(

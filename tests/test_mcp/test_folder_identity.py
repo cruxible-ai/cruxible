@@ -235,13 +235,15 @@ def _refusal(instance_id: str) -> FolderIdentityRefused:
 
     with pytest.raises(FolderIdentityRefused) as refused:
         handlers.handle_playbill_whoami(instance_id)
-    assert "cruxible init" in str(refused.value)
+    assert "cruxible init" not in str(refused.value)
+    assert refused.value.repair_commands
     # The CLI with no remembered principal runs the same check before its first
     # daemon call and refuses with the same code and repair.
     result = CliRunner().invoke(cli, ["whoami", "--json"])
     assert result.exit_code == 1, result.output
     assert f"{refused.value.error_code}:" in result.stderr
-    assert "Repair:" in result.stderr
+    for command in refused.value.repair_commands:
+        assert f"Repair: {command}" in result.stderr
     return refused.value
 
 
@@ -282,6 +284,21 @@ def test_an_unusable_record_refuses_with_its_typed_error(
     assert shown.exit_code == 0, shown.output
     reason = json.loads(shown.stdout)["daemon_host_registration"]["reason"]
     assert "cruxible.identity.folder_key_mismatch" in reason
+
+    # The repair it names works: attach with the right principal and its key.
+    repaired_by = CliRunner().invoke(
+        cli,
+        ["workspace", "attach", "--replace"],
+        env={
+            "CRUXIBLE_PRINCIPAL_ID": "owner",
+            "CRUXIBLE_PRINCIPAL_KEY": str(record.private_key_path),
+        },
+    )
+    assert repaired_by.exit_code == 0, repaired_by.output
+    repaired = read_folder_identity(folder)
+    assert repaired is not None and repaired.key_dir == record.key_dir
+    handlers.reset_client_cache()
+    assert handlers.handle_playbill_whoami(instance_id).identity.actor_id == "owner"
 
     unknown = tmp_path / "unknown-keys"
     generate_client_principal_key(
