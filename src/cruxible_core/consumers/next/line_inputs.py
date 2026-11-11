@@ -51,7 +51,8 @@ CREATE TABLE inputs (line TEXT NOT NULL, node_id TEXT NOT NULL, line_id TEXT NOT
 CREATE INDEX inputs_by_line_id ON inputs(line_id);
 CREATE TABLE runbook_lines (runbook TEXT NOT NULL, line TEXT NOT NULL,
  PRIMARY KEY(runbook,line)) STRICT;
-CREATE INDEX runbook_lines_by_line ON runbook_lines(line);
+CREATE TABLE runbook_named_lines (line TEXT PRIMARY KEY, runbooks INTEGER NOT NULL
+ CHECK(runbooks > 0)) STRICT;
 """,
 )
 
@@ -129,6 +130,42 @@ def _line_inputs(instance: Any, git_oid: str, raw: bytes, path: str) -> list[tup
     return rows
 
 
+def _replace_runbook_lines(connection: Any, runbook: str, lines: list[str]) -> None:
+    """Swap one Runbook's Line memberships, keeping each named Line's Runbook count.
+
+    Only the changed Runbook's own rows are touched: its old memberships are
+    released (a Line no live Runbook names any more leaves the named set) and
+    its new ones counted, so the named set stays the distinct Lines live
+    Runbooks name, whatever number of Runbooks share them.
+    """
+
+    old = [
+        str(row[0])
+        for row in connection.execute("SELECT line FROM runbook_lines WHERE runbook=?", (runbook,))
+    ]
+    if old:
+        connection.execute("DELETE FROM runbook_lines WHERE runbook=?", (runbook,))
+        # Release the last membership first, then decrement the shared ones.
+        connection.executemany(
+            "DELETE FROM runbook_named_lines WHERE line=? AND runbooks=1",
+            [(line,) for line in old],
+        )
+        connection.executemany(
+            "UPDATE runbook_named_lines SET runbooks=runbooks-1 WHERE line=?",
+            [(line,) for line in old],
+        )
+    new = list(dict.fromkeys(lines))
+    if new:
+        connection.executemany(
+            "INSERT INTO runbook_lines VALUES(?,?)", [(runbook, line) for line in new]
+        )
+        connection.executemany(
+            "INSERT INTO runbook_named_lines VALUES(?,1) "
+            "ON CONFLICT(line) DO UPDATE SET runbooks=runbooks+1",
+            [(line,) for line in new],
+        )
+
+
 def catch_up(instance: Any, *, through: int | None = None) -> None:
     """Fold only the Line and Runbook versions accepted after the persisted cursor."""
 
@@ -151,14 +188,12 @@ def catch_up(instance: Any, *, through: int | None = None) -> None:
                     raise ValueError(f"accepted bytes unavailable: {version.identity}")
                 if version.path.startswith("runbooks/"):
                     runbook = parse_runbook(raw, path=version.path)
-                    connection.execute(
-                        "DELETE FROM runbook_lines WHERE runbook=?", (version.identity,)
+                    named = (
+                        [line.qualified for line in runbook.lines]
+                        if runbook.lifecycle.state == "live"
+                        else []
                     )
-                    if runbook.lifecycle.state == "live":
-                        connection.executemany(
-                            "INSERT OR IGNORE INTO runbook_lines VALUES(?,?)",
-                            [(version.identity, line.qualified) for line in runbook.lines],
-                        )
+                    _replace_runbook_lines(connection, version.identity, named)
                     continue
                 connection.execute("DELETE FROM inputs WHERE line=?", (version.identity,))
                 connection.executemany(
@@ -211,12 +246,7 @@ def needed_workspace_inputs(instance: Any) -> tuple[LineWorkspaceInput, ...]:
     with _STATE.open(instance, create=False) as connection:
         if connection is None:
             return ()
-        named = [
-            str(row[0])
-            for row in connection.execute(
-                "SELECT DISTINCT line FROM runbook_lines INDEXED BY runbook_lines_by_line"
-            )
-        ]
+        named = [str(row[0]) for row in connection.execute("SELECT line FROM runbook_named_lines")]
         rows = {
             (str(row[0]), str(row[1])): row
             for row in (*_keyed(connection, "line", named), *_keyed(connection, "line_id", enabled))

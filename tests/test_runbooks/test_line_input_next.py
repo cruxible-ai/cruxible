@@ -29,6 +29,8 @@ from tests.test_runbooks.test_line_input_refusal import _run
 from tests.test_runbooks.test_runbook_preview import DESCRIBED_LINE, DOC_HELP, _described
 
 EVALUATION_TIME = datetime(2026, 10, 30, 12, tzinfo=UTC)
+SETTLE_KEY = f"Line:{SETTLE}"
+FAIL_KEY = f"Line:{FAIL}"
 
 
 # -- next ---------------------------------------------------------------------------
@@ -283,3 +285,94 @@ def test_lines_neither_enabled_nor_runbook_steps_cost_a_read_nothing(tmp_path: P
     assert measured[20]["presence_calls"] == measured[2000]["presence_calls"] == 1
     assert measured[2000]["sql_statements"] == measured[20]["sql_statements"]
     assert measured[2000]["sql_vm_steps"] == measured[20]["sql_vm_steps"]
+
+
+def test_live_runbooks_sharing_one_line_cost_a_read_the_same(tmp_path: Path) -> None:
+    """20 or 2,000 live Runbooks naming one Line whose one input is there: the same work."""
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.runbooks import parse_runbook, render_runbook, runbook_path
+    from tests.core_support._identity_support import accept_tree
+
+    instance, root = runbook_world(tmp_path)
+    author_runbook(instance, "test.shared", line_steps(SETTLE))
+    template_path = runbook_path("test.shared")
+    template = parse_runbook(
+        instance.blob_at(instance.accepted_coordinate().git_oid, template_path),
+        path=template_path,
+    )
+    measured: dict[int, dict[str, int]] = {}
+    previous = 0
+    for size in (20, 2000):
+        updates = {}
+        for index in range(previous, size):
+            name = f"test.shared-{index:04d}"
+            clone = template.model_copy(
+                update={"identity": ArtifactIdentity(kind="Runbook", name=name)}
+            )
+            updates[runbook_path(name)] = render_runbook(clone)
+        accept_tree(instance, updates, name=f"shared-runbooks-{size}")
+        measured[size] = _measured_read(instance, root)
+        previous = size
+    assert measured[20]["presence_calls"] == measured[2000]["presence_calls"] == 1
+    assert measured[2000]["sql_statements"] == measured[20]["sql_statements"]
+    assert measured[2000]["sql_vm_steps"] == measured[20]["sql_vm_steps"]
+
+
+def _named_lines(instance: Any) -> dict[str, int]:
+    from cruxible_core.consumers.next import line_inputs
+
+    line_inputs.catch_up(instance)
+    with line_inputs._STATE.open(instance, create=False) as connection:
+        assert connection is not None
+        return {
+            str(line): int(count)
+            for line, count in connection.execute("SELECT line, runbooks FROM runbook_named_lines")
+        }
+
+
+def test_a_line_leaves_the_named_set_only_when_no_live_runbook_names_it(tmp_path: Path) -> None:
+    from tests.test_runbooks.test_runbook_trigger_counters import _retire_runbook
+
+    instance, _root = runbook_world(tmp_path)
+    author_runbook(instance, "test.a", line_steps(SETTLE))
+    author_runbook(instance, "test.b", line_steps(SETTLE, FAIL))
+    assert _named_lines(instance) == {SETTLE_KEY: 2, FAIL_KEY: 1}
+    # A revised Runbook releases only its own memberships.
+    author_runbook(instance, "test.a", line_steps(FAIL))
+    assert _named_lines(instance) == {SETTLE_KEY: 1, FAIL_KEY: 2}
+    _retire_runbook(instance, "test.b")
+    assert _named_lines(instance) == {FAIL_KEY: 1}
+    _retire_runbook(instance, "test.a")
+    assert _named_lines(instance) == {}
+
+
+def test_an_earlier_index_schema_rebuilds_once(tmp_path: Path) -> None:
+    """A state an earlier version wrote is replayed once from accepted history, then kept."""
+
+    import sqlite3
+
+    from cruxible_core.consumers import state as disposable
+    from cruxible_core.consumers.next import line_inputs
+
+    instance, _root = runbook_world(tmp_path)
+    author_runbook(instance, "test.a", line_steps(SETTLE))
+    line_inputs.catch_up(instance)
+    # The earlier layout: Runbook Lines read through a membership index, no named set.
+    with sqlite3.connect(line_inputs._STATE.path(instance)) as connection:
+        connection.executescript(
+            "DROP TABLE runbook_named_lines;"
+            "CREATE INDEX runbook_lines_by_line ON runbook_lines(line);"
+        )
+    rebuilds: list[str] = []
+    real = disposable.DisposableState._rebuild
+
+    def counted(self: Any, connection: Any) -> None:
+        rebuilds.append(self.directory)
+        real(self, connection)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(disposable.DisposableState, "_rebuild", counted)
+        assert _named_lines(instance) == {SETTLE_KEY: 1}
+        assert _named_lines(instance) == {SETTLE_KEY: 1}
+    assert rebuilds == ["next/line-inputs"]

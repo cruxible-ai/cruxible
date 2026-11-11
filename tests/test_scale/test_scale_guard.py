@@ -335,7 +335,8 @@ def _tick(part: str) -> Callable[[World], object]:
 #: is due, the new Claims' Captures wait for the evidence check, next's facts and the
 #: floor have a new target, curation a new generation, and the refusal index a
 #: generation to catch up. Neither world holds a prediction contract, so the
-#: prediction part only ever matches. Idle, nothing is due anywhere.
+#: prediction part only ever matches, and the needed-inputs part folds Line and
+#: Runbook versions in its match and never has a unit. Idle, nothing is due anywhere.
 _DUE_AFTER_GENERATION = {
     "triggers": True,
     "line": True,
@@ -346,6 +347,7 @@ _DUE_AFTER_GENERATION = {
     "curation": True,
     "settled_refusals": True,
     "line_upgrades": False,
+    "line_inputs": False,
 }
 
 
