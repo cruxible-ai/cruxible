@@ -62,6 +62,7 @@ from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._subject_kind_support import core_assigned
 from tests.support.claim_types import claim_type as build_claim_type
+from tests.support.evidence_files import remove_later
 from tests.support.procedures import procedure_definition, procedure_members
 from tests.test_procedures import test_procedure_source_runs as fixtures
 
@@ -1430,7 +1431,7 @@ def test_corrupt_evidence_under_one_operation_does_not_stop_recovery_of_another(
         if admission.proposal_id in path.read_text()
     ]
     assert len(evaluation_files) == 1
-    evaluation_files[0].unlink()
+    remove_later(evaluation_files[0])
     # Run two, a later occurrence: crash before the door.
     _crash_after(monkeypatch, after_submit=False)
     with pytest.raises(_Crash):

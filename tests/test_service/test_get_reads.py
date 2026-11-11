@@ -34,6 +34,7 @@ from cruxible_core.service.list_pages import ListCursorMismatch
 from cruxible_core.service.read_refusals import ReadRefusalError
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._knowledge_loop_support import EVALUATION_TIME, PREDICATE, seed_claims
+from tests.support.evidence_files import remove_later
 from tests.test_proposals.test_proposal_readmit import _accept, _shell
 
 _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=True)
@@ -791,7 +792,7 @@ def test_a_partial_proposal_reads_as_incomplete_not_an_integrity_error(
             evidence.candidates
             / f"{partial.candidate.candidate_digest.removeprefix('sha256:')}.json"
         )
-    path.unlink()
+    remove_later(path)
 
     for ref in (proposal_id, proposal_id[:20], f"Proposal:{proposal_id}"):
         result = _get(instance, ref)

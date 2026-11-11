@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import pytest
 
 from cruxible_client.contracts import ProposalList
@@ -12,21 +9,8 @@ from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecord
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
 from tests.core_support._support import initialize_local
+from tests.support.evidence_files import remove_later
 from tests.test_proposals.test_grouped_proposal_notes import _submit
-
-
-def _remove_later(path: Path) -> None:
-    """Delete an evidence file as a later, separate change would.
-
-    The index trusts its evidence directories' timestamps. Linux stamps them
-    from a coarse clock, so a delete within milliseconds of the write can leave
-    the directory's timestamps unchanged; moving its mtime forward models a
-    deletion that happens after the write, as it does outside a test.
-    """
-
-    path.unlink()
-    directory = path.parent.stat()
-    os.utime(path.parent, ns=(directory.st_atime_ns, directory.st_mtime_ns + 1_000_000_000))
 
 
 def test_withdrawal_without_other_records_has_an_indexed_source_locator(tmp_path):
@@ -59,7 +43,7 @@ def test_orphan_withdrawal_survives_rebuild_restart_and_later_admission(tmp_path
     )
     evidence.write_withdrawal(withdrawal)
     evidence.index.locate(evidence, withdrawal.proposal_id)
-    _remove_later(evidence.proposals / f"{withdrawal.proposal_id.removeprefix('sha256:')}.json")
+    remove_later(evidence.proposals / f"{withdrawal.proposal_id.removeprefix('sha256:')}.json")
 
     entry = service_list_playbill_proposals(instance).entries[0]
     assert entry.status == "incomplete"
@@ -91,7 +75,7 @@ def test_incomplete_entry_does_not_hide_healthy_rows_or_invent_verdict(tmp_path,
         else evidence.candidates
         / f"{partial.candidate.candidate_digest.removeprefix('sha256:')}.json"
     )
-    _remove_later(path)
+    remove_later(path)
 
     result = service_list_playbill_proposals(instance)
     by_id = {entry.proposal_id: entry for entry in result.entries}
@@ -138,7 +122,7 @@ def test_one_proposal_status_reports_missing_evidence_as_incomplete(tmp_path, mi
             evidence.candidates
             / f"{partial.candidate.candidate_digest.removeprefix('sha256:')}.json"
         )
-    _remove_later(path)
+    remove_later(path)
 
     (listed,) = [
         entry
