@@ -12,6 +12,10 @@ requires-python = ">=3.11"
 authors = [
     {name = "Cruxible LLC"},
 ]
+classifiers = [
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+]
 dependencies = [
     # Security floor: 48.0.1 fixes CVE-2026-34073, -39892 and the bundled-OpenSSL
     # GHSA-537c-gmf6-5ccf. 49/50 fix only PKCS#7 and X.509-verification issues

@@ -25,6 +25,8 @@ Add the repo marketplace through `codex plugin marketplace add /path/to/repo`
 and install from the supported client's plugin directory. The two catalogs
 have host-specific formats; the skill content and runtime selection are shared.
 
+Supported: Linux x86-64 and macOS on Apple silicon; on Windows, use WSL2.
+
 The released stdio command is `uvx --from cruxible==VERSION cruxible mcp`.
 Install uv first. Keep the matching CLI available for setup (`init`,
 `workspace attach`, `principal add`), `authoring submit`, kit pulls and local

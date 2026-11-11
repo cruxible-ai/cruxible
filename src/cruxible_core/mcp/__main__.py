@@ -1,5 +1,5 @@
 """Entry point for python -m cruxible_core.mcp."""
 
-from cruxible_core.mcp.server import main
+from cruxible_core.entrypoints import mcp
 
-main()
+mcp()
