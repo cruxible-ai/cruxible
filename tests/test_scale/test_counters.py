@@ -265,6 +265,57 @@ def test_sql_on_other_threads_is_excluded(root: Path) -> None:
     shared.close()
 
 
+def test_tracing_starts_no_advertiser_thread_and_restores_the_starter(tmp_path: Path) -> None:
+    from cruxible_core.runtime.instance import PlaybillInstance
+
+    starter = PlaybillInstance.__dict__["_start_advertiser_locked"]
+    with trace_sqlite(tmp_path):
+        before = threading.active_count()
+        PlaybillInstance._start_advertiser_locked(object())  # type: ignore[arg-type]
+        assert threading.active_count() == before
+    assert PlaybillInstance.__dict__["_start_advertiser_locked"] is starter
+
+
+def test_a_window_waits_for_a_running_advertiser_before_installing_counters(
+    root: Path,
+) -> None:
+    # An advertiser started before tracing runs SQL on a traced connection; installing
+    # a step counter on that connection beside it could deadlock on the GIL.
+    connection = _claims(root)
+    shared = sqlite3.connect(root / "state.sqlite3", check_same_thread=False)
+    started = threading.Event()
+
+    def advertise() -> None:
+        started.set()
+        for _ in range(2000):
+            shared.execute("SELECT * FROM claims WHERE id = 7").fetchall()
+
+    thread = threading.Thread(target=advertise, name=f"{_counters.ADVERTISER_THREAD}test")
+    thread.start()
+    started.wait()
+    with counting(root) as window:
+        assert not thread.is_alive()
+        connection.execute("SELECT * FROM claims WHERE id = 7").fetchall()
+    assert window.counts["sql_statements"] == 1
+    shared.close()
+
+
+def test_a_window_fails_beside_an_advertiser_that_does_not_finish(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(_counters, "ADVERTISER_JOIN_SECONDS", 0.01)
+    release = threading.Event()
+    thread = threading.Thread(target=release.wait, name=f"{_counters.ADVERTISER_THREAD}test")
+    thread.start()
+    try:
+        with pytest.raises(AssertionError, match="would deadlock"):
+            with counting(root):
+                pass
+    finally:
+        release.set()
+        thread.join()
+
+
 def test_other_threads_do_not_count_opens_spawns_or_calls(root: Path) -> None:
     from cruxible_client.contracts import claims
     from cruxible_client.contracts.claims import ClaimFormatError
