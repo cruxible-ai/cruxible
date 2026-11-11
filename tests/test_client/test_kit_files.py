@@ -195,10 +195,12 @@ def test_the_automation_template_comes_back_with_its_text_checked_against_the_ma
     template = kit_automation_template(_template_bundle(content))
     assert template is not None
     assert (template.path, template.content) == ("automation.json", content.decode())
-    # No template named, or no file bytes carried (an inline bundle): nothing to return.
+    # No template named: nothing to return.
     assert kit_automation_template(_bundle()) is None
+    # A template named but its bytes not carried (an inline bundle) refuses.
     stripped = _template_bundle(content).model_copy(update={"files": ()})
-    assert kit_automation_template(stripped) is None
+    with pytest.raises(KitSourceError, match="carries no bytes for it"):
+        kit_automation_template(stripped)
 
 
 def test_an_automation_template_that_differs_or_is_too_large_is_refused() -> None:

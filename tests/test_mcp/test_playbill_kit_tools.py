@@ -274,13 +274,14 @@ def test_kit_add_returns_the_automation_template_from_a_directory_or_a_registry(
     bind_mcp_daemon(monkeypatch, client)
     local = handlers.handle_playbill_kit_add("inst", reference=str(kit_dir))
     assert local.automation_template_content == TEMPLATE
-    # An inline bundle without file bytes: the daemon names the path, the text is absent.
-    inline = handlers.handle_playbill_kit_add(
-        "inst", bundle=bundle.model_copy(update={"files": ()})
-    )
-    assert inline.automation_template == "automation.json"
-    assert inline.automation_template_content is None
+    assert all(not request.bundle.files for request in client.sent)
+    # An inline bundle that declares a template without its bytes refuses before
+    # the daemon: no request is sent.
+    before = len(client.sent)
+    with pytest.raises(KitSourceError, match="carries no bytes") as refused:
+        handlers.handle_playbill_kit_add("inst", bundle=bundle.model_copy(update={"files": ()}))
+    assert refused.value.error_code == "cruxible.kit.source_invalid"
+    assert len(client.sent) == before
     # A kit with no template carries neither.
     plain = handlers.handle_playbill_kit_add("inst", bundle=_bundle())
     assert plain.automation_template is None and plain.automation_template_content is None
-    assert all(not request.bundle.files for request in client.sent)

@@ -1130,7 +1130,8 @@ class KitChangeResult(_Strict):
     #: That template's text, checked against the manifest's sha256, added by the
     #: adapter that read the kit (CLI and MCP ``kit add``, preview and commit
     #: alike): write it to a file, tailor it, submit it. The daemon never receives
-    #: a kit's inert files, so it is absent when the caller sent no file bytes.
+    #: a kit's inert files; a bundle that declares a template without its bytes
+    #: refuses in the adapter before the daemon is called.
     automation_template_content: str | None = Field(
         default=None,
         max_length=KIT_AUTOMATION_TEMPLATE_MAX_BYTES,

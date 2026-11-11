@@ -396,11 +396,12 @@ def stage_kit_providers(client: CruxibleClient, instance_id: str, bundle: KitBun
 def kit_automation_template(bundle: KitBundle) -> KitAutomationTemplate | None:
     """The kit's automation template with its text, checked against the manifest.
 
-    ``None`` when the kit names no template or the bundle carries no inert file
-    bytes (an inline bundle). Refuses ``cruxible.kit.source_invalid`` when the
-    bytes differ from the manifest's sha256, exceed the template cap, or are not
-    UTF-8. ``kit add`` adapters call it before the daemon, so a bad template
-    refuses before anything is proposed.
+    ``None`` when the kit names no template. Refuses
+    ``cruxible.kit.source_invalid`` when a declared template's bytes are absent
+    from the bundle (an inline bundle that dropped its files), differ from the
+    manifest's sha256, exceed the template cap, or are not UTF-8. ``kit add``
+    adapters call it on the incoming bundle before the daemon, so a bad or
+    missing template refuses before anything is proposed.
     """
 
     path = bundle.manifest.automation_template
@@ -408,7 +409,10 @@ def kit_automation_template(bundle: KitBundle) -> KitAutomationTemplate | None:
         return None
     content = next((item.content for item in bundle.files if item.path == path), None)
     if content is None:
-        return None
+        raise KitSourceError(
+            f"the kit declares the automation template {path}, but the bundle carries no "
+            "bytes for it; send the bundle with its files, or add the kit by reference"
+        )
     if len(content) > KIT_AUTOMATION_TEMPLATE_MAX_BYTES:
         raise KitSourceError(
             f"the automation template {path} is over {KIT_AUTOMATION_TEMPLATE_MAX_BYTES} bytes"

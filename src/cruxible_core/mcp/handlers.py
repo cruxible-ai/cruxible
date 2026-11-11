@@ -394,8 +394,8 @@ def handle_playbill_kit_add(
 
     A commit stages the kit's bundled provider files in the daemon's body store
     first, so the daemon can install them; a preview sends none. The result
-    carries the automation template's text when the kit's file bytes are here
-    (a reference, or an inline bundle that carries them).
+    carries the automation template's text; a bundle that declares a template
+    without its bytes refuses before the daemon is called.
     """
 
     if request is not None:
