@@ -106,7 +106,9 @@ from this estimate; actual host tokenization/tool deferral can differ.
 Before there is an instance, `cruxible_server_info` can auto-start its daemon;
 [First run, step by step](#first-run-step-by-step) initializes against it.
 `cruxible_console` opens the read-only console in the user's browser, no CLI
-needed. Never store keys or tokens in the plugin.
+needed. It never returns the sign-in link: when it cannot open a browser it
+says to run `cruxible console` in your own terminal, which prints the link for
+you only. Never store keys or tokens in the plugin.
 
 For a pre-release checkout, override the plugin's server command in a local
 host configuration. Use an existing environment with the checkout's matching

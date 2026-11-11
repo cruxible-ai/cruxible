@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "kit-add-automation-template-content",
-    "surface_digest": "sha256:ee3d52800b32585867c99b929acbfc760824e33ebf086180f534b7d643e608d1"
+    "register_entry": "mcp-console-no-browser-link",
+    "surface_digest": "sha256:a0251f561112b39b7118c949b6f7a02643f6332bfe4f851617380144b7db7a75"
   },
   "surface": {
     "cli_leaves": [
@@ -2117,8 +2117,7 @@
     "mcp_tools": [
       {
         "client_operations": [
-          "audit",
-          "orient"
+          "audit"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_audit",
         "input_schema_digest": "sha256:4f9437a03bbef623059f84614bc52bfe9ab4a84516de61abcfd638a7623d51ef",
@@ -2128,8 +2127,7 @@
       },
       {
         "client_operations": [
-          "compile_authoring",
-          "orient"
+          "compile_authoring"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_bind",
         "input_schema_digest": "sha256:abe703d5c80239a82a5b77fa9d62dacd17fe6a481e20af5091f98f626f53e32a",
@@ -2139,8 +2137,7 @@
       },
       {
         "client_operations": [
-          "compile_authoring_input",
-          "orient"
+          "compile_authoring_input"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_compile",
         "input_schema_digest": "sha256:ed902d8d8113edb83365a73986a6eeb71640f4f1b21e903249784fb681080fcf",
@@ -2158,8 +2155,7 @@
       },
       {
         "client_operations": [
-          "get_authoring_intent",
-          "orient"
+          "get_authoring_intent"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_get",
         "input_schema_digest": "sha256:d996f8e8029e26b314325ccdfc2cb02d0451b6cbb86f1273e7a52df1b607e92d",
@@ -2169,8 +2165,7 @@
       },
       {
         "client_operations": [
-          "list_pending_authoring_intents",
-          "orient"
+          "list_pending_authoring_intents"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_list",
         "input_schema_digest": "sha256:a8825f015f73d9fccd91306046104981231333a9d865efba8101b40627a708d3",
@@ -2180,7 +2175,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "preflight_authoring_intent"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_preflight",
@@ -2191,8 +2185,7 @@
       },
       {
         "client_operations": [
-          "authoring_intent_status",
-          "orient"
+          "authoring_intent_status"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_status",
         "input_schema_digest": "sha256:dbbf30bf833582227cb14074f5c9e76cdbb4ef21504a00631854516dad86360f",
@@ -2202,7 +2195,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "submit_authoring_input",
           "submit_authoring_intent"
         ],
@@ -2214,7 +2206,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "submit_authoring_input",
           "submit_authoring_intent"
         ],
@@ -2226,8 +2217,7 @@
       },
       {
         "client_operations": [
-          "backlinks",
-          "orient"
+          "backlinks"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_backlinks",
         "input_schema_digest": "sha256:fa65be7104e9ba4bade58102f4c70425734d30d204d8070cbc1da71806b406e8",
@@ -2237,8 +2227,7 @@
       },
       {
         "client_operations": [
-          "depublish_block",
-          "orient"
+          "depublish_block"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_block_depublish",
         "input_schema_digest": "sha256:5951a8c2084356a669a782ea31fab3bd0d1c26702a3d12300ea34530fa43fb2b",
@@ -2253,7 +2242,6 @@
           "get",
           "head",
           "observe_blocks",
-          "orient",
           "query",
           "read_block_sync_backing"
         ],
@@ -2269,7 +2257,6 @@
           "get",
           "head",
           "observe_blocks",
-          "orient",
           "query",
           "read_block_sync_backing"
         ],
@@ -2286,7 +2273,6 @@
           "get",
           "head",
           "observe_blocks",
-          "orient",
           "query",
           "read_block_sync_backing"
         ],
@@ -2298,7 +2284,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "store_body"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_store_body",
@@ -2309,7 +2294,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "propose_capture_contract_input"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_propose_capture_contract",
@@ -2320,8 +2304,7 @@
       },
       {
         "client_operations": [
-          "erase_capture",
-          "orient"
+          "erase_capture"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_erase_capture",
         "input_schema_digest": "sha256:a95664319607ecff2e1fb02de5b3012a953e41874fc54525fea19aaec551ca0c",
@@ -2331,7 +2314,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "read_capture"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_read_capture",
@@ -2354,8 +2336,7 @@
       },
       {
         "client_operations": [
-          "migrate_claim_type",
-          "orient"
+          "migrate_claim_type"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_migrate_claim_type",
         "input_schema_digest": "sha256:d6299c0059040efc05a67200d7e1880c4ab05138d0985cc3b6f3ad11c609e43c",
@@ -2365,7 +2346,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "propose_builtin_claim_type",
           "propose_claim_type_input"
         ],
@@ -2377,7 +2357,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "propose_compiler_upgrade"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_compiler_upgrade",
@@ -2387,18 +2366,15 @@
         "permission": "ADMIN"
       },
       {
-        "client_operations": [
-          "orient"
-        ],
+        "client_operations": [],
         "delegate": "cruxible_core.mcp.handlers.handle_console",
         "input_schema_digest": "sha256:419cc464b9e84035b066da68491cf67800fed7f14dc0c8cf6333906fe6dc36f1",
         "name": "cruxible_console",
-        "output_schema_digest": "sha256:c4792565026b96dd5746ef946529a375707665eacf68f04709864a6bfa54bf15",
+        "output_schema_digest": "sha256:1091f8cc1b43f0dea1c32fdf434e9811226ce0c456caab3d05eaff7f38cc50f3",
         "permission": "READ_ONLY"
       },
       {
         "client_operations": [
-          "orient",
           "resolve_coverage"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_coverage",
@@ -2409,8 +2385,7 @@
       },
       {
         "client_operations": [
-          "accept_fixed_curation",
-          "orient"
+          "accept_fixed_curation"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_curation_accept_fixed",
         "input_schema_digest": "sha256:381ce42d445165e55f3c120e1dfdc7931f155e0fc44febd69f0274d4c3aaa862",
@@ -2420,8 +2395,7 @@
       },
       {
         "client_operations": [
-          "curation_duplicates",
-          "orient"
+          "curation_duplicates"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_curation_duplicates",
         "input_schema_digest": "sha256:19c1ca37178e93f2e1c91417dbb17670f3eb4f9a09bf8112121b1d5c2bbdfa81",
@@ -2431,8 +2405,7 @@
       },
       {
         "client_operations": [
-          "list_curation",
-          "orient"
+          "list_curation"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_curation_list",
         "input_schema_digest": "sha256:3a3791b8bdf1444b7504b16385ca9586c79a95aab99a0a405be47562bafe95b2",
@@ -2442,7 +2415,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "overrule_curation"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_curation_overrule",
@@ -2453,7 +2425,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "suppress_curation"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_curation_suppress",
@@ -2464,7 +2435,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "unsuppress_curation"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_curation_unsuppress",
@@ -2475,7 +2445,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "propose_document"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_propose_document",
@@ -2487,8 +2456,7 @@
       {
         "client_operations": [
           "check_file_bundle",
-          "file_context",
-          "orient"
+          "file_context"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_files_check",
         "input_schema_digest": "sha256:433f6c9d36f396821eb8ea89866558cb71b8fb8984305c1ad6438b3f661592ed",
@@ -2498,8 +2466,7 @@
       },
       {
         "client_operations": [
-          "file_context",
-          "orient"
+          "file_context"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_files_compile",
         "input_schema_digest": "sha256:c260c15a99078230dc1d9cf1e446c439a2860900535109b4c8a47a96a8853d15",
@@ -2510,7 +2477,6 @@
       {
         "client_operations": [
           "file_context",
-          "orient",
           "propose_file_bundle"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_files_propose",
@@ -2525,8 +2491,7 @@
           "export_floor",
           "floor_delta",
           "head",
-          "host_workspace_registration",
-          "orient"
+          "host_workspace_registration"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_floor_export",
         "input_schema_digest": "sha256:893ec2eb1fece89a23417980079272cb46d9d3499d0080cd1e892aa249faeeff",
@@ -2536,8 +2501,7 @@
       },
       {
         "client_operations": [
-          "get",
-          "orient"
+          "get"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_get",
         "input_schema_digest": "sha256:65af16c722418f37163fb5087a58a4eb4cddeda6ccec24aac31cc96935833bb7",
@@ -2547,8 +2511,7 @@
       },
       {
         "client_operations": [
-          "ack_inbox_item",
-          "orient"
+          "ack_inbox_item"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_inbox_ack",
         "input_schema_digest": "sha256:9254a49f4af9a5e110049bf5a102735057f9f69134ce7027eb3b5fa8741094dd",
@@ -2558,8 +2521,7 @@
       },
       {
         "client_operations": [
-          "dismiss_inbox_item",
-          "orient"
+          "dismiss_inbox_item"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_inbox_dismiss",
         "input_schema_digest": "sha256:bedb5d56ef70d7ef71bf1d67557081d3ec8806c2b6d43d40f493dc6a0349f258",
@@ -2569,8 +2531,7 @@
       },
       {
         "client_operations": [
-          "get_inbox_item",
-          "orient"
+          "get_inbox_item"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_inbox_get",
         "input_schema_digest": "sha256:59d992430c136800ccb6b9317865c7e7644af141260537122c0200048f337b19",
@@ -2580,8 +2541,7 @@
       },
       {
         "client_operations": [
-          "link_inbox_item",
-          "orient"
+          "link_inbox_item"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_inbox_link",
         "input_schema_digest": "sha256:b57a072c97f664a57bf425eb9040bcda6c58b6492423d736c93a9ce16b674b70",
@@ -2591,8 +2551,7 @@
       },
       {
         "client_operations": [
-          "list_inbox",
-          "orient"
+          "list_inbox"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_inbox_list",
         "input_schema_digest": "sha256:53516478e595f248537ae277482b9e4f54c7b818c262731d229e29e403ab5d8a",
@@ -2617,7 +2576,6 @@
         "client_operations": [
           "add_kit",
           "close",
-          "orient",
           "store_body"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_add",
@@ -2628,8 +2586,7 @@
       },
       {
         "client_operations": [
-          "build_kit",
-          "orient"
+          "build_kit"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_build",
         "input_schema_digest": "sha256:aa02642b4d17c39778cd3dfcfbe5ee91d54596862e14859b17ca22cba54d6f61",
@@ -2639,7 +2596,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "remove_kit"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_remove",
@@ -2651,8 +2607,7 @@
       {
         "client_operations": [
           "close",
-          "kit_status",
-          "orient"
+          "kit_status"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_status",
         "input_schema_digest": "sha256:7ac7b304b74762eec1aa955ef4dd274936e6b74f1e8b1d1b39f84cf9698b2ed7",
@@ -2662,8 +2617,7 @@
       },
       {
         "client_operations": [
-          "disable_line",
-          "orient"
+          "disable_line"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_line_disable",
         "input_schema_digest": "sha256:998b619a7add17e6ca77c2dfd629b4ad8dad2ca77b638ff3412871d637d6076f",
@@ -2673,8 +2627,7 @@
       },
       {
         "client_operations": [
-          "dispatch_line",
-          "orient"
+          "dispatch_line"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_line_dispatch",
         "input_schema_digest": "sha256:0353670dc52021c4955e598bbfde5d45c8e00757587b082e9c6f4056a1999d88",
@@ -2684,8 +2637,7 @@
       },
       {
         "client_operations": [
-          "enable_line",
-          "orient"
+          "enable_line"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_line_enable",
         "input_schema_digest": "sha256:01bf747751912e6a1caf5e012ec110f56c78f36c0dea3a5e138b27bb5ddaca01",
@@ -2695,8 +2647,7 @@
       },
       {
         "client_operations": [
-          "evaluate_line",
-          "orient"
+          "evaluate_line"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_line_evaluate",
         "input_schema_digest": "sha256:2a6221fe034390487e599a1dc49666a2005cf646d95db93c3a9b8c37a9f7be91",
@@ -2706,7 +2657,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "run_line"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_line_run",
@@ -2719,7 +2669,6 @@
         "client_operations": [
           "head",
           "next",
-          "orient",
           "resolve_coverage"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_next",
@@ -2740,8 +2689,7 @@
       },
       {
         "client_operations": [
-          "list_predictions",
-          "orient"
+          "list_predictions"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_prediction_list",
         "input_schema_digest": "sha256:ad4c0a39666aed089fa5b84548e39a852e870deb77d0093bb07e5fef590d2d6b",
@@ -2751,7 +2699,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "predict"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_predict",
@@ -2762,7 +2709,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "settle_prediction"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_settle_prediction",
@@ -2773,7 +2719,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "propose_principal_change"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_propose_principal_change",
@@ -2784,8 +2729,7 @@
       },
       {
         "client_operations": [
-          "dispose_procedure_resolution",
-          "orient"
+          "dispose_procedure_resolution"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_procedure_dispose",
         "input_schema_digest": "sha256:d09aed14d9ec0e36c8482516cb719eae991df4ca0bbc2c2379cc680aa3ddb50d",
@@ -2795,8 +2739,7 @@
       },
       {
         "client_operations": [
-          "measure_procedure",
-          "orient"
+          "measure_procedure"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_procedure_measure",
         "input_schema_digest": "sha256:ce11a90fb7f2daacf6d863c02ce6a7ad4af463e3e6e2db04b09d8bb614b3067b",
@@ -2806,8 +2749,7 @@
       },
       {
         "client_operations": [
-          "list_procedure_readings",
-          "orient"
+          "list_procedure_readings"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_procedure_readings",
         "input_schema_digest": "sha256:e41ce4e6c2ab5ea98ab40cd85bc49a3ab7774d4eb17dfc8a22ec201812262831",
@@ -2817,7 +2759,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "run_procedure"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_procedure_run",
@@ -2828,8 +2769,7 @@
       },
       {
         "client_operations": [
-          "activate_proposal",
-          "orient"
+          "activate_proposal"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_activate",
         "input_schema_digest": "sha256:ece46a5fb78446a1a4780c3ad4152281ccdef1f340498a0c6e07a673737fbc51",
@@ -2839,7 +2779,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "prepare_approval",
           "submit_approval"
         ],
@@ -2851,7 +2790,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "prepare_approval"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_prepare_approval",
@@ -2862,7 +2800,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "submit_approval"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_submit_approval",
@@ -2873,8 +2810,7 @@
       },
       {
         "client_operations": [
-          "list_proposals",
-          "orient"
+          "list_proposals"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_list_proposals",
         "input_schema_digest": "sha256:0dd82bb206d3f698f7372ebccf3e3febc56e4113f59bcd8cfd5adbdf4b6a64af",
@@ -2884,7 +2820,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "readmit_proposal"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_readmit_proposal",
@@ -2895,7 +2830,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "reject_proposal"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_reject_proposal",
@@ -2906,7 +2840,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "review_proposal"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_review",
@@ -2917,7 +2850,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "withdraw_proposal"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_withdraw_proposal",
@@ -2928,8 +2860,7 @@
       },
       {
         "client_operations": [
-          "install_provider",
-          "orient"
+          "install_provider"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_provider_install",
         "input_schema_digest": "sha256:2e8677dce25c477dfca9ad5bba738ae24e490d1eadb6b3acadd8b60542f75898",
@@ -2939,8 +2870,7 @@
       },
       {
         "client_operations": [
-          "list_provider_packages",
-          "orient"
+          "list_provider_packages"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_provider_catalog",
         "input_schema_digest": "sha256:989d4d6f16ee8339b9d31cd45dcfdffbdbc48ee241949b69e6b81f0763f63443",
@@ -2950,8 +2880,7 @@
       },
       {
         "client_operations": [
-          "move_provider",
-          "orient"
+          "move_provider"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_provider_move",
         "input_schema_digest": "sha256:c5a92401b87ab61fbc96e7f89ea73c745b6dfd291ee47ff1808a0f2e56e00d81",
@@ -2961,7 +2890,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "retire_provider"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_provider_retire",
@@ -2972,7 +2900,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "query"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_query",
@@ -2983,7 +2910,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "query"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_query_spec",
@@ -2994,7 +2920,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "retire"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_retire",
@@ -3005,7 +2930,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "preview_runbook"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_runbook_preview",
@@ -3016,7 +2940,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "run_runbook"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_runbook_run",
@@ -3027,7 +2950,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "server_info",
           "show_host",
           "version",
@@ -3041,7 +2963,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "set"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_set",
@@ -3052,7 +2973,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "since"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_since",
@@ -3063,7 +2983,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "version",
           "whoami"
         ],
@@ -3075,7 +2994,6 @@
       },
       {
         "client_operations": [
-          "orient",
           "write"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_write",

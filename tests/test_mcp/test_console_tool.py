@@ -62,7 +62,7 @@ def test_one_listener_per_instance_the_token_stays_out_of_the_result(
 
     assert first.status == "started" and first.port is not None
     assert first.address == f"http://127.0.0.1:{first.port}/i/{instance}"
-    assert first.browser_opened is True and first.bootstrap_link is None
+    assert first.browser_opened is True and first.message is None
     assert first.stop is not None and "stop=true" in first.stop
     (link,) = opened
     token = link.partition("token=")[2]
@@ -83,14 +83,41 @@ def test_one_listener_per_instance_the_token_stays_out_of_the_result(
     assert handlers.handle_console(instance, stop=True).status == "not_running"
 
 
-def test_without_a_browser_the_link_is_returned_and_says_so(
+def test_without_a_browser_no_link_is_returned_and_the_user_runs_cruxible_console(
     instance: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(console_module.webbrowser, "open", lambda link: False)
+    links: list[str] = []
+
+    def no_browser(link: str) -> bool:
+        links.append(link)
+        return False
+
+    monkeypatch.setattr(console_module.webbrowser, "open", no_browser)
     result = handlers.handle_console(instance)
-    assert result.browser_opened is False
-    assert result.bootstrap_link is not None
-    assert result.bootstrap_link.startswith(f"http://127.0.0.1:{result.port}/__console/bootstrap")
+
+    (link,) = links
+    token = link.partition("token=")[2]
+    rendered = json.dumps(result.model_dump(mode="json"))
+    assert token and token not in rendered
+    assert "bootstrap" not in rendered and "token" not in rendered
+    assert (result.status, result.browser_opened) == ("no_browser", False)
+    assert result.address is None and result.port is None and result.stop is None
+    assert result.message is not None and "`cruxible console`" in result.message
+    # The listener this call started is stopped: none runs without a browser session.
+    assert instance not in console_module._running
+    assert not _answers(int(link.split(":")[2].split("/")[0]))
+
+
+def test_a_running_console_without_a_browser_keeps_its_listener_and_returns_no_link(
+    instance: str, monkeypatch: pytest.MonkeyPatch, opened: list[str]
+) -> None:
+    first = handlers.handle_console(instance)
+    monkeypatch.setattr(console_module.webbrowser, "open", lambda link: False)
+    again = handlers.handle_console(instance)
+    assert (again.status, again.port, again.browser_opened) == ("running", first.port, False)
+    assert again.message is not None and "`cruxible console`" in again.message
+    assert "token" not in json.dumps(again.model_dump(mode="json"))
+    assert first.port is not None and _answers(first.port)
 
 
 def test_the_listener_stops_with_the_server(instance: str, opened: list[str]) -> None:
