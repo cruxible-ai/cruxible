@@ -6,7 +6,9 @@ Line spec costs one final-payload read and, when it failed, succeeded or
 halted, one admission read. A failed run of a Trigger's occurrence (a matched
 or dispatched one, never a manual ``line run``: its caller saw the failure)
 records the Line's latest failure; a later succeeded or halted top-level run
-of the Line clears it. The cursor and rows commit together; a rebuilt journal
+of the Line clears it, and marks the Line as one that ran (``next`` tells a
+file that vanished after a run from one never supplied). The cursor and rows
+commit together; a rebuilt journal
 index starts over from its beginning, which replays the same rows. Reads query
 the rows only.
 """
@@ -38,6 +40,7 @@ CREATE TABLE progress (singleton INTEGER PRIMARY KEY, identity TEXT NOT NULL,
 INSERT INTO progress VALUES(1,'',0);
 CREATE TABLE failed (line TEXT PRIMARY KEY, run_id TEXT NOT NULL, finalized_at TEXT NOT NULL,
  failure_code TEXT, cause TEXT) STRICT;
+CREATE TABLE ran (line TEXT PRIMARY KEY) STRICT;
 """,
 )
 
@@ -110,6 +113,7 @@ def catch_up(instance: Any, *, steps: int = STEPS) -> None:
             if identity != known and after:
                 # Positions belong to one index identity: start over, from nothing.
                 connection.execute("DELETE FROM failed")
+                connection.execute("DELETE FROM ran")
                 identity, page = _page(instance, 0)
             for _position, stored in page:
                 record = stored.record
@@ -125,6 +129,7 @@ def catch_up(instance: Any, *, steps: int = STEPS) -> None:
                 line, triggered = found
                 if status != "failed":
                     connection.execute("DELETE FROM failed WHERE line=?", (line,))
+                    connection.execute("INSERT OR IGNORE INTO ran VALUES(?)", (line,))
                 elif triggered:
                     assert isinstance(final, dict)
                     cause = final.get("failure_cause")
@@ -166,6 +171,26 @@ def line_run_failures(instance: Any) -> tuple[LineRunFailure, ...]:
         )
         for line, run_id, finalized_at, code, cause in rows
     )
+
+
+def lines_that_ran(instance: Any, lines: Iterable[str]) -> frozenset[str]:
+    """Which of ``lines`` ever finished a top-level run that succeeded or halted.
+
+    After a bounded catch-up: one keyed lookup per Line named.
+    """
+
+    wanted = tuple(dict.fromkeys(lines))
+    if not wanted:
+        return frozenset()
+    catch_up(instance)
+    with _STATE.open(instance, create=False) as connection:
+        if connection is None:
+            return frozenset()
+        return frozenset(
+            line
+            for line in wanted
+            if connection.execute("SELECT 1 FROM ran WHERE line=?", (line,)).fetchone() is not None
+        )
 
 
 class RunFailuresPart:

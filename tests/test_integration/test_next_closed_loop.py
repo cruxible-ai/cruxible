@@ -194,6 +194,8 @@ EXPECTED_OPERATIONS = {
     "line_settled_prior_refusals": "cruxible.authoring.submit",
     # A Line's unread inbox items: the list shows them; judging each clears the row.
     "line_inbox_unread": "cruxible.inbox.list",
+    # Placing a file in the workspace is a hand edit; the row names the path.
+    "line_input_missing": "hand_edit",
     # Restoring a Capture's bytes, or recapturing, is off the daemon's served verbs.
     "evidence_unavailable": "hand_edit",
     # Re-bind onto a fresh Capture under the same contract: the one exit while
@@ -2089,6 +2091,25 @@ def _line_not_enabled(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_gone(instance, "line_not_enabled", request)
 
 
+def _line_input_missing(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.support.runbooks import FAIL, author_runbook, line_steps, readers, runbook_world
+
+    instance, workspace = runbook_world(root)
+    author_runbook(instance, "test.rb", line_steps(FAIL))
+    request = _request(instance)
+    caller = {"workspace_file_reader": readers(instance, workspace)["workspace_file_reader"]}
+
+    row = _row(instance, "line_input_missing", request, **caller)
+    # Never ran: supplying the file is a setup step.
+    assert (row.subject_identity, row.severity) == (f"Line:{FAIL}", "setup")
+    assert row.detail["relative_path"] == "data/missing.json"
+    assert row.repair.target == "workspace file data/missing.json"
+
+    # The named repair: place the file where the row says.
+    (workspace / "data" / "missing.json").write_text('{"entries": [], "count": 0}')
+    _assert_gone(instance, "line_input_missing", request, **caller)
+
+
 def _line_run_failed(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from datetime import timedelta
 
@@ -2486,6 +2507,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("line_work_pending", None): _line_work_pending,
     ("line_settled_prior_refusals", None): _line_settled_prior_refusals,
     ("line_inbox_unread", None): _line_inbox_unread,
+    ("line_input_missing", None): _line_input_missing,
     ("subject_kind_undeclared", None): _subject_kind_undeclared,
     ("evidence_unavailable", None): _evidence_unavailable,
     ("claim_evidence_erased", None): _claim_evidence_erased,

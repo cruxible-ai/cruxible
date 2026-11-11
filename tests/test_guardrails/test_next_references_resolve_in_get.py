@@ -70,6 +70,7 @@ _REFERENCE_FORMS: dict[str, Literal["get", "workspace", "kit_status"]] = {
     "line_run_failed": "get",
     "line_settled_prior_refusals": "get",
     "line_inbox_unread": "get",
+    "line_input_missing": "get",
     # A kit is read with kit status, not get.
     "kit_resume_blocked": "kit_status",
 }

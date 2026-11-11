@@ -334,8 +334,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "step that fails or sends writes to review. Preview it first."
     ),
     "cruxible_runbook_preview": (
-        "Read what each Runbook step can read, write, settle, propose and set off, and its "
-        "order problems, from definitions only; nothing runs."
+        "Read what each Runbook step can read, write, settle, propose and set off, the files "
+        "and fetches it needs (and whether each file is there), and its order problems; "
+        "nothing runs."
     ),
     "cruxible_prediction_list": (
         "Find accepted resolution contracts testing a Claim, by Claim ID. Returns their "

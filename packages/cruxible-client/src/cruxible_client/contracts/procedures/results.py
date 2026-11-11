@@ -282,6 +282,23 @@ def _with_default_repair(value: object) -> object:
                 )
             )
             return {**value, "repair": repair.model_dump(mode="python")}
+    if (
+        code == "workspace_file_read_refused"
+        and isinstance(details, dict)
+        and details.get("path_class") in ("missing", "binding")
+        and isinstance(details.get("relative_path"), str)
+        and isinstance(details.get("repair_commands"), list)
+        and details["repair_commands"]
+        and isinstance(details["repair_commands"][0], str)
+    ):
+        # The file the Line reads is not there: the repair names where it goes.
+        repair = HandEditRepair(
+            hand_edit=HandEditInstruction(
+                target=f"workspace file {details['relative_path']}",
+                required_change=details["repair_commands"][0],
+            )
+        )
+        return {**value, "repair": repair.model_dump(mode="python")}
     return {**value, "repair": served_repair_for_refusal(code).model_dump(mode="python")}
 
 

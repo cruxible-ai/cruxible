@@ -14,6 +14,30 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 _RELATIVE_COMPONENT_RE = re.compile(r"^[^/\\\x00]+$")
 _DIGEST_PATTERN = '"^sha256:[0-9a-f]{64}$"'
 
+#: Why the daemon's workspace reader refuses a path: the class of the refusal.
+WorkspaceFilePathClass = Literal[
+    "cloud_no_mounts",
+    "binding",
+    "path_grammar",
+    "git_metadata",
+    "playbill_control",
+    "client_custody",
+    "managed_root",
+    "symlink",
+    "hardlink",
+    "non_regular",
+    "unreadable",
+    "changed_during_read",
+    "missing",
+    "size_budget",
+    # The authored request names no workspace and several roots are authorized.
+    "workspace_unnamed",
+    # The authored request names a workspace no authorized root (or several) is called.
+    "workspace_unknown",
+    # A glob read matches more files than its cap (D-R41).
+    "glob_over_cap",
+]
+
 #: The ``workspace.file`` operation core serves in process. Its Contracts are
 #: core-owned and seeded at genesis; core recognizes the operation by its exact
 #: signature (in and out digests and effect), never by a provider's name for it.
@@ -587,6 +611,7 @@ __all__ = [
     "WORKSPACE_FILE_REQUEST_CONTRACT",
     "WORKSPACE_FILE_RESULT_CONTRACT",
     "WORKSPACE_FILE_SOURCE_CONTRACT",
+    "WorkspaceFilePathClass",
     "is_workspace_file_signature",
     "workspace_file_contracts",
     "workspace_file_refusal_contracts",

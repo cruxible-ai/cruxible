@@ -17,6 +17,15 @@ generation_accepted Triggers its writes can set off, inside the Runbook or
 outside it. Across steps it reports order problems: a read of what only a
 later step writes, and a read of what nothing writes (direct entry only).
 It reports them and never reorders anything. It never predicts an outcome.
+
+Per step it also lists what the run takes from outside accepted state: the
+workspace files and globs it reads, the fetches it makes and the Capture a
+Trigger hands it, each with its location (resolved from the Line's
+parameters), the parameter and its authored description, and the
+CaptureContract's format and limits. The one read beyond definitions is
+whether each workspace file is there, by the daemon reader's own rules: a
+no-follow stat per path component and a no-follow open of the file closed
+unread (read access), never a listing, never a byte of the file.
 """
 
 from __future__ import annotations
@@ -40,6 +49,8 @@ from cruxible_client.contracts.runbooks import (
     RunbookPreviewAuthority,
     RunbookPreviewCall,
     RunbookPreviewCascade,
+    RunbookPreviewInput,
+    RunbookPreviewInputLimits,
     RunbookPreviewRead,
     RunbookPreviewStep,
     RunbookPreviewWrite,
@@ -47,6 +58,7 @@ from cruxible_client.contracts.runbooks import (
     RunbookSettleScope,
     runbook_digest,
 )
+from cruxible_client.contracts.shapes import Contract
 from cruxible_client.contracts.subject_kinds import SubjectKind
 from cruxible_client.contracts.triggers import (
     INTERNAL_ACTIONS,
@@ -55,8 +67,14 @@ from cruxible_client.contracts.triggers import (
     GenerationAcceptedSchedule,
     Trigger,
 )
+from cruxible_core.procedures.declared_inputs import (
+    DeclaredInput,
+    declared_inputs,
+    parameter_description,
+)
 
 if TYPE_CHECKING:
+    from cruxible_core.documents.workspace_file import WorkspaceFileReader
     from cruxible_core.runtime.instance import PlaybillInstance
 
 
@@ -227,6 +245,88 @@ def _calls(definition: Any, line: LineSpec) -> tuple[RunbookPreviewCall, ...]:
             )
         )
     return tuple(calls)
+
+
+def _presence(
+    reader: WorkspaceFileReader | None,
+    declared: DeclaredInput,
+    *,
+    max_bytes: int | None,
+    work: Counter[str],
+) -> tuple[str | None, str | None]:
+    """``(state, refused path class)`` for one workspace-file input; none for other kinds.
+
+    The one read beyond definitions (approved as consistent with D-R36): a
+    no-follow stat per path component and an unread open of the file through
+    the daemon's reader, counted in ``work``; never a listing, never a byte of
+    the file.
+    """
+
+    from cruxible_core.documents.workspace_file import WorkspaceFileReadRefused
+
+    if declared.kind != "workspace_file" or declared.location is None:
+        return None, None
+    if reader is None:
+        return "no_workspace", None
+    work["stat:workspace_file"] += 1
+    try:
+        state, path_class = reader.presence(
+            declared.location, workspace=declared.workspace, max_bytes=max_bytes
+        )
+    except WorkspaceFileReadRefused as exc:
+        if exc.path_class == "binding":
+            return "no_workspace", None
+        return "refused", exc.path_class
+    return state, path_class
+
+
+def _inputs(
+    reader: DefinitionReader,
+    definition: Any,
+    line: LineSpec,
+    workspace_reader: WorkspaceFileReader | None,
+) -> tuple[RunbookPreviewInput, ...]:
+    declared = declared_inputs(definition, line)
+    if not declared:
+        return ()
+    contract: Contract | None = None
+    if definition.parameter_contract is not None:
+        found = reader.source(definition.parameter_contract.target.qualified)
+        contract = found if isinstance(found, Contract) else None
+    inputs = []
+    for item in declared:
+        capture = (
+            None
+            if item.capture_contract is None
+            else reader.source(f"CaptureContract:{item.capture_contract}")
+        )
+        budget = getattr(capture, "selection_budget", None)
+        decoding = getattr(capture, "decoding", None)
+        max_bytes = None if budget is None else budget.max_bytes
+        state, refused = _presence(workspace_reader, item, max_bytes=max_bytes, work=reader.work)
+        inputs.append(
+            RunbookPreviewInput(
+                node_id=item.node_id,
+                kind=item.kind,
+                location=item.location,
+                parameter=item.parameter,
+                description=parameter_description(contract, item.parameter),
+                workspace=item.workspace,
+                capture_contract=item.capture_contract,
+                format=None if decoding is None else decoding.format,
+                limits=RunbookPreviewInputLimits(
+                    max_bytes=max_bytes,
+                    decoded_bytes=None if decoding is None else decoding.limits.decoded_bytes,
+                    depth=None if decoding is None else decoding.limits.depth,
+                    records=None if decoding is None else decoding.limits.records,
+                    max_files=item.max_files,
+                ),
+                origins=item.origins,
+                state=state,  # type: ignore[arg-type]
+                refused=refused,  # type: ignore[arg-type]
+            )
+        )
+    return tuple(inputs)
 
 
 _VALUE_BASES: frozenset[str] = frozenset({"extracted", "measured", "derived"})
@@ -427,7 +527,11 @@ def _outside_writers(
 
 
 def compose_runbook_preview(
-    reader: DefinitionReader, runbook: Runbook, *, generation_root: str
+    reader: DefinitionReader,
+    runbook: Runbook,
+    *,
+    generation_root: str,
+    workspace_reader: WorkspaceFileReader | None = None,
 ) -> RunbookPreview:
     runbook_lines = frozenset(identity.qualified for identity in runbook.lines)
     steps: list[RunbookPreviewStep] = []
@@ -478,6 +582,7 @@ def compose_runbook_preview(
                 reads=reads,
                 writes=writes,
                 calls=calls,
+                inputs=_inputs(reader, definition, line, workspace_reader),
                 authority=authority,
                 cascades=_cascades(
                     reader, captures=captures, writes=can_write, runbook_lines=runbook_lines
@@ -539,9 +644,18 @@ def compose_runbook_preview(
 
 
 def service_preview_runbook(
-    instance: PlaybillInstance, *, name: str, work: Counter[str] | None = None
+    instance: PlaybillInstance,
+    *,
+    name: str,
+    work: Counter[str] | None = None,
+    workspace_file_reader: WorkspaceFileReader | None = None,
 ) -> RunbookPreview:
-    """The Runbook's static preview at the accepted head (``runbook preview``)."""
+    """The Runbook's static preview at the accepted head (``runbook preview``).
+
+    ``workspace_file_reader`` is the daemon's own reader: each workspace file a
+    step reads is reported present, absent or refused by its rules. Without
+    one, those inputs report ``no_workspace``.
+    """
 
     from cruxible_core.service.runbooks import RunbookNotFoundError
 
@@ -553,7 +667,12 @@ def service_preview_runbook(
             raise RunbookNotFoundError(
                 f"No live accepted Runbook named {name!r}; author one with a runbook input."
             )
-        return compose_runbook_preview(reader, runbook, generation_root=coordinate.generation_root)
+        return compose_runbook_preview(
+            reader,
+            runbook,
+            generation_root=coordinate.generation_root,
+            workspace_reader=workspace_file_reader,
+        )
 
 
 __all__ = ["DefinitionReader", "compose_runbook_preview", "service_preview_runbook"]

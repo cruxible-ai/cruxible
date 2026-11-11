@@ -309,6 +309,10 @@ def test_the_preview_never_executes_or_reads_state(
         "ClaimType",
         "SubjectKind",
         "Trigger",
+        # What a step's external inputs declare: the params Contract and the
+        # CaptureContract each input lands under.
+        "Contract",
+        "CaptureContract",
     }, read_kinds
     assert {key for key in work if key.startswith("seek:")} <= {
         "seek:mandates_by_line",
@@ -477,3 +481,271 @@ def test_a_scope_restriction_the_preview_cannot_prove_shows_possible_review(
     assert _authority(line, (fenced,), definition).subject_scope == (
         "subjects/security.component/a.json",
     )
+
+
+# -- inputs: what each step's run takes from outside accepted state ---------------------
+
+DESCRIBED = "test.described"
+DESCRIBED_LINE = "test.described-line"
+DOC_HELP = "The advisory document: export it from the scanner and save it under data/."
+
+
+def _reader(instance: Any, root: Path) -> Any:
+    from tests.support.runbooks import readers
+
+    return readers(instance, root)["workspace_file_reader"]
+
+
+def _described(instance: Any) -> None:
+    """The override Procedure again, its path parameter now carrying a description."""
+
+    from tests.support.operation_world import author_line, author_procedure
+    from tests.support.procedures import procedure_spec
+    from tests.test_procedures.test_line_run_parameter_override import override_spec
+
+    raw = override_spec().model_dump(mode="python", by_alias=True)
+    raw["procedure"] = DESCRIBED
+    raw["params"] = {
+        "path": {
+            "type": 'string{max_len: 64, pattern: "^data/[a-z]+[.]json$"}',
+            "description": DOC_HELP,
+        }
+    }
+    author_procedure(instance, procedure_spec(base=raw, reference_text=True), name="described")
+    author_line(
+        instance,
+        name=DESCRIBED_LINE,
+        procedure=DESCRIBED,
+        parameters={"path": "data/doc.json"},
+        max_authority="observe",
+        label="described-line",
+    )
+
+
+def _only_input(preview: RunbookPreview, index: int) -> Any:
+    (item,) = _step(preview, index).inputs
+    return item
+
+
+def test_each_workspace_file_input_says_where_it_reads_and_whether_it_is_there(
+    tmp_path: Path,
+) -> None:
+    from tests.support.runbooks import propose_line
+    from tests.test_procedures.test_claims_value_upsert import CAPTURE
+
+    instance, root = runbook_world(tmp_path)
+    propose_line(instance, "test.linked-line", path="data/link.json")
+    (root / "data" / "link.json").symlink_to(root / "data" / "doc.json")
+    author_runbook(instance, "test.rb", line_steps(SETTLE, FAIL, "test.linked-line", PROPOSE))
+    preview = service_preview_runbook(
+        instance, name="test.rb", workspace_file_reader=_reader(instance, root)
+    )
+    present = _only_input(preview, 1)
+    assert (present.kind, present.location, present.parameter) == (
+        "workspace_file",
+        "data/doc.json",
+        "path",
+    )
+    assert (present.state, present.refused) == ("present", None)
+    assert present.capture_contract == CAPTURE
+    assert present.format == "json"
+    assert present.limits.max_bytes == 262144
+    # The author wrote no description for this parameter.
+    assert present.description is None
+    assert present.model_dump(mode="json")["description"] is None
+    absent = _only_input(preview, 2)
+    assert (absent.location, absent.state, absent.refused) == ("data/missing.json", "absent", None)
+    linked = _only_input(preview, 3)
+    # The reader's own rule: a symbolic link is never read.
+    assert (linked.state, linked.refused) == ("refused", "symlink")
+    assert _only_input(preview, 4).state == "present"
+
+    # No daemon reader (none attached, or construction refused): no_workspace.
+    bare = service_preview_runbook(instance, name="test.rb")
+    assert {item.state for step in bare.steps for item in step.inputs} == {"no_workspace"}
+
+
+def test_presence_refuses_what_the_reader_would_refuse(tmp_path: Path) -> None:
+    """The path classes come from the reader's own rules, before any stat of the file."""
+
+    instance, root = runbook_world(tmp_path)
+    reader = _reader(instance, root)
+    assert reader.presence("data/doc.json") == ("present", None)
+    assert reader.presence("data/missing.json") == ("absent", None)
+    # A file where a directory should be: the reader refuses it as non_regular.
+    assert reader.presence("data/doc.json/inner.json") == ("refused", "non_regular")
+    assert reader.presence(".git/config") == ("refused", "git_metadata")
+    assert reader.presence("../outside.json") == ("refused", "path_grammar")
+    assert reader.presence("data/doc.json", max_bytes=1) == ("refused", "size_budget")
+    (root / "data" / "pair.json").write_text("{}")
+    (root / "data" / "pair-twin.json").hardlink_to(root / "data" / "pair.json")
+    assert reader.presence("data/pair.json") == ("refused", "hardlink")
+    (root / "data" / "sub").mkdir()
+    assert reader.presence("data/sub") == ("refused", "non_regular")
+
+
+def test_presence_stats_each_path_component_and_lists_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    instance, root = runbook_world(tmp_path)
+    (root / "data" / "a" / "b").mkdir(parents=True)
+    (root / "data" / "a" / "b" / "deep.json").write_text("{}")
+    reader = _reader(instance, root)
+    stats: list[str] = []
+    real_stat = os.stat
+
+    def counted(path: Any, *args: Any, **kwargs: Any) -> Any:
+        # Only the reader's own walk stats through a directory descriptor.
+        if "dir_fd" in kwargs:
+            assert kwargs.get("follow_symlinks") is False
+            stats.append(str(path))
+        return real_stat(path, *args, **kwargs)
+
+    def no_listing(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("presence listed a directory")
+
+    monkeypatch.setattr(os, "stat", counted)
+    monkeypatch.setattr(os, "listdir", no_listing)
+    monkeypatch.setattr(os, "scandir", no_listing)
+
+    def no_read(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("presence read a byte of the file")
+
+    monkeypatch.setattr(os, "read", no_read)
+    assert reader.presence("data/a/b/deep.json") == ("present", None)
+    # One no-follow stat per component, nothing else.
+    assert stats == ["data", "a", "b", "deep.json"]
+    stats.clear()
+    assert reader.presence("data/missing.json") == ("absent", None)
+    assert stats == ["data", "missing.json"]
+
+
+def test_an_authored_parameter_description_is_shown_as_written(tmp_path: Path) -> None:
+    from click.testing import CliRunner
+
+    from cruxible_core.cli.commands.playbill import _echo_runbook_preview
+
+    instance, root = runbook_world(tmp_path)
+    _described(instance)
+    author_runbook(instance, "test.rb", line_steps(DESCRIBED_LINE, FAIL))
+    preview = service_preview_runbook(
+        instance, name="test.rb", workspace_file_reader=_reader(instance, root)
+    )
+    described = _only_input(preview, 1)
+    assert (described.parameter, described.description) == ("path", DOC_HELP)
+    assert _only_input(preview, 2).description is None
+
+    import click
+
+    @click.command()
+    def show() -> None:
+        _echo_runbook_preview(preview)
+
+    output = CliRunner().invoke(show).output
+    assert (
+        "      needs  file data/doc.json (json, at most 256 KiB, parameter path): present\n"
+        in output
+    )
+    assert f"        {DOC_HELP}\n" in output
+    assert (
+        "      needs  file data/missing.json (json, at most 256 KiB, parameter path): absent\n"
+        in output
+    )
+
+
+def test_a_step_with_no_external_input_lists_none(tmp_path: Path) -> None:
+    instance, root = runbook_world(tmp_path)
+    author_runbook(instance, "test.rb", [{"line": SETTLE}, {"action": "evidence.sweep"}])
+    preview = service_preview_runbook(
+        instance, name="test.rb", workspace_file_reader=_reader(instance, root)
+    )
+    assert _step(preview, 2).inputs == ()
+    assert preview.model_dump(mode="json")["steps"][1]["inputs"] == []
+
+
+class _Typed:
+    """A projection's typed source over a fixed set of definitions, with no index rows."""
+
+    def __init__(self, sources: dict[str, Any]) -> None:
+        self.sources = sources
+        self.connection = self
+
+    def source(self, identity: str) -> Any:
+        return self.sources.get(identity)
+
+    def execute(self, sql: str, parameters: Any) -> Any:
+        return self
+
+    def fetchall(self) -> list[Any]:
+        return []
+
+
+def _fetch_definition(name: str) -> Any:
+    from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef
+    from cruxible_client.contracts.procedures.models import CallNode, ProjectNode
+    from tests.support.procedures import procedure_definition
+
+    capture = ArtifactNameRef(target=ArtifactIdentity(kind="CaptureContract", name="test.feed"))
+    return procedure_definition(
+        name,
+        slots={
+            "fetch": {
+                "in": {"name": "web.fetch.request", "version": 1, "digest": "sha256:" + "1" * 64},
+                "out": {"name": "web.fetch.result", "version": 1, "digest": "sha256:" + "2" * 64},
+                "effect": "external_read",
+            }
+        },
+        nodes=(
+            CallNode(
+                node_id="catalog",
+                slot="fetch",
+                input={"url": "$params.url", "logical_source": "test.feed"},
+                captures={"capture": capture},
+                as_="catalog",
+                next="result",
+            ),
+            ProjectNode(node_id="result", fields={}, as_="result"),
+        ),
+    )
+
+
+def test_a_fetch_input_names_its_url_and_origins_and_no_presence() -> None:
+    from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
+    from cruxible_core.service.runbook_preview import DefinitionReader, _inputs
+    from tests.core_support._light_capture_support import JSON_DECODING, http_contract
+    from tests.support.lines import line_spec
+
+    contract = http_contract(name="test.feed", max_bytes=4 << 20, decoding=JSON_DECODING)
+    reader = DefinitionReader(_Typed({"CaptureContract:test.feed": contract}))
+    line = line_spec(
+        "test.feed-line",
+        parameters={"url": "https://feeds.example.test/catalog.json"},
+        acquisition={
+            "catalog.capture": LineAcquisitionRule(origins=("https://feeds.example.test",))
+        },
+    )
+    (item,) = _inputs(reader, _fetch_definition("test.feed-procedure"), line, None)
+    assert (item.kind, item.location, item.parameter) == (
+        "fetch",
+        "https://feeds.example.test/catalog.json",
+        "url",
+    )
+    assert item.origins == ("https://feeds.example.test",)
+    assert (item.capture_contract, item.format, item.limits.max_bytes) == (
+        "test.feed",
+        "json",
+        4 << 20,
+    )
+    # A fetch is the run's to make: nothing to stat, so no presence.
+    assert item.state is None
+    assert "state" not in item.model_dump(mode="json")
+    # A Line with no acquisition rule permits any origin.
+    (open_item,) = _inputs(
+        reader,
+        _fetch_definition("test.feed-procedure"),
+        line_spec("test.open", parameters={"url": "https://x.example.test/a.json"}),
+        None,
+    )
+    assert open_item.origins is None

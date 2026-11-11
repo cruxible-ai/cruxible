@@ -30,30 +30,15 @@ from cruxible_client.contracts.workspace_file import (
     ExecutedWorkspaceFileSourceRequestV2,
     SourceReadReceipt,
     WorkspaceFileGlobRequestV1,
+    WorkspaceFilePathClass,
+    WorkspaceFileSourceRequest,
     WorkspaceFileSourceRequestV2,
 )
 
-WorkspaceFilePathClass = Literal[
-    "cloud_no_mounts",
-    "binding",
-    "path_grammar",
-    "git_metadata",
-    "playbill_control",
-    "client_custody",
-    "managed_root",
-    "symlink",
-    "hardlink",
-    "non_regular",
-    "unreadable",
-    "changed_during_read",
-    "missing",
-    "size_budget",
-    # The authored request names no workspace and several roots are authorized.
-    "workspace_unnamed",
-    # The authored request names a workspace no authorized root (or several) is called.
-    "workspace_unknown",
-    # A glob read matches more files than its cap (D-R41).
-    "glob_over_cap",
+#: What a presence check finds at one workspace path: the file, nothing, or a
+#: path the reader would refuse (with its path class).
+WorkspaceFilePresence = tuple[
+    Literal["present", "absent", "refused"], WorkspaceFilePathClass | None
 ]
 
 
@@ -285,6 +270,77 @@ class WorkspaceFileReader:
                 f"the glob matches more than its {request.max_files} files",
             )
         return matches
+
+    def presence(
+        self,
+        relative_path: str,
+        *,
+        workspace: str | None = None,
+        max_bytes: int | None = None,
+    ) -> WorkspaceFilePresence:
+        """Whether a read of ``relative_path`` would find a file, reading none of it.
+
+        The same rules as ``read`` decide: the root the request resolves to,
+        the path grammar, the never-readable paths and managed roots, no
+        symbolic link on the way, read access to the leaf, a regular file
+        with one hard link, and the byte budget when ``max_bytes`` is given.
+        One no-follow stat per path component, walked through directory
+        descriptors, then the leaf opened no-follow from its parent's
+        descriptor and closed: no directory is listed and no byte of the file
+        is read. A refusal of the root itself (no workspace attached, several
+        unnamed) raises as ``resolve`` does.
+        """
+
+        root = self._resolve_root(workspace)
+        try:
+            WorkspaceFileSourceRequest._relative_path(relative_path)
+        except ValueError:
+            return "refused", "path_grammar"
+        parts = tuple(relative_path.split("/"))
+        try:
+            self._deny_path(parts)
+            self._check_managed_root(root.joinpath(*parts))
+        except WorkspaceFileReadRefused as exc:
+            return "refused", exc.path_class
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        leaf_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        descriptors: list[int] = []
+        try:
+            descriptors.append(os.open(root, flags))
+            for component in parts[:-1]:
+                status = os.stat(component, dir_fd=descriptors[-1], follow_symlinks=False)
+                if stat.S_ISLNK(status.st_mode):
+                    return "refused", "symlink"
+                if not stat.S_ISDIR(status.st_mode):
+                    return "refused", "non_regular"
+                descriptors.append(os.open(component, flags, dir_fd=descriptors[-1]))
+            status = os.stat(parts[-1], dir_fd=descriptors[-1], follow_symlinks=False)
+            if stat.S_ISLNK(status.st_mode):
+                return "refused", "symlink"
+            if stat.S_ISREG(status.st_mode) or stat.S_ISDIR(status.st_mode):
+                # Read access is decided as ``read`` decides it: the same
+                # no-follow open from the parent's descriptor, closed at once
+                # with no byte read. Only a file or directory is opened (a
+                # device or FIFO is refused without touching it).
+                os.close(os.open(parts[-1], leaf_flags, dir_fd=descriptors[-1]))
+        except FileNotFoundError:
+            return "absent", None
+        except PermissionError:
+            return "refused", "unreadable"
+        except OSError as exc:
+            if exc.errno == errno.ENOTDIR:
+                return "absent", None
+            return "refused", "symlink" if exc.errno == errno.ELOOP else "non_regular"
+        finally:
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
+        if not stat.S_ISREG(status.st_mode):
+            return "refused", "non_regular"
+        if status.st_nlink != 1:
+            return "refused", "hardlink"
+        if max_bytes is not None and status.st_size > max_bytes:
+            return "refused", "size_budget"
+        return "present", None
 
     def _root_for(self, binding_digest: str) -> Path:
         for root in self._roots:

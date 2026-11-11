@@ -2840,13 +2840,25 @@ def playbill_runbook_run(instance_id: str, name: str) -> RunbookRunResult:
 
 
 def playbill_runbook_preview(instance_id: str, name: str) -> RunbookPreview:
-    """The Runbook's static preview: definitions only, nothing executed (D-R36)."""
+    """The Runbook's static preview: definitions only, nothing executed (D-R36).
+
+    Beyond definitions it stats each workspace file a step reads, with the
+    daemon's own reader: present, absent or refused, never a byte read.
+    """
 
     from cruxible_core.service.runbook_preview import service_preview_runbook
 
     check_permission("cruxible_runbook_preview", instance_id=instance_id)
+    manager = get_playbill_manager()
+    try:
+        workspace_file_reader = manager.workspace_file_reader(instance_id)
+    except WorkspaceFileReadRefused:
+        # No reader: each workspace-file input reports no_workspace.
+        workspace_file_reader = None
     return service_preview_runbook(
-        get_playbill_manager().get(instance_id), name=RunbookRunRequest(runbook=name).runbook
+        manager.get(instance_id),
+        name=RunbookRunRequest(runbook=name).runbook,
+        workspace_file_reader=workspace_file_reader,
     )
 
 
@@ -2882,6 +2894,11 @@ def playbill_next(
     # The caller's principal comes from the authenticated transport, as
     # `whoami` resolves it, so no request can ask for another signer's work.
     actor = _actor_context()
+    try:
+        workspace_file_reader = get_playbill_manager().workspace_file_reader(instance_id)
+    except WorkspaceFileReadRefused:
+        # No reader: no workspace-file row can be checked.
+        workspace_file_reader = None
     result = service_playbill_next(
         get_playbill_manager().get(instance_id),
         request=validate_playbill_next_request(request),
@@ -2894,6 +2911,7 @@ def playbill_next(
         consumers_running=get_playbill_manager().consumer_runner.running,
         caller_rung=get_current_mode().value - 1,
         caller_authoring_refusal=_caller_authoring_refusal(instance_id),
+        workspace_file_reader=workspace_file_reader,
     )
     return contracts.NextResult.model_validate(result.model_dump(mode="json"))
 

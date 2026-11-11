@@ -15,6 +15,7 @@ from cruxible_core.consumers.next import (
     curation,
     evidence,
     facts,
+    line_inputs,
     line_upgrades,
     predictions,
     run_failures,
@@ -38,10 +39,12 @@ _PARTS: dict[
     | curation.CurationPart
     | settled_refusals.SettledRefusalsPart
     | line_upgrades.LineUpgradesPart
+    | line_inputs.LineInputsPart
     | run_failures.RunFailuresPart,
 ] = {
     "facts": facts._PART,
     "line_upgrades": line_upgrades._PART,
+    "line_inputs": line_inputs._PART,
     "evidence": evidence._PART,
     "prediction": predictions._PART,
     "curation": curation._PART,
