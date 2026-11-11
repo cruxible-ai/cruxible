@@ -13,7 +13,9 @@ Line costs its own, its Procedure's, its params Contract's and its
 CaptureContract's bytes at that generation; each changed Runbook its own. It
 never reads all Lines or any history. ``next`` then stats each indexed input
 of an enabled or Runbook-named Line once, with the daemon's own workspace
-reader: no workspace scan, no run history.
+reader: no workspace scan, no run history. Which Lines are eligible is
+read from indexed state first (active enablements, Runbook steps), so a Line
+neither enabled nor a Runbook step costs a ``next`` read nothing.
 """
 
 from __future__ import annotations
@@ -46,6 +48,7 @@ INSERT INTO progress VALUES(1,0);
 CREATE TABLE inputs (line TEXT NOT NULL, node_id TEXT NOT NULL, line_id TEXT NOT NULL,
  relative_path TEXT NOT NULL, workspace TEXT, parameter TEXT, description TEXT,
  max_bytes INTEGER, PRIMARY KEY(line,node_id)) STRICT;
+CREATE INDEX inputs_by_line_id ON inputs(line_id);
 CREATE TABLE runbook_lines (runbook TEXT NOT NULL, line TEXT NOT NULL,
  PRIMARY KEY(runbook,line)) STRICT;
 CREATE INDEX runbook_lines_by_line ON runbook_lines(line);
@@ -165,58 +168,80 @@ def catch_up(instance: Any, *, through: int | None = None) -> None:
         connection.execute("UPDATE progress SET generation=?", (end,))
 
 
-def _enabled(dispatch: Any, line_id: str) -> bool:
-    return (
-        dispatch.execute(
-            "SELECT 1 FROM sessions WHERE line_id=? AND active=1 LIMIT 1", (line_id,)
-        ).fetchone()
-        is not None
-    )
+_CHUNK = 500
+_COLUMNS = "line,node_id,line_id,relative_path,workspace,parameter,description,max_bytes"
+
+
+def _keyed(connection: Any, column: str, keys: list[str]) -> list[tuple[Any, ...]]:
+    """The inputs of the given Lines, one indexed lookup per key, in bounded chunks."""
+
+    rows: list[tuple[Any, ...]] = []
+    for start in range(0, len(keys), _CHUNK):
+        chunk = keys[start : start + _CHUNK]
+        rows.extend(
+            connection.execute(
+                f"SELECT {_COLUMNS} FROM inputs WHERE {column} IN ({','.join('?' for _ in chunk)})",
+                chunk,
+            ).fetchall()
+        )
+    return rows
 
 
 def needed_workspace_inputs(instance: Any) -> tuple[LineWorkspaceInput, ...]:
     """Each indexed input of a Line that is enabled or a step of a live Runbook.
 
-    After a catch-up over new generations: one keyed Runbook lookup and at
-    most one enablement probe per indexed Line.
+    Eligible Lines come first, from indexed state: the active enablements (the
+    dispatch projection's active-session index) and the Lines live Runbooks
+    name (kept by this fold as Runbooks are accepted). Only their inputs are
+    then fetched, by key. A Line neither enabled nor a Runbook step costs
+    nothing here, however many there are; the work is the eligible Lines,
+    in a bounded number of statements.
     """
 
     catch_up(instance)
+    with LineDispatchStore(instance).locked() as dispatch:
+        enabled = sorted(
+            {
+                str(row[0])
+                for row in dispatch.execute(
+                    "SELECT line_id FROM sessions INDEXED BY active_session WHERE active=1"
+                )
+            }
+        )
     with _STATE.open(instance, create=False) as connection:
         if connection is None:
             return ()
-        rows = connection.execute(
-            "SELECT line,node_id,line_id,relative_path,workspace,parameter,description,max_bytes "
-            "FROM inputs ORDER BY line,node_id"
-        ).fetchall()
-        if not rows:
-            return ()
-        in_runbook = {
-            str(line)
-            for line in {row[0] for row in rows}
-            if connection.execute(
-                "SELECT 1 FROM runbook_lines INDEXED BY runbook_lines_by_line WHERE line=? LIMIT 1",
-                (line,),
-            ).fetchone()
-            is not None
-        }
-    found = []
-    with LineDispatchStore(instance).locked() as dispatch:
-        for line, node_id, line_id, path, workspace, parameter, description, max_bytes in rows:
-            if line not in in_runbook and not _enabled(dispatch, str(line_id)):
-                continue
-            found.append(
-                LineWorkspaceInput(
-                    line=str(line),
-                    node_id=str(node_id),
-                    relative_path=str(path),
-                    workspace=None if workspace is None else str(workspace),
-                    parameter=None if parameter is None else str(parameter),
-                    description=None if description is None else str(description),
-                    max_bytes=None if max_bytes is None else int(max_bytes),
-                )
+        named = [
+            str(row[0])
+            for row in connection.execute(
+                "SELECT DISTINCT line FROM runbook_lines INDEXED BY runbook_lines_by_line"
             )
-    return tuple(found)
+        ]
+        rows = {
+            (str(row[0]), str(row[1])): row
+            for row in (*_keyed(connection, "line", named), *_keyed(connection, "line_id", enabled))
+        }
+    return tuple(
+        LineWorkspaceInput(
+            line=str(line),
+            node_id=str(node_id),
+            relative_path=str(path),
+            workspace=None if workspace is None else str(workspace),
+            parameter=None if parameter is None else str(parameter),
+            description=None if description is None else str(description),
+            max_bytes=None if max_bytes is None else int(max_bytes),
+        )
+        for _key, (
+            line,
+            node_id,
+            _line_id,
+            path,
+            workspace,
+            parameter,
+            description,
+            max_bytes,
+        ) in sorted(rows.items())
+    )
 
 
 class LineInputsPart:

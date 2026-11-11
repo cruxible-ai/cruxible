@@ -148,3 +148,138 @@ def test_the_index_folds_only_changed_lines(tmp_path: Path) -> None:
         line_inputs.catch_up(instance)
     # The new Runbook only: no Line, Procedure or Contract is read again.
     assert blobs == ["runbooks/test.rb.json"]
+
+
+def test_an_enabled_line_outside_any_runbook_is_checked_until_disabled(tmp_path: Path) -> None:
+    from cruxible_client.contracts.line_dispatch import LineEnablementPrincipal
+    from cruxible_core.service.procedures.line_dispatch import (
+        service_disable_line,
+        service_enable_line,
+    )
+    from tests.support.operation_world import NOW, actor
+
+    instance, root = runbook_world(tmp_path)
+    _described(instance)
+    (root / "data" / "doc.json").unlink()
+    assert _rows(instance, root) == []
+    service_enable_line(
+        instance,
+        DESCRIBED_LINE,
+        principal=LineEnablementPrincipal.model_validate(
+            {"kind": "principal_claim", "label": "owner"}
+        ),
+        actor=actor(),
+        now=NOW,
+        daemon_id="needed-inputs",
+    )
+    assert [row.subject_identity for row in _rows(instance, root)] == [f"Line:{DESCRIBED_LINE}"]
+    service_disable_line(instance, DESCRIBED_LINE, actor=actor(), now=NOW)
+    assert _rows(instance, root) == []
+
+
+def _measured_read(instance: Any, root: Path) -> dict[str, int]:
+    """One warm read of the needed inputs: SQL statements and VM steps on the index
+    and the dispatch projection, and presence calls."""
+
+    from collections import Counter
+    from contextlib import contextmanager
+
+    from cruxible_core.consumers.next import line_inputs
+    from cruxible_core.documents.workspace_file import WorkspaceFileReader
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+    from cruxible_core.service.discovery.next import _line_input_items
+
+    count: Counter[str] = Counter()
+
+    def statement(_sql: str) -> None:
+        count["sql_statements"] += 1
+
+    def step() -> int:
+        count["sql_vm_steps"] += 1
+        return 0
+
+    def traced(connection: Any) -> Any:
+        connection.set_trace_callback(statement)
+        connection.set_progress_handler(step, 1)
+        return connection
+
+    def untraced(connection: Any) -> None:
+        connection.set_trace_callback(None)
+        connection.set_progress_handler(None, 0)
+
+    real_open = line_inputs._STATE.open
+    real_locked = LineDispatchStore.locked
+    real_presence = WorkspaceFileReader.presence
+
+    @contextmanager
+    def state_open(*args: Any, **kwargs: Any) -> Any:
+        with real_open(*args, **kwargs) as connection:
+            if connection is None:
+                yield None
+                return
+            try:
+                yield traced(connection)
+            finally:
+                untraced(connection)
+
+    @contextmanager
+    def locked(self: Any) -> Any:
+        with real_locked(self) as connection:
+            try:
+                yield traced(connection)
+            finally:
+                untraced(connection)
+
+    def presence(self: Any, *args: Any, **kwargs: Any) -> Any:
+        count["presence_calls"] += 1
+        return real_presence(self, *args, **kwargs)
+
+    # Warm the fold first: a changed definition is fold work, not read work.
+    line_inputs.catch_up(instance)
+    reader = readers(instance, root)["workspace_file_reader"]
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(line_inputs._STATE, "open", state_open)
+        patch.setattr(LineDispatchStore, "locked", locked)
+        patch.setattr(WorkspaceFileReader, "presence", presence)
+        found = _line_input_items(
+            instance, workspace_file_reader=reader, access_profile=_request(instance).access_profile
+        )
+    assert found == ()
+    return dict(count)
+
+
+def test_lines_neither_enabled_nor_runbook_steps_cost_a_read_nothing(tmp_path: Path) -> None:
+    """20 or 2,000 disabled workspace-reading Lines outside any Runbook: the same work."""
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.procedures.line_specs import (
+        line_spec_path,
+        parse_line_spec,
+        render_line_spec,
+    )
+    from tests.core_support._identity_support import accept_tree
+
+    instance, root = runbook_world(tmp_path)
+    author_runbook(instance, "test.rb", line_steps(SETTLE))
+    template_path = line_spec_path(FAIL)
+    template = parse_line_spec(
+        instance.blob_at(instance.accepted_coordinate().git_oid, template_path),
+        path=template_path,
+    )
+    measured: dict[int, dict[str, int]] = {}
+    previous = 0
+    for size in (20, 2000):
+        updates = {}
+        for index in range(previous, size):
+            name = f"test.unrelated-{index:04d}"
+            clone = template.model_copy(
+                update={"identity": ArtifactIdentity(kind="Line", name=name)}
+            )
+            updates[line_spec_path(name)] = render_line_spec(clone)
+        accept_tree(instance, updates, name=f"unrelated-{size}")
+        measured[size] = _measured_read(instance, root)
+        previous = size
+    # One stat for the one Runbook Line, and SQL work flat in the unrelated population.
+    assert measured[20]["presence_calls"] == measured[2000]["presence_calls"] == 1
+    assert measured[2000]["sql_statements"] == measured[20]["sql_statements"]
+    assert measured[2000]["sql_vm_steps"] == measured[20]["sql_vm_steps"]
