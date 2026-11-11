@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import stat
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -132,7 +133,7 @@ class FolderIdentityRefused(WorkspaceError):
         self.error_code = code
         self.path = str(path)
         self.detail = detail
-        remove = f"rm {path}"
+        remove = f"rm {shlex.quote(str(path))}"
         if code == "cruxible.identity.folder_key_unavailable":
             where = "the key" if key is None else f"the key {key}"
             self.repair_commands: tuple[str, ...] = _RECORD_PRINCIPAL

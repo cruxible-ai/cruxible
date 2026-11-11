@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -101,7 +102,7 @@ def test_the_record_is_never_a_symlink_and_never_holds_a_secret(
         with pytest.raises(FolderIdentityRefused) as refused:
             read_folder_identity(folder)
         assert refused.value.error_code == "cruxible.identity.folder_record_invalid"
-        assert refused.value.repair_commands[0] == f"rm {path}"
+        assert refused.value.repair_commands[0] == f"rm {shlex.quote(str(path))}"
 
 
 def test_a_missing_key_directory_or_key_refuses_by_name(folder: Path, tmp_path: Path) -> None:
@@ -172,12 +173,25 @@ def test_each_refusal_names_what_repairs_it(tmp_path: Path) -> None:
         "cruxible.identity.folder_principal_unknown",
     ):
         wrong = FolderIdentityRefused(code, path=record, detail="not held")  # type: ignore[arg-type]
-        assert wrong.repair_commands == (*attach, f"rm {record}")
+        assert wrong.repair_commands == (*attach, f"rm {shlex.quote(str(record))}")
         assert "workspace attach --replace" in str(wrong) and "restore" not in str(wrong)
 
     stale = FolderIdentityRefused(
         "cruxible.identity.folder_record_invalid", path=record, detail="another instance"
     )
-    assert stale.repair_commands == (f"rm {record}", *attach)
+    assert stale.repair_commands == (f"rm {shlex.quote(str(record))}", *attach)
     for refusal in (missing, wrong, stale):
         assert "cruxible init" not in str(refusal)
+
+
+def test_the_removal_repair_quotes_a_record_path_with_spaces(tmp_path: Path) -> None:
+    record = tmp_path / "Project Name" / ".cruxible" / "identity.json"
+    for code in (
+        "cruxible.identity.folder_key_mismatch",
+        "cruxible.identity.folder_principal_unknown",
+        "cruxible.identity.folder_record_invalid",
+    ):
+        refused = FolderIdentityRefused(code, path=record, detail="x")  # type: ignore[arg-type]
+        (remove,) = (item for item in refused.repair_commands if item.startswith("rm "))
+        assert shlex.split(remove) == ["rm", str(record)]
+        assert f"`{remove}`" in str(refused)
