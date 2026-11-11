@@ -263,7 +263,23 @@ def test_an_unusable_record_refuses_with_its_typed_error(
     _rewrite_record(folder, key_dir=record.key_dir)
     record.private_key_path.chmod(0o000)
     try:
-        assert _refusal(instance_id).error_code == "cruxible.identity.folder_key_unavailable"
+        unreadable = _refusal(instance_id)
+        assert unreadable.error_code == "cruxible.identity.folder_key_unavailable"
+        # context show, the diagnostic, still runs and names the refusal and its repair.
+        text = CliRunner().invoke(cli, ["context", "show"])
+        assert text.exit_code == 0, text.output
+        assert "Folder identity: refused (cruxible.identity.folder_key_unavailable)" in text.stdout
+        assert "not readable" in text.stdout
+        for command in unreadable.repair_commands:
+            assert f"Repair: {command}" in text.stdout
+        shown = CliRunner().invoke(cli, ["context", "show", "--json"])
+        assert shown.exit_code == 0, shown.output
+        assert json.loads(shown.stdout)["folder_identity_refusal"] == {
+            "code": "cruxible.identity.folder_key_unavailable",
+            "record_path": unreadable.path,
+            "detail": unreadable.detail,
+            "repair_commands": list(unreadable.repair_commands),
+        }
     finally:
         record.private_key_path.chmod(0o600)
 

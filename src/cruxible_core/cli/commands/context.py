@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import click
 
+from cruxible_client.authoring.folder_identity import FolderIdentityRefused
 from cruxible_core.cli.commands._common import (
     _clear_persisted_cli_context,
     _emit_json,
@@ -48,6 +50,7 @@ def context_show(output_json: bool) -> None:
         "workspace_path": None,
         "reason": "no_instance",
     }
+    identity_refusal: dict[str, object] | None = None
     if obj.get("instance_id"):
         # A diagnostic read never starts a daemon.
         obj["no_autostart_here"] = True
@@ -60,6 +63,15 @@ def context_show(output_json: bool) -> None:
                 "tag": "playbill-daemon-host-registration-status-v1",
                 **observed.model_dump(mode="json", exclude={"tag"}),
                 "reason": None,
+            }
+        except FolderIdentityRefused as refused:
+            # The folder record this CLI acts by cannot be used: say why and how to repair.
+            registration["reason"] = f"registration_unavailable: {refused}"
+            identity_refusal = {
+                "code": refused.error_code,
+                "record_path": refused.path,
+                "detail": refused.detail,
+                "repair_commands": list(refused.repair_commands),
             }
         except Exception as exc:  # noqa: BLE001 - context diagnostics remain locally readable
             registration["reason"] = f"registration_unavailable: {exc}"
@@ -114,6 +126,7 @@ def context_show(output_json: bool) -> None:
         "principal_id": obj.get("principal_id"),
         "principal_source": obj.get("principal_source"),
         "principal_settings": obj.get("principal_settings"),
+        "folder_identity_refusal": identity_refusal,
     }
     if output_json:
         _emit_json(payload)
@@ -134,6 +147,11 @@ def context_show(output_json: bool) -> None:
         click.echo(f"Principal: {payload['principal_id']} ({payload['principal_source']}{where})")
     else:
         click.echo("Principal: <none>")
+    if identity_refusal is not None:
+        click.echo(f"Folder identity: refused ({identity_refusal['code']})")
+        click.echo(f"  Why: {identity_refusal['record_path']}: {identity_refusal['detail']}")
+        for command in cast(list[str], identity_refusal["repair_commands"]):
+            click.echo(f"Repair: {command}")
     attachment = "attached" if payload["workspace_attached"] else "not attached"
     click.echo(f"Workspace: {payload['workspace']} ({payload['workspace_source']}, {attachment})")
     click.echo(f"Workspace config: {config_attachment['status']}")
