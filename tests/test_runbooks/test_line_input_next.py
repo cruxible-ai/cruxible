@@ -117,12 +117,32 @@ def test_next_stats_each_indexed_input_once_and_lists_nothing(
         calls.append(relative_path)
         return real(self, relative_path, **kwargs)
 
-    def no_listing(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("next listed a workspace directory")
+    # Every directory of the workspace tree, by device and inode, so a listing by
+    # path or by descriptor is caught. The instance's own directories (its CAS
+    # pending reconciliation lists them) are not the workspace.
+    instance_root = Path(instance.root).resolve()
+    workspace_dirs: set[tuple[int, int]] = set()
+    for directory, children, _files in os.walk(root):
+        resolved = Path(directory).resolve()
+        if resolved == instance_root or instance_root in resolved.parents:
+            children[:] = []
+            continue
+        status = os.stat(directory)
+        workspace_dirs.add((status.st_dev, status.st_ino))
+
+    def no_workspace_listing(real: Any) -> Any:
+        def listing(path: Any = ".") -> Any:
+            status = os.fstat(path) if isinstance(path, int) else os.stat(path)
+            if (status.st_dev, status.st_ino) in workspace_dirs:
+                raise AssertionError("next listed a workspace directory")
+            return real(path)
+
+        return listing
 
     monkeypatch.setattr(WorkspaceFileReader, "presence", counted)
     reader = readers(instance, root)["workspace_file_reader"]
-    monkeypatch.setattr(os, "scandir", no_listing)
+    monkeypatch.setattr(os, "scandir", no_workspace_listing(os.scandir))
+    monkeypatch.setattr(os, "listdir", no_workspace_listing(os.listdir))
     service_playbill_next(instance, request=_request(instance), workspace_file_reader=reader)
     # One stat per indexed input of a Runbook-named Line: never a scan.
     assert sorted(calls) == ["data/doc.json", "data/missing.json"]
