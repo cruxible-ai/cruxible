@@ -1331,7 +1331,13 @@ def _act_as(
         # A command that turns out to act on another instance (init in a new
         # folder) drops the remembered principal it was handed.
         restore()
-        for key in ("principal_id", "principal_source", "principal_settings"):
+        for key in (
+            "principal_id",
+            "principal_source",
+            "principal_settings",
+            "folder_identity",
+            "folder_identity_refused",
+        ):
             obj.pop(key, None)
 
     os.environ.update(environment)
@@ -1345,42 +1351,37 @@ def _act_as(
 def _load_folder_principal(ctx: click.Context, folder: Path, instance_id: str) -> bool:
     """Act as the bound folder's default principal (`.cruxible/identity.json`), if it names one.
 
-    The MCP server started in this folder acts as the same principal. A record
-    that cannot be used warns and acts as no principal, so every command (a
-    `server stop` included) still runs; a write then refuses as unconfigured.
+    The MCP server started in this folder acts as the same principal, after the
+    same check (`cruxible_client.authoring.folder_identity.check_folder_identity`):
+    key custody, then the daemon's principal registry and the key's public half.
+    That check needs the daemon, so it runs before this command's first daemon
+    call (`_common._get_client`), not here: a command that never calls the daemon
+    (`server stop`, `context show`'s local half) still runs. A record that cannot
+    be used is kept as its typed refusal, raised by that first daemon call.
     """
 
     from cruxible_client.authoring.folder_identity import (
         FolderIdentityRefused,
         folder_identity_path,
-        read_folder_identity,
-        require_folder_key,
+        read_bound_folder_identity,
     )
 
     path = folder_identity_path(folder)
     try:
-        record = read_folder_identity(folder)
-        if record is None:
-            return False
-        if record.instance_id != instance_id:
-            click.echo(
-                f"warning: {path} names instance {record.instance_id}, not this folder's "
-                f"{instance_id}; acting as no principal. Repair: rerun `cruxible init` or "
-                "`cruxible workspace attach` here",
-                err=True,
-            )
-            return False
-        key = require_folder_key(record, path=path)
+        record = read_bound_folder_identity(folder, instance_id=instance_id)
     except FolderIdentityRefused as refused:
-        click.echo(f"warning: {refused}; acting as no principal", err=True)
+        ctx.obj["folder_identity_refused"] = refused
+        return True
+    if record is None:
         return False
     settings = Path(record.key_dir) / "cruxible.env"
     _act_as(
         ctx,
         # The record names a principal and its key only; a token is never loaded from it.
-        {PRINCIPAL_ID_ENV: record.principal_id, PRINCIPAL_KEY_ENV: str(key)},
+        {PRINCIPAL_ID_ENV: record.principal_id, PRINCIPAL_KEY_ENV: str(record.private_key_path)},
         principal_id=record.principal_id,
         source="folder",
         settings_path=str(settings) if settings.is_file() else None,
     )
+    ctx.obj["folder_identity"] = (record, path, folder)
     return True

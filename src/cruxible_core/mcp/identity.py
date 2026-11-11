@@ -22,23 +22,22 @@ from __future__ import annotations
 
 import os
 import threading
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from cruxible_client.authoring.context import ContextResolutionError, resolve_context
 from cruxible_client.authoring.folder_identity import (
     FolderIdentity,
-    FolderIdentityRefused,
     IdentitySource,
     VerifiedFolderIdentity,
+    check_folder_identity,
     folder_identity_path,
     folder_key_custody,
-    read_folder_identity,
-    verify_folder_identity,
+    read_bound_folder_identity,
 )
 from cruxible_client.contracts.principals import PRINCIPAL_ID_ENV, PRINCIPAL_KEY_ENV
-from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.workspace_layout import WorkspaceDirectoryConflict
 from cruxible_client.transport.http import configured_principal_id
 from cruxible_core.errors import ConfigError
@@ -117,20 +116,10 @@ def folder_candidate(environ: Mapping[str, str], *, target: DaemonTarget) -> Fol
             return None
     except (OSError, RuntimeError):
         return None
-    path = folder_identity_path(binding.workspace)
-    record = read_folder_identity(binding.workspace)
+    record = read_bound_folder_identity(binding.workspace, instance_id=binding.instance_id)
     if record is None:
         return None
-    if record.instance_id != binding.instance_id:
-        raise FolderIdentityRefused(
-            "cruxible.identity.folder_record_invalid",
-            path=path,
-            detail=(
-                f"it names instance {record.instance_id}, but this folder's binding selects "
-                f"{binding.instance_id}"
-            ),
-        )
-    return FolderCandidate(record=record, path=path)
+    return FolderCandidate(record=record, path=folder_identity_path(binding.workspace))
 
 
 def local_identity(
@@ -163,7 +152,7 @@ def verified_folder_identity(
     candidate: FolderCandidate,
     *,
     target: DaemonTarget,
-    principals: Callable[[str], Sequence[PrincipalRecord]],
+    client: Any,
     environ: Mapping[str, str] | None = None,
 ) -> VerifiedFolderIdentity:
     """Check the key's custody on every call; its public-key match once per custody state.
@@ -180,10 +169,10 @@ def verified_folder_identity(
         cached = _verified.get(cache_key)
     if cached is not None:
         return cached
-    verified = verify_folder_identity(
+    verified = check_folder_identity(
         candidate.record,
         path=candidate.path,
-        principals=principals(candidate.record.instance_id),
+        client=client,
         forbidden_roots=mcp_custody_forbidden_roots(environ),
     )
     with _verified_lock:

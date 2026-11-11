@@ -231,9 +231,17 @@ def _rewrite_record(folder: Path, **changes: str) -> None:
 
 
 def _refusal(instance_id: str) -> FolderIdentityRefused:
+    """The MCP server's refusal, and the CLI's in the same folder, which must agree."""
+
     with pytest.raises(FolderIdentityRefused) as refused:
         handlers.handle_playbill_whoami(instance_id)
     assert "cruxible init" in str(refused.value)
+    # The CLI with no remembered principal runs the same check before its first
+    # daemon call and refuses with the same code and repair.
+    result = CliRunner().invoke(cli, ["whoami", "--json"])
+    assert result.exit_code == 1, result.output
+    assert f"{refused.value.error_code}:" in result.stderr
+    assert "Repair:" in result.stderr
     return refused.value
 
 
@@ -242,11 +250,20 @@ def test_an_unusable_record_refuses_with_its_typed_error(
 ) -> None:
     folder = world["folder"]
     instance_id = _init(world, folder)["instance_id"]
+    _forget_cli_context(world)
     record = read_folder_identity(folder)
     assert record is not None
 
     _rewrite_record(folder, key_dir=str(tmp_path / "gone"))
     assert _refusal(instance_id).error_code == "cruxible.identity.folder_key_unavailable"
+
+    # A key this process cannot read (custody is checked by opening it).
+    _rewrite_record(folder, key_dir=record.key_dir)
+    record.private_key_path.chmod(0o000)
+    try:
+        assert _refusal(instance_id).error_code == "cruxible.identity.folder_key_unavailable"
+    finally:
+        record.private_key_path.chmod(0o600)
 
     stranger = tmp_path / "stranger-keys"
     generate_client_principal_key(
@@ -254,6 +271,17 @@ def test_an_unusable_record_refuses_with_its_typed_error(
     )
     _rewrite_record(folder, key_dir=str(stranger))
     assert _refusal(instance_id).error_code == "cruxible.identity.folder_key_mismatch"
+
+    # Lifecycle and diagnostic commands still run: init reports the refusal and
+    # changes nothing; context show reports it in place of the daemon's answer.
+    reinit = CliRunner().invoke(cli, ["init"])
+    assert reinit.exit_code == 0, reinit.output
+    assert "cruxible.identity.folder_key_mismatch:" in reinit.stderr
+    assert "already initialized" in reinit.stdout
+    shown = CliRunner().invoke(cli, ["context", "show", "--json"])
+    assert shown.exit_code == 0, shown.output
+    reason = json.loads(shown.stdout)["daemon_host_registration"]["reason"]
+    assert "cruxible.identity.folder_key_mismatch" in reason
 
     unknown = tmp_path / "unknown-keys"
     generate_client_principal_key(
@@ -265,13 +293,9 @@ def test_an_unusable_record_refuses_with_its_typed_error(
     _rewrite_record(folder, principal_id="owner", key_dir=record.key_dir, instance_id="inst_x")
     assert _refusal(instance_id).error_code == "cruxible.identity.folder_record_invalid"
 
-    # The CLI in the folder warns and acts as no principal instead (a broken
-    # record never blocks `server stop`).
-    _forget_cli_context(world)
-    result = CliRunner().invoke(cli, ["whoami", "--json"])
-    assert result.exit_code == 0, result.output
-    assert "names instance inst_x" in result.stderr
-    assert json.loads(result.stdout)["actor_id"] == "operator"
+    # The record restored, the CLI acts as the owner again.
+    _rewrite_record(folder, instance_id=instance_id)
+    assert _json("whoami")["actor_id"] == "owner"
 
 
 def test_a_custody_change_mid_session_refuses_the_next_call(world: dict[str, Path]) -> None:

@@ -21,7 +21,6 @@ from cruxible_client._safe_files import ContainmentError, HeldRoot
 from cruxible_client.artifacts import unpack_artifact
 from cruxible_client.authoring.attestations import (
     local_attestation_signer_from_environment,
-    principal_records,
 )
 from cruxible_client.authoring.bind import bind_catalogued_selection_input
 from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
@@ -33,7 +32,6 @@ from cruxible_client.authoring.files import (
     mapped_root_aliases,
 )
 from cruxible_client.authoring.folder_identity import (
-    FolderIdentityRefused,
     VerifiedFolderIdentity,
 )
 from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
@@ -112,7 +110,6 @@ from cruxible_client.contracts.write import (
     WriteOutcome,
     WriteRequest,
 )
-from cruxible_client.errors import CoreError as ClientCoreError
 from cruxible_client.errors import DaemonOperationScopeError as ClientDaemonOperationScopeError
 from cruxible_client.errors import ServerUnreachableError
 from cruxible_client.kits import (
@@ -236,20 +233,7 @@ def _identity_and_client() -> tuple[McpIdentity, CruxibleClient]:
         client = _client_cache
     if candidate is None:
         return McpIdentity(source=source, principal_id=principal_id), client
-    try:
-        verified = verified_folder_identity(
-            candidate,
-            target=target,
-            principals=lambda instance_id: principal_records(client, instance_id),
-        )
-    except (FolderIdentityRefused, ServerUnreachableError):
-        raise
-    except ClientCoreError as exc:
-        raise FolderIdentityRefused(
-            "cruxible.identity.folder_principal_unknown",
-            path=candidate.path,
-            detail=f"the daemon's principal registry could not be read ({exc})",
-        ) from exc
+    verified = verified_folder_identity(candidate, target=target, client=client)
     return McpIdentity(source="folder", principal_id=principal_id, folder=verified), client
 
 

@@ -31,7 +31,7 @@ import stat
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
@@ -216,6 +216,22 @@ def write_folder_identity(
     return path, "written"
 
 
+def read_bound_folder_identity(root: Path, *, instance_id: str) -> FolderIdentity | None:
+    """The record at a bound workspace ``root``; it must name the binding's instance."""
+
+    record = read_folder_identity(root)
+    if record is not None and record.instance_id != instance_id:
+        raise FolderIdentityRefused(
+            "cruxible.identity.folder_record_invalid",
+            path=folder_identity_path(root),
+            detail=(
+                f"it names instance {record.instance_id}, but this folder's binding selects "
+                f"{instance_id}"
+            ),
+        )
+    return record
+
+
 def folder_key_custody(identity: FolderIdentity, *, path: Path) -> tuple[int, ...]:
     """Check the key's current custody with one ``lstat`` each of it and its directory.
 
@@ -345,6 +361,41 @@ def verify_folder_identity(
     return VerifiedFolderIdentity(identity=identity, record_path=path, principal=principal)
 
 
+def check_folder_identity(
+    identity: FolderIdentity,
+    *,
+    path: Path,
+    client: Any,
+    forbidden_roots: Sequence[Path],
+) -> VerifiedFolderIdentity:
+    """The one check the MCP server and the CLI run before acting as the folder's principal.
+
+    The key's custody first (no daemon read), then the daemon's principal
+    registry for the record's instance through ``client``, then
+    `verify_folder_identity`. A registry that cannot be read refuses
+    (``cruxible.identity.folder_principal_unknown``); an unreachable daemon
+    propagates as itself.
+    """
+
+    from cruxible_client.authoring.attestations import principal_records
+    from cruxible_client.errors import CoreError, ServerUnreachableError
+
+    folder_key_custody(identity, path=path)
+    try:
+        principals = principal_records(client, identity.instance_id)
+    except ServerUnreachableError:
+        raise
+    except CoreError as exc:
+        raise FolderIdentityRefused(
+            "cruxible.identity.folder_principal_unknown",
+            path=path,
+            detail=f"the daemon's principal registry could not be read ({exc})",
+        ) from exc
+    return verify_folder_identity(
+        identity, path=path, principals=principals, forbidden_roots=forbidden_roots
+    )
+
+
 __all__ = [
     "FOLDER_IDENTITY_PATH",
     "FOLDER_IDENTITY_TAG",
@@ -353,8 +404,10 @@ __all__ = [
     "FolderIdentityRefused",
     "IdentitySource",
     "VerifiedFolderIdentity",
+    "check_folder_identity",
     "folder_identity_path",
     "folder_key_custody",
+    "read_bound_folder_identity",
     "read_folder_identity",
     "require_folder_key",
     "verify_folder_identity",

@@ -188,6 +188,7 @@ from cruxible_core.cli.commands._common import (
     _remember_principal_settings,
     _require_instance_id,
     _root_ctx_obj,
+    _set_aside_folder_identity,
     _transport_target,
     brief_option,
     change_control_options,
@@ -1079,6 +1080,8 @@ def init_playbill(
         raise click.UsageError("--require-independent-approval requires --reviewer-key-dir")
     if not ensure_cli_daemon():
         raise click.UsageError(no_daemon_message("cruxible init"))
+    # Init repairs a folder, so its record's refusal is reported, not raised.
+    folder_refusal = _set_aside_folder_identity()
     git_workspace = _creation_workspace(workspace_path, fallback_to_start=True).workspace_root
     transport = _transport_target(_root_ctx_obj())
     if transport is None:  # pragma: no cover - guarded by _get_client above
@@ -1090,6 +1093,8 @@ def init_playbill(
     if selected_instance is not None and instance_source == "workspace":
         initialized_here = _initialized_host(str(selected_instance))
         if initialized_here is not None:
+            if folder_refusal is not None:
+                click.echo(f"warning: {folder_refusal}", err=True)
             _echo_already_initialized(
                 initialized_here,
                 workspace=git_workspace,

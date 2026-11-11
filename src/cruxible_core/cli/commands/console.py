@@ -11,6 +11,7 @@ import click
 import httpx
 
 from cruxible_core.cli.commands._common import (
+    _get_client,
     _root_ctx_obj,
     ensure_cli_daemon,
     no_daemon_message,
@@ -156,6 +157,9 @@ def console_cmd(port: int, no_open: bool, instance: str | None) -> None:
     # The daemon the CLI context names, else the local one, started if need be.
     ensure_cli_daemon()
     obj = _root_ctx_obj()
+    if obj.get("folder_identity") is not None or obj.get("folder_identity_refused") is not None:
+        # Reading as the folder's principal takes the check every daemon call does.
+        _get_client()
     upstream = _upstream(obj)
     instance_id = instance or obj.get("instance_id")
     if not instance_id:
