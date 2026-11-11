@@ -159,8 +159,8 @@ def test_pyproject_declares_expected_aliases() -> None:
     """
     scripts = _declared_scripts()
     assert scripts == {
-        "cruxible": "cruxible_core.cli.main:cli",
-        "cruxible-mcp": "cruxible_core.mcp.server:main",
+        "cruxible": "cruxible_core.entrypoints:cli",
+        "cruxible-mcp": "cruxible_core.entrypoints:mcp",
     }
 
 

@@ -88,8 +88,9 @@ dev = [
 ]
 
 [project.scripts]
-cruxible = "cruxible_core.cli.main:cli"
-cruxible-mcp = "cruxible_core.mcp.server:main"
+# Thin launchers: they refuse native Windows before the POSIX-only CLI/MCP modules import.
+cruxible = "cruxible_core.entrypoints:cli"
+cruxible-mcp = "cruxible_core.entrypoints:mcp"
 # The daemon launches only via `cruxible server start`; there is no separate
 # `cruxible-server` console-script (removed in wi-server-cli-verb-consistency).
 
