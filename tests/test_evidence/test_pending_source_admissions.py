@@ -19,6 +19,7 @@ from cruxible_core.service.evidence import file_catalog
 from tests.core_support._candidate_support import submit_subject_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal, subject_shell
 from tests.core_support._support import initialize_local
+from tests.support.evidence_files import remove_later
 from tests.test_ledger.test_activation import _sign
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance
 from tests.test_service.test_playbill_file_catalog import service_compile_playbill_files
@@ -28,7 +29,7 @@ def _orphan(instance, proposal_id: str) -> None:  # type: ignore[no-untyped-def]
     # An evaluation can survive an interrupted submission before admission,
     # the publication commit point; drop the admission to reproduce that.
     evidence = instance.proposal_evidence()
-    (evidence.proposals / f"{proposal_id.removeprefix('sha256:')}.json").unlink()
+    remove_later(evidence.proposals / f"{proposal_id.removeprefix('sha256:')}.json")
 
 
 @pytest.mark.parametrize(

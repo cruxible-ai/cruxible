@@ -20,7 +20,7 @@ WorkspaceFilePathClass = Literal[
     "binding",
     "path_grammar",
     "git_metadata",
-    "playbill_control",
+    "cruxible_control",
     "client_custody",
     "managed_root",
     "symlink",

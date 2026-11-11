@@ -176,6 +176,7 @@ def test_the_runtime_passes_whoamis_refusal_less_the_tier(
                 lane_status=lambda: ("available", None, None)
             ),
             consumer_runner=SimpleNamespace(running=False),
+            workspace_file_reader=lambda _i: None,
         ),
     )
 

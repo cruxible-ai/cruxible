@@ -364,7 +364,7 @@ class WorkspaceFileReader:
             raise WorkspaceFileReadRefused("git_metadata", "Git metadata is never readable")
         if any(part == ".cruxible" for part in folded):
             raise WorkspaceFileReadRefused(
-                "playbill_control", "Cruxible control paths are never readable"
+                "cruxible_control", "Cruxible control paths are never readable"
             )
         leaf = folded[-1]
         if (

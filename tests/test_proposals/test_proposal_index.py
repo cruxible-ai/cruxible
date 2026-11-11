@@ -15,6 +15,7 @@ from cruxible_core.service.authoring.documents import service_inspect_playbill_p
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
 from tests.core_support._proposal_note_oracle import build_proposal_note_oracle
 from tests.core_support._support import initialize_local
+from tests.support.evidence_files import remove_later
 from tests.test_proposals.test_grouped_proposal_notes import _submit as _submit_once
 
 
@@ -174,7 +175,7 @@ def test_duplicate_evaluation_foreign_names_and_conflicting_admissions(tmp_path)
     duplicate.write_bytes(evaluation.read_bytes())
     with pytest.raises(ProposalIntegrityError, match="multiple evaluations"):
         evidence.read_evaluation(first.admission.proposal_id)
-    duplicate.unlink()
+    remove_later(duplicate)
     renamed = evidence.evaluations / "legacy.json"
     evaluation.rename(renamed)
     assert evidence.read_evaluation(first.admission.proposal_id) == first.evaluation
@@ -196,7 +197,7 @@ def test_missing_evaluation_is_not_a_refused_list_entry(tmp_path):
     instance, _ = initialize_local(tmp_path)
     first = _submit(instance, "one")
     evidence = instance.proposal_evidence()
-    next(evidence.evaluations.glob("*.json")).unlink()
+    remove_later(next(evidence.evaluations.glob("*.json")))
     entry = service_list_playbill_proposals(instance).entries[0]
     assert entry.status == "incomplete"
     assert entry.verdict is None
@@ -394,8 +395,8 @@ def test_split_source_completion_refreshes_missing_evaluation_and_candidate(tmp_
     instance, _ = initialize_local(tmp_path)
     proposal = _submit(instance, "one")
     evidence = instance.proposal_evidence()
-    next(evidence.evaluations.glob("*.json")).unlink()
-    next(evidence.candidates.glob("*.json")).unlink()
+    remove_later(next(evidence.evaluations.glob("*.json")))
+    remove_later(next(evidence.candidates.glob("*.json")))
     assert service_list_playbill_proposals(instance).entries[0].incomplete_reasons == (
         "missing_evaluation",
     )

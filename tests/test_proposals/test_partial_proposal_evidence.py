@@ -9,6 +9,7 @@ from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecord
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
 from tests.core_support._support import initialize_local
+from tests.support.evidence_files import remove_later
 from tests.test_proposals.test_grouped_proposal_notes import _submit
 
 
@@ -42,7 +43,7 @@ def test_orphan_withdrawal_survives_rebuild_restart_and_later_admission(tmp_path
     )
     evidence.write_withdrawal(withdrawal)
     evidence.index.locate(evidence, withdrawal.proposal_id)
-    (evidence.proposals / f"{withdrawal.proposal_id.removeprefix('sha256:')}.json").unlink()
+    remove_later(evidence.proposals / f"{withdrawal.proposal_id.removeprefix('sha256:')}.json")
 
     entry = service_list_playbill_proposals(instance).entries[0]
     assert entry.status == "incomplete"
@@ -74,7 +75,7 @@ def test_incomplete_entry_does_not_hide_healthy_rows_or_invent_verdict(tmp_path,
         else evidence.candidates
         / f"{partial.candidate.candidate_digest.removeprefix('sha256:')}.json"
     )
-    path.unlink()
+    remove_later(path)
 
     result = service_list_playbill_proposals(instance)
     by_id = {entry.proposal_id: entry for entry in result.entries}
@@ -121,7 +122,7 @@ def test_one_proposal_status_reports_missing_evidence_as_incomplete(tmp_path, mi
             evidence.candidates
             / f"{partial.candidate.candidate_digest.removeprefix('sha256:')}.json"
         )
-    path.unlink()
+    remove_later(path)
 
     (listed,) = [
         entry

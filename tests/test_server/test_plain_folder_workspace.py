@@ -144,7 +144,7 @@ def test_the_daemon_reader_reads_a_plain_folder_with_every_containment_rule(
     (folder / "hard.md").hardlink_to(folder / "docs" / "notes.md")
     for relative, path_class in (
         (".git/config", "git_metadata"),
-        (".cruxible/coverage.json", "playbill_control"),
+        (".cruxible/coverage.json", "cruxible_control"),
         ("owner.ed25519", "client_custody"),
         ("linked.md", "symlink"),
         ("hard.md", "hardlink"),

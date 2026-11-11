@@ -132,7 +132,7 @@ def test_prepared_generation_survives_external_repack_until_ref_publication(ledg
     assert ledger.read_tree(generation) == {"one": b"changed"}
 
 
-def test_request_stages_one_pair_and_flushes_only_at_acceptance(ledger, monkeypatch):
+def test_request_stages_one_pair_and_flushes_only_at_acceptance(ledger, monkeypatch, request):
     import os
 
     base = ledger.create_signed_genesis({"one": b"one"}, timestamp="2026-10-15T12:00:00Z")
@@ -140,11 +140,18 @@ def test_request_stages_one_pair_and_flushes_only_at_acceptance(ledger, monkeypa
     directory = ledger.path / "objects/pack"
     before = set(directory.glob("*.pack"))
     synced = []
+    # Synced files are named by inode. Acceptance syncs and then removes its
+    # in-flight marker before writing the pack pair, and a filesystem that
+    # reuses inodes (ext4) can hand the marker's number to the new index.
+    # Holding each synced file open keeps its inode from being reused.
+    held: list[int] = []
+    request.addfinalizer(lambda: [os.close(fd) for fd in held])
     real_fsync = os.fsync
 
     def observe(fd):
         st = os.fstat(fd)
         synced.append((st.st_dev, st.st_ino))
+        held.append(os.dup(fd))
         return real_fsync(fd)
 
     def sync_count(path):
