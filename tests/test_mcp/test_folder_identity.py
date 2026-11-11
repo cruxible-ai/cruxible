@@ -331,6 +331,25 @@ def test_an_unusable_record_refuses_with_its_typed_error(
     assert _json("whoami")["actor_id"] == "owner"
 
 
+def test_init_of_another_folder_acts_as_its_new_owner_not_this_folders(
+    world: dict[str, Path],
+) -> None:
+    # Folder A acts by its record (no remembered principal); B is a fresh folder.
+    first = _init(world, world["folder"], principal_id="owner-a")["instance_id"]
+    _forget_cli_context(world)
+    assert _json("whoami")["actor_id"] == "owner-a"
+
+    other = world["other"]
+    created = _json("init", "--workspace", str(other), "--principal-id", "owner-b")
+    assert created["instance_id"] != first
+    record = read_folder_identity(other)
+    assert record is not None
+    assert (record.instance_id, record.principal_id) == (created["instance_id"], "owner-b")
+    # A keeps its own owner.
+    own = read_folder_identity(world["folder"])
+    assert own is not None and (own.instance_id, own.principal_id) == (first, "owner-a")
+
+
 def test_a_custody_change_mid_session_refuses_the_next_call(world: dict[str, Path]) -> None:
     instance_id = _init(world, world["folder"])["instance_id"]
     record = read_folder_identity(world["folder"])

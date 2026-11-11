@@ -1080,14 +1080,15 @@ def init_playbill(
         raise click.UsageError("--require-independent-approval requires --reviewer-key-dir")
     if not ensure_cli_daemon():
         raise click.UsageError(no_daemon_message("cruxible init"))
-    # Init repairs a folder, so its record's refusal is reported, not raised.
-    folder_refusal = _set_aside_folder_identity()
     git_workspace = _creation_workspace(workspace_path, fallback_to_start=True).workspace_root
     transport = _transport_target(_root_ctx_obj())
     if transport is None:  # pragma: no cover - guarded by _get_client above
         raise click.UsageError("Server mode is required for cruxible init")
     if git_workspace is not None:
         transport = _target_init_folder(git_workspace) or transport
+    # Only once the target folder is resolved (retargeting drops another folder's
+    # record): init repairs a folder, so its record's refusal is reported, not raised.
+    folder_refusal = _set_aside_folder_identity()
     selected_instance = _root_ctx_obj().get("instance_id")
     instance_source = str(_root_ctx_obj().get("target_instance_source") or "")
     if selected_instance is not None and instance_source == "workspace":

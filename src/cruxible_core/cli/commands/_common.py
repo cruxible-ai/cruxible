@@ -423,7 +423,12 @@ def _get_client() -> CruxibleClient | None:
         raise refused
     client = obj.get("_client")
     if isinstance(client, CruxibleClient):
-        return client
+        if obj.get("_client_principal_id") == obj.get("principal_id"):
+            return client
+        # The command now acts as another principal (init retargeted to another
+        # folder): a client never carries the previous one's identity.
+        client.close()
+        obj.pop("_client", None)
     client = CruxibleClient(
         base_url=server_url,
         socket_path=server_socket,
@@ -437,6 +442,7 @@ def _get_client() -> CruxibleClient | None:
         client.close()
         raise
     obj["_client"] = client
+    obj["_client_principal_id"] = obj.get("principal_id")
     return client
 
 
