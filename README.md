@@ -50,6 +50,8 @@ Cruxible validates and settles deterministically.
 
 Requirements: Python 3.11+ and Git.
 
+Supported: Linux x86-64 and macOS on Apple silicon; on Windows, use WSL2.
+
 ~~~bash
 pip install cruxible        # or: uv tool install cruxible
 ~~~

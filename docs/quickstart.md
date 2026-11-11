@@ -11,6 +11,12 @@ and `epss.empiricalsecurity.com`. If the project has JavaScript dependencies,
 you'll also need Node.js with `npm`: the intake writes their SBOM with
 `npx @cyclonedx/cdxgen`.
 
+## Supported platforms
+
+Supported: Linux x86-64 and macOS on Apple silicon; on Windows, use WSL2.
+Cruxible does not run natively on Windows yet: install Python and Cruxible
+inside your WSL2 Linux distribution and run every command there.
+
 ## 1. Install and start Cruxible
 
 ~~~bash
