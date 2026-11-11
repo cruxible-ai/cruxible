@@ -934,7 +934,7 @@ def test_a_line_occurrence_reads_the_workspace_file_through_the_same_reader(
     [
         ("../outside.json", RELATIVE_PATH, "path_grammar"),
         (".GIT/config", RELATIVE_PATH, "git_metadata"),
-        ("Data/.CruxIble/keys.json", RELATIVE_PATH, "playbill_control"),
+        ("Data/.CruxIble/keys.json", RELATIVE_PATH, "cruxible_control"),
     ],
 )
 def test_the_line_lane_refuses_the_same_uncontained_paths(
@@ -1081,7 +1081,7 @@ def test_a_case_flipped_git_metadata_path_refuses_typed(tmp_path: Path) -> None:
     assert invoker.spawn_calls == 0
 
 
-def test_a_case_flipped_playbill_control_path_refuses_typed(tmp_path: Path) -> None:
+def test_a_case_flipped_cruxible_control_path_refuses_typed(tmp_path: Path) -> None:
     """The same folding, on a denied name that is not the leading component."""
 
     instance, _owner, _procedure, root, _policy_artifact = _world(
@@ -1090,7 +1090,7 @@ def test_a_case_flipped_playbill_control_path_refuses_typed(tmp_path: Path) -> N
 
     state, invoker = _run(instance, root)
 
-    assert _read_refusal(state).details["path_class"] == "playbill_control"
+    assert _read_refusal(state).details["path_class"] == "cruxible_control"
     assert invoker.spawn_calls == 0
 
 
