@@ -24,7 +24,6 @@ from cruxible_client.contracts.authoring.inputs import (
 )
 from cruxible_client.contracts.capabilities import (
     Capability,
-    CapabilityFormatError,
     CapabilityRef,
     capability_digest,
     capability_path,
@@ -510,15 +509,6 @@ def test_a_fresh_instance_counts_no_capabilities(tmp_path: Path) -> None:
 # -- kits carry capabilities -------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=CapabilityFormatError,
-    reason=(
-        "owner: coordinator (service/kits.py is outside slice 1): a kit build gives every "
-        "non-Contract definition a snapshot lifecycle; capabilities must keep their bytes "
-        "like Contracts (patch in the slice 1 report)"
-    ),
-)
 def test_a_kit_that_owns_a_capability_builds_adds_and_keeps_it(tmp_path: Path) -> None:
     from cruxible_client.contracts.kits import KitAddRequest, KitBuildRequest, KitRemoveRequest
     from cruxible_core.service.kits import build_kit, service_add_kit, service_remove_kit
