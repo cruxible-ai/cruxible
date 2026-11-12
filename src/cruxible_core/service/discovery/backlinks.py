@@ -321,6 +321,36 @@ def service_section_backlinks(
         )
 
 
+def card_guidance(
+    connection: sqlite3.Connection, definition: str, *, limit: int
+) -> tuple[tuple[tuple[str, str | None], ...], int | None]:
+    """The first ``limit`` Documents that ``guides`` one definition, and the total if cut.
+
+    One range of the backlink primary key (target, relation) bounded by
+    ``limit + 1`` rows, each Document's title by its key; only a cut list
+    counts the rest, over the same range of this one target.
+    """
+
+    rows = connection.execute(
+        "SELECT b.source_identity,d.title FROM backlinks b "
+        "LEFT JOIN documents d ON d.identity=b.source_identity "
+        "WHERE b.target=? AND b.relation='guides' ORDER BY b.source_identity LIMIT ?",
+        (definition, limit + 1),
+    ).fetchall()
+    total = None
+    if len(rows) > limit:
+        total = int(
+            connection.execute(
+                "SELECT count(*) FROM backlinks WHERE target=? AND relation='guides'",
+                (definition,),
+            ).fetchone()[0]
+        )
+    shown = tuple(
+        (str(document), None if title is None else str(title)) for document, title in rows[:limit]
+    )
+    return shown, total
+
+
 #: Definitions one review asks for guidance about, and Documents shown per definition.
 REVIEW_GUIDANCE_MAX_DEFINITIONS = 20
 REVIEW_GUIDANCE_PER_DEFINITION = 5
@@ -471,6 +501,7 @@ def service_playbill_backlinks(
 
 __all__ = [
     "backlinks_of_resolved",
+    "card_guidance",
     "claim_type_identity",
     "resolve_backlink_target",
     "review_guidance",

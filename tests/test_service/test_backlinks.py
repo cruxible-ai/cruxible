@@ -389,3 +389,131 @@ def test_default_mcp_profile_reaches_backlinks_through_get(
     assert "cruxible_backlinks" not in tools
     detail = tools["cruxible_get"].inputSchema["properties"]["detail"]
     assert "backlinks" in detail["enum"]
+
+
+# -- guidance and links on the get cards (D-R17: shown as backlinks) ------------
+
+
+def _card(instance, ref: str, surface: str = "mcp"):
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    return service_playbill_get(
+        instance,
+        request=GetRequest(ref=ref, surface=surface),  # type: ignore[arg-type]
+        access=BodyAccessContext(principal_id="reader", can_read_body=True),
+    ).card
+
+
+def _guides(target: str) -> DocumentLink:
+    return DocumentLink(relation="guides", target_identity=target)
+
+
+#: The backlinks read a cut guidance list names, per surface.
+_MORE_GUIDANCE = {
+    "cli": "cruxible backlinks {ref}",
+    "mcp": 'cruxible_get(ref="{ref}", detail="backlinks")',
+    "sdk": 'cx.backlinks("{ref}")',
+}
+
+
+def _assert_guidance_cut(instance, ref: str, shown: list[str], total: int) -> None:
+    for surface, spelling in _MORE_GUIDANCE.items():
+        card = _card(instance, ref, surface)
+        assert [item.document for item in card.guidance] == shown
+        assert card.guidance_total == total
+        assert spelling.format(ref=ref) in card.next
+
+
+def test_a_claim_type_card_lists_the_documents_that_guide_it_bounded(tmp_path: Path) -> None:
+    from cruxible_client.contracts.get_reads import GET_CARD_LINKS, GetClaimTypeCard
+
+    instance, _ = seed_write_surface(tmp_path)
+    ref = f"ClaimType:{STATUS}"
+    bare = _card(instance, ref)
+    assert isinstance(bare, GetClaimTypeCard)
+    # No guidance: absent from the card, and no next names backlinks.
+    assert bare.guidance == () and bare.guidance_total is None
+    dumped = bare.model_dump(mode="json")
+    assert "guidance" not in dumped and "guidance_total" not in dumped
+    assert not any("backlinks" in step for step in bare.next)
+
+    propose_document(instance, "status-review", _guides(ref))
+    card = _card(instance, ref)
+    assert [(item.document, item.title) for item in card.guidance] == [
+        ("Document:status-review", "Guidance status-review")
+    ]
+    assert card.guidance_total is None and not any("backlinks" in step for step in card.next)
+
+    names = [f"status-review-{index}" for index in range(GET_CARD_LINKS)]
+    for name in names:
+        propose_document(instance, name, _guides(ref))
+    every = sorted(["status-review", *names], key=lambda item: f"document:{item}".encode())
+    _assert_guidance_cut(
+        instance, ref, [f"Document:{name}" for name in every[:GET_CARD_LINKS]], len(every)
+    )
+
+
+def test_a_document_card_lists_its_links_bounded(tmp_path: Path) -> None:
+    from cruxible_client.contracts.get_reads import GET_CARD_LINKS, GetDocumentCard
+
+    instance, _ = seed_write_surface(tmp_path)
+    propose_document(instance, "plain")
+    plain = _card(instance, "Document:plain")
+    assert isinstance(plain, GetDocumentCard)
+    assert plain.links == () and plain.links_total is None
+    dumped = plain.model_dump(mode="json")
+    assert "links" not in dumped and "links_total" not in dumped
+
+    propose_document(
+        instance,
+        "status-review",
+        _guides(f"ClaimType:{STATUS}"),
+        DocumentLink(relation="about", target_identity=f"Subject:{KIND}/wi-1"),
+    )
+    card = _card(instance, "Document:status-review")
+    assert [(link.relation, link.target) for link in card.links] == [
+        ("about", f"Subject:{KIND}/wi-1"),
+        ("guides", f"ClaimType:{STATUS}"),
+    ]
+    assert card.links_total is None and not any('"proof"' in step for step in card.next)
+
+    labels = [
+        DocumentLink(relation="see-also", target_identity=f"document:other-{index}")
+        for index in range(GET_CARD_LINKS + 1)
+    ]
+    propose_document(instance, "many", *labels)
+    many = _card(instance, "Document:many")
+    assert [link.target for link in many.links] == [
+        link.target_identity for link in labels[:GET_CARD_LINKS]
+    ]
+    assert many.links_total == GET_CARD_LINKS + 1
+    assert 'cruxible_get(ref="Document:many", detail="proof")' in many.next
+
+
+def test_a_procedure_card_lists_the_documents_that_guide_it_bounded(tmp_path: Path) -> None:
+    from cruxible_client.contracts.get_reads import GET_CARD_LINKS, GetProcedureCard
+    from tests.test_procedures.test_procedure_run_surface import _world
+
+    instance, _owner, procedure = _world(tmp_path)
+    ref = f"Procedure:{procedure.identity.name}"
+    bare = _card(instance, ref)
+    assert isinstance(bare, GetProcedureCard)
+    assert bare.guidance == () and bare.guidance_total is None
+    assert "guidance" not in bare.model_dump(mode="json")
+
+    propose_document(instance, "run-review", _guides(ref))
+    card = _card(instance, ref)
+    assert [(item.document, item.title) for item in card.guidance] == [
+        ("Document:run-review", "Guidance run-review")
+    ]
+    assert card.guidance_total is None and not any("backlinks" in step for step in card.next)
+
+    names = [f"run-review-{index}" for index in range(GET_CARD_LINKS)]
+    for name in names:
+        propose_document(instance, name, _guides(ref))
+    every = sorted(["run-review", *names], key=lambda item: f"document:{item}".encode())
+    _assert_guidance_cut(
+        instance, ref, [f"Document:{name}" for name in every[:GET_CARD_LINKS]], len(every)
+    )

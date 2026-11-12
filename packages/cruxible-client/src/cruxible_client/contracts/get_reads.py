@@ -102,6 +102,10 @@ GET_PAGED_DETAILS: tuple[str, ...] = ("history", "incoming", "pairs", "runs", "b
 #: The pairs a Subject card lists per pair kind and key part; ``detail="pairs"``
 #: pages them all.
 GET_CARD_PAIRS = 5
+#: The guidance Documents a ClaimType or Procedure card lists, and the links a
+#: Document card lists; a cut list says how many there are and names the read
+#: that shows them all.
+GET_CARD_LINKS = 5
 
 # A git oid or a prefix of one; the read resolves it (at least 12 hex, unique).
 _GIT_OID = r"^[0-9a-f]{1,64}$"
@@ -399,6 +403,20 @@ class GetEvidenceRule(_StrictGetModel):
     admission: Literal["origin_only", "direct", "derivational"]
 
 
+class GetGuidance(_StrictGetModel):
+    """A governed Document linked ``guides`` a ClaimType or Procedure (D-R17)."""
+
+    document: str = Field(description="The guiding Document, as Document:<name>.")
+    title: str | None = Field(default=None, exclude_if=_omit_none)
+
+
+class GetDocumentLink(_StrictGetModel):
+    """One of a Document's own links: its relation and the identity it names."""
+
+    relation: str
+    target: str
+
+
 class GetClaimTypeCard(_StrictGetModel):
     predicate: str
     subject_kinds: tuple[str, ...]
@@ -436,6 +454,10 @@ class GetClaimTypeCard(_StrictGetModel):
     # The installed kit that owns the ClaimType (its receipt records it); absent
     # when no kit owns it.
     kit: str | None = Field(default=None, exclude_if=_omit_none)
+    # The governed Documents linked ``guides`` it, at most ``GET_CARD_LINKS``.
+    guidance: tuple[GetGuidance, ...] = Field(default=(), exclude_if=lambda value: not value)
+    # How many Documents guide it, only when the card lists fewer.
+    guidance_total: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
     next: tuple[str, ...] = ()
 
 
@@ -446,6 +468,10 @@ class GetDocumentCard(_StrictGetModel):
     media_type: str
     size: int | None
     revision: int
+    # The Document's links in their stored order, at most ``GET_CARD_LINKS``.
+    links: tuple[GetDocumentLink, ...] = Field(default=(), exclude_if=lambda value: not value)
+    # How many links it has, only when the card lists fewer.
+    links_total: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
     next: tuple[str, ...] = ()
 
 
@@ -490,6 +516,10 @@ class GetProcedureCard(_StrictGetModel):
     unsupported_nodes: tuple[GetProcedureNode, ...] = ()
     #: Accepted promotions of this Procedure's runs, by promotion name.
     track_record: tuple[GetProcedureTrackRecord, ...] = ()
+    #: The governed Documents linked ``guides`` it, at most ``GET_CARD_LINKS``.
+    guidance: tuple[GetGuidance, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: How many Documents guide it, only when the card lists fewer.
+    guidance_total: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
     next: tuple[str, ...] = ()
 
 
@@ -1079,6 +1109,7 @@ __all__ = [
     "GET_HISTORY_MAX_LIMIT",
     "GET_PAGED_DETAILS",
     "GET_CARD_PAIRS",
+    "GET_CARD_LINKS",
     "AttestationCountReason",
     "ByteRange",
     "ClaimLine",
@@ -1103,6 +1134,7 @@ __all__ = [
     "GetProposedReason",
     "GetRevisionReason",
     "GetDocumentCard",
+    "GetDocumentLink",
     "GetEvidence",
     "GetFieldChanged",
     "GetFieldEvent",
@@ -1110,6 +1142,7 @@ __all__ = [
     "GetFieldReobserved",
     "GetFieldRetired",
     "GetFieldStated",
+    "GetGuidance",
     "GetHistory",
     "GetHistoryAny",
     "GetIncoming",

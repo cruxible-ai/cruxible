@@ -59,6 +59,7 @@ from cruxible_client.contracts.get_display import (
 )
 from cruxible_client.contracts.get_reads import (
     GET_BODY_DEFAULT_MAX_BYTES,
+    GET_CARD_LINKS,
     GET_CARD_PAIRS,
     GET_DETAILS_BY_KIND,
     GET_HISTORY_DEFAULT_LIMIT,
@@ -78,6 +79,7 @@ from cruxible_client.contracts.get_reads import (
     GetContractField,
     GetCoordinate,
     GetDocumentCard,
+    GetDocumentLink,
     GetEndPairs,
     GetEvidence,
     GetEvidenceRule,
@@ -87,6 +89,7 @@ from cruxible_client.contracts.get_reads import (
     GetFieldReobserved,
     GetFieldRetired,
     GetFieldStated,
+    GetGuidance,
     GetHistory,
     GetIncoming,
     GetIncomingClaim,
@@ -1069,6 +1072,40 @@ def _render_procedure_run(surface: ReadSurface, name: str, runnable: str) -> tup
     return ()
 
 
+def _render_backlinks(surface: ReadSurface, ref: str) -> str:
+    """The backlinks read of one target, spelled for the caller's surface.
+
+    MCP spells it as ``get`` with ``detail="backlinks"``, the same page, which
+    every tool profile serves.
+    """
+
+    if surface == "cli":
+        return f"cruxible backlinks {shlex.quote(ref)}"
+    if surface == "sdk":
+        return f"cx.backlinks({json.dumps(ref)})"
+    return _render_get(surface, ref, "backlinks")
+
+
+def _card_guidance(
+    connection: Any, resolved: ResolvedRef, *, surface: ReadSurface
+) -> tuple[tuple[GetGuidance, ...], int | None, tuple[str, ...]]:
+    """The Documents that guide a ClaimType or Procedure, for its card (D-R17).
+
+    One bounded range of the backlink index for this one target; a cut list
+    carries the total and the backlinks read that pages them all.
+    """
+
+    from cruxible_core.service.discovery.backlinks import card_guidance
+
+    rows, total = card_guidance(connection, resolved.identity, limit=GET_CARD_LINKS)
+    guidance = tuple(
+        GetGuidance(document=_display("document", document), title=title)
+        for document, title in rows
+    )
+    more = () if total is None else (_render_backlinks(surface, resolved.display),)
+    return guidance, total, more
+
+
 def _render_read_capture(surface: ReadSurface, digest: str) -> str:
     """The body-permission read of one Capture's material, spelled for the surface."""
 
@@ -1514,6 +1551,9 @@ def _claim_type_card(
         kit = owned_by(
             kit_owners(instance, projection.typed.connection), "ClaimType", claim_type.predicate
         )
+        guidance, guidance_total, more_guidance = _card_guidance(
+            projection.typed.connection, resolved, surface=surface
+        )
     names = CaptureContractNames(instance, coordinate)
     evidence = names.admitted(claim_type, qualified=True)
     rules = tuple(
@@ -1531,6 +1571,7 @@ def _claim_type_card(
     next_steps.extend(
         _render_get(surface, name) for name in evidence[:1] if not name.startswith("unresolved:")
     )
+    next_steps.extend(more_guidance)
     return GetClaimTypeCard(
         predicate=claim_type.predicate,
         subject_kinds=claim_type.allowed_subject_kinds,
@@ -1552,6 +1593,8 @@ def _claim_type_card(
         live_claims=live,
         subjects_with_value=with_value,
         kit=kit,
+        guidance=guidance,
+        guidance_total=guidance_total,
         next=tuple(next_steps),
     )
 
@@ -1578,6 +1621,9 @@ def _document_card(
     with instance.bind_accepted_projection(coordinate) as projection:
         shell = cast(DocumentShell, projection.typed.source(resolved.identity))
         size = _document_size(projection, resolved.identity, shell.body_digest)
+    # Its own links, from the shell already read; a cut list names the full
+    # envelope (``proof``), which carries them all.
+    cut = len(shell.links) > GET_CARD_LINKS
     return GetDocumentCard(
         document=_name(resolved.identity),
         title=shell.title,
@@ -1585,10 +1631,16 @@ def _document_card(
         media_type=shell.media_type,
         size=size,
         revision=shell.lifecycle.revision,
+        links=tuple(
+            GetDocumentLink(relation=link.relation, target=link.target_identity)
+            for link in shell.links[:GET_CARD_LINKS]
+        ),
+        links_total=len(shell.links) if cut else None,
         next=(
             _render_get(surface, resolved.display, "body"),
             _render_get(surface, resolved.display, "why"),
             _render_get(surface, resolved.display, "history"),
+            *((_render_get(surface, resolved.display, "proof"),) if cut else ()),
         ),
     )
 
@@ -1738,6 +1790,9 @@ def _procedure_card(
         promoted = projection.typed.facts(
             "cruxible.procedure.track_record", identity=resolved.identity
         )
+        guidance, guidance_total, more_guidance = _card_guidance(
+            projection.typed.connection, resolved, surface=surface
+        )
     from cruxible_client.contracts.procedures.decompile import decompile_procedure
 
     return GetProcedureCard(
@@ -1756,6 +1811,8 @@ def _procedure_card(
             _track_record_entry(fact)
             for fact in sorted(promoted, key=lambda item: item.fact_key.encode("utf-8"))
         ),
+        guidance=guidance,
+        guidance_total=guidance_total,
         next=(
             *(
                 ()
@@ -1763,6 +1820,7 @@ def _procedure_card(
                 else _render_procedure_run(surface, _name(resolved.identity), readiness.runnable)
             ),
             _render_get(surface, resolved.display, "proof"),
+            *more_guidance,
         ),
     )
 
