@@ -28914,7 +28914,7 @@
           },
           "ClaimsRunSummary": {
             "additionalProperties": false,
-            "description": "One claims terminal: what it wrote, kept, retired, surfaced and skipped.\n\n``written`` and ``revised`` count new and revising Claims, ``inverse_written``\nthe declared-inverse Claims (written or revising) apart from them, and\n``subjects_created`` the Subjects created by key. ``re_observed`` counts\nheld Claims a new Capture re-confirmed, ``no_op`` restatements that changed\nnothing at all. ``downgraded`` counts values written as the ClaimType's\nunknown member over incomplete input. ``surfaced`` counts held Claims a\nsource no longer contains that were reported instead of retired;\n``skipped`` counts the other findings, by kind (an item not written, or an\nincomplete source). ``delivery`` is how the change landed.",
+            "description": "One claims terminal: what it wrote, kept, retired, surfaced and skipped.\n\n``written`` and ``revised`` count new and revising Claims, ``inverse_written``\nthe declared-inverse Claims (written or revising) apart from them, and\n``subjects_created`` the Subjects created by key. ``re_observed`` counts\nheld Claims a new Capture re-confirmed and whose re-observation was\nrecorded; ``reobservations_refused`` counts, by reason, the ones whose\nre-observation the record refused (the Claim is unchanged, but its content\nwas not observed again). ``no_op`` counts restatements that changed\nnothing at all. ``downgraded`` counts values written as the ClaimType's\nunknown member over incomplete input. ``surfaced`` counts held Claims a\nsource no longer contains that were reported instead of retired;\n``skipped`` counts the other findings, by kind (an item not written, or an\nincomplete source). ``delivery`` is how the change landed.",
             "properties": {
               "delivery": {
                 "enum": [
@@ -28957,6 +28957,28 @@
                 "minimum": 0,
                 "title": "Re Observed",
                 "type": "integer"
+              },
+              "reobservations_refused": {
+                "additionalProperties": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "propertyNames": {
+                  "enum": [
+                    "capture_not_admitted",
+                    "claim_absent",
+                    "claim_not_live",
+                    "capture_already_cited",
+                    "extraction_differs",
+                    "absence_witness_unverified",
+                    "content_not_cited",
+                    "head_moved",
+                    "observed_after_recording"
+                  ]
+                },
+                "title": "Reobservations Refused",
+                "type": "object"
               },
               "retired": {
                 "maximum": 9007199254740991,
@@ -65047,7 +65069,7 @@
           },
           "ClaimsRunSummary": {
             "additionalProperties": false,
-            "description": "One claims terminal: what it wrote, kept, retired, surfaced and skipped.\n\n``written`` and ``revised`` count new and revising Claims, ``inverse_written``\nthe declared-inverse Claims (written or revising) apart from them, and\n``subjects_created`` the Subjects created by key. ``re_observed`` counts\nheld Claims a new Capture re-confirmed, ``no_op`` restatements that changed\nnothing at all. ``downgraded`` counts values written as the ClaimType's\nunknown member over incomplete input. ``surfaced`` counts held Claims a\nsource no longer contains that were reported instead of retired;\n``skipped`` counts the other findings, by kind (an item not written, or an\nincomplete source). ``delivery`` is how the change landed.",
+            "description": "One claims terminal: what it wrote, kept, retired, surfaced and skipped.\n\n``written`` and ``revised`` count new and revising Claims, ``inverse_written``\nthe declared-inverse Claims (written or revising) apart from them, and\n``subjects_created`` the Subjects created by key. ``re_observed`` counts\nheld Claims a new Capture re-confirmed and whose re-observation was\nrecorded; ``reobservations_refused`` counts, by reason, the ones whose\nre-observation the record refused (the Claim is unchanged, but its content\nwas not observed again). ``no_op`` counts restatements that changed\nnothing at all. ``downgraded`` counts values written as the ClaimType's\nunknown member over incomplete input. ``surfaced`` counts held Claims a\nsource no longer contains that were reported instead of retired;\n``skipped`` counts the other findings, by kind (an item not written, or an\nincomplete source). ``delivery`` is how the change landed.",
             "properties": {
               "delivery": {
                 "enum": [
@@ -65090,6 +65112,28 @@
                 "minimum": 0,
                 "title": "Re Observed",
                 "type": "integer"
+              },
+              "reobservations_refused": {
+                "additionalProperties": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "propertyNames": {
+                  "enum": [
+                    "capture_not_admitted",
+                    "claim_absent",
+                    "claim_not_live",
+                    "capture_already_cited",
+                    "extraction_differs",
+                    "absence_witness_unverified",
+                    "content_not_cited",
+                    "head_moved",
+                    "observed_after_recording"
+                  ]
+                },
+                "title": "Reobservations Refused",
+                "type": "object"
               },
               "retired": {
                 "maximum": 9007199254740991,
@@ -68653,7 +68697,7 @@
           },
           "RunCounts": {
             "additionalProperties": false,
-            "description": "What one Line run did, in counts: the line a reader checks before \"succeeded\".\n\n``status`` says the run finished; this says what it achieved. ``written``\ncounts new, revising and inverse Claims across the run's claims terminals;\n``settled`` and ``proposed`` split them by how each terminal delivered\n(``proposed`` includes a change still waiting on the Line's open proposal).\n``unchanged`` counts re-observed and no-op restatements, ``retired`` the\nretirements. ``refused`` counts the items not written (every finding but\nan incomplete source), with ``top_refusals`` naming the most frequent codes\namong the findings the run kept. ``inbox`` counts the items this run posted\nto its Line's inbox; when the inbox could not be read it is the count the\nrun's journaled ``post_inbox`` summaries prove, or ``None`` when they prove\nnone (findings routed to the inbox are not journaled). It splits into\n``inbox_new``, the postings that made a new item, and ``inbox_seen_again``,\nthe re-sightings of an item already there (which keep its status and\ndecision); both are ``None`` when the split is unknown (the inbox could\nnot be read, or the counts were recorded before the split existed).\n``inbox_unposted`` counts the items an inbox cap left out of this run's\nposts. ``complete`` is false when the run recorded incompleteness, with\n``incomplete_reasons`` naming each node and kind. ``needs_attention`` is\ntrue when the run was incomplete, refused an item, posted a new inbox item,\nleft items out under an inbox cap (they may be new: nothing posted them),\nor posted to the inbox without a known split: an unreadable count never\nreads as nothing new. A run whose posts were all re-sightings does not\nneed attention for them.",
+            "description": "What one Line run did, in counts: the line a reader checks before \"succeeded\".\n\n``status`` says the run finished; this says what it achieved. ``written``\ncounts new, revising and inverse Claims across the run's claims terminals;\n``settled`` and ``proposed`` split them by how each terminal delivered\n(``proposed`` includes a change still waiting on the Line's open proposal).\n``unchanged`` counts re-observed and no-op restatements (a re-observation\nwhose record was refused included), ``retired`` the\nretirements. ``refused`` counts the items not written (every finding but\nan incomplete source), with ``top_refusals`` naming the most frequent codes\namong the findings the run kept. ``inbox`` counts the items this run posted\nto its Line's inbox; when the inbox could not be read it is the count the\nrun's journaled ``post_inbox`` summaries prove, or ``None`` when they prove\nnone (findings routed to the inbox are not journaled). It splits into\n``inbox_new``, the postings that made a new item, and ``inbox_seen_again``,\nthe re-sightings of an item already there (which keep its status and\ndecision); both are ``None`` when the split is unknown (the inbox could\nnot be read, or the counts were recorded before the split existed).\n``inbox_unposted`` counts the items an inbox cap left out of this run's\nposts. ``complete`` is false when the run recorded incompleteness, with\n``incomplete_reasons`` naming each node and kind. ``needs_attention`` is\ntrue when the run was incomplete, refused an item, posted a new inbox item,\nleft items out under an inbox cap (they may be new: nothing posted them),\nor posted to the inbox without a known split: an unreadable count never\nreads as nothing new. A run whose posts were all re-sightings does not\nneed attention for them.",
             "properties": {
               "complete": {
                 "title": "Complete",
@@ -100762,7 +100806,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "What one Line run did, in counts: the line a reader checks before \"succeeded\".\n\n``status`` says the run finished; this says what it achieved. ``written``\ncounts new, revising and inverse Claims across the run's claims terminals;\n``settled`` and ``proposed`` split them by how each terminal delivered\n(``proposed`` includes a change still waiting on the Line's open proposal).\n``unchanged`` counts re-observed and no-op restatements, ``retired`` the\nretirements. ``refused`` counts the items not written (every finding but\nan incomplete source), with ``top_refusals`` naming the most frequent codes\namong the findings the run kept. ``inbox`` counts the items this run posted\nto its Line's inbox; when the inbox could not be read it is the count the\nrun's journaled ``post_inbox`` summaries prove, or ``None`` when they prove\nnone (findings routed to the inbox are not journaled). It splits into\n``inbox_new``, the postings that made a new item, and ``inbox_seen_again``,\nthe re-sightings of an item already there (which keep its status and\ndecision); both are ``None`` when the split is unknown (the inbox could\nnot be read, or the counts were recorded before the split existed).\n``inbox_unposted`` counts the items an inbox cap left out of this run's\nposts. ``complete`` is false when the run recorded incompleteness, with\n``incomplete_reasons`` naming each node and kind. ``needs_attention`` is\ntrue when the run was incomplete, refused an item, posted a new inbox item,\nleft items out under an inbox cap (they may be new: nothing posted them),\nor posted to the inbox without a known split: an unreadable count never\nreads as nothing new. A run whose posts were all re-sightings does not\nneed attention for them.",
+        "description": "What one Line run did, in counts: the line a reader checks before \"succeeded\".\n\n``status`` says the run finished; this says what it achieved. ``written``\ncounts new, revising and inverse Claims across the run's claims terminals;\n``settled`` and ``proposed`` split them by how each terminal delivered\n(``proposed`` includes a change still waiting on the Line's open proposal).\n``unchanged`` counts re-observed and no-op restatements (a re-observation\nwhose record was refused included), ``retired`` the\nretirements. ``refused`` counts the items not written (every finding but\nan incomplete source), with ``top_refusals`` naming the most frequent codes\namong the findings the run kept. ``inbox`` counts the items this run posted\nto its Line's inbox; when the inbox could not be read it is the count the\nrun's journaled ``post_inbox`` summaries prove, or ``None`` when they prove\nnone (findings routed to the inbox are not journaled). It splits into\n``inbox_new``, the postings that made a new item, and ``inbox_seen_again``,\nthe re-sightings of an item already there (which keep its status and\ndecision); both are ``None`` when the split is unknown (the inbox could\nnot be read, or the counts were recorded before the split existed).\n``inbox_unposted`` counts the items an inbox cap left out of this run's\nposts. ``complete`` is false when the run recorded incompleteness, with\n``incomplete_reasons`` naming each node and kind. ``needs_attention`` is\ntrue when the run was incomplete, refused an item, posted a new inbox item,\nleft items out under an inbox cap (they may be new: nothing posted them),\nor posted to the inbox without a known split: an unreadable count never\nreads as nothing new. A run whose posts were all re-sightings does not\nneed attention for them.",
         "properties": {
           "complete": {
             "title": "Complete",

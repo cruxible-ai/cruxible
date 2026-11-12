@@ -7969,6 +7969,12 @@ def _node_summary_text(summary: Mapping[str, Any]) -> str:
             )
             if summary.get(name)
         ]
+        refused = summary.get("reobservations_refused") or {}
+        if refused:
+            parts.append(
+                "re-observation not recorded "
+                + ", ".join(f"{reason}={count}" for reason, count in sorted(refused.items()))
+            )
         skipped = summary.get("skipped") or {}
         if skipped:
             parts.append(

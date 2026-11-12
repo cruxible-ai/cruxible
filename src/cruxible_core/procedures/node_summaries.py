@@ -30,6 +30,7 @@ from cruxible_client.contracts.procedures.node_summary import (
     GuardRunSummary,
     HaltRunSummary,
     NodeRunSummary,
+    ReobservationRefusalReason,
     TransformRunSummary,
 )
 from cruxible_client.contracts.shapes import DuplicateArm
@@ -251,11 +252,14 @@ def claims_summary(
     *,
     downgraded: int,
     delivery: ClaimsDelivery,
+    reobservations_refused: Mapping[ReobservationRefusalReason, int] | None = None,
 ) -> ClaimsRunSummary:
     """A claims terminal's counts: its changes, and the counters its expansion kept.
 
     ``ClaimsDiagnostics.same`` counts every restatement, re-observed or not;
     each re-observation is also one change, so ``no_op`` is their difference.
+    ``reobservations_refused`` counts, by reason, the re-observations delivery
+    could not record: those are never counted ``re_observed``.
     Each downgrade was reported ``incomplete_source`` and still written, so it
     is counted in ``downgraded`` and not as skipped.
     """
@@ -280,12 +284,16 @@ def claims_summary(
     if downgraded:
         counts["incomplete_source"] = counts.get("incomplete_source", 0) - downgraded
     same = 0 if diagnostics is None else diagnostics.same
+    refused = {
+        reason: count for reason, count in sorted((reobservations_refused or {}).items()) if count
+    }
     return ClaimsRunSummary(
         written=_count(written),
         revised=_count(revised),
         inverse_written=_count(inverse),
         subjects_created=_count(subjects),
-        re_observed=_count(observed),
+        re_observed=_count(observed - sum(refused.values())),
+        reobservations_refused={reason: _count(count) for reason, count in refused.items()},
         no_op=_count(same - observed),
         retired=_count(retired),
         surfaced=_count(surfaced),

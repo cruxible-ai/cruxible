@@ -41,6 +41,7 @@ from cruxible_client.contracts.claim_verdicts import (
 from cruxible_client.contracts.claims import claim_path, parse_claim
 from cruxible_client.contracts.errors import CruxibleError, ReadRefusalError
 from cruxible_client.contracts.primitives import new_id
+from cruxible_client.contracts.procedures.node_summary import ReobservationRefusalReason
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_core.exhaust.backends import LocalJournalBackend, journal_log_path
@@ -133,7 +134,9 @@ class ClaimReobservationRefused(CruxibleError):
 
     error_code = "cruxible.claim.reobservation_refused"
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, reason: ReobservationRefusalReason) -> None:
+        #: The closed reason a run's claims summary counts the refusal under.
+        self.reason: ReobservationRefusalReason = reason
         super().__init__(f"{self.error_code}: {message}")
 
 
@@ -331,25 +334,32 @@ class ClaimReobservationStore:
             )
         except (CaptureReadInvalid, CruxibleError, ReadRefusalError, ValueError) as exc:
             raise ClaimReobservationRefused(
-                f"Capture {capture_digest} does not verify as daemon-admitted evidence: {exc}"
+                f"Capture {capture_digest} does not verify as daemon-admitted evidence: {exc}",
+                reason="capture_not_admitted",
             ) from exc
         if isinstance(verified, str):
             raise ClaimReobservationRefused(
-                f"Capture {capture_digest} is not admissible evidence here ({verified})"
+                f"Capture {capture_digest} is not admissible evidence here ({verified})",
+                reason="capture_not_admitted",
             )
         envelope = verified.envelope
         content = self.instance.blob_at(coordinate.git_oid, claim_path(claim_id))
         if content is None:
-            raise ClaimReobservationRefused(f"no accepted Claim {claim_id} to re-observe")
+            raise ClaimReobservationRefused(
+                f"no accepted Claim {claim_id} to re-observe", reason="claim_absent"
+            )
         claim = parse_claim(content, path=claim_path(claim_id))
         if claim.lifecycle.state != "live":
             raise ClaimReobservationRefused(
                 f"Claim {claim_id} is {claim.lifecycle.state} at the head: a re-observation "
-                "is recorded only for a live Claim"
+                "is recorded only for a live Claim",
+                reason="claim_not_live",
             )
         if capture_digest in claim.backing.capture_digests:
             raise ClaimReobservationRefused(
-                f"Claim {claim_id} already cites Capture {capture_digest}: nothing new was observed"
+                f"Claim {claim_id} already cites Capture {capture_digest}: "
+                "nothing new was observed",
+                reason="capture_already_cited",
             )
         original = claim.backing.procedure_evidence
         same_extraction = False
@@ -381,9 +391,13 @@ class ClaimReobservationStore:
                         verified=verified_witnesses,
                     )
                     if refusal is not None:
-                        raise ClaimReobservationRefused(refusal)
+                        raise ClaimReobservationRefused(
+                            refusal, reason="absence_witness_unverified"
+                        )
             if not same_extraction:
-                raise ClaimReobservationRefused("extraction does not prove the same value and key")
+                raise ClaimReobservationRefused(
+                    "extraction does not prove the same value and key", reason="extraction_differs"
+                )
         wanted = (envelope.capture_contract_digest, observed_content(envelope).digest)
         cited_captures = (
             (original.value.capture_digest,)
@@ -414,7 +428,8 @@ class ClaimReobservationStore:
                 return envelope, held_digest
         raise ClaimReobservationRefused(
             f"Capture {capture_digest} observed no content Claim {claim_id} "
-            "cites under its contract"
+            "cites under its contract",
+            reason="content_not_cited",
         )
 
     def _witness_refusal(
@@ -491,7 +506,8 @@ class ClaimReobservationStore:
         if observed_at > now:
             raise ClaimReobservationRefused(
                 f"Capture {capture_digest} was observed at {format_datetime(observed_at)}, "
-                f"after the re-observation is recorded ({format_datetime(now)})"
+                f"after the re-observation is recorded ({format_datetime(now)})",
+                reason="observed_after_recording",
             )
         return ReobservationRecord(
             claim_id=claim_id,
@@ -571,7 +587,8 @@ class ClaimReobservationStore:
             if accepted.git_oid != main:
                 raise ClaimReobservationRefused(
                     "accepted state moved past this instance's verified head; "
-                    "the re-observation is judged again at the new head"
+                    "the re-observation is judged again at the new head",
+                    reason="head_moved",
                 )
             # Admission's immutable work first: verify the Capture, the live Claim
             # and its citations at the held head, then recover any reserved

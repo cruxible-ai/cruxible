@@ -158,6 +158,27 @@ class GuardRunSummary(_NodeSummary):
     operands_truncated: SummaryCount = Field(default=0, exclude_if=lambda value: value == 0)
 
 
+#: Why a re-observation an unchanged claims item made was not recorded, so the
+#: Claim's cited content was not observed again: the re-observing Capture is
+#: not daemon-admitted evidence at the head (``capture_not_admitted``), the
+#: Claim is absent or no longer live there, it already cites that Capture,
+#: the extraction does not prove the same value and key, an absence witness's
+#: Captures do not stand, the Capture observed no content the Claim cites,
+#: accepted state moved during the record (``head_moved``), or the Capture was
+#: observed after the recording instant.
+ReobservationRefusalReason: TypeAlias = Literal[
+    "capture_not_admitted",
+    "claim_absent",
+    "claim_not_live",
+    "capture_already_cited",
+    "extraction_differs",
+    "absence_witness_unverified",
+    "content_not_cited",
+    "head_moved",
+    "observed_after_recording",
+]
+
+
 #: How a claims terminal's change was delivered: ``settled`` under its
 #: mandate, ``proposed`` for review, ``still_current`` when it equals its
 #: Line's open proposal, ``unchanged`` when every item restated accepted
@@ -174,7 +195,10 @@ class ClaimsRunSummary(_NodeSummary):
     ``written`` and ``revised`` count new and revising Claims, ``inverse_written``
     the declared-inverse Claims (written or revising) apart from them, and
     ``subjects_created`` the Subjects created by key. ``re_observed`` counts
-    held Claims a new Capture re-confirmed, ``no_op`` restatements that changed
+    held Claims a new Capture re-confirmed and whose re-observation was
+    recorded; ``reobservations_refused`` counts, by reason, the ones whose
+    re-observation the record refused (the Claim is unchanged, but its content
+    was not observed again). ``no_op`` counts restatements that changed
     nothing at all. ``downgraded`` counts values written as the ClaimType's
     unknown member over incomplete input. ``surfaced`` counts held Claims a
     source no longer contains that were reported instead of retired;
@@ -188,6 +212,9 @@ class ClaimsRunSummary(_NodeSummary):
     inverse_written: SummaryCount
     subjects_created: SummaryCount
     re_observed: SummaryCount
+    reobservations_refused: dict[ReobservationRefusalReason, SummaryCount] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
     no_op: SummaryCount
     retired: SummaryCount
     surfaced: SummaryCount
@@ -261,7 +288,8 @@ class RunCounts(_NodeSummary):
     counts new, revising and inverse Claims across the run's claims terminals;
     ``settled`` and ``proposed`` split them by how each terminal delivered
     (``proposed`` includes a change still waiting on the Line's open proposal).
-    ``unchanged`` counts re-observed and no-op restatements, ``retired`` the
+    ``unchanged`` counts re-observed and no-op restatements (a re-observation
+    whose record was refused included), ``retired`` the
     retirements. ``refused`` counts the items not written (every finding but
     an incomplete source), with ``top_refusals`` naming the most frequent codes
     among the findings the run kept. ``inbox`` counts the items this run posted
@@ -363,7 +391,9 @@ def run_counts(
                 settled += changed
             elif summary.delivery in {"proposed", "still_current"}:
                 proposed += changed
-            unchanged += summary.re_observed + summary.no_op
+            unchanged += (
+                summary.re_observed + summary.no_op + sum(summary.reobservations_refused.values())
+            )
             retired += summary.retired
             refused += sum(
                 count for kind, count in summary.skipped.items() if kind != "incomplete_source"
@@ -430,6 +460,7 @@ __all__ = [
     "HaltRunSummary",
     "NodeRunSummary",
     "ReadRunSummary",
+    "ReobservationRefusalReason",
     "RUN_COUNTS_TOP_REFUSALS_MAX",
     "RepeatRunSummary",
     "RunRefusalCount",

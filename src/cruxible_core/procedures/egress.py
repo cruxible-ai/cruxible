@@ -72,6 +72,7 @@ from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
     authority_for_rung,
 )
+from cruxible_client.contracts.procedures.node_summary import ReobservationRefusalReason
 from cruxible_client.contracts.procedures.results import ServedAuthorityTerm
 from cruxible_client.contracts.proposal_models import SETTLE_OUTSIDE_MANDATE_SCOPE
 from cruxible_client.contracts.repairs import (
@@ -1063,6 +1064,9 @@ class TerminalEgressChildReceiptV3(TerminalEgressChildReceiptV2):
     ``egress_digest`` its current artifact digest at the admitted base. The
     re-observing Capture and when it observed the content ride along; the
     re-observation is recorded on the evidence plane, never as a revision.
+    ``reobservation_refused`` names why delivery could not record it (omitted
+    when it was recorded): the item is still unchanged, but its Claim's
+    content was not observed again.
     """
 
     tag: Literal["playbill-terminal-egress-child-receipt-v3"] = (
@@ -1071,6 +1075,9 @@ class TerminalEgressChildReceiptV3(TerminalEgressChildReceiptV2):
     disposition: Literal["unchanged"] = "unchanged"
     reobserving_capture_digest: str
     reobserved_at: datetime = Field(description="Reads ASSERTION TIME.")
+    reobservation_refused: ReobservationRefusalReason | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     _reobserving = field_validator("reobserving_capture_digest")(_tagged)
 
