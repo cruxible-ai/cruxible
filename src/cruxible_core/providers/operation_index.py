@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.capabilities import CapabilityLookup
 from cruxible_client.contracts.provider_operations import (
     LineBinding,
     OperationSignature,
@@ -226,16 +227,23 @@ def resolve_slot_bindings(
 def line_slot_map(
     definition: Any,
     child: Callable[[ArtifactIdentity], Any],
+    capabilities: CapabilityLookup,
 ) -> dict[str, OperationSignature]:
     """Every slot a Line over ``definition`` binds, invoked children's included.
 
-    ``child`` reads the definition an invoke node names, at the authoring or
-    admission coordinate.
+    ``child`` reads the definition an invoke node names, and ``capabilities``
+    resolves each slot's capability pin, at the authoring or admission
+    coordinate. Each slot's signature is derived from its capability by the
+    provisional ``provisional_slot_signatures`` the binding slice replaces.
     """
 
     from cruxible_client.contracts.procedures.line_specs import line_slot_signatures
 
-    return line_slot_signatures(definition, child=line_child_definitions(definition, child))
+    return line_slot_signatures(
+        definition,
+        capabilities=capabilities,
+        child=line_child_definitions(definition, child),
+    )
 
 
 def line_capture_output_map(

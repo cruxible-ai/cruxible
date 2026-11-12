@@ -14,8 +14,9 @@ from cruxible_client.authoring.procedures import (
     lower_procedure_spec,
 )
 from cruxible_client.authoring.sdk import Cruxible
+from cruxible_client.contracts.capabilities import Capability
 from cruxible_client.contracts.procedures.authored import ProcedureSpecError
-from cruxible_client.contracts.provider_operations import ProcedureSlot
+from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.refs import Ref, step_ref
 from cruxible_client.contracts.shapes import Contract
 from tests.support.procedures import abort, emit, goto, guard, halt, halt_step, project
@@ -31,15 +32,18 @@ CAPS = ProcedureLimits(
 #: The one slot every sequence below declares for its call steps. A Line binds
 #: a slot to an exact {build, operation} later (ruling C3).
 PROVIDER_SLOT = "backend"
-SLOTS = {
-    PROVIDER_SLOT: ProcedureSlot(
-        **{
-            "in": "test.procedure-composition.request@1",
-            "out": "test.procedure-composition.response@1",
-            "effect": "external_read",
-        }
-    )
-}
+SLOTS = {PROVIDER_SLOT: ProcedureSlot(capability="test.procedure-composition@1")}
+#: The capability the slot names, as an author supplies it to the builder.
+CAPABILITY = Capability.model_validate(
+    {
+        "name": "test.procedure-composition",
+        "version": 1,
+        "description": "Answer the composition test's request.",
+        "effect": "external_read",
+        "in": "test.procedure-composition.request@1",
+        "out": "test.procedure-composition.response@1",
+    }
+)
 
 
 def sequence(**kwargs):
@@ -81,6 +85,7 @@ def test_handles_are_typed_refs_checked_against_the_fields_a_step_produces():
     plan = sequence(
         slots=SLOTS,
         params={"limit": "int"},
+        capabilities={"test.procedure-composition@1": CAPABILITY},
         contracts={"test.procedure-composition.response@1": out},
     )
     answer = plan.call("answer", slot=PROVIDER_SLOT, input={})

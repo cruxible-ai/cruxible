@@ -13,6 +13,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
     ArtifactRef,
 )
+from cruxible_client.contracts.capabilities import CAPABILITY_PIN_ROLE
 from cruxible_client.contracts.shapes import CONTRACT_PIN_ROLE, contract_identity
 
 # These registry/manifest kinds have no governed ledger envelope. A digest
@@ -156,13 +157,9 @@ def dependency_pins(
         )
     if kind == "Procedure":
         definition = getattr(artifact, "definition", None)
+        # A slot pins one capability version; the capability pins its Contracts.
         for slot in getattr(definition, "slots", {}).values():
-            for ref in (slot.in_, slot.out):
-                pins.append(
-                    ArtifactRef(
-                        role=CONTRACT_PIN_ROLE, target=contract_identity(ref.name, ref.version)
-                    )
-                )
+            pins.append(ArtifactRef(role=CAPABILITY_PIN_ROLE, target=slot.capability.identity))
         for node in getattr(definition, "nodes", ()):
             row = getattr(node, "row", None) if getattr(node, "kind", None) == "extract" else None
             if row is not None:

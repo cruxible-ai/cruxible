@@ -29,8 +29,8 @@ def authored_policy_call():
     from cruxible_client.contracts.procedures.models import ProcedureDefinition
     from cruxible_client.contracts.provider_operations import LineBinding, binding_pin
     from cruxible_client.contracts.providers import AcceptedProvider, provider_digest, provider_path
-    from cruxible_client.contracts.shapes import contract_digest
-    from tests.support.operation_world import VALUE, operation, operation_build
+    from tests.support.capabilities import pinned_slot
+    from tests.support.operation_world import compute_capability, operation, operation_build
     from tests.test_procedures.test_named_reference_closure import authored_procedure
 
     base = authored_procedure(name="effectful", query=None)
@@ -40,7 +40,6 @@ def authored_policy_call():
         provider=build,
         artifact_digest=provider_digest(build).tagged,
     )
-    value = {"name": "test.value", "version": 1, "digest": contract_digest(VALUE).tagged}
     node = {
         "kind": "call",
         "node_id": "call",
@@ -51,7 +50,7 @@ def authored_policy_call():
     }
     raw = base.definition.model_dump(mode="json", by_alias=True)
     raw["nodes"] = [node]
-    raw["slots"] = {"act": {"in": value, "out": value, "effect": "external_mutation"}}
+    raw["slots"] = {"act": pinned_slot(compute_capability("external_mutation"))}
     raw["hard_caps"]["max_provider_calls"] = 1
     definition = ProcedureDefinition.model_validate(raw)
     artifact = ProcedureArtifact.model_validate(

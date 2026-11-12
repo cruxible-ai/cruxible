@@ -236,7 +236,8 @@ def validate_claims_templates(
                 nested = fields[path[0]]
                 return field_type(nested, each, trail | {alias}) or literal_type(nested)
         if isinstance(producer, CallNode):
-            fields = contract(definition.slots[producer.slot].out).fields
+            pin = definition.slots[producer.slot].capability
+            fields = contract(source("Capability", f"{pin.name}/v{pin.version}").out).fields
             if value.startswith("$item") and isinstance(each, str):
                 collection = each.split(".")[2:]
                 if not collection or collection[0] not in fields:
@@ -488,6 +489,10 @@ def tree_claims_lookup(tree: Any) -> Callable[[ArtifactIdentity], Any]:
     """Resolve each pinned vocabulary dependency by path, never enumerate state."""
     from functools import cache
 
+    from cruxible_client.contracts.capabilities import (
+        capability_path_for_identity,
+        parse_capability,
+    )
     from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
     from cruxible_client.contracts.query.definitions import (
         parse_query_definition,
@@ -501,6 +506,7 @@ def tree_claims_lookup(tree: Any) -> Callable[[ArtifactIdentity], Any]:
         "SubjectKind": (subject_kind_path, parse_subject_kind),
         "QueryDefinition": (query_definition_path, parse_query_definition),
         "Contract": (contract_path_for_identity, parse_contract),
+        "Capability": (capability_path_for_identity, parse_capability),
     }
 
     @cache

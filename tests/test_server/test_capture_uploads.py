@@ -28,7 +28,6 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     ProjectNode,
 )
-from cruxible_client.contracts.shapes import contract_digest
 from cruxible_client.contracts.uploads import (
     UPLOAD_PART_SIZE,
     CaptureUploadCompleteRequest,
@@ -36,7 +35,6 @@ from cruxible_client.contracts.uploads import (
 )
 from cruxible_client.contracts.workspace_file import (
     WorkspaceFileSourceRequestV2,
-    workspace_file_contracts,
 )
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
@@ -556,27 +554,14 @@ def _definition(contract_pin: ArtifactPin) -> ProcedureDefinition:
         replayability="exact",
     ).model_dump(mode="json")
     request["relative_path"] = "$input.relative_path"
-    _wf_source, _wf_content, wf_request, wf_result = workspace_file_contracts()
+    from tests.support.capabilities import pinned_slot, workspace_file_capability
+
     return procedure_definition(
         name=PROCEDURE,
         description="Read an uploaded advisory and return its severity.",
         contract_in=named(pin("contract-in", input_contract)),
         contract_out=named(pin("contract-out", output_contract)),
-        slots={
-            "read": {
-                "in": {
-                    "name": "workspace.file.request",
-                    "version": 1,
-                    "digest": contract_digest(wf_request).tagged,
-                },
-                "out": {
-                    "name": "workspace.file.result",
-                    "version": 1,
-                    "digest": contract_digest(wf_result).tagged,
-                },
-                "effect": "pure",
-            }
-        },
+        slots={"read": pinned_slot(workspace_file_capability())},
         nodes=(
             CallNode(
                 node_id="read",
@@ -675,6 +660,16 @@ def _author_acquire(transport: CruxibleClient, instance_id: str) -> None:
         lower_authoring_input(_authored(definition, contracts=_contracts())).model_dump(
             mode="json", by_alias=True
         ),
+        # The capability the read slot names, over the genesis workspace.file Contracts.
+        {
+            "tag": "cruxible-capability-authoring-payload-v1",
+            "name": "workspace.file",
+            "version": 1,
+            "description": "Read one workspace file; core's builtin serves it.",
+            "effect": "pure",
+            "in": {"name": "workspace.file.request", "version": 1},
+            "out": {"name": "workspace.file.result", "version": 1},
+        },
     ]
     adapter = TypeAdapter(AuthoringChangeSetMember)
     members.sort(

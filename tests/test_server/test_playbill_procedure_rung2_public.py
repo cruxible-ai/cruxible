@@ -42,12 +42,10 @@ from cruxible_client.contracts.procedures.models import (
     ProjectNode,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.shapes import contract_digest
 from cruxible_client.contracts.subjects import subject_path
 from cruxible_client.contracts.workspace_file import (
     WORKSPACE_FILE_OPERATION,
     WorkspaceFileSourceRequestV2,
-    workspace_file_contracts,
 )
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.governance.keys import generate_client_principal_key
@@ -219,27 +217,14 @@ def _procedure_definition(
         selector={"id": 7, "relation": "orders"},
         replayability="exact",
     )
-    _wf_source, _wf_content, wf_request, wf_result = workspace_file_contracts()
+    from tests.support.capabilities import pinned_slot, workspace_file_capability
+
     return procedure_definition(
         name=PROCEDURE_NAME,
         description="Read the advisory document and propose its severity as a Claim.",
         contract_in=named(contract_in),
         contract_out=named(contract_out),
-        slots={
-            "read": {
-                "in": {
-                    "name": "workspace.file.request",
-                    "version": 1,
-                    "digest": contract_digest(wf_request).tagged,
-                },
-                "out": {
-                    "name": "workspace.file.result",
-                    "version": 1,
-                    "digest": contract_digest(wf_result).tagged,
-                },
-                "effect": "pure",
-            }
-        },
+        slots={"read": pinned_slot(workspace_file_capability())},
         nodes=(
             CallNode(
                 node_id="read",
@@ -450,6 +435,16 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
             name=SUBJECT_KIND, keys=(f"{SUBJECT_KIND}.slug",), uniqueness="unique"
         ).model_dump(mode="json"),
         create_by_key(SUBJECT_KIND, SUBJECT_ID).model_dump(mode="json"),  # type: ignore[attr-defined]
+        # The capability the read slot names, over the genesis workspace.file Contracts.
+        {
+            "tag": "cruxible-capability-authoring-payload-v1",
+            "name": "workspace.file",
+            "version": 1,
+            "description": "Read one workspace file; core's builtin serves it.",
+            "effect": "pure",
+            "in": {"name": "workspace.file.request", "version": 1},
+            "out": {"name": "workspace.file.result", "version": 1},
+        },
         lower_authoring_input(_authored(definition)).model_dump(mode="json", by_alias=True),
         {
             "tag": "cruxible-line-authoring-payload-v2",

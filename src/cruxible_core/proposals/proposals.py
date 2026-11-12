@@ -2045,6 +2045,9 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
                     ),
                 )
             )
+    from cruxible_client.contracts.capabilities import tree_capability_resolver
+    from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
+
     law = evaluate_procedure_law(
         procedure,
         path=context.path,
@@ -2055,6 +2058,8 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
         contract_lookup=candidate_contract,
         capture_lookup=candidate_capture_contract,
         enum_members=tree_enum_resolver(context.candidate_tree),
+        capability_lookup=tree_capability_resolver(context.candidate_tree),
+        builtin_capabilities=BUILTIN_CAPABILITY_NAMES,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -2216,11 +2221,20 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
         accepted = context.resolved.procedures.get(identity.qualified)
         return None if accepted is None else accepted.procedure.definition
 
+    from cruxible_client.contracts.capabilities import tree_capability_resolver
+    from cruxible_client.contracts.procedures.line_specs import SlotCapabilityUnresolved
+
     try:
-        slots = line_slot_map(accepted_procedure.procedure.definition, child)
+        slots = line_slot_map(
+            accepted_procedure.procedure.definition,
+            child,
+            tree_capability_resolver(context.candidate_tree),
+        )
         capture_outputs = line_capture_output_map(accepted_procedure.procedure.definition, child)
     except RequestRefusedError as exc:
         return _MemberVerdict(diagnostics=(_diagnostic(exc.error_code, str(exc), context.path),))
+    except SlotCapabilityUnresolved as exc:
+        return _MemberVerdict(diagnostics=(_diagnostic(exc.code, str(exc), context.path),))
     law = evaluate_line_spec_law(
         line,
         path=context.path,

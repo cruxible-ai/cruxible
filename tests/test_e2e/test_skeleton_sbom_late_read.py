@@ -39,6 +39,7 @@ from cruxible_client.contracts.subject_kinds import render_subject_kind, subject
 from tests.core_support._identity_support import accept_tree
 from tests.core_support._light_capture_support import JSON_DECODING
 from tests.core_support._subject_kind_support import keyed_subject_kind
+from tests.support.capabilities import accept_head_capabilities
 from tests.support.operation_world import NOW, Invoker, Operator, actor, author, build_files
 from tests.support.procedures import boundary_contract, contract_files, procedure_limits
 from tests.support.procedures import procedure_spec as build_spec
@@ -212,6 +213,11 @@ def sbom_world(tmp_path: Path, *, purl_type: str = "string") -> tuple[Any, Path]
         },
         name="sbom-vocabulary",
     )
+    accept_head_capabilities(
+        instance,
+        ("test.sbom-derive", "test.sbom-derive.request@1", "web.fetch.result@1", "pure"),
+        name="sbom-capabilities",
+    )
     accept_tree(instance, build_files(_derive_build(require_provider_checkout())), name="sbom")
     author(
         instance,
@@ -353,16 +359,8 @@ def sbom_spec(*, read_rows: int = 500, shape: str = "subject") -> Any:
         input={},
         output={},
         slots={
-            "read": {
-                "in": "workspace.file.request@1",
-                "out": "workspace.file.result@1",
-                "effect": "pure",
-            },
-            "derive": {
-                "in": "test.sbom-derive.request@1",
-                "out": "web.fetch.result@1",
-                "effect": "pure",
-            },
+            "read": {"capability": "workspace.file@1"},
+            "derive": {"capability": "test.sbom-derive@1"},
         },
         hard_caps=procedure_limits(provider_calls=2, capture_bytes=2_097_152, read_rows=read_rows),
         steps=[
@@ -568,13 +566,7 @@ def seed_spec(shape: str) -> Any:
         reference_text=True,
         input={},
         output={},
-        slots={
-            "read": {
-                "in": "workspace.file.request@1",
-                "out": "workspace.file.result@1",
-                "effect": "pure",
-            }
-        },
+        slots={"read": {"capability": "workspace.file@1"}},
         hard_caps=procedure_limits(provider_calls=1, capture_bytes=2_097_152),
         steps=[
             {

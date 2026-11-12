@@ -34,6 +34,7 @@ from collections import Counter
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
+from cruxible_client.contracts.capabilities import Capability, CapabilityRef
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate
 from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
@@ -225,20 +226,31 @@ def _writes(definition: Any) -> tuple[RunbookPreviewWrite, ...]:
     )
 
 
-def _calls(definition: Any, line: LineSpec) -> tuple[RunbookPreviewCall, ...]:
+def _capability(reader: DefinitionReader, ref: CapabilityRef) -> Capability | None:
+    """The capability version a slot pins (immutable: read by identity, once)."""
+
+    found = reader.source(ref.identity.qualified)
+    return found if isinstance(found, Capability) else None
+
+
+def _calls(
+    reader: DefinitionReader, definition: Any, line: LineSpec
+) -> tuple[RunbookPreviewCall, ...]:
     calls = []
     for node in definition.nodes:
         if not isinstance(node, CallNode):
             continue
         slot = definition.slots.get(node.slot)
+        capability = None if slot is None else _capability(reader, slot.capability)
         binding = line.bindings.get(node.slot)
         calls.append(
             RunbookPreviewCall(
                 node_id=node.node_id,
                 slot=node.slot,
-                signature_in=None if slot is None else f"{slot.in_.name}@{slot.in_.version}",
-                signature_out=None if slot is None else f"{slot.out.name}@{slot.out.version}",
-                effect=None if slot is None else slot.effect,
+                capability=None if slot is None else slot.capability.spelling,
+                signature_in=None if capability is None else capability.in_.spelling,
+                signature_out=None if capability is None else capability.out.spelling,
+                effect=None if capability is None else capability.effect,
                 build=None if binding is None else binding.build.target.qualified,
                 operation=None if binding is None else binding.operation,
                 captures=_sorted(ref.target.name for ref in node.captures.values()),
@@ -286,7 +298,7 @@ def _inputs(
     line: LineSpec,
     workspace_reader: WorkspaceFileReader | None,
 ) -> tuple[RunbookPreviewInput, ...]:
-    declared = declared_inputs(definition, line)
+    declared = declared_inputs(definition, line, capabilities=lambda ref: _capability(reader, ref))
     if not declared:
         return ()
     contract: Contract | None = None
@@ -563,7 +575,7 @@ def compose_runbook_preview(
         definition = procedure.definition
         reads = _reads(reader, definition)
         writes = _writes(definition)
-        calls = _calls(definition, line)
+        calls = _calls(reader, definition, line)
         authority = _authority(line, reader.mandates(line), definition)
         captures = _sorted(
             [contract for call in calls for contract in call.captures]

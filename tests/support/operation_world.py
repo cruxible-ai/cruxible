@@ -1,10 +1,12 @@
 """Provider operations, slotted Procedures and Lines over them, for B2 tests.
 
-A world holds two B1 Contracts (``test.value@1`` and ``test.refusal@1``), a
-provider build serving ``compute: test.value@1 -> test.value@1 (pure)``, a
-Procedure whose one Call names slot ``compute`` with that signature, and a
-Line binding it. Every artifact is authored and accepted through the ordinary
-lowering and proposal path; providers run through a fake operator.
+A world holds two B1 Contracts (``test.value@1`` and ``test.refusal@1``), the
+capabilities over ``test.value@1 -> test.value@1`` (``test.compute`` for each
+effect), a provider build serving ``compute: test.value@1 -> test.value@1
+(pure)``, a Procedure whose one Call names slot ``compute`` with capability
+``test.compute@1``, and a Line binding it. Every artifact is authored and
+accepted through the ordinary lowering and proposal path; providers run through
+a fake operator.
 """
 
 from __future__ import annotations
@@ -66,10 +68,44 @@ REFUSAL = Contract.model_validate(
 )
 
 
+def compute_capability(effect: str = "pure") -> Any:
+    """The fixture capability over ``test.value@1 -> test.value@1`` with ``effect``."""
+
+    from tests.support.capabilities import capability
+
+    suffix = {"pure": "", "external_read": "-read", "external_mutation": "-mutation"}[effect]
+    return capability("test.compute" + suffix, in_=VALUE, out=VALUE, effect=effect)
+
+
+def compute_slot(effect: str = "pure", *, may_truncate: bool = False) -> dict[str, Any]:
+    """The authored slot naming :func:`compute_capability` for ``effect``."""
+
+    from tests.support.capabilities import slot
+
+    return slot(compute_capability(effect), may_truncate=may_truncate)
+
+
 def contract_files(*contracts: Contract) -> dict[str, bytes]:
+    """The tree files of ``contracts``; by default the fixture Contracts, the
+    ``test.compute`` capabilities over them, and ``workspace.file@1`` (over the
+    genesis workspace.file Contracts)."""
+
+    from tests.support.capabilities import capability_files, workspace_file_capability
+
+    if contracts:
+        return {contract_path(item.name, item.version): render_contract(item) for item in contracts}
     return {
-        contract_path(item.name, item.version): render_contract(item)
-        for item in (contracts or (VALUE, REFUSAL))
+        **{
+            contract_path(item.name, item.version): render_contract(item)
+            for item in (VALUE, REFUSAL)
+        },
+        **capability_files(
+            *(
+                compute_capability(effect)
+                for effect in ("pure", "external_read", "external_mutation")
+            ),
+            workspace_file_capability(),
+        ),
     }
 
 
@@ -170,7 +206,7 @@ def slotted_spec(
     effect: str = "pure",
     description: str | None = None,
 ) -> ProcedureSpec:
-    """One Call through slot ``compute`` (``test.value@1 -> test.value@1``).
+    """One Call through slot ``compute`` (capability ``test.compute``, any effect).
 
     Its ``value`` is a parameter: a Line (or a direct run's ``parameters``)
     supplies it.
@@ -181,7 +217,7 @@ def slotted_spec(
         description=description,
         params={"value": "int"},
         output={"value": "int"},
-        slots={"compute": {"in": "test.value@1", "out": "test.value@1", "effect": effect}},
+        slots={"compute": compute_slot(effect)},
         steps=[CallStep(call="result", slot="compute", input={"value": ref("$params.value")})],
         returns="result",
         hard_caps=procedure_limits(provider_calls=1),
@@ -377,6 +413,8 @@ __all__ = [
     "author_line",
     "author_procedure",
     "build_files",
+    "compute_capability",
+    "compute_slot",
     "contract_files",
     "operation",
     "operation_build",

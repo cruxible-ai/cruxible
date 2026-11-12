@@ -196,7 +196,7 @@ def _slotted_world(tmp_path, *, landed=False):
         procedure="test.measured-slot",
         params={"value": "int"},
         output={"value": "int"},
-        slots={"compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}},
+        slots={"compute": {"capability": "test.compute@1"}},
         steps=[
             CallStep(
                 call="result",
@@ -235,12 +235,8 @@ def _slotted_world(tmp_path, *, landed=False):
             reference_text=True,
             base=spec.model_dump(mode="json"),
             slots={
-                "compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"},
-                "fetch": {
-                    "in": "workspace.file.request@1",
-                    "out": "workspace.file.result@1",
-                    "effect": "pure",
-                },
+                "compute": {"capability": "test.compute@1"},
+                "fetch": {"capability": "workspace.file@1"},
             },
             steps=[
                 CallStep(

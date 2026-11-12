@@ -136,7 +136,7 @@ _READ = {
     "selector_type": "relation-primary-key-v1",
     "selector": {"id": 7, "relation": "orders"},
 }
-_SLOT = {"in": "workspace.file.request@1", "out": "workspace.file.result@1", "effect": "pure"}
+_SLOT = {"capability": "workspace.file@1"}
 
 
 def _transform(node_id: str, kind: str, spec: dict[str, Any], next_node: str) -> TransformStep:

@@ -2642,11 +2642,12 @@ def _co_propose_boundary_contracts(
 
 
 def _pin_slot_contracts(definition: Any, tree: Mapping[str, bytes]) -> Any:
-    """The definition with every slot Contract pinned to the version accepted in ``tree``.
+    """The definition with every slot capability pinned to the version accepted in ``tree``.
 
-    A slot is ``{in, out, effect}``, authored ``name@N``; lowering owns the
-    digest, so an author can neither supply one nor pin a Contract this instance
-    has not accepted (``cruxible.authoring.slot_contract_unresolved``).
+    A slot is ``{capability, may_truncate}``, its capability authored ``name@N``;
+    lowering owns the digest, so an author can neither supply another one nor
+    name a capability this instance has not accepted (or staged in the same
+    change set) (``cruxible.authoring.slot_capability_unresolved``).
     """
 
     from copy import deepcopy
@@ -2689,38 +2690,45 @@ def _pin_slot_contracts(definition: Any, tree: Mapping[str, bytes]) -> Any:
         }
     if not result.get("slots"):
         return result
+    from cruxible_client.contracts.capabilities import (
+        CapabilityFormatError,
+        CapabilitySlot,
+        capability_pin,
+        tree_capability_resolver,
+    )
+
+    capability_at = tree_capability_resolver(tree)
     for name, slot in dict(result["slots"]).items():
         if not isinstance(slot, Mapping):
             continue
-        pinned = dict(slot)
-        for side in ("in", "out"):
-            value = slot.get(side)
-            ref = parse_contract_ref(value) if isinstance(value, str) else None
-            if ref is None and isinstance(value, Mapping):
-                ref = parse_contract_ref(f"{value.get('name')}@{value.get('version')}")
-            if ref is None:
-                continue
-            path = contract_path(ref.name, ref.version)
-            content = tree.get(path)
-            if content is None:
-                _refuse(
-                    "cruxible.authoring.slot_contract_unresolved",
-                    f"definition.slots.{name}.{side}",
-                    f"Slot {name!r} names {ref.spelling}, which is not accepted.",
-                    repair_kind="replace_reference",
-                    repair_description="Accept the Contract first, or name an accepted version.",
-                )
-            digest = contract_digest(parse_contract(content, path=path)).tagged
-            stated = value.get("digest") if isinstance(value, Mapping) else None
-            if stated is not None and stated != digest:
-                _refuse(
-                    "cruxible.authoring.slot_contract_unresolved",
-                    f"definition.slots.{name}.{side}",
-                    f"Slot {name!r} pins {ref.spelling} at {stated}; the accepted is {digest}.",
-                    repair_kind="replace_reference",
-                    repair_description="Name the Contract version without a digest.",
-                )
-            pinned[side] = {"name": ref.name, "version": ref.version, "digest": digest}
+        try:
+            authored = CapabilitySlot.model_validate(slot)
+        except (ValueError, CapabilityFormatError):
+            continue  # the definition model refuses it with its own message
+        named = authored.capability
+        found = capability_at(named.model_copy(update={"digest": None}))
+        if found is None:
+            _refuse(
+                "cruxible.authoring.slot_capability_unresolved",
+                f"definition.slots.{name}.capability",
+                f"Slot {name!r} names capability {named.spelling}, which is not accepted.",
+                repair_kind="replace_reference",
+                repair_description=(
+                    "Author the capability first (or in the same change set), or name an "
+                    "accepted version."
+                ),
+            )
+        pin = capability_pin(found)
+        if named.digest is not None and named.digest != pin.digest:
+            _refuse(
+                "cruxible.authoring.slot_capability_digest_mismatch",
+                f"definition.slots.{name}.capability",
+                f"Slot {name!r} pins {named.spelling} at {named.digest}; the accepted "
+                f"version is {pin.digest}.",
+                repair_kind="replace_reference",
+                repair_description="Name the capability version without a digest.",
+            )
+        pinned = authored.model_copy(update={"capability": pin}).model_dump(mode="json")
         result["slots"][name] = pinned
     return result
 
@@ -3139,8 +3147,20 @@ def _render_line_member(
             ),
         )
 
+    from cruxible_client.contracts.capabilities import tree_capability_resolver
+    from cruxible_client.contracts.procedures.line_specs import SlotCapabilityUnresolved
+
+    capability_at = tree_capability_resolver(tree)
     try:
-        slots = line_slot_map(procedure.definition, child)
+        slots = line_slot_map(procedure.definition, child, capability_at)
+    except SlotCapabilityUnresolved as exc:
+        _refuse(
+            exc.code,
+            "procedure_name",
+            str(exc),
+            repair_kind="replace_procedure_name",
+            repair_description="Accept the capability the Procedure's slot names first.",
+        )
     except ValueError as exc:
         _refuse(
             "cruxible.authoring.line_procedure_missing",
@@ -3200,7 +3220,8 @@ def _render_line_member(
                 if isinstance(node, CallNode) and node.node_id == output.node_path
             )
             slot = procedure.definition.slots.get(call.slot)
-            out = None if slot is None else tree_contract_resolver(tree)(slot.out)
+            capability = None if slot is None else capability_at(slot.capability)
+            out = None if capability is None else tree_contract_resolver(tree)(capability.out)
             if out is not None and output.field in {
                 name for name, _kind, _cap in capture_list_fields(out)
             }:

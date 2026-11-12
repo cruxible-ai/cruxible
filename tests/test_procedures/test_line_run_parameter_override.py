@@ -61,13 +61,7 @@ def override_spec() -> Any:
         input={},
         output={},
         params={"path": 'string{max_len: 64, pattern: "^data/[a-z]+[.]json$"}'},
-        slots={
-            "fetch": {
-                "in": "workspace.file.request@1",
-                "out": "workspace.file.result@1",
-                "effect": "pure",
-            }
-        },
+        slots={"fetch": {"capability": "workspace.file@1"}},
         hard_caps=procedure_limits(provider_calls=1, capture_bytes=262144),
         steps=[
             {

@@ -24,6 +24,7 @@ import pytest
 
 from cruxible_client.contracts.claim_evidence import CaptureBasis
 from tests.core_support._identity_support import accept_tree
+from tests.support.capabilities import accept_head_capabilities
 from tests.support.operation_world import NOW, Invoker, author_line, author_procedure, build_files
 from tests.support.procedures import boundary_contract, contract_files, procedure_limits
 from tests.support.procedures import procedure_spec as build_spec
@@ -137,6 +138,12 @@ def pages_world(tmp_path: Path) -> Any:
     instance = skeleton_world(tmp_path)
     accept_tree(
         instance, contract_files(PAGES_REQUEST, PAGES_RESULT, PAGES_DERIVE), name="pages-contracts"
+    )
+    accept_head_capabilities(
+        instance,
+        ("test.pages", "test.pages.request@1", "test.pages.result@1", "external_read"),
+        ("test.pages-derive", "test.pages-derive.request@1", "web.fetch.result@1", "pure"),
+        name="pages-capabilities",
     )
     accept_tree(instance, build_files(_pages_build(require_provider_checkout())), name="pages")
     return instance
@@ -313,19 +320,9 @@ def list_spec(
         )
         entries = "$steps.selected.records"
     steps.append(_claims_step(entries, absence=absence))
-    slots = {
-        "pages": {
-            "in": "test.pages.request@1",
-            "out": "test.pages.result@1",
-            "effect": "external_read",
-        }
-    }
+    slots = {"pages": {"capability": "test.pages@1"}}
     if derive:
-        slots["derive"] = {
-            "in": "test.pages-derive.request@1",
-            "out": "web.fetch.result@1",
-            "effect": "pure",
-        }
+        slots["derive"] = {"capability": "test.pages-derive@1"}
     name = (
         "test.kev-pages"
         + ("" if absence else "-present")
@@ -892,13 +889,7 @@ def real_pages_spec() -> Any:
         _extract_step("$steps.pages.captures"),
     ]
     steps.append(_claims_step("$steps.entries.records", absence=True))
-    slots = {
-        "pages": {
-            "in": "web.fetch.pages.request@1",
-            "out": "web.fetch.pages.result@1",
-            "effect": "external_read",
-        }
-    }
+    slots = {"pages": {"capability": "web.fetch.pages@1"}}
     return build_spec(
         "test.kev-real-pages",
         reference_text=True,

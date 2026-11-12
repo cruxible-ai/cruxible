@@ -49,14 +49,7 @@ def _incomplete_spec(*, inbox: bool = False, unknown: bool = True, value: str = 
             "for_each": "$steps.entries.records",
             "fields": {"status": value},
         }
-    slots = {
-        "fetch": {
-            "in": "workspace.file.request@1",
-            "out": "workspace.file.result@1",
-            "effect": "pure",
-            "may_truncate": True,
-        }
-    }
+    slots = {"fetch": {"capability": "workspace.file@1", "may_truncate": True}}
     if inbox:
         steps.insert(-1, {"project": "out", "fields": {}})
         return claims_spec(steps=steps, slots=slots, returns="out")

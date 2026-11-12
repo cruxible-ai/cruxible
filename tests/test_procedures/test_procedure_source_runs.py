@@ -113,6 +113,11 @@ from tests.core_support._candidate_support import submit_member_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._support import initialize_local
+from tests.support.capabilities import (
+    capability_files,
+    pinned_slot,
+    workspace_file_capability,
+)
 from tests.support.lines import line_budgets, line_spec
 from tests.support.mandates import procedure_mandate
 from tests.support.procedures import (
@@ -293,30 +298,12 @@ def _procedure(  # noqa: PLR0913
             ),
         }
     )
-    from cruxible_client.contracts.shapes import contract_digest
-    from cruxible_client.contracts.workspace_file import workspace_file_contracts
-
-    _wf_source, _wf_content, wf_request, wf_result = workspace_file_contracts()
     definition = procedure_definition(
         name=PROCEDURE_NAME,
         description="Read one accepted advisory document and shape its severity.",
         contract_in=named(contract_in),
         contract_out=named(contract_out),
-        slots={
-            "read": {
-                "in": {
-                    "name": "workspace.file.request",
-                    "version": 1,
-                    "digest": contract_digest(wf_request).tagged,
-                },
-                "out": {
-                    "name": "workspace.file.result",
-                    "version": 1,
-                    "digest": contract_digest(wf_result).tagged,
-                },
-                "effect": "pure",
-            }
-        },
+        slots={"read": pinned_slot(workspace_file_capability())},
         nodes=(
             CallNode(
                 node_id="read",
@@ -603,6 +590,8 @@ def _world(  # noqa: PLR0913
             accepted_contract
         ),
         **fan_out_members(),
+        # The capability the Procedure's read slot names (its Contracts are genesis).
+        **capability_files(workspace_file_capability()),
     }
     if accept_procedure:
         members.update(procedure_members(procedure))

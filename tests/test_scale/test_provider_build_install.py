@@ -25,8 +25,8 @@ from cruxible_core.providers.builds import indexed_newest_provider
 from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 from cruxible_core.service.procedures.provider_installation import _definition_changes
 from tests.core_support._projection_support import MemoryLedger, accepted_coordinate
+from tests.support.operation_world import REFUSAL, VALUE, contract_files
 from tests.support.operation_world import _digests as _operation_digests
-from tests.support.operation_world import contract_files
 from tests.support.operation_world import operation as _operation
 
 #: The fixture provider's single build-independent entrypoint.
@@ -83,7 +83,7 @@ def test_install_work_is_flat_with_unrelated_build_population(
         # Invalid bytes deliberately fail if installation parses another name's build.
         tree = SnapshotTree(
             {
-                **contract_files(),
+                **contract_files(VALUE, REFUSAL),
                 **{f"providers/other/{i:064x}.json": b"unrelated" for i in range(size)},
             }
         )
@@ -157,7 +157,7 @@ def _population(tmp_path, package, size):
     providers = tuple(build(i + 1) for i in range(size))
     tree = SnapshotTree(
         {
-            **contract_files(),
+            **contract_files(VALUE, REFUSAL),
             **{provider_path(p.identity.name): render_provider(p) for p in providers},
         }
     )
@@ -379,7 +379,7 @@ def test_accepted_head_preserves_registration_order_and_reconstructs(tmp_path, p
         tree = instance.tree_at(instance.accepted_coordinate().git_oid)
         tree.update(
             {
-                **contract_files(),
+                **contract_files(VALUE, REFUSAL),
                 **{provider_path(p.identity.name): render_provider(p) for p in providers},
             }
         )
