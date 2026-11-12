@@ -1,0 +1,54 @@
+{
+  "decoding": {
+    "encoding": "identity",
+    "format": "json",
+    "limits": {
+      "decoded_bytes": 4194304,
+      "depth": 8,
+      "records": 20000
+    }
+  },
+  "layout": {
+    "header": {
+      "inventory": {
+        "at": "/inventory",
+        "type": "string{min_len: 1, max_len: 256}"
+      }
+    },
+    "records": {
+      "components": {
+        "at": "/components/*",
+        "count_at": "/count",
+        "fields": {
+          "name": {
+            "at": "name",
+            "presence": "optional"
+          },
+          "named_by": {
+            "at": "named_by"
+          },
+          "scope": {
+            "at": "scope",
+            "canonicalize": "claim_type"
+          },
+          "warning": {
+            "at": "warning",
+            "presence": "optional"
+          }
+        },
+        "key": {
+          "purl": {
+            "at": "purl",
+            "type": "key_part<security.component:purl>"
+          }
+        },
+        "row": {
+          "digest": "sha256:f8b48814c88ac2cdeadc62e9c4f9c65ee0e8b62ccbd118a3af5cfa1ea2076532",
+          "name": "security.sbom-component",
+          "version": 1
+        }
+      }
+    }
+  },
+  "name": "security.sbom-components"
+}

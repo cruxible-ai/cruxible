@@ -1,0 +1,43 @@
+{
+  "capture": "$steps.derived.document",
+  "complete_when": {
+    "count_at": "/count"
+  },
+  "fields": {
+    "name": {
+      "at": "name",
+      "presence": "optional"
+    },
+    "named_by": {
+      "at": "named_by"
+    },
+    "scope": {
+      "at": "scope",
+      "canonicalize": "claim_type"
+    },
+    "warning": {
+      "at": "warning",
+      "presence": "optional"
+    }
+  },
+  "header": {
+    "inventory": {
+      "at": "/inventory",
+      "type": "string{min_len: 1, max_len: 256}"
+    }
+  },
+  "id": "listed",
+  "key": {
+    "purl": {
+      "at": "purl",
+      "type": "key_part<security.component:purl>"
+    }
+  },
+  "kind": "extract",
+  "records": "/components/*",
+  "row": {
+    "digest": "sha256:f8b48814c88ac2cdeadc62e9c4f9c65ee0e8b62ccbd118a3af5cfa1ea2076532",
+    "name": "security.sbom-component",
+    "version": 1
+  }
+}
