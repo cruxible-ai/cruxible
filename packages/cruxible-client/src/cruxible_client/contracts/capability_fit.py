@@ -9,19 +9,40 @@ path as :class:`Unfit`, with both sides rendered. Binding a slot also needs
 equal effects and a truncation promise the slot accepts:
 :class:`EffectUnequal` and :class:`TruncationUnfit`.
 
-The fit function itself lives with the binding rule; this module fixes what it
-returns, how a failure reads, and the refusal codes and messages of binding by
-capability (``cruxible.line.*``).
+This module holds the fit function (:func:`record_fits`), what it returns, how
+a failure reads, and the refusal codes and messages of binding by capability
+(``cruxible.line.*``).
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Annotated, Final, Literal, TypeAlias
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Annotated, Final, Literal, NamedTuple, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from cruxible_client.contracts.provider_operations import OperationEffect
+from cruxible_client.contracts.provider_operations import ContractLookup, OperationEffect
+from cruxible_client.contracts.shapes import (
+    ANY_CAPTURE_KIND,
+    CaptureType,
+    Contract,
+    ContractField,
+    ContractRef,
+    FieldResultType,
+    FieldType,
+    ListType,
+    NestedType,
+    RecordType,
+    RefusalType,
+    ResultType,
+    VariantType,
+    contract_digest,
+    edge_refusal,
+    render_type,
+)
+
+if TYPE_CHECKING:
+    from cruxible_client.contracts.capture_layouts import LayoutGap, RowFit, TypeFit
 
 #: How a fitting pair fits: the same Contract digests, or by shape.
 FitKind = Literal["identical", "structural"]
@@ -124,6 +145,249 @@ def render_unfit(reason: BindingUnfitReason, *, slot: str) -> str:
     return f"{reason.side}.{reason.path}: {clause}"
 
 
+# -- the fit rule --------------------------------------------------------------------------
+
+#: The Capture seam: whether the sender side's layout of one CaptureKind covers the
+#: receiver side's. :func:`record_fits` asks it only where both sides name the same
+#: ``capture<K>``, passing ``K`` and the fit rule for one field type and for two row
+#: Contracts (each over the same resolvers and memo as the call itself), which is
+#: what ``capture_layouts.layout_covers`` takes. The caller wires it over its two
+#: declarations of ``K``, the sender side's as producer:
+#: ``lambda kind, type_fits, row_fits: layout_covers(sent[kind], received[kind],
+#: type_fits=type_fits, row_fits=row_fits)``. On the request the sender side is the
+#: instance's kind and the receiver the operation's copy; on the result the reverse.
+#: ``None`` means it covers.
+CaptureCovers: TypeAlias = Callable[[str, "TypeFit", "RowFit"], "LayoutGap | None"]
+
+#: The root a :data:`TypeFit` reports a failing path from (``value``, ``value[]``).
+_TYPE_FIT_ROOT = "value"
+
+
+class FitUnresolved(LookupError):
+    """A Contract pin one side names does not resolve in that side's closure.
+
+    Fit judges two resolvable closures; the closure checks that run before it
+    (Contract law, a registration's ``declares``) refuse an unresolved pin first.
+    """
+
+    def __init__(self, ref: ContractRef, *, party: Literal["sender", "receiver"]) -> None:
+        super().__init__(f"the {party}'s pin {ref.spelling} does not resolve")
+        self.ref = ref
+        self.party = party
+
+
+class _Fail(NamedTuple):
+    """A failing path relative to the record being walked."""
+
+    path: str
+    problem: FitProblem
+    sender: str
+    receiver: str
+
+    def under(self, prefix: str) -> _Fail:
+        return self._replace(path=f"{prefix}.{self.path}")
+
+
+def _field_order(name: str) -> bytes:
+    return name.encode("utf-8")
+
+
+class _Walk:
+    """One fit call: both resolvers, the Capture seam, and memos shared by every nested walk."""
+
+    def __init__(
+        self,
+        resolve_sender: ContractLookup,
+        resolve_receiver: ContractLookup,
+        side: FitSide,
+        capture_covers: CaptureCovers,
+    ) -> None:
+        self.resolve_sender = resolve_sender
+        self.resolve_receiver = resolve_receiver
+        self.side = side
+        self.capture_covers = capture_covers
+        self.records: dict[tuple[str, str], _Fail | None] = {}
+        self.walking: set[tuple[str, str]] = set()
+        self.layouts: dict[str, LayoutGap | None] = {}
+
+    # -- entry points (record_fits, and the two callables the Capture seam receives)
+
+    def record(self, sender: ContractRef, receiver: ContractRef) -> FitResult:
+        if sender.digest is not None and sender.digest == receiver.digest:
+            return Fits(fit="identical")
+        sent, received, key = self._pair(sender, receiver)
+        if key[0] == key[1]:
+            return Fits(fit="identical")
+        fail = self._walk_pair(sent, received, key)
+        return Fits(fit="structural") if fail is None else self._unfit(fail)
+
+    def type_fits(self, sender: FieldType, receiver: FieldType) -> FitResult:
+        fail = self._types(sender, receiver, _TYPE_FIT_ROOT)
+        if fail is not None:
+            return self._unfit(fail)
+        return Fits(fit="identical" if sender == receiver else "structural")
+
+    # -- records
+
+    def _unfit(self, fail: _Fail) -> Unfit:
+        return Unfit(
+            side=self.side,
+            path=fail.path,
+            problem=fail.problem,
+            sender=fail.sender,
+            receiver=fail.receiver,
+        )
+
+    def _pair(
+        self, sender: ContractRef, receiver: ContractRef
+    ) -> tuple[Contract, Contract, tuple[str, str]]:
+        sent = self.resolve_sender(sender)
+        if sent is None:
+            raise FitUnresolved(sender, party="sender")
+        received = self.resolve_receiver(receiver)
+        if received is None:
+            raise FitUnresolved(receiver, party="receiver")
+        key = (
+            sender.digest or contract_digest(sent).tagged,
+            receiver.digest or contract_digest(received).tagged,
+        )
+        return sent, received, key
+
+    def _contract(self, sender: ContractRef, receiver: ContractRef) -> _Fail | None:
+        if sender.digest is not None and receiver.digest is not None:
+            if sender.digest == receiver.digest:
+                return None
+            pinned = (sender.digest, receiver.digest)
+            if pinned in self.records:
+                return self.records[pinned]
+        sent, received, key = self._pair(sender, receiver)
+        if key[0] == key[1]:
+            return None
+        return self._walk_pair(sent, received, key)
+
+    def _walk_pair(self, sent: Contract, received: Contract, key: tuple[str, str]) -> _Fail | None:
+        if key in self.records:
+            return self.records[key]
+        if key in self.walking:
+            # A pair already being walked higher up fits unless something else fails.
+            return None
+        self.walking.add(key)
+        try:
+            fail = self._fields(sent.fields, received.fields)
+        finally:
+            self.walking.discard(key)
+        self.records[key] = fail
+        return fail
+
+    def _fields(
+        self, sent: dict[str, ContractField], received: dict[str, ContractField]
+    ) -> _Fail | None:
+        for name in sorted(set(sent) | set(received), key=_field_order):
+            offered, wanted = sent.get(name), received.get(name)
+            if wanted is None:
+                assert offered is not None
+                return _Fail(name, "undeclared", offered.spelling, ABSENT)
+            if offered is None:
+                if not wanted.optional:
+                    return _Fail(name, "required", ABSENT, wanted.spelling)
+                continue
+            if offered.optional and not wanted.optional:
+                return _Fail(name, "optional", offered.spelling, wanted.spelling)
+            fail = self._types(offered.type, wanted.type, name)
+            if fail is not None:
+                return fail
+        return None
+
+    # -- types
+
+    def _types(self, sender: FieldType, receiver: FieldType, path: str) -> _Fail | None:
+        if isinstance(sender, CaptureType) and isinstance(receiver, CaptureType):
+            return self._capture(sender, receiver, path)
+        if isinstance(sender, ListType) and isinstance(receiver, ListType):
+            if sender.max_items > receiver.max_items:
+                return self._type_fail(sender, receiver, path)
+            return self._types(sender.item, receiver.item, f"{path}[]")
+        if isinstance(sender, FieldResultType) and isinstance(receiver, FieldResultType):
+            return self._types(sender.value, receiver.value, path)
+        if (
+            isinstance(sender, NestedType | RecordType | ResultType | RefusalType)
+            and isinstance(receiver, NestedType | RecordType | ResultType | RefusalType)
+            and sender.kind == receiver.kind
+        ):
+            fail = self._contract(sender.contract, receiver.contract)
+            return None if fail is None else fail.under(path)
+        if isinstance(sender, VariantType) and isinstance(receiver, VariantType):
+            if not set(sender.arms) <= set(receiver.arms):
+                return self._type_fail(sender, receiver, path)
+            for tag in sorted(sender.arms, key=_field_order):
+                fail = self._contract(sender.arms[tag], receiver.arms[tag])
+                if fail is not None:
+                    return fail.under(f"{path}.{tag}")
+            return None
+        if _STRUCTURED.isdisjoint((sender.kind, receiver.kind)) and (
+            edge_refusal(sender, receiver) is None
+        ):
+            return None
+        return self._type_fail(sender, receiver, path)
+
+    def _capture(self, sender: CaptureType, receiver: CaptureType, path: str) -> _Fail | None:
+        if receiver.capture_kind == ANY_CAPTURE_KIND:
+            return None
+        if sender.capture_kind != receiver.capture_kind:
+            return self._type_fail(sender, receiver, path)
+        kind = sender.capture_kind
+        if kind not in self.layouts:
+            self.layouts[kind] = self.capture_covers(kind, self.type_fits, self.record)
+        gap = self.layouts[kind]
+        if gap is None:
+            return None
+        return _Fail(f"{path}.layout.{gap.entry}", "layout", gap.producer, gap.reader)
+
+    @staticmethod
+    def _type_fail(sender: FieldType, receiver: FieldType, path: str) -> _Fail:
+        return _Fail(path, "type", render_type(sender), render_type(receiver))
+
+
+#: Kinds the walk judges itself; every other pair of types is a leaf the edge rule judges.
+_STRUCTURED = frozenset(
+    {"capture", "list", "field_result", "contract", "record", "result", "refusal", "variant"}
+)
+
+
+def record_fits(
+    sender: ContractRef,
+    receiver: ContractRef,
+    resolve_sender: ContractLookup,
+    resolve_receiver: ContractLookup,
+    *,
+    side: FitSide,
+    capture_covers: CaptureCovers,
+) -> FitResult:
+    """Whether the ``sender`` record fits the ``receiver`` record: the one rule of binding.
+
+    Every sender field exists in the receiver and its type fits; a field
+    optional in the sender is optional in the receiver; every receiver field
+    the sender lacks is optional. Types fit by the edge rule's refinements
+    (ranges and lengths within, a pattern equal or absent on the receiver, enum
+    members a subset, Subject kinds a subset; everything else identical), and
+    structurally where they wrap others: a list's bound is within and its item
+    fits; a nested Contract, a ``record<C>``, ``result<C>`` or ``refusal<C>``
+    fits by this same rule; a variant's arms are a subset and each arm fits; a
+    ``field_result<T>`` fits by its value. ``capture<K>`` fits ``capture<*>``;
+    ``capture<*>`` fits only ``capture<*>``; ``capture<K>`` into ``capture<K>``
+    fits when ``capture_covers`` says the sender side's layout of ``K`` covers
+    the receiver side's.
+
+    Each side's pins resolve in that side's closure. Two pins with equal digests
+    fit without being read (``identical``); otherwise the first failing path, in
+    field-name order, is returned as :class:`Unfit` on ``side``. Within one call
+    each (sender digest, receiver digest) pair is walked once and the seam is
+    asked once per kind. An unresolved pin raises :class:`FitUnresolved`.
+    """
+
+    return _Walk(resolve_sender, resolve_receiver, side, capture_covers).record(sender, receiver)
+
+
 # -- refusals of binding by capability -----------------------------------------------------
 
 SLOT_UNFILLED: Final = "cruxible.line.slot_unfilled"
@@ -220,17 +484,20 @@ __all__ = [
     "UNFIT_CLAUSES",
     "BindingFit",
     "BindingUnfitReason",
+    "CaptureCovers",
     "EffectUnequal",
     "FitKind",
     "FitProblem",
     "FitResult",
     "FitSide",
+    "FitUnresolved",
     "Fits",
     "LineBindingRefusalCode",
     "TruncationUnfit",
     "Unfit",
     "binding_undeclared_message",
     "binding_unfit_message",
+    "record_fits",
     "render_unfit",
     "slot_ambiguous_message",
     "slot_unfilled_message",
