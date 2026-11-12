@@ -2543,7 +2543,10 @@ def _capability_member(context: _MemberContext) -> _MemberVerdict:
         evaluate_capability_law,
         parse_capability,
     )
-    from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
+    from cruxible_core.capabilities.artifact import (
+        BUILTIN_CAPABILITY_NAMES,
+        bundled_version_problems,
+    )
 
     capability = parse_capability(context.content, path=context.path)
     problems = evaluate_capability_law(
@@ -2553,7 +2556,7 @@ def _capability_member(context: _MemberContext) -> _MemberVerdict:
         parent_content=context.parent_content,
         content=context.content,
         builtin_capabilities=BUILTIN_CAPABILITY_NAMES,
-    )
+    ) + bundled_version_problems(capability)
     if problems:
         return _MemberVerdict(
             diagnostics=tuple(

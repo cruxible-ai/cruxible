@@ -323,7 +323,7 @@ def test_raw_acceptance_reserves_workspace_names_to_core(tmp_path: Path) -> None
     # Version 1 of a name core's builtin serves is the base kit's; a later
     # version is the adopter's to author.
     other_first = _raw(tree, name="workspace.file")
-    assert "cruxible.capability.immutable" in _refused_codes(instance, _files(other_first))
+    assert "cruxible.capability.reserved" in _refused_codes(instance, _files(other_first))
     first_path = capability_path("workspace.file", 1)
     second = _raw(
         tree,

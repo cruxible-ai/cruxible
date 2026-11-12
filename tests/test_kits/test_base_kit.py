@@ -20,12 +20,24 @@ from typing import Any
 
 import pytest
 
+from cruxible_client.contracts.authoring.inputs import (
+    CapabilityInput,
+    ChangeSetInput,
+    ContractInput,
+    lower_authoring_input,
+)
 from cruxible_client.contracts.capabilities import (
+    capability_digest,
     capability_path,
     capability_path_parts,
+    parse_capability,
+    render_capability,
+    validate_capability,
 )
 from cruxible_client.contracts.errors import BootstrapError
 from cruxible_client.contracts.kits import KitAddRequest, kit_receipt_document_id
+from cruxible_client.contracts.proposal_models import ProposalAdmissionRequest
+from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.governance.keys import GeneratedKeyMaterial
 from cruxible_core.kits import BundledKitPin
 from cruxible_core.kits import base_kit as base_kit_module
@@ -35,6 +47,7 @@ from cruxible_core.kits.base_kit import (
     base_kit_directory,
     bundled_base_kit,
     bundled_kit_reference,
+    install_bundled_base_kit,
     load_bundled_kit,
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -46,6 +59,7 @@ from cruxible_core.service.authoring.documents import (
 from cruxible_core.service.kits import service_add_kit, service_kit_status
 from cruxible_core.service.proposals.review import service_prepare_playbill_approval
 from cruxible_core.storage.cas import BodyAccessContext
+from tests.core_support._identity_support import accept_tree
 from tests.core_support._support import FIXED_TIMESTAMP, generate_client
 from tests.test_ledger.test_activation import _sign
 
@@ -294,3 +308,153 @@ def _older_bundle(root: Path) -> Any:
     return load_bundled_kit(
         directory, BundledKitPin(kit_id="base", version="0.9.0", content_digest=digest)
     )
+
+
+# -- reserved names -----------------------------------------------------------------------
+
+
+def _without_base_kit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[PlaybillInstance, GeneratedKeyMaterial]:
+    """An instance whose creation skipped the base kit (as if removed before it landed)."""
+
+    monkeypatch.setattr(base_kit_module, "install_bundled_base_kit", lambda *a, **k: None)
+    instance, owner, _reviewer = _create(tmp_path)
+    monkeypatch.undo()
+    assert capability_path("workspace.file", 1) not in _tree(instance)
+    return instance, owner
+
+
+def _squatter(tree: dict[str, bytes]) -> tuple[str, bytes]:
+    """``workspace.file@1`` over the bundled Contracts, worded differently."""
+
+    path = capability_path("workspace.file", 1)
+    bundled = parse_capability(bundled_base_kit().contents()[path], path=path)
+    other = validate_capability(
+        {**bundled.model_dump(mode="json", by_alias=True), "description": "Reads any file."}
+    )
+    return path, render_capability(other)
+
+
+def _bundled_contracts() -> dict[str, bytes]:
+    return {
+        path: content
+        for path, content in bundled_base_kit().contents().items()
+        if path.startswith("contracts/workspace.file.")
+    }
+
+
+def test_an_agent_authored_workspace_file_v1_is_refused_at_acceptance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _owner = _without_base_kit(tmp_path, monkeypatch)
+    accept_tree(instance, _bundled_contracts(), name="file-contracts")
+    base = instance.accepted_coordinate()
+    path, content = _squatter(_tree(instance))
+    proposed = instance.proposal_service().submit(
+        actor=OWNER,
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/squat", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree={**_tree(instance), path: content},
+        timestamp=STAMP,
+    )
+    assert proposed.candidate is None
+    assert "cruxible.capability.reserved" in {item.code for item in proposed.evaluation.diagnostics}
+
+
+def test_an_agent_authored_workspace_file_v1_is_refused_at_authoring(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _owner = _without_base_kit(tmp_path, monkeypatch)
+    accept_tree(instance, _bundled_contracts(), name="file-contracts")
+    compiled = AuthoringIntentCoordinator.for_instance(instance).compile(
+        actor=OWNER,
+        payload=lower_authoring_input(  # type: ignore[arg-type]
+            CapabilityInput.model_validate(
+                {
+                    "kind": "capability",
+                    "name": "workspace.file",
+                    "version": 1,
+                    "description": "Reads any file.",
+                    "effect": "pure",
+                    "in": "workspace.file.request@1",
+                    "out": "workspace.file.result@1",
+                }
+            )
+        ),
+        canonical_timestamp=STAMP,
+    )
+    assert compiled.verdict == "refused"
+    (diagnostic, *_rest) = compiled.frontier.diagnostics
+    assert diagnostic.code == "cruxible.capability.reserved"
+    assert "kit add base" in diagnostic.repairs[0].description
+
+
+def test_the_bundled_workspace_file_v1_lands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _owner = _without_base_kit(tmp_path, monkeypatch)
+    result = install_bundled_base_kit(instance, actor_id="owner", at=_at(STAMP))
+    assert result.status == "accepted"
+    path = capability_path("workspace.file", 1)
+    assert _tree(instance)[path] == bundled_base_kit().contents()[path]
+
+
+def test_an_adopter_authors_workspace_file_v2(tmp_path: Path) -> None:
+    instance, owner, _reviewer = _create(tmp_path)
+    first_path = capability_path("workspace.file", 1)
+    first = parse_capability(_tree(instance)[first_path], path=first_path)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    submitted = coordinator.compile_and_submit(
+        actor=OWNER,
+        payload=lower_authoring_input(  # type: ignore[arg-type]
+            ChangeSetInput(
+                kind="change_set",
+                members=(
+                    CapabilityInput.model_validate(
+                        {
+                            "kind": "capability",
+                            "name": "workspace.file",
+                            "version": 2,
+                            "description": first.description + " Second wording.",
+                            "effect": "pure",
+                            "in": "workspace.file.request@1",
+                            "out": "workspace.file.result@1",
+                        }
+                    ),
+                    ContractInput(
+                        kind="contract",
+                        name="acme.unused",
+                        version=1,
+                        fields={"note": "string"},  # type: ignore[dict-item]
+                    ),
+                ),
+            )
+        ),
+        canonical_timestamp=STAMP,
+    )
+    assert submitted.status.proposal_id is not None, submitted.status.model_dump(mode="json")
+    assert submitted.status.candidate_digest is not None
+    approval = _sign(
+        owner, submitted.status.candidate_digest, instance.accepted_coordinate().semantic_root
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=submitted.status.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    activated = service_activate_playbill_proposal(
+        instance, proposal_id=submitted.status.proposal_id, activated_by="owner"
+    )
+    assert activated.status == "accepted"
+    second_path = capability_path("workspace.file", 2)
+    second = parse_capability(_tree(instance)[second_path], path=second_path)
+    assert second.predecessor_digest == capability_digest(first).tagged
+
+
+def _at(stamp: str) -> Any:
+    from cruxible_client.contracts.temporal import parse_datetime
+
+    return parse_datetime(stamp)

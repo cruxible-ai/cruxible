@@ -3,8 +3,9 @@
 The model, path, digest, parse and law live in
 ``cruxible_client.contracts.capabilities``. This module holds the two things
 core decides: the pin roles a capability's Contract pins carry in the
-projection and the dependency closure, and the capability names core's builtin
-serves (the only names the law admits under ``workspace.``).
+projection and the dependency closure, the capability names core's builtin
+serves (the only names the law admits under ``workspace.``), and that version 1
+of a name under ``workspace.`` is exactly the bundled base kit's.
 """
 
 from __future__ import annotations
@@ -12,7 +13,15 @@ from __future__ import annotations
 from typing import Final
 
 from cruxible_client.contracts.artifacts import ArtifactPin
-from cruxible_client.contracts.capabilities import Capability
+from cruxible_client.contracts.capabilities import (
+    CAPABILITY_RESERVED,
+    RESERVED_CAPABILITY_PREFIX,
+    Capability,
+    capability_digest,
+    capability_path,
+    is_reserved_capability_name,
+)
+from cruxible_client.contracts.law_problems import LawProblem
 from cruxible_core.procedures.ports import WORKSPACE_FILE_BUILTIN
 
 #: The pin role of a capability's request Contract, then of its result Contract.
@@ -34,4 +43,33 @@ def capability_pins(capability: Capability) -> tuple[ArtifactPin, ...]:
     )
 
 
-__all__ = ["BUILTIN_CAPABILITY_NAMES", "CAPABILITY_CONTRACT_PIN_ROLES", "capability_pins"]
+def bundled_version_problems(capability: Capability) -> tuple[LawProblem, ...]:
+    """Version 1 of a name under ``workspace.`` is accepted only as the bundled base kit's.
+
+    Compared by digest with the base kit this core ships, so no caller-supplied
+    kit id stands in for it. Later versions are the adopter's to author.
+    """
+
+    if capability.version != 1 or not is_reserved_capability_name(capability.name):
+        return ()
+    from cruxible_core.kits.base_kit import bundled_base_artifact_digest
+
+    bundled = bundled_base_artifact_digest(capability_path(capability.name, 1))
+    if bundled is not None and capability_digest(capability).tagged == bundled:
+        return ()
+    return (
+        LawProblem(
+            CAPABILITY_RESERVED,
+            f"{capability.ref.spelling} is under {RESERVED_CAPABILITY_PREFIX}, which core "
+            "reserves: version 1 is the bundled base kit's, byte for byte. Install it with "
+            "`cruxible kit add base`, then author version 2 to change it.",
+        ),
+    )
+
+
+__all__ = [
+    "BUILTIN_CAPABILITY_NAMES",
+    "CAPABILITY_CONTRACT_PIN_ROLES",
+    "bundled_version_problems",
+    "capability_pins",
+]
