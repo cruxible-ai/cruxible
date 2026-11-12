@@ -893,9 +893,9 @@ class ProposalReadmitResult(BaseModel):
     proposal: ProposalInspection | None
     accepted_coordinate: AcceptedCoordinate | None = None
     #: Re-observations of unchanged items the readmission could not record, by
-    #: reason; empty when every one was recorded.
+    #: reason; omitted when every one was recorded.
     reobservations_refused: dict[_ReobservationRefusalReason, _SummaryCount] = Field(
-        default_factory=dict
+        default_factory=dict, exclude_if=lambda value: not value
     )
 
 
