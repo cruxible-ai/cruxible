@@ -38,9 +38,10 @@ from cruxible_client.contracts.claim_verdicts import (
     CaptureReobservationEvidence,
     CaptureVerdictEvidence,
 )
-from cruxible_client.contracts.claims import claim_path, parse_claim
+from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, parse_claim
 from cruxible_client.contracts.errors import CruxibleError, ReadRefusalError
 from cruxible_client.contracts.primitives import new_id
+from cruxible_client.contracts.procedures.node_summary import ReobservationRefusalReason
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_core.exhaust.backends import LocalJournalBackend, journal_log_path
@@ -62,7 +63,7 @@ _FENCE = "claim-reobservation-local-v1"
 _PARTITION = "reobservations"
 _EVENT_TAG = "cruxible-claim-reobservation-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # ``reobservations`` keeps the full history (audit, historical verification).
@@ -75,6 +76,10 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # Each step keeps its journal sequence, so a read recorded at a journal position
 # counts only the steps through it (``read_positions``): the steps are written in
 # sequence order, so those are exactly the steps the projection held then.
+# Each record also names the Claim version (artifact digest) live when it was
+# admitted, so a version's latest observation by a given instant is one seek on
+# ``reobservations_by_version`` (prediction settlement), however many records of
+# the lineage, or of that version observed later, there are.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS progress (
  singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL, recorded_us INTEGER NOT NULL
@@ -83,9 +88,12 @@ CREATE TABLE IF NOT EXISTS reobservations (
  claim_id TEXT NOT NULL, capture_digest TEXT NOT NULL, contract_digest TEXT NOT NULL,
  observed_content_digest TEXT NOT NULL, observed_at TEXT NOT NULL, recorded_at TEXT NOT NULL,
  observed_us INTEGER NOT NULL, recorded_us INTEGER NOT NULL, sequence INTEGER NOT NULL,
+ claim_artifact_digest TEXT NOT NULL,
  PRIMARY KEY(claim_id, capture_digest)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS reobservations_by_sequence ON reobservations (claim_id, sequence);
+CREATE INDEX IF NOT EXISTS reobservations_by_version
+ ON reobservations (claim_id, claim_artifact_digest, observed_us, capture_digest);
 CREATE TABLE IF NOT EXISTS reobservation_points (
  claim_id TEXT NOT NULL, contract_digest TEXT NOT NULL, observed_content_digest TEXT NOT NULL,
  recorded_us INTEGER NOT NULL, observed_us INTEGER NOT NULL, capture_digest TEXT NOT NULL,
@@ -106,6 +114,12 @@ _NEXT_POINT = (
 )
 _NEVER = 1 << 62
 _LAST_SEQUENCE = "SELECT MAX(sequence) FROM reobservations WHERE claim_id=? AND sequence<=?"
+_VERSION_RECORD = (
+    "SELECT capture_digest, contract_digest, observed_content_digest, observed_at, recorded_at, "
+    "sequence FROM reobservations INDEXED BY reobservations_by_version "
+    "WHERE claim_id=? AND claim_artifact_digest=? AND observed_us<=? AND sequence<=? "
+    "ORDER BY observed_us DESC, capture_digest DESC LIMIT 1"
+)
 
 
 def _through() -> int:
@@ -128,7 +142,9 @@ class ClaimReobservationRefused(CruxibleError):
 
     error_code = "cruxible.claim.reobservation_refused"
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, reason: ReobservationRefusalReason) -> None:
+        #: The closed reason a run's claims summary counts the refusal under.
+        self.reason: ReobservationRefusalReason = reason
         super().__init__(f"{self.error_code}: {message}")
 
 
@@ -156,6 +172,20 @@ class ReobservationRecord:
     observed_content_digest: str
     observed_at: datetime
     recorded_at: datetime
+
+
+@dataclass(frozen=True)
+class RecordedReobservation:
+    """A lineage's latest re-observation and the journal record that holds it.
+
+    ``accepted_coordinate`` is the accepted head the record was admitted at:
+    the Claim version live there is the version it re-observed.
+    """
+
+    record: ReobservationRecord
+    sequence: int
+    record_digest: str
+    accepted_coordinate: AcceptedCoordinate
 
 
 def _instant(value: object) -> datetime:
@@ -220,12 +250,32 @@ class ClaimReobservationStore:
                     )
                     if not isinstance(payload, dict) or payload.get("tag") != _EVENT_TAG:
                         raise ValueError("invalid Claim re-observation record")
+                    if "claim_artifact_digest" not in payload:
+                        # A record written before records named their version:
+                        # the version live at the head it was admitted at (one
+                        # Claim read, paid once, when the projection is rebuilt).
+                        payload = {
+                            **payload,
+                            "claim_artifact_digest": self._version_at(
+                                str(payload["claim_id"]),
+                                stored.record.accepted_coordinate.git_oid,
+                            ),
+                        }
                     self._apply(conn, payload, stored.record.sequence, stored.record.recorded_at)
                 conn.commit()
                 yield conn
                 conn.commit()
             finally:
                 conn.close()
+
+    def _version_at(self, claim_id: str, git_oid: str) -> str:
+        """The artifact digest of the Claim version at one accepted head ('' when absent)."""
+
+        path = claim_path(claim_id)
+        content = self.instance.blob_at(git_oid, path)
+        if content is None:
+            return ""
+        return claim_artifact_digest(parse_claim(content, path=path)).tagged
 
     @staticmethod
     def _apply(
@@ -244,7 +294,7 @@ class ClaimReobservationStore:
         observed_us = _micros(observed_at)
         key = (payload["claim_id"], payload["contract_digest"], payload["observed_content_digest"])
         inserted = conn.execute(
-            "INSERT OR IGNORE INTO reobservations VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT OR IGNORE INTO reobservations VALUES (?,?,?,?,?,?,?,?,?,?)",
             (
                 payload["claim_id"],
                 payload["capture_digest"],
@@ -255,6 +305,7 @@ class ClaimReobservationStore:
                 observed_us,
                 recorded_us,
                 sequence,
+                str(payload.get("claim_artifact_digest", "")),
             ),
         ).rowcount
         if inserted:
@@ -281,7 +332,7 @@ class ClaimReobservationStore:
         extracted_value: object = None,
         cited_envelopes: dict[str, CaptureEnvelopeAny] | None = None,
         verified_witnesses: dict[object, None] | None = None,
-    ) -> tuple[CaptureEnvelopeAny, str]:
+    ) -> tuple[CaptureEnvelopeAny, str, str]:
         """The re-observing Capture's envelope, or the typed refusal.
 
         It must be a daemon-admitted Capture that verifies at ``coordinate``,
@@ -312,25 +363,32 @@ class ClaimReobservationStore:
             )
         except (CaptureReadInvalid, CruxibleError, ReadRefusalError, ValueError) as exc:
             raise ClaimReobservationRefused(
-                f"Capture {capture_digest} does not verify as daemon-admitted evidence: {exc}"
+                f"Capture {capture_digest} does not verify as daemon-admitted evidence: {exc}",
+                reason="capture_not_admitted",
             ) from exc
         if isinstance(verified, str):
             raise ClaimReobservationRefused(
-                f"Capture {capture_digest} is not admissible evidence here ({verified})"
+                f"Capture {capture_digest} is not admissible evidence here ({verified})",
+                reason="capture_not_admitted",
             )
         envelope = verified.envelope
         content = self.instance.blob_at(coordinate.git_oid, claim_path(claim_id))
         if content is None:
-            raise ClaimReobservationRefused(f"no accepted Claim {claim_id} to re-observe")
+            raise ClaimReobservationRefused(
+                f"no accepted Claim {claim_id} to re-observe", reason="claim_absent"
+            )
         claim = parse_claim(content, path=claim_path(claim_id))
         if claim.lifecycle.state != "live":
             raise ClaimReobservationRefused(
                 f"Claim {claim_id} is {claim.lifecycle.state} at the head: a re-observation "
-                "is recorded only for a live Claim"
+                "is recorded only for a live Claim",
+                reason="claim_not_live",
             )
         if capture_digest in claim.backing.capture_digests:
             raise ClaimReobservationRefused(
-                f"Claim {claim_id} already cites Capture {capture_digest}: nothing new was observed"
+                f"Claim {claim_id} already cites Capture {capture_digest}: "
+                "nothing new was observed",
+                reason="capture_already_cited",
             )
         original = claim.backing.procedure_evidence
         same_extraction = False
@@ -362,9 +420,13 @@ class ClaimReobservationStore:
                         verified=verified_witnesses,
                     )
                     if refusal is not None:
-                        raise ClaimReobservationRefused(refusal)
+                        raise ClaimReobservationRefused(
+                            refusal, reason="absence_witness_unverified"
+                        )
             if not same_extraction:
-                raise ClaimReobservationRefused("extraction does not prove the same value and key")
+                raise ClaimReobservationRefused(
+                    "extraction does not prove the same value and key", reason="extraction_differs"
+                )
         wanted = (envelope.capture_contract_digest, observed_content(envelope).digest)
         cited_captures = (
             (original.value.capture_digest,)
@@ -392,10 +454,11 @@ class ClaimReobservationStore:
                 and cited == original.value.capture_digest
                 and held.capture_contract_digest == envelope.capture_contract_digest
             ):
-                return envelope, held_digest
+                return envelope, held_digest, claim_artifact_digest(claim).tagged
         raise ClaimReobservationRefused(
             f"Capture {capture_digest} observed no content Claim {claim_id} "
-            "cites under its contract"
+            "cites under its contract",
+            reason="content_not_cited",
         )
 
     def _witness_refusal(
@@ -472,7 +535,8 @@ class ClaimReobservationStore:
         if observed_at > now:
             raise ClaimReobservationRefused(
                 f"Capture {capture_digest} was observed at {format_datetime(observed_at)}, "
-                f"after the re-observation is recorded ({format_datetime(now)})"
+                f"after the re-observation is recorded ({format_datetime(now)})",
+                reason="observed_after_recording",
             )
         return ReobservationRecord(
             claim_id=claim_id,
@@ -514,7 +578,7 @@ class ClaimReobservationStore:
         """
 
         if is_previewing():
-            envelope, cited_content = self._admissible(
+            envelope, _cited, _version = self._admissible(
                 claim_id=claim_id,
                 capture_digest=capture_digest,
                 coordinate=self.instance.accepted_coordinate(),
@@ -552,12 +616,13 @@ class ClaimReobservationStore:
             if accepted.git_oid != main:
                 raise ClaimReobservationRefused(
                     "accepted state moved past this instance's verified head; "
-                    "the re-observation is judged again at the new head"
+                    "the re-observation is judged again at the new head",
+                    reason="head_moved",
                 )
             # Admission's immutable work first: verify the Capture, the live Claim
             # and its citations at the held head, then recover any reserved
             # material and the journal head and activate the writer.
-            envelope, cited_content = self._admissible(
+            envelope, cited_content, version = self._admissible(
                 claim_id=claim_id,
                 capture_digest=capture_digest,
                 coordinate=accepted,
@@ -609,6 +674,7 @@ class ClaimReobservationStore:
                 "contract_digest": record.contract_digest,
                 "observed_content_digest": record.observed_content_digest,
                 "observed_at": format_datetime(record.observed_at),
+                "claim_artifact_digest": version,
             }
             if extraction is not None:
                 payload["extraction"] = extraction.model_dump(mode="json")
@@ -874,6 +940,67 @@ class ReobservationReader:
             row = conn.execute(_LAST_SEQUENCE, (claim_id, _through())).fetchone()
         return 0 if row is None or row[0] is None else int(row[0])
 
+    def latest_version_record(
+        self, claim_id: str, version: str, *, observed_by: datetime
+    ) -> RecordedReobservation | None:
+        """One Claim version's latest recorded re-observation observed by ``observed_by``.
+
+        ``version`` is the Claim's artifact digest: only records admitted while
+        that exact version was live count. One
+        seek on ``reobservations_by_version`` and one journal record read by
+        its sequence: records observed after ``observed_by``, and the lineage's
+        other versions, are never visited.
+        """
+
+        self._guard_fork()
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return None
+            self.probes += 1
+            row = conn.execute(
+                _VERSION_RECORD,
+                (claim_id, version, _micros(observed_by), _through()),
+            ).fetchone()
+        if row is None:
+            return None
+        self.rows_read += 1
+        sequence = int(row[5])
+        journal = self.store._journal(create=False)
+        stored = (
+            ()
+            if journal is None
+            else journal.select_records(
+                self.store.stream,
+                partition_id=_PARTITION,
+                first_sequence=sequence,
+                last_sequence=sequence,
+            )
+        )
+        record = ReobservationRecord(
+            claim_id=claim_id,
+            capture_digest=str(row[0]),
+            contract_digest=str(row[1]),
+            observed_content_digest=str(row[2]),
+            observed_at=_instant(row[3]),
+            recorded_at=_instant(row[4]),
+        )
+        if (
+            len(stored) != 1
+            or stored[0].record.event_kind != "claim_reobservation"
+            or stored[0].record.recorded_at != record.recorded_at
+        ):
+            raise ClaimReobservationJournalCorrupt(
+                f"re-observation record {sequence} of Claim {claim_id} is not in the journal "
+                "its projection was caught up from"
+            )
+        return RecordedReobservation(
+            record=record,
+            sequence=sequence,
+            record_digest=stored[0].record_digest,
+            accepted_coordinate=stored[0].record.accepted_coordinate,
+        )
+
     def latest(
         self, claim_id: str, keys: Sequence[ReobservationKey], at: datetime
     ) -> ReobservationReading:
@@ -1004,6 +1131,7 @@ __all__ = [
     "ReobservationReader",
     "ReobservationReading",
     "ReobservationRecord",
+    "RecordedReobservation",
     "cited_reobservation_keys",
     "reobservation_journal_identity",
     "reobservation_journal_signature",

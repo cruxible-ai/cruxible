@@ -13,13 +13,15 @@ from cruxible_client.contracts.authoring.models import (
     ResolutionContractAuthoringPayload,
 )
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
-from cruxible_client.contracts.canonical import CanonicalValue
+from cruxible_client.contracts.canonical import CanonicalValue, canonical_bytes
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
     LiteralClaimObject,
+    claim_artifact_digest,
     claim_path,
     claim_statement_address,
     claim_statement_digest,
+    parse_claim,
 )
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.predictions import (
@@ -42,8 +44,12 @@ from cruxible_client.contracts.resolution_contracts import (
     resolution_contract_digest,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.temporal import ensure_utc
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.evidence.claim_reobservations import (
+    RecordedReobservation,
+    ReobservationReader,
+)
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
@@ -97,18 +103,22 @@ class PredictionRefused(FormatError):
         message: str,
         *,
         repair: ServedRepair,
+        details: dict[str, str] | None = None,
     ) -> None:
         self.code = code
         self.error_code = code
         self.repair = repair
+        self.details = {} if details is None else details
         super().__init__(f"{code}: {message}")
 
 
 def _refuse(
     code: PredictionRefusalCode,
     message: str,
+    *,
+    details: dict[str, str] | None = None,
 ) -> PredictionRefused:
-    return PredictionRefused(code, message, repair=served_repair_for_refusal(code))
+    return PredictionRefused(code, message, repair=served_repair_for_refusal(code), details=details)
 
 
 def service_predict_playbill(
@@ -165,6 +175,78 @@ def _observation_matches(
         and statement.qualifier == selector.qualifier
         and statement.role == selector.role
     )
+
+
+def _inside_window(activation: ResolutionContractActivationV3, observed_at: datetime) -> bool:
+    """An observation counts after contract acceptance and inside its bound window."""
+
+    return (
+        observed_at > activation.activated_at
+        and activation.check_at <= observed_at <= activation.expires_at
+    )
+
+
+def _window_refusal(
+    activation: ResolutionContractActivationV3, observed_at: datetime
+) -> PredictionRefused:
+    """Why an observation at ``observed_at`` cannot settle: the bound it misses, with both times."""
+
+    def stamp(value: datetime) -> str:
+        text = format_datetime(value)
+        assert text is not None  # a datetime always formats
+        return text
+
+    observed = stamp(observed_at)
+    if observed_at <= activation.activated_at:
+        accepted = stamp(activation.activated_at)
+        return _refuse(
+            "prediction_observation_predates_contract",
+            f"The observation was made at {observed}, not after the prediction was accepted "
+            f"at {accepted}. An unchanged value stated before then needs a re-observation "
+            "recorded after the prediction was accepted.",
+            details={"observed_at": observed, "contract_accepted_at": accepted},
+        )
+    if observed_at < activation.check_at:
+        opens = stamp(activation.check_at)
+        return _refuse(
+            "prediction_window_not_open",
+            f"The observation was made at {observed}, before the prediction's window "
+            f"opens at {opens}.",
+            details={"observed_at": observed, "window_opens_at": opens},
+        )
+    closed = stamp(activation.expires_at)
+    return _refuse(
+        "prediction_deadline_passed",
+        f"The observation was made at {observed}, after the prediction's window closed "
+        f"at {closed}.",
+        details={"observed_at": observed, "window_closed_at": closed},
+    )
+
+
+def _version_reobservation(
+    instance: PlaybillInstance, reference: ClaimVersionReference, *, observed_by: datetime
+) -> RecordedReobservation | None:
+    """This exact version's latest recorded re-observation observed by ``observed_by``.
+
+    One indexed seek and one journal record read
+    (``ReobservationReader.latest_version_record``): records observed later,
+    and records of the lineage's other versions, are never visited. The Claim
+    blob at the head the record was admitted at is read once more to confirm
+    the version: admission records only a live Claim.
+    """
+
+    found = ReobservationReader.of(instance).latest_version_record(
+        reference.identity.name, reference.artifact_digest, observed_by=observed_by
+    )
+    if found is None:
+        return None
+    path = claim_path(reference.identity.name)
+    raw = instance.blob_at(found.accepted_coordinate.git_oid, path)
+    if raw is None:
+        return None
+    if claim_artifact_digest(parse_claim(raw, path=path)).tagged != reference.artifact_digest:
+        return None
+    return found
 
 
 def _journal(
@@ -474,14 +556,33 @@ def service_settle_playbill_prediction(
             "Observation does not match the accepted contract selector.",
         )
     observed_at = artifact_accepted_time(instance, observation_reference)
-    if (
-        observed_at <= activation.activated_at
-        or not activation.check_at <= observed_at <= activation.expires_at
-    ):
-        raise _refuse(
-            "prediction_deadline_passed",
-            "Observation must follow contract acceptance and fall inside its bound window.",
+    reobservation: RecordedReobservation | None = None
+    if not _inside_window(activation, observed_at):
+        # The version itself was accepted outside the window. A recorded
+        # re-observation of this exact version counts as observing it at the
+        # re-observing Capture's time; nothing about the Claim changes.
+        # The one that counts is the latest observed by the window's close (or
+        # by now): a later record past the close never hides an earlier one.
+        settled_at = ensure_utc(recorded_at)
+        reobservation = _version_reobservation(
+            instance,
+            observation_reference,
+            observed_by=min(activation.expires_at, settled_at),
         )
+        if reobservation is not None and _inside_window(
+            activation, reobservation.record.observed_at
+        ):
+            observed_at = reobservation.record.observed_at
+        else:
+            # Refused, and judged by the latest observation of this version
+            # there is: the one before the window opened, or one after it closed.
+            latest = reobservation or _version_reobservation(
+                instance, observation_reference, observed_by=settled_at
+            )
+            raise _window_refusal(
+                activation,
+                observed_at if latest is None else max(observed_at, latest.record.observed_at),
+            )
     prediction_object = prediction_claim.statement.object
     observation_object = observation.statement.object
     if not isinstance(prediction_object, LiteralClaimObject) or not isinstance(
@@ -553,6 +654,29 @@ def service_settle_playbill_prediction(
             "settlement_evidence_mismatch",
             "Settlement evidence kind is unsupported.",
         )
+    evidence_refs = [
+        ProcedureProofReferenceV1(kind=proof_kind, digest=proof_digest, subject=proof_subject)
+    ]
+    if reobservation is not None:
+        # The re-observing Capture and the journal record that admitted it are
+        # the proof the value was observed inside the window.
+        evidence_refs += [
+            ProcedureProofReferenceV1(kind="capture", digest=reobservation.record.capture_digest),
+            ProcedureProofReferenceV1(kind="journal_record", digest=reobservation.record_digest),
+        ]
+        reobserved: dict[str, CanonicalValue] = {
+            "reobserving_capture_digest": reobservation.record.capture_digest,
+            "reobservation_record_digest": reobservation.record_digest,
+        }
+        authorization_source = (
+            {
+                "tag": "playbill-prediction-settlement-authorization-v1",
+                "kind": "reobservation_admission",
+                **reobserved,
+            }
+            if evidence_kind == "observation_claim"
+            else {**cast(dict[str, CanonicalValue], authorization_source), **reobserved}
+        )
     settlement_endpoint = ResolutionClaimEndpointV1(
         statement_address=claim_statement_address(claim_path(observation.identity.name)),
         content_digest=claim_statement_digest(observation.statement).tagged,
@@ -572,12 +696,8 @@ def service_settle_playbill_prediction(
             "settlement_value": settlement_value,
             "authorization_source": authorization_source,
         },
-        evidence_refs=(
-            ProcedureProofReferenceV1(
-                kind=proof_kind,
-                digest=proof_digest,
-                subject=proof_subject,
-            ),
+        evidence_refs=tuple(
+            sorted(evidence_refs, key=lambda item: canonical_bytes(item.model_dump(mode="json")))
         ),
         observed_at=observed_at,
         recorded_at=ensure_utc(recorded_at),

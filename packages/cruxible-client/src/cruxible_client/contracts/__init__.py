@@ -237,7 +237,15 @@ from cruxible_client.contracts.procedures.dispositions import (
 from cruxible_client.contracts.procedures.dispositions import (
     ResolutionDispositionSummary as ResolutionDispositionSummary,
 )
-from cruxible_client.contracts.procedures.node_summary import RunCounts
+from cruxible_client.contracts.procedures.node_summary import (
+    ReobservationRefusalReason as _ReobservationRefusalReason,
+)
+from cruxible_client.contracts.procedures.node_summary import (
+    RunCounts,
+)
+from cruxible_client.contracts.procedures.node_summary import (
+    SummaryCount as _SummaryCount,
+)
 from cruxible_client.contracts.procedures.readings import (
     ProcedureMeasurementContractStatus as ProcedureMeasurementContractStatus,
 )
@@ -884,6 +892,11 @@ class ProposalReadmitResult(BaseModel):
     operation_digest: str
     proposal: ProposalInspection | None
     accepted_coordinate: AcceptedCoordinate | None = None
+    #: Re-observations of unchanged items the readmission could not record, by
+    #: reason; omitted when every one was recorded.
+    reobservations_refused: dict[_ReobservationRefusalReason, _SummaryCount] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
 
 
 class ProposalWithdrawResult(BaseModel):

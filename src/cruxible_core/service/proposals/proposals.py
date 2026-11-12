@@ -24,6 +24,10 @@ from cruxible_client.contracts.errors import (
     ProposalStale,
 )
 from cruxible_client.contracts.principals import AuthoringRefusal
+from cruxible_client.contracts.procedures.node_summary import (
+    ReobservationRefusalReason,
+    SummaryCount,
+)
 from cruxible_client.contracts.proposal_models import ProposalReadmissionLink
 from cruxible_core.authoring.id_prefixes import AmbiguousIdPrefix, resolve_id_prefix
 from cruxible_core.indexes.proposals.proposal_index import timestamp
@@ -145,6 +149,12 @@ class PlaybillProposalReadmitResultV1(_StrictOperationalReadModel):
     #: readmission's own inspection carries it otherwise).
     accepted_coordinate: AcceptedCoordinate | None = Field(
         default=None, exclude_if=lambda value: value is None
+    )
+    #: Re-observations of unchanged items the readmission could not record, by
+    #: reason (the Claim retired since, say): those Claims' content was not
+    #: observed again. Omitted when every one was recorded.
+    reobservations_refused: dict[ReobservationRefusalReason, SummaryCount] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
     )
 
     @model_validator(mode="after")
@@ -1206,6 +1216,7 @@ def _readmit(
                 operation_digest=link.operation_digest,
                 proposal=None,
                 accepted_coordinate=recompiled.coordinate,
+                reobservations_refused=recompiled.reobservations_refused,
             )
         return PlaybillProposalReadmitResultV1(
             source_proposal_id=proposal_id,
@@ -1215,6 +1226,7 @@ def _readmit(
                 proposal=recompiled.proposal,
                 accepted_coordinate=recompiled.coordinate,
             ),
+            reobservations_refused=recompiled.reobservations_refused,
         )
     if (
         source.candidate is not None

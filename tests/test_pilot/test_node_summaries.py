@@ -142,3 +142,41 @@ def test_node_fired_summaries_stay_within_the_byte_bound(tmp_path: Path) -> None
         assert node.summary is not None
         size = len(canonical_bytes(node.summary.model_dump(mode="json")))
         assert size <= NODE_SUMMARY_MAX_BYTES, (node.node, size)
+
+
+def test_a_refused_reobservation_is_reported_not_counted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Delivery that cannot record a re-observation says so, by reason, in the summary."""
+
+    from cruxible_client.contracts.procedures.node_summary import run_counts
+    from cruxible_core.evidence.claim_reobservations import (
+        ClaimReobservationRefused,
+        ClaimReobservationStore,
+    )
+
+    instance, root = pilot_world(tmp_path, "kev.json")
+    activate(instance, run(instance, root))
+    record = ClaimReobservationStore.record
+    refused: list[str] = []
+
+    def refuse_two(self, *, claim_id: str, **kwargs: Any):  # type: ignore[no-untyped-def]
+        if len(refused) < 2:
+            refused.append(claim_id)
+            raise ClaimReobservationRefused("test refusal", reason="claim_not_live")
+        return record(self, claim_id=claim_id, **kwargs)
+
+    monkeypatch.setattr(ClaimReobservationStore, "record", refuse_two)
+    again = run(instance, root, minute=1)
+    restated = _summaries(again)["write"]
+    (egress,) = again.terminal_egress
+    assert all(child.unchanged for child in egress.children)
+    assert restated.re_observed == len(egress.children) - 2 == 6
+    assert restated.reobservations_refused == {"claim_not_live": 2}
+    assert run_counts([restated]).unchanged == 8
+    store = ClaimReobservationStore(instance)
+    assert all(store.history(claim_id) == () for claim_id in refused)
+    # The run card serves the same summary.
+    assert {node.node: node.summary for node in _card_nodes(instance, again.run_id)}[
+        "write"
+    ] == restated

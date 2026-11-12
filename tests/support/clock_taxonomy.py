@@ -132,6 +132,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     # on any clock; a duration, like a process outcome's own.
     ("ActionRunRequest", "wait_timeout_seconds"): "VALIDITY WINDOW",
     ("ReobservationReading", "sequence"): "SETTLEMENT ORDER",
+    ("RecordedReobservation", "sequence"): "SETTLEMENT ORDER",
     ("LandingHead", "sequence"): "SETTLEMENT ORDER",
     ("Landing", "sequence"): "SETTLEMENT ORDER",
     ("ReobservationReading", "boundaries"): "VALIDITY WINDOW",

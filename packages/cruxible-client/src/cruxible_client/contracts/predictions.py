@@ -32,6 +32,8 @@ from cruxible_client.contracts.resolution_rules import (
 
 PredictionRefusalCode: TypeAlias = Literal[
     "prediction_unsettleable_rule",
+    "prediction_observation_predates_contract",
+    "prediction_window_not_open",
     "prediction_deadline_passed",
     "settlement_evidence_mismatch",
     "prediction_window_unknown",

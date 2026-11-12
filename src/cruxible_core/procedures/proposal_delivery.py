@@ -35,9 +35,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, NoReturn, cast
+from typing import TYPE_CHECKING, NoReturn, TypeVar, cast
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.authoring.models import (
@@ -84,6 +84,7 @@ from cruxible_client.contracts.procedure_mandates import (
     evaluate_procedure_mandate,
     mandate_rung,
 )
+from cruxible_client.contracts.procedures.node_summary import ReobservationRefusalReason
 from cruxible_client.contracts.proposal_models import (
     SETTLE_OUTSIDE_MANDATE_SCOPE,
     ProposalItemReason,
@@ -1425,6 +1426,24 @@ def select_settle_mandate(
     )
 
 
+_Child = TypeVar("_Child", bound=BaseModel)
+
+
+def _with_refused_reobservations(
+    children: tuple[_Child, ...], refused: Mapping[str, ReobservationRefusalReason]
+) -> tuple[_Child, ...]:
+    """Each unchanged Claim child whose re-observation was refused, marked with why."""
+
+    if not refused:
+        return children
+    return tuple(
+        child.model_copy(update={"reobservation_refused": refused[child.item_key]})
+        if isinstance(child, TerminalEgressChildReceiptV3) and child.item_key in refused
+        else child
+        for child in children
+    )
+
+
 class ProposalTerminalEgressSink:
     """The production `claims` sink: prepare once, deliver exactly once."""
 
@@ -1932,10 +1951,12 @@ class ProposalTerminalEgressSink:
         prepared: PreparedProposal,
         *,
         successor_id: str | None,
-    ) -> None:
+    ) -> dict[str, ReobservationRefusalReason]:
         """Once a recompilation committed: what delivery would have recorded at the head.
 
-        Each unchanged item's re-observation is recorded, as delivery does. A
+        Each unchanged item's re-observation is recorded, as delivery does; the
+        ones the record refused are returned by item key, for the
+        recompilation's result to report. A
         Line's open proposal moves to the successor, so the Line's next run
         finds its change still current rather than opening a duplicate; a source
         closed as already live leaves the record naming a closed proposal, which
@@ -1944,10 +1965,10 @@ class ProposalTerminalEgressSink:
 
         from cruxible_core.exhaust.line_dispatch import LineDispatchStore, LineOpenProposal
 
-        self._record_reobservations(request, prepared.prepared.unchanged)
+        refused = self._record_reobservations(request, prepared.prepared.unchanged)
         decision = prepared.prepared.line_proposal
         if successor_id is None or decision is None or decision.decision != "supersede":
-            return
+            return refused
         LineDispatchStore(self.instance).record_open_proposal(
             LineOpenProposal(
                 line_id=decision.line_id,
@@ -1959,6 +1980,7 @@ class ProposalTerminalEgressSink:
             actor=request.actor_context,
             now=datetime.now(timezone.utc),
         )
+        return refused
 
     def _line_proposal(
         self,
@@ -2138,12 +2160,12 @@ class ProposalTerminalEgressSink:
             # Every item restated what is already live: no proposal, no
             # authority exercised. The re-observations are recorded, and every
             # child is reported unchanged.
-            self._record_reobservations(request, prepared_nothing.prepared.unchanged)
+            refused = self._record_reobservations(request, prepared_nothing.prepared.unchanged)
             return TerminalEgressUnchangedReceiptV1(
                 kind=request.kind,
                 run_id=request.run_id,
                 node_id=request.node_id,
-                children=prepared_nothing.prepared.unchanged,
+                children=_with_refused_reobservations(prepared_nothing.prepared.unchanged, refused),
             )
         if (
             not isinstance(request, TerminalEgressRequestV2)
@@ -2155,8 +2177,11 @@ class ProposalTerminalEgressSink:
             # proposal is still current. Unchanged items still re-observe.
             kept = prepared_nothing.prepared
             assert kept.line_proposal is not None and kept.line_proposal.open_proposal_id
-            self._record_reobservations(request, kept.unchanged)
-            unchanged_children = {child.item_key: child for child in kept.unchanged}
+            refused = self._record_reobservations(request, kept.unchanged)
+            unchanged_children = {
+                child.item_key: child
+                for child in _with_refused_reobservations(kept.unchanged, refused)
+            }
             return TerminalEgressStillCurrentReceiptV1(
                 kind=request.kind,
                 run_id=request.run_id,
@@ -2208,7 +2233,7 @@ class ProposalTerminalEgressSink:
                 "claims_absence_binding_invalid",
                 "No prepared run binding exists for this absence witness",
             )
-        self._record_reobservations(request, prepared.prepared.unchanged)
+        refused = self._record_reobservations(request, prepared.prepared.unchanged)
         if prepared.creations:
             # The operation's own core record, which the candidate boundary reads
             # back to verify each Subject's recorded assignment (review F-001).
@@ -2256,6 +2281,10 @@ class ProposalTerminalEgressSink:
                 evidence.write_item_reason_link(proposal_id, operation)
             elif isinstance(receipt, TerminalEgressReceiptV3):
                 receipt = receipt.model_copy(update={"item_reasons_unattributed": True})
+        if refused and isinstance(receipt, TerminalEgressReceiptV3):
+            receipt = receipt.model_copy(
+                update={"children": _with_refused_reobservations(receipt.children, refused)}
+            )
         return receipt
 
     def _record_item_reasons(
@@ -2270,7 +2299,7 @@ class ProposalTerminalEgressSink:
         self,
         request: TerminalEgressRequestV1,
         unchanged: tuple[UnchangedChildReceiptAny, ...],
-    ) -> None:
+    ) -> dict[str, ReobservationRefusalReason]:
         """Record each unchanged item's re-observation of content its Claim cites.
 
         The store admits each one at the current head under its append lock
@@ -2278,11 +2307,14 @@ class ProposalTerminalEgressSink:
         retired, or no longer citing that contract and content, since the run's
         base; or the very Capture the Claim already cites -- is not recorded.
         The terminal still completes, and its receipt still names the child as
-        it was at the admitted base.
+        it was at the admitted base, with the reason its re-observation was
+        refused (returned here by item key), so the run never counts it
+        re-observed.
         """
 
+        refused: dict[str, ReobservationRefusalReason] = {}
         if not unchanged:
-            return
+            return refused
         store = ClaimReobservationStore(self.instance)
         cited_envelopes: dict[str, CaptureEnvelopeAny] = {}
         verified_witnesses: dict[object, None] = {}
@@ -2307,8 +2339,9 @@ class ProposalTerminalEgressSink:
                         else None
                     ),
                 )
-            except ClaimReobservationRefused:
-                continue
+            except ClaimReobservationRefused as exc:
+                refused[child.item_key] = exc.reason
+        return refused
 
     def recover_existing(
         self,

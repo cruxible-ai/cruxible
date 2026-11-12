@@ -6,8 +6,9 @@ origin chain and this proposal's input/members; it adds no population scan.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from heapq import nsmallest
 from itertools import chain
@@ -16,6 +17,7 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.authoring.models import ChangeSetAuthoringPayload
 from cruxible_client.contracts.errors import CruxibleError, ProposalNotFoundError, ProposalStale
+from cruxible_client.contracts.procedures.node_summary import ReobservationRefusalReason
 from cruxible_client.contracts.proposal_models import (
     ProposalReadmissionLink,
     ProposalSettleSubmission,
@@ -64,8 +66,15 @@ class RecompileInput:
     already_live: bool = False
     #: Called once the recompilation committed, with the successor's proposal ID
     #: (None when the source closed as already live): the origin's own follow-up
-    #: records, such as a Line's open-proposal record and re-observations.
-    published: Callable[[str | None], None] | None = None
+    #: records, such as a Line's open-proposal record and re-observations. It
+    #: returns the re-observations it could not record, by item key.
+    published: Callable[[str | None], Mapping[str, ReobservationRefusalReason] | None] | None = None
+
+
+def _refusal_counts(
+    refused: Mapping[str, ReobservationRefusalReason] | None,
+) -> dict[ReobservationRefusalReason, int]:
+    return dict(sorted(Counter((refused or {}).values()).items()))
 
 
 @dataclass(frozen=True)
@@ -78,6 +87,8 @@ class Recompilation:
     changed_members: tuple[RecompiledMemberChange, ...]
     changed_members_truncated: bool
     already_live: bool = False
+    #: Re-observations the publication could not record, counted by reason.
+    reobservations_refused: dict[ReobservationRefusalReason, int] = field(default_factory=dict)
 
 
 ALREADY_LIVE_REASON = (
@@ -358,6 +369,7 @@ def _recompile_proposal(
     after = {member.path: member.candidate_artifact_digest for member in result.candidate.members}
     identical = source.candidate is not None and before == after
     changed_members, truncated = _changed_members(before, after)
+    refused: dict[ReobservationRefusalReason, int] = {}
     if not preview:
         assert isinstance(result, ProposalResult)
         from cruxible_core.service.change_preview import ChangeMode
@@ -396,8 +408,16 @@ def _recompile_proposal(
             ),
         )
         if inputs is not None and inputs.published is not None:
-            inputs.published(result.admission.proposal_id)
-    return Recompilation(source_id, result, identical, head, changed_members, truncated)
+            refused = _refusal_counts(inputs.published(result.admission.proposal_id))
+    return Recompilation(
+        source_id,
+        result,
+        identical,
+        head,
+        changed_members,
+        truncated,
+        reobservations_refused=refused,
+    )
 
 
 def _close_already_live(
@@ -423,6 +443,7 @@ def _close_already_live(
         else {member.path: member.candidate_artifact_digest for member in source.candidate.members}
     )
     changed_members, truncated = _changed_members(before, {})
+    refused: dict[ReobservationRefusalReason, int] = {}
     if not preview:
         _close_once(
             instance,
@@ -435,7 +456,7 @@ def _close_already_live(
             ),
         )
         if inputs.published is not None:
-            inputs.published(None)
+            refused = _refusal_counts(inputs.published(None))
     return Recompilation(
         source_id,
         None,
@@ -444,4 +465,5 @@ def _close_already_live(
         changed_members=changed_members,
         changed_members_truncated=truncated,
         already_live=True,
+        reobservations_refused=refused,
     )

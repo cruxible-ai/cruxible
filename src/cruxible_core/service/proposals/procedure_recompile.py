@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.errors import CruxibleError, ProposalStale, ReadmitRefusalOrigin
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate
+from cruxible_client.contracts.procedures.node_summary import ReobservationRefusalReason
 from cruxible_core.authoring.assignment_records import procedure_operation_id
 from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -238,8 +239,8 @@ def procedure_input(
     }
     recompiled_request = request
 
-    def published(successor_id: str | None) -> None:
-        sink.after_recompiled(recompiled_request, prepared, successor_id=successor_id)
+    def published(successor_id: str | None) -> Mapping[str, ReobservationRefusalReason]:
+        return sink.after_recompiled(recompiled_request, prepared, successor_id=successor_id)
 
     def authorize(
         current: AcceptedProjectionCoordinate, _tree: Mapping[str, bytes]

@@ -127,6 +127,12 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "prediction_unsettleable_rule": (
         "revise_the_resolution_contract_rule_or_hypothesis_and_submit_a_successor"
     ),
+    # An unchanged value stated before the prediction was accepted counts once a
+    # later run re-observes it: the recorded re-observation is the observation.
+    "prediction_observation_predates_contract": (
+        "settle_with_an_observation_or_reobservation_recorded_after_the_prediction_was_accepted"
+    ),
+    "prediction_window_not_open": "settle_with_an_observation_made_once_the_window_opens",
     "prediction_deadline_passed": "use_evidence_within_the_bound_window_or_accept_a_new_contract",
     "prediction_window_unknown": "read_playbill_next_for_the_bound_contract_ids_the_worker_holds",
     "settlement_evidence_mismatch": "bind_the_exact_contract_and_matching_accepted_observation",

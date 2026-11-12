@@ -27,8 +27,10 @@ from cruxible_client.contracts.procedures.node_summary import (
     GuardOperand,
     GuardRunSummary,
     ReadRunSummary,
+    ReobservationRefusalReason,
     RepeatRunSummary,
     TransformRunSummary,
+    run_counts,
 )
 from cruxible_client.contracts.shapes import DuplicateArm
 from cruxible_core.cli.commands.playbill import _run_node_line
@@ -103,6 +105,26 @@ def test_claims_summary_counts_each_change_once() -> None:
         skipped={"held_disagrees": 1, "incomplete_source": 1},
         delivery="settled",
     )
+
+
+def test_a_refused_reobservation_is_counted_by_reason_not_as_re_observed() -> None:
+    changes = [CoreReobservationChange.model_construct() for _ in range(3)]
+    summary = claims_summary(
+        changes,
+        _diagnostics({}, same=4),
+        downgraded=0,
+        delivery="unchanged",
+        reobservations_refused={"claim_not_live": 1, "head_moved": 1, "content_not_cited": 0},
+    )
+    assert summary.re_observed == 1
+    assert summary.reobservations_refused == {"claim_not_live": 1, "head_moved": 1}
+    assert summary.no_op == 1
+    # Still unchanged items: the run's unchanged count keeps them.
+    assert run_counts([summary]).unchanged == 4
+    # A summary without refusals keeps its recorded shape.
+    assert "reobservations_refused" not in claims_summary(
+        changes, _diagnostics({}, same=3), downgraded=0, delivery="unchanged"
+    ).model_dump(mode="json")
 
 
 def test_claims_delivery_reads_the_receipt_kind() -> None:
@@ -201,6 +223,7 @@ def _worst_cases() -> list[Any]:
             SimpleNamespace(counts=dict.fromkeys(kinds, HUGE), same=HUGE),  # type: ignore[arg-type]
             downgraded=HUGE,
             delivery="still_current",
+            reobservations_refused=dict.fromkeys(get_args(ReobservationRefusalReason), HUGE),
         ),
         EgressRunSummary(kind="post_inbox", emitted=big, unposted=big),
         halt_summary(WIDE_TEXT),
@@ -313,6 +336,23 @@ def test_run_node_reads_a_payload_with_or_without_a_summary() -> None:
             ),
             "entries claims succeeded: 3 written, 9 re-observed, skipped extract_refused=1; "
             "proposed",
+        ),
+        (
+            ClaimsRunSummary(
+                written=0,
+                revised=0,
+                inverse_written=0,
+                subjects_created=0,
+                re_observed=7,
+                reobservations_refused={"claim_not_live": 2},
+                no_op=0,
+                retired=0,
+                surfaced=0,
+                downgraded=0,
+                delivery="unchanged",
+            ),
+            "entries claims succeeded: 7 re-observed, re-observation not recorded "
+            "claim_not_live=2; unchanged",
         ),
     ],
 )

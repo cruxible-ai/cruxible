@@ -907,6 +907,7 @@ def _recompile_for_review(
             changed_members=recompiled.changed_members,
             changed_members_truncated=recompiled.changed_members_truncated,
             accepted_coordinate=recompiled.coordinate,
+            reobservations_refused=recompiled.reobservations_refused,
         )
     result = recompiled.proposal
     assert isinstance(result, ProposalResult) and result.candidate is not None
@@ -919,6 +920,7 @@ def _recompile_for_review(
         changed_members=recompiled.changed_members,
         changed_members_truncated=recompiled.changed_members_truncated,
         accepted_coordinate=recompiled.coordinate,
+        reobservations_refused=recompiled.reobservations_refused,
     )
 
 

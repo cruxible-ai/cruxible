@@ -438,3 +438,80 @@ def test_reject_client_and_cli_send_and_report_the_reason(
         f"rejected  {SOURCE_ID}  2026-09-08T09:00:00.000000Z",
         "Reason: the query reads the wrong field",
     ]
+
+
+def _already_live_wire(**extra: object) -> dict[str, object]:
+    """An already-live readmission as the daemon serves it."""
+
+    return {
+        "tag": "playbill-proposal-readmit-result-v1",
+        "status": "already_live",
+        "source_proposal_id": SOURCE_ID,
+        "operation_digest": OPERATION,
+        "proposal": None,
+        "accepted_coordinate": COORDINATE.model_dump(mode="json"),
+        **extra,
+    }
+
+
+@pytest.mark.parametrize(
+    "wire",
+    [_already_live_wire(), _already_live_wire(reobservations_refused={"claim_not_live": 2})],
+    ids=["no-refusal", "refused"],
+)
+def test_readmit_refusal_counts_round_trip_only_when_present(monkeypatch, wire) -> None:
+    import json
+
+    parsed = contracts.ProposalReadmitResult.model_validate(wire)
+    # A response with no refusals keeps its exact shape; counts are kept when present.
+    assert parsed.model_dump(mode="json") == wire
+
+    class StubClient:
+        def resolve_proposal_selector(self, instance_id, selector):
+            return contracts.ProposalSelectorResult(selector=selector, proposal_id=SOURCE_ID)
+
+        def readmit_proposal(self, instance_id, proposal_id, **_control):
+            return parsed
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "proposal",
+            "readmit",
+            SOURCE_ID,
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == wire
+
+
+def test_the_other_refusal_fields_are_omitted_when_empty() -> None:
+    from datetime import UTC, datetime
+
+    from cruxible_client.contracts.recompilation import ProposalRecompiled
+    from cruxible_core.procedures.egress import TerminalEgressChildReceiptV3
+
+    recompiled = ProposalRecompiled(
+        status="already_live",
+        source_proposal_id=SOURCE_ID,
+        members_identical=False,
+        accepted_coordinate=COORDINATE,
+    )
+    assert "reobservations_refused" not in recompiled.model_dump(mode="json")
+    child = TerminalEgressChildReceiptV3(
+        child_index=0,
+        item_key="k",
+        egress_digest=OPERATION,
+        path="claims/c.json",
+        reobserving_capture_digest=NEW_ID,
+        reobserved_at=datetime(2026, 11, 12, tzinfo=UTC),
+    )
+    assert "reobservation_refused" not in child.model_dump(mode="json")
+    refused = child.model_copy(update={"reobservation_refused": "head_moved"})
+    assert refused.model_dump(mode="json")["reobservation_refused"] == "head_moved"

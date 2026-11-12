@@ -493,8 +493,9 @@ def test_old_observation_cannot_be_relabelled_with_later_snapshot(tmp_path: Path
     later = observation.model_copy(
         update={"coordinate": AcceptedCoordinate.from_internal(instance.accepted_coordinate())}
     )
-    with pytest.raises(PredictionRefused, match="window"):
+    with pytest.raises(PredictionRefused) as refused:
         _settle(instance, contract, later)
+    assert refused.value.code == "prediction_observation_predates_contract"
 
 
 def test_terminal_cannot_settle_another_investigation(tmp_path: Path, monkeypatch):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import time
+from collections import Counter
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -140,6 +141,7 @@ from cruxible_client.contracts.procedures.node_summary import (
     EgressRunSummary,
     NodeRunSummary,
     ReadRunSummary,
+    ReobservationRefusalReason,
     RepeatRunSummary,
 )
 from cruxible_client.contracts.procedures.reads import effective_read_rows
@@ -258,6 +260,7 @@ from cruxible_core.procedures.egress import (
     PreparedTerminalEgressV1,
     SettleGrantHolderProtocol,
     TerminalAuthorityRefusal,
+    TerminalEgressChildReceiptV3,
     TerminalEgressError,
     TerminalEgressItemV1,
     TerminalEgressPreparerProtocol,
@@ -2466,6 +2469,11 @@ class _RunState:
     late_reads: dict[str, AcceptedStateRunInput] = dataclass_field(default_factory=dict)
     #: How each claims terminal's change landed, from its delivery.
     claims_deliveries: dict[str, ClaimsDelivery] = dataclass_field(default_factory=dict)
+    #: Each claims terminal's unchanged items whose re-observation delivery
+    #: could not record, counted by reason, from its receipt.
+    claims_reobservations_refused: dict[str, dict[ReobservationRefusalReason, int]] = (
+        dataclass_field(default_factory=dict)
+    )
 
     def observe_items(self, observed: int, boundary: str, field_path: str) -> None:
         candidate = (boundary.encode("utf-8"), field_path.encode("utf-8"))
@@ -5739,6 +5747,7 @@ class ProcedureExecutor:
                 expanded.diagnostics,
                 downgraded=downgraded,
                 delivery=state.claims_deliveries.get(node.node_id, "empty"),
+                reobservations_refused=state.claims_reobservations_refused.get(node.node_id, {}),
             ),
         )
 
@@ -6111,6 +6120,12 @@ class ProcedureExecutor:
             delivery=claims_delivery(receipt) if isinstance(node, ClaimsNode) else "empty",
             emitted=len(request.items),
             truncation=truncation,
+            refused_reobservations=Counter(
+                child.reobservation_refused
+                for child in receipt.children
+                if isinstance(child, TerminalEgressChildReceiptV3)
+                and child.reobservation_refused is not None
+            ),
         )
         if isinstance(request, TerminalEgressRequestV2) and request.kind == "emit_capture":
             assert isinstance(receipt, TerminalEgressReceiptV2)  # verified above
@@ -6152,11 +6167,14 @@ class ProcedureExecutor:
         delivery: ClaimsDelivery,
         emitted: int,
         truncation: Mapping[str, object] | None,
+        refused_reobservations: Mapping[ReobservationRefusalReason, int] | None = None,
     ) -> None:
         """Keep what a delivered terminal emitted, for its node summary."""
 
         if isinstance(node, ClaimsNode):
             state.claims_deliveries[node.node_id] = delivery
+            if refused_reobservations:
+                state.claims_reobservations_refused[node.node_id] = dict(refused_reobservations)
             return
         unposted = 0
         if truncation is not None:

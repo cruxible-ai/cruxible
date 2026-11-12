@@ -67,6 +67,7 @@ from cruxible_core.service.discovery.audit import AuditError
 from cruxible_core.service.discovery.curation import CurationError
 from cruxible_core.service.discovery.next import NextError
 from cruxible_core.service.discovery.since import SinceError
+from cruxible_core.service.procedures.predictions import PredictionRefused
 from cruxible_core.service.procedures.procedure_runs import ProcedureNotFound, ProcedureSurfaceError
 from cruxible_core.service.read_refusals import ReadRefusalError
 from cruxible_core.service.refusals import (
@@ -308,6 +309,8 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["repair_commands"] = list(exc.repair_commands)
     if isinstance(exc, ReadRefusalError | CaptureEraseRefusedError):
         context.update(exc.context)
+    if isinstance(exc, PredictionRefused):
+        context.update(exc.details)
     if isinstance(exc, ClaimTypeNotFoundError):
         context["predicate"] = exc.predicate
         context["nearest"] = list(exc.nearest)

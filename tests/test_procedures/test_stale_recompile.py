@@ -512,3 +512,46 @@ def test_a_refused_line_recompile_names_the_lines_next_run_not_readmit(
     assert service_playbill_proposal_status(instance, proposal_id=stale).status == (
         "awaiting_readmit"
     )
+
+
+def test_a_readmission_reports_a_reobservation_it_could_not_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Claim retired between recompilation and publication: the refusal is reported."""
+
+    from pathlib import PurePosixPath
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+    from tests.core_support._retirement_support import retire_claim
+    from tests.test_procedures.test_proposal_fan_out import _element, _write_feed
+
+    instance, owner, root, line, other = _two_line_world(tmp_path)
+    _write_feed(root, [_element(None)])
+    first = _delivered(run_line(instance, root, other))
+    stale = _delivered(run_line(instance, root, line, at=fixtures.NOW + timedelta(minutes=1)))
+    accept_proposal(instance, owner, service_inspect_playbill_proposal(instance, proposal_id=first))
+
+    after = ProposalTerminalEgressSink.after_recompiled
+    retired: list[str] = []
+
+    def retire_first(self, request, prepared, *, successor_id):  # type: ignore[no-untyped-def]
+        # An ordinary accepted retirement lands between lowering at the old
+        # head and the re-observation's admission at the current one.
+        for child in prepared.prepared.unchanged:
+            if hasattr(child, "reobserving_capture_digest"):
+                claim_id = PurePosixPath(child.path).stem
+                retire_claim(instance, owner, claim_id)
+                retired.append(claim_id)
+        return after(self, request, prepared, successor_id=successor_id)
+
+    monkeypatch.setattr(ProposalTerminalEgressSink, "after_recompiled", retire_first)
+    answered = _readmit(instance, stale)
+    assert retired
+    assert answered.status == "already_live"
+    assert answered.reobservations_refused == {"claim_not_live": len(retired)}
+    assert answered.model_dump(mode="json")["reobservations_refused"] == {
+        "claim_not_live": len(retired)
+    }
+    store = ClaimReobservationStore(instance)
+    assert all(store.history(claim_id) == () for claim_id in retired)
