@@ -342,16 +342,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:014d047d52e15415e0967c74a301e4c17aeb1753f739b6f8da66964119425da3"
+    expected = "sha256:ca35c56e4540487eeae3d67527839d09d8c08db186305e535814155288706851"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 63,
+            "semantic_revision": 64,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "capability-artifacts",
+            "revision_name": "capability-slots",
         },
     )
     assert computed == expected
@@ -396,9 +396,11 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "capability-artifacts"
-    assert compiler_revision_label(CURRENT_COMPILER) == "capability-artifacts"
+    assert CURRENT_COMPILER_REVISION == "capability-slots"
+    assert compiler_revision_label(CURRENT_COMPILER) == "capability-slots"
     for earlier_digest in (
+        # Revision 63: before a Procedure slot named a capability.
+        "sha256:014d047d52e15415e0967c74a301e4c17aeb1753f739b6f8da66964119425da3",
         # Revision 62: before the Capability artifact kind.
         "sha256:368468b4786521ebebeb2b8a9de53d9ceb2a3f9e83985cad4d613895cc59eaaf",
         # Revision 61: before the Runbook artifact kind and Runbook Trigger targets (D-R36).
