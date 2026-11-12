@@ -22,8 +22,6 @@ from typing import Annotated, Final, Literal, TypeAlias
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, field_validator
 
-from cruxible_client.contracts.kits import _kit_id, kit_version_key
-
 #: The most kits one kit may require.
 MAX_KIT_REQUIRES = 16
 
@@ -50,16 +48,24 @@ class KitRequirement(BaseModel):
     @field_validator("kit_id")
     @classmethod
     def _kit_id(cls, value: str) -> str:
+        # ``kits`` declares ``requires`` with this module's types, so it imports
+        # this module: its rules are read when they run, never at import.
+        from cruxible_client.contracts.kits import _kit_id
+
         return _kit_id(value)
 
     @field_validator("min_version")
     @classmethod
     def _min_version(cls, value: str) -> str:
+        from cruxible_client.contracts.kits import kit_version_key
+
         kit_version_key(value)
         return value
 
     def met_by(self, installed_version: str | None) -> bool:
         """Whether a kit installed at ``installed_version`` (``None``: not installed) meets it."""
+
+        from cruxible_client.contracts.kits import kit_version_key
 
         return installed_version is not None and kit_version_key(
             installed_version
