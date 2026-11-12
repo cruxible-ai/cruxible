@@ -16,6 +16,9 @@ from cruxible_client.contracts.capability_fit import (
     FitSide,
     FitUnresolved,
     Unfit,
+    _Fail,
+    _Seg,
+    _Walk,
     record_fits,
     render_unfit,
 )
@@ -30,6 +33,8 @@ from cruxible_client.contracts.provider_operations import ContractLookup, closur
 from cruxible_client.contracts.shapes import (
     Contract,
     ContractRef,
+    FieldPresent,
+    check_value,
     contract_digest,
     parse_type,
     render_type,
@@ -231,15 +236,13 @@ WIDE_ROW = _contract("acme.row", {"x": "int{0..100}"})
 
 
 @pytest.mark.parametrize("side", SIDES)
-@pytest.mark.parametrize("wrapper", ["{}", "record<{}>", "result<{}>", "refusal<{}>"])
-def test_wrapped_contracts_fit_by_shape(side: FitSide, wrapper: str) -> None:
+def test_nested_copies_fit_by_shape(side: FitSide) -> None:
     """The same ``acme.row@1`` name means each side's own copy; the copies fit by shape."""
 
-    spelling = wrapper.format("acme.row@1")
     assert (
         _fit(
-            {"value": spelling},
-            {"value": spelling},
+            {"value": "acme.row@1"},
+            {"value": "acme.row@1"},
             side=side,
             sender_closure=[NARROW_ROW],
             receiver_closure=[WIDE_ROW],
@@ -247,12 +250,169 @@ def test_wrapped_contracts_fit_by_shape(side: FitSide, wrapper: str) -> None:
         == STRUCTURAL
     )
     assert _fit(
-        {"value": spelling},
-        {"value": spelling},
+        {"value": "acme.row@1"},
+        {"value": "acme.row@1"},
         side=side,
         sender_closure=[WIDE_ROW],
         receiver_closure=[NARROW_ROW],
     ) == _type_unfit(side, "value.x", "int{0..100}", "int{0..10}")
+
+
+# -- wrappers follow their wire values: fit implies the receiver's validator accepts -------
+
+
+def _wrapped_case(
+    spelling: str, sent_row: Contract, received_row: Contract, value: object, side: FitSide
+) -> tuple[FitResult, bool]:
+    """Fit ``spelling`` over each side's row copy; check that ``value`` is valid for the sender
+    (asserted) and return whether the receiver's existing validator accepts it."""
+
+    sender = _contract("acme.sent", {"value": spelling})
+    receiver = _contract("acme.received", {"value": spelling})
+    resolve_sender = closure_lookup((sender, sent_row))
+    resolve_receiver = closure_lookup((receiver, received_row))
+    fit = record_fits(
+        _ref(sender),
+        _ref(receiver),
+        resolve_sender,
+        resolve_receiver,
+        side=side,
+        capture_covers=_no_layouts,
+    )
+    sent = check_value(value, sender.fields["value"].type, at="/value", resolve=resolve_sender)
+    assert isinstance(sent, FieldPresent), sent
+    received = check_value(
+        value, receiver.fields["value"].type, at="/value", resolve=resolve_receiver
+    )
+    return fit, isinstance(received, FieldPresent)
+
+
+def _envelope(spelling: str, fields: dict[str, object]) -> object:
+    record = {"record": "/0", "key": {}, "fields": fields}
+    return {"tag": "record", "record": record} if spelling.startswith("result") else record
+
+
+SEVEN = {"tag": "present", "value": 7, "at": "/x"}
+ROW_X = _contract("acme.row", {"x": "int"})
+ROW_X_Y = _contract("acme.row", {"x": "int", "y": "string?"})
+ROW_X_OPTIONAL = _contract("acme.row", {"x": "int?"})
+
+
+@pytest.mark.parametrize("side", SIDES)
+@pytest.mark.parametrize("spelling", ["record<acme.row@1>", "result<acme.row@1>"])
+@pytest.mark.parametrize(
+    ("sent_row", "received_row", "fields", "expected"),
+    [
+        pytest.param(NARROW_ROW, WIDE_ROW, {"x": SEVEN}, None, id="value_type_within"),
+        pytest.param(
+            WIDE_ROW,
+            NARROW_ROW,
+            {"x": {"tag": "present", "value": 50, "at": "/x"}},
+            ("x", "type", "int{0..100}", "int{0..10}"),
+            id="value_type_wider",
+        ),
+        # The envelope carries every row field: an optional receiver field the sender's row
+        # lacks is missing from every sender value.
+        pytest.param(
+            ROW_X,
+            ROW_X_Y,
+            {"x": SEVEN},
+            ("y", "required", ABSENT, "string?"),
+            id="receiver_row_has_more_fields",
+        ),
+        pytest.param(
+            ROW_X_Y,
+            ROW_X,
+            {"x": SEVEN, "y": {"tag": "absent"}},
+            ("y", "undeclared", "string?", ABSENT),
+            id="sender_row_has_more_fields",
+        ),
+        # Optionality is not compared: both envelopes carry field_result<int>.
+        pytest.param(
+            ROW_X_OPTIONAL, ROW_X, {"x": {"tag": "absent"}}, None, id="optional_into_required"
+        ),
+        pytest.param(ROW_X, ROW_X_OPTIONAL, {"x": SEVEN}, None, id="required_into_optional"),
+    ],
+)
+def test_record_and_result_rows_follow_the_envelope(
+    side: FitSide,
+    spelling: str,
+    sent_row: Contract,
+    received_row: Contract,
+    fields: dict[str, object],
+    expected: tuple[str, str, str, str] | None,
+) -> None:
+    fit, accepted = _wrapped_case(
+        spelling, sent_row, received_row, _envelope(spelling, fields), side
+    )
+    if expected is None:
+        assert fit == STRUCTURAL
+        assert accepted
+    else:
+        path, problem, sender, receiver = expected
+        assert fit == Unfit(
+            side=side, path=f"value.{path}", problem=problem, sender=sender, receiver=receiver
+        )
+        assert not accepted
+
+
+ROW_X_NAMED = _contract("acme.other", {"x": "int"})
+ROW_X_DESCRIBED = validate_contract(
+    {"name": "acme.row", "version": 1, "description": "Another wording.", "fields": {"x": "int"}}
+)
+
+
+@pytest.mark.parametrize("side", SIDES)
+@pytest.mark.parametrize(
+    ("sent_row", "received_row", "fits"),
+    [
+        pytest.param(ROW_X, ROW_X, True, id="same_pin"),
+        pytest.param(ROW_X, ROW_X_DESCRIBED, False, id="description_only_digest_differs"),
+        pytest.param(NARROW_ROW, WIDE_ROW, False, id="narrower_body"),
+    ],
+)
+def test_refusal_needs_the_same_pin(
+    side: FitSide, sent_row: Contract, received_row: Contract, fits: bool
+) -> None:
+    value = {
+        "code": "declined",
+        "contract": _pinned(sent_row).model_dump(mode="json"),
+        "body": {"x": 7},
+    }
+    fit, accepted = _wrapped_case("refusal<acme.row@1>", sent_row, received_row, value, side)
+    assert accepted is fits
+    if fits:
+        assert fit == STRUCTURAL
+        return
+    assert isinstance(fit, Unfit)
+    assert (fit.path, fit.problem) == ("value", "type")
+    sent_digest = contract_digest(sent_row).tagged[:19]
+    assert fit.sender == f"refusal<acme.row@1> at {sent_digest}"
+
+
+@pytest.mark.parametrize("side", SIDES)
+def test_refusal_of_another_name_with_the_same_body(side: FitSide) -> None:
+    sender = _contract("acme.sent", {"value": "refusal<acme.row@1>"})
+    receiver = _contract("acme.received", {"value": "refusal<acme.other@1>"})
+    resolve_receiver = closure_lookup((receiver, ROW_X_NAMED))
+    fit = record_fits(
+        _ref(sender),
+        _ref(receiver),
+        closure_lookup((sender, ROW_X)),
+        resolve_receiver,
+        side=side,
+        capture_covers=_no_layouts,
+    )
+    assert fit == _type_unfit(side, "value", "refusal<acme.row@1>", "refusal<acme.other@1>")
+    value = {
+        "code": "declined",
+        "contract": _pinned(ROW_X).model_dump(mode="json"),
+        "body": {"x": 7},
+    }
+    received = check_value(
+        value, receiver.fields["value"].type, at="/value", resolve=resolve_receiver
+    )
+    assert not isinstance(received, FieldPresent)
 
 
 @pytest.mark.parametrize("side", SIDES)
@@ -572,47 +732,150 @@ def _counting(contracts: Iterable[Contract], calls: Counter[str], party: str) ->
     return lookup
 
 
-def test_equal_digests_fit_identical_without_resolving() -> None:
-    contract = _contract("acme.request", {"a": "int", "doc": "capture<acme.hits>"})
+def test_equal_digests_skip_the_receiver_and_the_walk() -> None:
+    contract = _contract("acme.request", {"a": "int", "b": "list<string>{max_items: 3}"})
+    calls: Counter[str] = Counter()
     result = record_fits(
         _pinned(contract),
         _pinned(contract),
-        _refusing(),
+        _counting([contract], calls, "sender"),
         _refusing(),
         side="request",
         capture_covers=_no_layouts,
     )
     assert result == Fits(fit="identical")
+    assert calls == Counter({"sender:acme.request": 1})
 
 
-def test_equal_contracts_without_pins_fit_identical_without_walking() -> None:
+def test_equal_digests_still_ask_every_reached_kind() -> None:
+    inner = _contract("acme.inner", {"doc": "capture<acme.links>"})
+    contract = _contract(
+        "acme.request",
+        {"doc": "capture<acme.hits>", "inner": _nested(inner), "any": "capture<*>"},
+    )
+    seam = _Seam()
+    result = record_fits(
+        _pinned(contract),
+        _pinned(contract),
+        closure_lookup([contract, inner]),
+        _refusing(),
+        side="result",
+        capture_covers=seam,
+    )
+    assert result == Fits(fit="identical")
+    assert seam.asked == ["acme.hits", "acme.links"]
+    seam = _Seam({"acme.links": GAP})
+    result = record_fits(
+        _pinned(contract),
+        _pinned(contract),
+        closure_lookup([contract, inner]),
+        _refusing(),
+        side="result",
+        capture_covers=seam,
+    )
+    assert result == Unfit(
+        side="result",
+        path="inner.doc.layout.records.hits",
+        problem="layout",
+        sender=ABSENT,
+        receiver="at /hits/*",
+    )
+
+
+def test_equal_contracts_without_pins_still_ask_their_kinds() -> None:
     contract = _contract("acme.request", {"doc": "capture<acme.hits>"})
+    seam = _Seam({KIND: GAP})
     result = record_fits(
         _ref(contract),
         _ref(contract),
         closure_lookup([contract]),
         closure_lookup([contract]),
         side="result",
-        capture_covers=_no_layouts,
+        capture_covers=seam,
     )
-    assert result == Fits(fit="identical")
+    assert isinstance(result, Unfit)
+    assert result.path == "doc.layout.records.hits"
 
 
-def test_equal_nested_pins_are_not_resolved() -> None:
+def test_equal_nested_pins_are_not_compared() -> None:
     inner = _contract("acme.inner", {"doc": "capture<acme.hits>"})
     sender = _contract("acme.sent", {"inner": _nested(inner), "a": "int{0..1}"})
     receiver = _contract("acme.received", {"inner": _nested(inner), "a": "int"})
     calls: Counter[str] = Counter()
+    seam = _Seam()
     result = record_fits(
         _ref(sender),
         _ref(receiver),
-        _counting([sender], calls, "sender"),
+        _counting([sender, inner], calls, "sender"),
         _counting([receiver], calls, "receiver"),
         side="request",
-        capture_covers=_no_layouts,
+        capture_covers=seam,
     )
     assert result == STRUCTURAL
-    assert calls["sender:acme.inner"] == calls["receiver:acme.inner"] == 0
+    assert calls["receiver:acme.inner"] == 0
+    assert calls["sender:acme.inner"] == 1
+    assert seam.asked == [KIND]
+
+
+# The review's reproduction: one Contract on both sides, layouts that differ.
+OTHER_SET_ROW = _contract("acme.hit", {"title": "string"})
+
+
+def _set_layout(record_set: str, at: str) -> DeclaredCaptureKind:
+    return DeclaredCaptureKind.model_validate(
+        {
+            "name": KIND,
+            "decoding": JSON_DECODING,
+            "layout": {
+                "records": {
+                    record_set: {
+                        "at": at,
+                        "row": _pinned(OTHER_SET_ROW).model_dump(mode="json"),
+                        "fields": {"title": {"at": "title"}},
+                    }
+                }
+            },
+        }
+    )
+
+
+@pytest.mark.parametrize("side", SIDES)
+@pytest.mark.parametrize("pinned", [True, False])
+def test_shared_contract_with_unequal_layouts_is_unfit(side: FitSide, pinned: bool) -> None:
+    shared = _contract("acme.root", {"doc": "capture<acme.hits>"})
+    covers = _wired(_set_layout("other", "/other/*"), _set_layout("hits", "/hits/*"))
+    pin = _pinned if pinned else _ref
+    expected = Unfit(
+        side=side,
+        path="doc.layout.records.hits",
+        problem="layout",
+        sender=ABSENT,
+        receiver="at /hits/*",
+    )
+    closure = [shared, OTHER_SET_ROW]
+    assert (
+        record_fits(
+            pin(shared),
+            pin(shared),
+            closure_lookup(closure),
+            closure_lookup(closure),
+            side=side,
+            capture_covers=covers,
+        )
+        == expected
+    )
+    # The same Contract nested under roots of different names.
+    sender = _contract("acme.sent", {"body": _nested(shared)})
+    receiver = _contract("acme.received", {"body": _nested(shared)})
+    nested = record_fits(
+        _ref(sender),
+        _ref(receiver),
+        closure_lookup([sender, *closure]),
+        closure_lookup([receiver, *closure]),
+        side=side,
+        capture_covers=covers,
+    )
+    assert nested == expected.model_copy(update={"path": "body.doc.layout.records.hits"})
 
 
 def test_a_diamond_is_walked_once() -> None:
@@ -723,3 +986,186 @@ def test_an_unresolved_pin_raises() -> None:
         _fit({"value": "acme.row@1"}, {"value": "acme.row@1"}, sender_closure=[NARROW_ROW])
     assert raised.value.party == "receiver"
     assert raised.value.ref.spelling == "acme.row@1"
+
+
+# -- layouts that name their own kind --------------------------------------------------------
+
+
+def _linked(name: str, parent: str, query: str) -> DeclaredCaptureKind:
+    """A kind whose header names ``capture<parent>``; ``parent`` may be the kind itself."""
+
+    return DeclaredCaptureKind.model_validate(
+        {
+            "name": name,
+            "decoding": JSON_DECODING,
+            "layout": {
+                "header": {
+                    "parent": {"at": "/parent", "type": f"capture<{parent}>"},
+                    "query": {"at": "/query", "type": query},
+                },
+                "records": {
+                    "hits": {
+                        "at": "/hits/*",
+                        "row": _pinned(OTHER_SET_ROW).model_dump(mode="json"),
+                        "fields": {"title": {"at": "title"}},
+                    }
+                },
+            },
+        }
+    )
+
+
+def _by_name(*kinds: DeclaredCaptureKind) -> CaptureCovers:
+    sent = {kind.name: kind for kind in kinds[: len(kinds) // 2]}
+    received = {kind.name: kind for kind in kinds[len(kinds) // 2 :]}
+
+    def covers(kind: str, type_fits: TypeFit, row_fits: RowFit) -> LayoutGap | None:
+        return layout_covers(sent[kind], received[kind], type_fits=type_fits, row_fits=row_fits)
+
+    return covers
+
+
+def _fit_linked(covers: CaptureCovers, side: FitSide) -> FitResult:
+    return _fit(
+        {"doc": "capture<acme.hits>"},
+        {"doc": "capture<acme.hits>"},
+        side=side,
+        sender_closure=[OTHER_SET_ROW],
+        receiver_closure=[OTHER_SET_ROW],
+        covers=covers,
+    )
+
+
+NARROW_QUERY, WIDE_QUERY = "string{max_len: 10}", "string{max_len: 20}"
+
+
+@pytest.mark.parametrize("side", SIDES)
+def test_a_layout_naming_its_own_kind_terminates(side: FitSide) -> None:
+    fits = _by_name(_linked(KIND, KIND, NARROW_QUERY), _linked(KIND, KIND, WIDE_QUERY))
+    assert _fit_linked(fits, side) == STRUCTURAL
+    unfit = _by_name(_linked(KIND, KIND, WIDE_QUERY), _linked(KIND, KIND, NARROW_QUERY))
+    assert _fit_linked(unfit, side) == Unfit(
+        side=side,
+        path="doc.layout.header.query.type",
+        problem="layout",
+        sender=WIDE_QUERY,
+        receiver=NARROW_QUERY,
+    )
+
+
+@pytest.mark.parametrize("side", SIDES)
+def test_a_mutual_pair_of_layouts_terminates(side: FitSide) -> None:
+    links = "acme.links"
+    fits = _by_name(
+        _linked(KIND, links, NARROW_QUERY),
+        _linked(links, KIND, NARROW_QUERY),
+        _linked(KIND, links, WIDE_QUERY),
+        _linked(links, KIND, WIDE_QUERY),
+    )
+    assert _fit_linked(fits, side) == STRUCTURAL
+    # The mismatch is in acme.links, reached through acme.hits' header; it is not hidden
+    # by the back edge to acme.hits.
+    unfit = _by_name(
+        _linked(KIND, links, NARROW_QUERY),
+        _linked(links, KIND, WIDE_QUERY),
+        _linked(KIND, links, WIDE_QUERY),
+        _linked(links, KIND, NARROW_QUERY),
+    )
+    assert _fit_linked(unfit, side) == Unfit(
+        side=side,
+        path="doc.layout.header.parent.type",
+        problem="layout",
+        sender=WIDE_QUERY,
+        receiver=NARROW_QUERY,
+    )
+
+
+def test_a_success_that_assumed_a_failed_kind_is_dropped() -> None:
+    links = "acme.links"
+    covers = _by_name(
+        _linked(KIND, links, WIDE_QUERY),
+        _linked(links, KIND, NARROW_QUERY),
+        _linked(KIND, links, NARROW_QUERY),
+        _linked(links, KIND, WIDE_QUERY),
+    )
+    walk = _Walk(
+        closure_lookup([OTHER_SET_ROW]), closure_lookup([OTHER_SET_ROW]), "request", covers
+    )
+    assert walk._kind(KIND) is not None
+    # acme.links covered only on the assumption that acme.hits did; acme.hits did not.
+    assert ("kind", links) not in walk.memo
+    assert walk.provisional == {}
+
+
+# -- deep closures: an explicit work stack, linear work and storage --------------------------
+
+
+def _chain(prefix: str, depth: int, leaf: str) -> list[Contract]:
+    contracts = [_contract(f"acme.{prefix}000", {"x": leaf})]
+    for index in range(1, depth):
+        contracts.append(_contract(f"acme.{prefix}{index:03d}", {"next": _nested(contracts[-1])}))
+    return contracts
+
+
+def _chain_walk(
+    depth: int, sent_leaf: str, received_leaf: str
+) -> tuple[_Walk, FitResult, Counter[str]]:
+    sent, received = _chain("s", depth, sent_leaf), _chain("r", depth, received_leaf)
+    calls: Counter[str] = Counter()
+    walk = _Walk(
+        _counting(sent, calls, "sender"),
+        _counting(received, calls, "receiver"),
+        "request",
+        _no_layouts,
+    )
+    return walk, walk.record(_pinned(sent[-1]), _pinned(received[-1])), calls
+
+
+def _retained_path(walk: _Walk) -> tuple[int, int]:
+    """Distinct path segments the memo's failures hold, and their characters."""
+
+    seen: dict[int, int] = {}
+    for value in walk.memo.values():
+        if not isinstance(value, _Fail):
+            continue
+        node: _Seg | None = value.path
+        while node is not None and id(node) not in seen:
+            seen[id(node)] = len(node.head)
+            node = node.tail
+    return len(seen), sum(seen.values())
+
+
+@pytest.mark.parametrize("depth", [125, 250])
+def test_a_deep_pinned_chain_fits(depth: int) -> None:
+    walk, result, calls = _chain_walk(depth, "int{0..10}", "int")
+    assert result == STRUCTURAL
+    assert sum(calls.values()) == 2 * depth
+    assert walk.steps == depth
+
+
+@pytest.mark.parametrize("depth", [125, 250])
+def test_a_deep_pinned_chain_fails_at_its_leaf(depth: int) -> None:
+    walk, result, calls = _chain_walk(depth, "int", "int{0..10}")
+    assert result == _type_unfit("request", "next." * (depth - 1) + "x", "int", "int{0..10}")
+    assert sum(calls.values()) == 2 * depth
+    assert walk.steps == depth + 1
+    segments, characters = _retained_path(walk)
+    # One shared segment per level: the leaf's ``x`` and one ``next`` per pair above it.
+    assert segments == depth
+    assert characters == 1 + 4 * (depth - 1)
+
+
+def test_a_deep_shared_chain_still_asks_its_kind() -> None:
+    contracts = _chain("s", 250, "capture<acme.hits>")
+    seam = _Seam({KIND: GAP})
+    result = record_fits(
+        _pinned(contracts[-1]),
+        _pinned(contracts[-1]),
+        closure_lookup(contracts),
+        _refusing(),
+        side="result",
+        capture_covers=seam,
+    )
+    assert isinstance(result, Unfit)
+    assert result.path == "next." * 249 + "x.layout.records.hits"
+    assert seam.asked == [KIND]
