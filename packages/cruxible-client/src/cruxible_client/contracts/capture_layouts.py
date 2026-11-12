@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Callable
+from collections import deque
+from collections.abc import Callable, Iterator
 from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -36,10 +37,17 @@ from cruxible_client.contracts.law_problems import LawProblem
 from cruxible_client.contracts.procedures.extract import ExtractField
 from cruxible_client.contracts.provider_operations import ContractLookup
 from cruxible_client.contracts.shapes import (
+    ANY_CAPTURE_KIND,
+    CaptureType,
+    Contract,
     ContractField,
     ContractRef,
+    FieldResultType,
     FieldType,
+    ListType,
+    all_field_refs,
     parse_contract_ref,
+    type_refs,
 )
 
 MAX_LAYOUT_HEADER_FIELDS = 64
@@ -58,6 +66,7 @@ LAYOUT_DECODING_UNSUPPORTED: Final = "cruxible.capture_kind.layout_decoding_unsu
 LAYOUT_ROW_UNRESOLVED: Final = "cruxible.capture_kind.layout_row_unresolved"
 LAYOUT_FIELD_UNKNOWN: Final = "cruxible.capture_kind.layout_field_unknown"
 LAYOUT_FIELD_MISSING: Final = "cruxible.capture_kind.layout_field_missing"
+LAYOUT_REF_UNRESOLVED: Final = "cruxible.capture_kind.layout_ref_unresolved"
 LAYOUT_SUCCESSION_BREAK: Final = "cruxible.capture_kind.layout_succession_break"
 
 #: Every code the layout law and the succession check return.
@@ -66,6 +75,7 @@ LayoutLawCode = Literal[
     "cruxible.capture_kind.layout_row_unresolved",
     "cruxible.capture_kind.layout_field_unknown",
     "cruxible.capture_kind.layout_field_missing",
+    "cruxible.capture_kind.layout_ref_unresolved",
     "cruxible.capture_kind.layout_succession_break",
 ]
 
@@ -231,26 +241,70 @@ def declared_capture_kind_digest(kind: DeclaredCaptureKind) -> ArtifactDigest:
 # -- the layout law ------------------------------------------------------------------------
 
 
+def capture_kinds_of(field_type: FieldType) -> Iterator[str]:
+    """Every named CaptureKind (``capture<K>``, K not ``*``) one type names directly.
+
+    Through lists and field results; a nested Contract's own fields are read
+    where that Contract is reached.
+    """
+
+    if isinstance(field_type, CaptureType):
+        if field_type.capture_kind != ANY_CAPTURE_KIND:
+            yield field_type.capture_kind
+    elif isinstance(field_type, ListType):
+        yield from capture_kinds_of(field_type.item)
+    elif isinstance(field_type, FieldResultType):
+        yield from capture_kinds_of(field_type.value)
+
+
+def layout_rule_types(layout: CaptureLayout) -> Iterator[tuple[str, FieldType]]:
+    """Each field rule's effective type with its entry path: header fields, then each
+    record set's key parts and field rules."""
+
+    for name, rule in layout.header.items():
+        yield f"header.{name}", rule.field_type()
+    for set_name, item in layout.records.items():
+        for part, rule in item.key.items():
+            yield f"records.{set_name}.key.{part}", rule.field_type()
+        for field, rule in item.fields.items():
+            yield f"records.{set_name}.fields.{field}", rule.field_type()
+
+
 def evaluate_layout_law(
     layout: CaptureLayout,
     *,
     decoding: CaptureDecoding | None,
     resolve: ContractLookup,
+    capture_kind_exists: Callable[[str], bool] | None = None,
 ) -> tuple[LawProblem, ...]:
-    """Judge one layout against its kind's decoding and the Contracts it pins.
+    """Judge one layout against its kind's decoding and the definitions it names.
 
     The kind decodes as JSON or CSV (and a CSV layout has the CSV shape); every
     record set's row resolves (by exact digest when pinned); its field rules
     are exactly its row Contract's fields, so each record it yields is a whole
     ``record<row>`` (an optional row field still needs a rule; key parts are a
-    separate map and are not row fields). Key types are judged where the kind
-    is accepted, against the instance's SubjectKinds.
+    separate map and are not row fields). Every Contract a rule's type names
+    resolves, and so does every Contract those and the rows name, transitively
+    (``layout_ref_unresolved``). With ``capture_kind_exists``, every
+    ``capture<K>`` a rule's type or a reached Contract names is a CaptureKind
+    here. Key types are judged where the kind is accepted, against the
+    instance's SubjectKinds.
     """
 
     problems: list[LawProblem] = []
     decoding_problem = layout_decoding_problem(layout, decoding)
     if decoding_problem is not None:
         problems.append(LawProblem(LAYOUT_DECODING_UNSUPPORTED, decoding_problem))
+    pending: deque[tuple[ContractRef, str]] = deque()
+    kinds: dict[str, str] = {}
+
+    def reached(contract: Contract, where: str) -> None:
+        through = f"{where} via {contract.ref.spelling}"
+        pending.extend((nested, through) for nested in all_field_refs(contract))
+        for field_name, declared in contract.fields.items():
+            for kind in capture_kinds_of(declared.type):
+                kinds.setdefault(kind, f"{through}.{field_name}")
+
     for name, item in layout.records.items():
         row = resolve(item.row)
         if row is None:
@@ -262,6 +316,7 @@ def evaluate_layout_law(
                 )
             )
             continue
+        reached(row, f"records.{name}.row")
         unknown = sorted(set(item.fields) - set(row.fields))
         if unknown:
             problems.append(
@@ -280,7 +335,38 @@ def evaluate_layout_law(
                     "a rule, so each record is a whole record of its row",
                 )
             )
-    return tuple(problems)
+    for entry, field_type in layout_rule_types(layout):
+        pending.extend((ref, entry) for ref in type_refs(field_type))
+        for kind in capture_kinds_of(field_type):
+            kinds.setdefault(kind, entry)
+    seen: set[tuple[str, int, str | None]] = set()
+    while pending:
+        ref, where = pending.popleft()
+        key = (ref.name, ref.version, ref.digest)
+        if key in seen:
+            continue
+        seen.add(key)
+        found = resolve(ref)
+        if found is None:
+            problems.append(
+                LawProblem(
+                    LAYOUT_REF_UNRESOLVED,
+                    f"{where}: {ref.spelling} is not an accepted Contract"
+                    + (" at its pinned digest." if ref.digest is not None else "."),
+                )
+            )
+            continue
+        reached(found, where)
+    if capture_kind_exists is not None:
+        for kind, where in kinds.items():
+            if not capture_kind_exists(kind):
+                problems.append(
+                    LawProblem(
+                        LAYOUT_REF_UNRESOLVED,
+                        f"{where}: capture<{kind}> names no CaptureKind here.",
+                    )
+                )
+    return tuple(dict.fromkeys(problems))
 
 
 # -- succession: a layout may only grow ----------------------------------------------------
@@ -493,6 +579,7 @@ __all__ = [
     "LAYOUT_DECODING_UNSUPPORTED",
     "LAYOUT_FIELD_MISSING",
     "LAYOUT_FIELD_UNKNOWN",
+    "LAYOUT_REF_UNRESOLVED",
     "LAYOUT_ROW_UNRESOLVED",
     "LAYOUT_SUCCESSION_BREAK",
     "MAX_LAYOUT_FIELDS",
@@ -506,10 +593,12 @@ __all__ = [
     "LayoutRecordSet",
     "RowFit",
     "TypeFit",
+    "capture_kinds_of",
     "declared_capture_kind_digest",
     "evaluate_layout_law",
     "layout_covers",
     "layout_decoding_problem",
+    "layout_rule_types",
     "layout_succession_message",
     "layout_successor_break",
     "render_field_rule",

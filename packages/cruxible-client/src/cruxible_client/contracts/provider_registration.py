@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import deque
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from pathlib import PurePosixPath
 from typing import Annotated, Final, Literal, TypeAlias
 
@@ -36,7 +36,14 @@ from cruxible_client.contracts.capabilities import (
     is_reserved_capability_name,
     validate_capability_name,
 )
-from cruxible_client.contracts.capture_layouts import DeclaredCaptureKind, evaluate_layout_law
+from cruxible_client.contracts.capture_layouts import (
+    LAYOUT_REF_UNRESOLVED,
+    LAYOUT_ROW_UNRESOLVED,
+    DeclaredCaptureKind,
+    capture_kinds_of,
+    evaluate_layout_law,
+    layout_rule_types,
+)
 from cruxible_client.contracts.law_problems import LawProblem
 from cruxible_client.contracts.provider_operations import (
     ContractLookup,
@@ -45,19 +52,17 @@ from cruxible_client.contracts.provider_operations import (
     OperationSignature,
 )
 from cruxible_client.contracts.shapes import (
-    ANY_CAPTURE_KIND,
-    CaptureType,
     Contract,
     ContractRef,
-    FieldResultType,
-    FieldType,
-    ListType,
     all_field_refs,
     contract_digest,
     parse_contract_ref,
+    type_refs,
 )
 
 REGISTRATION_SCHEMA_VERSION = 3
+#: Layout law codes the registration closure already judges inside ``declares``.
+_RESOLUTION_CODES = frozenset({LAYOUT_ROW_UNRESOLVED, LAYOUT_REF_UNRESOLVED})
 #: The most capability names one operation serves.
 MAX_SERVES = 16
 MAX_OPERATIONS = 256
@@ -440,18 +445,6 @@ class PackageRegistration(_Strict):
 # -- the registration law ------------------------------------------------------------------
 
 
-def _capture_kinds_of(field_type: FieldType) -> Iterator[str]:
-    """Every named CaptureKind (``capture<K>``, K not ``*``) one type carries."""
-
-    if isinstance(field_type, CaptureType):
-        if field_type.capture_kind != ANY_CAPTURE_KIND:
-            yield field_type.capture_kind
-    elif isinstance(field_type, ListType):
-        yield from _capture_kinds_of(field_type.item)
-    elif isinstance(field_type, FieldResultType):
-        yield from _capture_kinds_of(field_type.value)
-
-
 def evaluate_declared_operations(
     operations: Sequence[DeclaredOperation], declares: ProviderDeclares
 ) -> tuple[LawProblem, ...]:
@@ -461,8 +454,9 @@ def evaluate_declared_operations(
     refusal Contract resolves inside ``declares`` (to the carried digest when
     the reference pins one); every carried Contract pins its nested Contracts by
     digest and they resolve inside ``declares``; every ``capture<K>`` the reached
-    Contracts name is a carried CaptureKind; carried layouts pass the layout law
-    against the carried Contracts; and ``declares`` carries nothing the
+    Contracts name is a carried CaptureKind, whose layout's rows and field-rule
+    types are reached in turn (their Contracts and named kinds, transitively);
+    carried layouts pass the layout law; and ``declares`` carries nothing the
     operations do not reach. ``built_against`` is a record and is not judged.
     """
 
@@ -503,12 +497,28 @@ def evaluate_declared_operations(
             )
         return found
 
-    # Reach from the operations; a named, carried kind's layout rows are reached
-    # too (and may name further kinds), until nothing new is reached.
+    # Reach from the operations; a named, carried kind's layout (its rows and
+    # the types of its field rules) is reached too, and may name further
+    # Contracts and kinds, until nothing new is reached.
     carried_kinds = {item.name: item for item in declares.capture_kinds}
     reached: dict[tuple[str, int], Contract] = {}
     named_kinds: dict[str, str] = {}
     pending: deque[tuple[ContractRef, str]] = deque()
+
+    def reach_kind(kind_name: str, where: str) -> None:
+        if kind_name in named_kinds:
+            return
+        named_kinds[kind_name] = where
+        kind = carried_kinds.get(kind_name)
+        if kind is None or kind.layout is None:
+            return
+        owner = f"CaptureKind `{kind_name}`"
+        pending.extend((row, owner) for row in kind.layout.row_refs())
+        for entry, field_type in layout_rule_types(kind.layout):
+            pending.extend((ref, f"{owner} {entry}") for ref in type_refs(field_type))
+            for nested_kind in capture_kinds_of(field_type):
+                reach_kind(nested_kind, f"{owner} {entry}")
+
     for operation in operations:
         pending.extend((ref, f"operation `{operation.name}`") for ref in operation.contract_refs())
     while pending:
@@ -529,15 +539,8 @@ def evaluate_declared_operations(
                 )
             pending.append((nested, nested_owner))
         for field_name, declared in found.fields.items():
-            for kind_name in _capture_kinds_of(declared.type):
-                if kind_name in named_kinds:
-                    continue
-                named_kinds[kind_name] = f"{found.ref.spelling}.{field_name}"
-                kind = carried_kinds.get(kind_name)
-                if kind is not None and kind.layout is not None:
-                    pending.extend(
-                        (row, f"CaptureKind `{kind_name}`") for row in kind.layout.row_refs()
-                    )
+            for kind_name in capture_kinds_of(declared.type):
+                reach_kind(kind_name, f"{found.ref.spelling}.{field_name}")
 
     for kind_name, where in sorted(named_kinds.items()):
         if kind_name not in carried_kinds:
@@ -557,11 +560,14 @@ def evaluate_declared_operations(
                 )
             )
         if kind.layout is not None:
+            # Resolution inside declares is judged by the closure above, with its
+            # owner; the layout law adds what it alone knows.
             problems.extend(
                 LawProblem(problem.code, f"carried CaptureKind `{kind.name}`: {problem.message}")
                 for problem in evaluate_layout_law(
                     kind.layout, decoding=kind.decoding, resolve=resolve
                 )
+                if problem.code not in _RESOLUTION_CODES
             )
     for key, contract in carried.items():
         if key not in reached:

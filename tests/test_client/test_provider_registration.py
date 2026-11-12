@@ -361,3 +361,115 @@ def test_a_carried_layout_passes_the_layout_law() -> None:
         "cruxible.capture_kind.layout_field_missing",
     ]
     assert problems[0].message.startswith("carried CaptureKind `acme.hits`:")
+
+
+# -- references inside a carried layout's field-rule types (review F-002) -------------------
+
+PART = validate_contract({"name": "acme.meta-part", "version": 1, "fields": {"name": "string"}})
+META = validate_contract(
+    {
+        "name": "acme.meta",
+        "version": 1,
+        "fields": {
+            "part": {
+                "type": {
+                    "kind": "contract",
+                    "contract": {
+                        "name": "acme.meta-part",
+                        "version": 1,
+                        "digest": contract_digest(PART).tagged,
+                    },
+                }
+            }
+        },
+    }
+)
+OTHER_ROW = validate_contract(
+    {"name": "acme.other-row", "version": 1, "fields": {"note": "string"}}
+)
+OTHER_KIND = {
+    "name": "acme.other",
+    "decoding": JSON,
+    "layout": {
+        "records": {
+            "notes": {
+                "at": "/notes/*",
+                "row": {
+                    "name": "acme.other-row",
+                    "version": 1,
+                    "digest": contract_digest(OTHER_ROW).tagged,
+                },
+                "fields": {"note": {"at": "note"}},
+            }
+        }
+    },
+}
+#: Every wrapper a field-rule type may put around a Contract reference.
+META_SPELLINGS = (
+    "acme.meta@1",
+    "list<acme.meta@1>{max_items: 4}",
+    "variant{one: acme.meta@1}",
+    "field_result<acme.meta@1>",
+    "record<acme.meta@1>",
+)
+
+
+def _kind_with(location: str, spelling: str) -> dict[str, Any]:
+    """KIND with ``spelling`` as the type of a header field, a key part or a field rule."""
+
+    hits = dict(KIND["layout"]["records"]["hits"])
+    layout: dict[str, Any] = {"records": {"hits": hits}}
+    if location == "header":
+        layout["header"] = {"meta": {"at": "/meta", "type": spelling, "presence": "required"}}
+    elif location == "key":
+        hits["key"] = {"meta": {"at": "meta", "type": spelling}}
+    else:
+        hits["fields"] = {"title": {"at": "title", "type": spelling}}
+    return {**KIND, "layout": layout}
+
+
+@pytest.mark.parametrize("location", ["header", "key", "field"])
+@pytest.mark.parametrize("spelling", META_SPELLINGS)
+def test_a_contract_a_layout_rule_names_is_reached_and_must_be_carried(
+    location: str, spelling: str
+) -> None:
+    kind = _kind_with(location, spelling)
+    missing = _registration(declares=_declares(capture_kinds=[kind]))
+    problems = evaluate_registration_law(missing)
+    assert [problem.code for problem in problems] == ["cruxible.provider.declared_contract_missing"]
+    assert "acme.meta@1" in problems[0].message
+
+    carried = _registration(
+        declares=_declares(
+            contracts=_sorted(ROW, PARAM, REQUEST, RESULT, DECLINED, META, PART),
+            capture_kinds=[kind],
+        )
+    )
+    assert evaluate_registration_law(carried) == ()
+
+
+def test_a_nested_dependency_of_a_layout_rule_contract_is_checked_too() -> None:
+    kind = _kind_with("header", "acme.meta@1")
+    without_part = _registration(
+        declares=_declares(
+            contracts=_sorted(ROW, PARAM, REQUEST, RESULT, DECLINED, META), capture_kinds=[kind]
+        )
+    )
+    problems = evaluate_registration_law(without_part)
+
+    assert [problem.code for problem in problems] == ["cruxible.provider.declared_contract_missing"]
+    assert "acme.meta-part@1" in problems[0].message
+
+
+def test_a_kind_a_layout_rule_names_is_reached_and_its_layout_followed() -> None:
+    kind = _kind_with("header", "capture<acme.other>")
+    missing = _registration(declares=_declares(capture_kinds=[kind]))
+    assert _codes(missing) == ["cruxible.provider.declared_capture_kind_missing"]
+
+    carried = _registration(
+        declares=_declares(
+            contracts=_sorted(ROW, PARAM, REQUEST, RESULT, DECLINED, OTHER_ROW),
+            capture_kinds=[kind, OTHER_KIND],
+        )
+    )
+    assert evaluate_registration_law(carried) == ()

@@ -201,6 +201,7 @@ def test_the_law_codes_are_a_closed_vocabulary() -> None:
         "cruxible.capture_kind.layout_row_unresolved",
         "cruxible.capture_kind.layout_field_unknown",
         "cruxible.capture_kind.layout_field_missing",
+        "cruxible.capture_kind.layout_ref_unresolved",
         "cruxible.capture_kind.layout_succession_break",
     }
 
@@ -546,3 +547,87 @@ def test_coverage_compares_decoding_formats() -> None:
     assert _covers(_kind(csv_layout, decoding=CSV), json_reader) == LayoutGap(
         entry="decoding.format", producer="csv", reader="json"
     )
+
+
+# -- references inside field-rule types (review F-002) ----------------------------------------
+
+PART = validate_contract({"name": "acme.meta-part", "version": 1, "fields": {"name": "string"}})
+META = validate_contract(
+    {
+        "name": "acme.meta",
+        "version": 1,
+        "fields": {"part": {"type": {"kind": "contract", "contract": _pin(PART)}}},
+    }
+)
+
+
+def _with_header(spelling: str) -> CaptureLayout:
+    return _layout(header={"meta": {"at": "/meta", "type": spelling, "presence": "required"}})
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "acme.meta@1",
+        "list<acme.meta@1>{max_items: 4}",
+        "variant{one: acme.meta@1}",
+        "field_result<acme.meta@1>",
+        "record<acme.meta@1>",
+    ],
+)
+def test_the_layout_law_resolves_contracts_a_rule_type_names(spelling: str) -> None:
+    layout = _with_header(spelling)
+    problems = evaluate_layout_law(layout, decoding=JSON, resolve=RESOLVE)
+
+    assert [problem.code for problem in problems] == ["cruxible.capture_kind.layout_ref_unresolved"]
+    assert problems[0].message.startswith("header.meta: acme.meta@1")
+    resolve = closure_lookup((ROW, META, PART))
+    assert evaluate_layout_law(layout, decoding=JSON, resolve=resolve) == ()
+
+
+def test_the_layout_law_resolves_transitively_from_rule_types_and_rows() -> None:
+    problems = evaluate_layout_law(
+        _with_header("acme.meta@1"), decoding=JSON, resolve=closure_lookup((ROW, META))
+    )
+    assert [problem.code for problem in problems] == ["cruxible.capture_kind.layout_ref_unresolved"]
+    assert problems[0].message.startswith("header.meta via acme.meta@1: acme.meta-part@1")
+
+    nested_row = validate_contract(
+        {
+            "name": "acme.hit",
+            "version": 1,
+            "fields": {
+                "title": "string{max_len: 64}",
+                "rank": "int",
+                "meta": {"type": {"kind": "contract", "contract": _pin(META)}, "optional": True},
+            },
+        }
+    )
+    layout = _layout(
+        records={
+            "hits": _hits(
+                row=_pin(nested_row),
+                fields={**_hits()["fields"], "meta": {"at": "meta", "presence": "optional"}},
+            )
+        }
+    )
+    problems = evaluate_layout_law(layout, decoding=JSON, resolve=closure_lookup((nested_row,)))
+    assert [problem.code for problem in problems] == ["cruxible.capture_kind.layout_ref_unresolved"]
+    assert problems[0].message.startswith("records.hits.row via acme.hit@1: acme.meta@1")
+
+
+def test_the_layout_law_checks_named_kinds_when_it_can_see_them() -> None:
+    layout = _layout(header={"att": {"at": "/att", "type": "capture<acme.other>"}})
+
+    assert evaluate_layout_law(layout, decoding=JSON, resolve=RESOLVE) == ()
+    assert (
+        evaluate_layout_law(
+            layout, decoding=JSON, resolve=RESOLVE, capture_kind_exists=lambda name: True
+        )
+        == ()
+    )
+    problems = evaluate_layout_law(
+        layout, decoding=JSON, resolve=RESOLVE, capture_kind_exists=lambda name: False
+    )
+    assert [problem.code for problem in problems] == ["cruxible.capture_kind.layout_ref_unresolved"]
+    assert problems[0].message == "header.att: capture<acme.other> names no CaptureKind here."
