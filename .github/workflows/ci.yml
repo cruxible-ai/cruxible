@@ -85,6 +85,11 @@ jobs:
         if: matrix.shard == 1
         run: uv run mypy src packages/cruxible-client/src
 
+      # The base kit core bundles must match its sources and the pinned digest.
+      - name: Bundled base kit
+        if: matrix.shard == 1
+        run: uv run python scripts/build_base_kit.py --check
+
       - name: Test
         run: uv run pytest -n auto --dist loadfile --tb=short --timeout 900 --timeout-method=thread -o faulthandler_timeout=1200
 

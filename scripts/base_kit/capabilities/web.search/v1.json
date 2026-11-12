@@ -1,0 +1,9 @@
+{
+  "artifact_format": "cruxible-capability-v1",
+  "description": "Sends one query to a web search service and returns its response verbatim as one Capture, in the vendor's own format; web.search.results reads it into the shared form.",
+  "effect": "external_read",
+  "in": "web.search.request@1",
+  "name": "web.search",
+  "out": "web.search.result@1",
+  "version": 1
+}

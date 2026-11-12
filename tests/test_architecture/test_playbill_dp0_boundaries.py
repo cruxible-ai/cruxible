@@ -461,7 +461,9 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
 
 
 def test_pc_d_retired_donor_packages_and_modules_are_absent() -> None:
-    for package in ("group", "kits"):
+    # ``kits/`` is no longer the retired donor: it holds the base kit core
+    # bundles (design note §7.4.2), so only ``group`` stays absent.
+    for package in ("group",):
         root = CORE / package
         assert not any(
             path.is_file() and "__pycache__" not in path.parts for path in root.rglob("*")

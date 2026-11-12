@@ -1,0 +1,17 @@
+{
+  "artifact_format": "cruxible-capability-v1",
+  "description": "Fetches one web resource as pages: the values of one query parameter are split, in order, across as few HTTP GETs as keep each URL within a length limit, and each page's exact body comes back as its own Capture, in page order. A page that returns no Capture is listed as failed and the result is marked incomplete.",
+  "effect": "external_read",
+  "in": {
+    "digest": "sha256:4ef9ca61bfce39d44bcb2ac0a63c98dd05a33e23c015647ebc999f1003a9f535",
+    "name": "web.fetch.pages.request",
+    "version": 1
+  },
+  "name": "web.fetch.pages",
+  "out": {
+    "digest": "sha256:9bffebb513b46b5577e41cb174f7ad855857e22aee048f291fd5cc5d12467bfb",
+    "name": "web.fetch.pages.result",
+    "version": 1
+  },
+  "version": 1
+}

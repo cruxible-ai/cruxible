@@ -12,6 +12,8 @@ echo "== ruff format --check"
 uv run ruff format --check src packages/cruxible-client/src tests
 echo "== mypy"
 uv run mypy src packages/cruxible-client/src
+echo "== bundled base kit"
+uv run python scripts/build_base_kit.py --check
 # The provider-runtime tests need a cruxible-providers checkout, as in CI
 # (tests/support/provider_checkout.py); without one they skip.
 if [ -n "${CRUXIBLE_PROVIDERS_CHECKOUT:-}" ]; then
