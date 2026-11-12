@@ -3317,6 +3317,16 @@ never runs effectful terminals; they run only on a Line. The `prediction_settlea
 in `cruxible next` renders `cruxible prediction settle RSC-...`; add
 `--observation CLAIM_ID`.
 
+The observation's time is when its Claim version was accepted. When that falls
+outside the window, settle reads the latest re-observation recorded for the
+Claim: if it was recorded while this same version was live and its Capture was
+observed after the contract was accepted and inside the window, the observation
+counts at that Capture's observed time. The resolution then cites the
+re-observing Capture (`capture`) and its re-observation record
+(`journal_record`) next to the Claim statement, and its authorization source is
+`reobservation_admission`. An unchanged value stated before the prediction was
+accepted therefore settles once a later run re-observes it.
+
 A window that closed with no accepted observation inside it cannot settle:
 `prediction settle` refuses with `prediction_deadline_passed`, and the
 `prediction_settleable` row stays until the contract is retired. Cruxible does

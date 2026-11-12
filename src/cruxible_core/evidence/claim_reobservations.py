@@ -106,6 +106,11 @@ _NEXT_POINT = (
 )
 _NEVER = 1 << 62
 _LAST_SEQUENCE = "SELECT MAX(sequence) FROM reobservations WHERE claim_id=? AND sequence<=?"
+_LATEST_RECORD = (
+    "SELECT capture_digest, contract_digest, observed_content_digest, observed_at, recorded_at, "
+    "sequence FROM reobservations WHERE claim_id=? AND sequence<=? "
+    "ORDER BY sequence DESC LIMIT 1"
+)
 
 
 def _through() -> int:
@@ -156,6 +161,20 @@ class ReobservationRecord:
     observed_content_digest: str
     observed_at: datetime
     recorded_at: datetime
+
+
+@dataclass(frozen=True)
+class RecordedReobservation:
+    """A lineage's latest re-observation and the journal record that holds it.
+
+    ``accepted_coordinate`` is the accepted head the record was admitted at:
+    the Claim version live there is the version it re-observed.
+    """
+
+    record: ReobservationRecord
+    sequence: int
+    record_digest: str
+    accepted_coordinate: AcceptedCoordinate
 
 
 def _instant(value: object) -> datetime:
@@ -874,6 +893,59 @@ class ReobservationReader:
             row = conn.execute(_LAST_SEQUENCE, (claim_id, _through())).fetchone()
         return 0 if row is None or row[0] is None else int(row[0])
 
+    def latest_recorded(self, claim_id: str) -> RecordedReobservation | None:
+        """The lineage's most recently recorded re-observation, with its journal record.
+
+        One indexed probe of the projection and one journal record read by its
+        sequence, however long the lineage's or the journal's history.
+        """
+
+        self._guard_fork()
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return None
+            self.probes += 1
+            row = conn.execute(_LATEST_RECORD, (claim_id, _through())).fetchone()
+        if row is None:
+            return None
+        self.rows_read += 1
+        sequence = int(row[5])
+        journal = self.store._journal(create=False)
+        stored = (
+            ()
+            if journal is None
+            else journal.select_records(
+                self.store.stream,
+                partition_id=_PARTITION,
+                first_sequence=sequence,
+                last_sequence=sequence,
+            )
+        )
+        record = ReobservationRecord(
+            claim_id=claim_id,
+            capture_digest=str(row[0]),
+            contract_digest=str(row[1]),
+            observed_content_digest=str(row[2]),
+            observed_at=_instant(row[3]),
+            recorded_at=_instant(row[4]),
+        )
+        if (
+            len(stored) != 1
+            or stored[0].record.event_kind != "claim_reobservation"
+            or stored[0].record.recorded_at != record.recorded_at
+        ):
+            raise ClaimReobservationJournalCorrupt(
+                f"re-observation record {sequence} of Claim {claim_id} is not in the journal "
+                "its projection was caught up from"
+            )
+        return RecordedReobservation(
+            record=record,
+            sequence=sequence,
+            record_digest=stored[0].record_digest,
+            accepted_coordinate=stored[0].record.accepted_coordinate,
+        )
+
     def latest(
         self, claim_id: str, keys: Sequence[ReobservationKey], at: datetime
     ) -> ReobservationReading:
@@ -1004,6 +1076,7 @@ __all__ = [
     "ReobservationReader",
     "ReobservationReading",
     "ReobservationRecord",
+    "RecordedReobservation",
     "cited_reobservation_keys",
     "reobservation_journal_identity",
     "reobservation_journal_signature",

@@ -13,13 +13,15 @@ from cruxible_client.contracts.authoring.models import (
     ResolutionContractAuthoringPayload,
 )
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
-from cruxible_client.contracts.canonical import CanonicalValue
+from cruxible_client.contracts.canonical import CanonicalValue, canonical_bytes
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
     LiteralClaimObject,
+    claim_artifact_digest,
     claim_path,
     claim_statement_address,
     claim_statement_digest,
+    parse_claim,
 )
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.predictions import (
@@ -44,6 +46,10 @@ from cruxible_client.contracts.resolution_contracts import (
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.evidence.claim_reobservations import (
+    RecordedReobservation,
+    ReobservationReader,
+)
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
@@ -165,6 +171,37 @@ def _observation_matches(
         and statement.qualifier == selector.qualifier
         and statement.role == selector.role
     )
+
+
+def _inside_window(activation: ResolutionContractActivationV3, observed_at: datetime) -> bool:
+    """An observation counts after contract acceptance and inside its bound window."""
+
+    return (
+        observed_at > activation.activated_at
+        and activation.check_at <= observed_at <= activation.expires_at
+    )
+
+
+def _version_reobservation(
+    instance: PlaybillInstance, reference: ClaimVersionReference
+) -> RecordedReobservation | None:
+    """The lineage's latest recorded re-observation, when it re-observed this exact version.
+
+    One indexed probe and one journal record read (``ReobservationReader.latest_recorded``),
+    then the Claim blob at the head the record was admitted at: admission
+    records only a live Claim, so the version there is the one it re-observed.
+    """
+
+    latest = ReobservationReader.of(instance).latest_recorded(reference.identity.name)
+    if latest is None:
+        return None
+    path = claim_path(reference.identity.name)
+    raw = instance.blob_at(latest.accepted_coordinate.git_oid, path)
+    if raw is None:
+        return None
+    if claim_artifact_digest(parse_claim(raw, path=path)).tagged != reference.artifact_digest:
+        return None
+    return latest
 
 
 def _journal(
@@ -474,14 +511,22 @@ def service_settle_playbill_prediction(
             "Observation does not match the accepted contract selector.",
         )
     observed_at = artifact_accepted_time(instance, observation_reference)
-    if (
-        observed_at <= activation.activated_at
-        or not activation.check_at <= observed_at <= activation.expires_at
-    ):
-        raise _refuse(
-            "prediction_deadline_passed",
-            "Observation must follow contract acceptance and fall inside its bound window.",
-        )
+    reobservation: RecordedReobservation | None = None
+    if not _inside_window(activation, observed_at):
+        # The version itself was accepted outside the window. A recorded
+        # re-observation of this exact version counts as observing it at the
+        # re-observing Capture's time; nothing about the Claim changes.
+        reobservation = _version_reobservation(instance, observation_reference)
+        if reobservation is not None and (
+            _inside_window(activation, reobservation.record.observed_at)
+            and reobservation.record.observed_at <= ensure_utc(recorded_at)
+        ):
+            observed_at = reobservation.record.observed_at
+        else:
+            raise _refuse(
+                "prediction_deadline_passed",
+                "Observation must follow contract acceptance and fall inside its bound window.",
+            )
     prediction_object = prediction_claim.statement.object
     observation_object = observation.statement.object
     if not isinstance(prediction_object, LiteralClaimObject) or not isinstance(
@@ -553,6 +598,29 @@ def service_settle_playbill_prediction(
             "settlement_evidence_mismatch",
             "Settlement evidence kind is unsupported.",
         )
+    evidence_refs = [
+        ProcedureProofReferenceV1(kind=proof_kind, digest=proof_digest, subject=proof_subject)
+    ]
+    if reobservation is not None:
+        # The re-observing Capture and the journal record that admitted it are
+        # the proof the value was observed inside the window.
+        evidence_refs += [
+            ProcedureProofReferenceV1(kind="capture", digest=reobservation.record.capture_digest),
+            ProcedureProofReferenceV1(kind="journal_record", digest=reobservation.record_digest),
+        ]
+        reobserved: dict[str, CanonicalValue] = {
+            "reobserving_capture_digest": reobservation.record.capture_digest,
+            "reobservation_record_digest": reobservation.record_digest,
+        }
+        authorization_source = (
+            {
+                "tag": "playbill-prediction-settlement-authorization-v1",
+                "kind": "reobservation_admission",
+                **reobserved,
+            }
+            if evidence_kind == "observation_claim"
+            else {**cast(dict[str, CanonicalValue], authorization_source), **reobserved}
+        )
     settlement_endpoint = ResolutionClaimEndpointV1(
         statement_address=claim_statement_address(claim_path(observation.identity.name)),
         content_digest=claim_statement_digest(observation.statement).tagged,
@@ -572,12 +640,8 @@ def service_settle_playbill_prediction(
             "settlement_value": settlement_value,
             "authorization_source": authorization_source,
         },
-        evidence_refs=(
-            ProcedureProofReferenceV1(
-                kind=proof_kind,
-                digest=proof_digest,
-                subject=proof_subject,
-            ),
+        evidence_refs=tuple(
+            sorted(evidence_refs, key=lambda item: canonical_bytes(item.model_dump(mode="json")))
         ),
         observed_at=observed_at,
         recorded_at=ensure_utc(recorded_at),

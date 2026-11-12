@@ -744,10 +744,15 @@ ResolutionContract:NAME` reads one.
 Settling is an explicit act; nothing settles a prediction on its own. Any
 accepted observation inside the window can settle it, and once the window has
 closed `next` lists the prediction as `prediction_settleable` with the settle
-command. A window that closes with no accepted observation inside it cannot
-settle (`prediction_deadline_passed`); Cruxible gives an unobserved window no
-meaning of its own, so retire the contract, or record the observation you did
-make as a revised Claim and predict again.
+command. An observation counts at the time its Claim version was accepted, or
+at the time a later Capture re-observed that same unchanged version: when a
+run observes a value its live Claim already states, the re-observation is
+recorded, and settle uses the latest one for that version if it lies inside the
+window. The Claim itself does not change; the settlement cites the
+re-observing Capture and its record. A window that closes with no observation
+inside it cannot settle (`prediction_deadline_passed`); Cruxible gives an
+unobserved window no meaning of its own, so retire the contract, or record the
+observation you did make as a revised Claim and predict again.
 
 ## Procedures and Lines
 
