@@ -546,6 +546,54 @@ def _decoding_gap(
     return None
 
 
+def _may_reach_capture(field_type: FieldType) -> bool:
+    """Whether a rule type names a ``capture<J>`` or a Contract (whose fields may)."""
+
+    return next(capture_kinds_of(field_type), None) is not None or bool(type_refs(field_type))
+
+
+def _shared_layout_gap(
+    layout: CaptureLayout, *, type_fits: TypeFit, row_fits: RowFit
+) -> LayoutGap | None:
+    """Equal declarations of one kind: ask only what can reach another kind's layout.
+
+    Header rules whose type may reach a Capture are fitted to themselves; a
+    record set with such a rule fits its row Contract to itself, then those
+    rules. Everything else is the same declaration and is not compared.
+    """
+
+    for name, rule in layout.header.items():
+        field_type = rule.field_type()
+        if _may_reach_capture(field_type):
+            fit = type_fits(field_type, field_type)
+            if isinstance(fit, Unfit):
+                return LayoutGap(
+                    entry=f"header.{name}.type", producer=fit.sender, reader=fit.receiver
+                )
+    for set_name, item in layout.records.items():
+        entry = f"records.{set_name}"
+        reaching = [
+            (f"{entry}.{group}.{name}", field_type)
+            for group, rules in (("key", item.key), ("fields", item.fields))
+            for name, rule in rules.items()
+            if _may_reach_capture(field_type := rule.field_type())
+        ]
+        if not reaching:
+            continue
+        row = row_fits(item.row, item.row)
+        if isinstance(row, Unfit):
+            return LayoutGap(
+                entry=f"{entry}.row.{row.path}", producer=row.sender, reader=row.receiver
+            )
+        for rule_entry, field_type in reaching:
+            fit = type_fits(field_type, field_type)
+            if isinstance(fit, Unfit):
+                return LayoutGap(
+                    entry=f"{rule_entry}.type", producer=fit.sender, reader=fit.receiver
+                )
+    return None
+
+
 def layout_covers(
     producer: DeclaredCaptureKind,
     reader: DeclaredCaptureKind,
@@ -563,14 +611,19 @@ def layout_covers(
     parts, a row Contract that fits, and every field rule of the reader's
     present (the same rule, with a fitting type); a count the reader declares,
     the producer declares at the same path. Two equal declarations cover each
-    other; callers holding the two kinds' digests compare those first.
+    other in everything the kind itself declares, but a rule type that names a
+    ``capture<J>`` or a Contract (which may reach one) still asks its fit, since
+    the two sides' layouts of ``J`` are not part of this kind
+    (:func:`_shared_layout_gap`); a layout with no such type covers at once.
     """
 
     if producer.name != reader.name:
         return LayoutGap(entry="name", producer=producer.name, reader=reader.name)
     wanted = reader.layout
-    if wanted is None or producer == reader:
+    if wanted is None:
         return None
+    if producer == reader:
+        return _shared_layout_gap(wanted, type_fits=type_fits, row_fits=row_fits)
     offered = producer.layout
     if offered is None:
         return LayoutGap(

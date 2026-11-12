@@ -34,6 +34,7 @@ from cruxible_client.contracts.shapes import (
     Contract,
     ContractRef,
     FieldPresent,
+    FieldType,
     check_value,
     contract_digest,
     parse_type,
@@ -1169,3 +1170,92 @@ def test_a_deep_shared_chain_still_asks_its_kind() -> None:
     assert isinstance(result, Unfit)
     assert result.path == "next." * 249 + "x.layout.records.hits"
     assert seam.asked == [KIND]
+
+
+# -- equal declarations of one kind still ask the kinds their layout reaches ----------------
+
+
+@pytest.mark.parametrize("side", SIDES)
+def test_equal_declarations_still_ask_the_kinds_their_header_reaches(side: FitSide) -> None:
+    links = "acme.links"
+    # acme.hits is declared the same on both sides; acme.links is not.
+    covers = _by_name(
+        _linked(KIND, links, NARROW_QUERY),
+        _linked(links, KIND, WIDE_QUERY),
+        _linked(KIND, links, NARROW_QUERY),
+        _linked(links, KIND, NARROW_QUERY),
+    )
+    assert _fit_linked(covers, side) == Unfit(
+        side=side,
+        path="doc.layout.header.parent.type",
+        problem="layout",
+        sender=WIDE_QUERY,
+        receiver=NARROW_QUERY,
+    )
+
+
+def test_equal_declarations_without_a_capture_reference_ask_nothing() -> None:
+    declared = _declared(HIT_WIDE, rank="int", query="string{max_len: 128}")
+    asked: list[str] = []
+
+    def type_fits(sender: FieldType, receiver: FieldType) -> FitResult:
+        asked.append("type")
+        return STRUCTURAL
+
+    def row_fits(sender: ContractRef, receiver: ContractRef) -> FitResult:
+        asked.append("row")
+        return STRUCTURAL
+
+    copy = DeclaredCaptureKind.model_validate(declared.model_dump(mode="json"))
+    assert layout_covers(declared, copy, type_fits=type_fits, row_fits=row_fits) is None
+    assert asked == []
+
+
+LINKED_ROW = _contract("acme.linked_hit", {"title": "string", "link": "capture<acme.links>"})
+
+
+def _hits_with_linked_rows() -> DeclaredCaptureKind:
+    return DeclaredCaptureKind.model_validate(
+        {
+            "name": KIND,
+            "decoding": JSON_DECODING,
+            "layout": {
+                "records": {
+                    "hits": {
+                        "at": "/hits/*",
+                        "row": _pinned(LINKED_ROW).model_dump(mode="json"),
+                        "fields": {
+                            "title": {"at": "title"},
+                            "link": {"at": "link", "type": "capture<acme.links>"},
+                        },
+                    }
+                }
+            },
+        }
+    )
+
+
+@pytest.mark.parametrize("side", SIDES)
+def test_equal_declarations_still_ask_the_kinds_their_rows_reach(side: FitSide) -> None:
+    links = "acme.links"
+    covers = _by_name(
+        _hits_with_linked_rows(),
+        _linked(links, KIND, WIDE_QUERY),
+        _hits_with_linked_rows(),
+        _linked(links, KIND, NARROW_QUERY),
+    )
+    result = _fit(
+        {"doc": "capture<acme.hits>"},
+        {"doc": "capture<acme.hits>"},
+        side=side,
+        sender_closure=[LINKED_ROW, OTHER_SET_ROW],
+        receiver_closure=[LINKED_ROW, OTHER_SET_ROW],
+        covers=covers,
+    )
+    assert result == Unfit(
+        side=side,
+        path="doc.layout.records.hits.row.link.layout.header.query.type",
+        problem="layout",
+        sender=WIDE_QUERY,
+        receiver=NARROW_QUERY,
+    )
