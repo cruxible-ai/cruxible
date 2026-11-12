@@ -48,16 +48,20 @@ from cruxible_client.contracts.provider_registration import (
     evaluate_registration_law,
 )
 from cruxible_client.contracts.shapes import (
+    CaptureType,
+    IntType,
+    ListType,
     contract_digest,
     contract_path_parts,
     parse_contract,
     render_contract,
     tree_contract_resolver,
 )
+from cruxible_client.contracts.workspace_file import MAX_WORKSPACE_GLOB_FILES
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "pilot_contract_batch" / "examples"
 KITS = ("base", "security")
-BUILTIN = frozenset({"workspace.file"})
+BUILTIN = frozenset({"workspace.file", "workspace.files"})
 
 
 def _tree(kit: str) -> dict[str, bytes]:
@@ -99,7 +103,34 @@ def test_the_examples_hold_the_capabilities_the_batch_names() -> None:
         "web.search@1",
         "web.search.results@1",
         "workspace.file@1",
+        "workspace.files@1",
     }
+
+
+def test_file_reading_is_one_path_or_one_bounded_glob() -> None:
+    """Ruling O2: ``workspace.file`` reads one path; ``workspace.files`` reads a glob's matches."""
+
+    resolve = tree_contract_resolver(_tree("base"))
+    capabilities = {item.name: item for item in _capabilities("base").values()}
+    one, many = capabilities["workspace.file"], capabilities["workspace.files"]
+    one_in, one_out = resolve(one.in_), resolve(one.out)
+    many_in, many_out = resolve(many.in_), resolve(many.out)
+    assert one_in and one_out and many_in and many_out
+    assert (one.effect, many.effect) == ("pure", "pure")
+
+    assert "glob" not in one_in.fields and "max_files" not in one_in.fields
+    assert not one_in.fields["relative_path"].optional
+    assert list(one_out.fields) == ["capture"]
+    assert one_out.fields["capture"].type == CaptureType(capture_kind="*")
+
+    assert "relative_path" not in many_in.fields
+    assert not many_in.fields["glob"].optional
+    cap = many_in.fields["max_files"].type
+    assert isinstance(cap, IntType) and cap.max == MAX_WORKSPACE_GLOB_FILES
+    assert list(many_out.fields) == ["captures"]
+    assert many_out.fields["captures"].type == ListType(
+        item=CaptureType(capture_kind="*"), max_items=MAX_WORKSPACE_GLOB_FILES
+    )
 
 
 @pytest.mark.parametrize("kit", KITS)
