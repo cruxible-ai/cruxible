@@ -1951,10 +1951,12 @@ class ProposalTerminalEgressSink:
         prepared: PreparedProposal,
         *,
         successor_id: str | None,
-    ) -> None:
+    ) -> dict[str, ReobservationRefusalReason]:
         """Once a recompilation committed: what delivery would have recorded at the head.
 
-        Each unchanged item's re-observation is recorded, as delivery does. A
+        Each unchanged item's re-observation is recorded, as delivery does; the
+        ones the record refused are returned by item key, for the
+        recompilation's result to report. A
         Line's open proposal moves to the successor, so the Line's next run
         finds its change still current rather than opening a duplicate; a source
         closed as already live leaves the record naming a closed proposal, which
@@ -1963,10 +1965,10 @@ class ProposalTerminalEgressSink:
 
         from cruxible_core.exhaust.line_dispatch import LineDispatchStore, LineOpenProposal
 
-        self._record_reobservations(request, prepared.prepared.unchanged)
+        refused = self._record_reobservations(request, prepared.prepared.unchanged)
         decision = prepared.prepared.line_proposal
         if successor_id is None or decision is None or decision.decision != "supersede":
-            return
+            return refused
         LineDispatchStore(self.instance).record_open_proposal(
             LineOpenProposal(
                 line_id=decision.line_id,
@@ -1978,6 +1980,7 @@ class ProposalTerminalEgressSink:
             actor=request.actor_context,
             now=datetime.now(timezone.utc),
         )
+        return refused
 
     def _line_proposal(
         self,

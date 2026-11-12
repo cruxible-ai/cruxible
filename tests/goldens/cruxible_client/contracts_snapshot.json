@@ -74276,6 +74276,34 @@
             ]
           }
         },
+        "reobservations_refused": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "reobservations_refused",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "capture_not_admitted",
+                "claim_absent",
+                "claim_not_live",
+                "capture_already_cited",
+                "extraction_differs",
+                "absence_witness_unverified",
+                "content_not_cited",
+                "head_moved",
+                "observed_after_recording"
+              ]
+            },
+            "title": "Reobservations Refused",
+            "type": "object"
+          }
+        },
         "source_proposal_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -74799,6 +74827,28 @@
               }
             ]
           },
+          "reobservations_refused": {
+            "additionalProperties": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "capture_not_admitted",
+                "claim_absent",
+                "claim_not_live",
+                "capture_already_cited",
+                "extraction_differs",
+                "absence_witness_unverified",
+                "content_not_cited",
+                "head_moved",
+                "observed_after_recording"
+              ]
+            },
+            "title": "Reobservations Refused",
+            "type": "object"
+          },
           "source_proposal_id": {
             "title": "Source Proposal Id",
             "type": "string"
@@ -74923,6 +74973,32 @@
             ],
             "default": null,
             "title": "Proposal Id"
+          }
+        },
+        "reobservations_refused": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "reobservations_refused",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "capture_not_admitted",
+                "claim_absent",
+                "claim_not_live",
+                "capture_already_cited",
+                "extraction_differs",
+                "absence_witness_unverified",
+                "content_not_cited",
+                "head_moved",
+                "observed_after_recording"
+              ]
+            },
+            "title": "Reobservations Refused",
+            "type": "object"
           }
         },
         "source_proposal_id": {
@@ -75076,6 +75152,26 @@
             ],
             "default": null,
             "title": "Proposal Id"
+          },
+          "reobservations_refused": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "capture_not_admitted",
+                "claim_absent",
+                "claim_not_live",
+                "capture_already_cited",
+                "extraction_differs",
+                "absence_witness_unverified",
+                "content_not_cited",
+                "head_moved",
+                "observed_after_recording"
+              ]
+            },
+            "title": "Reobservations Refused",
+            "type": "object"
           },
           "source_proposal_id": {
             "title": "Source Proposal Id",

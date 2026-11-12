@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from cruxible_client.contracts.procedures.node_summary import ReobservationRefusalReason
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
 RECOMPILED_MEMBER_PATH_LIMIT = 50
@@ -38,6 +39,11 @@ class ProposalRecompiled(BaseModel):
     )
     changed_members_truncated: bool = False
     accepted_coordinate: AcceptedCoordinate
+    #: Re-observations of unchanged items the recompilation could not record,
+    #: by reason (the Claim retired since, say); omitted when all were recorded.
+    reobservations_refused: dict[ReobservationRefusalReason, int] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
 
     @model_validator(mode="after")
     def _successor_shape(self) -> "ProposalRecompiled":
