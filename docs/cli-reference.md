@@ -3327,8 +3327,17 @@ re-observing Capture (`capture`) and its re-observation record
 `reobservation_admission`. An unchanged value stated before the prediction was
 accepted therefore settles once a later run re-observes it.
 
-A window that closed with no accepted observation inside it cannot settle:
-`prediction settle` refuses with `prediction_deadline_passed`, and the
+An observation outside the window is refused with the bound it misses, and the
+refusal's context carries both times:
+
+| Code | When | Context |
+| --- | --- | --- |
+| `prediction_observation_predates_contract` | observed at or before the prediction was accepted; an unchanged value needs a re-observation recorded after that | `observed_at`, `contract_accepted_at` |
+| `prediction_window_not_open` | observed before the window opens | `observed_at`, `window_opens_at` |
+| `prediction_deadline_passed` | observed after the window closed | `observed_at`, `window_closed_at` |
+
+A window that closed with no observation inside it cannot settle:
+`prediction settle` refuses with one of these codes, and the
 `prediction_settleable` row stays until the contract is retired. Cruxible does
 not assign a meaning to a window that closed unobserved (a lapse, or a
 resolution where the contract declares absence decisive); retire the contract

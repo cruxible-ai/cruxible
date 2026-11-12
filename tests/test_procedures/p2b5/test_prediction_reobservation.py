@@ -26,7 +26,7 @@ from cruxible_client.contracts.predictions import (
 from cruxible_client.contracts.procedures.windows import FixedWindow
 from cruxible_client.contracts.resolution_contracts import ResolutionContract
 from cruxible_client.contracts.semantic import ContentSpan
-from cruxible_client.contracts.temporal import parse_datetime
+from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_core.evidence.claim_reobservations import (
     ClaimReobservationStore,
     ReobservationReader,
@@ -141,7 +141,8 @@ def test_a_recorded_reobservation_settles_with_the_captures_time(tmp_path: Path)
     # Stated before the prediction: by its accepted time alone it cannot settle.
     with pytest.raises(PredictionRefused) as refused:
         _settle(instance, claim, at=PREDICTED_AT + timedelta(minutes=10))
-    assert refused.value.code == "prediction_deadline_passed"
+    assert refused.value.code == "prediction_observation_predates_contract"
+    assert "needs a re-observation recorded after the prediction was accepted" in str(refused.value)
 
     reobserved_at = PREDICTED_AT + timedelta(minutes=30)
     _reobserve(instance, reobserved_at)
@@ -165,12 +166,32 @@ def test_a_reobservation_before_the_prediction_was_accepted_does_not_settle(
     tmp_path: Path,
 ) -> None:
     instance, owner = _freshness_world(tmp_path)
-    claim = _current_claim(instance)
-    _reobserve(instance, PREDICTED_AT - timedelta(minutes=5))
+    reobserved_at = PREDICTED_AT - timedelta(minutes=5)
+    _reobserve(instance, reobserved_at)
     claim = _predict(instance, owner, starts_at=PREDICTED_AT - timedelta(minutes=30))
     with pytest.raises(PredictionRefused) as refused:
         _settle(instance, claim, at=PREDICTED_AT + timedelta(minutes=10))
-    assert refused.value.code == "prediction_deadline_passed"
+    assert refused.value.code == "prediction_observation_predates_contract"
+    # Judged by the latest observation of the version: the re-observation.
+    assert refused.value.details == {
+        "observed_at": format_datetime(reobserved_at),
+        "contract_accepted_at": format_datetime(PREDICTED_AT),
+    }
+
+
+def test_an_observation_before_the_window_opens_does_not_settle(tmp_path: Path) -> None:
+    instance, owner = _freshness_world(tmp_path)
+    opens = PREDICTED_AT + timedelta(hours=1)
+    claim = _predict(instance, owner, starts_at=opens)
+    reobserved_at = PREDICTED_AT + timedelta(minutes=30)
+    _reobserve(instance, reobserved_at)
+    with pytest.raises(PredictionRefused) as refused:
+        _settle(instance, claim, at=reobserved_at + timedelta(minutes=5))
+    assert refused.value.code == "prediction_window_not_open"
+    assert refused.value.details == {
+        "observed_at": format_datetime(reobserved_at),
+        "window_opens_at": format_datetime(opens),
+    }
 
 
 def test_a_reobservation_of_a_superseded_version_is_not_used(tmp_path: Path) -> None:
@@ -204,6 +225,10 @@ def test_a_reobservation_after_the_window_closed_does_not_settle(tmp_path: Path)
     with pytest.raises(PredictionRefused) as refused:
         _settle(instance, claim, at=late + timedelta(minutes=5))
     assert refused.value.code == "prediction_deadline_passed"
+    assert refused.value.details == {
+        "observed_at": format_datetime(late),
+        "window_closed_at": format_datetime(PREDICTED_AT + WINDOW),
+    }
 
 
 def test_settle_reads_one_reobservation_record_not_the_history(

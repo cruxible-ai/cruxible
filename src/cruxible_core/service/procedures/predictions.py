@@ -44,7 +44,7 @@ from cruxible_client.contracts.resolution_contracts import (
     resolution_contract_digest,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.temporal import ensure_utc
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.evidence.claim_reobservations import (
     RecordedReobservation,
@@ -103,18 +103,22 @@ class PredictionRefused(FormatError):
         message: str,
         *,
         repair: ServedRepair,
+        details: dict[str, str] | None = None,
     ) -> None:
         self.code = code
         self.error_code = code
         self.repair = repair
+        self.details = {} if details is None else details
         super().__init__(f"{code}: {message}")
 
 
 def _refuse(
     code: PredictionRefusalCode,
     message: str,
+    *,
+    details: dict[str, str] | None = None,
 ) -> PredictionRefused:
-    return PredictionRefused(code, message, repair=served_repair_for_refusal(code))
+    return PredictionRefused(code, message, repair=served_repair_for_refusal(code), details=details)
 
 
 def service_predict_playbill(
@@ -179,6 +183,43 @@ def _inside_window(activation: ResolutionContractActivationV3, observed_at: date
     return (
         observed_at > activation.activated_at
         and activation.check_at <= observed_at <= activation.expires_at
+    )
+
+
+def _window_refusal(
+    activation: ResolutionContractActivationV3, observed_at: datetime
+) -> PredictionRefused:
+    """Why an observation at ``observed_at`` cannot settle: the bound it misses, with both times."""
+
+    def stamp(value: datetime) -> str:
+        text = format_datetime(value)
+        assert text is not None  # a datetime always formats
+        return text
+
+    observed = stamp(observed_at)
+    if observed_at <= activation.activated_at:
+        accepted = stamp(activation.activated_at)
+        return _refuse(
+            "prediction_observation_predates_contract",
+            f"The observation was made at {observed}, not after the prediction was accepted "
+            f"at {accepted}. An unchanged value stated before then needs a re-observation "
+            "recorded after the prediction was accepted.",
+            details={"observed_at": observed, "contract_accepted_at": accepted},
+        )
+    if observed_at < activation.check_at:
+        opens = stamp(activation.check_at)
+        return _refuse(
+            "prediction_window_not_open",
+            f"The observation was made at {observed}, before the prediction's window "
+            f"opens at {opens}.",
+            details={"observed_at": observed, "window_opens_at": opens},
+        )
+    closed = stamp(activation.expires_at)
+    return _refuse(
+        "prediction_deadline_passed",
+        f"The observation was made at {observed}, after the prediction's window closed "
+        f"at {closed}.",
+        details={"observed_at": observed, "window_closed_at": closed},
     )
 
 
@@ -523,10 +564,13 @@ def service_settle_playbill_prediction(
         ):
             observed_at = reobservation.record.observed_at
         else:
-            raise _refuse(
-                "prediction_deadline_passed",
-                "Observation must follow contract acceptance and fall inside its bound window.",
+            # Judged by the latest observation of this version there is.
+            latest = (
+                observed_at
+                if reobservation is None
+                else max(observed_at, reobservation.record.observed_at)
             )
+            raise _window_refusal(activation, latest)
     prediction_object = prediction_claim.statement.object
     observation_object = observation.statement.object
     if not isinstance(prediction_object, LiteralClaimObject) or not isinstance(
