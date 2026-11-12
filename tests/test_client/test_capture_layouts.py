@@ -200,6 +200,7 @@ def test_the_law_codes_are_a_closed_vocabulary() -> None:
         "cruxible.capture_kind.layout_decoding_unsupported",
         "cruxible.capture_kind.layout_row_unresolved",
         "cruxible.capture_kind.layout_field_unknown",
+        "cruxible.capture_kind.layout_field_missing",
         "cruxible.capture_kind.layout_succession_break",
     }
 
@@ -210,7 +211,7 @@ def test_the_layout_law_accepts_a_sound_layout() -> None:
 
 def test_the_layout_law_names_each_problem() -> None:
     unknown_field = _layout(
-        records={"hits": _hits(fields={"title": {"at": "title"}, "score": {"at": "score"}})}
+        records={"hits": _hits(fields={**_hits()["fields"], "score": {"at": "score"}})}
     )
     problems = evaluate_layout_law(unknown_field, decoding=JSON, resolve=RESOLVE)
     assert [problem.code for problem in problems] == ["cruxible.capture_kind.layout_field_unknown"]
@@ -225,6 +226,122 @@ def test_the_layout_law_names_each_problem() -> None:
     assert [problem.code for problem in problems] == [
         "cruxible.capture_kind.layout_decoding_unsupported"
     ]
+
+
+@pytest.mark.parametrize(
+    ("row", "fields", "missing"),
+    [
+        # A required row field with no rule.
+        (ROW, {"title": {"at": "title"}}, ["rank"]),
+        # An optional row field still needs a rule: its field result is part of the record.
+        (ROW_V2, {"title": {"at": "title"}, "rank": {"at": "rank", "parse": "int"}}, ["note"]),
+        (ROW_V2, {"title": {"at": "title"}}, ["note", "rank"]),
+    ],
+)
+def test_every_row_field_needs_a_field_rule(
+    row: Contract, fields: dict[str, Any], missing: list[str]
+) -> None:
+    layout = _layout(records={"hits": _hits(row=_pin(row), fields=fields)})
+    problems = evaluate_layout_law(layout, decoding=JSON, resolve=RESOLVE)
+
+    assert [problem.code for problem in problems] == [
+        "cruxible.capture_kind.layout_field_missing"
+    ] * len(missing)
+    assert [problem.message.split(":")[0] for problem in problems] == [
+        f"records.hits.fields.{field}" for field in missing
+    ]
+
+
+def test_a_key_part_is_not_a_row_field() -> None:
+    keyed = validate_contract({"name": "acme.keyed", "version": 1, "fields": {"title": "string"}})
+    layout = _layout(
+        records={
+            "hits": _hits(
+                row=_pin(keyed),
+                key={"url": {"at": "url"}, "title": {"at": "title"}},
+                fields={"other": {"at": "other"}},
+            )
+        }
+    )
+    problems = evaluate_layout_law(layout, decoding=JSON, resolve=closure_lookup((keyed,)))
+
+    assert [problem.code for problem in problems] == [
+        "cruxible.capture_kind.layout_field_unknown",
+        "cruxible.capture_kind.layout_field_missing",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("row", "fields", "document"),
+    [
+        (
+            ROW,
+            {"title": {"at": "title"}, "rank": {"at": "rank", "parse": "int"}},
+            {
+                "query": "q",
+                "hits": [{"url": "https://a.example", "title": "a", "rank": 7}],
+                "count": 1,
+            },
+        ),
+        (
+            ROW_V2,
+            {
+                "title": {"at": "title"},
+                "rank": {"at": "rank", "parse": "int"},
+                "note": {"at": "note", "presence": "optional"},
+            },
+            {
+                "query": "q",
+                "hits": [{"url": "https://a.example", "title": "a", "rank": 7}],
+                "count": 1,
+            },
+        ),
+    ],
+)
+def test_an_accepted_layout_yields_whole_records_of_its_row(
+    row: Contract, fields: dict[str, Any], document: dict[str, Any]
+) -> None:
+    import json
+
+    from cruxible_client.contracts.procedures.layout_extract import (
+        LayoutExtractNode,
+        resolve_layout_extract,
+    )
+    from cruxible_client.contracts.shapes import FieldPresent, RecordType, check_value
+    from cruxible_core.procedures.extract import run_extract
+
+    layout = _layout(records={"hits": _hits(row=_pin(row), fields=fields)})
+    assert evaluate_layout_law(layout, decoding=JSON, resolve=RESOLVE) == ()
+    node = resolve_layout_extract(
+        LayoutExtractNode.model_validate(
+            {
+                "node_id": "hits",
+                "capture": "$steps.search.results",
+                "records": "hits",
+                "header": ["query"],
+                "as": "hits",
+            }
+        ),
+        layout,
+    )
+    outcome = run_extract(
+        node,
+        capture_digest="sha256:" + "0" * 64,
+        content=json.dumps(document).encode("utf-8"),
+        decoding=JSON,
+        row=row,
+        resolve=RESOLVE,
+    )
+
+    assert outcome.complete_when_held and len(outcome.records) == 1
+    for record in outcome.records:
+        checked = check_value(
+            record.model_dump(mode="json"),
+            RecordType(contract=ContractRef.model_validate(_pin(row))),
+            at="",
+            resolve=RESOLVE,
+        )
+        assert isinstance(checked, FieldPresent), checked
 
 
 # -- succession ----------------------------------------------------------------------------

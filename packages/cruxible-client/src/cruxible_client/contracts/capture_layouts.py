@@ -57,6 +57,7 @@ _KIND_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 LAYOUT_DECODING_UNSUPPORTED: Final = "cruxible.capture_kind.layout_decoding_unsupported"
 LAYOUT_ROW_UNRESOLVED: Final = "cruxible.capture_kind.layout_row_unresolved"
 LAYOUT_FIELD_UNKNOWN: Final = "cruxible.capture_kind.layout_field_unknown"
+LAYOUT_FIELD_MISSING: Final = "cruxible.capture_kind.layout_field_missing"
 LAYOUT_SUCCESSION_BREAK: Final = "cruxible.capture_kind.layout_succession_break"
 
 #: Every code the layout law and the succession check return.
@@ -64,6 +65,7 @@ LayoutLawCode = Literal[
     "cruxible.capture_kind.layout_decoding_unsupported",
     "cruxible.capture_kind.layout_row_unresolved",
     "cruxible.capture_kind.layout_field_unknown",
+    "cruxible.capture_kind.layout_field_missing",
     "cruxible.capture_kind.layout_succession_break",
 ]
 
@@ -238,9 +240,11 @@ def evaluate_layout_law(
     """Judge one layout against its kind's decoding and the Contracts it pins.
 
     The kind decodes as JSON or CSV (and a CSV layout has the CSV shape); every
-    record set's row resolves (by exact digest when pinned); every field rule
-    names a field of its row Contract. Key types are judged where the kind is
-    accepted, against the instance's SubjectKinds.
+    record set's row resolves (by exact digest when pinned); its field rules
+    are exactly its row Contract's fields, so each record it yields is a whole
+    ``record<row>`` (an optional row field still needs a rule; key parts are a
+    separate map and are not row fields). Key types are judged where the kind
+    is accepted, against the instance's SubjectKinds.
     """
 
     problems: list[LawProblem] = []
@@ -265,6 +269,15 @@ def evaluate_layout_law(
                     LAYOUT_FIELD_UNKNOWN,
                     f"record set {name!r} reads fields its row Contract {item.row.spelling} "
                     f"does not declare: {unknown}",
+                )
+            )
+        for field in sorted(set(row.fields) - set(item.fields)):
+            problems.append(
+                LawProblem(
+                    LAYOUT_FIELD_MISSING,
+                    f"records.{name}.fields.{field}: row Contract {item.row.spelling} declares "
+                    f"{field!r}, which the record set gives no field rule; every row field needs "
+                    "a rule, so each record is a whole record of its row",
                 )
             )
     return tuple(problems)
@@ -478,6 +491,7 @@ __all__ = [
     "ABSENT",
     "DECLARED_CAPTURE_KIND_DIGEST_DOMAIN",
     "LAYOUT_DECODING_UNSUPPORTED",
+    "LAYOUT_FIELD_MISSING",
     "LAYOUT_FIELD_UNKNOWN",
     "LAYOUT_ROW_UNRESOLVED",
     "LAYOUT_SUCCESSION_BREAK",

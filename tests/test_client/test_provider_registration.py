@@ -356,5 +356,8 @@ def test_a_carried_layout_passes_the_layout_law() -> None:
         ProviderDeclares.model_validate(_declares(capture_kinds=[bad_kind])),
     )
 
-    assert [problem.code for problem in problems] == ["cruxible.capture_kind.layout_field_unknown"]
+    assert [problem.code for problem in problems] == [
+        "cruxible.capture_kind.layout_field_unknown",
+        "cruxible.capture_kind.layout_field_missing",
+    ]
     assert problems[0].message.startswith("carried CaptureKind `acme.hits`:")
