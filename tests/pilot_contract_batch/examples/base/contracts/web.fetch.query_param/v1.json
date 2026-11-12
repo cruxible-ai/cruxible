@@ -1,0 +1,33 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "One query parameter of a fetch: its name and its values, each sent as its own name=value (join: repeat, the default) or comma-joined into one (join: comma). A parameter has at least one value.",
+  "fields": {
+    "join": {
+      "optional": true,
+      "type": {
+        "kind": "enum",
+        "members": [
+          "comma",
+          "repeat"
+        ]
+      }
+    },
+    "name": {
+      "type": {
+        "kind": "string",
+        "min_len": 1
+      }
+    },
+    "values": {
+      "type": {
+        "item": {
+          "kind": "string"
+        },
+        "kind": "list",
+        "max_items": 1000
+      }
+    }
+  },
+  "name": "web.fetch.query_param",
+  "version": 1
+}
