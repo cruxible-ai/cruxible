@@ -3239,46 +3239,25 @@ def _candidate_capture_kind_exists(context: _MemberContext, name: str) -> bool:
 
 
 def _layout_key_problems(context: _MemberContext, layout: Any) -> tuple[str, ...]:
-    """Each layout key part typed ``key<K>``/``key_part<K:p>`` names a SubjectKind and part here.
+    """Every key type a layout rule states names a live keyed SubjectKind (and its part).
 
-    O(key parts): one path read per named SubjectKind, never a scan.
+    Every effective rule is read: header fields, record key parts and record
+    field rules, with key types nested in lists and field results. Each is
+    judged by the rule a Contract field's key type follows
+    (``cruxible.contract.key_kind_invalid``), through direct candidate-tree
+    reads: O(rules), never a scan.
     """
 
-    from cruxible_client.contracts.shapes import KeyPartType, KeyType
-    from cruxible_client.contracts.subject_kinds import (
-        key_predicate,
-        parse_subject_kind,
-        subject_kind_path,
-    )
+    from cruxible_client.contracts.capture_layouts import layout_rule_types
+    from cruxible_client.contracts.shapes import _key_type_problem, key_types
 
     problems: list[str] = []
-    for set_name, record_set in layout.records.items():
-        for part, rule in record_set.key.items():
-            field_type = rule.field_type()
-            if not isinstance(field_type, KeyType | KeyPartType):
-                continue
-            entry = f"records.{set_name}.key.{part}"
-            path = subject_kind_path(field_type.subject_kind)
-            content = context.candidate_tree.get(path)
-            kind = None if content is None else parse_subject_kind(content, path=path)
-            if kind is None:
-                problems.append(
-                    f"{entry}: {rule.type} names no SubjectKind {field_type.subject_kind!r} here."
-                )
-            elif isinstance(field_type, KeyPartType) and (
-                key_predicate(kind, field_type.part) is None
-            ):
-                problems.append(
-                    f"{entry}: SubjectKind {field_type.subject_kind!r} has no key part "
-                    f"{field_type.part!r}."
-                )
-            elif isinstance(field_type, KeyType) and len(kind.keys) != 1:
-                problems.append(
-                    f"{entry}: key<{field_type.subject_kind}> names the whole key of a one-key "
-                    f"kind; {field_type.subject_kind!r} has {len(kind.keys)} key parts: use "
-                    "key_part<K:part>."
-                )
-    return tuple(problems)
+    for entry, field_type in layout_rule_types(layout):
+        for found in key_types(field_type):
+            problem = _key_type_problem(found, context.candidate_tree.get)
+            if problem is not None:
+                problems.append(f"{entry}: {problem}")
+    return tuple(dict.fromkeys(problems))
 
 
 def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:

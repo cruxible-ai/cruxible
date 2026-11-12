@@ -336,3 +336,117 @@ def test_an_accepted_kind_without_a_layout_grows_one_by_kind_authoring(tmp_path:
     assert grown.layout == CaptureLayout.model_validate(_layout(row))
     assert grown.decoding == bare.decoding
     assert grown.lifecycle.predecessor_digest == capture_contract_digest(bare).tagged
+
+
+# -- key types in a layout follow the Contract key-type rule ---------------------------------
+
+
+def _keyed_vocabulary(instance: Any, owner: Any) -> None:
+    """Live keyed ``test.item`` (slug) and composite ``test.pair`` (slug, region), accepted."""
+
+    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicy
+    from cruxible_client.contracts.subject_kinds import render_subject_kind, subject_kind_path
+    from tests.core_support._subject_kind_support import keyed_subject_kind
+    from tests.support.claim_types import claim_type
+
+    kinds = (
+        keyed_subject_kind("test.item", ("test.item.slug",)),
+        keyed_subject_kind("test.pair", ("test.pair.slug", "test.pair.region")),
+    )
+    keys = [
+        claim_type(
+            predicate=predicate,
+            allowed_subject_kinds=[kind],
+            value_type={"type": "string"},
+            default_role="observation",
+            evidence_requirement="none",
+            evidence_admission_policy=ClaimEvidenceAdmissionPolicy(rules=()),
+        )
+        for kind, predicate in (
+            ("test.item", "test.item.slug"),
+            ("test.pair", "test.pair.slug"),
+            ("test.pair", "test.pair.region"),
+        )
+    ]
+    members = {
+        **{subject_kind_path(k.identity.name): render_subject_kind(k) for k in kinds},
+        **{claim_type_path(t.predicate): render_claim_type(t) for t in keys},
+    }
+    accept_proposal(instance, owner, _submit(instance, members, "keyed-vocabulary"))
+
+
+def _retire_item_kind(instance: Any, owner: Any) -> None:
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.subject_kinds import (
+        parse_subject_kind,
+        render_subject_kind,
+        subject_kind_digest,
+        subject_kind_path,
+    )
+
+    path = subject_kind_path("test.item")
+    live = parse_subject_kind(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
+    )
+    retired = live.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=subject_kind_digest(live).tagged
+            )
+        }
+    )
+    inspection = _submit(instance, {path: render_subject_kind(retired)}, "retire-item")
+    accept_proposal(instance, owner, inspection)
+
+
+@pytest.mark.parametrize(
+    ("case", "entry", "problem"),
+    [
+        ("header_absent_kind", "header.owner", "no live SubjectKind declares test.absent"),
+        ("retired_record_key", "records.items.key.id", "no live SubjectKind declares test.item"),
+        ("nested_key_type", "header.owners", "'missing' is not a key of test.item"),
+    ],
+)
+def test_every_layout_key_type_names_a_live_keyed_subject_kind(
+    tmp_path: Path, case: str, entry: str, problem: str
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _keyed_vocabulary(instance, owner)
+    row = _row()
+    layout = _layout(row)
+    if case == "header_absent_kind":
+        layout["header"]["owner"] = {"at": "/owner", "type": "key<test.absent>"}
+    elif case == "retired_record_key":
+        _retire_item_kind(instance, owner)
+        layout["records"]["items"]["key"]["id"]["type"] = "key_part<test.item:slug>"
+    elif case == "nested_key_type":
+        layout["header"]["owners"] = {
+            "at": "/owners",
+            "type": "list<key_part<test.item:missing>>{max_items: 10}",
+        }
+    inspection = _submit(instance, _members(_kind(layout), row), case)
+
+    assert inspection.proposal.candidate is None
+    diagnostics = inspection.proposal.evaluation.diagnostics
+    assert [item.code for item in diagnostics] == [LAYOUT_REF_UNRESOLVED], diagnostics
+    assert diagnostics[0].message.startswith(f"{entry}: ")
+    assert problem in diagnostics[0].message
+
+
+def test_a_composite_kind_s_whole_key_is_accepted_and_reads_both_parts(tmp_path: Path) -> None:
+    from cruxible_core.indexes.subject_identity import tree_key_rules
+
+    instance, owner = initialize_local(tmp_path)
+    _keyed_vocabulary(instance, owner)
+    row = _row()
+    layout = _layout(row)
+    layout["records"]["items"]["key"]["id"]["type"] = "key<test.pair>"
+    inspection = _submit(instance, _members(_kind(layout), row), "composite-key")
+    assert inspection.proposal.candidate is not None, _codes(inspection)
+    accept_proposal(instance, owner, inspection)
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    rules = tree_key_rules(tree)
+    canonical = rules.canonical("test.pair", None, {"slug": "alpha", "region": "east"})
+    assert canonical is not None
