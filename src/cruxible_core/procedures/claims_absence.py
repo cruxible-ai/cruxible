@@ -15,7 +15,6 @@ from cruxible_client.contracts.claims import NoneClaimObject, claim_artifact_dig
 from cruxible_client.contracts.content_memo import seal
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.claims import ClaimsExpectByEnd
-from cruxible_client.contracts.procedures.models import ExtractNode
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import SubjectType
 from cruxible_core.procedures.claims_changes import (
@@ -31,12 +30,13 @@ from cruxible_core.procedures.claims_units import (
     resolve_value,
     unit_key,
 )
+from cruxible_core.procedures.extract import StoredExtractNode
 
 
 def append_absence(
     node: Any,
     *,
-    enumeration: ExtractNode,
+    enumeration: StoredExtractNode,
     executor: Any,
     admission: Any,
     state: Any,
@@ -168,11 +168,13 @@ def append_absence(
         refuse("claims_absence_invalid: the enumeration's Captures name different logical sources")
     from cruxible_client.contracts.procedures.extract import EXTRACTOR_VERSIONS
     from cruxible_core.procedures.claims_terminal import _receipt_extract_digest
+    from cruxible_core.procedures.extract import extract_spec as resolved_extract_spec
 
-    extract_spec = _receipt_extract_digest(extracting)
     contract = executor.capture_contracts.get(state.capture_contracts.get(capture, ""))
     if contract is None or contract.decoding is None:
         refuse("claims_absence_invalid: enumeration CaptureKind decoding is unavailable")
+    # The witness digests the enumeration's one resolved spec, under the kind it read.
+    extract_spec = _receipt_extract_digest(resolved_extract_spec(extracting, contract))
     extractor = EXTRACTOR_VERSIONS[contract.decoding.format]
     check = state.extraction_checks.get(extracting.as_)
     by_subject: dict[str, list[dict[str, Any]]] = {}
@@ -790,7 +792,7 @@ def _pairs_by_end(
 
 
 def _list_members(
-    extracting: ExtractNode, state: Any, captures: set[str], *, node_id: str
+    extracting: StoredExtractNode, state: Any, captures: set[str], *, node_id: str
 ) -> tuple[str, ...] | None:
     """The members of the Capture list an enumeration reads, or ``None`` for one Capture.
 
