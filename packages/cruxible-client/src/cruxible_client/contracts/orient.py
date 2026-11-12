@@ -71,6 +71,7 @@ OrientSection: TypeAlias = Literal[
     "activity",
     "sources",
     "contracts",
+    "capabilities",
 ]
 #: The surface a caller renders ``next`` for: tool calls, commands, or SDK calls.
 OrientSurface: TypeAlias = Literal["mcp", "cli", "sdk"]
@@ -226,6 +227,25 @@ class OrientContract(_StrictOrientModel):
     pins: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
 
 
+class OrientCapability(_StrictOrientModel):
+    """One accepted capability version: a kind of call a Procedure slot names.
+
+    ``capability`` is ``<name>@<version>``; ``get("Capability:<name>@<version>")``
+    reads it. ``in`` and ``out`` are its request and result Contracts
+    (``<name>@<version>``).
+    """
+
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, populate_by_name=True, serialize_by_alias=True
+    )
+
+    capability: str
+    effect: str
+    in_: str = Field(alias="in")
+    out: str
+    description: str
+
+
 #: A kind no accepted SubjectKind declares: its Subjects are grandfathered.
 UNDECLARED_KIND_IDENTITY = "undeclared"
 
@@ -300,7 +320,8 @@ class OrientArtifactCounts(_StrictOrientModel):
     """How many of each family exist; each operational family is its own section.
 
     ``lines``, ``runbooks``, ``capture_contracts``, ``resolution_contracts`` and
-    ``mandates`` count live accepted artifacts, ``captures`` the Captures accepted Claims cite,
+    ``mandates`` count live accepted artifacts, ``capabilities`` the accepted
+    capability versions, ``captures`` the Captures accepted Claims cite,
     and ``runs`` / ``running`` the Procedure runs admitted and still running.
     """
 
@@ -315,6 +336,7 @@ class OrientArtifactCounts(_StrictOrientModel):
     capture_contracts: int = Field(default=0, ge=0)
     resolution_contracts: int = Field(default=0, ge=0)
     mandates: int = Field(default=0, ge=0)
+    capabilities: int = Field(default=0, ge=0)
     runs: int = Field(default=0, ge=0)
     running: int = Field(default=0, ge=0)
     claims: OrientClaimCounts | None = Field(default=None, exclude_if=_is_none)
@@ -792,6 +814,8 @@ class OrientResult(_StrictOrientModel):
     subject_kinds: tuple[OrientSubjectKind, ...] | None = Field(default=None, exclude_if=_is_none)
     # Accepted Contract versions by name then version (section "contracts").
     contracts: tuple[OrientContract, ...] | None = Field(default=None, exclude_if=_is_none)
+    # Accepted capability versions by name then version (section "capabilities").
+    capabilities: tuple[OrientCapability, ...] | None = Field(default=None, exclude_if=_is_none)
     queries: tuple[OrientQuery, ...] | None = Field(default=None, exclude_if=_is_none)
     #: The default map lists the first ``ORIENT_DEFAULT_QUERIES`` queries;
     #: true when ``artifacts.queries`` counts more (``section="queries"`` lists all).
@@ -889,6 +913,7 @@ __all__ = [
     "OrientQuery",
     "OrientResult",
     "OrientSection",
+    "OrientCapability",
     "OrientContract",
     "OrientKindEnd",
     "OrientSubjectKind",

@@ -27,6 +27,7 @@ from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.canonical import (
     canonical_bytes,
 )
+from cruxible_client.contracts.capabilities import parse_capability
 from cruxible_client.contracts.captures import parse_capture_contract
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestation,
@@ -355,6 +356,22 @@ OWNER_CODECS = (
             ("field_count", "INTEGER NOT NULL CHECK(field_count>=0)"),
         ),
     ),
+    # One immutable kind of call per version: always live, succeeded by a new
+    # version. Its Contract pins are rows of ``pins``; these columns are what
+    # newest-by-name, the list page and capabilities-by-name read.
+    OwnerCodec(
+        "capability",
+        "Capability",
+        "capabilities",
+        parse_capability,
+        (
+            ("capability_name", "TEXT NOT NULL"),
+            ("capability_version", "INTEGER NOT NULL CHECK(capability_version>=1)"),
+            ("effect", "TEXT NOT NULL"),
+            ("in_contract", "TEXT NOT NULL"),
+            ("out_contract", "TEXT NOT NULL"),
+        ),
+    ),
     OwnerCodec(
         "capture-contract",
         "CaptureContract",
@@ -396,6 +413,8 @@ COMMON_COLUMNS = "identity,kind,format_tag,path,artifact_digest,predecessor_dige
 
 #: orient's Runbook count (D-R48 F1): the maintained singleton, one primary-key seek.
 RUNBOOK_LIVE_COUNT_SQL = "SELECT amount FROM runbook_live_count WHERE singleton=1"
+#: orient's capability count: the maintained singleton, never a count of the rows.
+CAPABILITY_COUNT_SQL = "SELECT amount FROM capability_count WHERE singleton=1"
 
 # Live Claims of one slot (Subject path, predicate, qualifier). ``+lifecycle`` is
 # SQLite's no-op unary plus: it keeps the planner off ``claims_by_lifecycle`` and
@@ -565,6 +584,24 @@ def schema_sql() -> str:
             # contracts page both order by (name, version); without this, both
             # cost a scan and a temporary sort of every accepted Contract.
             "CREATE INDEX contracts_by_name_version ON contracts(contract_name,contract_version)",
+            # Newest-by-name (``get Capability:<name>``), the orient capabilities
+            # page and capabilities-by-name all seek (name, version).
+            "CREATE INDEX capabilities_by_name_version ON capabilities(capability_name,capability_version)",
+            # orient's capability count: a maintained singleton, never a scan of
+            # capabilities. A capability version is immutable and never retires,
+            # so a row is inserted once; a delete (a cold rebuild replacing rows)
+            # uncounts it. As for Runbooks, the delete (amount=1) runs before the
+            # update (amount>1) so the CHECK-forbidden zero is never written.
+            "CREATE TABLE capability_count ("
+            "singleton INTEGER PRIMARY KEY CHECK(singleton=1), amount INTEGER NOT NULL CHECK(amount>0)"
+            ") STRICT",
+            """CREATE TRIGGER capability_count_insert AFTER INSERT ON capabilities BEGIN
+ INSERT INTO capability_count VALUES (1,1) ON CONFLICT(singleton) DO UPDATE SET amount=amount+1;
+END""",
+            """CREATE TRIGGER capability_count_delete AFTER DELETE ON capabilities BEGIN
+ DELETE FROM capability_count WHERE singleton=1 AND amount=1;
+ UPDATE capability_count SET amount=amount-1 WHERE singleton=1 AND amount>1;
+END""",
             "CREATE INDEX lines_by_identity_digest ON lines(identity_digest,identity)",
             "CREATE INDEX lines_by_procedure ON lines(procedure_identity,identity) WHERE lifecycle='live'",
             "CREATE INDEX triggers_by_target ON triggers(target_kind,target,identity) WHERE lifecycle='live'",
@@ -767,6 +804,14 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
             "rule": rule.rule,
             "uniqueness": getattr(rule, "uniqueness", None),
             "key_predicates": canonical_bytes(list(source.keys)).decode("utf-8"),
+        }
+    if owner.kind == "capability":
+        return {
+            "capability_name": source.name,
+            "capability_version": source.version,
+            "effect": source.effect,
+            "in_contract": source.in_.identity.qualified,
+            "out_contract": source.out.identity.qualified,
         }
     if owner.kind == "contract":
         return {

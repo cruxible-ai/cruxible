@@ -80,6 +80,7 @@ GetRefKind = Literal[
     "procedure_runtime_policy",
     "provider",
     "contract",
+    "capability",
     "runbook",
 ]
 # Verdict problems a row or card carries; derived from the verdict machinery,
@@ -133,6 +134,7 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "procedure_runtime_policy": ("summary", "history", "proof"),
     "provider": ("summary", "history", "proof"),
     "contract": ("summary", "history", "proof"),
+    "capability": ("summary", "history", "proof"),
     "runbook": ("summary", "history", "proof"),
 }
 
@@ -621,6 +623,27 @@ class GetContractCard(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
+class GetCapabilityCard(_StrictGetModel):
+    """One capability version: an immutable kind of call a Procedure slot names."""
+
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, populate_by_name=True, serialize_by_alias=True
+    )
+
+    #: ``Capability:<name>@<version>``
+    capability: str
+    version: int
+    description: str
+    effect: str
+    #: The request Contract (``<name>@<N>``) a slot sends.
+    in_: str = Field(alias="in")
+    #: The result Contract (``<name>@<N>``) a slot receives back.
+    out: str
+    #: The version this one succeeds (``<name>@<N-1>``); absent for version 1.
+    predecessor: str | None = Field(default=None, exclude_if=_omit_none)
+    next: tuple[str, ...] = ()
+
+
 class GetProposalChange(_StrictGetModel):
     path: str
     change: str
@@ -717,6 +740,7 @@ GetCard = (
     | GetProcedureRuntimePolicyCard
     | GetProviderCard
     | GetContractCard
+    | GetCapabilityCard
     | GetRunbookCard
 )
 
@@ -1103,6 +1127,7 @@ __all__ = [
     "GET_BODY_RANGE_MAX_BYTES",
     "GET_REASON_MAX_CHARS",
     "GET_DETAILS_BY_KIND",
+    "GetCapabilityCard",
     "GetContractCard",
     "GetContractField",
     "GET_HISTORY_DEFAULT_LIMIT",

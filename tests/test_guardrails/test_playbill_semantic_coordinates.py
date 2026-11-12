@@ -21,6 +21,7 @@ from cruxible_client.contracts.laws import (
     ACCEPTANCE_LAWS,
     APPROVAL_POLICY_ACCEPTANCE_LAW,
     ATTESTATION_ACCEPTANCE_LAW,
+    CAPABILITY_ACCEPTANCE_LAW,
     CAPTURE_CONTRACT_ACCEPTANCE_LAW,
     CLAIM_ACCEPTANCE_LAW,
     CLAIM_LAW,
@@ -90,6 +91,13 @@ LAW_COORDINATES: tuple[
         "cruxible-contract-v1",
         1,
         "sha256:ef15ee167046bf9d2a08e7df6a4690338aee8c48d65f606e964da7e00e778a37",
+    ),
+    (
+        CAPABILITY_ACCEPTANCE_LAW,
+        "cruxible.capability.v1",
+        "cruxible-capability-v1",
+        1,
+        "sha256:9be3b5f24927879011aa0ed3b65cce65e71208bbb7e4a31c3249738634fe9f90",
     ),
     (
         PROVIDER_V3_ACCEPTANCE_LAW,

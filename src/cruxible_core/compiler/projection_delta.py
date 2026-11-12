@@ -48,6 +48,7 @@ if TYPE_CHECKING:
 _LOCAL_KINDS = frozenset(
     {
         "attestation",
+        "capability",
         "contract",
         "exhaust-promotion",
         "resolution-contract",

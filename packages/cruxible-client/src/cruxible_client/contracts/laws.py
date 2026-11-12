@@ -427,6 +427,17 @@ CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="contract",
     artifact_tag="cruxible-contract-v1",
 )
+# A Capability is one immutable, versioned kind of call (contracts/capabilities.py):
+# a version never changes, a successor names its predecessor's digest and keeps
+# its effect, both Contract pins resolve exactly, and ``workspace.`` names are
+# only those core's builtin serves.
+CAPABILITY_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.capability.v1", "cruxible-capability-v1", semantic_revision=1
+    ),
+    artifact_kind="capability",
+    artifact_tag="cruxible-capability-v1",
+)
 RESOLUTION_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         "cruxible.resolution-contract.v1", "playbill-resolution-contract-v1", semantic_revision=1
@@ -508,6 +519,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         LINE_V6_ACCEPTANCE_LAW,
         SUBJECT_KIND_ACCEPTANCE_LAW,
         CONTRACT_ACCEPTANCE_LAW,
+        CAPABILITY_ACCEPTANCE_LAW,
         PROVIDER_ACCEPTANCE_LAW,
         PROVIDER_V2_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_ACCEPTANCE_LAW,

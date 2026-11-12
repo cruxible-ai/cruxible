@@ -44,6 +44,7 @@ class RefKind(str, Enum):
     PROVIDER = "provider"
     SUBJECT_KIND = "subject_kind"
     CONTRACT = "contract"
+    CAPABILITY = "capability"
     RUNBOOK = "runbook"
 
 

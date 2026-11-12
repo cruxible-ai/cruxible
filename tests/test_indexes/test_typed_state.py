@@ -103,6 +103,7 @@ def test_typed_reverse_and_full_address_indexes_are_present():
         "procedure_mandates",
         "query_definitions",
         "contracts",
+        "capabilities",
         "capture_contracts",
         "exhaust_promotions",
     }
@@ -316,7 +317,7 @@ def test_claim_type_name_overlay_and_delta_match_cold_reconstruction(tmp_path):
 #: The one current physical schema pin. A schema change must deliberately
 #: move its version and this expected digest; no historical reader matrix.
 STORAGE_SCHEMA_DIGESTS = {
-    37: "15aea888a463c460f09ac3637afcedf495ad0b2179a75cbfa944a7b86639f687",
+    38: "e432799dcb017d98783f10748257098ad84589a9b0f60add82b78638b093b5b4",
 }
 
 
