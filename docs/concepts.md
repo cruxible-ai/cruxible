@@ -747,8 +747,9 @@ closed `next` lists the prediction as `prediction_settleable` with the settle
 command. An observation counts at the time its Claim version was accepted, or
 at the time a later Capture re-observed that same unchanged version: when a
 run observes a value its live Claim already states, the re-observation is
-recorded, and settle uses the latest one for that version if it lies inside the
-window. The Claim itself does not change; the settlement cites the
+recorded, and settle uses that version's latest re-observation made by the
+window's close if it lies inside the window (a later one past the close does
+not hide it). The Claim itself does not change; the settlement cites the
 re-observing Capture and its record. Settle names the bound an observation
 misses: `prediction_observation_predates_contract` when it was made at or
 before the prediction was accepted (an unchanged value stated earlier needs a

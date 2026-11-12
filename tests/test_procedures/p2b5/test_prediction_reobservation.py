@@ -231,17 +231,38 @@ def test_a_reobservation_after_the_window_closed_does_not_settle(tmp_path: Path)
     }
 
 
+def test_a_later_reobservation_past_the_close_does_not_hide_one_inside_the_window(
+    tmp_path: Path,
+) -> None:
+    instance, owner = _freshness_world(tmp_path)
+    claim = _predict(instance, owner)
+    inside = PREDICTED_AT + timedelta(minutes=30)
+    _reobserve(instance, inside)
+    _reobserve(instance, PREDICTED_AT + WINDOW + timedelta(minutes=1), suffix=b"\n\n")
+    assert len(ClaimReobservationStore(instance).history(claim.identity.name)) == 2
+    result = _settle(instance, claim, at=PREDICTED_AT + WINDOW + timedelta(minutes=10))
+    assert parse_datetime(result.resolution["observed_at"]) == inside
+    assert result.resolution["settlement_outcome"] is True
+
+
 def test_settle_reads_one_reobservation_record_not_the_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from cruxible_core.evidence.claim_reobservations import _VERSION_RECORD
     from cruxible_core.exhaust.backends import LocalJournalBackend
     from cruxible_core.exhaust.records import CLAIM_REOBSERVATION_JOURNAL_FAMILY
 
     instance, owner = _freshness_world(tmp_path)
     claim = _predict(instance, owner)
-    for minutes, suffix in ((10, b"\n"), (20, b"\n\n"), (30, b"\n\n\n")):
-        _reobserve(instance, PREDICTED_AT + timedelta(minutes=minutes), suffix=suffix)
-    assert len(ClaimReobservationStore(instance).history(claim.identity.name)) == 3
+    # Three inside the window, then many observed after it closed.
+    for minutes in (10, 20, 30):
+        _reobserve(instance, PREDICTED_AT + timedelta(minutes=minutes), suffix=b"\n" * minutes)
+    late = 12
+    for minutes in range(1, late + 1):
+        _reobserve(
+            instance, PREDICTED_AT + WINDOW + timedelta(minutes=minutes), suffix=b" " * minutes
+        )
+    assert len(ClaimReobservationStore(instance).history(claim.identity.name)) == 3 + late
 
     reader = ReobservationReader.of(instance)
     probes_before = reader.probes
@@ -255,8 +276,15 @@ def test_settle_reads_one_reobservation_record_not_the_history(
         return found
 
     monkeypatch.setattr(LocalJournalBackend, "select_records", counting)
-    result = _settle(instance, claim, at=PREDICTED_AT + timedelta(minutes=40))
+    result = _settle(instance, claim, at=PREDICTED_AT + WINDOW + timedelta(minutes=30))
     assert parse_datetime(result.resolution["observed_at"]) == PREDICTED_AT + timedelta(minutes=30)
-    # One indexed probe and one journal record, whatever the lineage's history.
+    # One indexed seek and one journal record, however many were observed later.
     assert reader.probes - probes_before == 1
     assert sum(read) == 1
+    conn = reader._connection()
+    assert conn is not None
+    (plan,) = (
+        row[-1] for row in conn.execute(f"EXPLAIN QUERY PLAN {_VERSION_RECORD}", ("c", "v", 0, 0))
+    )
+    assert "USING INDEX reobservations_by_version" in plan
+    assert "observed_us<?" in plan

@@ -224,25 +224,29 @@ def _window_refusal(
 
 
 def _version_reobservation(
-    instance: PlaybillInstance, reference: ClaimVersionReference
+    instance: PlaybillInstance, reference: ClaimVersionReference, *, observed_by: datetime
 ) -> RecordedReobservation | None:
-    """The lineage's latest recorded re-observation, when it re-observed this exact version.
+    """This exact version's latest recorded re-observation observed by ``observed_by``.
 
-    One indexed probe and one journal record read (``ReobservationReader.latest_recorded``),
-    then the Claim blob at the head the record was admitted at: admission
-    records only a live Claim, so the version there is the one it re-observed.
+    One indexed seek and one journal record read
+    (``ReobservationReader.latest_version_record``): records observed later,
+    and records of the lineage's other versions, are never visited. The Claim
+    blob at the head the record was admitted at is read once more to confirm
+    the version: admission records only a live Claim.
     """
 
-    latest = ReobservationReader.of(instance).latest_recorded(reference.identity.name)
-    if latest is None:
+    found = ReobservationReader.of(instance).latest_version_record(
+        reference.identity.name, reference.artifact_digest, observed_by=observed_by
+    )
+    if found is None:
         return None
     path = claim_path(reference.identity.name)
-    raw = instance.blob_at(latest.accepted_coordinate.git_oid, path)
+    raw = instance.blob_at(found.accepted_coordinate.git_oid, path)
     if raw is None:
         return None
     if claim_artifact_digest(parse_claim(raw, path=path)).tagged != reference.artifact_digest:
         return None
-    return latest
+    return found
 
 
 def _journal(
@@ -557,20 +561,28 @@ def service_settle_playbill_prediction(
         # The version itself was accepted outside the window. A recorded
         # re-observation of this exact version counts as observing it at the
         # re-observing Capture's time; nothing about the Claim changes.
-        reobservation = _version_reobservation(instance, observation_reference)
-        if reobservation is not None and (
-            _inside_window(activation, reobservation.record.observed_at)
-            and reobservation.record.observed_at <= ensure_utc(recorded_at)
+        # The one that counts is the latest observed by the window's close (or
+        # by now): a later record past the close never hides an earlier one.
+        settled_at = ensure_utc(recorded_at)
+        reobservation = _version_reobservation(
+            instance,
+            observation_reference,
+            observed_by=min(activation.expires_at, settled_at),
+        )
+        if reobservation is not None and _inside_window(
+            activation, reobservation.record.observed_at
         ):
             observed_at = reobservation.record.observed_at
         else:
-            # Judged by the latest observation of this version there is.
-            latest = (
-                observed_at
-                if reobservation is None
-                else max(observed_at, reobservation.record.observed_at)
+            # Refused, and judged by the latest observation of this version
+            # there is: the one before the window opened, or one after it closed.
+            latest = reobservation or _version_reobservation(
+                instance, observation_reference, observed_by=settled_at
             )
-            raise _window_refusal(activation, latest)
+            raise _window_refusal(
+                activation,
+                observed_at if latest is None else max(observed_at, latest.record.observed_at),
+            )
     prediction_object = prediction_claim.statement.object
     observation_object = observation.statement.object
     if not isinstance(prediction_object, LiteralClaimObject) or not isinstance(

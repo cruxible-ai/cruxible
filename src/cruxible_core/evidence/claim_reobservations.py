@@ -38,7 +38,7 @@ from cruxible_client.contracts.claim_verdicts import (
     CaptureReobservationEvidence,
     CaptureVerdictEvidence,
 )
-from cruxible_client.contracts.claims import claim_path, parse_claim
+from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, parse_claim
 from cruxible_client.contracts.errors import CruxibleError, ReadRefusalError
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.procedures.node_summary import ReobservationRefusalReason
@@ -63,7 +63,7 @@ _FENCE = "claim-reobservation-local-v1"
 _PARTITION = "reobservations"
 _EVENT_TAG = "cruxible-claim-reobservation-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # ``reobservations`` keeps the full history (audit, historical verification).
@@ -76,6 +76,10 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # Each step keeps its journal sequence, so a read recorded at a journal position
 # counts only the steps through it (``read_positions``): the steps are written in
 # sequence order, so those are exactly the steps the projection held then.
+# Each record also names the Claim version (artifact digest) live when it was
+# admitted, so a version's latest observation by a given instant is one seek on
+# ``reobservations_by_version`` (prediction settlement), however many records of
+# the lineage, or of that version observed later, there are.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS progress (
  singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL, recorded_us INTEGER NOT NULL
@@ -84,9 +88,12 @@ CREATE TABLE IF NOT EXISTS reobservations (
  claim_id TEXT NOT NULL, capture_digest TEXT NOT NULL, contract_digest TEXT NOT NULL,
  observed_content_digest TEXT NOT NULL, observed_at TEXT NOT NULL, recorded_at TEXT NOT NULL,
  observed_us INTEGER NOT NULL, recorded_us INTEGER NOT NULL, sequence INTEGER NOT NULL,
+ claim_artifact_digest TEXT NOT NULL,
  PRIMARY KEY(claim_id, capture_digest)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS reobservations_by_sequence ON reobservations (claim_id, sequence);
+CREATE INDEX IF NOT EXISTS reobservations_by_version
+ ON reobservations (claim_id, claim_artifact_digest, observed_us, capture_digest);
 CREATE TABLE IF NOT EXISTS reobservation_points (
  claim_id TEXT NOT NULL, contract_digest TEXT NOT NULL, observed_content_digest TEXT NOT NULL,
  recorded_us INTEGER NOT NULL, observed_us INTEGER NOT NULL, capture_digest TEXT NOT NULL,
@@ -107,10 +114,11 @@ _NEXT_POINT = (
 )
 _NEVER = 1 << 62
 _LAST_SEQUENCE = "SELECT MAX(sequence) FROM reobservations WHERE claim_id=? AND sequence<=?"
-_LATEST_RECORD = (
+_VERSION_RECORD = (
     "SELECT capture_digest, contract_digest, observed_content_digest, observed_at, recorded_at, "
-    "sequence FROM reobservations WHERE claim_id=? AND sequence<=? "
-    "ORDER BY sequence DESC LIMIT 1"
+    "sequence FROM reobservations INDEXED BY reobservations_by_version "
+    "WHERE claim_id=? AND claim_artifact_digest=? AND observed_us<=? AND sequence<=? "
+    "ORDER BY observed_us DESC, capture_digest DESC LIMIT 1"
 )
 
 
@@ -242,12 +250,32 @@ class ClaimReobservationStore:
                     )
                     if not isinstance(payload, dict) or payload.get("tag") != _EVENT_TAG:
                         raise ValueError("invalid Claim re-observation record")
+                    if "claim_artifact_digest" not in payload:
+                        # A record written before records named their version:
+                        # the version live at the head it was admitted at (one
+                        # Claim read, paid once, when the projection is rebuilt).
+                        payload = {
+                            **payload,
+                            "claim_artifact_digest": self._version_at(
+                                str(payload["claim_id"]),
+                                stored.record.accepted_coordinate.git_oid,
+                            ),
+                        }
                     self._apply(conn, payload, stored.record.sequence, stored.record.recorded_at)
                 conn.commit()
                 yield conn
                 conn.commit()
             finally:
                 conn.close()
+
+    def _version_at(self, claim_id: str, git_oid: str) -> str:
+        """The artifact digest of the Claim version at one accepted head ('' when absent)."""
+
+        path = claim_path(claim_id)
+        content = self.instance.blob_at(git_oid, path)
+        if content is None:
+            return ""
+        return claim_artifact_digest(parse_claim(content, path=path)).tagged
 
     @staticmethod
     def _apply(
@@ -266,7 +294,7 @@ class ClaimReobservationStore:
         observed_us = _micros(observed_at)
         key = (payload["claim_id"], payload["contract_digest"], payload["observed_content_digest"])
         inserted = conn.execute(
-            "INSERT OR IGNORE INTO reobservations VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT OR IGNORE INTO reobservations VALUES (?,?,?,?,?,?,?,?,?,?)",
             (
                 payload["claim_id"],
                 payload["capture_digest"],
@@ -277,6 +305,7 @@ class ClaimReobservationStore:
                 observed_us,
                 recorded_us,
                 sequence,
+                str(payload.get("claim_artifact_digest", "")),
             ),
         ).rowcount
         if inserted:
@@ -303,7 +332,7 @@ class ClaimReobservationStore:
         extracted_value: object = None,
         cited_envelopes: dict[str, CaptureEnvelopeAny] | None = None,
         verified_witnesses: dict[object, None] | None = None,
-    ) -> tuple[CaptureEnvelopeAny, str]:
+    ) -> tuple[CaptureEnvelopeAny, str, str]:
         """The re-observing Capture's envelope, or the typed refusal.
 
         It must be a daemon-admitted Capture that verifies at ``coordinate``,
@@ -425,7 +454,7 @@ class ClaimReobservationStore:
                 and cited == original.value.capture_digest
                 and held.capture_contract_digest == envelope.capture_contract_digest
             ):
-                return envelope, held_digest
+                return envelope, held_digest, claim_artifact_digest(claim).tagged
         raise ClaimReobservationRefused(
             f"Capture {capture_digest} observed no content Claim {claim_id} "
             "cites under its contract",
@@ -549,7 +578,7 @@ class ClaimReobservationStore:
         """
 
         if is_previewing():
-            envelope, cited_content = self._admissible(
+            envelope, _cited, _version = self._admissible(
                 claim_id=claim_id,
                 capture_digest=capture_digest,
                 coordinate=self.instance.accepted_coordinate(),
@@ -593,7 +622,7 @@ class ClaimReobservationStore:
             # Admission's immutable work first: verify the Capture, the live Claim
             # and its citations at the held head, then recover any reserved
             # material and the journal head and activate the writer.
-            envelope, cited_content = self._admissible(
+            envelope, cited_content, version = self._admissible(
                 claim_id=claim_id,
                 capture_digest=capture_digest,
                 coordinate=accepted,
@@ -645,6 +674,7 @@ class ClaimReobservationStore:
                 "contract_digest": record.contract_digest,
                 "observed_content_digest": record.observed_content_digest,
                 "observed_at": format_datetime(record.observed_at),
+                "claim_artifact_digest": version,
             }
             if extraction is not None:
                 payload["extraction"] = extraction.model_dump(mode="json")
@@ -910,11 +940,16 @@ class ReobservationReader:
             row = conn.execute(_LAST_SEQUENCE, (claim_id, _through())).fetchone()
         return 0 if row is None or row[0] is None else int(row[0])
 
-    def latest_recorded(self, claim_id: str) -> RecordedReobservation | None:
-        """The lineage's most recently recorded re-observation, with its journal record.
+    def latest_version_record(
+        self, claim_id: str, version: str, *, observed_by: datetime
+    ) -> RecordedReobservation | None:
+        """One Claim version's latest recorded re-observation observed by ``observed_by``.
 
-        One indexed probe of the projection and one journal record read by its
-        sequence, however long the lineage's or the journal's history.
+        ``version`` is the Claim's artifact digest: only records admitted while
+        that exact version was live count. One
+        seek on ``reobservations_by_version`` and one journal record read by
+        its sequence: records observed after ``observed_by``, and the lineage's
+        other versions, are never visited.
         """
 
         self._guard_fork()
@@ -923,7 +958,10 @@ class ReobservationReader:
             if conn is None:
                 return None
             self.probes += 1
-            row = conn.execute(_LATEST_RECORD, (claim_id, _through())).fetchone()
+            row = conn.execute(
+                _VERSION_RECORD,
+                (claim_id, version, _micros(observed_by), _through()),
+            ).fetchone()
         if row is None:
             return None
         self.rows_read += 1

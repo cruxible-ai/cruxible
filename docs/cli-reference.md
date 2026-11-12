@@ -3318,10 +3318,11 @@ in `cruxible next` renders `cruxible prediction settle RSC-...`; add
 `--observation CLAIM_ID`.
 
 The observation's time is when its Claim version was accepted. When that falls
-outside the window, settle reads the latest re-observation recorded for the
-Claim: if it was recorded while this same version was live and its Capture was
-observed after the contract was accepted and inside the window, the observation
-counts at that Capture's observed time. The resolution then cites the
+outside the window, settle reads the latest re-observation recorded while this
+same version was live whose Capture was observed by the window's close; re-observations
+observed after the close are skipped, not read. If that Capture was observed
+after the contract was accepted and inside the window, the observation counts
+at its observed time. The resolution then cites the
 re-observing Capture (`capture`) and its re-observation record
 (`journal_record`) next to the Claim statement, and its authorization source is
 `reobservation_admission`. An unchanged value stated before the prediction was
