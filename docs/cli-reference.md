@@ -4173,6 +4173,13 @@ refused by the ClaimType's rule) or `not evidence` (a copy the rule does not
 admit). It lists the Claim version's attestations, accepted ones and the
 events `claim attest` recorded, each with whether it counts toward the
 verdict and why (`--detail why` carries the same as `attestation_accounts`).
+A `ClaimType:` or `Procedure:` card lists up to five governed Documents that
+guide it (`guidance`: each `Document:<name>` and its title), read from the
+backlink index for that one target; when more guide it, `guidance_total` says
+how many and `next` names `cruxible backlinks REF`, which pages them all. A
+`Document:` card lists up to five of its own links (`links`: relation and
+target); past five, `links_total` says how many and `next` names `--detail
+proof`, whose envelope carries every link. A card with none has no such field.
 A wrong or ambiguous REF
 refuses with a code and the nearest names. `--json` prints the whole structured
 result. A dotted tail is
