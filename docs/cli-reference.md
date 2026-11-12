@@ -4179,7 +4179,9 @@ backlink index for that one target; when more guide it, `guidance_total` says
 how many and `next` names `cruxible backlinks REF`, which pages them all. A
 `Document:` card lists up to five of its own links (`links`: relation and
 target); past five, `links_total` says how many and `next` names `--detail
-proof`, whose envelope carries every link. A card with none has no such field.
+proof`, whose envelope carries every link. A card read with `--at` names
+either read with the same `--at`, so it answers the generation the card cut.
+A card with none has no such field.
 A wrong or ambiguous REF
 refuses with a code and the nearest names. `--json` prints the whole structured
 result. A dotted tail is

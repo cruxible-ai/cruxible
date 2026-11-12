@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from cruxible_client.contracts.backlinks import BacklinksRequest, BacklinksResult
 from cruxible_client.contracts.documents import DocumentLink
 from cruxible_client.contracts.get_reads import GET_CARD_LINKS, GetRequest, GetResult
+from cruxible_core.service.discovery.backlinks import service_playbill_backlinks
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._write_support import KIND, seed_write_surface
@@ -17,13 +20,13 @@ from tests.test_cli.test_playbill_write import (  # noqa: F401  (autouse fixture
     _isolated_context,
     _run,
 )
-from tests.test_service.test_backlinks import STATUS, propose_document
+from tests.test_service.test_backlinks import STATUS, propose_document, revise_document
 
 _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=True)
 
 
 class _Reads:
-    """Answers ``get`` from the real service over one instance."""
+    """Answers ``get`` and ``backlinks`` from the real service over one instance."""
 
     def __init__(self, instance: Any) -> None:
         self.instance = instance
@@ -31,6 +34,10 @@ class _Reads:
     def get(self, instance_id: str, *, request: GetRequest) -> GetResult:
         assert instance_id == "inst_write"
         return service_playbill_get(self.instance, request=request, access=_ACCESS)
+
+    def backlinks(self, instance_id: str, *, request: BacklinksRequest) -> BacklinksResult:
+        assert instance_id == "inst_write"
+        return service_playbill_backlinks(self.instance, request=request, access=_ACCESS)
 
 
 def _serve(monkeypatch: pytest.MonkeyPatch, instance: Any) -> None:
@@ -152,3 +159,57 @@ def test_get_procedure_prints_its_guidance_bounded(
         key=lambda name: f"document:{name}".encode(),
     )[:GET_CARD_LINKS]
     _assert_guidance_text(ref, [f"Document:{name}" for name in shown], cut=GET_CARD_LINKS + 1)
+
+
+def _follow(text: str, prefix: str) -> dict[str, Any]:
+    """Run the one ``next:`` line the card printed that starts with ``prefix``, as JSON."""
+
+    (line,) = (
+        line.removeprefix("next: ")
+        for line in text.splitlines()
+        if line.startswith(f"next: {prefix}")
+    )
+    argv = shlex.split(line)
+    assert argv[0] == "cruxible"
+    result = _run(*argv[1:], "--json")
+    assert result.exit_code == 0, result.output
+    payload: dict[str, Any] = json.loads(result.stdout)
+    return payload
+
+
+def test_a_historical_claim_type_card_continues_at_its_coordinate(instance: Any) -> None:
+    ref = f"ClaimType:{STATUS}"
+    names = [f"guide-{index}" for index in range(GET_CARD_LINKS + 1)]
+    for name in names:
+        propose_document(instance, name, _guides(ref))
+    old = instance.accepted_coordinate().git_oid
+    revise_document(instance, "guide-0")  # head: one guide fewer
+
+    text = _text(ref, "--at", old)
+    assert f"guidance_total: {GET_CARD_LINKS + 1}\n" in text
+    page = _follow(text, "cruxible backlinks")
+    assert page["coordinate"]["git_oid"] == old[:12]
+    assert [link["source"] for link in page["links"]] == [f"document:{name}" for name in names]
+
+
+def test_a_historical_document_card_continues_at_its_coordinate(instance: Any) -> None:
+    labels = [
+        DocumentLink(relation="see-also", target_identity=f"document:other-{index}")
+        for index in range(GET_CARD_LINKS + 1)
+    ]
+    propose_document(instance, "many", *labels)
+    old = instance.accepted_coordinate().git_oid
+    revise_document(instance, "many")  # head: no links
+
+    text = _text("Document:many", "--at", old)
+    assert f"links_total: {GET_CARD_LINKS + 1}\n" in text
+    proof = _follow(text, "cruxible get Document:many --detail proof")["proof"]
+    (references,) = (
+        fact["value"]
+        for fact in proof["facts"]
+        if fact["schema_id"] == "cruxible.document.references"
+    )
+    assert [link["target_identity"] for link in references["links"]] == [
+        link.target_identity for link in labels
+    ]
+    assert proof["coordinate"]["git_oid"] == old

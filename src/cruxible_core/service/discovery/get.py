@@ -1004,6 +1004,15 @@ def _resolve_bare(projection: Any, value: str, *, surface: ReadSurface) -> Resol
 # -- rendering next steps for the caller's surface -----------------------------
 
 
+def _sdk_context(at: ClientCoordinate | None) -> str:
+    """The SDK context a rendered read runs on: ``cx``, pinned to ``at`` when given."""
+
+    if at is None:
+        return "cx"
+    fields = ", ".join(f"{key}={json.dumps(value)}" for key, value in at.model_dump().items())
+    return f"cx.at(AcceptedCoordinate({fields}))"
+
+
 def _render_get(
     surface: ReadSurface,
     ref: str,
@@ -1032,13 +1041,7 @@ def _render_get(
             else f'range={{"start": {start}, "end": {end}}}'
         )
     if surface == "sdk":
-        context = "cx"
-        if at is not None:
-            fields = ", ".join(
-                f"{key}={json.dumps(value)}" for key, value in at.model_dump().items()
-            )
-            context += f".at(AcceptedCoordinate({fields}))"
-        return f"{context}.get({', '.join(arguments)})"
+        return f"{_sdk_context(at)}.get({', '.join(arguments)})"
     if at is not None:
         arguments.append(f"at={json.dumps(at.git_oid)}")
     arguments[0] = f"ref={arguments[0]}"
@@ -1072,27 +1075,34 @@ def _render_procedure_run(surface: ReadSurface, name: str, runnable: str) -> tup
     return ()
 
 
-def _render_backlinks(surface: ReadSurface, ref: str) -> str:
-    """The backlinks read of one target, spelled for the caller's surface.
+def _render_backlinks(surface: ReadSurface, ref: str, *, at: ClientCoordinate | None) -> str:
+    """The backlinks read of one target, spelled for the caller's surface, at ``at``.
 
     MCP spells it as ``get`` with ``detail="backlinks"``, the same page, which
     every tool profile serves.
     """
 
     if surface == "cli":
-        return f"cruxible backlinks {shlex.quote(ref)}"
+        return f"cruxible backlinks {shlex.quote(ref)}" + (
+            "" if at is None else f" --at {at.git_oid}"
+        )
     if surface == "sdk":
-        return f"cx.backlinks({json.dumps(ref)})"
-    return _render_get(surface, ref, "backlinks")
+        return f"{_sdk_context(at)}.backlinks({json.dumps(ref)})"
+    return _render_get(surface, ref, "backlinks", at=at)
 
 
 def _card_guidance(
-    connection: Any, resolved: ResolvedRef, *, surface: ReadSurface
+    connection: Any,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+    pinned: ClientCoordinate | None,
 ) -> tuple[tuple[GetGuidance, ...], int | None, tuple[str, ...]]:
     """The Documents that guide a ClaimType or Procedure, for its card (D-R17).
 
     One bounded range of the backlink index for this one target; a cut list
-    carries the total and the backlinks read that pages them all.
+    carries the total and the backlinks read that pages them all, at
+    ``pinned`` (the coordinate a historical card was read at).
     """
 
     from cruxible_core.service.discovery.backlinks import card_guidance
@@ -1102,7 +1112,7 @@ def _card_guidance(
         GetGuidance(document=_display("document", document), title=title)
         for document, title in rows
     )
-    more = () if total is None else (_render_backlinks(surface, resolved.display),)
+    more = () if total is None else (_render_backlinks(surface, resolved.display, at=pinned),)
     return guidance, total, more
 
 
@@ -1536,6 +1546,7 @@ def _claim_type_card(
     resolved: ResolvedRef,
     *,
     surface: ReadSurface,
+    pinned: ClientCoordinate | None = None,
 ) -> GetClaimTypeCard:
     with instance.bind_accepted_projection(coordinate) as projection:
         claim_type = cast(ClaimType, projection.typed.source(resolved.identity))
@@ -1552,7 +1563,7 @@ def _claim_type_card(
             kit_owners(instance, projection.typed.connection), "ClaimType", claim_type.predicate
         )
         guidance, guidance_total, more_guidance = _card_guidance(
-            projection.typed.connection, resolved, surface=surface
+            projection.typed.connection, resolved, surface=surface, pinned=pinned
         )
     names = CaptureContractNames(instance, coordinate)
     evidence = names.admitted(claim_type, qualified=True)
@@ -1617,6 +1628,7 @@ def _document_card(
     resolved: ResolvedRef,
     *,
     surface: ReadSurface,
+    pinned: ClientCoordinate | None = None,
 ) -> GetDocumentCard:
     with instance.bind_accepted_projection(coordinate) as projection:
         shell = cast(DocumentShell, projection.typed.source(resolved.identity))
@@ -1640,7 +1652,7 @@ def _document_card(
             _render_get(surface, resolved.display, "body"),
             _render_get(surface, resolved.display, "why"),
             _render_get(surface, resolved.display, "history"),
-            *((_render_get(surface, resolved.display, "proof"),) if cut else ()),
+            *((_render_get(surface, resolved.display, "proof", at=pinned),) if cut else ()),
         ),
     )
 
@@ -1771,6 +1783,7 @@ def _procedure_card(
     *,
     evaluation_time: datetime,
     surface: ReadSurface,
+    pinned: ClientCoordinate | None = None,
 ) -> GetProcedureCard:
     from cruxible_core.service.procedures.procedure_runs import (
         ProcedureReadinessRequestV1,
@@ -1791,7 +1804,7 @@ def _procedure_card(
             "cruxible.procedure.track_record", identity=resolved.identity
         )
         guidance, guidance_total, more_guidance = _card_guidance(
-            projection.typed.connection, resolved, surface=surface
+            projection.typed.connection, resolved, surface=surface, pinned=pinned
         )
     from cruxible_client.contracts.procedures.decompile import decompile_procedure
 
@@ -3425,6 +3438,16 @@ def service_playbill_get(
     def render(ref: str, detail: str | None) -> str:
         return _render_get(surface, ref, detail)
 
+    # A card read at a named coordinate pins the continuations that recover
+    # what it cut (guidance, a Document's links) to that same coordinate.
+    pinned = (
+        None
+        if request.at is None
+        else ClientCoordinate.model_validate(
+            AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
+        )
+    )
+
     if request.detail == "summary":
         if resolved.kind == "claim":
             card = _claim_card(
@@ -3443,12 +3466,17 @@ def service_playbill_get(
                 surface=surface,
             )
         elif resolved.kind == "claim_type":
-            card = _claim_type_card(instance, coordinate, resolved, surface=surface)
+            card = _claim_type_card(instance, coordinate, resolved, surface=surface, pinned=pinned)
         elif resolved.kind == "document":
-            card = _document_card(instance, coordinate, resolved, surface=surface)
+            card = _document_card(instance, coordinate, resolved, surface=surface, pinned=pinned)
         elif resolved.kind == "procedure":
             card = _procedure_card(
-                instance, coordinate, resolved, evaluation_time=evaluation_time, surface=surface
+                instance,
+                coordinate,
+                resolved,
+                evaluation_time=evaluation_time,
+                surface=surface,
+                pinned=pinned,
             )
         elif resolved.kind == "query":
             card = _query_card(instance, coordinate, resolved, surface=surface)
