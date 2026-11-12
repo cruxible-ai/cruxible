@@ -27,6 +27,7 @@ from cruxible_client.contracts.capabilities import (
     CapabilityRef,
     capability_digest,
     capability_path,
+    capability_path_parts,
     parse_capability,
     render_capability,
 )
@@ -41,6 +42,7 @@ from cruxible_client.contracts.shapes import (
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.capabilities.lookup import capabilities_by_name, capability_lookup_at
 from cruxible_core.compiler.projection_artifacts import registered_path_kind
+from cruxible_core.kits.base_kit import bundled_base_kit
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
@@ -54,6 +56,14 @@ from tests.test_authoring.test_authoring_preflight import TIMESTAMP
 from tests.test_ledger.test_activation import _sign
 
 ACTOR = AuthenticatedActor(actor_id="owner")
+#: The capabilities creation's base kit lands on every instance, by name.
+BASE_CAPABILITIES = tuple(
+    sorted(
+        parts[0]
+        for item in bundled_base_kit().manifest.artifacts
+        if (parts := capability_path_parts(item.path)) is not None
+    )
+)
 _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=False)
 NAME = "acme.match"
 
@@ -310,9 +320,21 @@ def test_raw_acceptance_reserves_workspace_names_to_core(tmp_path: Path) -> None
     tree = _tree(instance)
     squatter = _raw(tree, name="workspace.scan")
     assert "cruxible.capability.reserved" in _refused_codes(instance, _files(squatter))
-    # A name core's builtin serves is declarable (the base kit owns it).
-    accept_tree(instance, _files(_raw(tree, name="workspace.file")), name="builtin-name")
-    assert capability_path("workspace.file", 1) in _tree(instance)
+    # Version 1 of a name core's builtin serves is the base kit's; a later
+    # version is the adopter's to author.
+    other_first = _raw(tree, name="workspace.file")
+    assert "cruxible.capability.immutable" in _refused_codes(instance, _files(other_first))
+    first_path = capability_path("workspace.file", 1)
+    second = _raw(
+        tree,
+        name="workspace.file",
+        version=2,
+        predecessor_digest=capability_digest(
+            parse_capability(tree[first_path], path=first_path)
+        ).tagged,
+    )
+    accept_tree(instance, _files(second), name="builtin-name")
+    assert capability_path("workspace.file", 2) in _tree(instance)
 
 
 def test_raw_acceptance_refuses_removing_a_capability(tmp_path: Path) -> None:
@@ -389,7 +411,8 @@ def test_the_index_holds_one_row_per_version_from_the_accepted_generation(
         connection = projection.typed.connection
         rows = connection.execute(
             "SELECT identity, capability_name, capability_version, effect, in_contract, "
-            "out_contract FROM capabilities ORDER BY capability_version"
+            "out_contract FROM capabilities WHERE capability_name=? ORDER BY capability_version",
+            (NAME,),
         ).fetchall()
         count = connection.execute(
             "SELECT amount FROM capability_count WHERE singleton=1"
@@ -405,7 +428,8 @@ def test_the_index_holds_one_row_per_version_from_the_accepted_generation(
         )
         for version in (1, 2)
     ]
-    assert tuple(count) == (2,)
+    # Beside the base kit's eight, which every instance holds from creation.
+    assert tuple(count) == (2 + len(BASE_CAPABILITIES),)
 
 
 def test_capability_lookup_at_resolves_pins_and_lists_by_name(tmp_path: Path) -> None:
@@ -492,18 +516,22 @@ def test_orient_lists_capabilities_by_page_and_counts_them(tmp_path: Path) -> No
         instance, section="capabilities", limit=1, cursor=first.next_cursor
     )
     assert [row.capability for row in second.capabilities or ()] == [f"{NAME}@2"]
-    assert not second.truncated
+    # The base kit's capabilities follow by name (``web.``, ``workspace.``).
+    assert second.truncated
     default = service_playbill_orient(instance)
-    assert default.artifacts is not None and default.artifacts.capabilities == 2
+    assert default.artifacts is not None
+    assert default.artifacts.capabilities == 2 + len(BASE_CAPABILITIES)
 
 
-def test_a_fresh_instance_counts_no_capabilities(tmp_path: Path) -> None:
+def test_a_fresh_instance_counts_the_base_kit_capabilities(tmp_path: Path) -> None:
     from cruxible_core.service.discovery.orient import service_playbill_orient
 
     instance, _owner = initialize_local(tmp_path)
     default = service_playbill_orient(instance)
-    assert default.artifacts is not None and default.artifacts.capabilities == 0
-    assert service_playbill_orient(instance, section="capabilities").capabilities == ()
+    assert default.artifacts is not None
+    assert default.artifacts.capabilities == len(BASE_CAPABILITIES)
+    listed = service_playbill_orient(instance, section="capabilities").capabilities or ()
+    assert [row.capability for row in listed] == [f"{name}@1" for name in BASE_CAPABILITIES]
 
 
 # -- kits carry capabilities -------------------------------------------------------------

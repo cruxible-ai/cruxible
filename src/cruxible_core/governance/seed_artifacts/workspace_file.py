@@ -1,11 +1,16 @@
 """Compiler-owned ``workspace.file`` operation and built-in Provider.
 
-New instances start with these artifacts at genesis (``GENESIS_SEEDS`` in
-``ledger/bootstrap.py``): the core-owned Contracts the operation's
-signature pins (``cruxible_client.contracts.workspace_file``), and the
-``cruxible-builtin`` Provider whose one operation, ``workspace.file``, is core's
-in-process adapter (``cruxible_core.providers.builtin_workspace_file``). Core
-recognizes the operation by its exact signature, never by name.
+New instances start with the ``cruxible-builtin`` Provider at genesis
+(``GENESIS_SEEDS`` in ``ledger/bootstrap.py``): its one operation,
+``workspace.file``, is core's in-process adapter
+(``cruxible_core.providers.builtin_workspace_file``). The handoff Contracts the
+operation's signature pins (``cruxible_client.contracts.workspace_file``) are no
+longer genesis seeds: the ``workspace.file`` and ``workspace.files``
+capabilities and their authored request and result Contracts arrive with the
+base kit (``cruxible_core.kits``). The handoff shapes are to travel inside the
+builtin Provider as its own copies (note §7.4.7); until it carries them, a
+binding to this operation resolves its pins only where an instance holds those
+Contracts. Core recognizes the operation by its exact signature, never by name.
 
 Identity. The implementation digest is the ordinary
 ``provider_implementation_digest(entrypoint, distribution_sha256)``

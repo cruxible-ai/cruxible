@@ -33,6 +33,7 @@ from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, 
 from cruxible_client.contracts.claims import ClaimArtifact, parse_claim
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentShell
 from cruxible_client.contracts.kits import (
+    InstalledKit,
     KitAddRequest,
     KitArtifact,
     KitArtifactBytes,
@@ -40,6 +41,7 @@ from cruxible_client.contracts.kits import (
     KitBundle,
     KitChangeResult,
     KitRemoveRequest,
+    KitStatus,
 )
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
@@ -80,6 +82,12 @@ SEATS = "acme.account.seats"
 PLAN = "acme.account.plan"
 OWNER = "acme.account.owner"
 UNOWNED = "other.thing.flag"
+
+
+def _installed(status: KitStatus) -> tuple[InstalledKit, ...]:
+    """The kits these tests add: every instance also holds creation's base kit."""
+
+    return tuple(kit for kit in status.kits if kit.kit_id != "base")
 
 
 def _path(predicate: str) -> str:
@@ -351,7 +359,7 @@ def test_a_release_installs_byte_identical_and_reinstalling_it_changes_nothing(
     for path, content in release.contents().items():
         assert tree[path] == content
     status = playbill_api.playbill_kit_status(consumer.instance_id)
-    assert [(kit.kit_id, kit.version, kit.drifted) for kit in status.kits] == [
+    assert [(kit.kit_id, kit.version, kit.drifted) for kit in _installed(status)] == [
         ("acme", "1.0.0", ())
     ]
     assert consumer.add(release).status == "unchanged"
@@ -385,7 +393,7 @@ def test_an_upgrade_is_the_consumers_diff_against_a_self_contained_release(
     assert seats.lifecycle.predecessor_digest == installed_seats
     assert seats.value.kind == "int" and seats.value.min == 1
     assert consumer.tree()[_path(OWNER)] == second.contents()[_path(OWNER)]
-    assert playbill_api.playbill_kit_status(consumer.instance_id).kits[0].drifted == ()
+    assert _installed(playbill_api.playbill_kit_status(consumer.instance_id))[0].drifted == ()
 
 
 def test_a_later_release_installs_fresh_on_its_own(worlds: tuple[_World, _World]) -> None:
@@ -577,7 +585,9 @@ def test_a_local_edit_takes_the_release_by_default_and_says_it_overwrites_your_e
     publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
     consumer.add(publisher.build("1.0.0"))
     consumer.succeed(PLAN, {"type": "string", "minLength": 1})
-    assert playbill_api.playbill_kit_status(consumer.instance_id).kits[0].drifted == (_path(PLAN),)
+    assert _installed(playbill_api.playbill_kit_status(consumer.instance_id))[0].drifted == (
+        _path(PLAN),
+    )
 
     publisher.succeed(PLAN, {"type": "string", "maxLength": 64})
     upgraded = consumer.add(publisher.build("1.1.0"))
@@ -589,7 +599,7 @@ def test_a_local_edit_takes_the_release_by_default_and_says_it_overwrites_your_e
         (_path(SEATS), "unchanged", None),
     ]
     assert consumer.claim_type(PLAN).value.max_len == 64
-    assert playbill_api.playbill_kit_status(consumer.instance_id).kits[0].drifted == ()
+    assert _installed(playbill_api.playbill_kit_status(consumer.instance_id))[0].drifted == ()
 
 
 def test_keeping_a_local_edit_records_it_so_the_next_upgrade_does_not_ask_again(
@@ -609,7 +619,7 @@ def test_keeping_a_local_edit_records_it_so_the_next_upgrade_does_not_ask_again(
         (_path(SEATS), "unchanged", None),
     ]
     assert consumer.claim_type(PLAN).value.min_len == 1
-    (installed,) = playbill_api.playbill_kit_status(consumer.instance_id).kits
+    (installed,) = _installed(playbill_api.playbill_kit_status(consumer.instance_id))
     assert installed.drifted == ()
     assert [(item.identity, item.consequence) for item in installed.kept] == [
         (f"ClaimType:{PLAN}", "overwrites_your_edit")
@@ -632,7 +642,7 @@ def test_reverting_a_local_edit_is_no_longer_an_edit(worlds: tuple[_World, _Worl
     consumer.succeed(SEATS, {"type": "integer"})
 
     # A revert is a new successor with a new digest; content says it is unedited.
-    assert playbill_api.playbill_kit_status(consumer.instance_id).kits[0].drifted == ()
+    assert _installed(playbill_api.playbill_kit_status(consumer.instance_id))[0].drifted == ()
     publisher.succeed(SEATS, {"type": "integer", "minimum": 0})
     upgraded = consumer.add(publisher.build("1.1.0"))
     assert [(item.action, item.consequence) for item in upgraded.plan] == [("replace", None)]
@@ -651,7 +661,7 @@ def test_a_downgrade_needs_allow_downgrade(worlds: tuple[_World, _World]) -> Non
 
     downgraded = consumer.add(older, allow_downgrade=True)
     assert (downgraded.status, downgraded.transition) == ("accepted", "downgrade")
-    assert playbill_api.playbill_kit_status(consumer.instance_id).kits[0].version == "1.0.0"
+    assert _installed(playbill_api.playbill_kit_status(consumer.instance_id))[0].version == "1.0.0"
 
 
 def test_a_dropped_definition_retires_unless_kept_or_depended_on(
@@ -796,7 +806,7 @@ def test_a_kept_dropped_definition_stays_the_kits_until_retired_later(
 
     kept = consumer.add(release)
     assert any(item.path == _path(SEATS) and item.action == "keep" for item in kept.plan)
-    status = playbill_api.playbill_kit_status(consumer.instance_id).kits[0]
+    status = _installed(playbill_api.playbill_kit_status(consumer.instance_id))[0]
     assert status.version == "2.0.0"
     assert any(item.path == _path(SEATS) for item in status.kept)
     # Still the kit's: removing the kit would retire it.
@@ -814,7 +824,7 @@ def test_a_kept_dropped_definition_stays_the_kits_until_retired_later(
     assert retired.status == "accepted", retired.detail
     assert consumer.claim_type(SEATS).lifecycle.state == "retired"
     assert _query_state(consumer, "local.accounts") == "retired"
-    status = playbill_api.playbill_kit_status(consumer.instance_id).kits[0]
+    status = _installed(playbill_api.playbill_kit_status(consumer.instance_id))[0]
     assert not any(item.path == _path(SEATS) for item in status.kept)
 
 
@@ -1068,7 +1078,7 @@ def test_removing_a_kit_retires_what_it_installed(worlds: tuple[_World, _World])
 
     assert {item.action for item in removed.plan} == {"retire"}
     assert consumer.claim_type(SEATS).lifecycle.state == "retired"
-    assert playbill_api.playbill_kit_status(consumer.instance_id).kits == ()
+    assert _installed(playbill_api.playbill_kit_status(consumer.instance_id)) == ()
 
 
 def test_removing_a_kit_that_is_not_installed_is_refused_naming_the_installed_ones(
@@ -1134,7 +1144,7 @@ def test_a_release_travels_as_a_directory_through_the_http_client(
     )
     consumer.settle(proposed)
     status = transport.kit_status(consumer.instance_id)
-    assert [(kit.kit_id, kit.source) for kit in status.kits] == [("acme", "acme-1.0.0")]
+    assert [(kit.kit_id, kit.source) for kit in _installed(status)] == [("acme", "acme-1.0.0")]
 
     (directory / "artifacts" / "claim-types" / "stray.json").write_bytes(b"{}\n")
     with pytest.raises(ValueError, match="does not match its manifest"):
@@ -1180,7 +1190,7 @@ def test_an_unpinned_kit_add_whose_head_moves_after_evaluation_refuses_typed_and
     proposals = consumer.http.get(f"/api/v1/{consumer.instance_id}/proposals").json()
     assert not [entry for entry in proposals["entries"] if "/kit-acme-" in entry["target_ref"]]
     assert _path(SEATS) not in consumer.tree()
-    assert playbill_api.playbill_kit_status(consumer.instance_id).kits == ()
+    assert _installed(playbill_api.playbill_kit_status(consumer.instance_id)) == ()
     # The caller runs it again, at the moved head.
     assert consumer.add(release).status == "accepted"
     assert _path(SEATS) in consumer.tree()
@@ -1390,12 +1400,12 @@ def test_an_ordinary_document_named_like_a_receipt_does_not_break_kits(
     )
     consumer.activate(proposed.proposal["admission"]["proposal_id"])
 
-    assert playbill_api.playbill_kit_status(consumer.instance_id).kits == ()
+    assert _installed(playbill_api.playbill_kit_status(consumer.instance_id)) == ()
     publisher.author(_claim_type(SEATS, {"type": "integer"}))
     consumer.add(publisher.build("1.0.0"))
-    assert [kit.kit_id for kit in playbill_api.playbill_kit_status(consumer.instance_id).kits] == [
-        "acme"
-    ]
+    assert [
+        kit.kit_id for kit in _installed(playbill_api.playbill_kit_status(consumer.instance_id))
+    ] == ["acme"]
 
 
 @pytest.mark.parametrize(
@@ -1572,9 +1582,9 @@ def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(
     )
     assert removal.status == "would_propose" and removal.proposal_id is None
     assert {item.action for item in removal.plan} == {"retire"}
-    assert [kit.kit_id for kit in playbill_api.playbill_kit_status(consumer.instance_id).kits] == [
-        "acme"
-    ]
+    assert [
+        kit.kit_id for kit in _installed(playbill_api.playbill_kit_status(consumer.instance_id))
+    ] == ["acme"]
 
 
 def test_a_kit_carries_its_subject_kinds_and_their_keys(
@@ -1630,7 +1640,7 @@ def test_a_kit_carries_its_subject_kinds_and_their_keys(
     assert upgraded.status in {"accepted", "proposed"}, upgraded
     declared = parse_subject_kind(consumer.tree()[path], path=path)
     assert not declared.unique
-    (status,) = playbill_api.playbill_kit_status(consumer.instance_id).kits
+    (status,) = _installed(playbill_api.playbill_kit_status(consumer.instance_id))
     assert status.drifted == ()
 
 
@@ -1730,7 +1740,7 @@ def test_a_release_with_inert_files_installs_as_the_same_release(
         KitAddRequest(bundle=read_back, source=directory.name, dry_run=False),
     )
     consumer.settle(proposed)
-    (installed,) = transport.kit_status(consumer.instance_id).kits
+    (installed,) = _installed(transport.kit_status(consumer.instance_id))
     assert installed.content_digest == built.bundle.manifest.content_digest
 
 

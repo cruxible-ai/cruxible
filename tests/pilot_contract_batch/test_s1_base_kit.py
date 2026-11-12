@@ -41,7 +41,6 @@ def _create(root: Path) -> tuple[object, float]:
     return instance, watch.seconds
 
 
-@pytest.mark.xfail(strict=True, raises=NotImplementedError, reason=f"owner: {surfaces.BASE_KIT}")
 @pytest.mark.pilot(
     "s1-base-kit",
     owner=surfaces.BASE_KIT,

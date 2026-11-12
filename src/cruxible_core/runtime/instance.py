@@ -56,7 +56,7 @@ from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
     parse_principal_record,
 )
-from cruxible_client.contracts.temporal import format_datetime, utc_now
+from cruxible_client.contracts.temporal import format_datetime, parse_datetime, utc_now
 from cruxible_client.contracts.types import (
     Decommission,
     Descriptor,
@@ -208,6 +208,7 @@ from cruxible_core.storage.preview_fence import is_previewing, refuse_write_whil
 from cruxible_core.storage.read_positions import unpositioned_operation
 
 if TYPE_CHECKING:
+    from cruxible_client.contracts.kits import KitChangeResult
     from cruxible_core.evidence.attestation_verification import CaptureContractVersions
     from cruxible_core.evidence.claim_attestation_store import ClaimAttestationEvidenceStore
     from cruxible_core.proposals.refusal_index import RefusalIndex
@@ -389,6 +390,9 @@ class PlaybillInstance:
         #: What rebuildable and raw operational state is kept (projection
         #: generations, raw-receipt days). Tests replace it here.
         self.retention: RetentionSettings = DEFAULT_RETENTION
+        #: What creation's base kit add did (accepted, or proposed under
+        #: independent approval); ``None`` on an instance this process opened.
+        self.base_kit_install: KitChangeResult | None = None
         # Compiled semantic facts per owner version; see TypedStateReader.facts_for.
         self._owner_facts = self.derived.memo(
             "owner-facts", max_entries=65536, max_bytes=64 * 1024 * 1024
@@ -669,11 +673,27 @@ class PlaybillInstance:
                 canonical_bytes(descriptor.model_dump(mode="json")) + b"\n",
             )
             _fsync_directory(managed_root)
-            return cls.open(
+            instance = cls.open(
                 managed_root,
                 trust_root=trust_root,
                 promotion_verifier=promotion_verifier,
             )
+            # Straight after genesis the base kit lands through the ordinary kit
+            # add, as the creating owner (the first active ordinary principal).
+            # Under independent approval it stops at proposed, like any kit add.
+            from cruxible_core.kits.base_kit import install_bundled_base_kit
+
+            owner = next(
+                record.principal_id
+                for record in client_principals
+                if record.kind == "ordinary" and record.status == "active"
+            )
+            genesis_time = parse_datetime(commit_timestamp)
+            assert genesis_time is not None
+            instance.base_kit_install = install_bundled_base_kit(
+                instance, actor_id=owner, at=genesis_time
+            )
+            return instance
         except BaseException:
             # `managed_root` was proven absent and created by this invocation.
             # Removing this exact incomplete target cannot affect prior user data.

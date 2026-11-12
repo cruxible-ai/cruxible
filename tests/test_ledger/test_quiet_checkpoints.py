@@ -46,7 +46,8 @@ def test_a_flushed_summary_at_the_head_reopens_without_replaying(
     instance.flush_replay_checkpoint()
     record = load_checkpoint_file(directory)
     assert record is not None
-    assert (record.body.sequence, record.body.git_oid) == (2, head)
+    # Creation's base kit is generation 1; the two settled here are 2 and 3.
+    assert (record.body.sequence, record.body.git_oid) == (3, head)
     assert _stamp(directory) == record.checkpoint_digest
 
     replayed: list[int] = []
@@ -61,10 +62,10 @@ def test_a_flushed_summary_at_the_head_reopens_without_replaying(
     assert reopened.accepted_history() == instance.accepted_history()
     assert replayed == []
 
-    # Without the summary the same reopen replays both generations.
+    # Without the summary the same reopen replays every generation after genesis.
     discard_checkpoint(directory)
     PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
-    assert len(replayed) == 2
+    assert len(replayed) == 3
 
 
 def test_a_summary_is_written_only_while_its_generation_is_main(tmp_path: Path) -> None:

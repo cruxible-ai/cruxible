@@ -106,7 +106,8 @@ def test_every_accepted_generation_settles_in_the_one_receipt(
 ) -> None:
     instance, _builder = crossed_ledger
     records = _records(_reopen(instance))
-    assert [type(record) for record in records] == [ChangeSetRecord] * _GENERATIONS
+    # Creation's base kit settles first, in the same receipt.
+    assert [type(record) for record in records] == [ChangeSetRecord] * (_GENERATIONS + 1)
     assert {record.tag for record in records} == {"playbill-changeset-v3"}
     assert {record.candidate.tag for record in records} == {"playbill-candidate-v2"}
 
@@ -171,7 +172,8 @@ def test_the_ledger_replays_from_genesis_and_from_a_mid_history_checkpoint(
 
     genesis_rooted = _reopen(instance)
     expected = genesis_rooted.accepted_coordinate()
-    assert len(genesis_rooted.accepted_history()) == _GENERATIONS + 1
+    # Genesis, creation's base kit, then the built generations.
+    assert len(genesis_rooted.accepted_history()) == _GENERATIONS + 2
 
     # Seed a checkpoint mid-history, so replay re-derives the suffix from it.
     boundary_parent = genesis_rooted.accepted_history()[3]
@@ -311,11 +313,13 @@ def test_a_new_instance_reproduces_its_coordinates_through_its_first_two_generat
     """Fresh reopen, then generations one and two: live, cold and checkpointed agree."""
 
     instance, owner = initialize_local(tmp_path)
-    genesis = instance.accepted_coordinate()
+    # Creation lands the base kit as generation 1, straight after genesis.
+    created = instance.accepted_coordinate()
+    genesis = instance.accepted_history()[0]
     fresh = _reopen(instance)
-    assert fresh.accepted_coordinate() == genesis
+    assert fresh.accepted_coordinate() == created
     assert fresh.descriptor.genesis == instance.descriptor.genesis
-    assert fresh.descriptor.genesis.semantic_root == genesis.semantic_root
+    assert fresh.descriptor.genesis.semantic_root == genesis.semantic_root.tagged
 
     builder = _Builder(instance, owner, checkpoint_interval=10_000)
     live = []
@@ -328,36 +332,38 @@ def test_a_new_instance_reproduces_its_coordinates_through_its_first_two_generat
     checkpoint_path(directory).unlink(missing_ok=True)
     cold = _reopen(instance)
     history = cold.accepted_history()
-    assert [item.sequence for item in history] == [0, 1, 2]
+    assert [item.sequence for item in history] == [0, 1, 2, 3]
     assert history[0].record is None
-    assert history[0].semantic_root.tagged == genesis.semantic_root
+    assert history[0].semantic_root == genesis.semantic_root
+    assert history[1].oid == created.git_oid
     assert [
-        (item.oid, item.semantic_root.tagged, item.generation_root.tagged) for item in history[1:]
+        (item.oid, item.semantic_root.tagged, item.generation_root.tagged) for item in history[2:]
     ] == [(item.git_oid, item.semantic_root, item.generation_root) for item in live]
-    assert history[1].record is not None
-    assert history[1].record.candidate.parent_semantic_root == genesis.semantic_root
-    assert history[1].semantic_root == compute_semantic_root(
-        manifest_root=history[1].record.candidate.candidate_manifest_root,
-        changeset_digest=history[1].record.changeset_digest,
-        approval_digests=tuple(sorted(_approval_digests(history[1].record))),
-        parent=history[0].semantic_root,
-    )
+    for parent, generation in zip(history, history[1:], strict=False):
+        assert generation.record is not None
+        assert generation.record.candidate.parent_semantic_root == parent.semantic_root.tagged
+        assert generation.semantic_root == compute_semantic_root(
+            manifest_root=generation.record.candidate.candidate_manifest_root,
+            changeset_digest=generation.record.changeset_digest,
+            approval_digests=tuple(sorted(_approval_digests(generation.record))),
+            parent=parent.semantic_root,
+        )
 
-    # A checkpoint at generation one replays the suffix; the reopen leaves one at
-    # the head, from which the next reopen replays nothing.
+    # A checkpoint at the first built generation replays the suffix; the reopen
+    # leaves one at the head, from which the next reopen replays nothing.
     write_checkpoint(
         directory,
         checkpoint_body(
-            instance_id=genesis.instance_id,
-            object_format=genesis.git_object_format,
-            compiler=genesis.compiler,
+            instance_id=created.instance_id,
+            object_format=created.git_object_format,
+            compiler=created.compiler,
             genesis=cold.descriptor.genesis,
-            sequence=1,
-            git_oid=history[1].oid,
-            semantic_root=history[1].semantic_root.tagged,
-            generation_root=history[1].generation_root.tagged,
-            parent_generation_root=history[0].generation_root.tagged,
-            tree=cold.tree_at(history[1].oid),
+            sequence=2,
+            git_oid=history[2].oid,
+            semantic_root=history[2].semantic_root.tagged,
+            generation_root=history[2].generation_root.tagged,
+            parent_generation_root=history[1].generation_root.tagged,
+            tree=cold.tree_at(history[2].oid),
         ),
         written_at="2026-10-30T00:00:00.000000Z",
     )
@@ -370,4 +376,4 @@ def test_a_new_instance_reproduces_its_coordinates_through_its_first_two_generat
         ] == [(item.semantic_root, item.generation_root, item.descriptor) for item in history]
     head_checkpoint = load_checkpoint_file(directory)
     assert head_checkpoint is not None
-    assert head_checkpoint.body.sequence == 2
+    assert head_checkpoint.body.sequence == 3

@@ -62,6 +62,7 @@ def build_inputs() -> tuple[str, ...]:
     """
 
     import cruxible_core
+    import cruxible_core.kits.base_kit as base_kit_module
     import cruxible_core.ledger.bootstrap as bootstrap_module
     import cruxible_core.runtime.instance as instance_module
 
@@ -73,6 +74,8 @@ def build_inputs() -> tuple[str, ...]:
         repr(bootstrap_module.GENESIS_SEEDS),
         repr(bootstrap_module.seeded_procedure_runtime_policy()),
         repr(instance_module.initial_authority_matrix()),
+        # Creation installs the bundled base kit after genesis.
+        repr(base_kit_module.BASE_KIT_PIN),
     )
 
 

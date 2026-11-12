@@ -123,7 +123,40 @@ def list_capabilities(instance: Any) -> tuple[CapabilityEntry, ...]:
     precondition of scenarios 2, 4, 5, 7 and 8.
     """
 
-    raise SurfaceMissing("list_capabilities", BASE_KIT)
+    from cruxible_client.contracts.capabilities import capability_identity, parse_capability_ref
+    from cruxible_core.service.discovery.orient import service_playbill_orient
+    from cruxible_core.service.kits import _receipts
+
+    listed = []
+    cursor = None
+    while True:
+        page = service_playbill_orient(instance, section="capabilities", cursor=cursor)
+        listed.extend(page.capabilities)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+    coordinate = instance.accepted_coordinate()
+    tree = instance.immutable_tree_at(coordinate.git_oid)
+    owners = [(receipt.kit_id, receipt.owns) for receipt in _receipts(instance, tree)]
+    entries = []
+    with instance.bind_accepted_projection(coordinate) as projection:
+        for item in listed:
+            ref = parse_capability_ref(item.capability)
+            envelope = projection.typed.envelope(
+                capability_identity(ref.name, ref.version).qualified
+            )
+            assert envelope is not None, item.capability
+            kit_id = next(
+                (kit for kit, owns in owners if any(ref.name.startswith(p) for p in owns)), None
+            )
+            entries.append(
+                CapabilityEntry(
+                    pin=CapabilityPin(ref.name, ref.version, envelope.artifact_digest),
+                    effect=item.effect,
+                    kit_id=kit_id,
+                )
+            )
+    return tuple(sorted(entries, key=lambda entry: (entry.pin.name, entry.pin.version)))
 
 
 # -- scenario 2: slots in authoring -----------------------------------------------------

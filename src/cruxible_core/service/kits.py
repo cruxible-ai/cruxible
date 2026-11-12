@@ -2643,10 +2643,22 @@ def service_kit_status(instance: PlaybillInstance) -> KitStatus:
         for receipt in _receipts(instance, tree):
             if not receipt.artifacts:
                 continue
-            kits.append(_installed_kit(connection, tree, receipt))
+            kits.append(_bundled_comparison(_installed_kit(connection, tree, receipt)))
     from cruxible_core.service.kit_resume import kit_resume_statuses
 
     return KitStatus(kits=tuple(kits), resumes=kit_resume_statuses(instance))
+
+
+def _bundled_comparison(kit: InstalledKit) -> InstalledKit:
+    """The installed base kit against the one this core bundles: a local comparison."""
+
+    from cruxible_core.kits.base_kit import BASE_KIT_PIN
+
+    if kit.kit_id != BASE_KIT_PIN.kit_id:
+        return kit
+    return kit.model_copy(
+        update={"latest_available": BASE_KIT_PIN.version, "update_check": "checked"}
+    )
 
 
 def _installed_kit(connection: Any, tree: Mapping[str, bytes], receipt: KitReceipt) -> InstalledKit:

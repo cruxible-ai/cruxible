@@ -734,3 +734,60 @@ def test_a_kit_directory_whose_template_differs_from_its_manifest_refuses_before
     assert "cruxible.kit.source_invalid" in refused.stderr
     assert "automation.json differs from its sha256" in refused.stderr
     assert client.sent == [] and client.stored == []
+
+
+def test_kit_add_base_sends_the_bundled_base_kit_without_reading_a_directory_or_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_core.kits.base_kit import bundled_base_kit
+
+    sent: list[KitAddRequest] = []
+
+    class StubClient:
+        def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:
+            sent.append(request)
+            return KitChangeResult(
+                kit_id="base", version="1.0.0", status="would_propose", transition="upgrade"
+            )
+
+    def no_other_source(_kit: str) -> Any:
+        raise AssertionError("kit add base reads the bundled copy, never a directory or registry")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr("cruxible_core.cli.commands.playbill.resolve_kit", no_other_source)
+
+    result = CliRunner().invoke(cli, [*BASE, "add", "base"])
+
+    assert result.exit_code == 0, result.output
+    (request,) = sent
+    assert request.source == "bundled"
+    assert request.bundle.manifest == bundled_base_kit().manifest
+    assert "base 1.0.0: would_propose (upgrade)" in result.output
+
+
+def test_kit_status_compares_the_base_kit_with_the_bundled_copy_offline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubClient:
+        def kit_status(self, instance_id: str) -> KitStatus:
+            return KitStatus(
+                kits=(
+                    InstalledKit(
+                        kit_id="base",
+                        version="0.9.0",
+                        content_digest="sha256:" + "1" * 64,
+                        source="bundled",
+                        latest_available="1.0.0",
+                        update_check="checked",
+                    ),
+                )
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(cli, [*BASE, "status", "--offline"])
+
+    assert result.exit_code == 0, result.output
+    assert "base 0.9.0" in result.output
+    assert "latest 1.0.0 available" in result.output
+    assert "source: bundled" in result.output

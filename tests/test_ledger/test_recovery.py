@@ -64,7 +64,7 @@ def _prepared(tmp_path: Path):
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         proposal_actor_id="owner",
-        sequence=1,
+        sequence=len(instance.accepted_history()),
     )
     assert bundle.record.approval_requirements == ()
     assert bundle.record.approvals == ()
@@ -120,14 +120,16 @@ def test_restart_recovers_every_activation_boundary(
         assert not Path(projection.manifest_path).exists()
         assert not instance._ledger.object_exists(bundle.oid)
         _serves_only_the_base(publication, bundle.oid)
-        assert witness.records == []
+        # Only the base (creation's base kit generation) may be witnessed.
+        assert [r.head_oid for r in witness.records if r.head_oid != base.git_oid] == []
         return
 
     assert reopened.accepted_coordinate().git_oid == bundle.oid
     assert reopened.accepted_coordinate().semantic_root == bundle.semantic_root.tagged
     assert reopened.accepted_coordinate().generation_root == bundle.generation_root.tagged
     assert reopened._ledger.read_generation_note(bundle.oid) is not None
-    assert [record.head_oid for record in witness.records] == [bundle.oid]
+    # The reopen also witnesses the base (creation's base kit generation).
+    assert [r.head_oid for r in witness.records if r.head_oid != base.git_oid] == [bundle.oid]
     # The instance binds with its body-metadata resolver attached.
     with reopened.bind_accepted_projection(reopened.accepted_coordinate()) as handle:
         assert (
@@ -185,7 +187,7 @@ def test_restart_collects_crash_residue_from_generation_construction(
             bodies=instance.body_store(),
             actor_binding=ChangeActorBinding(actor_id="owner"),
             proposal_actor_id="owner",
-            sequence=1,
+            sequence=len(instance.accepted_history()),
             crash_hook=crash,
         )
     before = instance._ledger.unreachable_commits()
@@ -239,7 +241,7 @@ def test_restart_finishes_losing_cas_orphan_cleanup(tmp_path: Path, phase: str) 
             bodies=instance.body_store(),
             actor_binding=ChangeActorBinding(actor_id="owner"),
             proposal_actor_id="owner",
-            sequence=1,
+            sequence=len(instance.accepted_history()),
         )
 
     winner = bundle(winner_tree, winner_candidate)
@@ -335,7 +337,8 @@ def test_replay_retains_no_generation_trees_and_serves_history_from_the_ledger(
 
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     history = reopened.accepted_history()
-    assert [generation.sequence for generation in history] == [0, 1, 2, 3]
+    # Generation 1 is creation's base kit; the three revisions follow it.
+    assert [generation.sequence for generation in history] == [0, 1, 2, 3, 4]
 
     # A recovered generation is a coordinate plus its receipt -- never a tree.
     assert "tree" not in {field.name for field in fields(RecoveredGeneration)}
@@ -361,12 +364,12 @@ def test_replay_retains_no_generation_trees_and_serves_history_from_the_ledger(
     path = document_path("design")
     expected = [
         parse_document(reopened._ledger.read_tree(generation.oid)[path], path=path)
-        for generation in history[1:]
+        for generation in history[2:]
     ]
     assert expected == accepted
 
     served = service_playbill_document_history(reopened, identity="document:design")
-    assert [entry.sequence for entry in served.entries] == [1, 2, 3]
+    assert [entry.sequence for entry in served.entries] == [2, 3, 4]
     assert [entry.revision for entry in served.entries] == [1, 2, 3]
     assert [entry.envelope_digest for entry in served.entries] == [
         document_digest(shell).tagged for shell in accepted
@@ -375,7 +378,7 @@ def test_replay_retains_no_generation_trees_and_serves_history_from_the_ledger(
         shell.body_digest for shell in accepted
     ]
     assert [entry.coordinate.git_oid for entry in served.entries] == [
-        generation.oid for generation in history[1:]
+        generation.oid for generation in history[2:]
     ]
 
 

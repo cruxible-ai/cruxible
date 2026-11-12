@@ -8,7 +8,6 @@
         "packages/cruxible-client/src/cruxible_client/contracts/workspace_file.py::workspace_file_signature_digest": "derives the builtin signature it is recognized by",
         "src/cruxible_core/procedures/ports.py::<module>": "BuiltinOperation / WORKSPACE_FILE_BUILTIN, set by signature in bound_operation",
         "src/cruxible_core/providers/builtin_workspace_file.py::<module>": "the builtin's in-process implementation",
-        "src/cruxible_core/ledger/bootstrap.py::<module>": "genesis seeds the builtin's Contracts",
         "src/cruxible_core/governance/seed_artifacts/workspace_file.py::workspace_file_builtin_provider": "seeds the builtin Provider (drift refusal message)",
         "src/cruxible_core/providers/builtin_workspace_file.py::WorkspaceFile.__call__": "refusal message of the builtin itself",
         "src/cruxible_core/service/uploads.py::check_upload_procedure": "refusal message: an upload is read by the builtin",

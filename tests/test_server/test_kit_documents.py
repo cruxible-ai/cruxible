@@ -34,6 +34,12 @@ from tests.test_server.test_playbill_kits import SEATS, _claim_type, _open_world
 GUIDE = "acme.seats-review"
 
 
+def _added(status: Any) -> tuple[Any, ...]:
+    """The kits these tests add: every instance also holds creation's base kit."""
+
+    return tuple(kit for kit in status.kits if kit.kit_id != "base")
+
+
 @pytest.fixture
 def worlds(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
     """The publisher and consumer pair of the kit tests."""
@@ -221,7 +227,8 @@ def test_a_kit_installs_upgrades_and_removes_its_documents(
     )
     assert found is not None
     assert GUIDE_PATH in {item.path for item in found[1].artifacts}
-    assert playbill_api.playbill_kit_status(consumer.instance_id).kits[0].drifted == ()
+    (installed,) = _added(playbill_api.playbill_kit_status(consumer.instance_id))
+    assert installed.drifted == ()
     # The guides link resolved within the kit's own change set and is served.
     guidance = playbill_api.playbill_backlinks(
         consumer.instance_id, request=BacklinksRequest(ref=f"ClaimType:{SEATS}")
@@ -262,7 +269,7 @@ def test_a_kit_installs_upgrades_and_removes_its_documents(
         row.action == "keep" and row.detail == "Documents have no retired state and remain accepted"
     )
     assert GUIDE_PATH in consumer.tree()
-    assert playbill_api.playbill_kit_status(consumer.instance_id).kits == ()
+    assert _added(playbill_api.playbill_kit_status(consumer.instance_id)) == ()
 
 
 def test_a_missing_document_body_refuses_before_anything_is_written(
@@ -300,7 +307,9 @@ def test_install_cost_is_linear_in_kit_members(worlds: tuple[_World, _World]) ->
     from cruxible_client.contracts.kits import KitAddRequest, KitBuildRequest
 
     publisher, consumer = worlds
-    sizes = (2, 4, 8)
+    # Size 1 installs first, unmeasured: the first write after creation also
+    # carries one copy of the projection creation's base kit add published.
+    sizes = (1, 2, 4, 8)
     for size in sizes:
         for index in range(size):
             _document(
@@ -340,6 +349,6 @@ def test_install_cost_is_linear_in_kit_members(worlds: tuple[_World, _World]) ->
         assert result.status == "accepted", result
         counts[size] = statements[0]
     print("item 11 kit install statements", counts)
-    small, middle, large = (counts[size] for size in sizes)
+    small, middle, large = (counts[size] for size in sizes[1:])
     # Linear in members: 4 more Documents cost about twice what 2 more cost.
     assert large - middle <= 2 * (middle - small) * 1.25 + 60, counts
