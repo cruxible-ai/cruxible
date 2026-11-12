@@ -35,22 +35,29 @@ OSV_STEP_IDS = ("matched", "affected")
 
 
 def load(checkout: Path) -> SimpleNamespace:
-    """The kit gate's modules, imported from ``checkout`` without writing bytecode there."""
+    """The kit gate's modules from ``checkout``, which must be on ``PYTHONPATH``.
 
-    pilot = checkout / "kits/security/source/pilot"
-    if str(pilot) not in sys.path:
-        sys.path.insert(0, str(pilot))
-    previous = sys.dont_write_bytecode
+    Bytecode writing is turned off for the rest of the process first: the kit's
+    modules import more of the kit lazily (its provider package among them), and
+    none of it may write into the kits checkout.
+    """
+
+    import pytest
+
+    pilot = (checkout / "kits/security/source/pilot").resolve()
+    if not any(entry and Path(entry).resolve() == pilot for entry in sys.path):
+        pytest.fail(
+            f"put {pilot} on PYTHONPATH (python -m tests.pilot_contract_batch does it); "
+            "the kit gate's modules import each other by name"
+        )
     sys.dont_write_bytecode = True
-    try:
-        import definitions
-        import inventory
-        import osv
-        import template
-        import test_pilot_gate
-        import test_start_gate
-    finally:
-        sys.dont_write_bytecode = previous
+    import definitions
+    import inventory
+    import osv
+    import template
+    import test_pilot_gate
+    import test_start_gate
+
     return SimpleNamespace(
         definitions=definitions,
         inventory=inventory,
@@ -96,12 +103,16 @@ def _patched(target: Any, name: str, replacement: Any) -> Iterator[Any]:
         setattr(target, name, original)
 
 
-def start_run(kit: SimpleNamespace, root: Path) -> StartRun:
+def start_run(
+    kit: SimpleNamespace, root: Path, *, prepare: Callable[[Any], None] | None = None
+) -> StartRun:
     """Create an instance, install the kit, adopt the template, run security.start.
 
     Each phase is timed by wrapping the kit gate's own calls: ``kit_world`` (less
     the instance it opens, ``initialize_local``), the template's ``submit``, and
-    every ``service_run_playbill_line`` the Runbook makes.
+    every ``service_run_playbill_line`` the Runbook makes. ``prepare`` runs on the
+    instance between the kit install and the template (untimed): a scenario's
+    own authoring, such as a successor of a kit definition.
     """
 
     import tests.core_support._support as core_support
@@ -129,6 +140,8 @@ def start_run(kit: SimpleNamespace, root: Path) -> StartRun:
             with Stopwatch() as watch:
                 result = original(*args, **kwargs)
             times["kit"] += watch.seconds
+            if prepare is not None:
+                prepare(result)
             return result
 
         return wrapper

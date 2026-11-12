@@ -87,6 +87,8 @@ class Scenario:
     name: str
     owner: str
     title: str
+    #: What the transcript looks like when the scenario is green (its module docstring).
+    expected: str = ""
     lines: list[str] = field(default_factory=list)
     measures: list[tuple[str, str]] = field(default_factory=list)
 
@@ -140,7 +142,10 @@ class Scenario:
             "",
         ]
         tail = ["", f"STOPPED: {stopped}"] if stopped else []
-        return "\n".join([*head, *self.lines, *tail]) + "\n"
+        expected = []
+        if self.expected and status != "passed":
+            expected = ["", "-- expected when green " + "-" * 50, self.expected.strip()]
+        return "\n".join([*head, *self.lines, *tail, *expected]) + "\n"
 
     def write(self, status: str, stopped: str | None = None) -> None:
         out = out_dir()

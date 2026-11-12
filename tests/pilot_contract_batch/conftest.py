@@ -61,7 +61,10 @@ def pilot(
     if marker is None:
         raise RuntimeError("a pilot scenario needs @pytest.mark.pilot(name, owner=, title=)")
     scenario = Scenario(
-        name=marker.args[0], owner=marker.kwargs["owner"], title=marker.kwargs["title"]
+        name=marker.args[0],
+        owner=marker.kwargs["owner"],
+        title=marker.kwargs["title"],
+        expected=request.module.__doc__ or "",
     )
     isolate_home(monkeypatch, tmp_path)
     yield scenario
