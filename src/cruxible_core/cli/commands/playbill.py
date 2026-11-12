@@ -117,6 +117,7 @@ from cruxible_client.contracts.get_display import (
     GET_CLI_VALUE_WIDTH,
     get_value_display,
 )
+from cruxible_client.contracts.kit_requires import KitRequirement
 from cruxible_client.contracts.kits import (
     KitAddRequest,
     KitAutomationTemplate,
@@ -2159,6 +2160,15 @@ def _kit_directory_file(source: str, path: str | None) -> Path | None:
     return (directory / path).absolute()
 
 
+def _echo_kit_requires(requires: tuple[KitRequirement, ...]) -> None:
+    """The kits a release requires: kit build leaves out what they own."""
+
+    if requires:
+        click.echo(
+            "  requires: " + ", ".join(f"{item.kit_id} >= {item.min_version}" for item in requires)
+        )
+
+
 def _echo_kit_change(
     result: KitChangeResult, *, template_on_disk: Path | None = None, source: str | None = None
 ) -> None:
@@ -2346,6 +2356,7 @@ def build_kit(
             f"{len(bundle.manifest.providers)} provider package(s), "
             f"{bundle.manifest.content_digest}"
         )
+        _echo_kit_requires(bundle.manifest.requires)
         template = bundle.manifest.automation_template
         _echo_automation_template(template, on_disk=_kit_directory_file(str(out), template))
 
@@ -2458,6 +2469,7 @@ def add_kit(
             template_on_disk=_kit_directory_file(kit, result.automation_template),
             source=_pull_reference(kit, origin),
         )
+        _echo_kit_requires(bundle.manifest.requires)
 
 
 @kit_group.command("pull")
@@ -2558,6 +2570,16 @@ def kit_status(offline: bool, output_json: bool) -> None:
             click.echo(
                 f"  provider {provider.provider_id} ({provider.package} {provider.version}): "
                 f"{state}"
+            )
+        for required in kit.requires:
+            held = (
+                "not installed"
+                if required.installed_version is None
+                else f"installed {required.installed_version}"
+            )
+            click.echo(
+                f"  requires {required.kit_id} >= {required.min_version}: "
+                f"{'met' if required.met else 'not met'} ({held})"
             )
         for path in kit.drifted:
             click.echo(f"  edited locally: {path}")
