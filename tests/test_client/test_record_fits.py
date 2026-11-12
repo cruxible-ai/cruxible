@@ -10,6 +10,7 @@ import pytest
 
 from cruxible_client.contracts.capability_fit import (
     ABSENT,
+    MAX_CAPTURE_KIND_NESTING,
     CaptureCovers,
     FitResult,
     Fits,
@@ -1194,7 +1195,7 @@ def test_equal_declarations_still_ask_the_kinds_their_header_reaches(side: FitSi
     )
 
 
-def test_equal_declarations_without_a_capture_reference_ask_nothing() -> None:
+def test_equal_declarations_without_a_capture_reference_ask_only_their_rows() -> None:
     declared = _declared(HIT_WIDE, rank="int", query="string{max_len: 128}")
     asked: list[str] = []
 
@@ -1208,7 +1209,8 @@ def test_equal_declarations_without_a_capture_reference_ask_nothing() -> None:
 
     copy = DeclaredCaptureKind.model_validate(declared.model_dump(mode="json"))
     assert layout_covers(declared, copy, type_fits=type_fits, row_fits=row_fits) is None
-    assert asked == []
+    # One record set: its row is asked (a rule's type does not say what the row holds).
+    assert asked == ["row"]
 
 
 LINKED_ROW = _contract("acme.linked_hit", {"title": "string", "link": "capture<acme.links>"})
@@ -1259,3 +1261,119 @@ def test_equal_declarations_still_ask_the_kinds_their_rows_reach(side: FitSide) 
         sender=WIDE_QUERY,
         receiver=NARROW_QUERY,
     )
+
+
+# The second review's input: the row declares the Capture; its rule's type does not say so.
+PLAIN_LINKED_ROW = _contract("acme.linked_row", {"link": "capture<acme.links>"})
+
+
+def _hits_with_plain_rule(rule: dict[str, str]) -> DeclaredCaptureKind:
+    return DeclaredCaptureKind.model_validate(
+        {
+            "name": KIND,
+            "decoding": JSON_DECODING,
+            "layout": {
+                "records": {
+                    "hits": {
+                        "at": "/hits/*",
+                        "row": _pinned(PLAIN_LINKED_ROW).model_dump(mode="json"),
+                        "fields": {"link": rule},
+                    }
+                }
+            },
+        }
+    )
+
+
+def _links_set(record_set: str, at: str) -> DeclaredCaptureKind:
+    return _set_layout(record_set, at).model_copy(update={"name": "acme.links"})
+
+
+@pytest.mark.parametrize("side", SIDES)
+@pytest.mark.parametrize(
+    "rule",
+    [{"at": "link"}, {"at": "link", "type": "string"}],
+    ids=["rule_type_omitted", "rule_type_scalar"],
+)
+def test_equal_declarations_ask_rows_whose_rules_do_not_name_the_capture(
+    side: FitSide, rule: dict[str, str]
+) -> None:
+    hits = _hits_with_plain_rule(rule)
+    covers = _by_name(hits, _links_set("other", "/other/*"), hits, _links_set("hits", "/hits/*"))
+    root = _contract("acme.root", {"doc": "capture<acme.hits>"})
+    closure = [root, PLAIN_LINKED_ROW, OTHER_SET_ROW]
+    result = record_fits(
+        _pinned(root),
+        _pinned(root),
+        closure_lookup(closure),
+        closure_lookup(closure),
+        side=side,
+        capture_covers=covers,
+    )
+    assert result == Unfit(
+        side=side,
+        path="doc.layout.records.hits.row.link.layout.records.hits",
+        problem="layout",
+        sender=ABSENT,
+        receiver="at /hits/*",
+    )
+
+
+# -- kinds nested in kinds: bounded --------------------------------------------------------
+
+
+def _kind_cycle(count: int) -> CaptureCovers:
+    """``count`` distinct kinds, each header naming the next, the last naming the first;
+    the producer's query is narrower than the reader's, so every kind covers."""
+
+    names = [f"acme.k{index:03d}" for index in range(count)]
+    following = names[1:] + names[:1]
+    return _by_name(
+        *[_linked(name, after, NARROW_QUERY) for name, after in zip(names, following)],
+        *[_linked(name, after, WIDE_QUERY) for name, after in zip(names, following)],
+    )
+
+
+def _fit_cycle(covers: CaptureCovers, start: str, side: FitSide = "request") -> FitResult:
+    return _fit(
+        {"doc": f"capture<{start}>"},
+        {"doc": f"capture<{start}>"},
+        side=side,
+        sender_closure=[OTHER_SET_ROW],
+        receiver_closure=[OTHER_SET_ROW],
+        covers=covers,
+    )
+
+
+@pytest.mark.parametrize("count", [8, MAX_CAPTURE_KIND_NESTING])
+def test_a_cycle_of_kinds_within_the_bound_fits(count: int) -> None:
+    covers = _kind_cycle(count)
+    assert _fit_cycle(covers, "acme.k000") == STRUCTURAL
+    assert _fit_cycle(covers, f"acme.k{count - 1:03d}") == STRUCTURAL
+
+
+@pytest.mark.parametrize("side", SIDES)
+def test_a_cycle_of_kinds_past_the_bound_is_unfit(side: FitSide) -> None:
+    covers = _kind_cycle(150)
+    expected = Unfit(
+        side=side,
+        path="doc.layout.header.parent.type",
+        problem="layout",
+        sender=f"a capture kind nested more than {MAX_CAPTURE_KIND_NESTING} kinds deep",
+        receiver=f"at most {MAX_CAPTURE_KIND_NESTING} nested capture kinds",
+    )
+    for start in ("acme.k000", "acme.k075", "acme.k149"):
+        assert _fit_cycle(covers, start, side) == expected
+    assert render_unfit(expected, slot="match").startswith(
+        f"{side}.doc.layout.header.parent.type: "
+    )
+    assert f"nested more than {MAX_CAPTURE_KIND_NESTING} kinds deep" in render_unfit(
+        expected, slot="match"
+    )
+
+
+def test_the_bound_is_reached_one_kind_past_it() -> None:
+    covers = _kind_cycle(MAX_CAPTURE_KIND_NESTING + 1)
+    result = _fit_cycle(covers, "acme.k000")
+    assert isinstance(result, Unfit)
+    assert result.sender.startswith("a capture kind nested more than")

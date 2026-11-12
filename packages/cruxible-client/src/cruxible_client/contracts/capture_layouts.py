@@ -557,9 +557,10 @@ def _shared_layout_gap(
 ) -> LayoutGap | None:
     """Equal declarations of one kind: ask only what can reach another kind's layout.
 
-    Header rules whose type may reach a Capture are fitted to themselves; a
-    record set with such a rule fits its row Contract to itself, then those
-    rules. Everything else is the same declaration and is not compared.
+    Header rules whose type may reach a Capture are fitted to themselves; every
+    record set fits its row Contract to itself (a rule's type does not say what
+    the row contains), then its rules whose type may reach a Capture.
+    Everything else is the same declaration and is not compared.
     """
 
     for name, rule in layout.header.items():
@@ -578,8 +579,6 @@ def _shared_layout_gap(
             for name, rule in rules.items()
             if _may_reach_capture(field_type := rule.field_type())
         ]
-        if not reaching:
-            continue
         row = row_fits(item.row, item.row)
         if isinstance(row, Unfit):
             return LayoutGap(
@@ -611,10 +610,10 @@ def layout_covers(
     parts, a row Contract that fits, and every field rule of the reader's
     present (the same rule, with a fitting type); a count the reader declares,
     the producer declares at the same path. Two equal declarations cover each
-    other in everything the kind itself declares, but a rule type that names a
-    ``capture<J>`` or a Contract (which may reach one) still asks its fit, since
-    the two sides' layouts of ``J`` are not part of this kind
-    (:func:`_shared_layout_gap`); a layout with no such type covers at once.
+    other in everything the kind itself declares, but each row Contract, and a
+    rule type that names a ``capture<J>`` or a Contract (which may reach one),
+    still asks its fit, since the two sides' layouts of ``J`` are not part of
+    this kind (:func:`_shared_layout_gap`).
     """
 
     if producer.name != reader.name:

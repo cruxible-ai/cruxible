@@ -166,6 +166,11 @@ CaptureCovers: TypeAlias = Callable[[str, "TypeFit", "RowFit"], "LayoutGap | Non
 #: The root a :data:`TypeFit` reports a failing path from (``value``, ``value[]``).
 _TYPE_FIT_ROOT = "value"
 
+#: How deep kinds may refer to kinds through their layouts within one fit call.
+MAX_CAPTURE_KIND_NESTING = 32
+_NESTED_TOO_DEEP = f"a capture kind nested more than {MAX_CAPTURE_KIND_NESTING} kinds deep"
+_NESTING_ALLOWED = f"at most {MAX_CAPTURE_KIND_NESTING} nested capture kinds"
+
 #: How two Contracts are compared. ``body``: a nested record, whose absent optional
 #: fields are absent keys. ``envelope``: the row of a ``record<C>`` or ``result<C>``,
 #: whose value carries every row field as a ``field_result``.
@@ -334,6 +339,8 @@ class _Walk:
         self.entered = 0
         #: Duties taken from the work stack: the walk's own work, for the cost tests.
         self.steps = 0
+        #: Kinds being judged inside one another right now (each one a seam call).
+        self.kind_depth = 0
 
     # -- entry points (record_fits, and the two callables the Capture seam receives)
 
@@ -468,6 +475,8 @@ class _Walk:
             if isinstance(duty, _Reject):
                 return duty.fail, None
             if isinstance(duty, _Covers):
+                if self._too_deep(duty.kind):
+                    return _nesting_fail(_Seg(duty.segment)), None
                 gap = self._kind(duty.kind)
                 if gap is not None:
                     return _layout_fail(_Seg(duty.segment), gap), None
@@ -518,12 +527,28 @@ class _Walk:
         if hit:
             return cast("LayoutGap | None", value)
         item = self._begin(key)
-        gap = self.capture_covers(kind, self.type_fits, self.record)
+        self.kind_depth += 1
+        try:
+            gap = self.capture_covers(kind, self.type_fits, self.record)
+        finally:
+            self.kind_depth -= 1
         self._settle(item, gap)
         return gap
 
+    def _too_deep(self, kind: str) -> bool:
+        """Whether judging ``kind`` now would nest more than the bound allows."""
+
+        key: _Key = ("kind", kind)
+        return (
+            self.kind_depth >= MAX_CAPTURE_KIND_NESTING
+            and key not in self.active
+            and key not in self.memo
+        )
+
     def _identical(self, ref: ContractRef) -> _Fail | None:
         for kind, path in self._kinds_of(ref).items():
+            if self._too_deep(kind):
+                return _nesting_fail(path)
             gap = self._kind(kind)
             if gap is not None:
                 return _layout_fail(path, gap)
@@ -656,6 +681,10 @@ def _reject(duties: list[_Duty], sender: FieldType, receiver: FieldType, path: s
     return True
 
 
+def _nesting_fail(path: _Seg) -> _Fail:
+    return _Fail(path, "layout", _NESTED_TOO_DEEP, _NESTING_ALLOWED)
+
+
 def _layout_fail(path: _Seg, gap: LayoutGap) -> _Fail:
     return _Fail(path, "layout", gap.producer, gap.reader, f"layout.{gap.entry}")
 
@@ -696,7 +725,8 @@ def record_fits(
     field-name order, is returned as :class:`Unfit` on ``side``. Within one
     call each (sender digest, receiver digest) pair is walked once, the kinds a
     digest reaches are collected once, and the seam is asked once per kind. An
-    unresolved pin raises :class:`FitUnresolved`.
+    unresolved pin raises :class:`FitUnresolved`. Kinds that refer to kinds
+    through their layouts more than :data:`MAX_CAPTURE_KIND_NESTING` deep are unfit.
     """
 
     return _Walk(resolve_sender, resolve_receiver, side, capture_covers).record(sender, receiver)
@@ -807,6 +837,7 @@ __all__ = [
     "FitUnresolved",
     "Fits",
     "LineBindingRefusalCode",
+    "MAX_CAPTURE_KIND_NESTING",
     "TruncationUnfit",
     "Unfit",
     "binding_undeclared_message",
