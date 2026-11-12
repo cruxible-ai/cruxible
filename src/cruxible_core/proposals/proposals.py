@@ -56,6 +56,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.capture_erasure import RecordedCaptureErasure
+from cruxible_client.contracts.capture_layouts import LAYOUT_REF_UNRESOLVED
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
     CaptureContractV1,
@@ -3217,6 +3218,69 @@ def _capture_contract_dependents(
     return tuple(sorted(stranded, key=lambda item: item.encode("utf-8")))
 
 
+def _candidate_pinned_contract(context: _MemberContext, ref: Any) -> Any:
+    """The candidate Contract ``ref`` names, at its pinned digest when it pins one."""
+
+    from cruxible_client.contracts.shapes import contract_digest
+
+    found = _candidate_contract(context, f"{ref.name}/v{ref.version}")
+    if found is None or (ref.digest is not None and contract_digest(found).tagged != ref.digest):
+        return None
+    return found
+
+
+def _candidate_capture_kind_exists(context: _MemberContext, name: str) -> bool:
+    from cruxible_client.contracts.captures import capture_contract_path
+
+    try:
+        return capture_contract_path(name) in context.candidate_tree
+    except CaptureFormatError:
+        return False
+
+
+def _layout_key_problems(context: _MemberContext, layout: Any) -> tuple[str, ...]:
+    """Each layout key part typed ``key<K>``/``key_part<K:p>`` names a SubjectKind and part here.
+
+    O(key parts): one path read per named SubjectKind, never a scan.
+    """
+
+    from cruxible_client.contracts.shapes import KeyPartType, KeyType
+    from cruxible_client.contracts.subject_kinds import (
+        key_predicate,
+        parse_subject_kind,
+        subject_kind_path,
+    )
+
+    problems: list[str] = []
+    for set_name, record_set in layout.records.items():
+        for part, rule in record_set.key.items():
+            field_type = rule.field_type()
+            if not isinstance(field_type, KeyType | KeyPartType):
+                continue
+            entry = f"records.{set_name}.key.{part}"
+            path = subject_kind_path(field_type.subject_kind)
+            content = context.candidate_tree.get(path)
+            kind = None if content is None else parse_subject_kind(content, path=path)
+            if kind is None:
+                problems.append(
+                    f"{entry}: {rule.type} names no SubjectKind {field_type.subject_kind!r} here."
+                )
+            elif isinstance(field_type, KeyPartType) and (
+                key_predicate(kind, field_type.part) is None
+            ):
+                problems.append(
+                    f"{entry}: SubjectKind {field_type.subject_kind!r} has no key part "
+                    f"{field_type.part!r}."
+                )
+            elif isinstance(field_type, KeyType) and len(kind.keys) != 1:
+                problems.append(
+                    f"{entry}: key<{field_type.subject_kind}> names the whole key of a one-key "
+                    f"kind; {field_type.subject_kind!r} has {len(kind.keys)} key parts: use "
+                    "key_part<K:part>."
+                )
+    return tuple(problems)
+
+
 def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
     contract = parse_capture_contract(context.content, path=context.path)
     if (
@@ -3238,9 +3302,21 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
         contract,
         path=context.path,
         predecessor=predecessor,
+        contract_lookup=lambda ref: _candidate_pinned_contract(context, ref),
+        capture_kind_exists=lambda name: _candidate_capture_kind_exists(context, name),
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    layout = getattr(contract, "layout", None)
+    if layout is not None and contract.lifecycle.state == "live":
+        key_problems = _layout_key_problems(context, layout)
+        if key_problems:
+            return _MemberVerdict(
+                diagnostics=tuple(
+                    _diagnostic(LAYOUT_REF_UNRESOLVED, message, context.path)
+                    for message in key_problems
+                )
+            )
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted CaptureContract law result is incomplete")
     if predecessor is not None:
