@@ -1,0 +1,35 @@
+{
+  "capture": "$steps.matched.document",
+  "complete_when": {
+    "count_at": "/count"
+  },
+  "fields": {
+    "osv_id": {
+      "at": "osv_id"
+    }
+  },
+  "header": {
+    "queried": {
+      "at": "/queried",
+      "type": "list<string{max_len: 256}>{max_items: 20000}"
+    }
+  },
+  "id": "affected",
+  "key": {
+    "cve_id": {
+      "at": "cve_id",
+      "type": "key_part<security.vulnerability:cve_id>"
+    },
+    "purl": {
+      "at": "purl",
+      "type": "key_part<security.component:purl>"
+    }
+  },
+  "kind": "extract",
+  "records": "/affected/*",
+  "row": {
+    "digest": "sha256:78e3bcd86138b59ec55cdac71ea154aaf3e26bebdaca1896679c46ba9b39bc35",
+    "name": "security.osv-affected",
+    "version": 1
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "What to read from an authorized workspace: relative_path names one file, or glob names a pattern whose matches (at most max_files, default 100) are each read; give exactly one of the two. workspace names the authorized root (omitted: the attached workspace, else the only one); revision is the working tree.",
+  "fields": {
+    "glob": {
+      "optional": true,
+      "type": {
+        "kind": "string",
+        "max_len": 1024,
+        "min_len": 1
+      }
+    },
+    "logical_source": {
+      "type": {
+        "kind": "string",
+        "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+      }
+    },
+    "max_files": {
+      "optional": true,
+      "type": {
+        "kind": "int",
+        "max": 1000,
+        "min": 1
+      }
+    },
+    "relative_path": {
+      "optional": true,
+      "type": {
+        "kind": "string",
+        "max_len": 1024,
+        "min_len": 1
+      }
+    },
+    "revision": {
+      "optional": true,
+      "type": {
+        "kind": "enum",
+        "members": [
+          "working"
+        ]
+      }
+    },
+    "workspace": {
+      "optional": true,
+      "type": {
+        "kind": "string",
+        "max_len": 255,
+        "min_len": 1
+      }
+    }
+  },
+  "name": "workspace.file.request",
+  "version": 1
+}

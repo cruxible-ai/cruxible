@@ -1,0 +1,9 @@
+{
+  "capture": "$steps.derived.document",
+  "header": [
+    "inventory"
+  ],
+  "id": "listed",
+  "kind": "extract",
+  "records": "components"
+}

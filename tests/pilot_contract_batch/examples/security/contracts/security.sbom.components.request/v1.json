@@ -1,0 +1,26 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "One CycloneDX JSON SBOM this run read (its Capture bytes, passed by core), its workspace path (the inventory's name when the SBOM has no metadata.component purl) and the logical source the derived document is stated under.",
+  "fields": {
+    "logical_source": {
+      "type": {
+        "kind": "string",
+        "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+      }
+    },
+    "relative_path": {
+      "type": {
+        "kind": "string",
+        "max_len": 256
+      }
+    },
+    "sbom": {
+      "type": {
+        "capture_kind": "security.cyclonedx-sbom",
+        "kind": "capture"
+      }
+    }
+  },
+  "name": "security.sbom.components.request",
+  "version": 1
+}
