@@ -30,6 +30,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringExistingClaimDisposition,
     AuthoringPayload,
     AuthoringTriggerSchedule,
+    CapabilityAuthoringPayload,
     ChangeSetAuthoringPayload,
     ClaimAuthoringPayload,
     ClaimDependencyDrafts,
@@ -79,6 +80,7 @@ from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
     validate_change_set_rationale,
 )
+from cruxible_client.contracts.provider_operations import OperationEffect
 from cruxible_client.contracts.query.authored import QuerySpecInput
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
@@ -87,9 +89,11 @@ from cruxible_client.contracts.query.definitions import (
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
     ContractField,
+    ContractFormatError,
     ContractTypeRefused,
     claim_rationale,
     contract_type_refusal,
+    parse_contract_ref,
     parse_field_spelling,
 )
 from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyReference
@@ -587,6 +591,32 @@ class ContractInput(_StrictInputModel):
     )
 
 
+class CapabilityInput(_StrictInputModel):
+    """One Capability version: a named, immutable kind of call a Procedure slot names.
+
+    ``in`` is the request Contract a slot sends and ``out`` the result Contract
+    it receives back, each an accepted Contract written ``name@N`` (accepted
+    earlier or in the same change set). ``effect`` is the same for every version
+    of one name; a different effect is a different capability. Version 1 starts
+    a capability; version N names version N-1 as its predecessor. An accepted
+    version never changes: author the next.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+    kind: Literal["capability"]
+    name: str = Field(description="The capability name, e.g. 'security.osv.match'.")
+    version: int = Field(ge=1, description="The version this declares, starting at 1.")
+    description: str = Field(
+        description="What the capability does, led by its result; covered by its digest."
+    )
+    effect: OperationEffect = Field(
+        description="pure, external_read or external_write; fixed across versions."
+    )
+    in_: str = Field(alias="in", description="The request Contract, 'name@N'.")
+    out: str = Field(description="The result Contract, 'name@N'.")
+
+
 AuthoringChangeSetMemberInput: TypeAlias = Annotated[
     ClaimInput
     | ClaimTypeInput
@@ -603,6 +633,7 @@ AuthoringChangeSetMemberInput: TypeAlias = Annotated[
     | RunbookInput
     | SubjectKindInput
     | ContractInput
+    | CapabilityInput
     | ProcedureInput,
     Field(discriminator="kind"),
     BeforeValidator(_authored_procedure_input_shape),
@@ -638,6 +669,7 @@ AuthoringInput: TypeAlias = Annotated[
     | RunbookInput
     | SubjectKindInput
     | ContractInput
+    | CapabilityInput
     | ChangeSetInput,
     Field(discriminator="kind"),
     BeforeValidator(_authored_procedure_input_shape),
@@ -1000,6 +1032,27 @@ def _contract_payload(value: ContractInput) -> ContractAuthoringPayload:
         ) from exc
 
 
+def _capability_payload(value: CapabilityInput) -> CapabilityAuthoringPayload:
+    try:
+        return CapabilityAuthoringPayload.model_validate(
+            {
+                "name": value.name,
+                "version": value.version,
+                "description": value.description,
+                "effect": value.effect,
+                "in": parse_contract_ref(value.in_),
+                "out": parse_contract_ref(value.out),
+            }
+        )
+    except ContractFormatError as exc:
+        raise AuthoringInputError(
+            "cruxible.capability.invalid",
+            "input",
+            str(exc),
+            "Write in and out as accepted Contract versions, 'name@N'.",
+        ) from exc
+
+
 def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChangeSetMember:
     if isinstance(member, ClaimInput):
         return _claim_payload(member)
@@ -1051,6 +1104,8 @@ def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChange
         return _subject_kind_payload(member)
     if isinstance(member, ContractInput):
         return _contract_payload(member)
+    if isinstance(member, CapabilityInput):
+        return _capability_payload(member)
     return _mandate_payload(member)
 
 
@@ -1114,6 +1169,8 @@ def _lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
         return _subject_kind_payload(value)
     if isinstance(value, ContractInput):
         return _contract_payload(value)
+    if isinstance(value, CapabilityInput):
+        return _capability_payload(value)
     if not isinstance(value, ChangeSetInput):
         # Every single-member *Input wrapper matched above; what is left
         # falls through assuming a change set (`.members`). A bare spec type
@@ -1163,6 +1220,7 @@ __all__ = [
     "AuthoringInput",
     "AuthoringObjectInput",
     "AuthoringSourceInput",
+    "CapabilityInput",
     "ChangeSetInput",
     "ClaimDispositionInput",
     "ClaimRetirementInput",

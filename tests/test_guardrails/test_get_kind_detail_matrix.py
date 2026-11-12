@@ -96,7 +96,7 @@ def refs(world, credential_world, prediction_world, run_world):  # type: ignore[
 
 
 # Read over its own world below.
-_OWN_WORLD = frozenset({"subject_kind", "contract", "runbook"})
+_OWN_WORLD = frozenset({"subject_kind", "contract", "capability", "runbook"})
 
 
 def test_every_get_kind_has_a_reference_in_the_matrix(refs) -> None:  # type: ignore[no-untyped-def]
@@ -148,6 +148,29 @@ def test_every_contract_detail_answers_or_refuses_coded(  # type: ignore[no-unty
         except (CoreError, ClientCoreError):
             continue
         assert (result.kind, result.detail) == ("contract", detail)
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_every_capability_detail_answers_or_refuses_coded(  # type: ignore[no-untyped-def]
+    tmp_path, historical
+) -> None:
+    from tests.test_capabilities.test_capability_artifacts import _accept as accept_capability
+    from tests.test_capabilities.test_capability_artifacts import _capability, _world
+
+    instance, owner = _world(tmp_path)
+    accept_capability(instance, owner, _capability(2, description="Second wording."))
+    history = instance.accepted_history()
+    at = history[-2].oid if historical else None
+    for detail in GET_DETAILS_BY_KIND["capability"]:
+        try:
+            result = service_playbill_get(
+                instance,
+                request=GetRequest(ref="Capability:acme.match@1", detail=detail, at=at),
+                access=_ACCESS,
+            )
+        except (CoreError, ClientCoreError):
+            continue
+        assert (result.kind, result.detail) == ("capability", detail)
 
 
 @pytest.mark.parametrize("historical", [False, True])

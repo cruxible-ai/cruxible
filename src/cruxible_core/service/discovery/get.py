@@ -27,6 +27,7 @@ from typing import Any, Literal, cast
 from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
+from cruxible_client.contracts.capabilities import capability_ref_for_identity
 from cruxible_client.contracts.captures import (
     CaptureContractAny as CaptureContract,
 )
@@ -68,6 +69,7 @@ from cruxible_client.contracts.get_reads import (
     GetAttestationEvidence,
     GetBacklinks,
     GetBody,
+    GetCapabilityCard,
     GetCaptureContractCard,
     GetCaptureErasure,
     GetCaptureEvidence,
@@ -237,6 +239,7 @@ _TYPED_PREFIXES: Mapping[str, GetRefKind] = {
     "Trigger": "trigger",
     "SubjectKind": "subject_kind",
     "Contract": "contract",
+    "Capability": "capability",
     "Proposal": "proposal",
     "Line": "line",
     "Capture": "capture",
@@ -268,6 +271,7 @@ _PROJECTION_KIND: Mapping[GetRefKind, str] = {
     "procedure_runtime_policy": "procedure-runtime-policy",
     "provider": "provider",
     "contract": "contract",
+    "capability": "capability",
     "runbook": "runbook",
 }
 _REF_KIND = {value: key for key, value in _PROJECTION_KIND.items()}
@@ -288,6 +292,7 @@ _QUALIFIER: Mapping[GetRefKind, str] = {
     "procedure_runtime_policy": "ProcedureRuntimePolicy",
     "provider": "Provider",
     "contract": "Contract",
+    "capability": "Capability",
     "runbook": "Runbook",
 }
 _NAMED_KINDS: tuple[GetRefKind, ...] = (
@@ -321,6 +326,7 @@ _DISPLAY_PREFIX: Mapping[GetRefKind, str] = {
     "procedure_runtime_policy": "ProcedureRuntimePolicy",
     "provider": "Provider",
     "contract": "Contract",
+    "capability": "Capability",
     "runbook": "Runbook",
 }
 # The orient section that lists each operational kind, named by a refusal
@@ -333,6 +339,7 @@ _ORIENT_SECTION: Mapping[GetRefKind, str] = {
     "mandate": "mandates",
     "capture_contract": "capture_contracts",
     "contract": "contracts",
+    "capability": "capabilities",
     "procedure_run": "runs",
     "principal": "principals",
     "approval_policy": "policies",
@@ -367,6 +374,10 @@ def _display(kind: GetRefKind, identity: str) -> str:
         return name
     if kind == "contract":
         return "Contract:" + contract_ref_for_identity(parse_artifact_identity(identity)).spelling
+    if kind == "capability":
+        return (
+            "Capability:" + capability_ref_for_identity(parse_artifact_identity(identity)).spelling
+        )
     return f"{_DISPLAY_PREFIX[kind]}:{name}"
 
 
@@ -713,6 +724,8 @@ def _resolve_typed(
         return _resolve_provider(projection, name, ref=ref)
     if kind == "contract":
         return _resolve_contract(projection, name, ref=ref, surface=surface)
+    if kind == "capability":
+        return _resolve_capability(projection, name, ref=ref, surface=surface)
     if kind == "subject":
         name = name.removeprefix("Subject:")
         # A Subject reference resolves in the common order -- exact live id,
@@ -794,6 +807,44 @@ def _resolve_contract(projection: Any, name: str, *, ref: str, surface: ReadSurf
     )
     candidates = tuple(f"Contract:{item}" for item in nearest(base or text, names))
     raise _not_found("Contract", ref, candidates, surface=surface, section="contracts")
+
+
+def _resolve_capability(
+    projection: Any, name: str, *, ref: str, surface: ReadSurface
+) -> ResolvedRef:
+    """``Capability:<name>@<N>`` (or ``/v<N>``) names one version; a bare name its newest.
+
+    Served from the capabilities index: an identity seek, or one
+    ``capabilities_by_name_version`` seek for the newest version.
+    """
+
+    from cruxible_core.capabilities.lookup import newest_capability_identity
+
+    text = name.removeprefix("Capability:")
+    identity: str | None = None
+    base, at, version = text.partition("@")
+    if at and version.isdigit():
+        identity = f"Capability:{base}/v{version}"
+    elif "/v" in text:
+        identity = f"Capability:{text}"
+    else:
+        identity = newest_capability_identity(projection, text)
+    row = None if identity is None else _envelope(projection, identity)
+    if row is not None:
+        return ResolvedRef(
+            "capability", row.identity, _display("capability", row.identity), row.path
+        )
+    # The refusal names the nearest accepted names: only on this miss path.
+    names = sorted(
+        {
+            str(item[0])
+            for item in projection.typed.connection.execute(
+                "SELECT DISTINCT capability_name FROM capabilities"
+            )
+        }
+    )
+    candidates = tuple(f"Capability:{item}" for item in nearest(base or text, names))
+    raise _not_found("Capability", ref, candidates, surface=surface, section="capabilities")
 
 
 def _resolve_provider(projection: Any, name: str, *, ref: str) -> ResolvedRef:
@@ -1991,6 +2042,40 @@ def _contract_card(
         predecessor=None if declared.version == 1 else f"{declared.name}@{declared.version - 1}",
         pins=tuple(ref.spelling for ref in declared.refs()),
         next=(_render_get(surface, resolved.display, "history"),),
+    )
+
+
+def _capability_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetCapabilityCard:
+    """One capability version: what it does, its effect and its two Contracts."""
+
+    from cruxible_client.contracts.capabilities import Capability
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        declared = cast(Capability, projection.typed.source(resolved.identity))
+    request = f"Contract:{declared.in_.spelling}"
+    return GetCapabilityCard.model_validate(
+        {
+            "capability": resolved.display,
+            "version": declared.version,
+            "description": declared.description,
+            "effect": declared.effect,
+            "in": declared.in_.spelling,
+            "out": declared.out.spelling,
+            "predecessor": (
+                None if declared.version == 1 else f"{declared.name}@{declared.version - 1}"
+            ),
+            "next": (
+                _render_get(surface, request, "summary"),
+                _render_get(surface, f"Contract:{declared.out.spelling}", "summary"),
+                _render_get(surface, resolved.display, "history"),
+            ),
+        }
     )
 
 
@@ -3274,6 +3359,7 @@ def _proof(
         "procedure_runtime_policy",
         "provider",
         "contract",
+        "capability",
         "runbook",
     }:
         with instance.bind_accepted_projection(coordinate) as projection:
@@ -3488,6 +3574,8 @@ def service_playbill_get(
             card = _subject_kind_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "contract":
             card = _contract_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "capability":
+            card = _capability_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "line":
             card = line_card(
                 instance,

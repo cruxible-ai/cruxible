@@ -137,6 +137,7 @@ def test_role_demotion_inventory_covers_every_candidate_member_family() -> None:
         "runbook",
         "subject-kind",
         "contract",
+        "capability",
         "query-definition",
         "provider",
         "procedure-mandate",

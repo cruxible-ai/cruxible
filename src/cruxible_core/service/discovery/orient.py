@@ -50,6 +50,7 @@ from cruxible_client.contracts.orient import (
     Head,
     OrientArtifactCounts,
     OrientAttention,
+    OrientCapability,
     OrientClaimCounts,
     OrientContract,
     OrientDocument,
@@ -89,10 +90,11 @@ from cruxible_core.indexes.query_selection import (
     LIVE_SUBJECT_COUNTS_SQL,
 )
 from cruxible_core.indexes.sql_batch import select_in
-from cruxible_core.indexes.typed_state import RUNBOOK_LIVE_COUNT_SQL
+from cruxible_core.indexes.typed_state import CAPABILITY_COUNT_SQL, RUNBOOK_LIVE_COUNT_SQL
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.service.discovery.activity import ActivityPosition, activity_page
+from cruxible_core.service.discovery.capabilities import CapabilityKey, capabilities_page
 from cruxible_core.service.discovery.change_reasons import ChangeReasons
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.contracts import ContractKey, contracts_page
@@ -793,6 +795,67 @@ def _contracts_section(
     )
 
 
+def _capabilities_section(
+    instance: PlaybillInstance,
+    base: dict[str, Any],
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    served: AcceptedCoordinate,
+    continuation: ListContinuation | None,
+    limit: int,
+    surface: OrientSurface,
+) -> OrientResult:
+    """One keyset page of accepted capability versions, by name then version.
+
+    Read through ``capabilities_by_name_version``: a page costs its own rows,
+    one more to detect truncation, never a scan or sort of every capability.
+    """
+
+    from cruxible_client.contracts.capabilities import Capability
+
+    after = _keyset_after(continuation)
+    key = None if after is None else CapabilityKey.decode(after)
+    if after is not None and key is None:
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor is malformed; "
+            "orient again without a cursor"
+        )
+    with instance.bind_accepted_projection(coordinate) as projection:
+        rows, stop = capabilities_page(projection.typed.connection, limit=limit, after=key)
+        listed = []
+        for identity, name, version in rows:
+            declared = cast(Capability, projection.typed.source(identity))
+            listed.append(
+                OrientCapability.model_validate(
+                    {
+                        "capability": f"{name}@{version}",
+                        "effect": declared.effect,
+                        "in": declared.in_.spelling,
+                        "out": declared.out.spelling,
+                        "description": declared.description,
+                    }
+                )
+            )
+    next_cursor = (
+        None
+        if stop is None
+        else _keyset_cursor(view="capabilities", served=served, last_key=stop.encode())
+    )
+    calls: list[_Call] = []
+    if listed:
+        calls.append(_Call("get", (("ref", f"Capability:{listed[0].capability}"),)))
+    if next_cursor is not None:
+        calls.append(_Call("orient", (("section", "capabilities"), ("cursor", next_cursor))))
+    return OrientResult(
+        **base,
+        section="capabilities",
+        capabilities=tuple(listed),
+        truncated=next_cursor is not None,
+        next_cursor=next_cursor,
+        next=tuple(render_orient_call(call, surface) for call in calls),
+    )
+
+
 def _page(
     rows: Sequence[Any],
     keys: Sequence[str],
@@ -928,6 +991,16 @@ def service_playbill_orient(
             truncated=next_cursor is not None,
             next_cursor=next_cursor,
             next=tuple(render_orient_call(call, surface) for call in calls),
+        )
+    if section == "capabilities":
+        return _capabilities_section(
+            instance,
+            base,
+            coordinate=coordinate,
+            served=served,
+            continuation=continuation,
+            limit=limit,
+            surface=surface,
         )
     if section == "contracts":
         return _contracts_section(
@@ -1307,6 +1380,8 @@ def _operational_counts(
                 "SELECT count(*) FROM resolution_contracts WHERE lifecycle='live'"
             ),
             "mandates": count("SELECT count(*) FROM procedure_mandates WHERE lifecycle='live'"),
+            # The maintained singleton, never a count of the capability rows.
+            "capabilities": count(CAPABILITY_COUNT_SQL),
         }
     counts["runs"], counts["running"] = run_counts(instance)
     return counts

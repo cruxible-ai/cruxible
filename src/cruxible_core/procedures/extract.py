@@ -126,28 +126,45 @@ STORED_EXTRACT_NODES: tuple[type[ExtractNode], type[LayoutExtractNode]] = (
 KindLookup = Callable[[ArtifactNameRef], Any]
 
 
+#: The key of a sealed node's one resolution slot (see :func:`extract_spec`).
+_SPEC_SLOT_KEY = ("cruxible.procedures.extract_spec",)
+
+
+class _ResolvedSpecSlot:
+    """A sealed node's one remembered resolution: the kind digest and the spec it gave."""
+
+    __slots__ = ("entry",)
+
+    def __init__(self) -> None:
+        self.entry: tuple[str | None, ExtractNode] | None = None
+
+
 def extract_spec(node: StoredExtractNode, kind: Any) -> ExtractNode:
     """The full extract spec ``node`` reads: the one resolution every reader goes through.
 
     ``kind`` is the accepted CaptureKind the node's capture field is committed
-    as. A thin node resolves against the kind's layout once per (node, kind
-    digest): the node is part of a sealed accepted Procedure, so the resolved
-    spec lives exactly as long as that Procedure version and is never rebuilt
-    per record or per run. A layout refusal raises ``LayoutExtractRefused``
-    (a ``ValueError`` carrying its ``code``).
+    as. A node reads one capture field, so a sealed node (part of a sealed
+    accepted Procedure) remembers exactly one resolution: the spec for the kind
+    digest it last read. Runs of an unchanged Procedure over an unchanged kind
+    never resolve again; a successor kind replaces the entry, so the memo holds
+    at most one spec per node and lives as long as the node. An unsealed node
+    resolves on every call. A layout refusal raises ``LayoutExtractRefused`` (a
+    ``ValueError`` carrying its ``code``) and is never remembered.
     """
 
     if isinstance(node, ExtractNode):
         return node
     kind_digest = None if kind is None else capture_contract_digest(kind).tagged
-
-    def resolve() -> ExtractNode:
-        resolved = resolve_layout_extract(node, getattr(kind, "layout", None))
-        # Sealed, so its receipt digest is also computed once.
-        seal(resolved)
-        return resolved
-
-    return sealed_derive(node, ("cruxible.procedures.extract_spec", kind_digest), resolve)
+    slot = sealed_derive(node, _SPEC_SLOT_KEY, _ResolvedSpecSlot)
+    entry = slot.entry
+    if entry is not None and entry[0] == kind_digest:
+        return entry[1]
+    resolved = resolve_layout_extract(node, getattr(kind, "layout", None))
+    # Sealed, so its receipt digest is also computed once.
+    seal(resolved)
+    # One tuple assignment: a concurrent reader sees the old entry or the new one.
+    slot.entry = (kind_digest, resolved)
+    return resolved
 
 
 def extract_capture_ref(

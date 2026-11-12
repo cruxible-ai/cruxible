@@ -217,3 +217,42 @@ def test_a_sealed_node_resolves_once_per_kind_digest(monkeypatch: pytest.MonkeyP
     assert extract_spec(node, successor) == first
     assert extract_spec(node, successor) is extract_spec(node, successor)
     assert calls == ["entries", "entries"]
+
+
+def test_a_sealed_node_remembers_one_resolution_however_many_kinds_it_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.contracts.captures import capture_contract_digest
+    from cruxible_client.contracts.content_memo import sealed_derive
+
+    calls = _counting(monkeypatch)
+    node = _thin(HERE, "security.kev-triage.entries")
+    assert seal(node)
+    base = _stored_kind(HERE, "security.kev-catalog")
+    kinds = []
+    for index in range(128):
+        grown = base.layout.model_dump(mode="json")
+        grown["header"][f"extra_{index}"] = {"at": f"/extra/{index}"}
+        kinds.append(_stored_kind(HERE, "security.kev-catalog", layout=grown))
+    for kind in kinds:
+        extract_spec(node, kind)
+    assert len(calls) == 128
+
+    # The node's memo holds one entry: the last kind it read.
+    slot = sealed_derive(node, core_extract._SPEC_SLOT_KEY, core_extract._ResolvedSpecSlot)
+    assert slot.entry is not None
+    assert slot.entry[0] == capture_contract_digest(kinds[-1]).tagged
+    assert extract_spec(node, kinds[-1]) is slot.entry[1]
+    assert len(calls) == 128
+    # An earlier kind is resolved again and replaces the entry.
+    extract_spec(node, kinds[0])
+    assert len(calls) == 129
+    assert slot.entry[0] == capture_contract_digest(kinds[0]).tagged
+
+
+def test_an_unsealed_node_resolves_on_every_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _counting(monkeypatch)
+    node = _thin(HERE, "security.kev-triage.entries")
+    kind = _stored_kind(HERE, "security.kev-catalog")
+    assert extract_spec(node, kind) == extract_spec(node, kind)
+    assert calls == ["entries", "entries"]

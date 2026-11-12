@@ -416,6 +416,7 @@ _SUBJECT_KIND_PATH_RE = re.compile(
     r"^subject-kinds/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*\.json$"
 )
 _CONTRACT_PATH_RE = re.compile(r"^contracts/[a-z][a-z0-9_.-]{0,127}/v[1-9][0-9]{0,8}\.json$")
+_CAPABILITY_PATH_RE = re.compile(r"^capabilities/[a-z][a-z0-9_.-]{0,127}/v[1-9][0-9]{0,8}\.json$")
 _QUERY_DEFINITION_PATH_RE = re.compile(r"^query-definitions/[a-z][a-z0-9_.-]{0,255}\.json$")
 _EXHAUST_PROMOTION_PATH_RE = re.compile(r"^exhaust-promotions/[a-z][a-z0-9_.-]{0,255}\.json$")
 
@@ -436,6 +437,7 @@ _DEPENDENCY_CLOSED_PATTERNS: Final = (
     _QUERY_DEFINITION_PATH_RE,
     _EXHAUST_PROMOTION_PATH_RE,
     _CONTRACT_PATH_RE,
+    _CAPABILITY_PATH_RE,
 )
 """The member kinds whose three-way rebase reports exact per-member conflicts.
 
@@ -2530,6 +2532,48 @@ def _contract_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _capability_member(context: _MemberContext) -> _MemberVerdict:
+    """Judge one Capability version: immutable, succeeding exactly with the same
+    effect, both Contract pins exact, and ``workspace.`` only for core's builtin.
+
+    Reads the one capability, its predecessor and its two Contracts, by path.
+    """
+
+    from cruxible_client.contracts.capabilities import (
+        capability_digest,
+        evaluate_capability_law,
+        parse_capability,
+    )
+    from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
+
+    capability = parse_capability(context.content, path=context.path)
+    problems = evaluate_capability_law(
+        capability,
+        path=context.path,
+        lookup=context.candidate_tree.get,
+        parent_content=context.parent_content,
+        content=context.content,
+        builtin_capabilities=BUILTIN_CAPABILITY_NAMES,
+    )
+    if problems:
+        return _MemberVerdict(
+            diagnostics=tuple(
+                _diagnostic(problem.code, problem.message, context.path) for problem in problems
+            )
+        )
+    digest = capability_digest(capability).tagged
+    return _accepted(
+        context,
+        _installed(context, capability.artifact_format),
+        predecessor_artifact_digest=None,
+        candidate_artifact_digest=digest,
+        required_tier="governed_write",
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={"artifact_digest": digest, "verdict": "accepted"},
+    )
+
+
 def _literal_object_traversal(
     query: QueryDefinition,
     *,
@@ -3249,12 +3293,12 @@ def _layout_key_problems(context: _MemberContext, layout: Any) -> tuple[str, ...
     """
 
     from cruxible_client.contracts.capture_layouts import layout_rule_types
-    from cruxible_client.contracts.shapes import _key_type_problem, key_types
+    from cruxible_client.contracts.shapes import key_type_problem, key_types
 
     problems: list[str] = []
     for entry, field_type in layout_rule_types(layout):
         for found in key_types(field_type):
-            problem = _key_type_problem(found, context.candidate_tree.get)
+            problem = key_type_problem(found, context.candidate_tree.get)
             if problem is not None:
                 problems.append(f"{entry}: {problem}")
     return tuple(dict.fromkeys(problems))
@@ -4266,6 +4310,14 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
         format_code="cruxible.contract.format_invalid",
     ),
     _MemberKind(
+        name="capability",
+        pattern=_CAPABILITY_PATH_RE,
+        removal_code="cruxible.capability.removal_unsupported",
+        removal_message="Capabilities are immutable; author the next version instead.",
+        evaluate=_capability_member,
+        format_code="cruxible.capability.format_invalid",
+    ),
+    _MemberKind(
         name="query-definition",
         pattern=_QUERY_DEFINITION_PATH_RE,
         removal_code="cruxible.change_set.delete_unsupported",
@@ -4346,6 +4398,7 @@ ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
     "runbook",
     "subject-kind",
     "contract",
+    "capability",
     "query-definition",
     "provider",
     "procedure-mandate",
@@ -4696,7 +4749,13 @@ def _evaluate_scoped_members(
             )
 
         except FormatError as exc:
-            if kind.name not in {"attestation", "resolution-contract", "trigger", "runbook"}:
+            if kind.name not in {
+                "attestation",
+                "resolution-contract",
+                "trigger",
+                "runbook",
+                "capability",
+            }:
                 raise
             return CandidateEvaluation(
                 candidate_tree,

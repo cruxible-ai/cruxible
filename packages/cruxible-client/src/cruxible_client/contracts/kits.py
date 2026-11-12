@@ -48,8 +48,10 @@ KIT_FILE_DIRECTORY = "files"
 # typed graph (they feed its definition digest). A SubjectKind (how a kind's
 # Subjects are named) names its key ClaimTypes by predicate, so it travels with
 # them. A Contract (one immutable data shape) travels with the Procedures and
-# provider operations whose slots and signatures pin it.
+# provider operations whose slots and signatures pin it. A Capability (one
+# immutable kind of call) travels with the Procedures whose slots name it.
 KIT_ARTIFACT_PREFIXES: tuple[str, ...] = (
+    "capabilities/",
     "capture-contracts/",
     "claim-types/",
     "contracts/",
