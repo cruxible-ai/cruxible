@@ -12,6 +12,7 @@ import json
 from collections.abc import Iterator, Mapping
 from typing import Any
 
+from cruxible_client.contracts.capabilities import Capability
 from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
 from cruxible_client.contracts.shapes import Contract, all_field_refs
 from cruxible_core.errors import RequestRefusedError
@@ -27,6 +28,21 @@ def immutable_contract_error(path: str) -> RequestRefusedError:
             hand_edit=HandEditInstruction(
                 target=path,
                 required_change="Preserve this version and author the next Contract version.",
+            )
+        ),
+    )
+
+
+def immutable_capability_error(path: str) -> RequestRefusedError:
+    """A capability version cannot acquire new bytes or pins."""
+
+    return RequestRefusedError(
+        "cruxible.capability.immutable",
+        f"{path} is immutable; author the next capability version instead.",
+        repair=HandEditRepair(
+            hand_edit=HandEditInstruction(
+                target=path,
+                required_change="Preserve this version and author the next capability version.",
             )
         ),
     )
@@ -180,10 +196,11 @@ def _at(value: object, steps: tuple[str, ...], remap: Mapping[str, str] | None) 
 def movable_references(path: str) -> bool:
     """Whether ``move_references`` can re-pin an artifact at ``path``.
 
-    Contracts support validation only: a remap changing a commitment refuses.
+    Contracts and capabilities support validation only: a remap changing a
+    commitment refuses.
     """
 
-    return path.startswith("contracts/") or reference_fields(path) is not None
+    return path.startswith(("contracts/", "capabilities/")) or reference_fields(path) is not None
 
 
 def referenced_digests(path: str, payload: Mapping[str, Any]) -> Iterator[str]:
@@ -195,6 +212,15 @@ def referenced_digests(path: str, payload: Mapping[str, Any]) -> Iterator[str]:
         # Historical commitment, needed for closure but never freely re-pinned.
         if contract.predecessor_digest is not None:
             yield contract.predecessor_digest
+        return
+    if path.startswith("capabilities/"):
+        # Its two exact Contract pins and its predecessor: commitments, never re-pinned.
+        capability = Capability.model_validate(payload)
+        for ref in capability.contract_refs():
+            if ref.digest is not None:
+                yield ref.digest
+        if capability.predecessor_digest is not None:
+            yield capability.predecessor_digest
         return
     for steps in reference_fields(path) or ():
         yield from _at(payload, steps, None)
@@ -211,6 +237,10 @@ def move_references(
         if any(remap.get(digest, digest) != digest for digest in referenced_digests(path, payload)):
             raise immutable_contract_error(path)
         return Contract.model_validate(payload).model_dump(mode="json")
+    if path.startswith("capabilities/"):
+        if any(remap.get(digest, digest) != digest for digest in referenced_digests(path, payload)):
+            raise immutable_capability_error(path)
+        return Capability.model_validate(payload).model_dump(mode="json")
     fields = reference_fields(path)
     if fields is None:
         raise ValueError(f"{path} has no reference table; it cannot be re-pinned automatically")
