@@ -34417,6 +34417,110 @@
         "run_id"
       ]
     },
+    "InitBaseKit": {
+      "fields": {
+        "kit_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "kit_id",
+          "required": true,
+          "schema": {
+            "title": "Kit Id",
+            "type": "string"
+          }
+        },
+        "proposal_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "accepted",
+              "proposed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "version": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "version",
+          "required": true,
+          "schema": {
+            "title": "Version",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "The base kit creation installs: ``accepted`` at once, or ``proposed`` under\nindependent approval, with the proposal that awaits a second approver.",
+        "properties": {
+          "kit_id": {
+            "title": "Kit Id",
+            "type": "string"
+          },
+          "proposal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "proposed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kit_id",
+          "version",
+          "status"
+        ],
+        "title": "InitBaseKit",
+        "type": "object"
+      },
+      "required_fields": [
+        "kit_id",
+        "status",
+        "version"
+      ]
+    },
     "InitResult": {
       "fields": {
         "approval_policy_mode": {
@@ -34431,6 +34535,25 @@
             ],
             "title": "Approval Policy Mode",
             "type": "string"
+          }
+        },
+        "base_kit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "base_kit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InitBaseKit"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "coordinate": {
@@ -34580,6 +34703,47 @@
             "title": "GitWorkspaceNote",
             "type": "object"
           },
+          "InitBaseKit": {
+            "additionalProperties": false,
+            "description": "The base kit creation installs: ``accepted`` at once, or ``proposed`` under\nindependent approval, with the proposal that awaits a second approver.",
+            "properties": {
+              "kit_id": {
+                "title": "Kit Id",
+                "type": "string"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "status": {
+                "enum": [
+                  "accepted",
+                  "proposed"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "version": {
+                "title": "Version",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kit_id",
+              "version",
+              "status"
+            ],
+            "title": "InitBaseKit",
+            "type": "object"
+          },
           "WorkspaceAdvertisement": {
             "additionalProperties": false,
             "properties": {
@@ -34665,6 +34829,17 @@
             ],
             "title": "Approval Policy Mode",
             "type": "string"
+          },
+          "base_kit": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InitBaseKit"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "coordinate": {
             "$ref": "#/$defs/AcceptedCoordinate"

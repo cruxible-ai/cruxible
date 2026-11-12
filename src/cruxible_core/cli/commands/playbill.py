@@ -1298,6 +1298,16 @@ def init_playbill(
         return
     click.echo(f"Cruxible initialized at {result.coordinate.git_oid}")
     click.echo(f"Approval policy: {result.approval_policy_mode}")
+    if result.base_kit is not None:
+        kit = result.base_kit
+        if kit.status == "accepted":
+            click.echo(f"Base kit: {kit.kit_id} {kit.version} installed")
+        else:
+            click.echo(
+                f"Base kit: {kit.kit_id} {kit.version} awaits approval, proposal "
+                f"{kit.proposal_id} (cruxible proposal approve {kit.proposal_id} "
+                "--signer-id ID --key FILE, as a second principal)"
+            )
     click.echo(f"Workspace refs: {result.workspace_advertisement.status}")
     if result.workspace_advertisement.failure_code is not None:
         click.echo(f"Workspace ref failure: {result.workspace_advertisement.failure_code}")

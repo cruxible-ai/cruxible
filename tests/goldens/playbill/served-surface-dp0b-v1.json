@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-11-12:capability-artifacts",
-    "surface_digest": "sha256:f847d7471e2c6577fc4a40866c01f478b1917d0d93b680da505c0a88d475233b"
+    "register_entry": "2026-11-12:base-kit",
+    "surface_digest": "sha256:dce833c35f96e92575f7344f22f365ca3470b51b13dd1200d6ac617b4dd7c632"
   },
   "surface": {
     "cli_leaves": [
@@ -1475,7 +1475,7 @@
         "request_model": "cruxible_core.server.playbill_request_models.InitRequest",
         "request_schema_digest": "sha256:adfdb247bb056580199eed0832483994262d2466328ff23e329181fb4a18c813",
         "response_model": "cruxible_client.contracts.InitResult",
-        "response_schema_digest": "sha256:8258441209f241fc82a8ecc4558b0742a6655ff56632acec97e2435813131200"
+        "response_schema_digest": "sha256:77cf7947d0acf9ba63b204c43139208393e54d2dd404da409288bd9c143efa23"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.instance_decommission",

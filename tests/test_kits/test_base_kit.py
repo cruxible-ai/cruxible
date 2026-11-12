@@ -458,3 +458,24 @@ def _at(stamp: str) -> Any:
     from cruxible_client.contracts.temporal import parse_datetime
 
     return parse_datetime(stamp)
+
+
+def test_init_says_whether_the_base_kit_landed_or_awaits_approval() -> None:
+    from cruxible_client.contracts.kits import KitChangeResult
+    from cruxible_core.runtime.playbill_api import _init_base_kit
+
+    landed = _init_base_kit(KitChangeResult(kit_id="base", version="1.0.0", status="accepted"))
+    assert landed is not None
+    assert (landed.status, landed.proposal_id) == ("accepted", None)
+    waiting = _init_base_kit(
+        KitChangeResult(
+            kit_id="base",
+            version="1.0.0",
+            status="proposed",
+            proposal_id="sha256:" + "a" * 64,
+            approval_required=True,
+        )
+    )
+    assert waiting is not None
+    assert (waiting.status, waiting.proposal_id) == ("proposed", "sha256:" + "a" * 64)
+    assert _init_base_kit(None) is None
