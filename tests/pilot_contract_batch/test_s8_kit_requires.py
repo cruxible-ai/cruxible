@@ -6,7 +6,7 @@ build leaves the base definition out and records ``requires: base``.
 
 Transcript shape::
 
-    $ cruxible list Capability                         ... the base kit's seven
+    $ cruxible list Capability                         ... the base kit's eight
     $ cruxible authoring submit pilot.hit-row@1 (hit: web.search-result@1)
     $ cruxible kit build pilot-dependent 0.1.0 --owns pilot.
       requires: base >= 1.0.0; web.search-result not in the bundle

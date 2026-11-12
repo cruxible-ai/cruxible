@@ -62,13 +62,13 @@ checkout is read with bytecode writing off.
 | Scenario | What it shows | Owner | Helper the owner implements |
 |---|---|---|---|
 | `baseline` | security kit installed into a fresh instance, `security.start` run offline; OSV `matched`/`affected` as authored today; `affected_by` Claims written; costs | none: passes today | none |
-| `s1-base-kit` | a new instance knows the base kit's seven capabilities and no providers; init opened no socket | base kit (slice 9) | `list_capabilities` |
+| `s1-base-kit` | a new instance knows the base kit's eight capabilities (file reading is `workspace.file` and `workspace.files`) and no providers; init opened no socket | base kit (slice 9) | `list_capabilities` |
 | `s2-capability-slots` | a slot naming a capability is stored as one pin; an unknown capability is refused at authoring | slots in authoring (slice 2) | `author_capability_procedure` |
 | `s3-provider-install` | a provider installs with no kit present and lists what it serves, with descriptions and sources | registration and install (slice 3) | `install_provider_package` |
 | `s4-binding` | a fitting operation binds; three that do not fit get the note's §2.6 messages; binding cost with 1 and 50 other providers | binding (slice 4) | `accept_line` |
 | `s5-swap` | swapping one fitting provider for another keeps the Claims and evidence; receipts record the capability pin and `fit` | binding (slice 4) with Capture-as-field (slice 6) | `run_slot_records` |
 | `s6-thin-extract` | the OSV Procedure with a thin EXTRACT over the kind's layout writes the baseline's Claims in the baseline's time | layout and thin EXTRACT (slice 5) | `adopt_layout_and_thin_extract` |
-| `s7-coverage` | a derive whose layout lacks the kind's record set is refused at binding; nothing retires | coverage (slice 7) | `layout_coverage_gap` |
+| `s7-coverage` | a derive whose layout lacks the kind's record set is refused at binding; nothing retires. A derive whose layout declares it and whose document has it present but empty binds, reads zero records as complete, and retires every title | coverage (slice 7) | `layout_coverage_gap` |
 | `s8-kit-requires` | a kit requiring `base` installs only beside it; `kit remove base` refused under it | kit requires kit (slice 10) | `kit_requires` |
 
 Every helper lives in `surfaces.py` and raises `SurfaceMissing` until its owner
@@ -82,6 +82,13 @@ plain code plus a schema-3 registration each. Copies of base-kit shapes are read
 from `src/cruxible_core/kits/base/` byte for byte, as a provider build copies
 them. `examples/` belongs to the shared-models slice, not to this directory's
 scenarios.
+
+`test_fixtures.py` is not a scenario and writes no transcript. It builds every
+test provider from the wave 0 example artifacts (`examples/base`, standing in
+for the base kit until it ships) and checks that each registration parses as
+the wave 0 model (`PackageRegistration`, schema 3) and passes the registration
+law. The models are the authority: when they and a fixture disagree, the
+fixture changes.
 
 ## Rules for owners
 

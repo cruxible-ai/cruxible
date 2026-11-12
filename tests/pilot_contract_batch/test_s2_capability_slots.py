@@ -3,7 +3,7 @@
 Transcript shape::
 
     $ cruxible list Capability
-      ... the base kit's seven
+      ... the base kit's eight
     $ cruxible authoring submit procedure.json   (slot search: {capability: web.search@1})
       accepted pilot.search-titles; slot search pins web.search@1 sha256:...
     $ cruxible get Procedure:pilot.search-titles

@@ -33,7 +33,7 @@ LINE = "pilot.search-titles"
 QUERY = "cruxible"
 URLS = tuple(hit["link"] for hit in providers.RECORDED_HITS[QUERY])
 
-#: The seven capabilities the base kit declares (note §7.4.1).
+#: The eight capabilities the base kit declares (note §7.4.1; ruling O2 split file reading).
 BASE_CAPABILITIES = (
     "web.fetch",
     "web.fetch.pages",
@@ -42,6 +42,7 @@ BASE_CAPABILITIES = (
     "web.search",
     "web.search.results",
     "workspace.file",
+    "workspace.files",
 )
 
 

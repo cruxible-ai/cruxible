@@ -2,7 +2,7 @@
 
 Transcript shape::
 
-    $ cruxible list Capability                       ... the base kit's seven
+    $ cruxible list Capability                       ... the base kit's eight
     $ cruxible provider install pilot-search / pilot-results / pilot-fetch-only /
       pilot-results-narrow / pilot-results-untyped
     $ cruxible authoring submit line.json   (search -> pilot-search; results left to fit)

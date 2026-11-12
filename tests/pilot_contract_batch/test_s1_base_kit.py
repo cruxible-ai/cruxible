@@ -6,13 +6,16 @@ Transcript shape::
       instance inst_... created in 0.NN s; Internet connections: none
     $ cruxible list Capability
       web.fetch@1     external_read  kit base
-      ... seven rows, the base kit's capabilities (§7.4.1)
+      ... eight rows, the base kit's capabilities (§7.4.1), among them
+      workspace.file@1   pure  kit base    (one path, one Capture)
+      workspace.files@1  pure  kit base    (a glob, a bounded sorted list of Captures)
     $ cruxible kit status --offline
       base 1.0.0 (bundled), no providers
     $ cruxible provider list
-      cruxible-builtin (core's file reader) and nothing else
+      cruxible-builtin (core's file reader, serving workspace.file and workspace.files)
+      and nothing else
 
-Green when: the seven capabilities are listed, each owned by kit ``base``;
+Green when: the eight capabilities are listed, each owned by kit ``base``;
 ``kit status`` shows ``base`` at 1.0.0 with source ``bundled`` and no providers;
 the only live provider is core's builtin; creation opened no Internet socket.
 Cost (when green): instance creation with the base kit, median of three.
@@ -42,7 +45,7 @@ def _create(root: Path) -> tuple[object, float]:
 @pytest.mark.pilot(
     "s1-base-kit",
     owner=surfaces.BASE_KIT,
-    title="create an instance; it knows the base kit's seven capabilities and no providers",
+    title="create an instance; it knows the base kit's eight capabilities and no providers",
 )
 def test_a_new_instance_holds_the_base_kit_and_no_providers(
     pilot: Scenario, tmp_path: Path
@@ -78,6 +81,7 @@ def test_a_new_instance_holds_the_base_kit_and_no_providers(
             f"{provider.provider}  {provider.build}  operations: {', '.join(provider.operations)}"
         )
 
+    assert len(listed) == 8
     assert sorted(entry.pin.name for entry in listed) == sorted(BASE_CAPABILITIES)
     assert {entry.pin.version for entry in listed} == {1}
     assert {entry.kit_id for entry in listed} == {"base"}
