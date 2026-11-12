@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validat
 from .canonical import Sha256Value, canonical_digest
 from .change_control import DryRun, PreviewAt
 from .get_reads import GetCoordinate
+from .kit_requires import KitRequires
 from .projection import AcceptedCoordinate
 from .provider_installation import (
     AutomationCarryV1,
@@ -458,6 +459,11 @@ class KitManifest(_Strict):
     version: str
     # Identity prefixes this kit defines, each ending in a dot (``dev.``).
     owns: tuple[str, ...]
+    #: Kits this kit requires, sorted by kit id: ``kit build`` leaves out every
+    #: definition one of them owns and records the kit here; ``kit add`` refuses
+    #: unless each is installed at ``min_version`` or later. Omitted when empty,
+    #: so a kit that requires nothing keeps its bytes and ``content_digest``.
+    requires: KitRequires = Field(default=(), exclude_if=lambda value: not value)
     artifacts: tuple[KitArtifact, ...]
     #: Provider packages the kit names, sorted by provider id: bundled ones (wheel
     #: and lock carried) and index defaults (installed by name and version).
@@ -480,6 +486,12 @@ class KitManifest(_Strict):
     @classmethod
     def _version(cls, value: str) -> str:
         return _version(value)
+
+    @model_validator(mode="after")
+    def _requires_another(self) -> KitManifest:
+        if any(item.kit_id == self.kit_id for item in self.requires):
+            raise ValueError(f"kit {self.kit_id} cannot require itself")
+        return self
 
     @model_validator(mode="after")
     def _template_is_a_file(self) -> KitManifest:
@@ -844,6 +856,9 @@ class KitReceipt(_Strict):
     provenance: KitProvenance | None = None
     #: The provider packages the installed release bundled.
     providers: tuple[KitProvider, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: The kits the installed release requires, as its manifest names them;
+    #: ``kit remove`` refuses to remove one of them while this kit is installed.
+    requires: KitRequires = Field(default=(), exclude_if=lambda value: not value)
 
     @field_validator("kit_id")
     @classmethod
@@ -1164,11 +1179,24 @@ class KitProviderStatus(_Strict):
     installed_version: str | None = None
 
 
+class KitRequirementStatus(_Strict):
+    """One kit an installed kit requires, and whether this instance meets it."""
+
+    kit_id: str
+    min_version: str
+    #: The required kit's installed version; absent when it is not installed.
+    installed_version: str | None = None
+    #: Installed at ``min_version`` or later.
+    met: bool
+
+
 class InstalledKit(_Strict):
     kit_id: str
     version: str
     content_digest: str
     source: str | None = None
+    #: The kits this kit requires, each with the version here and whether it is met.
+    requires: tuple[KitRequirementStatus, ...] = ()
     # Kit paths whose accepted content no longer matches the receipt: local edits.
     drifted: tuple[str, ...] = ()
     provenance: KitProvenance | None = None

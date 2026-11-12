@@ -19,6 +19,7 @@ from typing import Any, Literal, Protocol
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_digest, pretty_canonical_bytes
+from cruxible_client.contracts.capabilities import CAPABILITY_IDENTITY_KIND
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import parse_claim_type
 from cruxible_client.contracts.documents import (
@@ -33,6 +34,15 @@ from cruxible_client.contracts.errors import (
     ProposalIntegrityError,
     ProposalStale,
     SettlementIntegrityError,
+)
+from cruxible_client.contracts.kit_requires import (
+    KIT_REMOVE_REQUIRED,
+    KIT_REQUIRES_MISSING,
+    KIT_REQUIRES_UNRESOLVED,
+    KitRequirement,
+    remove_required_message,
+    requires_missing_message,
+    requires_unresolved_message,
 )
 from cruxible_client.contracts.kits import (
     KIT_ARTIFACT_PREFIXES,
@@ -61,6 +71,7 @@ from cruxible_client.contracts.kits import (
     KitProviderStep,
     KitReceipt,
     KitRemoveRequest,
+    KitRequirementStatus,
     KitStatus,
     KitTransition,
     kit_artifact_path_allowed,
@@ -110,6 +121,7 @@ from cruxible_core.claims.closure import ArtifactDependencyStateV1, parse_depend
 from cruxible_core.derived.derived_state import fork_tree, paths_with_prefix
 from cruxible_core.errors import ConfigError, DataValidationError, RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.indexes.sql_batch import select_in
 from cruxible_core.ledger.bootstrap import genesis_seed_files
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.providers.automation_carry import carry_automation, parse_carry_line
@@ -146,6 +158,9 @@ _RECEIPT_ACCESS = BodyAccessContext(principal_id="kit-receipt", can_read_body=Tr
 _PROVIDER_FILE_ACCESS = BodyAccessContext(principal_id="kit-provider", can_read_body=True)
 _RECEIPT_SCOPE = ("kit",)
 _SNAPSHOT_LIFECYCLE = {"predecessor_digest": None, "state": "live"}
+#: Definitions pinned at an exact digest whatever the compiler mode: immutable
+#: versions. A pin to any other definition a required kit owns resolves by name.
+_EXACT_KINDS = frozenset({"Contract", CAPABILITY_IDENTITY_KIND})
 
 
 @functools.cache
@@ -279,8 +294,13 @@ def _dependency_order(
     payloads: Mapping[str, dict[str, Any]],
     *,
     within: set[str] | None = None,
+    outside: Mapping[str, bytes] | None = None,
 ) -> Iterator[tuple[str, tuple[str, ...]]]:
-    """Paths with the paths they pin, dependencies first; a cycle refuses."""
+    """Paths with the paths they pin, dependencies first; a cycle refuses.
+
+    ``outside`` holds the Contracts a release pins but leaves out because a kit
+    it requires owns them, so their nesting is checked against the bytes held.
+    """
 
     by_digest = {state.artifact_digest: path for path, state in states.items()}
     by_identity = {
@@ -291,6 +311,8 @@ def _dependency_order(
     def contract_lookup(path: str) -> bytes | None:
         if path in payloads:
             return pretty_canonical_bytes(payloads[path])
+        if outside is not None and path in outside:
+            return outside[path]
         return genesis_seed_files().get(path)
 
     @functools.cache
@@ -480,8 +502,16 @@ def service_build_kit(
         files[inspected.provider.wheel.filename] = wheel
         files[inspected.provider.lock.filename] = lock
         files.update(dependencies)
+    # The kits installed here: a definition another of them owns is left out of
+    # this release and that kit recorded in its requires (O(installed kits)).
+    receipts = tuple(_receipts(instance, tree))
     bundle = build_kit(
-        tree, request, provenance=provenance, providers=tuple(packages), automation_template=None
+        tree,
+        request,
+        provenance=provenance,
+        providers=tuple(packages),
+        automation_template=None,
+        installed=receipts,
     )
     # Collected before the template check (R3): a non-genesis Document body in
     # the closure must already be in the throwaway instance's body store when
@@ -496,7 +526,10 @@ def service_build_kit(
 
         assert template_actor_id is not None  # refused above when a template is named
         check_automation_template(
-            bundle.contents(),
+            {
+                **_required_definitions(tree, receipts, bundle.manifest.requires),
+                **bundle.contents(),
+            },
             template,
             actor_id=template_actor_id,
             providers=tuple(packages),
@@ -621,6 +654,46 @@ def _build_difference(
     return None
 
 
+def _named_definitions(
+    path: str, state: ArtifactDependencyStateV1, payload: Mapping[str, Any]
+) -> Iterator[tuple[ArtifactIdentity, str | None]]:
+    """Every definition one artifact names: its pins (with their digests) and the
+    identities it names by reference."""
+
+    for pin in state.pins:
+        yield pin.target, pin.artifact_digest if isinstance(pin, ArtifactPin) else None
+    for kind, name in referenced_identities(path, payload):
+        yield ArtifactIdentity(kind=kind, name=name), None
+
+
+def _required_definitions(
+    tree: Mapping[str, bytes],
+    receipts: tuple[KitReceipt, ...],
+    requires: tuple[KitRequirement, ...],
+) -> dict[str, bytes]:
+    """What the required kits (and the kits they require) installed here, as held.
+
+    An adopter holds every required kit before this one, so checking the
+    release against it needs their definitions too. O(required kits' members).
+    """
+
+    by_id = {receipt.kit_id: receipt for receipt in receipts if receipt.artifacts}
+    found: dict[str, bytes] = {}
+    pending = [item.kit_id for item in requires]
+    seen: set[str] = set()
+    while pending:
+        kit_id = pending.pop()
+        receipt = by_id.get(kit_id)
+        if kit_id in seen or receipt is None:
+            continue
+        seen.add(kit_id)
+        pending.extend(item.kit_id for item in receipt.requires)
+        for entry in (*receipt.artifacts, *receipt.carried):
+            if entry.path in tree:
+                found[entry.path] = tree[entry.path]
+    return found
+
+
 def build_kit(
     tree: Mapping[str, bytes],
     request: KitBuildRequest,
@@ -628,6 +701,7 @@ def build_kit(
     provenance: KitProvenance | None = None,
     providers: tuple[InspectedProviderPackage, ...] = (),
     automation_template: tuple[str, bytes] | None = None,
+    installed: tuple[KitReceipt, ...] = (),
 ) -> KitBundle:
     """Export the owned definitions of one accepted tree as a self-contained release.
 
@@ -636,6 +710,11 @@ def build_kit(
     their nested closure and predecessor chain. A Provider pin names a bundled
     package instead. An ``automation_template`` (its kit path and bytes, already
     checked) is named in the manifest and carried as the release's kit file.
+
+    A definition under a prefix another ``installed`` kit owns is never
+    carried: the release keeps its pins to it and requires that kit at the
+    version installed here. Such a pin refuses unless that kit's receipt holds
+    the definition (an immutable version at the pinned digest).
     """
 
     bundled: dict[str, InspectedProviderPackage] = {}
@@ -644,9 +723,23 @@ def build_kit(
             raise DataValidationError(
                 f"two bundled packages register Provider {package.provider.provider_id}"
             )
+    owners = tuple(
+        (prefix, receipt)
+        for receipt in installed
+        if receipt.kit_id != request.kit_id and receipt.artifacts
+        for prefix in receipt.owns
+    )
+
+    def owner_of(name: str) -> tuple[str, KitReceipt] | None:
+        if name.startswith(request.owns):
+            return None
+        return next(((p, r) for p, r in owners if name.startswith(p)), None)
+
     states: dict[str, ArtifactDependencyStateV1] = {}
     payloads: dict[str, dict[str, Any]] = {}
     tree_providers: dict[str, ArtifactDependencyStateV1] = {}
+    # Definitions another installed kit owns, by identity: left out of the release.
+    outside: dict[tuple[str, str], str] = {}
     for path in tree:
         if path.endswith(".json") and path.startswith(_INDEXED_PREFIXES):
             state = parse_dependency_artifact(path, tree[path])
@@ -658,6 +751,10 @@ def build_kit(
                 continue
             if _builtin(state.identity.kind, state.identity.name, state.artifact_digest):
                 # A compiler-seeded Contract: pinned as it is, never carried.
+                continue
+            if owners and owner_of(state.identity.name) is not None:
+                # Another installed kit's definition: pinned, never carried.
+                outside[(state.identity.kind, state.identity.name)] = path
                 continue
             states[path] = state
             payloads[path] = json.loads(tree[path])
@@ -691,7 +788,8 @@ def build_kit(
     }
     remap: dict[str, str] = {}
     built: dict[str, bytes] = {}
-    for path, pinned in _dependency_order(states, payloads, within=roots):
+    held = {path: tree[path] for path in outside.values() if path.startswith("contracts/")}
+    for path, pinned in _dependency_order(states, payloads, within=roots, outside=held):
         for dependency in pinned:
             if not kit_artifact_path_allowed(dependency):
                 raise DataValidationError(
@@ -706,10 +804,58 @@ def build_kit(
         if digest != states[path].artifact_digest:
             remap[states[path].artifact_digest] = digest
         built[path] = content
+    # Every definition the release names that another installed kit owns: one
+    # lookup per name each built definition (or bundled operation) names.
+    required: dict[str, str] = {}
+    if outside:
+        named = [
+            (path, identity, digest)
+            for path in sorted(built)
+            for identity, digest in _named_definitions(path, states[path], payloads[path])
+        ]
+        named.extend(
+            (f"provider {package.provider.provider_id}", ref.identity, ref.digest)
+            for package in bundled.values()
+            for operation in package.document.operations
+            for ref in (
+                operation.in_,
+                operation.out,
+                *(refusal.contract for refusal in operation.refusals.values()),
+            )
+        )
+        members: dict[str, dict[str, KitInstalledArtifact]] = {}
+        for source, identity, pin_digest in named:
+            target = outside.get((identity.kind, identity.name))
+            if target is None:
+                continue
+            owner = owner_of(identity.name)
+            assert owner is not None
+            prefix, receipt = owner
+            if receipt.kit_id not in members:
+                members[receipt.kit_id] = {item.path: item for item in receipt.artifacts}
+            entry = members[receipt.kit_id].get(target)
+            exact = identity.kind in _EXACT_KINDS
+            if entry is None or (
+                exact and pin_digest is not None and pin_digest != entry.release_digest
+            ):
+                raise RequestRefusedError(
+                    KIT_REQUIRES_UNRESOLVED,
+                    f"{source} pins {identity.qualified}, under {prefix}, which kit "
+                    f"{receipt.kit_id} owns; kit {receipt.kit_id} {receipt.version} does not "
+                    "hold it" + (" at the pinned digest" if exact else "") + ". A kit "
+                    "never carries a definition another installed kit owns: add it to kit "
+                    f"{receipt.kit_id}, or name it under this kit's own prefix",
+                    repair=RepairOperation(operation="cruxible.kit.build"),
+                )
+            required[receipt.kit_id] = receipt.version
     manifest = KitManifest(
         kit_id=request.kit_id,
         version=request.version,
         owns=request.owns,
+        requires=tuple(
+            KitRequirement(kit_id=kit_id, min_version=version)
+            for kit_id, version in sorted(required.items())
+        ),
         artifacts=tuple(
             KitArtifact(
                 path=path, artifact_digest=_artifact_state(path, built[path]).artifact_digest
@@ -897,6 +1043,7 @@ def _diff_release(
     keep: frozenset[str],
     keep_local_edits: bool,
     preset: Mapping[str, str] | None = None,
+    held: Mapping[str, bytes] | None = None,
 ) -> tuple[_Diff, set[str]]:
     """Plan every release path against the tree; returns the diff and the owned paths.
 
@@ -904,6 +1051,8 @@ def _diff_release(
     differently takes the release's version as a successor of its own,
     unless ``keep`` (or ``keep_local_edits``) keeps this instance's version or an
     earlier install kept it on purpose against this same release version.
+    ``held`` holds the Contracts the release left out because a kit it
+    requires owns them, as this instance holds them.
     """
 
     states = {path: _artifact_state(path, content) for path, content in contents.items()}
@@ -915,7 +1064,7 @@ def _diff_release(
     # Digests the release pins outside itself, already moved to this instance's
     # (a bundled provider's Provider).
     diff.installed.update(preset or {})
-    for path, _pinned in _dependency_order(states, payloads):
+    for path, _pinned in _dependency_order(states, payloads, outside=held):
         release_digest = states[path].artifact_digest
         identity = states[path].identity.qualified
         payload = _substitute(path, payloads[path], diff.installed)
@@ -1794,6 +1943,98 @@ def _provider_steps(
     return steps, missing
 
 
+def _required_receipts(
+    manifest: KitManifest, receipts: tuple[KitReceipt, ...]
+) -> dict[str, KitReceipt]:
+    """Each kit the release requires, installed here at ``min_version`` or later.
+
+    Refuses ``cruxible.kit.requires_missing`` naming the first that is not.
+    """
+
+    installed = {receipt.kit_id: receipt for receipt in receipts if receipt.artifacts}
+    for requirement in manifest.requires:
+        receipt = installed.get(requirement.kit_id)
+        version = None if receipt is None else receipt.version
+        if not requirement.met_by(version):
+            raise RequestRefusedError(
+                KIT_REQUIRES_MISSING,
+                requires_missing_message(manifest.kit_id, manifest.version, requirement, version),
+                repair=RepairOperation(
+                    operation="cruxible.kit.add", arguments={"kit": requirement.kit_id}
+                ),
+            )
+    return {item.kit_id: installed[item.kit_id] for item in manifest.requires}
+
+
+def _left_out_pins(
+    connection: Any,
+    tree: Mapping[str, bytes],
+    manifest: KitManifest,
+    contents: Mapping[str, bytes],
+    required: Mapping[str, KitReceipt],
+) -> tuple[dict[str, bytes], dict[str, str]]:
+    """Every definition the release names but leaves out, resolved here.
+
+    A name under a prefix a required kit owns, which the release does not carry,
+    must resolve on this instance: an immutable version (Contract, Capability)
+    at its pinned digest, any other definition by name, live. Refuses
+    ``cruxible.kit.requires_unresolved`` otherwise. Returns the Contracts held
+    (path -> bytes) and the moves of mutable pins to the digests held here.
+    One indexed lookup per name, never a scan of this instance's definitions.
+    """
+
+    owners = tuple((prefix, receipt) for receipt in required.values() for prefix in receipt.owns)
+    if not owners:
+        return {}, {}
+    states = {path: _artifact_state(path, content) for path, content in contents.items()}
+    carried = {state.identity for state in states.values()}
+    wanted: dict[str, list[tuple[ArtifactIdentity, str | None, KitReceipt]]] = {}
+    for path, state in sorted(states.items()):
+        for identity, digest in _named_definitions(path, state, json.loads(contents[path])):
+            if identity in carried or identity.name.startswith(manifest.owns):
+                continue
+            owner = next((r for p, r in owners if identity.name.startswith(p)), None)
+            if owner is not None:
+                wanted.setdefault(identity.qualified, []).append((identity, digest, owner))
+    if not wanted:
+        return {}, {}
+    paths = dict(
+        select_in(
+            connection,
+            "SELECT identity,path FROM artifact_lookup WHERE identity IN ({})",
+            sorted(wanted),
+        )
+    )
+    held: dict[str, bytes] = {}
+    moves: dict[str, str] = {}
+    for qualified, names in sorted(wanted.items()):
+        held_path = paths.get(qualified)
+        raw = None if held_path is None else tree.get(held_path)
+        here = None if held_path is None or raw is None else _artifact_state(held_path, raw)
+        for identity, digest, owner in names:
+            exact = identity.kind in _EXACT_KINDS
+            if (
+                here is None
+                or here.lifecycle.state != "live"
+                or (exact and digest is not None and here.artifact_digest != digest)
+            ):
+                raise RequestRefusedError(
+                    KIT_REQUIRES_UNRESOLVED,
+                    requires_unresolved_message(
+                        manifest.kit_id, manifest.version, owner.kit_id, qualified, exact=exact
+                    ),
+                    repair=RepairOperation(
+                        operation="cruxible.kit.add", arguments={"kit": owner.kit_id}
+                    ),
+                )
+            assert held_path is not None and raw is not None and here is not None
+            if held_path.startswith("contracts/"):
+                held[held_path] = raw
+            elif digest is not None and digest != here.artifact_digest:
+                moves[digest] = here.artifact_digest
+    return held, moves
+
+
 def _early_refusals(
     tree: Mapping[str, bytes],
     manifest: KitManifest,
@@ -2170,6 +2411,16 @@ def _add_kit(
     # Kit-add work only: indexed receipt documents and their recorded definitions,
     # never the instance's Claims or Subjects. Reuse this inventory for both guards.
     receipts = tuple(_receipts(instance, tree))
+    # The kits this release requires, then every pin it left out to their
+    # definitions: both before anything is installed or proposed.
+    required = _required_receipts(manifest, receipts)
+    held: dict[str, bytes] = {}
+    left_out_moves: dict[str, str] = {}
+    if required:
+        with instance.bind_accepted_projection(mode.head) as projection:
+            held, left_out_moves = _left_out_pins(
+                projection.typed.connection, tree, manifest, contents, required
+            )
     ownership = _ownership_conflicts(receipts, tree, manifest)
     if ownership:
         return KitChangeResult(
@@ -2239,7 +2490,8 @@ def _add_kit(
             kept={} if receipt is None else {item.path: item for item in receipt.kept},
             keep=frozenset(request.keep),
             keep_local_edits=request.keep_local_edits,
-            preset=_provider_remap(tree, contents, manifest, inspected),
+            preset={**left_out_moves, **_provider_remap(tree, contents, manifest, inspected)},
+            held=held,
         )
         ownership = _foreign_takeovers(receipts, manifest, initial)
         early.extend(item.detail for item in ownership)
@@ -2336,7 +2588,8 @@ def _add_kit(
         kept=kept,
         keep=keep,
         keep_local_edits=request.keep_local_edits,
-        preset=_provider_remap(tree, contents, manifest, inspected),
+        preset={**left_out_moves, **_provider_remap(tree, contents, manifest, inspected)},
+        held=held,
     )
     retire_with = _settle_dropped(
         tree,
@@ -2483,6 +2736,7 @@ def _add_kit(
         kept=tuple(sorted(diff.kept, key=lambda item: item.path)),
         provenance=manifest.provenance,
         providers=manifest.providers,
+        requires=manifest.requires,
     )
     if awaiting_install:
         return KitChangeResult(
@@ -2565,6 +2819,22 @@ def _remove_kit(
             repair=RepairOperation(operation="cruxible.kit.status"),
         )
     shell, receipt = found
+    # Kit-remove work only: the receipts of the installed kits (O(installed kits)).
+    dependents = sorted(
+        other.kit_id
+        for other in _receipts(instance, tree)
+        if other.artifacts
+        and other.kit_id != request.kit_id
+        and any(item.kit_id == request.kit_id for item in other.requires)
+    )
+    if dependents:
+        raise RequestRefusedError(
+            KIT_REMOVE_REQUIRED,
+            remove_required_message(request.kit_id, dependents),
+            repair=RepairOperation(
+                operation="cruxible.kit.remove", arguments={"kit_id": dependents[0]}
+            ),
+        )
     diff = _Diff()
     edited = []
     back = _tree_back_remap((*receipt.artifacts, *receipt.carried), tree)
@@ -2613,7 +2883,7 @@ def _remove_kit(
         kit_id=request.kit_id,
         version=receipt.version,
         receipt=receipt.model_copy(
-            update={"artifacts": (), "carried": (), "kept": (), "providers": ()}
+            update={"artifacts": (), "carried": (), "kept": (), "providers": (), "requires": ()}
         ),
         previous_receipt=shell,
         writes=diff.writes,
@@ -2629,19 +2899,22 @@ def service_kit_status(instance: PlaybillInstance) -> KitStatus:
     coordinate = instance.accepted_coordinate()
     tree = instance.immutable_tree_at(coordinate.git_oid)
     kits = []
+    receipts = tuple(receipt for receipt in _receipts(instance, tree) if receipt.artifacts)
+    versions = {receipt.kit_id: receipt.version for receipt in receipts}
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection
-        for receipt in _receipts(instance, tree):
-            if not receipt.artifacts:
-                continue
-            kits.append(_installed_kit(connection, tree, receipt))
+        for receipt in receipts:
+            kits.append(_installed_kit(connection, tree, receipt, versions))
     from cruxible_core.service.kit_resume import kit_resume_statuses
 
     return KitStatus(kits=tuple(kits), resumes=kit_resume_statuses(instance))
 
 
-def _installed_kit(connection: Any, tree: Mapping[str, bytes], receipt: KitReceipt) -> InstalledKit:
-    """One installed kit's status: drifted paths and each provider build here."""
+def _installed_kit(
+    connection: Any, tree: Mapping[str, bytes], receipt: KitReceipt, versions: Mapping[str, str]
+) -> InstalledKit:
+    """One installed kit's status: drifted paths, each provider build here, and
+    each kit it requires (``versions``: installed kit id -> version)."""
 
     back = _tree_back_remap((*receipt.artifacts, *receipt.carried), tree)
     drifted = tuple(
@@ -2688,6 +2961,15 @@ def _installed_kit(connection: Any, tree: Mapping[str, bytes], receipt: KitRecei
         version=receipt.version,
         content_digest=receipt.content_digest,
         source=receipt.source,
+        requires=tuple(
+            KitRequirementStatus(
+                kit_id=item.kit_id,
+                min_version=item.min_version,
+                installed_version=versions.get(item.kit_id),
+                met=item.met_by(versions.get(item.kit_id)),
+            )
+            for item in receipt.requires
+        ),
         drifted=drifted,
         provenance=receipt.provenance,
         kept=receipt.kept,
