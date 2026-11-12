@@ -10,7 +10,6 @@ from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.procedures.claims import ClaimsExpectByEnd, ClaimsNode
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ExtractNode,
     ProcedureDefinition,
     ProjectNode,
     ReadNode,
@@ -46,6 +45,11 @@ from cruxible_client.contracts.shapes import (
     render_type,
 )
 from cruxible_client.contracts.subject_kinds import key_predicate
+from cruxible_core.procedures.extract import (
+    STORED_EXTRACT_NODES,
+    StoredExtractNode,
+    extract_specs,
+)
 
 
 class ClaimsTypingRefused(ValueError):
@@ -81,7 +85,9 @@ _END_FORM = (
 )
 
 
-def absence_enumeration(node: ClaimsNode, aliases: Mapping[str | None, object]) -> ExtractNode:
+def absence_enumeration(
+    node: ClaimsNode, aliases: Mapping[str | None, object]
+) -> StoredExtractNode:
     """The enumeration absence judges: the extract at the root of ``for_each``'s chain.
 
     It is never authored. ``for_each`` must reach the extract's output directly
@@ -106,7 +112,7 @@ def absence_enumeration(node: ClaimsNode, aliases: Mapping[str | None, object]) 
             )
         if len(parts) > 3 or (len(parts) == 3 and parts[2] != "records"):
             break
-        if isinstance(producer, ExtractNode):
+        if isinstance(producer, STORED_EXTRACT_NODES):
             return producer
         if not isinstance(producer, TransformNode) or not isinstance(
             producer.spec, TransformFilterSpec | TransformDedupeSpec
@@ -127,6 +133,11 @@ def validate_claims_templates(
     if not any(isinstance(node, ClaimsNode) for node in definition.nodes):
         return
     aliases = {getattr(node, "as_", None): node for node in definition.nodes}
+    # Each extract is typed through its one resolved spec (its kind's layout).
+    spec_of = extract_specs(
+        definition.nodes,
+        lambda ref: lookup(ArtifactIdentity(kind="CaptureContract", name=ref.target.name)),
+    )
 
     def source(kind: str, name: str) -> Any:
         found = lookup(ArtifactIdentity(kind=kind, name=name))
@@ -176,19 +187,20 @@ def validate_claims_templates(
         if alias in trail:
             return None
         producer = aliases.get(alias)
-        if isinstance(producer, ExtractNode):
+        if isinstance(producer, STORED_EXTRACT_NODES):
+            read = spec_of(producer)
             if path and path[0] == "fields":
-                fields = contract(producer.row).fields
+                fields = contract(read.row).fields
                 return (
                     descend(fields[path[1]].type, path[2:])
                     if len(path) > 1 and path[1] in fields
                     else None
                 )
             if path and path[0] == "key" and len(path) == 2:
-                rule = producer.key.get(path[1])
+                rule = read.key.get(path[1])
                 return None if rule is None or rule.type is None else parse_type(rule.type)
             if path and path[0] == "header" and len(path) == 2:
-                rule = producer.header.get(path[1])
+                rule = read.header.get(path[1])
                 return None if rule is None else rule.field_type()
         if isinstance(producer, TransformNode):
             spec = producer.spec
@@ -488,6 +500,7 @@ def tree_claims_lookup(tree: Any) -> Callable[[ArtifactIdentity], Any]:
     """Resolve each pinned vocabulary dependency by path, never enumerate state."""
     from functools import cache
 
+    from cruxible_client.contracts.captures import capture_contract_path, parse_capture_contract
     from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
     from cruxible_client.contracts.query.definitions import (
         parse_query_definition,
@@ -501,6 +514,7 @@ def tree_claims_lookup(tree: Any) -> Callable[[ArtifactIdentity], Any]:
         "SubjectKind": (subject_kind_path, parse_subject_kind),
         "QueryDefinition": (query_definition_path, parse_query_definition),
         "Contract": (contract_path_for_identity, parse_contract),
+        "CaptureContract": (capture_contract_path, parse_capture_contract),
     }
 
     @cache
