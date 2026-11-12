@@ -310,3 +310,29 @@ def test_a_successor_that_changes_an_entry_is_refused_naming_it(
     assert [item.code for item in diagnostics] == [LAYOUT_SUCCESSION_BREAK], diagnostics
     assert f"layout entry {entry} changes" in diagnostics[0].message
     assert "declare a new kind" in diagnostics[0].message
+
+
+def test_an_accepted_kind_without_a_layout_grows_one_by_kind_authoring(tmp_path: Path) -> None:
+    from cruxible_core.service.evidence.capture_contracts import service_propose_capture_contract
+
+    instance, owner = initialize_local(tmp_path)
+    row = _row()
+    bare = _kind(None)
+    accept_proposal(instance, owner, _submit(instance, _members(bare, row), "bare"))
+
+    inspection = service_propose_capture_contract(
+        instance,
+        input=CaptureContractInputRecord.model_validate({"name": KIND, "layout": _layout(row)}),
+        actor_id="owner",
+        proposal_name="grow-layout",
+        timestamp=STAMP,
+    )
+    assert inspection.proposal.candidate is not None, _codes(inspection)
+    accept_proposal(instance, owner, inspection)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    grown = parse_capture_contract(
+        tree[capture_contract_path(KIND)], path=capture_contract_path(KIND)
+    )
+    assert grown.layout == CaptureLayout.model_validate(_layout(row))
+    assert grown.decoding == bare.decoding
+    assert grown.lifecycle.predecessor_digest == capture_contract_digest(bare).tagged
