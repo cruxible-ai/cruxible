@@ -32,7 +32,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.capability_fit import FitResult, Unfit
-from cruxible_client.contracts.captures import DERIVED_CAPTURE_DECODINGS, CaptureDecoding
+from cruxible_client.contracts.captures import (
+    DERIVED_CAPTURE_DECODINGS,
+    CaptureCsvDecoding,
+    CaptureDecoding,
+)
 from cruxible_client.contracts.law_problems import LawProblem
 from cruxible_client.contracts.procedures.extract import ExtractField
 from cruxible_client.contracts.provider_operations import ContractLookup
@@ -501,6 +505,47 @@ def _rule_gap(
     return None
 
 
+def _render_decoding_value(value: object) -> str:
+    if value is None:
+        return ABSENT
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _decoding_gap(
+    producer: CaptureDecoding | None, reader: CaptureDecoding | None
+) -> LayoutGap | None:
+    """The first decoding entry that differs: format, then encoding, then each CSV dialect field.
+
+    Bytes are read with exactly the kind's declarations, so a producer that
+    encodes or splits rows differently yields a different read (ruling O1).
+    Resource limits are not compared.
+    """
+
+    produced_format = ABSENT if producer is None else producer.format
+    read_format = ABSENT if reader is None else reader.format
+    if produced_format != read_format:
+        return LayoutGap(entry="decoding.format", producer=produced_format, reader=read_format)
+    if producer is None or reader is None:
+        return None
+    if producer.encoding != reader.encoding:
+        return LayoutGap(
+            entry="decoding.encoding", producer=producer.encoding, reader=reader.encoding
+        )
+    if producer.csv is None or reader.csv is None:
+        return None
+    for field in CaptureCsvDecoding.model_fields:
+        offered, wanted = getattr(producer.csv, field), getattr(reader.csv, field)
+        if offered != wanted:
+            return LayoutGap(
+                entry=f"decoding.dialect.{field}",
+                producer=_render_decoding_value(offered),
+                reader=_render_decoding_value(wanted),
+            )
+    return None
+
+
 def layout_covers(
     producer: DeclaredCaptureKind,
     reader: DeclaredCaptureKind,
@@ -511,7 +556,8 @@ def layout_covers(
     """``None`` when the producer's declared layout covers the reader's, else the first gap.
 
     Same kind; when the reader declares a layout, the producer declares one too,
-    with the same decoding format; every header field of the reader's is in the
+    with the same decoding format, the same encoding and, for CSV, the same
+    dialect (every field of it); every header field of the reader's is in the
     producer's with the same path and rule and a fitting type; every record set
     of the reader's is in the producer's with the same path, the same key
     parts, a row Contract that fits, and every field rule of the reader's
@@ -530,10 +576,9 @@ def layout_covers(
         return LayoutGap(
             entry="layout", producer=ABSENT, reader="record sets " + ", ".join(wanted.records)
         )
-    produced_format = ABSENT if producer.decoding is None else producer.decoding.format
-    read_format = ABSENT if reader.decoding is None else reader.decoding.format
-    if produced_format != read_format:
-        return LayoutGap(entry="decoding.format", producer=produced_format, reader=read_format)
+    gap = _decoding_gap(producer.decoding, reader.decoding)
+    if gap is not None:
+        return gap
     for name, rule in wanted.header.items():
         gap = _rule_gap(f"header.{name}", offered.header.get(name), rule, type_fits)
         if gap is not None:

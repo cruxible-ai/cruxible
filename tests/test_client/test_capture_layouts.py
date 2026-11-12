@@ -20,7 +20,7 @@ from cruxible_client.contracts.capture_layouts import (
     layout_succession_message,
     layout_successor_break,
 )
-from cruxible_client.contracts.captures import CaptureDecoding
+from cruxible_client.contracts.captures import CaptureCsvDecoding, CaptureDecoding
 from cruxible_client.contracts.provider_operations import closure_lookup
 from cruxible_client.contracts.shapes import (
     Contract,
@@ -546,6 +546,87 @@ def test_coverage_compares_decoding_formats() -> None:
 
     assert _covers(_kind(csv_layout, decoding=CSV), json_reader) == LayoutGap(
         entry="decoding.format", producer="csv", reader="json"
+    )
+
+
+# -- coverage compares encoding and the CSV dialect (ruling O1) ------------------------------
+
+CSV_LAYOUT = CaptureLayout.model_validate({"records": {"hits": _hits(at="/*", count_at=None)}})
+
+
+def _decoding(base: CaptureDecoding, **changes: Any) -> CaptureDecoding:
+    data = base.model_dump(mode="json")
+    data.update(changes)
+    return CaptureDecoding.model_validate(data)
+
+
+def _csv(**dialect: Any) -> CaptureDecoding:
+    return _decoding(CSV, csv=dialect)
+
+
+def test_coverage_needs_the_same_encoding() -> None:
+    gzip_json = _decoding(JSON, encoding="gzip")
+
+    assert _covers(_kind(decoding=gzip_json), _kind()) == LayoutGap(
+        entry="decoding.encoding", producer="gzip", reader="identity"
+    )
+    assert _covers(_kind(), _kind(decoding=gzip_json)) == LayoutGap(
+        entry="decoding.encoding", producer="identity", reader="gzip"
+    )
+    gzip_csv = _decoding(CSV, encoding="gzip")
+    assert _covers(_kind(CSV_LAYOUT, decoding=gzip_csv), _kind(CSV_LAYOUT, decoding=CSV)) == (
+        LayoutGap(entry="decoding.encoding", producer="gzip", reader="identity")
+    )
+
+
+@pytest.mark.parametrize(
+    ("produced", "read", "gap"),
+    [
+        (
+            {},
+            {"comment_prefix": "#"},
+            LayoutGap(entry="decoding.dialect.comment_prefix", producer=ABSENT, reader="#"),
+        ),
+        (
+            {"comment_prefix": ";"},
+            {"comment_prefix": "#"},
+            LayoutGap(entry="decoding.dialect.comment_prefix", producer=";", reader="#"),
+        ),
+        (
+            {"header": False},
+            {},
+            LayoutGap(entry="decoding.dialect.header", producer="false", reader="true"),
+        ),
+    ],
+)
+def test_coverage_needs_the_same_csv_dialect(
+    produced: dict[str, Any], read: dict[str, Any], gap: LayoutGap
+) -> None:
+    producer = _kind(CSV_LAYOUT, decoding=_csv(**produced))
+    reader = _kind(CSV_LAYOUT, decoding=_csv(**read))
+
+    assert _covers(producer, reader) == gap
+
+
+def test_every_csv_dialect_field_is_compared() -> None:
+    """The dialect has no delimiter or quote field today; each field it has is compared."""
+
+    assert set(CaptureCsvDecoding.model_fields) == {"comment_prefix", "header"}
+
+
+def test_equal_format_encoding_and_dialect_cover() -> None:
+    dialect = {"comment_prefix": "#", "header": True}
+    producer = _kind(CSV_LAYOUT, decoding=_decoding(CSV, encoding="gzip", csv=dialect))
+    reader = _kind(CSV_LAYOUT, decoding=_decoding(CSV, encoding="gzip", csv=dialect))
+
+    assert _covers(producer, reader) is None
+    # Limits are not part of coverage: the reader's own decoding governs its read.
+    smaller = _decoding(JSON, limits={"decoded_bytes": 512, "depth": 4, "records": 10})
+    assert _covers(_kind(decoding=smaller), _kind()) is None
+    # A producer that differs only in limits, read by a reader with a different layout
+    # entry, still reports the layout gap, not a decoding one.
+    assert _covers(_kind(_layout(header={}), decoding=smaller), _kind()) == LayoutGap(
+        entry="header.query", producer=ABSENT, reader="at /query, type string{max_len: 256}"
     )
 
 
