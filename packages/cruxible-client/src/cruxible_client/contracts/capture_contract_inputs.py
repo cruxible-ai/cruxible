@@ -14,6 +14,7 @@ from pydantic import (
 )
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.capture_layouts import CaptureLayout
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     CanonicalDuration,
@@ -55,6 +56,14 @@ class CaptureContractInputRecord(BaseModel):
         description="How the bytes decode for an extract: {format: json|csv|text|bytes, "
         "encoding: identity|gzip, csv?: {comment_prefix, header}, limits: {decoded_bytes, "
         "depth, records}}. Required for any CaptureContract an extract reads.",
+    )
+    layout: CaptureLayout | None = Field(
+        default=None,
+        description="The documents' declared shape, which an extract names: {header?: {<name>: "
+        "<field rule>}, records: {<set>: {at, key?: {<part>: <field rule>}, row: 'name@N', "
+        "fields: {<row field>: <field rule>}, count_at?}}}. A field rule is {at, type?, parse?, "
+        "project?, canonicalize?, presence?}. Needs a json or csv decoding; a successor may "
+        "only add header fields, record sets and optional row fields.",
     )
     body_access: CaptureBodyAccess | None = Field(
         default=None,
@@ -118,6 +127,7 @@ def _lower_capture_contract_input(
             components=capture_shape_components(record.shape, replay),
             epistemic_grade=record.grade or "observed",
             decoding=record.decoding,
+            layout=record.layout,
             body_access=record.body_access or "open",
             selection_budget=CaptureSelectionBudget(
                 max_bytes=record.max_bytes or 16 * 1024 * 1024, max_rows=1, max_items=1
@@ -182,6 +192,8 @@ def _lower_capture_contract_input(
         updates["epistemic_grade"] = record.grade
     if "decoding" in record.model_fields_set:
         updates["decoding"] = record.decoding
+    if "layout" in record.model_fields_set:
+        updates["layout"] = record.layout
     if "body_access" in record.model_fields_set:
         updates["body_access"] = record.body_access
     if "max_bytes" in record.model_fields_set:

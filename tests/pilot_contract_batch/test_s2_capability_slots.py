@@ -97,7 +97,8 @@ def test_a_slot_is_one_capability_pin_and_an_unknown_capability_is_refused(
                 "name": providers.SEARCH,
                 "version": 1,
                 "digest": listed[providers.SEARCH].digest,
-            }
+            },
+            "may_truncate": False,
         }
     }
     assert code.startswith("cruxible.")

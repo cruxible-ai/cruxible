@@ -5435,7 +5435,7 @@
                 "type": "string"
               },
               "effect": {
-                "description": "pure, external_read or external_write; fixed across versions.",
+                "description": "pure, external_read or external_mutation; fixed across versions.",
                 "enum": [
                   "pure",
                   "external_read",
@@ -20707,6 +20707,26 @@
             "title": "Grade"
           }
         },
+        "layout": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "layout",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CaptureLayout"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The documents' declared shape, which an extract names: {header?: {<name>: <field rule>}, records: {<set>: {at, key?: {<part>: <field rule>}, row: 'name@N', fields: {<row field>: <field rule>}, count_at?}}}. A field rule is {at, type?, parse?, project?, canonicalize?, presence?}. Needs a json or csv decoding; a successor may only add header fields, record sets and optional row fields."
+          }
+        },
         "lifecycle": {
           "default": null,
           "default_json_serializable": true,
@@ -20961,6 +20981,214 @@
             ],
             "title": "CaptureDecodingLimits",
             "type": "object"
+          },
+          "CaptureLayout": {
+            "additionalProperties": false,
+            "description": "A CaptureKind's declared document shape: header fields and named record sets.",
+            "properties": {
+              "header": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/ExtractField"
+                },
+                "maxProperties": 64,
+                "title": "Header",
+                "type": "object"
+              },
+              "records": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/LayoutRecordSet"
+                },
+                "maxProperties": 64,
+                "minProperties": 1,
+                "title": "Records",
+                "type": "object"
+              }
+            },
+            "required": [
+              "records"
+            ],
+            "title": "CaptureLayout",
+            "type": "object"
+          },
+          "ContractRef": {
+            "additionalProperties": false,
+            "description": "A pin to one Contract version. Authors write ``name@N``; acceptance adds the digest.",
+            "properties": {
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Digest"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "maximum": 999999999,
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "title": "ContractRef",
+            "type": "object"
+          },
+          "ExtractField": {
+            "additionalProperties": false,
+            "description": "Where one field is read, and how its lexeme becomes a typed value.\n\n``at`` is a JSON Pointer relative to the record (or to the document, for a\nheader field), or a CSV column name. ``parse`` converts a text lexeme\n(``date``, ``datetime``, ``int``, ``decimal``, ``bool``); ``type`` states\nthe field's type where no row Contract does (keys and header fields);\n``canonicalize: claim_type`` matches an enum member case-insensitively.\n``presence`` overrides the row Contract's optionality. ``project`` reshapes\nthe parsed value: ``utc_date`` (``parse: datetime``) keeps its UTC calendar\nday; ``utc_start_of_day`` (``parse: date``) is that day at 00:00 UTC.",
+            "properties": {
+              "at": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "At",
+                "type": "string"
+              },
+              "canonicalize": {
+                "anyOf": [
+                  {
+                    "const": "claim_type",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Canonicalize"
+              },
+              "parse": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "date",
+                      "datetime",
+                      "int",
+                      "decimal",
+                      "bool"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Parse"
+              },
+              "presence": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "required",
+                      "optional"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Presence"
+              },
+              "project": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "utc_date",
+                      "utc_start_of_day"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Project"
+              },
+              "type": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Type"
+              }
+            },
+            "required": [
+              "at"
+            ],
+            "title": "ExtractField",
+            "type": "object"
+          },
+          "LayoutRecordSet": {
+            "additionalProperties": false,
+            "description": "One named record set: where its records are, their key, row Contract and field rules.\n\n``count_at`` names a document field that states how many records the set\nholds; a read is complete only when it equals the records read.",
+            "properties": {
+              "at": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "At",
+                "type": "string"
+              },
+              "count_at": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Count At"
+              },
+              "fields": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/ExtractField"
+                },
+                "maxProperties": 256,
+                "minProperties": 1,
+                "title": "Fields",
+                "type": "object"
+              },
+              "key": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/ExtractField"
+                },
+                "maxProperties": 16,
+                "title": "Key",
+                "type": "object"
+              },
+              "row": {
+                "$ref": "#/$defs/ContractRef"
+              }
+            },
+            "required": [
+              "at",
+              "row",
+              "fields"
+            ],
+            "title": "LayoutRecordSet",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -21023,6 +21251,18 @@
             ],
             "default": null,
             "title": "Grade"
+          },
+          "layout": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CaptureLayout"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The documents' declared shape, which an extract names: {header?: {<name>: <field rule>}, records: {<set>: {at, key?: {<part>: <field rule>}, row: 'name@N', fields: {<row field>: <field rule>}, count_at?}}}. A field rule is {at, type?, parse?, project?, canonicalize?, presence?}. Needs a json or csv decoding; a successor may only add header fields, record sets and optional row fields."
           },
           "lifecycle": {
             "anyOf": [

@@ -62,7 +62,9 @@ from cruxible_client.contracts.provider_execution import (
     provider_invocation_receipt_digest,
     provider_secret_binding_identity_digest,
 )
+from cruxible_client.contracts.provider_operations import ContractLookup
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
+from cruxible_client.contracts.shapes import Contract, ContractRef
 from cruxible_client.contracts.source_references import (
     HTTP_RESPONSE_COORDINATE_TYPE,
     CasSourceReference,
@@ -368,6 +370,18 @@ DERIVED_CAPTURE_SHAPES: frozenset[str] = frozenset(
 #: The decodings a derived CaptureKind may declare (D-R37 e1): extract reads them.
 DERIVED_CAPTURE_DECODINGS: frozenset[str] = frozenset({"json", "csv"})
 
+# The layout module reads the decoding models above, and the kinds below carry a
+# layout: it is imported here, once those names exist and before any kind model is
+# built. The package's ``__init__`` imports this module first, so the layout module
+# never starts before it.
+from cruxible_client.contracts.capture_layouts import (  # noqa: E402
+    LAYOUT_SUCCESSION_BREAK,
+    CaptureLayout,
+    evaluate_layout_law,
+    layout_succession_message,
+    layout_successor_break,
+)
+
 
 def _derived_kind_law(grade: str, shape: str, decoding: CaptureDecoding | None) -> None:
     """A derived CaptureKind is extract-readable: JSON or CSV, on a derivable shape."""
@@ -392,6 +406,7 @@ class CaptureContract(_StrictCaptureModel):
     retention_erasure_policy: CaptureRetentionErasurePolicy
     epistemic_grade: Literal["observed", "derived", "predicted"] = "observed"
     decoding: CaptureDecoding | None = Field(default=None, exclude_if=lambda value: value is None)
+    layout: CaptureLayout | None = Field(default=None, exclude_if=lambda value: value is None)
     body_access: CaptureBodyAccess = Field(default="open", exclude_if=lambda value: value == "open")
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
@@ -466,7 +481,9 @@ class NamedCaptureContract(_StrictCaptureModel):
 
     ``decoding`` is optional: it declares how the bytes decode for an
     ``extract``, and a Procedure whose extract reads a CaptureContract without
-    it is refused when it is accepted.
+    it is refused when it is accepted. ``layout`` is optional too: the header
+    fields and named record sets the kind's documents carry, which an extract
+    names. A kind without one renders exactly as before.
     """
 
     artifact_format: Literal["cruxible-capture-contract-v4"] = "cruxible-capture-contract-v4"
@@ -478,6 +495,7 @@ class NamedCaptureContract(_StrictCaptureModel):
     retention_erasure_policy: NamedCaptureRetentionPolicy
     epistemic_grade: Literal["observed", "derived", "predicted"] = "observed"
     decoding: CaptureDecoding | None = Field(default=None, exclude_if=lambda value: value is None)
+    layout: CaptureLayout | None = Field(default=None, exclude_if=lambda value: value is None)
     body_access: CaptureBodyAccess = Field(default="open", exclude_if=lambda value: value == "open")
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
@@ -1262,6 +1280,8 @@ _WIDEN_ON_SUCCESSION: tuple[str, ...] = (
 def capture_contract_successor_break(
     previous: CaptureContractAny,
     successor: CaptureContractAny,
+    *,
+    resolve: ContractLookup | None = None,
 ) -> str | None:
     """Name the first field a live successor changes incompatibly, or None.
 
@@ -1270,6 +1290,11 @@ def capture_contract_successor_break(
     A successor may widen what it accepts and raise its budgets; everything that
     decides what a Capture commits to, how it replays, what its provenance is and
     which subject it binds must stay identical. Anything else is a new identity.
+
+    A layout may only grow (``layout_successor_break``); a layout entry that
+    changes is named ``layout`` or ``layout.<entry>``. It is judged only with
+    ``resolve``, the Contract lookup a moved row needs: acceptance always
+    passes one, and authoring leaves the layout to acceptance.
     """
 
     for name in _EQUAL_ON_SUCCESSION:
@@ -1294,6 +1319,10 @@ def capture_contract_successor_break(
             return "shape/replay"
         if previous.decoding != successor.decoding:
             return "decoding"
+        if resolve is not None:
+            entry = layout_successor_break(previous.layout, successor.layout, resolve=resolve)
+            if entry is not None:
+                return entry if entry == "layout" else f"layout.{entry}"
     # Who may read a kind's bytes is fixed with its name: a Capture keeps the
     # access its kind declared when it was taken (no historical reclassification).
     if capture_body_access(previous) != capture_body_access(successor):
@@ -1317,13 +1346,23 @@ def evaluate_capture_contract_law(
     *,
     path: str,
     predecessor: AcceptedCaptureContract | None,
+    contract_lookup: ContractLookup | None = None,
+    capture_kind_exists: Callable[[str], bool] | None = None,
 ) -> CaptureContractLawResult:
     """Evaluate the complete contract without granting source or Claim authority.
 
     A live successor must be compatible with its predecessor and a retired
     contract cannot be revived. Retirement is its own transition and is never
     judged for compatibility.
+
+    A live kind's layout is judged by ``evaluate_layout_law`` against
+    ``contract_lookup`` (the candidate Contracts) and ``capture_kind_exists``,
+    and on succession it may only grow. Without a lookup, a layout's rows
+    resolve to nothing and the layout is refused.
     """
+
+    def lookup(ref: ContractRef) -> Contract | None:
+        return None if contract_lookup is None else contract_lookup(ref)
 
     try:
         validate_capture_contract_path(contract, path)
@@ -1409,7 +1448,20 @@ def evaluate_capture_contract_law(
                         ),
                     ),
                 )
-            broken = capture_contract_successor_break(predecessor.contract, contract)
+            broken = capture_contract_successor_break(
+                predecessor.contract, contract, resolve=lookup
+            )
+            if broken is not None and (broken == "layout" or broken.startswith("layout.")):
+                return CaptureContractLawResult(
+                    verdict="refused",
+                    diagnostics=(
+                        _diagnostic(
+                            LAYOUT_SUCCESSION_BREAK,
+                            layout_succession_message(broken.removeprefix("layout.")),
+                            path=path,
+                        ),
+                    ),
+                )
             if broken is not None:
                 return CaptureContractLawResult(
                     verdict="refused",
@@ -1507,6 +1559,21 @@ def evaluate_capture_contract_law(
                 ),
             ),
         )
+    layout = getattr(contract, "layout", None)
+    if layout is not None and contract.lifecycle.state == "live":
+        problems = evaluate_layout_law(
+            layout,
+            decoding=getattr(contract, "decoding", None),
+            resolve=lookup,
+            capture_kind_exists=capture_kind_exists,
+        )
+        if problems:
+            return CaptureContractLawResult(
+                verdict="refused",
+                diagnostics=tuple(
+                    _diagnostic(problem.code, problem.message, path=path) for problem in problems
+                ),
+            )
     erasure_digest = capture_retention_policy(contract).erasure_rule_digest
     if erasure_digest is not None and ("erasure-rule", erasure_digest) not in registry_roles:
         return CaptureContractLawResult(

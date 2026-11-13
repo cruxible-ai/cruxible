@@ -93,7 +93,17 @@ def test_the_empty_derive_covers_the_base_kind_and_the_thin_one_does_not() -> No
     thin = carried(providers.thin_layout_package(BASE))
 
     assert empty == reader
-    assert layout_covers(empty, reader, type_fits=_never, row_fits=_never) is None  # type: ignore[arg-type]
+    rows_asked: list[object] = []
+
+    def _row_fits(sender: object, receiver: object) -> object:
+        # Equal declarations still ask each record set's row, which may reach another kind.
+        from cruxible_client.contracts.capability_fit import Fits
+
+        rows_asked.append((sender, receiver))
+        return Fits(fit="identical")
+
+    assert layout_covers(empty, reader, type_fits=_never, row_fits=_row_fits) is None  # type: ignore[arg-type]
+    assert len(rows_asked) == 1
     assert thin.layout is None
     assert layout_covers(thin, reader, type_fits=_never, row_fits=_never) == LayoutGap(  # type: ignore[arg-type]
         entry="layout", producer=ABSENT, reader="record sets results"

@@ -8,7 +8,7 @@ from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.providers import provider_digest, provider_path, render_provider
 from cruxible_core.service.procedures.provider_installation import installed_providers
 from tests.core_support._support import initialize_local
-from tests.support.operation_world import REFUSAL, VALUE, contract_files, operation_build
+from tests.support.operation_world import contract_files, operation_build
 from tests.test_procedures.test_procedure_source_runs import _accept_more
 from tests.test_service.test_get_reads import _get, _refusal
 
@@ -37,7 +37,7 @@ def provider_world(tmp_path, package, *, together=False):
     # there is no separate ProviderInterface artifact to accept beside it,
     # but its operation Contract pins (test.value@1) must themselves be accepted.
     definitions = {
-        **contract_files(VALUE, REFUSAL),
+        **contract_files(),
         provider_path(first.identity.name): render_provider(first),
     }
     if together:

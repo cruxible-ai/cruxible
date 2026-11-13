@@ -1357,7 +1357,7 @@ def evaluate_contract_law(
             )
     for name, declared in contract.fields.items():
         for found in key_types(declared.type):
-            problem = _key_type_problem(found, lookup)
+            problem = key_type_problem(found, lookup)
             if problem is not None:
                 problems.append(
                     ContractLawProblem(
@@ -1369,7 +1369,7 @@ def evaluate_contract_law(
     return tuple(dict.fromkeys(problems))
 
 
-def _key_type_problem(
+def key_type_problem(
     field_type: KeyType | KeyPartType, lookup: Callable[[str], bytes | None]
 ) -> str | None:
     """Why ``key<K>`` / ``key_part<K:p>`` names no key here: K live and keyed, p one of its keys."""
@@ -2601,6 +2601,7 @@ __all__ = [
     "cast_record",
     "cast_value",
     "check_key_value",
+    "key_type_problem",
     "key_types",
     "check_record",
     "check_value",
