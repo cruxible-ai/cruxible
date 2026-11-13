@@ -14,7 +14,9 @@ from cruxible_core.proposals.proposal_notes import admission_bytes
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
 from tests.core_support._proposal_note_oracle import build_proposal_note_oracle
-from tests.core_support._support import initialize_local
+
+# These tests count every proposal and evidence file from genesis: no base kit add.
+from tests.core_support._support import initialize_without_base_kit as initialize_local
 from tests.support.evidence_files import remove_later
 from tests.test_proposals.test_grouped_proposal_notes import _submit as _submit_once
 

@@ -111,6 +111,27 @@ def initialize_fresh(
     return instance, owner
 
 
+def initialize_without_base_kit(
+    tmp_path: Path,
+    *,
+    object_format: GitObjectFormat = "sha256",
+    instance_id: str = "inst_playbill_test",
+) -> tuple[PlaybillInstance, GeneratedKeyMaterial]:
+    """A fresh instance whose creation skips the base kit add.
+
+    For tests of proposal evidence and ledger mechanics that count every
+    proposal, evidence file or generation from genesis; the base kit plays no
+    part in what they check. Never shared through a world template.
+    """
+
+    from unittest import mock
+
+    import cruxible_core.kits.base_kit as base_kit_module
+
+    with mock.patch.object(base_kit_module, "record_pending_base_kit", lambda *a, **k: None):
+        return initialize_fresh(tmp_path, object_format=object_format, instance_id=instance_id)
+
+
 @dataclass(frozen=True)
 class TemplateWorld:
     """What a copy needs to reopen a templated instance and name its owner key."""

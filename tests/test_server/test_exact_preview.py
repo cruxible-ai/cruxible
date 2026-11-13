@@ -563,7 +563,11 @@ def test_a_document_proposal_previews_and_writes_nothing(
     )
 
     assert preview["status"] in {"would_propose", "would_block"}
-    assert _ok(client.get(_api(instance_id, "/proposals")))["entries"] == []
+    # Only creation's base kit add is a proposal; the preview added none.
+    assert [
+        entry["target_ref"].rpartition("/")[2].startswith("kit-base-")
+        for entry in _ok(client.get(_api(instance_id, "/proposals")))["entries"]
+    ] == [True]
 
 
 def test_withdrawing_and_readmitting_a_proposal_preview_and_write_nothing(
@@ -1283,4 +1287,8 @@ def test_a_claim_type_proposal_previews_and_writes_nothing(
 
     assert preview["proposal"]["status"] in {"would_propose", "would_block"}
     assert "admission" not in preview["proposal"]["proposal"]
-    assert _ok(client.get(_api(instance_id, "/proposals")))["entries"] == []
+    # Only creation's base kit add is a proposal; the preview added none.
+    assert [
+        entry["target_ref"].rpartition("/")[2].startswith("kit-base-")
+        for entry in _ok(client.get(_api(instance_id, "/proposals")))["entries"]
+    ] == [True]

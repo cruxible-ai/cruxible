@@ -189,7 +189,8 @@ def calls_spec(*, results: str = f"{providers.RESULTS}@1") -> dict[str, Any]:
             "procedure": PROCEDURE,
             "description": "Ask the search pair about the project.",
             "input": {},
-            "output": {},
+            # The second call is the last step, so its result is the Procedure's.
+            "output": {"results": "capture<*>"},
             "slots": {
                 "search": {"capability": f"{providers.SEARCH}@1"},
                 "results": {"capability": results},
