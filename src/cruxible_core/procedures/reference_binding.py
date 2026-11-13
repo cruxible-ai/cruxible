@@ -26,7 +26,10 @@ from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     procedure_artifact_digest,
 )
-from cruxible_client.contracts.procedures.line_specs import provisional_slot_signatures
+from cruxible_client.contracts.procedures.line_specs import (
+    builtin_binding_problem,
+    provisional_slot_signatures,
+)
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     ProcedureDefinition,
@@ -265,6 +268,8 @@ def bind_procedure_references(
 
     from cruxible_core.procedures.declared_inputs import builtin_slot_signatures
 
+    builtin_names = frozenset(builtin_slot_signatures())
+
     # The provisional signature key (line_specs.provisional_slot_signatures, which
     # the binding slice replaces). A replay rebinds the bindings its admission
     # recorded and checked, from recorded pins only, so it derives none.
@@ -316,6 +321,34 @@ def bind_procedure_references(
         )
         if operation is None:
             raise ExecutionError(f"Slot {name!r}: {binding.spelling} declares no such operation")
+        # Ruling B1, rechecked at every admission (a replay included), whatever the
+        # signatures say: a builtin capability binds only core's builtin, and core's
+        # builtin binds no other capability.
+        builtin_problem = builtin_binding_problem(
+            name,
+            capability=slot.capability.spelling,
+            builtin=slot.capability.name in builtin_names,
+            operation=operation,
+            spelling=binding.spelling,
+        )
+        if builtin_problem is not None:
+            from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
+            from cruxible_core.errors import RequestRefusedError
+
+            raise RequestRefusedError(
+                builtin_problem[0],
+                builtin_problem[1],
+                repair=HandEditRepair(
+                    hand_edit=HandEditInstruction(
+                        target="bindings",
+                        required_change=(
+                            f"Bind {name} to core's builtin"
+                            if slot.capability.name in builtin_names
+                            else f"Bind {name} to a provider build serving {slot.capability.name}"
+                        ),
+                    )
+                ),
+            )
         signature = signatures.get(name)
         try:
             fits = signature is None or operation.signature().same_as(signature)
