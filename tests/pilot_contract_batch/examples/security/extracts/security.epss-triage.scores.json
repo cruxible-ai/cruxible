@@ -1,0 +1,7 @@
+{
+  "capture": "$steps.scores_api.captures",
+  "id": "scores",
+  "kind": "extract",
+  "only_keys": "$steps.watch_keys.rows",
+  "records": "scores"
+}
