@@ -742,7 +742,7 @@ def parse_projection_tree(
                     capability_digest,
                     parse_capability,
                 )
-                from cruxible_core.capabilities.artifact import CAPABILITY_CONTRACT_PIN_ROLES
+                from cruxible_core.capabilities.artifact import capability_pins
 
                 capability = parse_capability(content, path=path)
                 identity = capability.identity.qualified
@@ -765,16 +765,16 @@ def parse_projection_tree(
                         ),
                     )
                 )
+                # The same pins the dependency closure reads: one per distinct
+                # Contract, so a request and result that are one Contract is one edge.
                 pins.extend(
                     PinRow(
                         source_identity=identity,
-                        target_identity=ref.identity.qualified,
-                        target_digest=ref.digest,
-                        role=role,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
+                        role=pin.role,
                     )
-                    for role, ref in zip(
-                        CAPABILITY_CONTRACT_PIN_ROLES, capability.contract_refs(), strict=True
-                    )
+                    for pin in capability_pins(capability)
                 )
                 continue
             if kind == "subject-kind":
