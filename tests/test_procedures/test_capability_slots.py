@@ -358,3 +358,22 @@ def test_a_workspace_read_commits_core_bytes_as_its_one_capture_field() -> None:
     assert "workspace.file" in found[1]
     # The same slot not recognised is an ordinary call; nothing about core's field.
     assert problem(()) is None
+
+
+def test_an_acquiring_call_whose_result_declares_no_capture_field_is_refused() -> None:
+    """A Capture is a named field of the result Contract, never the whole result."""
+
+    from cruxible_client.contracts.procedures.capture_outputs import procedure_capture_problem
+    from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
+
+    plain = compute_capability("external_read")
+    definition = _one_call(pinned_slot(plain), acquires=True)
+    found = procedure_capture_problem(
+        definition,
+        contract_lookup=lambda ref: VALUE if ref.name == VALUE.name else None,
+        capture_lookup=lambda name: object(),  # type: ignore[arg-type,return-value]
+        capability_lookup=capability_lookup(plain),
+        builtin_capabilities=BUILTIN_CAPABILITY_NAMES,
+    )
+    assert found is not None and found[0] == "cruxible.procedure.captures_mismatch"
+    assert "never the whole result" in found[1]

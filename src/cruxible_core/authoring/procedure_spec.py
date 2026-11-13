@@ -265,60 +265,47 @@ def resolve_procedure_spec(
             )
             from cruxible_client.contracts.source_references import HTTP_RESPONSE_COORDINATE_TYPE
 
-            # The whole-wire Capture is typed by the kind it is taken under, so
-            # it flows into a derive's capture<K> or capture<*> input.
+            # The workspace read's Capture is typed by the kind it is taken
+            # under, so it flows into a derive's capture<K> or capture<*> input.
             wire_capture = ContractField(
                 type=CaptureType(
                     capture_kind=ANY_CAPTURE_KIND if capture is None else capture.identity.name
                 )
             )
             if acquiring and not workspace_source:
-                from cruxible_client.contracts.provider_operations import (
-                    capture_fields,
-                    capture_list_fields,
-                )
                 from cruxible_client.contracts.shapes import ListType
 
-                out_view = output_view
-                listed = capture_list_fields(out_view)
-                if not capture_fields(out_view) and not listed:
-                    # The operation returns one Capture as its whole output: the
-                    # call's value names only that Capture.
-                    output_fields = {CAPTURE_FIELD: wire_capture}
-                    output_contract = None
-                else:
-                    # A capture<*> field, or a list<capture<*>>'s members, is typed
-                    # by the kind the call's captures map binds (D-R37 a1).
-                    bound = {
-                        field: resolved.identity.name
-                        for field, resolved in zip(sorted(step.captures), captures, strict=True)
-                    }
-                    retyped = dict(output_fields)
-                    for field, declared in output_fields.items():
-                        bound_kind = bound.get(field)
-                        typed = declared.type
-                        if bound_kind is None:
-                            continue
-                        if (
-                            isinstance(typed, CaptureType)
-                            and typed.capture_kind == ANY_CAPTURE_KIND
-                        ):
-                            retyped[field] = declared.model_copy(
-                                update={"type": CaptureType(capture_kind=bound_kind)}
-                            )
-                        elif (
-                            isinstance(typed, ListType)
-                            and isinstance(typed.item, CaptureType)
-                            and typed.item.capture_kind == ANY_CAPTURE_KIND
-                        ):
-                            retyped[field] = declared.model_copy(
-                                update={
-                                    "type": typed.model_copy(
-                                        update={"item": CaptureType(capture_kind=bound_kind)}
-                                    )
-                                }
-                            )
-                    output_fields = retyped
+                # A capture<*> field, or a list<capture<*>>'s members, is typed by
+                # the kind the call's captures map binds (D-R37 a1). A Capture is
+                # always a named field of the out Contract; the capture law
+                # refuses captures that name a field it does not declare.
+                bound = {
+                    field: resolved.identity.name
+                    for field, resolved in zip(sorted(step.captures), captures, strict=True)
+                }
+                retyped = dict(output_fields)
+                for field, declared in output_fields.items():
+                    bound_kind = bound.get(field)
+                    typed = declared.type
+                    if bound_kind is None:
+                        continue
+                    if isinstance(typed, CaptureType) and typed.capture_kind == ANY_CAPTURE_KIND:
+                        retyped[field] = declared.model_copy(
+                            update={"type": CaptureType(capture_kind=bound_kind)}
+                        )
+                    elif (
+                        isinstance(typed, ListType)
+                        and isinstance(typed.item, CaptureType)
+                        and typed.item.capture_kind == ANY_CAPTURE_KIND
+                    ):
+                        retyped[field] = declared.model_copy(
+                            update={
+                                "type": typed.model_copy(
+                                    update={"item": CaptureType(capture_kind=bound_kind)}
+                                )
+                            }
+                        )
+                output_fields = retyped
             if workspace_source:
                 # The read's exact bytes, committed by core beside its result.
                 output_fields = {**output_fields, CAPTURE_FIELD: wire_capture}

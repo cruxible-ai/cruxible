@@ -711,7 +711,6 @@ def _summaries(state: Any, kind: str) -> list[Any]:
     return [node.summary for node in state.nodes if node.summary and node.summary.kind == kind]
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_kev_and_epss_flow_from_recorded_bytes_to_claims(tmp_path: Path) -> None:
     instance = skeleton_world(tmp_path)
     kev = {"url": KEV_URL, "logical_source": "cisa.kev.catalog", "expected_format": "json"}
@@ -820,7 +819,6 @@ def test_kev_and_epss_flow_from_recorded_bytes_to_claims(tmp_path: Path) -> None
     activate(instance, third)
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_the_origin_gate_reads_the_coordinate_final_url(tmp_path: Path) -> None:
     """C4: a redirect off the permitted origin refuses, read from the coordinate."""
 
@@ -886,7 +884,6 @@ def decode_watch(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     yield watch
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_c_admission_commits_any_bytes_and_only_extract_decodes(
     tmp_path: Path, decode_watch: dict[str, Any]
 ) -> None:
@@ -950,7 +947,7 @@ def _contract_digest_in(checkout: Path, name: str) -> str:
 
 
 def _derive_build(checkout: Path, *, effect: str = "pure") -> Any:
-    """A core test-double provider: one pure ``derive`` returning Capture wire."""
+    """A core test-double provider: one pure ``derive`` returning one Capture field."""
 
     from cruxible_client.contracts.providers import (
         ProviderDistributionRef,
@@ -1050,26 +1047,29 @@ class DeriveReplay(Replay):
             body = kev_view(base64.b64decode(source["content_base64"]), context.input["watched"])
             digest = "sha256:" + hashlib.sha256(body).hexdigest()
             named = source["bytes_digest"]
+            # A Capture is a named field of the result: web.fetch.result's ``capture``.
             return {
-                "tag": "playbill-provider-result-to-external-capture-v1",
-                "source_identity": "test.kev-view",
-                "coordinate_type": "http-response-v1",
-                "coordinate": {
-                    "url": VIEW_URL,
-                    "final_url": VIEW_URL,
-                    "content_type": "application/json",
-                    "request_digest": "sha256:" + hashlib.sha256(named.encode()).hexdigest(),
-                    "source": "packaged-recording",
-                    "status": 200,
-                },
-                "selector_type": "whole-response-v1",
-                "selector": {},
-                "replayability": "attested_only",
-                "content_base64": base64.b64encode(body).decode("ascii"),
-                "content_encoding": "base64",
-                "byte_length": len(body),
-                "bytes_digest": digest,
-                "observed_at": NOW.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "capture": {
+                    "tag": "playbill-provider-result-to-external-capture-v1",
+                    "source_identity": "test.kev-view",
+                    "coordinate_type": "http-response-v1",
+                    "coordinate": {
+                        "url": VIEW_URL,
+                        "final_url": VIEW_URL,
+                        "content_type": "application/json",
+                        "request_digest": "sha256:" + hashlib.sha256(named.encode()).hexdigest(),
+                        "source": "packaged-recording",
+                        "status": 200,
+                    },
+                    "selector_type": "whole-response-v1",
+                    "selector": {},
+                    "replayability": "attested_only",
+                    "content_base64": base64.b64encode(body).decode("ascii"),
+                    "content_encoding": "base64",
+                    "byte_length": len(body),
+                    "bytes_digest": digest,
+                    "observed_at": NOW.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
             }
 
         return Invoker(output=output)
@@ -1175,7 +1175,6 @@ def _accepted_node_input(instance: Any, procedure: str, node_id: str) -> Any:
     return node.input
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_derived_capture_records_its_inputs_and_is_each_claims_one_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1279,7 +1278,6 @@ def _get_card(instance: Any, ref: str) -> Any:
     return service_playbill_get(instance, request=GetRequest(ref=ref), access=ACCESS).card
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_get_on_a_derived_capture_serves_its_sources_reads_and_reducer(tmp_path: Path) -> None:
     instance = derive_world(tmp_path)
     _install(instance, derive_spec(), line="test.kev-derive-line", parameters=KEV_PARAMS)
@@ -1302,7 +1300,6 @@ def test_get_on_a_derived_capture_serves_its_sources_reads_and_reducer(tmp_path:
     assert _get_card(instance, "Capture:" + source).derivation is None
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_derived_capture_inherits_its_restricted_inputs_body_access(tmp_path: Path) -> None:
     from cruxible_core.service.evidence.body_access import capture_access_resolver
 
@@ -1326,7 +1323,6 @@ def test_a_derived_capture_inherits_its_restricted_inputs_body_access(tmp_path: 
     assert fresh.restricted and fresh.inherited_restricted
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_derive_chain_roots_each_claim_at_the_last_derive(tmp_path: Path) -> None:
     instance = derive_world(tmp_path)
     _install(instance, derive_spec(chain=True), line="test.kev-chain-line", parameters=KEV_PARAMS)
@@ -1349,7 +1345,6 @@ def _manifest_or_none(instance: Any, capture: str) -> Any:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_an_unrelated_second_capture_in_a_claims_closure_still_refuses(tmp_path: Path) -> None:
     instance = derive_world(tmp_path)
     _install(instance, derive_spec(mix=True), line="test.kev-mix-line", parameters=KEV_PARAMS)
@@ -1359,7 +1354,6 @@ def test_an_unrelated_second_capture_in_a_claims_closure_still_refuses(tmp_path:
     assert "root Capture" in state.terminal.message
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_derive_must_declare_effect_pure(tmp_path: Path) -> None:
     """b5: a call producing a derived Capture from Capture bytes is pure computation."""
 

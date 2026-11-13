@@ -229,7 +229,8 @@ class Pages:
             self.derive_inputs.append(dict(context.input))
             body = view(context.input["sources"], context.input["watched"])
             wire = _wire(body, VIEW_URL, source="test.kev-view")
-            return {**wire, "tag": "playbill-provider-result-to-external-capture-v1"}
+            # A Capture is a named field of the result: web.fetch.result's ``capture``.
+            return {"capture": {**wire, "tag": "playbill-provider-result-to-external-capture-v1"}}
 
         return Invoker(output=output, incomplete_captures=self.incomplete_captures)
 
@@ -393,7 +394,6 @@ def listed_watched() -> list[str]:
     return [cve for cve in WATCHED if cve != UNLISTED]
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_extract_over_a_list_cites_each_records_page(tmp_path: Path) -> None:
     """a5: records merge across pages; each Claim cites its own page, page-local locator."""
 
@@ -426,7 +426,6 @@ def test_extract_over_a_list_cites_each_records_page(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_absence_over_a_complete_list_cites_every_page_and_retires(tmp_path: Path) -> None:
     """a6: every page complete, so absence infers and retires; the witness cites all pages."""
 
@@ -468,7 +467,6 @@ def test_absence_over_a_complete_list_cites_every_page_and_retires(tmp_path: Pat
     activate(instance, second)
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_failed_page_leaves_the_list_incomplete_and_absence_suppressed(
     tmp_path: Path,
 ) -> None:
@@ -495,7 +493,6 @@ def test_a_failed_page_leaves_the_list_incomplete_and_absence_suppressed(
 
 
 @pytest.mark.parametrize("absence", [False, True])
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_key_in_two_pages_writes_nothing_for_it(tmp_path: Path, absence: bool) -> None:
     """a5: a cross-member duplicate is a duplicate: no Claim for it, and no absence."""
 
@@ -521,7 +518,6 @@ def test_a_key_in_two_pages_writes_nothing_for_it(tmp_path: Path, absence: bool)
     assert any(item.kind == "duplicate_key" for item in state.findings)
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_list_extract_narrowed_before_claims_stays_refused(tmp_path: Path) -> None:
     """a8: list extract -> filter -> claims keeps no per-record lineage; narrow in derive."""
 
@@ -533,7 +529,6 @@ def test_a_list_extract_narrowed_before_claims_stays_refused(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize("declared", ["header", "complete_when"])
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_an_extract_over_a_list_declares_no_header_or_complete_when(
     tmp_path: Path, declared: str
 ) -> None:
@@ -562,7 +557,6 @@ def test_an_extract_over_a_list_declares_no_header_or_complete_when(
 
 
 @pytest.mark.parametrize("failed", [False, True])
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_derive_over_the_list_follows_its_completeness(tmp_path: Path, failed: bool) -> None:
     """fetch-list -> derive -> extract -> claims: the view's absence is the list's."""
 
@@ -683,7 +677,6 @@ def _law_refusals(monkeypatch: pytest.MonkeyPatch) -> dict[str, set[str]]:
 
 
 @pytest.mark.parametrize("defect", ["missing", "corrupt", "unproduced"])
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_acceptance_verifies_every_member_of_an_inverse_and_a_retirement_witness(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str
 ) -> None:
@@ -722,7 +715,6 @@ def test_acceptance_verifies_every_member_of_an_inverse_and_a_retirement_witness
     assert refused.get(retired_path) == {"cruxible.claim.evidence_unavailable"}, refused
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_acceptance_refuses_a_witness_whose_later_member_names_another_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -764,7 +756,6 @@ def test_acceptance_refuses_a_witness_whose_later_member_names_another_source(
 
 
 @pytest.mark.parametrize("defect", [None, "unavailable", "invalid", "other_source"])
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_an_absence_reobservation_verifies_every_member_of_its_witness(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str | None
 ) -> None:
@@ -825,7 +816,6 @@ def test_an_absence_reobservation_verifies_every_member_of_its_witness(
         assert recorded == ()
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_list_the_provider_says_is_incomplete_never_retires(tmp_path: Path) -> None:
     """All three pages land, but the provider names ``pages`` incomplete (a page it failed
     itself): the delisting neither retires nor inverts, as for a page core dropped."""
@@ -1002,7 +992,6 @@ class RealPages:
         return holder
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_real_failed_page_leaves_the_list_incomplete_and_suppresses_retirement(
     tmp_path: Path,
 ) -> None:

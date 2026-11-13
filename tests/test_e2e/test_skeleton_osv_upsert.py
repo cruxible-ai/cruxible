@@ -21,8 +21,6 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from cruxible_client.contracts.authoring.inputs import (
     LineInput,
     QueryDefinitionInput,
@@ -288,7 +286,8 @@ class Osv:
             self.calls.append("derive")
             body = matches(context.input["sources"], context.input["components"], self.unmatched)
             wire = _wire(body, "https://derive.test/osv-matches", source="test.osv-matches")
-            return {**wire, "tag": "playbill-provider-result-to-external-capture-v1"}
+            # A Capture is a named field of the result: web.fetch.result's ``capture``.
+            return {"capture": {**wire, "tag": "playbill-provider-result-to-external-capture-v1"}}
 
         return Invoker(output=output)
 
@@ -425,7 +424,6 @@ def _changes(state: Any) -> list[str]:
     return sorted(child.change_kind for child in egress.children if child.change_kind)
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_osv_single_procedure_creates_vulnerabilities_and_mirrors_by_queried(
     tmp_path: Path,
 ) -> None:
@@ -548,7 +546,6 @@ def _install_landed(instance: Any) -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_derived_captures_landing_triggers_a_line_that_writes_without_fetching(
     tmp_path: Path,
 ) -> None:

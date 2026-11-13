@@ -24,7 +24,6 @@ from tests.pilot_contract_batch.harness import (
 )
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 @pytest.mark.pilot(
     "baseline",
     owner="none (baseline)",
