@@ -7102,6 +7102,8 @@ class ProcedureExecutor:
             deployment_digest=verified_binding.deployment_digest,
             operation=verified_binding.operation,
             operation_signature_digest=verified_binding.operation_signature_digest,
+            capability=occurrence.capability,
+            fit=occurrence.fit,
             protocol_version=verified_binding.protocol_version,
             capture_contracts=occurrence.capture_contracts,
             input_digest=input_digest,

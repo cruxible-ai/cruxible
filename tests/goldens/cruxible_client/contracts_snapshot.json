@@ -62456,6 +62456,40 @@
             "title": "CanonicalDuration",
             "type": "object"
           },
+          "CapabilityRef": {
+            "additionalProperties": false,
+            "description": "A pin to one capability version. Authors write ``name@N``; acceptance adds the digest.",
+            "properties": {
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Digest"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "maximum": 999999999,
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "title": "CapabilityRef",
+            "type": "object"
+          },
           "HandEditInstruction": {
             "additionalProperties": false,
             "properties": {
@@ -63555,8 +63589,11 @@
           },
           "ProcedureProviderBinding": {
             "additionalProperties": false,
-            "description": "What one slotted node binds at admission: its slot's exact build and operation.\n\nThe binding is the Line's (or, for a direct run, the request's ephemeral\nspec), never chosen at run time.",
+            "description": "What one slotted node binds at admission: its slot's exact build and operation.\n\nThe binding is the Line's (or, for a direct run, the request's ephemeral\nspec), never chosen at run time. ``capability`` is the slot's capability\npin and ``fit`` how the operation fit it at admission; ``fit`` is omitted\nonly for a capability core's builtin serves (bound by name).",
             "properties": {
+              "capability": {
+                "$ref": "#/$defs/CapabilityRef"
+              },
               "effect_class": {
                 "enum": [
                   "pure",
@@ -63565,6 +63602,22 @@
                 ],
                 "title": "Effect Class",
                 "type": "string"
+              },
+              "fit": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "identical",
+                      "structural"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Fit"
               },
               "implementation_digest": {
                 "title": "Implementation Digest",
@@ -63598,8 +63651,8 @@
                 "type": "string"
               },
               "tag": {
-                "const": "cruxible-procedure-provider-binding-v4",
-                "default": "cruxible-procedure-provider-binding-v4",
+                "const": "cruxible-procedure-provider-binding-v5",
+                "default": "cruxible-procedure-provider-binding-v5",
                 "title": "Tag",
                 "type": "string"
               }
@@ -63607,6 +63660,7 @@
             "required": [
               "node_id",
               "slot",
+              "capability",
               "operation",
               "operation_signature_digest",
               "provider_artifact_digest",
@@ -65270,6 +65324,40 @@
               "microseconds"
             ],
             "title": "CanonicalDuration",
+            "type": "object"
+          },
+          "CapabilityRef": {
+            "additionalProperties": false,
+            "description": "A pin to one capability version. Authors write ``name@N``; acceptance adds the digest.",
+            "properties": {
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Digest"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "maximum": 999999999,
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "title": "CapabilityRef",
             "type": "object"
           },
           "ClaimVersionReference": {
@@ -67601,8 +67689,11 @@
           },
           "ProcedureProviderBinding": {
             "additionalProperties": false,
-            "description": "What one slotted node binds at admission: its slot's exact build and operation.\n\nThe binding is the Line's (or, for a direct run, the request's ephemeral\nspec), never chosen at run time.",
+            "description": "What one slotted node binds at admission: its slot's exact build and operation.\n\nThe binding is the Line's (or, for a direct run, the request's ephemeral\nspec), never chosen at run time. ``capability`` is the slot's capability\npin and ``fit`` how the operation fit it at admission; ``fit`` is omitted\nonly for a capability core's builtin serves (bound by name).",
             "properties": {
+              "capability": {
+                "$ref": "#/$defs/CapabilityRef"
+              },
               "effect_class": {
                 "enum": [
                   "pure",
@@ -67611,6 +67702,22 @@
                 ],
                 "title": "Effect Class",
                 "type": "string"
+              },
+              "fit": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "identical",
+                      "structural"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Fit"
               },
               "implementation_digest": {
                 "title": "Implementation Digest",
@@ -67644,8 +67751,8 @@
                 "type": "string"
               },
               "tag": {
-                "const": "cruxible-procedure-provider-binding-v4",
-                "default": "cruxible-procedure-provider-binding-v4",
+                "const": "cruxible-procedure-provider-binding-v5",
+                "default": "cruxible-procedure-provider-binding-v5",
                 "title": "Tag",
                 "type": "string"
               }
@@ -67653,6 +67760,7 @@
             "required": [
               "node_id",
               "slot",
+              "capability",
               "operation",
               "operation_signature_digest",
               "provider_artifact_digest",

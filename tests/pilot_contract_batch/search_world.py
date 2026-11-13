@@ -257,15 +257,21 @@ def line_input(bindings: Mapping[str, str], *, name: str = LINE) -> dict[str, An
         "bindings": dict(bindings),
         "parameters": {},
         "acquisition": {"search.response": {"origins": [providers.SEARCH_ORIGIN]}},
-        "max_authority": "propose",
+        # Inherits its Procedure's capability: propose for the ranks Procedure; the
+        # calls-only Procedure (scenario 4) writes nothing, so it can only observe.
     }
 
 
 def grant(instance: Any, line: str = LINE) -> None:
-    """A propose Mandate for the accepted Line (the e2e skeleton's own helper)."""
+    """A propose Mandate for the accepted Line (the e2e skeleton's own helper).
+
+    A Line successor already carries its live Mandate to a propose-only successor
+    pinning the new Line (ruling C3); then there is nothing to grant.
+    """
 
     from cruxible_client.contracts.artifacts import ArtifactPin
     from cruxible_client.contracts.procedure_mandates import (
+        parse_procedure_mandate_any,
         procedure_mandate_path,
         render_procedure_mandate,
     )
@@ -280,6 +286,12 @@ def grant(instance: Any, line: str = LINE) -> None:
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     path = line_spec_path(line)
     accepted = parse_line_spec(tree[path], path=path)
+    held = tree.get(procedure_mandate_path(line))
+    if held is not None and (
+        parse_procedure_mandate_any(held, path=procedure_mandate_path(line)).line.artifact_digest
+        == line_spec_digest(accepted).tagged
+    ):
+        return
     mandate = procedure_mandate(
         line,
         namespace=("claims",),

@@ -189,7 +189,7 @@ def test_line_acceptance_refuses_ambiguous_and_unfilled_slots_listing_candidates
     author_procedure(other, slotted_spec(effect="external_read"))
     unfilled = _refusal(lambda: author_line(other))
     assert unfilled.error_code == "cruxible.line.slot_unfilled"
-    assert "test.value@1 -> test.value@1 (external_read)" in str(unfilled)
+    assert "(test.compute-read@1, external_read)" in str(unfilled)
 
 
 def test_an_explicit_operation_binding_resolves_past_the_candidate_limit(tmp_path):
@@ -1067,6 +1067,7 @@ def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
         operation(
             "compute",
             signature=("test.value@1", "test.severity_value@1"),
+            serves=("test.compute.severity",),
         ),
     )
     manifest = ProviderRuntimeManifest(
@@ -1253,6 +1254,7 @@ def _fetch_world(
             "fetch",
             effect="external_read",
             signature=("demo.fetch.request@1", "demo.fetch.result@1"),
+            serves=("demo.fetch",),
         ),
     )
     manifest = ProviderRuntimeManifest(

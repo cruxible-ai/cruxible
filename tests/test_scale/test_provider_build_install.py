@@ -588,11 +588,10 @@ def test_exact_authoring_read_does_not_enumerate_sibling_builds(tmp_path, monkey
     The historical ``accepted_build_resolver.provider()`` this test exercised
     is gone (B2 noun removal); exact-build authoring survives through the
     current slot-binding path: ``resolve_slot_bindings`` seeks
-    ``indexed_exact_provider`` by the requested build's exact identity, then
-    ``fitting_operations`` seeks ``provider_operations`` filtered to that one
-    ``source_identity`` -- the same two indexed-seek shape the old resolver
-    guarded, just reached through Line/direct-run slot binding instead of
-    Procedure authoring.
+    ``indexed_exact_provider`` by the requested build's exact identity, reads
+    that one build, and fits its operation that serves the slot's capability --
+    the same indexed-seek shape the old resolver guarded, just reached through
+    Line/direct-run slot binding instead of Procedure authoring.
     """
 
     from cruxible_core.providers.operation_index import resolve_slot_bindings
@@ -601,11 +600,14 @@ def test_exact_authoring_read_does_not_enumerate_sibling_builds(tmp_path, monkey
     for size in (20, 200):
         instance, providers = _population(tmp_path, package, size)
         target = providers[0]
-        slots = {"compute": target.operations[0].signature()}
+        slots = {"compute": _compute_need()}
         requested = {"compute": target.identity.qualified}
 
         def read():
-            resolved = resolve_slot_bindings(instance.connection, slots, requested)
+            _clear_binding_memos()
+            resolved = resolve_slot_bindings(
+                instance.connection, slots, requested, **_binding_readers(instance)
+            )
             assert resolved["compute"].build.target == target.identity
             assert resolved["compute"].operation == "compute"
 
@@ -613,3 +615,99 @@ def test_exact_authoring_read_does_not_enumerate_sibling_builds(tmp_path, monkey
         instance.connection.close()
     print("work at 20/200 builds:", work)
     assert work[0] == work[1], work
+
+
+def _compute_need():
+    from cruxible_client.contracts.capabilities import capability_pin
+    from cruxible_client.contracts.procedures.line_specs import SlotNeed
+    from tests.support.operation_world import compute_capability
+
+    found = compute_capability()
+    return SlotNeed(pin=capability_pin(found), capability=found)
+
+
+def _binding_readers(instance):
+    from cruxible_core.providers.operation_index import (
+        memoized_slot_fitter,
+        tree_build_reader,
+        tree_capability_side,
+    )
+
+    return {
+        "fitter": memoized_slot_fitter(tree_capability_side(instance.tree)),
+        "builds": tree_build_reader(instance.tree),
+    }
+
+
+def _clear_binding_memos():
+    from cruxible_core.providers import operation_index
+
+    operation_index._BUILDS.clear()  # noqa: SLF001
+    operation_index._FITS.clear()  # noqa: SLF001
+
+
+def _other_capability_population(tmp_path, count):
+    """The one build serving ``test.compute`` and ``count`` builds each serving a
+    capability of its own (``test.other.<n>``)."""
+
+    from tests.support.operation_world import operation_build
+
+    serving = operation_build(provider_id="serving-provider")
+    others = tuple(
+        operation_build(
+            provider_id=f"other-provider-{index:03d}",
+            operations=(_operation(serves=(f"test.other.{index:03d}",)),),
+        )
+        for index in range(count)
+    )
+    builds = (serving, *others)
+    tree = SnapshotTree(
+        {
+            **contract_files(),
+            **{provider_path(p.identity.name): render_provider(p) for p in builds},
+        }
+    )
+    instance = _instance(tmp_path / f"others-{count}", tree)
+    connection = instance.connection
+    insert_members(connection, tree, instance.coordinate.git_object_format)
+    insert_owners(
+        connection, parsed=parse_static_owners(tree, accepted=instance.coordinate), blobs=tree
+    )
+    connection.executemany(
+        "INSERT INTO provider_registration_order VALUES (?,'',?)",
+        ((provider_path(p.identity.name), i + 1) for i, p in enumerate(builds)),
+    )
+    refresh_provider_heads(connection, tree)
+    return instance, serving
+
+
+def test_binding_a_slot_reads_nothing_of_providers_serving_other_capabilities(
+    tmp_path, monkeypatch
+):
+    """Binding an unnamed slot seeks its capability's rows only: with 1 or 50 installed
+    providers serving other capabilities, the counted work is the same (index rows
+    returned, builds read, fits computed, SQLite steps and tree reads)."""
+
+    from cruxible_core.providers.operation_index import BINDING_WORK, resolve_slot_bindings
+
+    work = []
+    for count in (1, 50):
+        instance, serving = _other_capability_population(tmp_path, count)
+        slots = {"compute": _compute_need()}
+
+        def bind():
+            _clear_binding_memos()
+            before = dict(BINDING_WORK)
+            resolved = resolve_slot_bindings(
+                instance.connection, slots, {}, **_binding_readers(instance)
+            )
+            assert resolved["compute"].build.target == serving.identity
+            counted.update({key: BINDING_WORK[key] - before[key] for key in BINDING_WORK})
+
+        counted: dict[str, int] = {}
+        reads, steps = _work(instance, monkeypatch, bind)
+        work.append((counted, reads, steps))
+        instance.connection.close()
+    print("binding work with 1/50 other-capability providers:", work)
+    assert work[0][0] == work[1][0] == {"candidates": 1, "builds": 1, "fits": 1}, work
+    assert work[0][1:] == work[1][1:], work

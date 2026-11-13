@@ -342,16 +342,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:e9df6fa866da614079eb44319d0b665e26f9e940aae05c3ef01dba1695b893e2"
+    expected = "sha256:35597e841a464f0c744e0887296c2213b89d68223cc67529760f408b88ad3878"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 69,
+            "semantic_revision": 70,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "capture-fields",
+            "revision_name": "binding-by-fit",
         },
     )
     assert computed == expected
@@ -396,9 +396,12 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "capture-fields"
-    assert compiler_revision_label(CURRENT_COMPILER) == "capture-fields"
+    assert CURRENT_COMPILER_REVISION == "binding-by-fit"
+    assert compiler_revision_label(CURRENT_COMPILER) == "binding-by-fit"
     for earlier_digest in (
+        # Revision 69: before a Line bound each slot by capability and fit (a slot
+        # bound by the exact signature its capability derived).
+        "sha256:e9df6fa866da614079eb44319d0b665e26f9e940aae05c3ef01dba1695b893e2",
         # Revision 68: before every Capture was a named field of the result Contract
         # (a whole-wire result and the implicit ``capture`` map were lawful).
         "sha256:3cb26c30a35e0a0918253fc93ef98c1cc54b59ebb7429545cb25d5439f8a02bc",

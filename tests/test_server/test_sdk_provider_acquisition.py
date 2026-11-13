@@ -134,6 +134,7 @@ _FETCH_CONTRACTS = (_FETCH_INPUT, _FETCH_OUTPUT)
 _FETCH_OPERATION = declared_operation(
     {
         "name": "fetch",
+        "serves": ["test.sdk-fetch"],
         "in": f"{_FETCH_INPUT.name}@{_FETCH_INPUT.version}",
         "out": f"{_FETCH_OUTPUT.name}@{_FETCH_OUTPUT.version}",
         "effect": "external_read",
@@ -467,6 +468,7 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     operation = declared_operation(
         {
             "name": "invoke",
+            "serves": ["test.sdk-call"],
             "in": f"{call_input.name}@{call_input.version}",
             "out": f"{call_output.name}@{call_output.version}",
             "effect": "external_read",

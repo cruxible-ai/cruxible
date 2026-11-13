@@ -2883,6 +2883,8 @@ def provider_capture_receipt_matches_occurrence(
         and receipt.provider_artifact_digest == occurrence.provider_artifact_digest
         and receipt.operation == occurrence.operation.name
         and receipt.operation_signature_digest == occurrence.operation_signature_digest
+        and receipt.capability == occurrence.capability
+        and receipt.fit == occurrence.fit
         and receipt.implementation_digest == occurrence.implementation_digest
         and receipt.materialization_digest == local.materialization_digest
         and receipt.deployment_digest == local.deployment_digest

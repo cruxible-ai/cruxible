@@ -89,6 +89,7 @@ def pages_world(
             "pages",
             effect="external_read",
             signature=("demo.pages.request@1", "demo.pages.result@1"),
+            serves=("demo.pages",),
         ),
     )
     manifest = ProviderRuntimeManifest(

@@ -16,6 +16,8 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
+from cruxible_client.contracts.capabilities import CapabilityRef
+from cruxible_client.contracts.capability_fit import FitKind
 from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic
 from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.mandate_scope import SettleScopeGap
@@ -697,14 +699,18 @@ class ProcedureProviderBinding(_StrictResultModel):
     """What one slotted node binds at admission: its slot's exact build and operation.
 
     The binding is the Line's (or, for a direct run, the request's ephemeral
-    spec), never chosen at run time.
+    spec), never chosen at run time. ``capability`` is the slot's capability
+    pin and ``fit`` how the operation fit it at admission; ``fit`` is omitted
+    only for a capability core's builtin serves (bound by name).
     """
 
-    tag: Literal["cruxible-procedure-provider-binding-v4"] = (
-        "cruxible-procedure-provider-binding-v4"
+    tag: Literal["cruxible-procedure-provider-binding-v5"] = (
+        "cruxible-procedure-provider-binding-v5"
     )
     node_id: str
     slot: str
+    capability: CapabilityRef
+    fit: FitKind | None = Field(default=None, exclude_if=lambda value: value is None)
     operation: str
     operation_signature_digest: str
     provider_artifact_digest: str
@@ -743,6 +749,8 @@ def procedure_provider_bindings(
         ProcedureProviderBinding(
             node_id=item.node_id,
             slot=item.slot,
+            capability=item.capability,
+            fit=item.fit,
             operation=item.operation.name,
             operation_signature_digest=item.operation_signature_digest,
             provider_artifact_digest=item.provider_artifact_digest,

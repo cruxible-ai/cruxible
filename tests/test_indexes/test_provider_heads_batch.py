@@ -42,7 +42,7 @@ def test_provider_maintenance_batches_every_changed_table(monkeypatch, size):
         for i in range(size)
         for build in ("a", "b")
     ]
-    operations = [(row[0], "compute", "in-digest", "out-digest", "pure") for row in providers]
+    operations = [(row[0], "compute", "test.compute", "pure") for row in providers]
     insert_rows(connection, "providers", providers)
     insert_rows(connection, "provider_operations", operations)
     sources = {row[1]: b"" for row in providers}
