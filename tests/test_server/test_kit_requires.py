@@ -305,10 +305,24 @@ def test_remove_refuses_a_required_kit_and_status_shows_requirements(
         "met": True,
     }
 
-    # Nothing stops a downgrade of base under its dependent; status says so.
-    assert _add(consumer, _base("0.9.0"), allow_downgrade=True).status == "accepted"
-    [behind] = {kit.kit_id: kit for kit in service_kit_status(consumer).kits}["acme"].requires
-    assert (behind.installed_version, behind.met) == ("0.9.0", False)
+    # Lowering base below what acme requires is refused, preview and commit alike.
+    for options in ({"allow_downgrade": True}, {"allow_downgrade": True, "dry_run": False}):
+        with pytest.raises(RequestRefusedError) as lowered:
+            service_add_kit(
+                consumer,
+                KitAddRequest(bundle=_base("0.9.0"), **options),  # type: ignore[arg-type]
+                actor_id="owner",
+                timestamp=STAMP,
+            )
+        assert lowered.value.error_code == "cruxible.kit.requires_missing"
+        assert str(lowered.value).endswith(
+            "This change installs kit base 0.9.0. Kit acme 0.1.0 requires kit base 1.0.0 or "
+            "later; this instance holds base 0.9.0. Upgrade it first: cruxible kit add base."
+        )
+    # An upgrade is never refused by a requirement.
+    assert _add(consumer, _base("1.1.0")).status == "accepted"
+    [ahead] = {kit.kit_id: kit for kit in service_kit_status(consumer).kits}["acme"].requires
+    assert (ahead.installed_version, ahead.met) == ("1.1.0", True)
 
     assert _remove(consumer, "acme").status == "accepted"
     assert _remove(consumer, "base").status == "accepted"
@@ -433,6 +447,35 @@ def test_a_pending_removal_is_refused_at_approval_once_a_dependent_was_accepted(
         assert "cruxible.kit.remove_required" in approved.text
         assert "Kit base cannot be removed: kit acme requires it." in approved.text
         assert {kit.kit_id for kit in service_kit_status(consumer).kits} == {"base", "acme"}
+    finally:
+        for _ in worlds:
+            pass
+
+
+def test_a_pending_downgrade_is_refused_at_approval_once_a_dependent_needs_more(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dependent: KitBundle
+) -> None:
+    worlds, world, consumer = _independent_consumer(tmp_path, monkeypatch)
+    try:
+        lowered = service_add_kit(
+            consumer,
+            KitAddRequest(bundle=_base("0.9.0"), allow_downgrade=True, dry_run=False),
+            actor_id="operator",
+            timestamp=STAMP,
+        )
+        assert lowered.status == "proposed"
+        added = _add_as_operator(consumer, dependent)
+        assert added.status == "proposed"
+        world.approve(added.proposal_id)
+
+        approved = _approval(world, lowered.proposal_id)
+        assert approved.status_code == 400, approved.text
+        assert "cruxible.kit.requires_missing" in approved.text
+        assert "This change installs kit base 0.9.0. Kit acme 0.1.0 requires kit base 1.0.0" in (
+            approved.text
+        )
+        versions = {kit.kit_id: kit.version for kit in service_kit_status(consumer).kits}
+        assert versions == {"base": "1.0.0", "acme": "0.1.0"}
     finally:
         for _ in worlds:
             pass

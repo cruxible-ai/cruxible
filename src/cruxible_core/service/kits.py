@@ -2472,6 +2472,9 @@ def _add_kit(
     # The kits this release requires, then every pin it left out to their
     # definitions: both before anything is installed or proposed.
     required = _required_receipts(manifest, receipts)
+    _refuse_lowering_below_dependents(
+        manifest.kit_id, manifest.version, (receipt for receipt in receipts if receipt.artifacts)
+    )
     held: dict[str, bytes] = {}
     left_out_moves: dict[str, str] = {}
     if required:
@@ -2976,11 +2979,33 @@ def _changed_receipts(
     return found
 
 
+def _refuse_lowering_below_dependents(
+    kit_id: str, version: str, installed: Iterable[KitReceipt]
+) -> None:
+    """Installing ``kit_id`` at ``version`` leaves every installed kit that requires it
+    met: a version below one's ``min_version`` refuses ``cruxible.kit.requires_missing``
+    from that dependent's side. An upgrade never refuses here.
+    """
+
+    for other in sorted(installed, key=lambda receipt: receipt.kit_id):
+        if other.kit_id == kit_id:
+            continue
+        for requirement in other.requires:
+            if requirement.kit_id == kit_id and not requirement.met_by(version):
+                raise RequestRefusedError(
+                    KIT_REQUIRES_MISSING,
+                    f"This change installs kit {kit_id} {version}. "
+                    + requires_missing_message(other.kit_id, other.version, requirement, version),
+                    repair=RepairOperation(operation="cruxible.kit.add", arguments={"kit": kit_id}),
+                )
+
+
 def _refuse_unmet_requires(
     after: Mapping[str, KitReceipt], changed: Mapping[str, KitReceipt]
 ) -> None:
     """A kit change lands only where every kit it installs still has what it requires,
-    and where it removes no kit an installed kit requires.
+    where it removes no kit an installed kit requires, and where it lowers no kit
+    below the version an installed kit requires.
 
     ``after``: every receipt once the change lands (kit id -> receipt); ``changed``:
     the receipts the change writes.
@@ -3003,6 +3028,7 @@ def _refuse_unmet_requires(
                     ),
                 )
             continue
+        _refuse_lowering_below_dependents(kit_id, receipt.version, installed.values())
         for requirement in receipt.requires:
             held = installed.get(requirement.kit_id)
             version = None if held is None else held.version
