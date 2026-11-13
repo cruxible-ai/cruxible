@@ -39,8 +39,8 @@ from cruxible_client.contracts.procedures.graph import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ExtractNode,
     InboxEgressNode,
+    LayoutExtractNode,
     ProcedureDefinition,
     RepeatNode,
 )
@@ -445,7 +445,7 @@ def _node_contracts(definition: ProcedureDefinition) -> tuple[tuple[str, str, Co
 
     found: list[tuple[str, str, ContractRef]] = []
     for node in definition.nodes:
-        if isinstance(node, ExtractNode):
+        if isinstance(node, LayoutExtractNode) and node.row is not None:
             found.append(("extract", node.node_id, node.row))
         elif isinstance(node, InboxEgressNode):
             found.append(("post_inbox", node.node_id, node.contract))

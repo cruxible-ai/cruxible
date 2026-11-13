@@ -450,3 +450,20 @@ def test_a_composite_kind_s_whole_key_is_accepted_and_reads_both_parts(tmp_path:
     rules = tree_key_rules(tree)
     canonical = rules.canonical("test.pair", None, {"slug": "alpha", "region": "east"})
     assert canonical is not None
+
+
+def test_a_kind_depends_on_the_row_contract_of_each_record_set() -> None:
+    """A kit (or any closure) that carries the kind carries its layout's rows."""
+
+    from cruxible_client.contracts.dependencies import CONTRACT_PIN_ROLE, dependency_pins
+
+    kind = _kind(_layout(_row()))
+    rows = {
+        pin.target.qualified
+        for pin in dependency_pins(kind)
+        if pin.role == CONTRACT_PIN_ROLE and pin.target.kind == "Contract"
+    }
+    assert rows == {"Contract:test.feed-row/v1"}
+    assert not any(
+        pin.target.qualified == "Contract:test.feed-row/v1" for pin in dependency_pins(_kind(None))
+    )

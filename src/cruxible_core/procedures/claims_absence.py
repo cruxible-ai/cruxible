@@ -15,6 +15,7 @@ from cruxible_client.contracts.claims import NoneClaimObject, claim_artifact_dig
 from cruxible_client.contracts.content_memo import seal
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.claims import ClaimsExpectByEnd
+from cruxible_client.contracts.procedures.layout_extract import LayoutExtractNode
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import SubjectType
 from cruxible_core.procedures.claims_changes import (
@@ -30,13 +31,12 @@ from cruxible_core.procedures.claims_units import (
     resolve_value,
     unit_key,
 )
-from cruxible_core.procedures.extract import StoredExtractNode
 
 
 def append_absence(
     node: Any,
     *,
-    enumeration: StoredExtractNode,
+    enumeration: LayoutExtractNode,
     executor: Any,
     admission: Any,
     state: Any,
@@ -174,7 +174,12 @@ def append_absence(
     if contract is None or contract.decoding is None:
         refuse("claims_absence_invalid: enumeration CaptureKind decoding is unavailable")
     # The witness digests the enumeration's one resolved spec, under the kind it read.
-    extract_spec = _receipt_extract_digest(resolved_extract_spec(extracting, contract))
+    pinned = (
+        None
+        if extracting.row is None or executor.contract_resolver is None
+        else executor.contract_resolver(extracting.row)
+    )
+    extract_spec = _receipt_extract_digest(resolved_extract_spec(extracting, contract, pinned))
     extractor = EXTRACTOR_VERSIONS[contract.decoding.format]
     check = state.extraction_checks.get(extracting.as_)
     by_subject: dict[str, list[dict[str, Any]]] = {}
@@ -792,7 +797,7 @@ def _pairs_by_end(
 
 
 def _list_members(
-    extracting: StoredExtractNode, state: Any, captures: set[str], *, node_id: str
+    extracting: LayoutExtractNode, state: Any, captures: set[str], *, node_id: str
 ) -> tuple[str, ...] | None:
     """The members of the Capture list an enumeration reads, or ``None`` for one Capture.
 

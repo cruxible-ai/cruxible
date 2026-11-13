@@ -23,14 +23,10 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import (
     BaseModel,
-    ConfigDict,
     Discriminator,
     Field,
     JsonValue,
     SerializerFunctionWrapHandler,
-    StrictBool,
-    StrictInt,
-    StrictStr,
     Tag,
     field_serializer,
     field_validator,
@@ -39,12 +35,19 @@ from pydantic import (
 )
 from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonSchemaMode
 from pydantic_core import PydanticUndefined
-from typing_extensions import TypeAliasType
 
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.captures import CanonicalDuration
+from cruxible_client.contracts.procedures.authored_base import (
+    Name,
+    NodeId,
+    StepId,
+    StepOptions,
+    Template,
+    _Model,
+)
 from cruxible_client.contracts.procedures.claims import CLAIMS_ON_DEFERRED
-from cruxible_client.contracts.procedures.extract import CompleteWhen, ExtractField
+from cruxible_client.contracts.procedures.layout_extract import LayoutExtractStep
 from cruxible_client.contracts.procedures.measurements import ProcedureMeasurementDeclaration
 from cruxible_client.contracts.procedures.models import (
     TransformKind,
@@ -85,11 +88,6 @@ from cruxible_client.contracts.shapes import (
     render_type,
     type_refs,
 )
-
-Name = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_.-]{0,255}$")]
-StepId = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,127}$")]
-NodeId = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")]
-
 
 #: A declared field: a Contract field spelling (``int``, ``string?``,
 #: ``list<x.row@1>{max_items: 50}``, ...) or its structured form.
@@ -140,25 +138,6 @@ def _spelled_fields(value: Mapping[str, ContractField] | None) -> dict[str, obje
     return result
 
 
-#: A value template: literal JSON whose leaves may be typed references. A
-#: literal string never names a reference (a reference is always a ``Ref``).
-Template = TypeAliasType(
-    "Template",
-    "Annotated[Ref | dict[str, Template] | list[Template] | StrictStr | StrictBool"
-    " | StrictInt | None, Field(union_mode='left_to_right')]",
-)
-
-
-class _Model(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-        frozen=True,
-        populate_by_name=True,
-        serialize_by_alias=True,
-        json_schema_mode_override="validation",
-    )
-
-
 def _typed_predicate(value: Any, context: PredicateContext) -> Predicate:
     predicate = as_predicate(value)
     problem = predicate_context_problem(predicate, context)
@@ -173,13 +152,6 @@ def _run_predicate(value: Any) -> Any:
 
 def _record_predicate(value: Any) -> Any:
     return None if value is None else _typed_predicate(value, "record")
-
-
-class StepOptions(_Model):
-    """``id`` names the stored node; ``next`` jumps forward past fallthrough."""
-
-    id: NodeId | None = None
-    next: NodeId | None = None
 
 
 class ReadStep(StepOptions):
@@ -208,33 +180,6 @@ class CallStep(StepOptions):
         description="The CaptureContract each capture<K> field of the slot's out Contract "
         "is committed as.",
     )
-
-
-class ExtractStep(StepOptions):
-    """Read one Capture's records, typed: ``capture`` references ``<call>.<capture field>``.
-
-    ``row`` is the Contract (``name@N``) whose fields the step reads; the rest
-    are the extract node's declarations (records, key, fields, header,
-    complete_when, duplicates, only_keys).
-    """
-
-    extract: StepId
-    capture: Ref
-    records: str
-    row: str
-    fields: dict[str, ExtractField]
-    key: dict[str, ExtractField] = Field(default_factory=dict)
-    header: dict[str, ExtractField] = Field(default_factory=dict)
-    complete_when: CompleteWhen | None = None
-    duplicates: Literal["refuse_run", "refuse_key", "first"] = "refuse_key"
-    only_keys: Template = None
-
-    @field_validator("capture")
-    @classmethod
-    def _capture(cls, value: Ref) -> Ref:
-        if value.root != "step" or len(value.path) != 1:
-            raise ValueError("an extract reads one capture field: {$ref: step, step, path: [f]}")
-        return value
 
 
 class ProjectStep(StepOptions):
@@ -659,7 +604,7 @@ _VERBS = (
 Step: TypeAlias = Annotated[
     Annotated[ReadStep, Tag("read")]
     | Annotated[CallStep, Tag("call")]
-    | Annotated[ExtractStep, Tag("extract")]
+    | Annotated[LayoutExtractStep, Tag("extract")]
     | Annotated[ProjectStep, Tag("project")]
     | Annotated[TransformStep, Tag("transform")]
     | Annotated[GuardStep, Tag("guard")]
@@ -901,6 +846,10 @@ def _authored_defaults(value: Any, wire: Any) -> Any:
             _authored_defaults(member, encoded) for member, encoded in zip(value, wire, strict=True)
         ]
     return wire
+
+
+#: The fields of an extract's value, in order (``header`` is untyped here).
+EXTRACT_VIEW_FIELDS = ("results", "records", "rows", "header", "complete", "count")
 
 
 def extract_view_fields(row: ContractRef, maximum: int) -> dict[str, ContractField | None]:
@@ -1460,31 +1409,32 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             if step.effect_policy:
                 node["effect_policy"] = _ref("EffectPolicy", step.effect_policy)
             alias = step.call
-        elif isinstance(step, ExtractStep):
+        elif isinstance(step, LayoutExtractStep):
+            # The thin node names a record set and header fields of its kind's
+            # layout; the row that types its records comes from that layout.
             capture = template(step.capture, path + ".capture")
-            details = {} if resolve is None else resolve("extract_row", step)
-            row = details.get("row") or parse_contract_ref(step.row).model_dump(mode="json")
             node.update(
                 kind="extract",
                 capture=capture,
                 records=step.records,
-                row=row,
-                fields={name: field.model_dump(mode="json") for name, field in step.fields.items()},
                 duplicates=step.duplicates,
             )
+            if step.header:
+                node["header"] = list(step.header)
             if step.key:
                 node["key"] = {
-                    name: field.model_dump(mode="json") for name, field in step.key.items()
+                    name: override.model_dump(mode="json") for name, override in step.key.items()
                 }
-            if step.header:
-                node["header"] = {
-                    name: field.model_dump(mode="json") for name, field in step.header.items()
-                }
-            if step.complete_when is not None:
-                node["complete_when"] = step.complete_when.model_dump(mode="json")
             if step.only_keys is not None:
                 node["only_keys"] = template(step.only_keys, path + ".only_keys")
-            output = extract_view_fields(parse_contract_ref(step.row), spec.hard_caps.items or 5000)
+            details = None if resolve is None else resolve("extract_layout", step)
+            if isinstance(details, dict) and details.get("row") is not None:
+                # Acceptance pins the record set's row (ruling L1), as it pins a
+                # slot's capability: later reads take that row and its fields only.
+                node["row"] = details["row"]
+                output = extract_view_fields(
+                    ContractRef.model_validate(details["row"]), spec.hard_caps.items or 5000
+                )
             alias = step.extract
         elif isinstance(step, ReadStep) and step.query is not None:
             if step.claim_type is not None or step.subject is not None or step.all is not None:
@@ -2102,7 +2052,7 @@ __all__ = [
     "DeriveCaseSpec",
     "DeriveSpec",
     "EmitStep",
-    "ExtractStep",
+    "EXTRACT_VIEW_FIELDS",
     "FilterSpec",
     "GotoAction",
     "GuardStep",

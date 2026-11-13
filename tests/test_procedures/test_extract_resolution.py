@@ -33,7 +33,6 @@ from cruxible_client.contracts.procedures.layout_extract import (
     LayoutExtractRefused,
     resolve_layout_extract,
 )
-from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
 from cruxible_client.contracts.shapes import tree_contract_resolver
 from cruxible_core.procedures import extract as core_extract
 from cruxible_core.procedures.extract import extract_spec, extract_specs
@@ -105,7 +104,6 @@ def test_core_resolution_is_today_s_stored_node(
     resolved = extract_spec(node, stored_kind)
 
     assert resolved == ExtractNode.model_validate(_wire(expected))
-    assert compact_procedure(resolved) == expected
     # A list read resolves the same spec; the list rule only refuses (a5).
     assert resolve_layout_extract(node, stored_kind.layout, reads_list=reads_list) == resolved
 
@@ -162,14 +160,6 @@ def test_a_thin_node_over_a_kind_without_a_layout_is_refused() -> None:
     assert refused.value.code == EXTRACT_LAYOUT_UNDECLARED
     with pytest.raises(LayoutExtractRefused):
         extract_spec(node, None)
-
-
-def test_today_s_full_node_resolves_to_itself_and_reads_no_kind() -> None:
-    full = ExtractNode.model_validate(_wire(_read(HERE, "security.kev-triage.entries.resolved")))
-    asked: list[object] = []
-    spec_of = extract_specs((), lambda ref: asked.append(ref))
-    assert spec_of(full) is full
-    assert asked == []
 
 
 def _counting(monkeypatch: pytest.MonkeyPatch) -> list[object]:
@@ -256,3 +246,49 @@ def test_an_unsealed_node_resolves_on_every_call(monkeypatch: pytest.MonkeyPatch
     kind = _stored_kind(HERE, "security.kev-catalog")
     assert extract_spec(node, kind) == extract_spec(node, kind)
     assert calls == ["entries", "entries"]
+
+
+def test_a_pinned_row_reads_its_fields_only_or_refuses_typed() -> None:
+    """Ruling L1: a node pinning its row reads that row's fields from the layout's rules."""
+
+    from cruxible_client.contracts.procedures.layout_extract import EXTRACT_ROW_UNAVAILABLE
+    from cruxible_client.contracts.shapes import contract_digest, validate_contract
+
+    node = _thin(HERE, "security.kev-triage.entries")
+    layout = _stored_kind(HERE, "security.kev-catalog").layout
+    offered = layout.records["vulnerabilities"].row
+    narrow = validate_contract(
+        {"name": offered.name, "version": 1, "fields": {"date_added": "date"}}
+    )
+    pin = {"name": offered.name, "version": 1, "digest": contract_digest(narrow).tagged}
+    pinned = node.model_copy(update={"row": type(offered).model_validate(pin)})
+
+    # The kit's layout pins its row at another digest than this narrow row: refused.
+    with pytest.raises(LayoutExtractRefused) as refused:
+        resolve_layout_extract(pinned, layout, pinned_row=narrow)
+    assert refused.value.code == EXTRACT_ROW_UNAVAILABLE
+
+    # An unpinned layout row of the same version: the read takes the pinned fields only.
+    loose = layout.model_copy(
+        update={
+            "records": {
+                "vulnerabilities": layout.records["vulnerabilities"].model_copy(
+                    update={"row": offered.model_copy(update={"digest": None})}
+                )
+            }
+        }
+    )
+    spec = resolve_layout_extract(pinned, loose, pinned_row=narrow)
+    assert set(spec.fields) == {"date_added"}
+    assert spec.row == pinned.row
+
+    # A pinned field the layout no longer reads, or a missing row Contract: refused.
+    wider = validate_contract(
+        {"name": offered.name, "version": 1, "fields": {"date_added": "date", "gone": "string?"}}
+    )
+    with pytest.raises(LayoutExtractRefused) as missing:
+        resolve_layout_extract(pinned, loose, pinned_row=wider)
+    assert missing.value.code == EXTRACT_ROW_UNAVAILABLE
+    with pytest.raises(LayoutExtractRefused) as absent:
+        resolve_layout_extract(pinned, loose, pinned_row=None)
+    assert absent.value.code == EXTRACT_ROW_UNAVAILABLE

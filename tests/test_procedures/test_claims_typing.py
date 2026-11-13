@@ -8,9 +8,17 @@ import pytest
 
 from cruxible_client.contracts.procedures.authored import lower_procedure_spec
 from cruxible_core.procedures.claims_typing import ClaimsTypingRefused, validate_claims_templates
+from tests.core_support._light_capture_support import record_contract
 from tests.core_support._subject_kind_support import keyed_subject_kind
 from tests.support.procedures import procedure_definition
-from tests.test_procedures.test_claims_terminal import KIND, PREDICATE, ROW, claim_type, claims_spec
+from tests.test_procedures.test_claims_terminal import (
+    KIND,
+    PREDICATE,
+    ROW,
+    claim_type,
+    claims_spec,
+    entries_layout,
+)
 
 
 def check(spec: Any, ct: Any = None) -> None:
@@ -20,6 +28,8 @@ def check(spec: Any, ct: Any = None) -> None:
         f"ClaimType:{KIND}.cve_id": claim_type(KIND + ".cve_id", "string"),
         f"ClaimType:{PREDICATE}": ct or claim_type(),
         ROW.identity.qualified: ROW,
+        # The extract's row and field types come from the kind's layout.
+        "CaptureContract:test.orders-v1": entries_layout(record_contract()),
     }
     validate_claims_templates(definition, lambda identity: definitions.get(identity.qualified))
 

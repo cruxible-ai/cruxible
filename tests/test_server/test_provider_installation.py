@@ -573,11 +573,19 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
 
     from cruxible_client.contracts.shapes import contract_path, render_contract, validate_contract
     from tests.core_support._light_capture_support import JSON_DECODING
+    from tests.support.layouts import record_set, with_layout
 
-    contract = http_contract(decoding=JSON_DECODING)
-    # The fetched body is the origin's JSON, read as one record.
+    # The fetched body is the origin's JSON, read as one record (the kind's layout).
     record = validate_contract(
         {"name": "test.web-record", "version": 1, "fields": {"station": "string"}}
+    )
+    contract = with_layout(
+        http_contract(decoding=JSON_DECODING),
+        {
+            "record": record_set(
+                at="/", row="test.web-record@1", fields={"station": {"at": "station"}}
+            )
+        },
     )
     from tests.support.capabilities import head_tree, missing_capability_files
 
@@ -618,13 +626,7 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
                     slot="fetch",
                     input={"url": url, "expected_format": "json"},
                 ),
-                {
-                    "extract": "record",
-                    "capture": "$observation.capture",
-                    "records": "/",
-                    "row": "test.web-record@1",
-                    "fields": {"station": {"at": "station"}},
-                },
+                {"extract": "record", "capture": "$observation.capture", "records": "record"},
                 ProjectStep(project="result", fields={"station": "$record.rows.0.station"}),
             ],
             returns="result",

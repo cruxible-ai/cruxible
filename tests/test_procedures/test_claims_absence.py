@@ -130,7 +130,7 @@ def test_inverse_requires_a_declared_inverse_at_authoring(tmp_path: Path):
 
 
 def inverse_world(tmp_path, *, incomplete=False, authority="propose"):
-    from tests.test_pilot.support import FIXTURES, KEV_ROW, _watched
+    from tests.test_pilot.support import FIXTURES, KEV_ROW, _watched, pilot_records
     from tests.test_procedures.test_claims_terminal import claims_world
 
     original = json.loads((FIXTURES / "kev.json").read_bytes())
@@ -145,6 +145,7 @@ def inverse_world(tmp_path, *, incomplete=False, authority="propose"):
             claim_type(KEV + "ransomware_use", "enum[Known, Unknown]"),
         ),
         rows=KEV_ROW,
+        records=pilot_records(True),
     )
     _watched(instance)
     path = root / "data/kev.json"
@@ -518,7 +519,7 @@ def test_mirror_publication_requires_retained_witness_bytes(tmp_path: Path, monk
 @pytest.mark.parametrize("unit", ("object", "object_key"))
 def test_subject_valued_inverse_tracks_its_declared_unit(tmp_path: Path, unit):
     from cruxible_client.contracts.policies import ClaimResolutionPolicy
-    from tests.test_pilot.support import FIXTURES, KEV_ROW, _watched
+    from tests.test_pilot.support import FIXTURES, KEV_ROW, _watched, pilot_records
     from tests.test_procedures.test_claims_terminal import claims_world
 
     original = json.loads((FIXTURES / "kev.json").read_bytes())
@@ -538,6 +539,7 @@ def test_subject_valued_inverse_tracks_its_declared_unit(tmp_path: Path, unit):
         {"entries": [{"id": row["cveID"]} for row in original["vulnerabilities"]]},
         types=(ct, claim_type(KEV + "ransomware_use", "enum[Known, Unknown]")),
         rows=KEV_ROW,
+        records=pilot_records(True),
     )
     _watched(instance)
     object_key = original["vulnerabilities"][0]["cveID"]

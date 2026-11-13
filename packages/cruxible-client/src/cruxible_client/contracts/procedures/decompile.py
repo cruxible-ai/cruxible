@@ -27,11 +27,11 @@ from cruxible_client.contracts.procedures.models import (
     CallNode,
     CaptureEgressNode,
     ClaimsNode,
-    ExtractNode,
     GuardNode,
     HaltNode,
     InboxEgressNode,
     InvokeNode,
+    LayoutExtractNode,
     ProcedureDefinition,
     ProjectNode,
     ReadNode,
@@ -223,18 +223,13 @@ def decompile_procedure(
                 }
             if node.effect_policy is not None:
                 step["effect_policy"] = _name(node.effect_policy)
-        elif isinstance(node, ExtractNode):
+        elif isinstance(node, LayoutExtractNode):
             step = dict(
                 extract=node.as_,
                 capture=typed_template(node.capture),
                 records=node.records,
-                row=node.row.spelling,
-                fields={k: v.model_dump(mode="json") for k, v in node.fields.items()},
+                header=list(node.header),
                 key={k: v.model_dump(mode="json") for k, v in node.key.items()},
-                header={k: v.model_dump(mode="json") for k, v in node.header.items()},
-                complete_when=None
-                if node.complete_when is None
-                else node.complete_when.model_dump(mode="json"),
                 duplicates=node.duplicates,
                 only_keys=typed_template(node.only_keys),
             )

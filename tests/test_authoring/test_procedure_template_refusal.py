@@ -79,15 +79,15 @@ def test_the_template_kinds_and_narrowing_transforms_stay_open() -> None:
     from cruxible_client.contracts.procedures.authored import (
         CallStep,
         ClaimsStep,
-        ExtractStep,
         InboxStep,
+        LayoutExtractStep,
         ReadStep,
     )
 
     steps = (
         ReadStep.model_construct(),
         CallStep.model_construct(),
-        ExtractStep.model_construct(),
+        LayoutExtractStep.model_construct(),
         TransformStep.model_construct(transform="f", kind="filter"),
         TransformStep.model_construct(transform="d", kind="dedupe"),
         ClaimsStep.model_construct(),

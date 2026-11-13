@@ -94,6 +94,46 @@ def claim_type(
     )
 
 
+#: The document header fields a claims world's kind declares (each extract selects some).
+ENTRIES_HEADER: dict[str, Any] = {
+    "listed_from": {"at": "/listed_from", "parse": "datetime"},
+    "snapshot": {"at": "/snapshot", "presence": "required"},
+    "catalog_version": {"at": "/catalogVersion"},
+    "catalog_date": {"at": "/catalogVersion", "parse": "date", "presence": "required"},
+    "score_date": {"at": "/created", "parse": "datetime", "project": "utc_date"},
+}
+
+
+def entries_layout(
+    capture: Any, rows: Contract = ROW, records: dict[str, Any] | None = None
+) -> Any:
+    """The world kind's layout: ``entries`` (every ``/entries/*`` record, keyed by its
+    ``id``), ``entries_counted`` (the same, complete only when ``/count`` matches) and
+    ``entries_unkeyed`` (no key); ``records`` adds or replaces record sets."""
+
+    from tests.support.layouts import record_set, with_layout
+
+    def entries(count_at: str | None, *, keyed: bool = True) -> dict[str, Any]:
+        return record_set(
+            at="/entries/*",
+            row=rows.ref.spelling,
+            key={"cve_id": {"at": "id", "type": f"key_part<{KIND}:cve_id>"}} if keyed else None,
+            fields={name: {"at": name} for name in rows.fields},
+            count_at=count_at,
+        )
+
+    return with_layout(
+        capture,
+        {
+            "entries": entries(None),
+            "entries_counted": entries("/count"),
+            "entries_unkeyed": entries(None, keyed=False),
+            **(records or {}),
+        },
+        ENTRIES_HEADER,
+    )
+
+
 def claims_world(
     tmp_path: Path,
     document: dict[str, Any],
@@ -102,6 +142,7 @@ def claims_world(
     rows: Contract = ROW,
     capture_body_access: str = "open",
     seed_subjects: bool = True,
+    records: dict[str, Any] | None = None,
 ) -> tuple[Any, Path]:
     import json
 
@@ -116,8 +157,12 @@ def claims_world(
         evidence_requirement="none",
         evidence_admission_policy=ClaimEvidenceAdmissionPolicy(rules=()),
     )
-    capture = record_contract(
-        **({} if capture_body_access == "open" else {"body_access": capture_body_access})
+    capture = entries_layout(
+        record_contract(
+            **({} if capture_body_access == "open" else {"body_access": capture_body_access})
+        ),
+        rows,
+        records,
     )
     all_types = types or (claim_type(),)
     accept_tree(
@@ -178,14 +223,7 @@ def claims_spec(
                     "selector": {"id": 7, "relation": "orders"},
                 },
             },
-            {
-                "extract": "entries",
-                "capture": "$steps.doc.capture",
-                "records": "/entries/*",
-                "row": rows.ref.spelling,
-                "key": {"cve_id": {"at": "id", "type": f"key_part<{KIND}:cve_id>"}},
-                "fields": {"status": {"at": "status"}, "note": {"at": "note"}},
-            },
+            {"extract": "entries", "capture": "$steps.doc.capture", "records": "entries"},
             {
                 "id": "write",
                 "for_each": "$steps.entries.records",

@@ -15,7 +15,7 @@ from cruxible_client.contracts.artifacts import ArtifactNameRef
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_MAX
 from cruxible_client.contracts.procedures.claims import ClaimsNode
-from cruxible_client.contracts.procedures.extract import ExtractNode
+from cruxible_client.contracts.procedures.layout_extract import LayoutExtractNode
 from cruxible_client.contracts.procedures.model_base import (
     _ALIAS_RE,
     _NAME_RE,
@@ -767,7 +767,7 @@ ProcedureNode = Annotated[
     InvokeNode
     | ReadNode
     | CallNode
-    | ExtractNode
+    | LayoutExtractNode
     | TransformNode
     | GuardNode
     | ProjectNode
@@ -801,7 +801,7 @@ __all__ = [
     "CaptureEgressNode",
     "EffectiveAuthority",
     "EgressNode",
-    "ExtractNode",
+    "LayoutExtractNode",
     "GuardNode",
     "HaltNode",
     "InboxEgressNode",

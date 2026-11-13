@@ -178,9 +178,7 @@ def test_a_restricted_header_lexeme_never_reaches_a_read_only_run_reader(
     tmp_path: Path,
 ) -> None:
     base = kev_spec().model_dump(mode="python", by_alias=True)
-    base["steps"][2]["header"] = {
-        "catalog_version": {"at": "/catalogVersion", "parse": "date", "presence": "required"}
-    }
+    base["steps"][2]["header"] = ["catalog_date"]
     instance, root = pilot_world(
         tmp_path, "kev.json", capture_body_access="restricted", spec=procedure_spec(base=base)
     )
@@ -338,8 +336,15 @@ def test_authorization_work_is_constant_in_the_captures_asked(
         {capture_contract_path("test.sealed-v1"): render_capture_contract(sealed)},
         name="sealed-kind",
     )
+    from cruxible_client.contracts.captures import parse_capture_contract
+
+    # The world's kind as accepted (its layout names the KEV record sets).
+    world_path = capture_contract_path(record_contract().identity.name)
+    world_kind = parse_capture_contract(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[world_path], path=world_path
+    )
     kinds = [
-        capture_contract_digest(record_contract()).tagged,
+        capture_contract_digest(world_kind).tagged,
         capture_contract_digest(sealed).tagged,
     ]
     digests = [
@@ -631,7 +636,7 @@ def test_restricted_kinds_compile_under_the_body_access_coordinate(tmp_path: Pat
 
     instance, _root = pilot_world(tmp_path, "kev.json", capture_body_access="restricted")
     coordinate = instance.accepted_coordinate()
-    assert CURRENT_COMPILER_REVISION == "registration-carried-copies"
+    assert CURRENT_COMPILER_REVISION == "layout-extract-nodes"
     from cruxible_core.service.authoring.documents import AcceptedCoordinate
 
     assert AcceptedCoordinate.from_internal(coordinate).compiler_digest == (
@@ -757,7 +762,9 @@ def _two_kind_world(tmp_path: Path) -> Any:
     )
     original = terminal.claim_type
     accept = terminal.accept_tree
-    open_kind = record_contract(name="test.open-v1")
+    open_kind = terminal.entries_layout(
+        record_contract(name="test.open-v1"), support.KEV_ROW, support.pilot_records(True)
+    )
 
     def with_open_kind(instance: Any, updates: dict[str, bytes], *, name: str) -> None:
         if name == "claims-vocabulary":

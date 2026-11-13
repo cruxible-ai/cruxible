@@ -121,14 +121,28 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     )
     from cruxible_core.runtime.playbill_manager import get_playbill_manager
     from tests.support.capabilities import head_tree, missing_capability_files
+    from tests.support.layouts import grown_kind_members, record_set
 
-    head = head_tree(get_playbill_manager().get(instance_id))
+    held = get_playbill_manager().get(instance_id)
+    head = head_tree(held)
     _accept(
         http,
         instance_id,
         reviewer,
         {
             contract_path(fetched.name, fetched.version): render_contract(fetched),
+            # The kind's layout names the document's one record, typed by fetch.document.
+            **grown_kind_members(
+                held,
+                "test.web",
+                {
+                    "document": record_set(
+                        at="/",
+                        row="fetch.document@1",
+                        fields={"unit": {"at": "/unit"}, "station": {"at": "/station"}},
+                    )
+                },
+            ),
             # Unless the instance holds it (base kit).
             **missing_capability_files(
                 head, ("web.fetch", "web.fetch.request@1", "web.fetch.result@1", "external_read")
@@ -238,9 +252,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         document = parent.extract(
             "document",
             capture=observation["capture"],
-            records="/",
-            row="fetch.document@1",
-            fields={"unit": {"at": "/unit"}, "station": {"at": "/station"}},
+            records="document",
         )
         guard(
             parent,

@@ -40,6 +40,7 @@ from tests.core_support._identity_support import accept_tree
 from tests.core_support._light_capture_support import JSON_DECODING
 from tests.core_support._subject_kind_support import keyed_subject_kind
 from tests.support.capabilities import ensure_capabilities
+from tests.support.layouts import record_set, with_layout
 from tests.support.operation_world import NOW, Invoker, Operator, actor, author, build_files
 from tests.support.procedures import boundary_contract, contract_files, procedure_limits
 from tests.support.procedures import procedure_spec as build_spec
@@ -129,13 +130,36 @@ def _derive_build(checkout: Path) -> Any:
     )
 
 
+#: The purl key every SBOM record set reads, typed as the component's key part.
+_PURL_KEY = {"purl": {"at": "purl", "type": f"key_part<{COMPONENT}:purl>"}}
+#: The fields of an SBOM row (``name`` is optional: a members list carries none).
+_SBOM_FIELDS = {"name": {"at": "name"}, "inventory": {"at": "inventory"}}
+#: The SBOM file kind: a members list (the seed and glob inventory files).
+SBOM_RECORDS = {
+    "members": record_set(
+        at="/members/*", row=SBOM_ROW.ref.spelling, key=_PURL_KEY, fields=_SBOM_FIELDS
+    )
+}
+#: The derived components kind: one record per component, counted, and its inventory.
+COMPONENTS_RECORDS = {
+    "components": record_set(
+        at="/components/*",
+        row=SBOM_ROW.ref.spelling,
+        key=_PURL_KEY,
+        fields=_SBOM_FIELDS,
+        count_at="/count",
+    )
+}
+COMPONENTS_HEADER = {"inventory": {"at": "/inventory", "type": "string{max_len: 256}"}}
+
+
 def _kind(name: str, *, grade: str = "observed") -> Any:
     from cruxible_client.contracts.capture_contract_inputs import (
         CaptureContractInputRecord,
         lower_capture_contract_input,
     )
 
-    return lower_capture_contract_input(
+    kind = lower_capture_contract_input(
         CaptureContractInputRecord(
             name=name,
             shape="http_response" if grade == "derived" else "database_snapshot",
@@ -146,6 +170,9 @@ def _kind(name: str, *, grade: str = "observed") -> Any:
         ),
         named=True,
     )
+    if grade == "derived":
+        return with_layout(kind, COMPONENTS_RECORDS, COMPONENTS_HEADER)
+    return with_layout(kind, SBOM_RECORDS)
 
 
 def sbom_world(tmp_path: Path, *, purl_type: str = "string") -> tuple[Any, Path]:
@@ -380,13 +407,9 @@ def sbom_spec(*, read_rows: int = 500, shape: str = "subject") -> Any:
             {
                 "extract": "listed",
                 "capture": "$steps.derived.capture",
-                "records": "/components/*",
-                "row": SBOM_ROW.ref.spelling,
-                "key": {"purl": {"at": "purl", "type": f"key_part<{COMPONENT}:purl>"}},
+                "records": "components",
                 "duplicates": "refuse_key",
-                "complete_when": {"count_at": "/count"},
-                "fields": {"name": {"at": "name"}, "inventory": {"at": "inventory"}},
-                "header": {"inventory": {"at": "/inventory", "type": "string{max_len: 256}"}},
+                "header": ["inventory"],
             },
             # The late read: keyed by the inventory only the derive knows.
             {
@@ -579,14 +602,7 @@ def seed_spec(shape: str) -> Any:
                     "selector": {"id": 2, "relation": "seed"},
                 },
             },
-            {
-                "extract": "members",
-                "capture": "$steps.seed.capture",
-                "records": "/members/*",
-                "row": SBOM_ROW.ref.spelling,
-                "key": {"purl": {"at": "purl", "type": f"key_part<{COMPONENT}:purl>"}},
-                "fields": {"inventory": {"at": "inventory"}},
-            },
+            {"extract": "members", "capture": "$steps.seed.capture", "records": "members"},
             {
                 "id": "write",
                 "for_each": "$steps.members.records",

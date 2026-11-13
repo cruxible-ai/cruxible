@@ -1,0 +1,9 @@
+{
+  "capture": "$steps.findings.document",
+  "header": [
+    "covered"
+  ],
+  "id": "found",
+  "kind": "extract",
+  "records": "findings"
+}

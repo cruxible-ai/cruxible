@@ -51,6 +51,17 @@ from tests.test_procedures.test_claims_terminal import (
 def test_changed_extract_spec_reobserves_equal_values_and_revises_only_changed_values(
     tmp_path: Path, changed_value: bool
 ) -> None:
+    from tests.support.layouts import record_set
+    from tests.test_procedures.test_claims_terminal import KIND, ROW
+
+    # The revised Procedure reads the same typed status from the note field: another
+    # record set over the same path.
+    from_note = record_set(
+        at="/entries/*",
+        row=ROW.ref.spelling,
+        key={"cve_id": {"at": "id", "type": f"key_part<{KIND}:cve_id>"}},
+        fields={"status": {"at": "note"}, "note": {"at": "note"}},
+    )
     instance, root = claims_world(
         tmp_path,
         {
@@ -63,6 +74,7 @@ def test_changed_extract_spec_reobserves_equal_values_and_revises_only_changed_v
                 },
             ]
         },
+        records={"entries_from_note": from_note},
     )
     spec = claims_spec()
     install(instance, spec)
@@ -71,7 +83,7 @@ def test_changed_extract_spec_reobserves_equal_values_and_revises_only_changed_v
     activate(instance, first)
     # A new Procedure reads the same typed status from a different source field.
     base = spec.model_dump(mode="json", by_alias=True)
-    base["steps"][1]["fields"]["status"]["at"] = "note"
+    base["steps"][1]["records"] = "entries_from_note"
     revised = procedure_spec(base=base)
     mandate_path = procedure_mandate_path("test.claims-line")
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)

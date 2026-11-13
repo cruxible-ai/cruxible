@@ -2,9 +2,50 @@
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef
 from cruxible_client.contracts.procedures.claims import ClaimsNode
-from cruxible_client.contracts.procedures.extract import ExtractNode
 from cruxible_client.contracts.shapes import contract_digest
+from tests.support.layouts import record_set, thin_node
 from tests.support.procedures import boundary_contract, contract_pin, named, procedure_definition
+
+#: The document header a dated delivery reads once per Capture.
+DELIVERY_HEADER = {"listed_from": {"at": "/listed_from", "parse": "datetime"}}
+#: Where a delivery's records are: the whole document, or one per proposal row.
+_DELIVERY_PATHS = {"doc": "/", "rows": "/proposals/*"}
+#: Which member keys a delivery's record: none, the row's ``id``, or its ``severity``.
+_DELIVERY_KEYS = {"unkeyed": None, "id": "id", "severity": "severity"}
+
+
+def delivery_row():
+    return boundary_contract("security.delivery-row", {"severity": "string{max_len: 256}"})
+
+
+def delivery_set_name(records: str, key: str, counted: bool) -> str:
+    """The record set a delivery variant reads (the world kind declares every one)."""
+
+    path = next(name for name, at in _DELIVERY_PATHS.items() if at == records)
+    return f"delivery_{path}_{key}_{'counted' if counted else 'all'}"
+
+
+def delivery_record_sets() -> dict[str, dict[str, object]]:
+    """Every delivery variant's record set: path x key x counted, over the delivery row.
+
+    A key part is a plain string; the node gives it the Subject key type of the
+    kind it delivers to.
+    """
+
+    row = delivery_row()
+    pinned = row.ref.model_copy(update={"digest": contract_digest(row).tagged})
+    found: dict[str, dict[str, object]] = {}
+    for at in _DELIVERY_PATHS.values():
+        for key, member in _DELIVERY_KEYS.items():
+            for counted in (False, True):
+                found[delivery_set_name(at, key, counted)] = record_set(
+                    at=at,
+                    row=pinned,
+                    fields={"severity": {"at": "severity"}},
+                    key=None if member is None else {"slug": {"at": member}},
+                    count_at="/count" if counted else None,
+                )
+    return found
 
 
 def delivery_definition(
@@ -27,7 +68,7 @@ def delivery_definition(
     source = procedure.definition.nodes[0]
     # ``dated``: each Claim is effective from the document's ``listed_from``, a
     # header read once per Capture (a row field would add extract work per row).
-    row = boundary_contract("security.delivery-row", {"severity": "string{max_len: 256}"})
+    row = delivery_row()
     out = boundary_contract("security.delivery-output", {})
     mappings = [
         {
@@ -113,32 +154,27 @@ def delivery_definition(
                     "rationale": creations[0]["rationale"],
                 }
             ]
+    key_variant = (
+        "id"
+        if records != "/"
+        else ("severity" if "$item.fields.severity" in subject_key.values() else "unkeyed")
+    )
     definition = procedure_definition(
         base=procedure.definition,
         contract_out=named(contract_pin("contract-out", out)),
         returns=None,
         nodes=(
             source.model_copy(update={"next": "entries"}),
-            ExtractNode(
+            thin_node(
                 node_id="entries",
                 capture=f"$steps.{source.as_}.capture",
-                records=records,
-                row=row.ref.model_copy(update={"digest": contract_digest(row).tagged}),
-                key={"slug": {"at": "id", "type": f"key_part<{subject_kind}:slug>"}}
-                if records != "/"
-                else (
-                    {"slug": {"at": "severity", "type": f"key_part<{subject_kind}:slug>"}}
-                    if "$item.fields.severity" in subject_key.values()
-                    else {}
-                ),
+                records=delivery_set_name(records, key_variant, bool(absence)),
+                key={} if key_variant == "unkeyed" else {"slug": f"key_part<{subject_kind}:slug>"},
                 only_keys=only_keys,
-                complete_when={"count_at": "/count"} if absence else None,
-                fields={"severity": {"at": "severity"}},
-                header={"listed_from": {"at": "/listed_from", "parse": "datetime"}}
-                if dated
-                else {},
+                header=("listed_from",) if dated else (),
                 as_="entries",
                 next=node_id,
+                row=row,
             ),
             ClaimsNode(
                 node_id=node_id,

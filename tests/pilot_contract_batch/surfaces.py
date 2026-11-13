@@ -331,7 +331,65 @@ def adopt_layout_and_thin_extract(
     the Procedure). Owner: layout and thin EXTRACT (slice 5).
     """
 
-    raise SurfaceMissing("adopt_layout_and_thin_extract", LAYOUT)
+    from cruxible_client.contracts.authoring.inputs import ProcedureInput
+    from cruxible_client.contracts.captures import capture_contract_path, parse_capture_contract
+    from tests.core_support._identity_support import accept_tree
+    from tests.pilot_contract_batch.kit_capabilities import capability_slots
+    from tests.support.layouts import grown_kind_members
+    from tests.support.operation_world import author
+
+    # The kind grows by the record sets and header fields it does not declare yet (a
+    # layout only grows; the pilot's kit copy may already carry this one).
+    path = capture_contract_path(kind)
+    accepted = parse_capture_contract(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
+    )
+    held = accepted.layout
+    records = {
+        name: item
+        for name, item in layout["records"].items()
+        if held is None or name not in held.records
+    }
+    header = {
+        name: rule
+        for name, rule in (layout.get("header") or {}).items()
+        if held is None or name not in held.header
+    }
+    if records or header:
+        accept_tree(
+            instance, grown_kind_members(instance, kind, records, header), name="kind-layout"
+        )
+    spec = dict(procedure)
+    spec["slots"] = capability_slots(spec.get("slots", {}))
+    payload = ProcedureInput.model_validate({"kind": "procedure", "spec": spec})
+    # A successor only when the thin spec changes the accepted Procedure's definition
+    # (the pilot's kit copy may already store this thin node).
+    from cruxible_client.contracts.authoring.inputs import lower_authoring_input
+    from cruxible_client.contracts.procedures.artifacts import parse_procedure, procedure_path
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.authoring.lowering import lower_authoring
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+
+    intent = (
+        AuthoringIntentCoordinator.for_instance(instance)
+        .create(
+            actor=AuthenticatedActor(actor_id="owner"),
+            payload=lower_authoring_input(payload),
+            canonical_timestamp="2026-11-12T12:00:00.000000Z",
+        )
+        .intent
+    )
+    lowered = dict(lower_authoring(instance, intent=intent, actor_id="owner").changed_members)
+    target = procedure_path(str(spec["procedure"]))
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    unchanged = (
+        target in lowered
+        and target in tree
+        and parse_procedure(lowered[target], path=target).definition_digest
+        == parse_procedure(tree[target], path=target).definition_digest
+    )
+    if not unchanged:
+        author(instance, payload, name="thin")
 
 
 # -- scenario 7: coverage ---------------------------------------------------------------

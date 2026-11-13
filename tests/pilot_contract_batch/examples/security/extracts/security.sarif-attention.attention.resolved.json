@@ -1,0 +1,44 @@
+{
+  "capture": "$steps.findings.document",
+  "fields": {
+    "finding": {
+      "at": "finding",
+      "presence": "optional"
+    },
+    "kind": {
+      "at": "kind"
+    },
+    "locus": {
+      "at": "locus",
+      "presence": "optional"
+    },
+    "path": {
+      "at": "path"
+    },
+    "reason": {
+      "at": "reason",
+      "presence": "optional"
+    },
+    "ref": {
+      "at": "ref"
+    },
+    "repo": {
+      "at": "repo"
+    },
+    "rule": {
+      "at": "rule"
+    },
+    "weakness": {
+      "at": "weakness",
+      "presence": "optional"
+    }
+  },
+  "id": "attention",
+  "kind": "extract",
+  "records": "/attention/*",
+  "row": {
+    "digest": "sha256:ab6123ec812fe081ba0c455ba904e0c903efc3f1ebd340707a821de7a9cdf11c",
+    "name": "security.sarif-attention-record",
+    "version": 1
+  }
+}

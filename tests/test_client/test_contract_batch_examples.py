@@ -41,7 +41,6 @@ from cruxible_client.contracts.procedures.layout_extract import (
     LayoutExtractNode,
     resolve_layout_extract,
 )
-from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
 from cruxible_client.contracts.provider_registration import (
     BuiltAgainstCapability,
     PackageRegistration,
@@ -195,7 +194,6 @@ def test_the_thin_extract_resolves_to_today_s_stored_node(thin: str, kind: str) 
     resolved = resolve_layout_extract(node, _kind("security", kind).layout)
 
     assert resolved == ExtractNode.model_validate(_stored_node(stored))
-    assert compact_procedure(resolved) == stored
 
 
 def test_the_registration_is_schema_3_and_passes_the_law() -> None:

@@ -72,12 +72,54 @@ ROW = Contract.model_validate(
         "fields": {
             "scope": "enum[required, optional, excluded]",
             "inventory": "string{max_len: 256}",
-            "purl": "string{max_len: 256}?",
             "vid": "string{max_len: 256}?",
         },
     }
 )
 ROLES = ("derivation", "normative", "observation")
+
+
+#: The row when the vulnerability is a key part too (a key part is not a row field).
+ROW_VID_KEYED = Contract.model_validate(
+    {
+        "name": "test.pair-row-vid-keyed",
+        "version": 1,
+        "fields": {
+            "scope": "enum[required, optional, excluded]",
+            "inventory": "string{max_len: 256}",
+        },
+    }
+)
+
+
+def _layout() -> tuple[dict[str, Any], dict[str, Any]]:
+    """``entries`` (keyed by inventory and component) and ``entries_vid`` (and by
+    vulnerability); both complete only when ``/count`` matches. The header names the
+    inventory and component the document is about."""
+
+    from tests.support.layouts import record_set
+
+    def keyed(vid: bool) -> dict[str, Any]:
+        key = {
+            "inv": {"at": "inventory", "type": f"key_part<{INVENTORY}:name>"},
+            "purl": {"at": "purl", "type": f"key_part<{COMPONENT}:purl>"},
+        }
+        if vid:
+            key["vid"] = {"at": "vid", "type": f"key_part<{VULN}:vid>"}
+        fields = {"scope": {"at": "scope"}, "inventory": {"at": "inventory"}}
+        if not vid:
+            fields["vid"] = {"at": "vid"}
+        row = ROW_VID_KEYED if vid else ROW
+        return record_set(
+            at="/entries/*", row=row.ref.spelling, key=key, fields=fields, count_at="/count"
+        )
+
+    records = {"entries": keyed(False), "entries_vid": keyed(True)}
+    header = {
+        "inventory": {"at": "/inventory", "type": "string{max_len: 256}"},
+        "component": {"at": "/component", "type": "string{max_len: 256}"},
+    }
+    return records, header
 
 
 def _capture_contract() -> Any:
@@ -86,16 +128,20 @@ def _capture_contract() -> Any:
         lower_capture_contract_input,
     )
     from tests.core_support._light_capture_support import JSON_DECODING
+    from tests.support.layouts import with_layout
 
-    return lower_capture_contract_input(
-        CaptureContractInputRecord(
-            name=CAPTURE,
-            shape="database_snapshot",
-            replay="exact",
-            max_bytes=4_194_304,
-            decoding=JSON_DECODING,
+    return with_layout(
+        lower_capture_contract_input(
+            CaptureContractInputRecord(
+                name=CAPTURE,
+                shape="database_snapshot",
+                replay="exact",
+                max_bytes=4_194_304,
+                decoding=JSON_DECODING,
+            ),
+            named=True,
         ),
-        named=True,
+        *_layout(),
     )
 
 
@@ -166,6 +212,7 @@ def vocabulary(*, hint: bool = False) -> dict[str, bytes]:
     return {
         capture_contract_path(capture.identity.name): render_capture_contract(capture),
         contract_path(ROW.name, ROW.version): render_contract(ROW),
+        contract_path(ROW_VID_KEYED.name, ROW_VID_KEYED.version): render_contract(ROW_VID_KEYED),
         **{subject_kind_path(k.identity.name): render_subject_kind(k) for k in kinds},
         **{claim_type_path(t.predicate): render_claim_type(t) for t in types},
     }
@@ -290,24 +337,9 @@ def pair_spec(
             {
                 "extract": "entries",
                 "capture": "$steps.doc.capture",
-                "records": "/entries/*",
-                "row": ROW.ref.spelling,
-                "key": {
-                    "inv": {"at": "inventory", "type": f"key_part<{INVENTORY}:name>"},
-                    "purl": {"at": "purl", "type": f"key_part<{COMPONENT}:purl>"},
-                    **({"vid": {"at": "vid", "type": f"key_part<{VULN}:vid>"}} if vid_key else {}),
-                },
+                "records": "entries_vid" if vid_key else "entries",
+                "header": ["component", "inventory"],
                 "duplicates": "refuse_key",
-                "complete_when": {"count_at": "/count"},
-                "fields": {
-                    "scope": {"at": "scope"},
-                    "inventory": {"at": "inventory"},
-                    **({} if vid_key else {"vid": {"at": "vid"}}),
-                },
-                "header": {
-                    "inventory": {"at": "/inventory", "type": "string{max_len: 256}"},
-                    "component": {"at": "/component", "type": "string{max_len: 256}"},
-                },
             },
             write,
         ],

@@ -8,6 +8,7 @@ from typing import Any, cast
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.procedures.claims import ClaimsExpectByEnd, ClaimsNode
+from cruxible_client.contracts.procedures.layout_extract import LayoutExtractNode
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     ProcedureDefinition,
@@ -46,8 +47,6 @@ from cruxible_client.contracts.shapes import (
 )
 from cruxible_client.contracts.subject_kinds import key_predicate
 from cruxible_core.procedures.extract import (
-    STORED_EXTRACT_NODES,
-    StoredExtractNode,
     extract_specs,
 )
 
@@ -87,7 +86,7 @@ _END_FORM = (
 
 def absence_enumeration(
     node: ClaimsNode, aliases: Mapping[str | None, object]
-) -> StoredExtractNode:
+) -> LayoutExtractNode:
     """The enumeration absence judges: the extract at the root of ``for_each``'s chain.
 
     It is never authored. ``for_each`` must reach the extract's output directly
@@ -112,7 +111,7 @@ def absence_enumeration(
             )
         if len(parts) > 3 or (len(parts) == 3 and parts[2] != "records"):
             break
-        if isinstance(producer, STORED_EXTRACT_NODES):
+        if isinstance(producer, LayoutExtractNode):
             return producer
         if not isinstance(producer, TransformNode) or not isinstance(
             producer.spec, TransformFilterSpec | TransformDedupeSpec
@@ -137,6 +136,7 @@ def validate_claims_templates(
     spec_of = extract_specs(
         definition.nodes,
         lambda ref: lookup(ArtifactIdentity(kind="CaptureContract", name=ref.target.name)),
+        lambda row: lookup(ArtifactIdentity(kind="Contract", name=f"{row.name}/v{row.version}")),
     )
 
     def source(kind: str, name: str) -> Any:
@@ -187,7 +187,7 @@ def validate_claims_templates(
         if alias in trail:
             return None
         producer = aliases.get(alias)
-        if isinstance(producer, STORED_EXTRACT_NODES):
+        if isinstance(producer, LayoutExtractNode):
             read = spec_of(producer)
             if path and path[0] == "fields":
                 fields = contract(read.row).fields

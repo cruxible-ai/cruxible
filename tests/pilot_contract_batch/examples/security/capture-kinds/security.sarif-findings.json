@@ -1,0 +1,107 @@
+{
+  "decoding": {
+    "encoding": "identity",
+    "format": "json",
+    "limits": {
+      "decoded_bytes": 8388608,
+      "depth": 16,
+      "records": 100000
+    }
+  },
+  "layout": {
+    "header": {
+      "covered": {
+        "at": "/covered",
+        "type": "list<string{max_len: 256}>{max_items: 20000}"
+      }
+    },
+    "records": {
+      "attention": {
+        "at": "/attention/*",
+        "fields": {
+          "finding": {
+            "at": "finding",
+            "presence": "optional"
+          },
+          "kind": {
+            "at": "kind"
+          },
+          "locus": {
+            "at": "locus",
+            "presence": "optional"
+          },
+          "path": {
+            "at": "path"
+          },
+          "reason": {
+            "at": "reason",
+            "presence": "optional"
+          },
+          "ref": {
+            "at": "ref"
+          },
+          "repo": {
+            "at": "repo"
+          },
+          "rule": {
+            "at": "rule"
+          },
+          "weakness": {
+            "at": "weakness",
+            "presence": "optional"
+          }
+        },
+        "row": {
+          "digest": "sha256:ab6123ec812fe081ba0c455ba904e0c903efc3f1ebd340707a821de7a9cdf11c",
+          "name": "security.sarif-attention-record",
+          "version": 1
+        }
+      },
+      "findings": {
+        "at": "/findings/*",
+        "count_at": "/count",
+        "fields": {
+          "reported_at": {
+            "at": "reported_at",
+            "presence": "optional"
+          },
+          "rule": {
+            "at": "rule",
+            "presence": "optional"
+          },
+          "severity": {
+            "at": "severity",
+            "presence": "optional"
+          },
+          "tool": {
+            "at": "tool",
+            "presence": "optional"
+          },
+          "verification": {
+            "at": "verification"
+          }
+        },
+        "key": {
+          "locus": {
+            "at": "locus",
+            "type": "key_part<security.finding:locus>"
+          },
+          "repo": {
+            "at": "repo",
+            "type": "key_part<security.finding:repo>"
+          },
+          "weakness": {
+            "at": "weakness",
+            "type": "key_part<security.finding:weakness>"
+          }
+        },
+        "row": {
+          "digest": "sha256:89b733667e5379af29230e496b5bf182942cb251b0891be100444d3ed82b7d91",
+          "name": "security.sarif-finding",
+          "version": 1
+        }
+      }
+    }
+  },
+  "name": "security.sarif-findings"
+}

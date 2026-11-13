@@ -45,8 +45,18 @@ from tests.test_procedures.test_procedure_source_runs import (
     _served_line,
     _TestClock,
     _world,
-    capture_contract,
+    world_layout,
 )
+from tests.test_procedures.test_procedure_source_runs import (
+    capture_contract as _bare_contract,
+)
+
+
+def capture_contract():  # type: ignore[no-untyped-def]
+    """The world's kind as accepted: with the record sets its extracts read."""
+
+    return world_layout(_bare_contract())
+
 
 LOCAL_OPERATOR = LineEnablementPrincipal(kind="local_operator", label="local-operator")
 TRIGGER = "trigger-source-trigger"

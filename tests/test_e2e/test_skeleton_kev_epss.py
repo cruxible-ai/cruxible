@@ -65,6 +65,7 @@ from tests.core_support._light_capture_support import JSON_DECODING, http_contra
 from tests.core_support._subject_kind_support import keyed_subject_kind
 from tests.support.capabilities import ensure_capabilities
 from tests.support.claim_types import claim_type as build_claim_type
+from tests.support.layouts import record_set, with_layout
 from tests.support.mandates import procedure_mandate
 from tests.support.operation_world import (
     NOW,
@@ -333,12 +334,9 @@ def kev_spec() -> Any:
             {
                 "extract": "entries",
                 "capture": "$steps.catalog.capture",
-                "records": "/vulnerabilities/*",
-                "row": KEV_ROW.ref.spelling,
-                "key": {"cve_id": {"at": "cveID", "type": f"key_part<{VULN}:cve_id>"}},
+                "records": "vulnerabilities",
                 "duplicates": "refuse_key",
-                "fields": {"date_added": {"at": "dateAdded", "parse": "date"}},
-                "header": {"catalog_version": {"at": "/catalogVersion"}},
+                "header": ["catalog_version"],
             },
             {
                 "id": "write",
@@ -374,18 +372,7 @@ def epss_spec() -> Any:
         [
             _fetch_step("scores_api", EPSS_KIND),
             {"read": "watched", "query": "test.watched-vulnerabilities"},
-            {
-                "extract": "scores",
-                "capture": "$steps.scores_api.capture",
-                "records": "/data/*",
-                "row": EPSS_ROW.ref.spelling,
-                "key": {"cve_id": {"at": "cve", "type": f"key_part<{VULN}:cve_id>"}},
-                "fields": {
-                    "score": {"at": "epss", "parse": "decimal"},
-                    "percentile": {"at": "percentile", "parse": "decimal"},
-                    "date": {"at": "date", "parse": "date"},
-                },
-            },
+            {"extract": "scores", "capture": "$steps.scores_api.capture", "records": "data"},
             {
                 "id": "write",
                 "for_each": "$steps.scores.records",
@@ -442,13 +429,41 @@ def _install(
     )
 
 
+def kev_records(count_at: str | None = None) -> dict[str, Any]:
+    """The KEV catalog's (and its derived view's) ``vulnerabilities`` record set."""
+
+    return record_set(
+        at="/vulnerabilities/*",
+        row=KEV_ROW.ref.spelling,
+        key={"cve_id": {"at": "cveID", "type": f"key_part<{VULN}:cve_id>"}},
+        fields={"date_added": {"at": "dateAdded", "parse": "date"}},
+        count_at=count_at,
+    )
+
+
+#: The KEV catalog's header field.
+KEV_HEADER = {"catalog_version": {"at": "/catalogVersion"}}
+EPSS_RECORDS = {
+    "data": record_set(
+        at="/data/*",
+        row=EPSS_ROW.ref.spelling,
+        key={"cve_id": {"at": "cve", "type": f"key_part<{VULN}:cve_id>"}},
+        fields={
+            "score": {"at": "epss", "parse": "decimal"},
+            "percentile": {"at": "percentile", "parse": "decimal"},
+            "date": {"at": "date", "parse": "date"},
+        },
+    )
+}
+
+
 def _derived_kind() -> Any:
     from cruxible_client.contracts.capture_contract_inputs import (
         CaptureContractInputRecord,
         lower_capture_contract_input,
     )
 
-    return lower_capture_contract_input(
+    kind = lower_capture_contract_input(
         CaptureContractInputRecord(
             name=KEV_VIEW_KIND,
             shape="http_response",
@@ -459,10 +474,15 @@ def _derived_kind() -> Any:
         ),
         named=True,
     )
+    return with_layout(kind, {"vulnerabilities": kev_records()})
 
 
 def _kev_kind(access: str) -> Any:
-    kind = http_contract(name=KEV_KIND, decoding=JSON_DECODING)
+    kind = with_layout(
+        http_contract(name=KEV_KIND, decoding=JSON_DECODING),
+        {"vulnerabilities": kev_records()},
+        KEV_HEADER,
+    )
     return kind if access == "open" else kind.model_copy(update={"body_access": access})
 
 
@@ -474,7 +494,7 @@ def skeleton_world(tmp_path: Path, *, kev_access: str = "open") -> Any:
     members, build = _web_provider_files(checkout)
     kinds = (
         _kev_kind(kev_access),
-        http_contract(name=EPSS_KIND, decoding=JSON_DECODING),
+        with_layout(http_contract(name=EPSS_KIND, decoding=JSON_DECODING), EPSS_RECORDS),
         _derived_kind(),
     )
     inverse = ClaimInverse(key={"kind": "object"}, evidence_rules=("captured",))
@@ -611,11 +631,14 @@ def _assert_payload_capture(instance: Any, capture_digest: str, origin: bytes, u
 
 
 def pinned_extract_digest(instance: Any, procedure: str, node_id: str) -> str:
-    """The digest of the accepted Procedure's own extract node, as receipts cite it."""
+    """The digest of the accepted Procedure's own extract node, as receipts cite it: the
+    full spec the thin node resolves to through its CaptureKind's layout."""
 
+    from cruxible_client.contracts.captures import parse_capture_contract
     from cruxible_client.contracts.procedures.artifacts import parse_procedure, procedure_path
     from cruxible_client.contracts.procedures.extract import extract_spec_digest
-    from cruxible_client.contracts.procedures.models import ExtractNode
+    from cruxible_client.contracts.procedures.layout_extract import LayoutExtractNode
+    from cruxible_core.procedures.extract import extract_specs
 
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     path = procedure_path(procedure)
@@ -623,9 +646,14 @@ def pinned_extract_digest(instance: Any, procedure: str, node_id: str) -> str:
     (node,) = (
         item
         for item in accepted.definition.nodes
-        if isinstance(item, ExtractNode) and item.node_id == node_id
+        if isinstance(item, LayoutExtractNode) and item.node_id == node_id
     )
-    return extract_spec_digest(node)
+
+    def kind_of(reference: Any) -> Any:
+        kind_path = capture_contract_path(reference.target.name)
+        return parse_capture_contract(tree[kind_path], path=kind_path)
+
+    return extract_spec_digest(extract_specs(accepted.definition.nodes, kind_of)(node))
 
 
 def _extracted(claim: Any, capture_digest: str, spec_digest: str) -> ExtractedBasis:
@@ -1077,11 +1105,8 @@ def derive_spec(*, chain: bool = False, mix: bool = False, effect: str = "pure")
         {
             "extract": "entries",
             "capture": f"$steps.{view}.capture",
-            "records": "/vulnerabilities/*",
-            "row": KEV_ROW.ref.spelling,
-            "key": {"cve_id": {"at": "cveID", "type": f"key_part<{VULN}:cve_id>"}},
+            "records": "vulnerabilities",
             "duplicates": "refuse_key",
-            "fields": {"date_added": {"at": "dateAdded", "parse": "date"}},
         },
         {
             "id": "write",

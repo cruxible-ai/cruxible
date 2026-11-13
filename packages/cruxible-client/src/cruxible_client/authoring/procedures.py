@@ -28,6 +28,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
 )
 from cruxible_client.contracts.procedures.authored import (
+    EXTRACT_VIEW_FIELDS,
     OPEN_TRANSFORM_KINDS,
     CallStep,
     ClaimsExpectBySpec,
@@ -35,7 +36,6 @@ from cruxible_client.contracts.procedures.authored import (
     ClaimsSubjectSpec,
     ClaimTemplateSpec,
     DedupeSpec,
-    ExtractStep,
     FieldType,
     FilterSpec,
     InboxStep,
@@ -48,15 +48,14 @@ from cruxible_client.contracts.procedures.authored import (
     Step,
     Template,
     TransformStep,
-    extract_view_fields,
     lower_procedure_spec,
     refuse_closed_steps,
 )
-from cruxible_client.contracts.procedures.extract import CompleteWhen, ExtractField
 from cruxible_client.contracts.procedures.graph import (
     ProcedureGraphFormatError,
     analyze_procedure,
 )
+from cruxible_client.contracts.procedures.layout_extract import KeyTypeOverride, LayoutExtractStep
 from cruxible_client.contracts.procedures.models import (
     RUNG_AUTHORITY,
     TERMINAL_NODE_KINDS,
@@ -81,7 +80,6 @@ from cruxible_client.contracts.shapes import (
     Operand,
     Predicate,
     Presence,
-    parse_contract_ref,
 )
 
 
@@ -399,44 +397,35 @@ class Sequence:
         *,
         capture: Ref,
         records: str,
-        row: str,
-        fields: Mapping[str, ExtractField | Mapping[str, object]],
-        key: Mapping[str, ExtractField | Mapping[str, object]] | None = None,
-        header: Mapping[str, ExtractField | Mapping[str, object]] | None = None,
-        complete_when: CompleteWhen | None = None,
+        header: tuple[str, ...] | list[str] = (),
+        key: Mapping[str, KeyTypeOverride | Mapping[str, object] | str] | None = None,
         duplicates: Literal["refuse_run", "refuse_key", "first"] = "refuse_key",
         only_keys: Template = None,
         id: str | None = None,
         next: str | None = None,
     ) -> Handle:
-        """Read one Capture's records, typed by the ``row`` Contract (``name@N``)."""
+        """Read record set ``records`` of the Capture ``capture`` names, through its
+        CaptureKind's layout: the layout types the records; ``header`` selects some
+        of its header fields; ``key`` may give a plain-string key part a Subject key
+        type (``{part: "key_part<K:p>"}``)."""
 
-        step = ExtractStep.model_validate(
+        step = LayoutExtractStep.model_validate(
             dict(
                 extract=name,
                 capture=capture,
                 records=records,
-                row=row,
-                fields=dict(fields),
-                key=dict(key or {}),
-                header=dict(header or {}),
-                complete_when=complete_when,
+                header=tuple(sorted(header, key=lambda item: item.encode("utf-8"))),
+                key={
+                    part: {"type": value} if isinstance(value, str) else value
+                    for part, value in (key or {}).items()
+                },
                 duplicates=duplicates,
                 only_keys=only_keys,
                 id=id,
                 next=next,
             )
         )
-        return self._add(
-            step,
-            name,
-            tuple(
-                extract_view_fields(
-                    parse_contract_ref(row),
-                    (self._hard_caps.items if self._hard_caps else None) or 5000,
-                )
-            ),
-        )
+        return self._add(step, name, EXTRACT_VIEW_FIELDS)
 
     def transform(
         self,

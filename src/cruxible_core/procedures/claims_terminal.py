@@ -25,10 +25,14 @@ from cruxible_client.contracts.claim_types import effective_canonical_form
 from cruxible_client.contracts.claims import claim_artifact_digest
 from cruxible_client.contracts.content_memo import sealed_memo
 from cruxible_client.contracts.procedures.claims import ClaimsNode, rationale_references
-from cruxible_client.contracts.procedures.extract import EXTRACTOR_VERSIONS, extract_spec_digest
+from cruxible_client.contracts.procedures.extract import (
+    EXTRACTOR_VERSIONS,
+    ExtractNode,
+    extract_spec_digest,
+)
+from cruxible_client.contracts.procedures.layout_extract import LayoutExtractNode
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ExtractNode,
     InvokeNode,
     ReadNode,
     RepeatNode,
@@ -60,8 +64,6 @@ from cruxible_core.procedures.claims_units import (
     unit_holders,
 )
 from cruxible_core.procedures.extract import (
-    STORED_EXTRACT_NODES,
-    StoredExtractNode,
     extract_specs,
     plan_kind_lookup,
 )
@@ -139,7 +141,7 @@ def expand_claims(
             item=row,
         )
 
-    enumeration: StoredExtractNode | None = None
+    enumeration: LayoutExtractNode | None = None
     if node.expect is not None:
         from cruxible_core.procedures.claims_typing import (
             ClaimsTypingRefused,
@@ -281,12 +283,14 @@ def expand_claims(
     source_cache: dict[str, tuple[tuple[Any, ...], tuple[str, ...], bool]] = {}
     # Each extract's receipt digests its one resolved spec (its kind's layout applied).
     spec_of = extract_specs(
-        nodes.values(), plan_kind_lookup(executor.plan, executor.capture_contracts)
+        nodes.values(),
+        plan_kind_lookup(executor.plan, executor.capture_contracts),
+        executor.contract_resolver,
     )
     extract_digests = {
         n.node_id: _receipt_extract_digest(spec_of(n))
         for n in nodes.values()
-        if isinstance(n, STORED_EXTRACT_NODES)
+        if isinstance(n, LayoutExtractNode)
     }
     #: Each list extract's members, indexed once for every Claim it roots (D-R37 a5).
     listed_members: dict[str, frozenset[str]] = {}
@@ -308,7 +312,7 @@ def expand_claims(
         if alias in source_cache:
             return source_cache[alias]
         producer = nodes.get(alias)
-        if isinstance(producer, STORED_EXTRACT_NODES):
+        if isinstance(producer, LayoutExtractNode):
             found: tuple[tuple[Any, ...], tuple[str, ...], bool] = ((producer,), (), False)
         elif producer is None or isinstance(producer, ReadNode | InvokeNode | RepeatNode):
             # Accepted-state reads and opaque computations cannot be receipted
@@ -703,7 +707,7 @@ def expand_claims(
                     "extract_refused", target, field=str(mapping.value), problem="basis_unsupported"
                 )
                 continue
-            extractors = [n for n in sources.values() if isinstance(n, STORED_EXTRACT_NODES)]
+            extractors = [n for n in sources.values() if isinstance(n, LayoutExtractNode)]
             computed = any(
                 isinstance(n, TransformNode)
                 and n.node_id in transforms

@@ -27,7 +27,6 @@ from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
 )
 from cruxible_client.contracts.procedures.authored import CallStep
-from cruxible_client.contracts.procedures.extract import ExtractNode
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
     CallNode,
@@ -287,6 +286,7 @@ _FETCH_BOUNDARIES = _fetch_boundaries()
 def _fetch_procedure(contract: CaptureContract, *, request: dict[str, object]) -> ProcedureArtifact:
     """One accepted Procedure whose Source slot fetches ``request`` and shapes severity."""
 
+    from tests.support.layouts import thin_node
     from tests.support.procedures import contract_pin
 
     run_input, run_output = _FETCH_BOUNDARIES
@@ -312,14 +312,12 @@ def _fetch_procedure(contract: CaptureContract, *, request: dict[str, object]) -
                 as_=_ALIAS,
                 next="record",
             ),
-            ExtractNode(
+            thin_node(
                 node_id="record",
                 capture=f"$steps.{_ALIAS}.capture",
-                records="/",
-                row=_RECORD_ROW_REF,
-                fields={"station": {"at": "station"}},
-                as_="record",
+                records="record",
                 next="shape",
+                row=_RECORD_ROW_REF,
             ),
             ProjectNode(
                 node_id="shape",
@@ -456,7 +454,13 @@ def test_sdk_source_retains_and_reads_acquisition(
     instance = manager.get(instance_id)
     request = {"url": URL}
     provider = web_provider(_FETCH_OPERATION, _FETCH_CONTRACTS)
-    contract = http_contract(max_bytes=1_000_000, decoding=JSON_DECODING)
+    from tests.support.layouts import record_set, with_layout
+
+    # The kind's layout reads the fetched JSON body as one record.
+    contract = with_layout(
+        http_contract(max_bytes=1_000_000, decoding=JSON_DECODING),
+        {"record": record_set(at="/", row=_RECORD_ROW_REF, fields={"station": {"at": "station"}})},
+    )
     # A direct run states no acquisition rule: its capture output runs under the
     # core default (the Procedure declares none).
     procedure = _fetch_procedure(contract, request=request)
