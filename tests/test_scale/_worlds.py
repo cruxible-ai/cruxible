@@ -493,7 +493,15 @@ def native_procedure(
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
-    return accepted, {**boundary_members(name), **contract_files(*contracts)}
+    from tests.support.capabilities import head_tree, missing_capability_files
+
+    # The workspace read's slot names workspace.file@1, unless the instance holds it.
+    capability = missing_capability_files(head_tree(world.instance), sources.WORKSPACE_FILE_SPEC)
+    return accepted, {
+        **boundary_members(name),
+        **contract_files(*contracts),
+        **capability,
+    }
 
 
 def run_native_line(world: World, name: str):
