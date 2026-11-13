@@ -107,7 +107,6 @@ from cruxible_client.contracts.providers import (
 from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair, RepairOperation
 from cruxible_client.contracts.shapes import (
     Contract,
-    contract_path,
     contract_path_for_identity,
     evaluate_contract_law,
     key_type_problem,
@@ -791,25 +790,10 @@ def build_kit(
     }
     if not roots:
         raise DataValidationError(f"no live definitions are named under {', '.join(request.owns)}")
-    # A bundled provider is never carried itself (it registers on install), but a
-    # consumer installing it still needs every Contract its operations pin --
-    # input, output and refusal alike -- resolvable, whatever namespace those
-    # Contracts live in. Nothing in the owned tree pins a refusal Contract (only
-    # the Provider artifact does, and a Provider is never walked for
-    # dependencies), so each bundled package's operations are swept in as their
-    # own roots here; their own nested closure (predecessor chain, further pins)
-    # still comes from the ordinary dependency walk below.
-    roots |= {
-        path
-        for package in bundled.values()
-        for operation in package.document.operations
-        for ref in (
-            operation.in_,
-            operation.out,
-            *(refusal.contract for refusal in operation.refusals.values()),
-        )
-        if (path := contract_path(ref.name, ref.version)) in states
-    }
+    # A bundled provider is never carried itself (it registers on install), and
+    # its operations' Contracts are copies inside its build (``declares``): they
+    # root nothing here. Instance Contracts travel only through the kit's own
+    # consumer definitions.
     remap: dict[str, str] = {}
     built: dict[str, bytes] = {}
     held = {path: tree[path] for path in outside.values() if path.startswith(_HELD_FAMILIES)}
@@ -837,16 +821,6 @@ def build_kit(
             for path in sorted(built)
             for identity, digest in _named_definitions(path, states[path], payloads[path])
         ]
-        named.extend(
-            (f"provider {package.provider.provider_id}", ref.identity, ref.digest)
-            for package in bundled.values()
-            for operation in package.document.operations
-            for ref in (
-                operation.in_,
-                operation.out,
-                *(refusal.contract for refusal in operation.refusals.values()),
-            )
-        )
         members: dict[str, dict[str, KitInstalledArtifact]] = {}
         for source, identity, pin_digest in named:
             target = outside.get((identity.kind, identity.name))
@@ -2163,117 +2137,6 @@ def _inspect_staged(
     }
 
 
-def _install_provider_contracts(
-    instance: PlaybillInstance,
-    mode: ChangeMode,
-    manifest: KitManifest,
-    contents: Mapping[str, bytes],
-    inspected: Mapping[str, InspectedProviderPackage],
-    missing: list[KitProvider],
-    *,
-    actor_id: str,
-    timestamp: str,
-    held: Mapping[str, bytes] | None = None,
-) -> KitChangeResult | None:
-    """Accept bundled operations' Contract closure before registering their builds.
-
-    Walk only the release's Contracts, including nested pins and predecessors.
-    The ordinary proposal policy governs this prerequisite change; when it
-    needs approval, stop before installing anything and let the caller approve
-    and retry. The kit receipt is written only by the final definitions change.
-    """
-
-    assert mode.head is not None
-    tree = instance.immutable_tree_at(mode.head.git_oid)
-    contracts = {
-        path: content for path, content in contents.items() if path.startswith("contracts/")
-    }
-    states = {path: _artifact_state(path, content) for path, content in contracts.items()}
-    roots = {
-        path
-        for provider in missing
-        if provider.delivery == "bundled"
-        for operation in inspected[provider.provider_id].document.operations
-        for ref in operation.contract_refs()
-        if (path := contract_path(ref.name, ref.version)) in contracts
-    }
-    writes = {}
-    for path, _dependencies in _dependency_order(
-        states,
-        {path: json.loads(content) for path, content in contracts.items()},
-        within=roots,
-        outside=held,
-    ):
-        current = tree.get(path)
-        if current is None:
-            writes[path] = contracts[path]
-        elif current != contracts[path]:
-            raise immutable_contract_error(path)
-    if not writes:
-        return None
-    candidate = tree.fork()
-    for path, content in writes.items():
-        candidate[path] = content
-    suffix = canonical_digest(
-        "playbill-kit-provider-contracts-target-v1",
-        {
-            "base": mode.head.semantic_root,
-            "kit": manifest.kit_id,
-            "members": {path: content.hex() for path, content in sorted(writes.items())},
-        },
-    )
-    target = f"refs/proposals/{actor_id}/kit-contracts-{suffix[:32]}"
-    pending = open_proposal_at_target(instance, target)
-    if pending is None:
-        admitted = admit_change_set(
-            instance,
-            mode,
-            actor_id=actor_id,
-            request=ProposalAdmissionRequest(
-                target_ref=target,
-                proposed_base_oid=mode.head.git_oid,
-                rationale=(
-                    f"Install operation Contracts for kit {manifest.kit_id} {manifest.version}."
-                ),
-            ),
-            candidate_tree=candidate,
-            timestamp=timestamp,
-        )
-        proposal_id = admitted.proposal_id
-        approval_required = admitted.approval_required
-        if not admitted.admitted:
-            return KitChangeResult(
-                kit_id=manifest.kit_id,
-                version=manifest.version,
-                status="blocked",
-                proposal_id=proposal_id,
-                detail=admitted.refusal_detail(),
-                coordinate=mode.coordinate,
-            )
-    else:
-        proposal_id = pending.proposal_id
-        assert pending.candidate_digest is not None
-        evidence = instance.proposal_evidence().read_candidate(pending.candidate_digest)
-        approval_required = bool(evidence.approval_requirements)
-    assert proposal_id is not None
-    if not approval_required:
-        activation = service_activate_playbill_proposal(
-            instance, proposal_id=proposal_id, activated_by=actor_id
-        )
-        if activation.status == "accepted":
-            return None
-    return KitChangeResult(
-        kit_id=manifest.kit_id,
-        version=manifest.version,
-        status="proposed" if approval_required else "blocked",
-        proposal_id=proposal_id,
-        approval_required=approval_required,
-        detail="Accept the kit's operation Contract proposal, then retry kit add to install "
-        "its providers and remaining definitions.",
-        coordinate=mode.coordinate,
-    )
-
-
 def _install_providers(
     instance: PlaybillInstance,
     missing: list[KitProvider],
@@ -2589,20 +2452,6 @@ def _add_kit(
                 coordinate=mode.coordinate,
                 **described,  # type: ignore[arg-type]
             )
-        assert inspected is not None
-        prerequisite = _install_provider_contracts(
-            instance,
-            mode,
-            manifest,
-            contents,
-            inspected,
-            missing,
-            actor_id=actor_id,
-            timestamp=timestamp,
-            held=held,
-        )
-        if prerequisite is not None:
-            return prerequisite.model_copy(update=described)
         steps = _install_providers(instance, missing, steps, install_provider)
         described["providers"] = tuple(steps)
         pending = [step for step in steps if step.action in {"awaiting_approval", "blocked"}]
