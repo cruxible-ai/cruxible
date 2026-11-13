@@ -2216,7 +2216,12 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
             )
         accepted_procedure = pinned
     from cruxible_core.errors import RequestRefusedError
-    from cruxible_core.providers.operation_index import line_capture_output_map, line_slot_map
+    from cruxible_core.providers.operation_index import (
+        line_capture_output_map,
+        line_slot_map,
+        memoized_slot_fitter,
+        tree_capability_side,
+    )
 
     def child(identity: ArtifactIdentity) -> Any:
         accepted = context.resolved.procedures.get(identity.qualified)
@@ -2248,6 +2253,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
             if (provider := context.resolved.providers.get(binding.build.target.qualified))
             is not None
         },
+        fitter=memoized_slot_fitter(tree_capability_side(context.candidate_tree)),
         capture_outputs=capture_outputs,
         contracts=_candidate_contract_resolver(context.candidate_tree),
         enum_members=tree_enum_resolver(context.candidate_tree),

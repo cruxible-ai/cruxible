@@ -19,6 +19,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.capabilities import Capability, CapabilityRef
+from cruxible_client.contracts.capability_fit import FitKind
 from cruxible_client.contracts.content_memo import ValueMemo
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
@@ -27,8 +28,12 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
 )
 from cruxible_client.contracts.procedures.line_specs import (
+    SlotBindingVerdict,
+    SlotFitter,
+    SlotNeed,
     builtin_binding_problem,
-    provisional_slot_signatures,
+    judge_slot_binding,
+    operation_spelling,
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
@@ -89,7 +94,9 @@ class ResolvedSlotBinding(BaseModel):
     ``contracts`` is the exact Contract closure the operation pins, taken from
     the bound build's own carried copies at admission (never from the
     instance's Contracts); it is empty in a replayed plan (a replay reads the
-    recorded acquisition plan, which carries its own closure).
+    recorded acquisition plan, which carries its own closure). ``capability`` is
+    the slot's capability pin; ``fit`` how the operation fits it at admission,
+    ``None`` for core's builtin (bound by name) and in a replayed plan.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -97,6 +104,8 @@ class ResolvedSlotBinding(BaseModel):
     build: ArtifactPin
     operation: DeclaredOperation
     operation_signature_digest: str
+    capability: CapabilityRef
+    fit: FitKind | None = None
     contracts: tuple[Contract, ...] = ()
 
     @property
@@ -266,22 +275,11 @@ def bind_procedure_references(
             else None
         )
 
-    from cruxible_core.procedures.declared_inputs import builtin_slot_signatures
+    from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
 
-    builtin_names = frozenset(builtin_slot_signatures())
-
-    # The provisional signature key (line_specs.provisional_slot_signatures, which
-    # the binding slice replaces). A replay rebinds the bindings its admission
-    # recorded and checked, from recorded pins only, so it derives none.
-    signatures = (
-        {}
-        if frozen_pins is not None
-        else provisional_slot_signatures(
-            {name: slot for name, slot in slot_declarations.items() if name in (bindings or {})},
-            capability,
-            builtin=builtin_slot_signatures(),
-        )
-    )
+    # A replay rebinds the bindings its admission recorded and checked, from
+    # recorded pins only: it rechecks ruling B1 and fits nothing.
+    fitter = None if frozen_pins is not None else lookup_slot_fitter(lookup)
     validate_slot_names(bindings or {}, slot_declarations)
     source_only_slots = _source_only_slot_names(authored.definition)
     references: dict[str, str] = {}
@@ -321,44 +319,60 @@ def bind_procedure_references(
         )
         if operation is None:
             raise ExecutionError(f"Slot {name!r}: {binding.spelling} declares no such operation")
-        # Ruling B1, rechecked at every admission (a replay included), whatever the
-        # signatures say: a builtin capability binds only core's builtin, and core's
-        # builtin binds no other capability.
-        builtin_problem = builtin_binding_problem(
-            name,
-            capability=slot.capability.spelling,
-            builtin=slot.capability.name in builtin_names,
-            operation=operation,
-            spelling=binding.spelling,
-        )
-        if builtin_problem is not None:
+        # The recorded binding still serves the slot's capability and fits it at
+        # this coordinate (ruling B1 first, at every admission, a replay included).
+        # Never chooses; memoized per process.
+        builtin = slot.capability.name in BUILTIN_CAPABILITY_NAMES
+        resolved_capability = None if fitter is None else capability(slot.capability)
+        if fitter is None or resolved_capability is None:
+            # A replay (or a capability gone from this coordinate) still answers B1.
+            problem = builtin_binding_problem(
+                name,
+                capability=slot.capability.spelling,
+                builtin=builtin,
+                operation=operation,
+                spelling=operation_spelling(binding.build.target.name, binding.operation),
+            )
+            if problem is None and fitter is not None:
+                problem = (
+                    "cruxible.procedure.slot_capability_unresolved",
+                    f"Slot {name!r} names capability {slot.capability.spelling}, which is not "
+                    "accepted at this coordinate at its pinned digest.",
+                )
+            verdict = SlotBindingVerdict(problem=problem)
+        else:
+            verdict = judge_slot_binding(
+                name,
+                SlotNeed(
+                    pin=slot.capability,
+                    capability=resolved_capability,
+                    may_truncate=slot.may_truncate,
+                    builtin=builtin,
+                ),
+                provider,
+                digest,
+                operation,
+                spelling=operation_spelling(binding.build.target.name, binding.operation),
+                fitter=fitter,
+            )
+        if verdict.problem is not None:
             from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
             from cruxible_core.errors import RequestRefusedError
 
             raise RequestRefusedError(
-                builtin_problem[0],
-                builtin_problem[1],
+                verdict.problem[0],
+                verdict.problem[1],
                 repair=HandEditRepair(
                     hand_edit=HandEditInstruction(
                         target="bindings",
                         required_change=(
                             f"Bind {name} to core's builtin"
-                            if slot.capability.name in builtin_names
-                            else f"Bind {name} to a provider build serving {slot.capability.name}"
+                            if builtin
+                            else f"Bind {name} to an operation serving {slot.capability.spelling} "
+                            "that fits it"
                         ),
                     )
                 ),
-            )
-        signature = signatures.get(name)
-        try:
-            fits = signature is None or operation.signature().same_as(signature)
-        except ValueError:
-            fits = False
-        if not fits:
-            assert signature is not None
-            raise ExecutionError(
-                f"Slot {name!r} needs {slot.capability.spelling} ({signature.spelling()}); "
-                f"{binding.spelling} serves {operation.signature().spelling()}"
             )
         closure: tuple[Contract, ...] = ()
         if frozen_pins is None:
@@ -375,6 +389,8 @@ def bind_procedure_references(
                 build=binding.build,
                 operation=operation,
                 operation_signature_digest=operation_signature_digest(operation.signature()),
+                capability=slot.capability,
+                fit=verdict.fit if frozen_pins is None else None,
                 contracts=closure,
             )
         )
@@ -403,6 +419,32 @@ def bind_procedure_references(
         authored=authored,
         artifact_digest=accepted.artifact_digest,
     )
+
+
+def lookup_slot_fitter(lookup: ReferenceLookup) -> SlotFitter:
+    """The memoized fitter whose capability side resolves through an admission lookup."""
+
+    from cruxible_client.contracts.procedures.line_specs import BindingSide, declared_kind
+    from cruxible_client.contracts.shapes import ContractRef, contract_digest, contract_identity
+    from cruxible_core.providers.operation_index import CapabilitySide, memoized_slot_fitter
+
+    def contract(ref: ContractRef) -> Contract | None:
+        selected = lookup(contract_identity(ref.name, ref.version))
+        if selected is None or not isinstance(selected[0], Contract):
+            return None
+        if ref.digest is not None and contract_digest(selected[0]).tagged != ref.digest:
+            return None
+        return selected[0]
+
+    def kind(name: str) -> Any:
+        selected = lookup(ArtifactIdentity(kind="CaptureContract", name=name))
+        return None if selected is None else declared_kind(selected[0])
+
+    def kind_digest(name: str) -> str | None:
+        selected = lookup(ArtifactIdentity(kind="CaptureContract", name=name))
+        return None if selected is None else selected[1]
+
+    return memoized_slot_fitter(CapabilitySide(BindingSide(contract, kind), kind_digest))
 
 
 def replay_procedure_references(

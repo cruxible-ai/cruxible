@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Literal
 
@@ -29,9 +30,31 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.capabilities import (
+    Capability,
     CapabilityLookup,
-    capability_slot_signature,
+    CapabilityRef,
     is_reserved_capability_name,
+)
+from cruxible_client.contracts.capability_fit import (
+    BINDING_UNDECLARED,
+    BINDING_UNFIT,
+    BindingFit,
+    EffectUnequal,
+    FitKind,
+    Fits,
+    FitSide,
+    FitUnresolved,
+    TruncationUnfit,
+    Unfit,
+    binding_undeclared_message,
+    binding_unfit_message,
+    record_fits,
+)
+from cruxible_client.contracts.capture_layouts import DeclaredCaptureKind
+from cruxible_client.contracts.captures import (
+    CaptureContract,
+    CaptureContractV1,
+    NamedCaptureContract,
 )
 from cruxible_client.contracts.claim_evidence import FindingKind
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
@@ -57,11 +80,8 @@ from cruxible_client.contracts.procedures.trigger_rules import (
 from cruxible_client.contracts.procedures.windows import (
     CaptureEventNameSelector,
 )
-from cruxible_client.contracts.provider_operations import (
-    LineBinding,
-    OperationSignature,
-)
-from cruxible_client.contracts.provider_registration import DeclaredOperation
+from cruxible_client.contracts.provider_operations import ContractLookup, LineBinding
+from cruxible_client.contracts.provider_registration import DeclaredOperation, ProviderDeclares
 from cruxible_client.contracts.providers import AcceptedProvider, ProviderV2
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import Contract, ContractRef, EnumResolver
@@ -370,15 +390,23 @@ def line_slots(
     return found
 
 
-class SlotSignature(OperationSignature):
-    """A slot's derived signature, with the capability it names (``name@N``).
+class SlotNeed(_StrictLineModel):
+    """One slot a Line binds: the capability version it pins, resolved where it is bound.
 
-    ``builtin``: the capability is one core's builtin serves, so the slot binds
-    only core's builtin build (ruling B1), whatever the signatures say.
+    ``pin`` is the slot's capability pin with its digest; ``capability`` the
+    accepted version it names. ``builtin``: the capability is one core's builtin
+    serves, so the slot binds only core's builtin build, by name and without the
+    fit check (ruling B1).
     """
 
-    capability: str
+    pin: CapabilityRef
+    capability: Capability
+    may_truncate: bool = False
     builtin: bool = False
+
+    @property
+    def spelling(self) -> str:
+        return self.pin.spelling
 
 
 #: A binding across the builtin boundary (ruling B1): a builtin capability slot bound
@@ -426,59 +454,240 @@ class SlotCapabilityUnresolved(ValueError):
     code = "cruxible.procedure.slot_capability_unresolved"
 
 
-# PROVISIONAL (contract batch, slots slice): the binding slice replaces this
-# function with binding by capability and fit (note §2.2, §2.4). Until then a
-# Line binds a slot by the exact ``(in, out, effect)`` signature today's index
-# keys, derived here from the slot's capability. Every binding path (Line
-# authoring and acceptance, direct runs, run admission, the kit default-provider
-# check) reaches the slot's signature through this one function.
-def provisional_slot_signatures(
+def slot_needs(
     slots: Mapping[str, ProcedureSlot],
-    capabilities: CapabilityLookup,
     *,
-    builtin: Mapping[str, OperationSignature],
-) -> dict[str, OperationSignature]:
-    """Each slot's derived signature (its capability's ``in``, ``out`` and ``effect``).
+    capabilities: CapabilityLookup,
+    builtin_names: frozenset[str],
+) -> dict[str, SlotNeed]:
+    """Each slot with its capability resolved through ``capabilities``.
 
-    ``builtin`` maps each capability name core's builtin serves to the builtin
-    operation's own signature: such a slot binds by name (note §7.4.7), so its key
-    is the builtin's whatever Contracts the capability's own version pins (the
-    base kit's ``workspace.file`` request is the authored one, not the handoff).
-    Raises :class:`SlotCapabilityUnresolved` naming the slot when its pinned
-    capability does not resolve through ``capabilities``.
+    ``builtin_names`` are the capability names core's builtin serves. Raises
+    :class:`SlotCapabilityUnresolved` naming the slot when its pin does not
+    resolve at its digest.
     """
 
-    found: dict[str, OperationSignature] = {}
+    found: dict[str, SlotNeed] = {}
     for name, slot in slots.items():
-        served = builtin.get(slot.capability.name)
-        signature = served if served is not None else capability_slot_signature(slot, capabilities)
-        if signature is None:
+        capability = capabilities(slot.capability)
+        if capability is None:
             raise SlotCapabilityUnresolved(
                 f"slot {name!r} names capability {slot.capability.spelling}, which is not "
                 "accepted here at its pinned digest"
             )
-        found[name] = SlotSignature.model_validate(
-            {
-                **signature.model_dump(by_alias=True),
-                "capability": slot.capability.spelling,
-                "builtin": served is not None,
-            }
+        found[name] = SlotNeed(
+            pin=slot.capability,
+            capability=capability,
+            may_truncate=slot.may_truncate,
+            builtin=slot.capability.name in builtin_names,
         )
     return found
 
 
-def line_slot_signatures(
+def line_slot_needs(
     definition: ProcedureDefinition,
     *,
     capabilities: CapabilityLookup,
-    builtin: Mapping[str, OperationSignature],
+    builtin_names: frozenset[str],
     child: Mapping[str, ProcedureDefinition] | None = None,
-) -> dict[str, OperationSignature]:
-    """Every slot a Line must bind (:func:`line_slots`), with its derived signature."""
+) -> dict[str, SlotNeed]:
+    """Every slot a Line must bind (:func:`line_slots`), its capability resolved.
 
-    return provisional_slot_signatures(
-        line_slots(definition, child=child), capabilities, builtin=builtin
+    ``capabilities`` resolves each slot's pin where the slot is bound (the
+    authoring tree, the candidate tree, or the admission coordinate).
+    """
+
+    return slot_needs(
+        line_slots(definition, child=child),
+        capabilities=capabilities,
+        builtin_names=builtin_names,
     )
+
+
+# -- fit of one operation to one slot (note §2.2, §2.3) ----------------------------------
+
+#: The instance's declaration of one CaptureKind (name, decoding, layout), or ``None``.
+CaptureKindLookup = Callable[[str], DeclaredCaptureKind | None]
+
+
+@dataclass(frozen=True)
+class BindingSide:
+    """The capability side of a fit: where the slot's Contracts and kinds resolve.
+
+    The operation side always resolves inside the bound build's own ``declares``.
+    """
+
+    contracts: ContractLookup
+    capture_kinds: CaptureKindLookup
+
+
+#: ``(slot, need, build, build digest, operation) -> fit``: how one operation fits one slot.
+SlotFitter = Callable[[str, SlotNeed, ProviderV2, str, DeclaredOperation], BindingFit]
+
+
+def declared_kind(kind: object) -> DeclaredCaptureKind | None:
+    """An instance CaptureKind as a coverage check reads it (name, decoding, layout), or
+    ``None`` when ``kind`` is not a CaptureKind. A format without a decoding or layout
+    declares neither."""
+
+    if not isinstance(kind, CaptureContractV1 | CaptureContract | NamedCaptureContract):
+        return None
+    return DeclaredCaptureKind(
+        name=kind.identity.name,
+        decoding=getattr(kind, "decoding", None),
+        layout=getattr(kind, "layout", None),
+    )
+
+
+def _unresolved(side: FitSide, exc: FitUnresolved) -> Unfit:
+    text = f"{exc.ref.spelling} (does not resolve)"
+    return Unfit(
+        side=side,
+        path=exc.ref.name,
+        problem="type",
+        sender=text if exc.party == "sender" else "-",
+        receiver=text if exc.party == "receiver" else "-",
+    )
+
+
+def slot_fit(
+    need: SlotNeed,
+    operation: DeclaredOperation,
+    declares: ProviderDeclares | None,
+    side: BindingSide,
+) -> BindingFit:
+    """Whether ``operation`` fits the slot ``need``: effect, truncation, then both records.
+
+    Effects are equal; an operation that may truncate binds only a slot that
+    says so; what the slot sends (the capability's ``in``) fits what the
+    operation accepts, and what the operation returns fits what the capability
+    expects (``out``), by :func:`record_fits`. Where both sides name
+    ``capture<K>``, the producer's layout of ``K`` must cover the reader's: on
+    the request the instance's kind produces and the operation's copy reads; on
+    the result the reverse. ``identical`` only when both records are.
+    """
+
+    from cruxible_client.contracts.capture_layouts import layout_covers
+
+    capability = need.capability
+    if operation.effect != capability.effect:
+        return EffectUnequal(capability=capability.effect, operation=operation.effect)
+    if operation.may_truncate and not need.may_truncate:
+        return TruncationUnfit()
+    carried = declares.lookup() if declares is not None else (lambda _ref: None)
+
+    def instance_kind(name: str) -> DeclaredCaptureKind:
+        return side.capture_kinds(name) or DeclaredCaptureKind(name=name)
+
+    def build_kind(name: str) -> DeclaredCaptureKind:
+        found = declares.capture_kind(name) if declares is not None else None
+        return found or DeclaredCaptureKind(name=name)
+
+    try:
+        request = record_fits(
+            capability.in_,
+            operation.in_,
+            side.contracts,
+            carried,
+            side="request",
+            capture_covers=lambda kind, type_fits, row_fits: layout_covers(
+                instance_kind(kind), build_kind(kind), type_fits=type_fits, row_fits=row_fits
+            ),
+        )
+    except FitUnresolved as exc:
+        return _unresolved("request", exc)
+    if not isinstance(request, Fits):
+        return request
+    try:
+        result = record_fits(
+            operation.out,
+            capability.out,
+            carried,
+            side.contracts,
+            side="result",
+            capture_covers=lambda kind, type_fits, row_fits: layout_covers(
+                build_kind(kind), instance_kind(kind), type_fits=type_fits, row_fits=row_fits
+            ),
+        )
+    except FitUnresolved as exc:
+        return _unresolved("result", exc)
+    if not isinstance(result, Fits):
+        return result
+    same = request.fit == "identical" and result.fit == "identical"
+    return Fits(fit="identical" if same else "structural")
+
+
+def slot_fitter(side: BindingSide) -> SlotFitter:
+    """The plain fitter over one capability side (no memo)."""
+
+    def fit(
+        slot: str,
+        need: SlotNeed,
+        provider: ProviderV2,
+        build_digest: str,
+        operation: DeclaredOperation,
+    ) -> BindingFit:
+        del slot, build_digest
+        return slot_fit(need, operation, provider.declares, side)
+
+    return fit
+
+
+def operation_spelling(build: str, operation: str) -> str:
+    """``<provider>#<operation>``, as binding refusals name an operation (note §2.6).
+
+    ``build`` is the build's identity name (``<provider>/<build>``) or qualified identity.
+    """
+
+    return f"{build.removeprefix('Provider:').partition('/')[0]}#{operation}"
+
+
+class SlotBindingVerdict(_StrictLineModel):
+    """One binding judged against its slot: a refusal ``(code, message)``, or how it fits.
+
+    ``fit`` is ``None`` for core's builtin, which binds by name without a fit check.
+    """
+
+    problem: tuple[str, str] | None = None
+    fit: FitKind | None = None
+
+
+def judge_slot_binding(
+    slot: str,
+    need: SlotNeed,
+    provider: ProviderV2,
+    build_digest: str,
+    operation: DeclaredOperation,
+    *,
+    spelling: str,
+    fitter: SlotFitter,
+) -> SlotBindingVerdict:
+    """Ruling B1 first, then ``serves``, then fit: the refusal of note §2.6, or the fit."""
+
+    problem = builtin_binding_problem(
+        slot,
+        capability=need.spelling,
+        builtin=need.builtin,
+        operation=operation,
+        spelling=spelling,
+    )
+    if problem is not None:
+        return SlotBindingVerdict(problem=problem)
+    if need.builtin:
+        return SlotBindingVerdict()
+    if need.pin.name not in operation.serves:
+        return SlotBindingVerdict(
+            problem=(
+                BINDING_UNDECLARED,
+                binding_undeclared_message(slot, need.spelling, spelling, operation.serves),
+            )
+        )
+    fit = fitter(slot, need, provider, build_digest, operation)
+    if not isinstance(fit, Fits):
+        return SlotBindingVerdict(
+            problem=(BINDING_UNFIT, binding_unfit_message(slot, need.spelling, spelling, fit))
+        )
+    return SlotBindingVerdict(fit=fit.fit)
 
 
 def line_capture_outputs(
@@ -601,8 +810,9 @@ def evaluate_line_spec_law(
     path: str,
     procedure: AcceptedProcedure,
     predecessor: AcceptedLineSpec | None,
-    slots: Mapping[str, OperationSignature] | None = None,
+    slots: Mapping[str, SlotNeed] | None = None,
     providers: Mapping[str, AcceptedProvider] | None = None,
+    fitter: SlotFitter | None = None,
     capture_outputs: frozenset[str] | None = None,
     contracts: Callable[[ContractRef], Contract | None] | None = None,
     enum_members: EnumResolver | None = None,
@@ -611,8 +821,10 @@ def evaluate_line_spec_law(
     """The Line law.
 
     ``procedure`` is the exact accepted version the Line pins. ``slots`` is
-    every slot the Line must bind (:func:`line_slot_signatures`), and
-    ``providers`` the accepted builds by qualified identity. ``capture_outputs``
+    every slot the Line must bind (:func:`line_slot_needs`), ``providers`` the
+    accepted builds by qualified identity, and ``fitter`` how a bound operation
+    fits its slot (:func:`slot_fitter` over the capability side's Contracts and
+    kinds; required when a slot is not core's builtin). ``capture_outputs``
     is every capture output the Line may name a rule for, invoked children's
     included (:func:`line_capture_outputs`); omitted, the Procedure's own.
     ``contracts`` reads governed Contracts at the coordinate: the Line's
@@ -662,6 +874,7 @@ def evaluate_line_spec_law(
         line.bindings,
         slots=_law_slots(slots, definition),
         providers=providers or {},
+        fitter=fitter,
     )
     if binding_problem is not None:
         return _refusal(binding_problem[0], binding_problem[1], path=path)
@@ -735,19 +948,19 @@ def evaluate_line_spec_law(
 
 
 def _law_slots(
-    slots: Mapping[str, OperationSignature] | None, definition: ProcedureDefinition
-) -> Mapping[str, OperationSignature]:
+    slots: Mapping[str, SlotNeed] | None, definition: ProcedureDefinition
+) -> Mapping[str, SlotNeed]:
     """The slots the law checks: as given, or none for a Procedure that declares none.
 
-    A slot's signature comes from its capability, which only the caller can
-    resolve (:func:`line_slot_signatures`); omitting ``slots`` is valid only for
-    a Procedure with no slots.
+    A slot's capability resolves only where the caller binds it
+    (:func:`line_slot_needs`); omitting ``slots`` is valid only for a Procedure
+    with no slots.
     """
 
     if slots is not None:
         return slots
     if definition.slots:
-        raise ValueError("a Line over a slotted Procedure is judged with its slot signatures")
+        raise ValueError("a Line over a slotted Procedure is judged with its slot needs")
     return {}
 
 
@@ -772,10 +985,15 @@ def bound_operation_of(
 def line_binding_problem(
     bindings: Mapping[str, LineBinding],
     *,
-    slots: Mapping[str, OperationSignature],
+    slots: Mapping[str, SlotNeed],
     providers: Mapping[str, AcceptedProvider],
+    fitter: SlotFitter | None = None,
 ) -> tuple[str, str] | None:
-    """Every slot is bound to a live build's operation serving its exact signature."""
+    """Every slot is bound to a live build's operation that serves its capability and fits.
+
+    Ruling B1 first; then the operation must name the slot's capability in
+    ``serves`` (``binding_undeclared``) and fit it (``binding_unfit``).
+    """
 
     missing = sorted(set(slots) - set(bindings))
     if missing:
@@ -797,28 +1015,31 @@ def line_binding_problem(
                 f"Slot {key!r} binds {binding.spelling}, which is not a live accepted "
                 "build operation at that exact digest.",
             )
-        slot = slots[key]
-        if isinstance(slot, SlotSignature):
-            problem = builtin_binding_problem(
-                key,
-                capability=slot.capability,
-                builtin=slot.builtin,
-                operation=operation,
-                spelling=binding.spelling,
-            )
-            if problem is not None:
-                return problem
-        try:
-            fits = operation.signature().same_as(slot)
-        except ValueError:
-            fits = False
-        if not fits:
-            return (
-                "cruxible.line.binding_signature_mismatch",
-                f"Slot {key!r} needs {slot.spelling()}; {binding.spelling} serves "
-                f"{operation.signature().spelling()}.",
-            )
+        need = slots[key]
+        provider = providers[binding.build.target.qualified].provider
+        assert isinstance(provider, ProviderV2)
+        verdict = judge_slot_binding(
+            key,
+            need,
+            provider,
+            binding.build.artifact_digest,
+            operation,
+            spelling=operation_spelling(binding.build.target.name, binding.operation),
+            fitter=fitter or _no_fit,
+        )
+        if verdict.problem is not None:
+            return verdict.problem
     return None
+
+
+def _no_fit(
+    slot: str,
+    need: SlotNeed,
+    provider: ProviderV2,
+    build_digest: str,
+    operation: DeclaredOperation,
+) -> BindingFit:
+    raise ValueError("a Line binding a provider slot is judged with a fitter")
 
 
 __all__ = [
@@ -830,12 +1051,21 @@ __all__ = [
     "bound_operation_of",
     "ephemeral_line_spec_digest",
     "LINE_BINDING_BUILTIN_MISMATCH",
-    "SlotSignature",
+    "BindingSide",
+    "CaptureKindLookup",
+    "SlotBindingVerdict",
+    "SlotFitter",
+    "SlotNeed",
     "builtin_binding_problem",
+    "declared_kind",
+    "judge_slot_binding",
     "line_binding_problem",
-    "line_slot_signatures",
+    "line_slot_needs",
     "line_slots",
-    "provisional_slot_signatures",
+    "operation_spelling",
+    "slot_fit",
+    "slot_fitter",
+    "slot_needs",
     "SlotCapabilityUnresolved",
     "AcceptedLineSpec",
     "LineAuthority",

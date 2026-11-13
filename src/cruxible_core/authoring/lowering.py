@@ -3021,19 +3021,32 @@ def _render_non_procedure_member(
 def _line_provider_resolver(
     instance: PlaybillInstance, base: AcceptedProjectionCoordinate, tree: Mapping[str, bytes]
 ) -> Callable[[Mapping[str, Any], Mapping[str, str]], dict[str, Any]]:
-    """Resolve a Line's slot bindings through the base's signature index.
+    """Resolve a Line's slot bindings through the base's capability index.
 
     ``(slots, requested) -> {slot: LineBinding}``: each requested
     ``provider[/build][#operation]`` names its build and operation; a slot left
-    out is fitted (exactly one live operation must serve its signature).
+    out is fitted (exactly one live operation must serve its capability and fit).
+    Builds come from the base; the capability side from the staged tree.
     """
 
-    del tree
-    from cruxible_core.providers.operation_index import resolve_slot_bindings
+    from cruxible_core.providers.operation_index import (
+        memoized_slot_fitter,
+        projection_build_reader,
+        resolve_slot_bindings,
+        tree_capability_side,
+    )
+
+    fitter = memoized_slot_fitter(tree_capability_side(tree))
 
     def resolve(slots: Mapping[str, Any], requested: Mapping[str, str]) -> dict[str, Any]:
         with instance.bind_accepted_projection(base) as projection:
-            return resolve_slot_bindings(projection.typed.connection, slots, requested)
+            return resolve_slot_bindings(
+                projection.typed.connection,
+                slots,
+                requested,
+                fitter=fitter,
+                builds=projection_build_reader(projection.typed),
+            )
 
     return resolve
 
@@ -3173,7 +3186,7 @@ def _render_line_member(
         _refuse(
             "cruxible.line.compiler_unsupported",
             "bindings",
-            "Line slot bindings need the accepted signature index.",
+            "Line slot bindings need the accepted capability index.",
             repair_kind="upgrade_compiler",
             repair_description="Author the Line through an instance.",
         )

@@ -1211,7 +1211,7 @@ def test_line_authoring_refuses_zero_or_multiple_fitting_operations(tmp_path, pr
     code = "cruxible.line.slot_" + ("unfilled" if not provider_count else "ambiguous")
     assert refusal.error_code == code
     assert refusal.repair.hand_edit.target == "bindings"
-    assert "compute" in str(refusal) and "test.value@1" in str(refusal)
+    assert "compute" in str(refusal) and "test.compute@1" in str(refusal)
     for build in builds:
         assert f"{build.identity.name}#compute" in str(refusal)
 

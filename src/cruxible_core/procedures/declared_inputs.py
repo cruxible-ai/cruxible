@@ -18,14 +18,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from functools import cache
-from types import MappingProxyType
 from typing import Any, Literal
 
 from cruxible_client.contracts.capabilities import CapabilityLookup
 from cruxible_client.contracts.procedures.line_specs import LineSpec
 from cruxible_client.contracts.procedures.nodes import CallNode
-from cruxible_client.contracts.provider_operations import OperationSignature
 from cruxible_client.contracts.shapes import Contract
 from cruxible_client.contracts.workspace_file import (
     WorkspaceFileGlobRequestV1,
@@ -112,37 +109,6 @@ def reads_workspace(slot: Any) -> bool:
     """
 
     return slot is not None and slot.capability.name in BUILTIN_CAPABILITY_NAMES
-
-
-@cache
-def builtin_slot_signatures() -> Mapping[str, OperationSignature]:
-    """Each capability name core's builtin serves -> the builtin operation's signature.
-
-    The provisional slot key (``line_specs.provisional_slot_signatures``) binds
-    such a slot by name to the builtin, whichever Contracts its capability pins.
-    """
-
-    from cruxible_client.contracts.shapes import Contract, contract_digest
-    from cruxible_client.contracts.workspace_file import workspace_file_contracts
-
-    _source, _content, request, result = workspace_file_contracts()
-    assert isinstance(request, Contract) and isinstance(result, Contract)
-    signature = OperationSignature.model_validate(
-        {
-            "in": {
-                "name": request.name,
-                "version": request.version,
-                "digest": contract_digest(request).tagged,
-            },
-            "out": {
-                "name": result.name,
-                "version": result.version,
-                "digest": contract_digest(result).tagged,
-            },
-            "effect": "pure",
-        }
-    )
-    return MappingProxyType({name: signature for name in sorted(BUILTIN_CAPABILITY_NAMES)})
 
 
 def _workspace_call(definition: Any, node: CallNode) -> bool:
@@ -246,7 +212,6 @@ def declared_inputs(
 __all__ = [
     "DeclaredInput",
     "DeclaredInputKind",
-    "builtin_slot_signatures",
     "declared_inputs",
     "reads_workspace",
     "effective_parameters",

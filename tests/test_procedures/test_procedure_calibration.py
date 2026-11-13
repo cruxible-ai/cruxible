@@ -7,6 +7,7 @@ from datetime import timedelta
 import pytest
 
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.capabilities import CapabilityRef
 from cruxible_client.contracts.errors import CasError, ExecutionError
 from cruxible_client.contracts.procedures.results import (
     ProcedureProviderBinding,
@@ -168,6 +169,8 @@ def test_membership_witness_is_built_only_from_reproducing_run_receipts(tmp_path
     binding = ProcedureProviderBinding(
         node_id="provider",
         slot="fetch",
+        capability=CapabilityRef(name="test.fetch", version=1, digest="sha256:" + "c" * 64),
+        fit="identical",
         operation="read",
         operation_signature_digest=_digest("signature"),
         provider_artifact_digest=_digest("provider"),
