@@ -131,6 +131,5 @@ def test_a_fitting_operation_binds_and_three_unfit_ones_are_refused(
     fifty = statistics.median(_acceptance_seconds(instance, "fifty-others"))
     pilot.measure("binding_line_acceptance_1_other", one, "s")
     pilot.measure("binding_line_acceptance_50_others", fifty, "s")
-    # Noise allowance only: the check seeks by capability name, so 49 more providers of
-    # other capabilities add nothing it reads.
-    assert fifty <= one * 1.25 + 0.05, (one, fifty)
+    # Reported, not asserted: wall time on a shared runner is noise. The counted work
+    # (index rows, build reads, fits) is asserted equal at both sizes in tests/test_scale.
