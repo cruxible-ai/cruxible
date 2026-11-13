@@ -6588,6 +6588,11 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
                     continue
                 if value in (None, [], {}):
                     continue
+                if key == "operations" and result.kind == "provider":
+                    click.echo("operations:")
+                    for row in value:
+                        click.echo("  " + _provider_operation_line(row))
+                    continue
                 if isinstance(value, list) and all(isinstance(item, dict) for item in value):
                     click.echo(f"{key}:")
                     for item in value:
@@ -8014,6 +8019,26 @@ def _node_summary_text(summary: Mapping[str, Any]) -> str:
     if kind == "repeat":
         return _plural(summary["attempts"], "attempt")
     return str(kind)
+
+
+def _provider_operation_line(row: dict[str, Any]) -> str:
+    """One operation of a Provider card: name, signature, what it serves, where its code is."""
+
+    source = row["source"]
+    where = source["path"]
+    if source.get("repository"):
+        where += f" ({source['repository']}" + (
+            f" at {source['revision'][:12]})" if source.get("revision") else ")"
+        )
+    refusals = ", ".join(
+        code + (" (absorbable)" if code in row.get("absorbable", ()) else "")
+        for code in row.get("refusals", ())
+    )
+    return (
+        f"{row['operation']}  {row['input']} -> {row['output']} ({row['effect']})  "
+        f"serves {', '.join(row['serves'])}\n    {printable(row['description'])}\n"
+        f"    source {where}" + (f"\n    refuses {refusals}" if refusals else "")
+    )
 
 
 def _run_node_line(node: Mapping[str, Any]) -> str:

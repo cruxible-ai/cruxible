@@ -388,3 +388,27 @@ def test_the_default_map_prints_one_line_per_kind_and_flat_nonzero_counts() -> N
     assert "Artifacts: claim_types=12 claims.live=40" in lines
     assert "  assets_by_owner(owner: string)  Assets an owner holds." in lines
     assert "  long()  " + "y" * 97 + "..." in lines
+
+
+def test_a_provider_cards_operations_print_as_terse_rows() -> None:
+    from cruxible_core.cli.commands.playbill import _provider_operation_line
+
+    row = {
+        "build": "Provider:demo/abc",
+        "operation": "demo.read",
+        "description": "Reads one record.",
+        "serves": ["demo.read"],
+        "source": {"path": "src/demo/read.py", "repository": "https://example.test/demo"},
+        "input": "demo.read.request@1",
+        "output": "demo.read.result@1",
+        "effect": "pure",
+        "refusals": ["declined", "too_big"],
+        "absorbable": ["declined"],
+        "signature_digest": "sha256:" + "0" * 64,
+    }
+    assert _provider_operation_line(row).splitlines() == [
+        "demo.read  demo.read.request@1 -> demo.read.result@1 (pure)  serves demo.read",
+        "    Reads one record.",
+        "    source src/demo/read.py (https://example.test/demo)",
+        "    refuses declined (absorbable), too_big",
+    ]
