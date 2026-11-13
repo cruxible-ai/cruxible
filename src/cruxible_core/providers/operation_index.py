@@ -339,11 +339,11 @@ class _FitMemo:
 
 
 def _still(read: _Read, side: CapabilitySide) -> bool:
-    if read[0] == "kind":
+    if len(read) == 3:
         _, name, digest = read
-        return side.kind_digest(str(name)) == digest
-    _, name, version, digest = read  # type: ignore[misc]
-    return side.contract_digest(str(name), int(version)) == digest
+        return side.kind_digest(name) == digest
+    _, name, version, held = read
+    return side.contract_digest(name, version) == held
 
 
 _FITS = _FitMemo(capacity=4096)
