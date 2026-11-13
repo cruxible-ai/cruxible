@@ -25,8 +25,8 @@ from cruxible_core.providers.builds import indexed_newest_provider
 from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 from cruxible_core.service.procedures.provider_installation import _definition_changes
 from tests.core_support._projection_support import MemoryLedger, accepted_coordinate
-from tests.support.operation_world import _digests as _operation_digests
-from tests.support.operation_world import contract_files
+from tests.support.declared_operations import registration_document
+from tests.support.operation_world import VALUE, contract_files
 from tests.support.operation_world import operation as _operation
 
 #: The fixture provider's single build-independent entrypoint.
@@ -35,7 +35,7 @@ _ENTRYPOINT = "demo.runtime:Provider"
 
 
 def _registration_document() -> PackageRegistrationDocumentV1:
-    """A schema-2 package registering one pure ``compute`` operation.
+    """A schema-3 package registering one pure ``compute`` operation.
 
     Replaces the historical schema-1 wheel-registration fixture this file
     used (``test_package_metadata_inert.build_inert_wheel()``, schema 1, a
@@ -57,7 +57,7 @@ def _registration_document() -> PackageRegistrationDocumentV1:
             ),
         ),
     )
-    return PackageRegistrationDocumentV1(schema_version=2, manifest=manifest, operations=served)
+    return registration_document(manifest, served, (VALUE,))
 
 
 def test_install_work_is_flat_with_unrelated_build_population(
@@ -76,7 +76,7 @@ def test_install_work_is_flat_with_unrelated_build_population(
             materialization_digests={"linux-cp313": "sha256:" + "c" * 64},
         ),
         control_domain="operator",
-        operations=document.pinned_operations(_operation_digests),
+        operations=document.pinned_operations(),
     )
     work = []
     for size in (20, 200):
@@ -146,7 +146,7 @@ def package(tmp_path):
                 materialization_digests={"linux-cp313": "sha256:" + "c" * 64},
             ),
             control_domain="operator",
-            operations=document.pinned_operations(_operation_digests),
+            operations=document.pinned_operations(),
         )
 
     return document, build

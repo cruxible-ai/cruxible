@@ -24,7 +24,7 @@ from cruxible_client.contracts.provider_execution import (
     ProviderSecretResolutionPlan,
     VerifiedProviderBinding,
 )
-from cruxible_client.contracts.provider_operations import ProviderOperation
+from cruxible_client.contracts.provider_registration import DeclaredOperation
 from cruxible_core.procedures.execution import (
     PreparedProcedureRun,
     ProcedureRunAdmission,
@@ -36,6 +36,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     _plan_selection_decision,
     service_prepare_playbill_line_admission,
 )
+from tests.support.declared_operations import declared_operation
 from tests.test_procedures.test_procedure_execution import (
     _digest,
     _fixture,
@@ -46,8 +47,8 @@ from tests.test_procedures.test_procedure_execution import (
 )
 
 
-def _demo_operation(effect: str) -> ProviderOperation:
-    return ProviderOperation.model_validate(
+def _demo_operation(effect: str) -> DeclaredOperation:
+    return declared_operation(
         {
             "name": "demo.interface",
             "in": {"name": "demo.input", "version": 1, "digest": _digest("contract-in")},

@@ -158,7 +158,8 @@ from cruxible_client.contracts.provider_execution import (
     provider_invocation_receipt_digest,
     provider_secret_binding_identity_digest,
 )
-from cruxible_client.contracts.provider_operations import LineBinding, ProviderOperation
+from cruxible_client.contracts.provider_operations import LineBinding
+from cruxible_client.contracts.provider_registration import DeclaredOperation
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
     ProviderV2,
@@ -523,7 +524,7 @@ class ProviderRuntimeOperatorProtocol(Protocol):
     def admit_line_provider(
         self,
         accepted_provider: AcceptedProvider,
-        operation: ProviderOperation,
+        operation: DeclaredOperation,
         implementation_digest: str,
         *,
         eligible_environment_pin_keys: tuple[str, ...],
@@ -941,11 +942,6 @@ def _accepted_procedure(
             source = projection.typed.source(identity.qualified)
             return None if row is None or source is None else (source, row.artifact_digest)
 
-        def contracts(ref: Any) -> Any:
-            from cruxible_client.contracts.shapes import contract_identity
-
-            return projection.typed.source(contract_identity(ref.name, ref.version).qualified)
-
         selected = dict(bindings or {})
         if bindings is None:
             from cruxible_client.contracts.procedures.line_specs import (
@@ -964,9 +960,7 @@ def _accepted_procedure(
                 ),
                 dict(requested_bindings or {}),
             )
-        return bind_procedure_references(
-            accepted, lookup=lookup, bindings=selected, contracts=contracts
-        )
+        return bind_procedure_references(accepted, lookup=lookup, bindings=selected)
 
 
 def direct_run_slot_bindings(

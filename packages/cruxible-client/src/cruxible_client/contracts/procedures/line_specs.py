@@ -28,7 +28,11 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.capabilities import CapabilityLookup, capability_slot_signature
+from cruxible_client.contracts.capabilities import (
+    CapabilityLookup,
+    capability_slot_signature,
+    is_reserved_capability_name,
+)
 from cruxible_client.contracts.claim_evidence import FindingKind
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
@@ -56,8 +60,8 @@ from cruxible_client.contracts.procedures.windows import (
 from cruxible_client.contracts.provider_operations import (
     LineBinding,
     OperationSignature,
-    ProviderOperation,
 )
+from cruxible_client.contracts.provider_registration import DeclaredOperation
 from cruxible_client.contracts.providers import AcceptedProvider, ProviderV2
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import Contract, ContractRef, EnumResolver
@@ -366,6 +370,56 @@ def line_slots(
     return found
 
 
+class SlotSignature(OperationSignature):
+    """A slot's derived signature, with the capability it names (``name@N``).
+
+    ``builtin``: the capability is one core's builtin serves, so the slot binds
+    only core's builtin build (ruling B1), whatever the signatures say.
+    """
+
+    capability: str
+    builtin: bool = False
+
+
+#: A binding across the builtin boundary (ruling B1): a builtin capability slot bound
+#: to another build, or core's builtin bound to a slot naming any other capability.
+LINE_BINDING_BUILTIN_MISMATCH = "cruxible.line.binding_builtin_mismatch"
+
+
+def builtin_binding_problem(
+    slot: str,
+    *,
+    capability: str,
+    builtin: bool,
+    operation: DeclaredOperation,
+    spelling: str,
+) -> tuple[str, str] | None:
+    """Ruling B1, independent of signatures: ``(code, message)`` or ``None``.
+
+    A slot naming a capability core serves binds only an operation that serves
+    that capability by name, which only core's builtin may (the registration law
+    refuses a ``workspace.`` capability anywhere else). An operation serving a
+    reserved capability is core's builtin, and binds no other slot. ``capability``
+    is the slot's ``name@N``; ``spelling`` the offered ``build#operation``.
+    """
+
+    name = capability.rpartition("@")[0] or capability
+    reserved = tuple(item for item in operation.serves if is_reserved_capability_name(item))
+    if builtin and name not in operation.serves:
+        return (
+            LINE_BINDING_BUILTIN_MISMATCH,
+            f"Slot {slot!r} names {capability}, which only core's builtin serves; "
+            f"{spelling} is not core's builtin (it serves {', '.join(operation.serves)}).",
+        )
+    if not builtin and reserved:
+        return (
+            LINE_BINDING_BUILTIN_MISMATCH,
+            f"Slot {slot!r} names {capability}; {spelling} is core's builtin, which "
+            f"serves only {', '.join(reserved)}.",
+        )
+    return None
+
+
 class SlotCapabilityUnresolved(ValueError):
     """A slot's capability pin does not resolve where the slot is being bound."""
 
@@ -397,16 +451,19 @@ def provisional_slot_signatures(
     found: dict[str, OperationSignature] = {}
     for name, slot in slots.items():
         served = builtin.get(slot.capability.name)
-        if served is not None:
-            found[name] = served
-            continue
-        signature = capability_slot_signature(slot, capabilities)
+        signature = served if served is not None else capability_slot_signature(slot, capabilities)
         if signature is None:
             raise SlotCapabilityUnresolved(
                 f"slot {name!r} names capability {slot.capability.spelling}, which is not "
                 "accepted here at its pinned digest"
             )
-        found[name] = signature
+        found[name] = SlotSignature.model_validate(
+            {
+                **signature.model_dump(by_alias=True),
+                "capability": slot.capability.spelling,
+                "builtin": served is not None,
+            }
+        )
     return found
 
 
@@ -696,7 +753,7 @@ def _law_slots(
 
 def bound_operation_of(
     binding: LineBinding, providers: Mapping[str, AcceptedProvider]
-) -> ProviderOperation | None:
+) -> DeclaredOperation | None:
     """The exact operation a binding names, or ``None`` if its build is not accepted live."""
 
     accepted = providers.get(binding.build.target.qualified)
@@ -740,14 +797,25 @@ def line_binding_problem(
                 f"Slot {key!r} binds {binding.spelling}, which is not a live accepted "
                 "build operation at that exact digest.",
             )
+        slot = slots[key]
+        if isinstance(slot, SlotSignature):
+            problem = builtin_binding_problem(
+                key,
+                capability=slot.capability,
+                builtin=slot.builtin,
+                operation=operation,
+                spelling=binding.spelling,
+            )
+            if problem is not None:
+                return problem
         try:
-            fits = operation.signature().same_as(slots[key])
+            fits = operation.signature().same_as(slot)
         except ValueError:
             fits = False
         if not fits:
             return (
                 "cruxible.line.binding_signature_mismatch",
-                f"Slot {key!r} needs {slots[key].spelling()}; {binding.spelling} serves "
+                f"Slot {key!r} needs {slot.spelling()}; {binding.spelling} serves "
                 f"{operation.signature().spelling()}.",
             )
     return None
@@ -761,6 +829,9 @@ __all__ = [
     "caps_line_budgets",
     "bound_operation_of",
     "ephemeral_line_spec_digest",
+    "LINE_BINDING_BUILTIN_MISMATCH",
+    "SlotSignature",
+    "builtin_binding_problem",
     "line_binding_problem",
     "line_slot_signatures",
     "line_slots",

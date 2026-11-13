@@ -15,6 +15,7 @@ from cruxible_client.contracts.orient import OrientOperation
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
 from cruxible_client.contracts.provider_operations import operation_signature_digest
+from cruxible_client.contracts.provider_registration import DeclaredOperation
 from cruxible_client.contracts.providers import ProviderV2, parse_provider
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinition,
@@ -61,20 +62,29 @@ def accepted_provider_operations(
                 provider := parse_provider(typed.member_bytes(path), path=path), ProviderV2
             )
         ]
-    rows = [
-        OrientOperation(
-            build=build.identity.qualified,
-            operation=operation.name,
-            input=operation.in_.spelling,
-            output=operation.out.spelling,
-            effect=operation.effect,
-            refusals=tuple(sorted(operation.refusals)),
-            signature_digest=operation_signature_digest(operation.signature()),
-        )
-        for build in builds
-        for operation in build.operations
-    ]
+    rows = [operation_row(build, operation) for build in builds for operation in build.operations]
     return tuple(sorted(rows, key=lambda item: (item.build, item.operation)))
+
+
+def operation_row(build: ProviderV2, operation: DeclaredOperation) -> OrientOperation:
+    """One build's operation as the reads show it: the provider's own declaration."""
+
+    return OrientOperation(
+        build=build.identity.qualified,
+        operation=operation.name,
+        description=operation.description,
+        serves=operation.serves,
+        source=operation.source,
+        input=operation.in_.spelling,
+        output=operation.out.spelling,
+        effect=operation.effect,
+        may_truncate=operation.may_truncate,
+        refusals=tuple(sorted(operation.refusals)),
+        absorbable=tuple(
+            sorted(code for code, refusal in operation.refusals.items() if refusal.absorbable)
+        ),
+        signature_digest=operation_signature_digest(operation.signature()),
+    )
 
 
 def accepted_claim_types(tree: Mapping[str, bytes]) -> tuple[ClaimType, ...]:

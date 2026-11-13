@@ -8,11 +8,9 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-import pytest
-
-#: The one Contract ``local.increment`` reads and returns: ``{n: int}``. An
-#: install pins it, so a world accepts it (``local_call_contract_files``) before
-#: installing the package.
+#: The one Contract ``local.increment`` reads and returns: ``{n: int}``. The
+#: package carries its own copy (``declares``); a world accepts it too
+#: (``local_call_contract_files``) only where a capability pins it.
 LOCAL_CALL_VALUE = {"name": "local.increment.value", "version": 1, "fields": {"n": {"type": "int"}}}
 LOCAL_CALL_IN = "local.increment.value@1"
 LOCAL_CALL_OUT = "local.increment.value@1"
@@ -28,6 +26,8 @@ LOCAL_CALL_SLOT = {"capability": LOCAL_CALL_CAPABILITY}
 #: namespace they live in, since nothing else pins them into the owned closure).
 OTHER_DECLINED_VALUE = {"name": "other.declined", "version": 1, "fields": {}}
 OTHER_DECLINED_REF = "other.declined@1"
+#: The refusal Contracts ``build_local_call(refusal=...)`` can carry, by reference.
+_REFUSAL_CONTRACTS: dict[str, dict[str, Any]] = {OTHER_DECLINED_REF: OTHER_DECLINED_VALUE}
 
 
 def local_call_contract_files() -> dict[str, bytes]:
@@ -64,10 +64,10 @@ def other_declined_contract_files() -> dict[str, bytes]:
 
 
 def accept_local_call_contract(instance_id: str, approve: Any) -> None:
-    """Accept ``local.increment``'s Contract in a world before any local-call install.
+    """Accept ``local.increment``'s Contract in a world, for what pins it there.
 
-    Every world that installs a package from ``build_local_call`` calls this
-    first: an install pins the operation's Contracts to the accepted ones.
+    An install no longer needs it (the package carries its own copy); a world
+    accepts it where a capability or a Procedure names it.
     ``approve(proposal_id)`` approves and activates the proposal the way the
     world's policy requires. A world that already holds the Contract is left
     as it is.
@@ -92,52 +92,26 @@ def accept_local_call_contract(instance_id: str, approve: Any) -> None:
     approve(proposal.admission.proposal_id)
 
 
-def _load_checkout_module(checkout: Path, name: str, relative_package: str) -> Any:
-    """A providers-checkout package, loaded by file location (never via sys.path).
-
-    Mirrors ``tests/test_e2e/test_skeleton_kev_epss.py``'s ``_web_fetch``: the
-    module is imported by its exact file location and cached in ``sys.modules``
-    under its real name, so its own internal imports (and any absolute import of
-    a sibling package already on the ambient path, e.g. ``cruxible_provider_runtime``)
-    resolve normally.
-    """
-
-    import importlib.util
-    import sys
-
-    if name in sys.modules:
-        return sys.modules[name]
-    package = checkout / relative_package
-    if not package.is_dir():
-        pytest.fail(f"{checkout} carries no {name} package")
-    spec = importlib.util.spec_from_file_location(
-        name, package / "__init__.py", submodule_search_locations=[str(package)]
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 def noop_contract_files() -> dict[str, bytes]:
-    """The reference noop operation's actual typed Contracts, straight from the package.
+    """The reference noop operations' Contracts, as tree members, straight from the package.
 
-    ``cruxible_provider_noop.contract_members()`` out of the pinned providers
-    checkout (the same one ``provider_checkout`` builds wheels from), so this
-    is exactly the tree the package itself ships under ``contracts/``
-    (including ``noop.captures``), never a hand-maintained duplicate that can
-    drift from it.
+    The copies the package carries in its registration's ``declares`` (read
+    out of the pinned providers checkout, the same one ``provider_checkout``
+    builds wheels from), never a hand-maintained duplicate that can drift.
+    A world accepts them only where a capability pins them; an install
+    needs none.
     """
+    from cruxible_client.contracts.shapes import contract_path, render_contract
+    from cruxible_core.providers.package_metadata import read_package_registration
     from tests.support.provider_checkout import require_provider_checkout
 
-    checkout = require_provider_checkout()
-    noop = _load_checkout_module(
-        checkout,
-        "cruxible_provider_noop",
-        "packages/cruxible-provider-noop/src/cruxible_provider_noop",
+    root = (
+        require_provider_checkout() / "packages/cruxible-provider-noop/src/cruxible_provider_noop"
     )
-    return noop.contract_members()
+    return {
+        contract_path(item.name, item.version): render_contract(item)
+        for item in read_package_registration(root).declares.contracts
+    }
 
 
 def _lock_root_version(lock_path: Path) -> str:
@@ -160,7 +134,7 @@ def build_local_call(
     runtime_requirements: tuple[dict[str, Any], ...] = (),
     refusal: str | None = None,
 ) -> tuple[Path, Path]:
-    """A provider runtime protocol 2.0 package: registration and manifest schema 2.
+    """A provider runtime protocol 2.0 package: registration schema 3, manifest schema 2.
 
     One entrypoint, ``local_call.operation:Increment``, serves every name in
     ``operations``; the wheel's ``cruxible.providers`` entry points are one per
@@ -170,6 +144,8 @@ def build_local_call(
     (D-R48 review fix round 3, F1): a kit-build regression exercising it.
     """
 
+    from cruxible_client.contracts.shapes import Contract
+
     module_name = "local_call"
     entrypoint = f"{module_name}.operation:Increment"
     project = directory / f"{name}-{increment}"
@@ -177,10 +153,10 @@ def build_local_call(
     module.mkdir(parents=True)
     (module / "__init__.py").write_text("")
     entry_points = "".join(f'"{operation}" = "{entrypoint}"\n' for operation in operations)
-    # The lock below is copied verbatim from the workspace package's own lock
+    # The lock below is copied verbatim from the noop package's own lock
     # (its root), so this package's own version must match that root's version
     # exactly, or resolve_provider_package's lock-root identity check fails.
-    version = _lock_root_version(repository / "packages/cruxible-provider-workspace/uv.lock")
+    version = _lock_root_version(repository / "packages/cruxible-provider-noop/uv.lock")
     (project / "pyproject.toml").write_text(f"""[project]
 name = "{name}"
 version = "{version}"
@@ -232,14 +208,18 @@ class Increment:
             ],
         },
     )
+    carried = [LOCAL_CALL_VALUE, *([] if refusal is None else [_REFUSAL_CONTRACTS[refusal]])]
     resource(
         "registration.json",
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "manifest": manifest,
             "operations": [
                 {
                     "name": operation,
+                    "description": f"Adds {increment} to n.",
+                    "source": {"path": f"src/{module_name}/operation.py"},
+                    "serves": [operation],
                     "in": LOCAL_CALL_IN,
                     "out": LOCAL_CALL_OUT,
                     "effect": "pure",
@@ -250,14 +230,20 @@ class Increment:
                 }
                 for operation in sorted(operations)
             ],
+            "declares": {
+                "contracts": [
+                    Contract.model_validate(item).model_dump(mode="json")
+                    for item in sorted(carried, key=lambda item: str(item["name"]))
+                ]
+            },
             "runtime_requirements": list(runtime_requirements),
         },
     )
     lock = project / "uv.lock"
     lock.write_text(
-        (repository / "packages/cruxible-provider-workspace/uv.lock")
+        (repository / "packages/cruxible-provider-noop/uv.lock")
         .read_text()
-        .replace("cruxible-provider-workspace", name)
+        .replace("cruxible-provider-noop", name)
     )
     uv = shutil.which("uv")
     assert uv is not None

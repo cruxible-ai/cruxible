@@ -1,10 +1,11 @@
-"""Typed provider operations: what one provider build serves, by Contract signature.
+"""Typed provider operations: signatures, refusals, bindings and value checks.
 
-A provider build declares ``operations``. Each operation names its input and
-output Contracts (``name@N``, pinned to the exact accepted digest when the
-build is accepted), its effect, the typed refusals it may return, an optional
-enumeration declaration (recorded, never verified), and the package
-entrypoint that serves it.
+A provider build declares ``operations``
+(:class:`~cruxible_client.contracts.provider_registration.DeclaredOperation`,
+registration schema 3). Each names its input and output Contracts, pinned at
+install to the digests of the copies the build carries in ``declares``, its
+effect, the typed refusals it may return, the capability names it serves, and
+the package entrypoint that serves it.
 
 A Procedure never names a provider. Its calling nodes name a **slot**, and each
 slot names one capability version
@@ -24,7 +25,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable, Mapping
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -52,14 +53,15 @@ from cruxible_client.contracts.shapes import (
     parse_contract_ref,
 )
 
+if TYPE_CHECKING:
+    from cruxible_client.contracts.provider_registration import DeclaredOperation
+
 OperationEffect = Literal["pure", "external_read", "external_mutation"]
 OPERATION_EFFECTS: tuple[OperationEffect, ...] = ("pure", "external_read", "external_mutation")
 OPERATION_SIGNATURE_DOMAIN = "cruxible-operation-signature-v1"
 
 _OPERATION_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 _SLOT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-_REFUSAL_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-_FIELD_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
 class _Strict(BaseModel):
@@ -71,13 +73,6 @@ def _contract_ref(value: object) -> object:
 
     if isinstance(value, str):
         return parse_contract_ref(value)
-    return value
-
-
-def _entrypoint(value: str) -> str:
-    module, separator, object_name = value.partition(":")
-    if not separator or not module or not object_name:
-        raise ValueError("an operation entrypoint is module:object")
     return value
 
 
@@ -93,85 +88,6 @@ class OperationRefusal(_Strict):
     absorbable: bool = False
 
     _contract = field_validator("contract", mode="before")(_contract_ref)
-
-
-class EnumeratedField(_Strict):
-    at: str = Field(min_length=1, max_length=512)
-
-
-class OperationEnumeration(_Strict):
-    """What a provider-parsed operation enumerates. Declared and recorded, not verified."""
-
-    capture: str
-    selector: str = Field(min_length=1, max_length=512)
-    fields: dict[str, EnumeratedField] = Field(min_length=1, max_length=256)
-
-    @field_validator("capture")
-    @classmethod
-    def _capture(cls, value: str) -> str:
-        if not _FIELD_RE.fullmatch(value):
-            raise ValueError("an enumeration names one input field holding its Capture")
-        return value
-
-    @field_validator("fields")
-    @classmethod
-    def _fields(cls, value: dict[str, EnumeratedField]) -> dict[str, EnumeratedField]:
-        for name in value:
-            if not _FIELD_RE.fullmatch(name):
-                raise ValueError(f"enumerated field {name!r} is not a canonical field name")
-        return value
-
-
-class ProviderOperation(_Strict):
-    """One operation of a provider build."""
-
-    model_config = ConfigDict(
-        extra="forbid", frozen=True, populate_by_name=True, serialize_by_alias=True
-    )
-
-    name: str
-    in_: ContractRef = Field(alias="in")
-    out: ContractRef
-    effect: OperationEffect
-    refusals: dict[str, OperationRefusal] = Field(
-        default_factory=dict, exclude_if=lambda value: not value
-    )
-    enumerates: OperationEnumeration | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-    entrypoint: str
-
-    _contracts = field_validator("in_", "out", mode="before")(_contract_ref)
-    _entrypoint = field_validator("entrypoint")(_entrypoint)
-
-    @field_validator("name")
-    @classmethod
-    def _name(cls, value: str) -> str:
-        if not _OPERATION_NAME_RE.fullmatch(value):
-            raise ValueError("an operation name is a canonical lowercase identifier")
-        return value
-
-    @field_validator("refusals")
-    @classmethod
-    def _refusals(cls, value: dict[str, OperationRefusal]) -> dict[str, OperationRefusal]:
-        for code in value:
-            if not _REFUSAL_CODE_RE.fullmatch(code):
-                raise ValueError(f"refusal code {code!r} is not a canonical identifier")
-        return dict(sorted(value.items()))
-
-    def contract_refs(self) -> tuple[ContractRef, ...]:
-        """Every Contract this operation pins: in, out, then refusals by code."""
-
-        return (self.in_, self.out, *(item.contract for item in self.refusals.values()))
-
-    @property
-    def pinned(self) -> bool:
-        return all(ref.digest is not None for ref in self.contract_refs())
-
-    def signature(self) -> OperationSignature:
-        return OperationSignature.model_validate(
-            {"in": self.in_, "out": self.out, "effect": self.effect}
-        )
 
 
 class OperationSignature(_Strict):
@@ -210,7 +126,9 @@ def operation_signature_digest(signature: OperationSignature) -> str:
     ).tagged
 
 
-def validate_operations(operations: tuple[ProviderOperation, ...]) -> tuple[ProviderOperation, ...]:
+def validate_operations(
+    operations: tuple[DeclaredOperation, ...],
+) -> tuple[DeclaredOperation, ...]:
     """Operations are sorted by name and unique."""
 
     names = tuple(item.name for item in operations)
@@ -692,15 +610,12 @@ __all__ = [
     "OPERATION_EFFECTS",
     "OPERATION_SIGNATURE_DOMAIN",
     "ContractLookup",
-    "EnumeratedField",
     "LineBinding",
     "OperationEffect",
-    "OperationEnumeration",
     "OperationItemBudgetExceeded",
     "OperationRefusal",
     "OperationSignature",
     "OperationValueRefused",
-    "ProviderOperation",
     "binding_pin",
     "capture_fields",
     "capture_list_fields",

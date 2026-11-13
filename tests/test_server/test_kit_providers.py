@@ -362,13 +362,14 @@ def _run(world: Any, name: str, n: int) -> Any:
 
 
 @pytest.mark.parametrize("independent", [False, True])
-def test_fresh_consumer_accepts_the_bundled_operation_contract_before_install(
+def test_fresh_consumer_installs_the_bundled_provider_with_no_contract_prerequisite(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     provider_checkout: ProviderCheckout,
     independent: bool,
 ) -> None:
-    """A fresh add governs Contracts, provider, then definitions, in that order."""
+    """A fresh add governs the provider, then the definitions: the package carries
+    its own operation Contracts (registration schema 3), so none is a prerequisite."""
     from cruxible_client.contracts.authoring.inputs import ProcedureInput
     from tests.support.provider_installation import local_call_contract_files
     from tests.test_server.test_provider_installation import _run_call
@@ -399,13 +400,11 @@ def test_fresh_consumer_accepts_the_bundled_operation_contract_before_install(
         publisher.approve(submitted._candidate_status.proposal_id)
         release = _build(publisher, project)
         # The inline boundaries ship as the Procedure's co-proposed Contracts;
-        # the bundled provider's own operation Contract ships too (D-R48 review
-        # fix round 3, F1), even though this pure Procedure never pins it itself.
+        # the bundled provider's operation Contract does not: its build carries it.
         assert set(release.contents()) == {
             "contracts/acme.installation-marker.input/v1.json",
             "contracts/acme.installation-marker.output/v1.json",
             "procedures/acme.installation-marker.json",
-            "contracts/local.increment.value/v1.json",
         }
         assert len(release.manifest.providers) == 1
         before = _tree(consumer)
@@ -420,23 +419,8 @@ def test_fresh_consumer_accepts_the_bundled_operation_contract_before_install(
         assert not any(path.startswith("providers/kit-call/") for path in before)
         added = _add(consumer, release, dry_run=False)
         if independent:
-            assert added.status == "proposed" and added.approval_required, added
-            assert added.proposal_id is not None
-            assert _tree(consumer) == before
-            # Retrying before approval reuses the prerequisite proposal and
-            # does not prepare or install the provider.
-            repeated = _add(consumer, release, dry_run=False)
-            assert repeated.proposal_id == added.proposal_id
-            consumer.approve(added.proposal_id)
-            contracts_only = _tree(consumer)
-            changed_definitions = {
-                path
-                for path in set(contracts_only) - set(before)
-                if path.startswith(("contracts/", "providers/", "procedures/", "documents/"))
-            }
-            assert changed_definitions == set(local_call_contract_files())
-            added = _add(consumer, release, dry_run=False)
             assert added.status == "awaiting_providers", added
+            assert _tree(consumer) == before
             (step,) = added.providers
             assert step.proposal_id is not None
             consumer.approve(step.proposal_id)
@@ -447,7 +431,9 @@ def test_fresh_consumer_accepts_the_bundled_operation_contract_before_install(
             assert added.status == "accepted", added
             assert [step.action for step in added.providers] == ["install"]
         with instance.accepted_history_reader() as history:
-            assert int(history.sequence) - before_generation == 3
+            # The provider's build, then the definitions: no Contract change first.
+            assert int(history.sequence) - before_generation == 2
+        assert not any(path in _tree(consumer) for path in local_call_contract_files())
         tree = _tree(consumer)
         assert all(tree[path] == content for path, content in release.contents().items())
         path = next(path for path in tree if path.startswith("providers/kit-call/"))

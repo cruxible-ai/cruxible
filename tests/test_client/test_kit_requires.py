@@ -12,6 +12,7 @@ from cruxible_client.contracts.kit_requires import (
     KitRequires,
     KitRequiresRefusalCode,
     remove_required_message,
+    requires_lowered_message,
     requires_missing_message,
     requires_unresolved_message,
 )
@@ -122,6 +123,10 @@ def test_the_refusals_name_the_kit_and_the_repair() -> None:
     ).endswith("does not hold it live.")
     assert remove_required_message("base", ["security"]) == (
         "Kit base cannot be removed: kit security requires it."
+    )
+    assert requires_lowered_message("base", "0.9.0", "security", "1.3.0", base) == (
+        "Kit base cannot be changed to 0.9.0: kit security 1.3.0 requires base 1.0.0 or "
+        "later. Keep base at 1.0.0 or later, or remove security first."
     )
     assert remove_required_message("base", ["web", "security"]) == (
         "Kit base cannot be removed: kits security, web require it."

@@ -14,8 +14,13 @@ from cruxible_client.contracts.provider_operations import (
     OPERATION_SIGNATURE_DOMAIN,
     OperationRefusal,
     OperationSignature,
-    ProviderOperation,
     operation_signature_digest,
+)
+from cruxible_client.contracts.provider_registration import (
+    DeclaredOperation,
+    PackageRegistration,
+    RegistrationRuntimeRequirement,
+    evaluate_registration_law,
 )
 from cruxible_client.contracts.providers import (
     PROVIDER_IMPLEMENTATION_DOMAIN,
@@ -24,10 +29,6 @@ from cruxible_client.contracts.providers import (
     provider_implementation_digest,
 )
 from cruxible_client.contracts.shapes import ContractRef
-from cruxible_core.providers.package_metadata import (
-    PackageRegistrationDescriptor,
-    PackageRuntimeRequirement,
-)
 from cruxible_core.providers.provider_runtime_contract import (
     PROVIDER_REFUSAL_CODE_RE,
     PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS,
@@ -53,23 +54,23 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_PATH = REPO_ROOT / "tests/fixtures/provider_runtime_contract_v2.json"
 #: The vendored bytes: cruxible-providers ``PROVIDER_RUNTIME_CONTRACT_COMMIT``'s
 #: packages/cruxible-provider-runtime/tests/fixtures/provider_runtime_contract_v2.json,
-#: exactly, including the result's generic ``incomplete_captures`` (D-R37 a4:
-#: its schema, the ``ok_incomplete_captures`` vector and
-#: ``result_incomplete_captures_not_ok``), which core led and the providers
-#: side now matches at this pin.
+#: exactly: registration schema 3 (operations that serve capabilities, with
+#: carried shapes) and the result's generic ``incomplete_captures``.
 PROVIDER_RUNTIME_CONTRACT_FIXTURE_DIGEST = (
-    "sha256:b0d77f0a956a0ec3e09a35614a7c8a8804e23e7c7263831f2422f0d36addc7d8"
+    "sha256:dea885c2e80000ec26553ed73ff264d5ca3e9c902335d329eb83d6c7dcadb257"
 )
 
 _MODEL_MAP: dict[str, type[BaseModel]] = {
     # The package-side declarations, which core reads through its own models.
+    # ``PackageRegistration`` is not compared schema for schema: core types the
+    # carried Contracts and kinds with its own grammar, which the runtime holds
+    # loosely (``test_registration_documents_validate_under_cores_model``).
     "ContractRef": ContractRef,
     "ImplementationManifest": ProviderImplementationManifest,
     "OperationRefusal": OperationRefusal,
-    "PackageRegistration": PackageRegistrationDescriptor,
     "ProviderManifest": ProviderRuntimeManifest,
-    "ProviderOperation": ProviderOperation,
-    "RuntimeRequirement": PackageRuntimeRequirement,
+    "ProviderOperation": DeclaredOperation,
+    "RuntimeRequirement": RegistrationRuntimeRequirement,
     # The wire.
     "Budgets": ProviderRuntimeBudgets,
     "ProtocolVersion": ProviderRuntimeProtocolVersion,
@@ -162,8 +163,42 @@ def test_provider_runtime_schemas_match_the_pinned_provider_models() -> None:
         actual[provider_name] = _normalize_schema(schema, root=schema, names=names)
     expected = {}
     for name, schema in fixture["schemas"].items():
-        expected[name] = _normalize_schema(schema, root=schema, names={})
+        if name in _MODEL_MAP:
+            expected[name] = _normalize_schema(schema, root=schema, names={})
     assert actual == expected
+    assert set(fixture["schemas"]) - set(_MODEL_MAP) == {"PackageRegistration"}
+
+
+def test_the_registration_document_has_cores_top_level_fields() -> None:
+    """The runtime's registration and core's agree on every top-level field and its need."""
+
+    runtime = _fixture()["schemas"]["PackageRegistration"]
+    core = PackageRegistration.model_json_schema()
+    assert set(runtime["properties"]) == set(core["properties"])
+    assert set(runtime.get("required", ())) == set(core.get("required", ()))
+
+
+def test_registration_documents_validate_under_cores_model() -> None:
+    """Every schema-3 registration the providers checkout ships is valid, and lawful, in core.
+
+    The runtime writes the registration; core reads it with its own stricter
+    model (typed Contracts and layouts) and judges it with the registration law.
+    """
+
+    from tests.support.provider_checkout import provider_checkout_path
+
+    checkout = provider_checkout_path()
+    if checkout is None:
+        pytest.skip("set CRUXIBLE_PROVIDERS_CHECKOUT to validate its registrations")
+    read = 0
+    for path in sorted(checkout.glob("packages/*/src/*/registration.json")):
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if document.get("schema_version") != 3:
+            continue  # a package still pending its schema-3 rewrite
+        registration = PackageRegistration.model_validate(document)
+        assert evaluate_registration_law(registration) == (), path
+        read += 1
+    assert read
 
 
 def test_provider_runtime_valid_vectors_round_trip_exactly() -> None:

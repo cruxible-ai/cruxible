@@ -7,11 +7,12 @@ is the outcome of that read -- bytes, base64-encoded, with their declared length
 and digest -- and its whole job is to turn those bytes into a structured capture
 body.
 
-It is a port of ``cruxible_provider_workspace.file`` (cruxible-providers
-db085204, the package that is no longer published): the same field validation,
-strict base64 decode, length and digest checks and text/bytes structuring, so a
-built-in run and a run of the package produce the same result envelope for the
-same input. A parity golden pins that (tests/test_providers/
+It began as a port of a provider package's file reader (cruxible-providers
+db085204; the package has since been deleted, and file reading is core's
+alone): the same field validation, strict base64 decode, length and digest
+checks and text/bytes structuring. The envelopes that package produced are kept
+as recorded provenance in ``tests/fixtures/workspace_file_parity.json``, and
+the built-in must still produce them byte for byte (tests/test_providers/
 test_builtin_workspace_file.py). The one addition is a typed refusal above
 1 MiB: core admitted no larger file while it still classified inputs.
 

@@ -1,0 +1,1596 @@
+{
+  "schema_version": 3,
+  "manifest": {
+    "path": "manifest.yaml",
+    "digest": "sha256:b600c1acf53504b37e0673615faa3d9841cb1729f7f193a8392d11235c66fe77"
+  },
+  "operations": [
+    {
+      "name": "search.web",
+      "description": "Asks the configured SearXNG instance one search query and returns its answer as one Capture, verbatim, with how it was asked in the HTTP coordinate.",
+      "source": {
+        "path": "packages/cruxible-provider-web/src/cruxible_provider_web/search.py",
+        "repository": "https://github.com/cruxible-ai/cruxible-providers"
+      },
+      "serves": [
+        "web.search"
+      ],
+      "in": "search.web.request@1",
+      "out": "search.web.result@1",
+      "effect": "external_read",
+      "refusals": {
+        "cross_origin_credentialed_redirect": {
+          "contract": "search.web.refusal.cross_origin_credentialed_redirect@1",
+          "absorbable": false
+        },
+        "provider_declined": {
+          "contract": "search.web.refusal.provider_declined@1",
+          "absorbable": true
+        },
+        "redirect_limit": {
+          "contract": "search.web.refusal.redirect_limit@1",
+          "absorbable": false
+        },
+        "undeclared_instance": {
+          "contract": "search.web.refusal.undeclared_instance@1",
+          "absorbable": false
+        },
+        "unsupported_redirect_scheme": {
+          "contract": "search.web.refusal.unsupported_redirect_scheme@1",
+          "absorbable": false
+        }
+      },
+      "entrypoint": "cruxible_provider_web.search:SearxngSearch"
+    },
+    {
+      "name": "web.fetch",
+      "description": "Retrieves one resource with one HTTP GET (query parameters encoded onto the URL in order, a credential named by reference) and returns the response body as one Capture, verbatim, with how it was obtained in the HTTP coordinate.",
+      "source": {
+        "path": "packages/cruxible-provider-web/src/cruxible_provider_web/fetch.py",
+        "repository": "https://github.com/cruxible-ai/cruxible-providers"
+      },
+      "serves": [
+        "web.fetch"
+      ],
+      "in": "web.fetch.request@1",
+      "out": "web.fetch.result@1",
+      "effect": "external_read",
+      "refusals": {
+        "credential_unavailable": {
+          "contract": "web.fetch.refusal.credential_unavailable@1",
+          "absorbable": false
+        },
+        "cross_origin_credentialed_redirect": {
+          "contract": "web.fetch.refusal.cross_origin_credentialed_redirect@1",
+          "absorbable": false
+        },
+        "provider_declined": {
+          "contract": "web.fetch.refusal.provider_declined@1",
+          "absorbable": true
+        },
+        "redirect_limit": {
+          "contract": "web.fetch.refusal.redirect_limit@1",
+          "absorbable": false
+        },
+        "unsupported_redirect_scheme": {
+          "contract": "web.fetch.refusal.unsupported_redirect_scheme@1",
+          "absorbable": false
+        }
+      },
+      "entrypoint": "cruxible_provider_web.fetch:WebFetch"
+    },
+    {
+      "name": "web.fetch.pages",
+      "description": "Sends one web.fetch request with one query parameter's values split across as few page requests as fit, and returns one Capture per page, verbatim, in page order; a page that fails is listed and its Capture is missing.",
+      "source": {
+        "path": "packages/cruxible-provider-web/src/cruxible_provider_web/pages.py",
+        "repository": "https://github.com/cruxible-ai/cruxible-providers"
+      },
+      "serves": [
+        "web.fetch.pages"
+      ],
+      "in": "web.fetch.pages.request@1",
+      "out": "web.fetch.pages.result@1",
+      "effect": "external_read",
+      "refusals": {
+        "credential_unavailable": {
+          "contract": "web.fetch.pages.refusal.credential_unavailable@1",
+          "absorbable": false
+        },
+        "cross_origin_credentialed_redirect": {
+          "contract": "web.fetch.pages.refusal.cross_origin_credentialed_redirect@1",
+          "absorbable": false
+        },
+        "provider_declined": {
+          "contract": "web.fetch.pages.refusal.provider_declined@1",
+          "absorbable": true
+        },
+        "redirect_limit": {
+          "contract": "web.fetch.pages.refusal.redirect_limit@1",
+          "absorbable": false
+        },
+        "unsupported_redirect_scheme": {
+          "contract": "web.fetch.pages.refusal.unsupported_redirect_scheme@1",
+          "absorbable": false
+        }
+      },
+      "entrypoint": "cruxible_provider_web.pages:WebFetchPages"
+    },
+    {
+      "name": "web.render",
+      "description": "Reads a Capture this run fetched into its main content, as Markdown or as canonical JSON (title, text, links), from the Capture's bytes alone; contacts nothing.",
+      "source": {
+        "path": "packages/cruxible-provider-web/src/cruxible_provider_web/render.py",
+        "repository": "https://github.com/cruxible-ai/cruxible-providers"
+      },
+      "serves": [
+        "web.render"
+      ],
+      "in": "web.render.request@1",
+      "out": "web.render.result@1",
+      "effect": "pure",
+      "refusals": {
+        "provider_declined": {
+          "contract": "web.render.refusal.provider_declined@1",
+          "absorbable": true
+        }
+      },
+      "entrypoint": "cruxible_provider_web.render:WebRender"
+    },
+    {
+      "name": "web.render.dom",
+      "description": "Opens one URL in a headless Chromium browser, lets the page's scripts run, and returns the assembled DOM as one Capture, with the main-frame response in the HTTP coordinate.",
+      "source": {
+        "path": "packages/cruxible-provider-web/src/cruxible_provider_web/dom.py",
+        "repository": "https://github.com/cruxible-ai/cruxible-providers"
+      },
+      "serves": [
+        "web.render.dom"
+      ],
+      "in": "web.render.dom.request@1",
+      "out": "web.render.dom.result@1",
+      "effect": "external_read",
+      "refusals": {
+        "engine_unavailable": {
+          "contract": "web.render.dom.refusal.engine_unavailable@1",
+          "absorbable": false
+        },
+        "provider_declined": {
+          "contract": "web.render.dom.refusal.provider_declined@1",
+          "absorbable": true
+        }
+      },
+      "entrypoint": "cruxible_provider_web.dom:WebRenderDom"
+    }
+  ],
+  "declares": {
+    "contracts": [
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "search.web.refusal.cross_origin_credentialed_redirect",
+        "version": 1,
+        "description": "Detail of a cross_origin_credentialed_redirect refusal: the origin an authenticated request was at, and the different origin it was sent to.",
+        "fields": {
+          "redirect_to": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "url": {
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "search.web.refusal.provider_declined",
+        "version": 1,
+        "description": "Detail of a provider_declined refusal: none; the message names the input or configuration the adapter declined.",
+        "fields": {}
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "search.web.refusal.redirect_limit",
+        "version": 1,
+        "description": "Detail of a redirect_limit refusal: the requested URL, the hop it would have followed next, and the hop limit.",
+        "fields": {
+          "max_redirects": {
+            "type": {
+              "kind": "int",
+              "min": 1
+            }
+          },
+          "next_url": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "url": {
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "search.web.refusal.undeclared_instance",
+        "version": 1,
+        "description": "Detail of an undeclared_instance refusal: the implementation, the instance origin the run named, and what the accepted declaration carries.",
+        "fields": {
+          "declared": {
+            "type": {
+              "item": {
+                "kind": "string"
+              },
+              "kind": "list",
+              "max_items": 256
+            }
+          },
+          "dynamic_forms": {
+            "type": {
+              "item": {
+                "kind": "enum",
+                "members": [
+                  "dynamic:target-from-configuration",
+                  "dynamic:target-from-run-input"
+                ]
+              },
+              "kind": "list",
+              "max_items": 2
+            }
+          },
+          "implementation_digest": {
+            "type": {
+              "kind": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "instance": {
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "search.web.refusal.unsupported_redirect_scheme",
+        "version": 1,
+        "description": "Detail of an unsupported_redirect_scheme refusal: the URL that redirected and the non-http(s) URL it named.",
+        "fields": {
+          "redirect_to": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "url": {
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "search.web.request",
+        "version": 1,
+        "description": "One query to the configured search instance. The instance is run configuration, not a request field; time_range is the instance's own recency filter.",
+        "fields": {
+          "language": {
+            "optional": true,
+            "type": {
+              "kind": "string",
+              "min_len": 1
+            }
+          },
+          "query": {
+            "type": {
+              "kind": "string",
+              "pattern": "^\\s*\\S[\\s\\S]*$"
+            }
+          },
+          "time_range": {
+            "optional": true,
+            "type": {
+              "kind": "enum",
+              "members": [
+                "day",
+                "month",
+                "year"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "search.web.result",
+        "version": 1,
+        "description": "One search answer as Capture wire: the exact response body the instance sent, its HTTP coordinate and the observation time.",
+        "fields": {
+          "byte_length": {
+            "type": {
+              "kind": "int",
+              "min": 0
+            }
+          },
+          "bytes_digest": {
+            "type": {
+              "kind": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "content_base64": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "content_encoding": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "base64"
+              ]
+            }
+          },
+          "coordinate": {
+            "type": {
+              "contract": {
+                "digest": "sha256:323753c310e7af28b18a5dcc1f6bb434a88c286affa7c84bd1c04477f664bd5d",
+                "name": "web.capture.coordinate",
+                "version": 1
+              },
+              "kind": "contract"
+            }
+          },
+          "coordinate_type": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "http-response-v1"
+              ]
+            }
+          },
+          "observed_at": {
+            "type": {
+              "kind": "datetime"
+            }
+          },
+          "replayability": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "attested_only"
+              ]
+            }
+          },
+          "selector": {
+            "type": {
+              "contract": {
+                "digest": "sha256:3333934af2eaa8df454a1b8720481a073de5633eac6e7b923db224f5570682fe",
+                "name": "web.capture.selector",
+                "version": 1
+              },
+              "kind": "contract"
+            }
+          },
+          "selector_type": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "whole-response-v1"
+              ]
+            }
+          },
+          "source_effective_time": {
+            "optional": true,
+            "type": {
+              "contract": {
+                "digest": "sha256:4f77f75bc2bbec9b949e3d9e5f86aa28d6a51df8a51dfd8fdddd183422ad27c0",
+                "name": "web.capture.source_effective_time",
+                "version": 1
+              },
+              "kind": "contract"
+            }
+          },
+          "source_identity": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "search.response"
+              ]
+            }
+          },
+          "tag": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "playbill-provider-result-to-external-capture-v1"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.capture.coordinate",
+        "version": 1,
+        "description": "How a web Capture's bytes were obtained, never inside them: the URL requested and the URL settled on, the 2xx status, the bytes' media type, the request digest, the kept freshness headers and whether a network or a packaged recording answered; for a derived document, the engine that made it and the content digest of the Capture it was made from; for an assembled listing, its pages.",
+        "fields": {
+          "content_type": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "derived_from": {
+            "optional": true,
+            "type": {
+              "kind": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "final_url": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "headers": {
+            "optional": true,
+            "type": {
+              "contract": {
+                "digest": "sha256:c2ccf272aca44d964aaa14f1dcf9d0f0c49757a8f26b05c90cbe097115d3e679",
+                "name": "web.capture.headers",
+                "version": 1
+              },
+              "kind": "contract"
+            }
+          },
+          "pages": {
+            "optional": true,
+            "type": {
+              "item": {
+                "contract": {
+                  "digest": "sha256:24a95d5e9bd0df3d0365adc7ff21771135e6804cdf91d62c16d04b280122b018",
+                  "name": "web.capture.page",
+                  "version": 1
+                },
+                "kind": "contract"
+              },
+              "kind": "list",
+              "max_items": 10000
+            }
+          },
+          "renderer": {
+            "optional": true,
+            "type": {
+              "kind": "string",
+              "min_len": 1
+            }
+          },
+          "request_digest": {
+            "type": {
+              "kind": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "source": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "network",
+                "packaged-recording"
+              ]
+            }
+          },
+          "status": {
+            "type": {
+              "kind": "int",
+              "max": 299,
+              "min": 200
+            }
+          },
+          "url": {
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.capture.headers",
+        "version": 1,
+        "description": "The response headers a web Capture keeps for freshness, each present only when the origin sent it.",
+        "fields": {
+          "content_length": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          },
+          "etag": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          },
+          "last_modified": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.capture.page",
+        "version": 1,
+        "description": "One page of a listing an operation assembled into one document: its URL, its 2xx status and its body's digest.",
+        "fields": {
+          "bytes_digest": {
+            "type": {
+              "kind": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "status": {
+            "type": {
+              "kind": "int",
+              "max": 299,
+              "min": 200
+            }
+          },
+          "url": {
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.capture.selector",
+        "version": 1,
+        "description": "The whole document: a web Capture selects no part of it.",
+        "fields": {}
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.capture.source_effective_time",
+        "version": 1,
+        "description": "The half-open interval a web observation is valid for.",
+        "fields": {
+          "effective_from": {
+            "type": {
+              "kind": "datetime"
+            }
+          },
+          "effective_until": {
+            "optional": true,
+            "type": {
+              "kind": "datetime"
+            }
+          },
+          "tag": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "playbill-source-effective-time-v1"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.fetch.pages.failure",
+        "version": 1,
+        "description": "One page of a web.fetch.pages call that has no Capture: its 0-based index and the page count, its built URL and request digest, whether it was refused or failed, the refusal code or error kind, the message, and the origin's status when it answered outside 2xx.",
+        "fields": {
+          "code": {
+            "type": {
+              "kind": "string",
+              "min_len": 1
+            }
+          },
+          "message": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "outcome": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "failed",
+                "refused"
+              ]
+            }
+          },
+          "page_count": {
+            "type": {
+              "kind": "int",
+              "max": 64,
+              "min": 1
+            }
+          },
+          "page_index": {
+            "type": {
+              "kind": "int",
+              "max": 63,
+              "min": 0
+            }
+          },
+          "request_digest": {
+            "type": {
+              "kind": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "status_code": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "max": 599,
+              "min": 100
+            }
+          },
+          "url": {
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.fetch.pages.refusal.credential_unavailable",
+        "version": 1,
+        "description": "Detail of a credential_unavailable refusal: the credential reference the run named and did not deliver.",
+        "fields": {
+          "ref": {
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.fetch.pages.refusal.cross_origin_credentialed_redirect",
+        "version": 1,
+        "description": "Detail of a cross_origin_credentialed_redirect refusal: the origin an authenticated request was at, and the different origin it was sent to.",
+        "fields": {
+          "redirect_to": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "url": {
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.fetch.pages.refusal.provider_declined",
+        "version": 1,
+        "description": "Detail of a provider_declined refusal: the URL when one was named; for a single page's weight refusal, the cap and the observed weight class.",
+        "fields": {
+          "cap_bytes": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "min": 1
+            }
+          },
+          "observed_weight": {
+            "optional": true,
+            "type": {
+              "kind": "enum",
+              "members": [
+                "heavy",
+                "light",
+                "medium"
+              ]
+            }
+          },
+          "url": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.fetch.pages.refusal.redirect_limit",
+        "version": 1,
+        "description": "Detail of a redirect_limit refusal: the requested URL, the hop it would have followed next, and the hop limit.",
+        "fields": {
+          "max_redirects": {
+            "type": {
+              "kind": "int",
+              "min": 1
+            }
+          },
+          "next_url": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "url": {
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.fetch.pages.refusal.unsupported_redirect_scheme",
+        "version": 1,
+        "description": "Detail of an unsupported_redirect_scheme refusal: the URL that redirected and the non-http(s) URL it named.",
+        "fields": {
+          "redirect_to": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "url": {
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.fetch.pages.request",
+        "version": 1,
+        "description": "web.fetch's request, sent as pages: the values of the query parameter page_param are split, in order, across as few requests as keep each built URL within max_url_chars (default 8192), and every other parameter is repeated on each page. The split is a function of the request alone; every value is sent on exactly one page. The page_param parameter may have no values: then no request is sent and captures is empty.",
+        "fields": {
+          "credential_header": {
+            "optional": true,
+            "type": {
+              "kind": "string",
+              "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+            }
+          },
+          "credential_ref": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          },
+          "expected_format": {
+            "optional": true,
+            "type": {
+              "kind": "enum",
+              "members": [
+                "auto",
+                "bytes",
+                "csv",
+                "html",
+                "json",
+                "text"
+              ]
+            }
+          },
+          "logical_source": {
+            "optional": true,
+            "type": {
+              "kind": "string",
+              "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+            }
+          },
+          "max_bytes": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "max": 33554432,
+              "min": 1
+            }
+          },
+          "max_url_chars": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "max": 8192,
+              "min": 1
+            }
+          },
+          "paced": {
+            "optional": true,
+            "type": {
+              "kind": "bool"
+            }
+          },
+          "page_param": {
+            "type": {
+              "kind": "string",
+              "min_len": 1
+            }
+          },
+          "query": {
+            "optional": true,
+            "type": {
+              "item": {
+                "contract": {
+                  "digest": "sha256:2f01ed6821337f937c6c77bba4910e06a10fb65a57232a1119d858fa672ecb3a",
+                  "name": "web.fetch.query_param",
+                  "version": 1
+                },
+                "kind": "contract"
+              },
+              "kind": "list",
+              "max_items": 64
+            }
+          },
+          "url": {
+            "type": {
+              "kind": "string",
+              "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://\\S+$"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.fetch.pages.result",
+        "version": 1,
+        "description": "One Capture per page, in page order: each member is the exact body that page's origin sent, with web.fetch's HTTP coordinate for that exchange (url is the page's built URL, request_digest covers it) plus page_index (0-based) and page_count. A page without a Capture is listed in failed_pages, and the result is then incomplete (D-R37 a4): absence never retires on it. A request with no values to page over has no pages: captures is empty and the result is complete.",
+        "fields": {
+          "captures": {
+            "type": {
+              "item": {
+                "capture_kind": "*",
+                "kind": "capture"
+              },
+              "kind": "list",
+              "max_items": 64
+            }
+          },
+          "failed_pages": {
+            "optional": true,
+            "type": {
+              "item": {
+                "contract": {
+                  "digest": "sha256:67bf0a00b7f614fbe3c0d6579ac0cd4a5690b30bff1cf2a63caa712d0821cb38",
+                  "name": "web.fetch.pages.failure",
+                  "version": 1
+                },
+                "kind": "contract"
+              },
+              "kind": "list",
+              "max_items": 64
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.fetch.query_param",
+        "version": 1,
+        "description": "One query parameter of a fetch: its name and its values, each sent as its own name=value (join: repeat, the default) or comma-joined into one (join: comma). A parameter has at least one value.",
+        "fields": {
+          "join": {
+            "optional": true,
+            "type": {
+              "kind": "enum",
+              "members": [
+                "comma",
+                "repeat"
+              ]
+            }
+          },
+          "name": {
+            "type": {
+              "kind": "string",
+              "min_len": 1
+            }
+          },
+          "values": {
+            "type": {
+              "item": {
+                "kind": "string"
+              },
+              "kind": "list",
+              "max_items": 1000
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.fetch.refusal.credential_unavailable",
+        "version": 1,
+        "description": "Detail of a credential_unavailable refusal: the credential reference the run named and did not deliver.",
+        "fields": {
+          "ref": {
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.fetch.refusal.cross_origin_credentialed_redirect",
+        "version": 1,
+        "description": "Detail of a cross_origin_credentialed_redirect refusal: the origin an authenticated request was at, and the different origin it was sent to.",
+        "fields": {
+          "redirect_to": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "url": {
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.fetch.refusal.provider_declined",
+        "version": 1,
+        "description": "Detail of a provider_declined refusal: the URL when one was named; for a weight refusal, the cap and the observed weight class.",
+        "fields": {
+          "cap_bytes": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "min": 1
+            }
+          },
+          "observed_weight": {
+            "optional": true,
+            "type": {
+              "kind": "enum",
+              "members": [
+                "heavy",
+                "light",
+                "medium"
+              ]
+            }
+          },
+          "url": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.fetch.refusal.redirect_limit",
+        "version": 1,
+        "description": "Detail of a redirect_limit refusal: the requested URL, the hop it would have followed next, and the hop limit.",
+        "fields": {
+          "max_redirects": {
+            "type": {
+              "kind": "int",
+              "min": 1
+            }
+          },
+          "next_url": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "url": {
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.fetch.refusal.unsupported_redirect_scheme",
+        "version": 1,
+        "description": "Detail of an unsupported_redirect_scheme refusal: the URL that redirected and the non-http(s) URL it named.",
+        "fields": {
+          "redirect_to": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "url": {
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.fetch.request",
+        "version": 1,
+        "description": "One resource to retrieve with one HTTP GET. query parameters are encoded onto url in order, and the built URL is the request its coordinate records. A credential is named by reference; its material stays in the run's secret custody, never in this payload.",
+        "fields": {
+          "credential_header": {
+            "optional": true,
+            "type": {
+              "kind": "string",
+              "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+            }
+          },
+          "credential_ref": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          },
+          "expected_format": {
+            "optional": true,
+            "type": {
+              "kind": "enum",
+              "members": [
+                "auto",
+                "bytes",
+                "csv",
+                "html",
+                "json",
+                "text"
+              ]
+            }
+          },
+          "logical_source": {
+            "optional": true,
+            "type": {
+              "kind": "string",
+              "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+            }
+          },
+          "max_bytes": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "max": 33554432,
+              "min": 1
+            }
+          },
+          "paced": {
+            "optional": true,
+            "type": {
+              "kind": "bool"
+            }
+          },
+          "query": {
+            "optional": true,
+            "type": {
+              "item": {
+                "contract": {
+                  "digest": "sha256:2f01ed6821337f937c6c77bba4910e06a10fb65a57232a1119d858fa672ecb3a",
+                  "name": "web.fetch.query_param",
+                  "version": 1
+                },
+                "kind": "contract"
+              },
+              "kind": "list",
+              "max_items": 64
+            }
+          },
+          "url": {
+            "type": {
+              "kind": "string",
+              "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://\\S+$"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.fetch.result",
+        "version": 1,
+        "description": "One retrieved web resource as Capture wire: the exact body the origin sent, its HTTP coordinate and the observation time.",
+        "fields": {
+          "byte_length": {
+            "type": {
+              "kind": "int",
+              "min": 0
+            }
+          },
+          "bytes_digest": {
+            "type": {
+              "kind": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "content_base64": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "content_encoding": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "base64"
+              ]
+            }
+          },
+          "coordinate": {
+            "type": {
+              "contract": {
+                "digest": "sha256:323753c310e7af28b18a5dcc1f6bb434a88c286affa7c84bd1c04477f664bd5d",
+                "name": "web.capture.coordinate",
+                "version": 1
+              },
+              "kind": "contract"
+            }
+          },
+          "coordinate_type": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "http-response-v1"
+              ]
+            }
+          },
+          "observed_at": {
+            "type": {
+              "kind": "datetime"
+            }
+          },
+          "replayability": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "attested_only"
+              ]
+            }
+          },
+          "selector": {
+            "type": {
+              "contract": {
+                "digest": "sha256:3333934af2eaa8df454a1b8720481a073de5633eac6e7b923db224f5570682fe",
+                "name": "web.capture.selector",
+                "version": 1
+              },
+              "kind": "contract"
+            }
+          },
+          "selector_type": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "whole-response-v1"
+              ]
+            }
+          },
+          "source_effective_time": {
+            "optional": true,
+            "type": {
+              "contract": {
+                "digest": "sha256:4f77f75bc2bbec9b949e3d9e5f86aa28d6a51df8a51dfd8fdddd183422ad27c0",
+                "name": "web.capture.source_effective_time",
+                "version": 1
+              },
+              "kind": "contract"
+            }
+          },
+          "source_identity": {
+            "type": {
+              "kind": "string",
+              "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+            }
+          },
+          "tag": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "playbill-provider-result-to-external-capture-v1"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.render.dom.refusal.engine_unavailable",
+        "version": 1,
+        "description": "Detail of an engine_unavailable refusal: the Python extra the environment lacks and the engine that needs it.",
+        "fields": {
+          "engine": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "required_extra": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "browser"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.render.dom.refusal.provider_declined",
+        "version": 1,
+        "description": "Detail of a provider_declined refusal: the page URL when one was named; for a weight refusal, the cap and the observed weight class; for a navigation without a response, the engine.",
+        "fields": {
+          "cap_bytes": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "min": 1
+            }
+          },
+          "engine": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          },
+          "observed_weight": {
+            "optional": true,
+            "type": {
+              "kind": "enum",
+              "members": [
+                "heavy",
+                "light",
+                "medium"
+              ]
+            }
+          },
+          "url": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.render.dom.request",
+        "version": 1,
+        "description": "One page to assemble in a browser: the browser navigates to url, runs the page's scripts and pulls its subresources, and the serialized DOM is the Capture.",
+        "fields": {
+          "logical_source": {
+            "optional": true,
+            "type": {
+              "kind": "string",
+              "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+            }
+          },
+          "max_bytes": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "max": 33554432,
+              "min": 1
+            }
+          },
+          "url": {
+            "type": {
+              "kind": "string",
+              "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://\\S+$"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.render.dom.result",
+        "version": 1,
+        "description": "One browser-assembled page as Capture wire: the exact serialized DOM, an HTTP coordinate naming the main-frame exchange and the engine that assembled it, and the observation time.",
+        "fields": {
+          "byte_length": {
+            "type": {
+              "kind": "int",
+              "min": 0
+            }
+          },
+          "bytes_digest": {
+            "type": {
+              "kind": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "content_base64": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "content_encoding": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "base64"
+              ]
+            }
+          },
+          "coordinate": {
+            "type": {
+              "contract": {
+                "digest": "sha256:323753c310e7af28b18a5dcc1f6bb434a88c286affa7c84bd1c04477f664bd5d",
+                "name": "web.capture.coordinate",
+                "version": 1
+              },
+              "kind": "contract"
+            }
+          },
+          "coordinate_type": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "http-response-v1"
+              ]
+            }
+          },
+          "observed_at": {
+            "type": {
+              "kind": "datetime"
+            }
+          },
+          "replayability": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "attested_only"
+              ]
+            }
+          },
+          "selector": {
+            "type": {
+              "contract": {
+                "digest": "sha256:3333934af2eaa8df454a1b8720481a073de5633eac6e7b923db224f5570682fe",
+                "name": "web.capture.selector",
+                "version": 1
+              },
+              "kind": "contract"
+            }
+          },
+          "selector_type": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "whole-response-v1"
+              ]
+            }
+          },
+          "source_effective_time": {
+            "optional": true,
+            "type": {
+              "contract": {
+                "digest": "sha256:4f77f75bc2bbec9b949e3d9e5f86aa28d6a51df8a51dfd8fdddd183422ad27c0",
+                "name": "web.capture.source_effective_time",
+                "version": 1
+              },
+              "kind": "contract"
+            }
+          },
+          "source_identity": {
+            "type": {
+              "kind": "string",
+              "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+            }
+          },
+          "tag": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "playbill-provider-result-to-external-capture-v1"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.render.refusal.provider_declined",
+        "version": 1,
+        "description": "Detail of a provider_declined refusal: the URL of the cited document when known; for a weight refusal, the cap and the observed weight class; for an extraction refusal, the extracting engine.",
+        "fields": {
+          "cap_bytes": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "min": 1
+            }
+          },
+          "engine": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          },
+          "observed_weight": {
+            "optional": true,
+            "type": {
+              "kind": "enum",
+              "members": [
+                "heavy",
+                "light",
+                "medium"
+              ]
+            }
+          },
+          "url": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.render.request",
+        "version": 1,
+        "description": "A derive over one Capture this run fetched (an HTML document): text is its main content as Markdown; json is canonical JSON {url, final_url, title?, text, links}. Pure: it reads only the Capture's bytes and contacts nothing.",
+        "fields": {
+          "form": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "json",
+                "text"
+              ]
+            }
+          },
+          "logical_source": {
+            "optional": true,
+            "type": {
+              "kind": "string",
+              "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+            }
+          },
+          "max_bytes": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "max": 33554432,
+              "min": 1
+            }
+          },
+          "source": {
+            "type": {
+              "capture_kind": "*",
+              "kind": "capture"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "web.render.result",
+        "version": 1,
+        "description": "One derived web document as Capture wire: the exact bytes the derive produced (main-content Markdown or the page's canonical JSON), a coordinate naming the engine and the content digest of the Capture it was made from, and that Capture's observation time.",
+        "fields": {
+          "byte_length": {
+            "type": {
+              "kind": "int",
+              "min": 0
+            }
+          },
+          "bytes_digest": {
+            "type": {
+              "kind": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "content_base64": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "content_encoding": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "base64"
+              ]
+            }
+          },
+          "coordinate": {
+            "type": {
+              "contract": {
+                "digest": "sha256:323753c310e7af28b18a5dcc1f6bb434a88c286affa7c84bd1c04477f664bd5d",
+                "name": "web.capture.coordinate",
+                "version": 1
+              },
+              "kind": "contract"
+            }
+          },
+          "coordinate_type": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "http-response-v1"
+              ]
+            }
+          },
+          "observed_at": {
+            "type": {
+              "kind": "datetime"
+            }
+          },
+          "replayability": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "attested_only"
+              ]
+            }
+          },
+          "selector": {
+            "type": {
+              "contract": {
+                "digest": "sha256:3333934af2eaa8df454a1b8720481a073de5633eac6e7b923db224f5570682fe",
+                "name": "web.capture.selector",
+                "version": 1
+              },
+              "kind": "contract"
+            }
+          },
+          "selector_type": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "whole-response-v1"
+              ]
+            }
+          },
+          "source_effective_time": {
+            "optional": true,
+            "type": {
+              "contract": {
+                "digest": "sha256:4f77f75bc2bbec9b949e3d9e5f86aa28d6a51df8a51dfd8fdddd183422ad27c0",
+                "name": "web.capture.source_effective_time",
+                "version": 1
+              },
+              "kind": "contract"
+            }
+          },
+          "source_identity": {
+            "type": {
+              "kind": "string",
+              "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+            }
+          },
+          "tag": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "playbill-provider-result-to-external-capture-v1"
+              ]
+            }
+          }
+        }
+      }
+    ]
+  },
+  "runtime_requirements": [
+    {
+      "entrypoint": "cruxible_provider_web.dom:WebRenderDom",
+      "kind": "python_extra",
+      "name": "browser",
+      "description": "Required Python extra for this implementation.",
+      "probe_entrypoint": null
+    },
+    {
+      "entrypoint": "cruxible_provider_web.dom:WebRenderDom",
+      "kind": "runtime_resource",
+      "name": "playwright.chromium",
+      "description": "Dom renders require a Chromium browser matching the installed Playwright version; installing the Python extra alone is insufficient.",
+      "probe_entrypoint": "cruxible_provider_web.resources:chromium_available"
+    }
+  ]
+}

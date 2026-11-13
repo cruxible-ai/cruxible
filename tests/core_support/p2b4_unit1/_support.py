@@ -30,17 +30,18 @@ from cruxible_client.contracts.provider_execution import (
     provider_secret_binding_identity_digest,
 )
 from cruxible_client.contracts.provider_operations import (
-    ProviderOperation,
     operation_signature_digest,
 )
+from cruxible_client.contracts.provider_registration import DeclaredOperation
 from cruxible_client.contracts.shapes import Contract, ContractRef, contract_digest
 from cruxible_core.storage.cas import ContentAddressedBodyStore
 from tests.core_support._pc_c_support import NOW, capture_contract
+from tests.support.declared_operations import declared_operation
 
 #: A trivial operation for this fixture's source occurrence. Its exact shape
 #: never matters here (these fixtures exercise Capture-envelope
 #: building/verification, not operation-contract validation) -- only that it
-#: is a well-formed ProviderOperation (B2: operations replace interfaces).
+#: is a well-formed DeclaredOperation (B2: operations replace interfaces).
 _SOURCE_VALUE = Contract.model_validate(
     {"name": "test.p2b4.source-value", "version": 1, "fields": {"value": {"type": "int"}}}
 )
@@ -50,13 +51,13 @@ def digest(domain: str, value: str) -> str:
     return typed_digest(Sha256Value, domain, {"value": value}).tagged
 
 
-def _source_operation() -> ProviderOperation:
+def _source_operation() -> DeclaredOperation:
     pinned = ContractRef(
         name=_SOURCE_VALUE.name,
         version=_SOURCE_VALUE.version,
         digest=contract_digest(_SOURCE_VALUE).tagged,
     )
-    return ProviderOperation.model_validate(
+    return declared_operation(
         {
             "name": "read",
             "in": pinned,

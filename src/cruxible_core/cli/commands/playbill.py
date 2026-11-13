@@ -117,6 +117,7 @@ from cruxible_client.contracts.get_display import (
     GET_CLI_VALUE_WIDTH,
     get_value_display,
 )
+from cruxible_client.contracts.kit_requires import KitRequirement
 from cruxible_client.contracts.kits import (
     KitAddRequest,
     KitAutomationTemplate,
@@ -2170,6 +2171,15 @@ def _kit_directory_file(source: str, path: str | None) -> Path | None:
     return (directory / path).absolute()
 
 
+def _echo_kit_requires(requires: tuple[KitRequirement, ...]) -> None:
+    """The kits a release requires: kit build leaves out what they own."""
+
+    if requires:
+        click.echo(
+            "  requires: " + ", ".join(f"{item.kit_id} >= {item.min_version}" for item in requires)
+        )
+
+
 def _echo_kit_change(
     result: KitChangeResult, *, template_on_disk: Path | None = None, source: str | None = None
 ) -> None:
@@ -2357,6 +2367,7 @@ def build_kit(
             f"{len(bundle.manifest.providers)} provider package(s), "
             f"{bundle.manifest.content_digest}"
         )
+        _echo_kit_requires(bundle.manifest.requires)
         template = bundle.manifest.automation_template
         _echo_automation_template(template, on_disk=_kit_directory_file(str(out), template))
 
@@ -2471,6 +2482,7 @@ def add_kit(
             template_on_disk=_kit_directory_file(kit, result.automation_template),
             source=_pull_reference(kit, origin),
         )
+        _echo_kit_requires(bundle.manifest.requires)
 
 
 @kit_group.command("pull")
@@ -2571,6 +2583,16 @@ def kit_status(offline: bool, output_json: bool) -> None:
             click.echo(
                 f"  provider {provider.provider_id} ({provider.package} {provider.version}): "
                 f"{state}"
+            )
+        for required in kit.requires:
+            held = (
+                "not installed"
+                if required.installed_version is None
+                else f"installed {required.installed_version}"
+            )
+            click.echo(
+                f"  requires {required.kit_id} >= {required.min_version}: "
+                f"{'met' if required.met else 'not met'} ({held})"
             )
         for path in kit.drifted:
             click.echo(f"  edited locally: {path}")
@@ -4929,13 +4951,13 @@ def authoring_example_command(
     Input kind family: claim | procedure |
     subject | subject_kind | subject_succession | query_definition |
     approval_policy | procedure_runtime_policy | procedure_mandate |
-    line | trigger | runbook | contract | change_set (tagless).
+    line | trigger | runbook | contract | capability | change_set (tagless).
 
     \b
     Change-set member kind family: claim | claim_type | claim_type_succession |
     claim_retirement | subject | subject_kind | subject_succession |
     query_definition | procedure_mandate | line | trigger | runbook | contract |
-    procedure.
+    capability | procedure.
     claim_type, claim_type_succession and
     claim_retirement are member kinds only -- none is a top-level input.
     approval_policy and procedure_runtime_policy are the reverse: the member
@@ -6579,6 +6601,11 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
                     continue
                 if value in (None, [], {}):
                     continue
+                if key == "operations" and result.kind == "provider":
+                    click.echo("operations:")
+                    for row in value:
+                        click.echo("  " + _provider_operation_line(row))
+                    continue
                 if isinstance(value, list) and all(isinstance(item, dict) for item in value):
                     click.echo(f"{key}:")
                     for item in value:
@@ -8005,6 +8032,26 @@ def _node_summary_text(summary: Mapping[str, Any]) -> str:
     if kind == "repeat":
         return _plural(summary["attempts"], "attempt")
     return str(kind)
+
+
+def _provider_operation_line(row: dict[str, Any]) -> str:
+    """One operation of a Provider card: name, signature, what it serves, where its code is."""
+
+    source = row["source"]
+    where = source["path"]
+    if source.get("repository"):
+        where += f" ({source['repository']}" + (
+            f" at {source['revision'][:12]})" if source.get("revision") else ")"
+        )
+    refusals = ", ".join(
+        code + (" (absorbable)" if code in row.get("absorbable", ()) else "")
+        for code in row.get("refusals", ())
+    )
+    return (
+        f"{row['operation']}  {row['input']} -> {row['output']} ({row['effect']})  "
+        f"serves {', '.join(row['serves'])}\n    {printable(row['description'])}\n"
+        f"    source {where}" + (f"\n    refuses {refusals}" if refusals else "")
+    )
 
 
 def _run_node_line(node: Mapping[str, Any]) -> str:

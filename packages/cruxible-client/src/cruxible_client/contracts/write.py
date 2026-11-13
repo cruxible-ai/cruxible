@@ -27,6 +27,7 @@ the nearest valid names.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import (
@@ -38,6 +39,7 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 
 from cruxible_client.contracts import AcceptedCoordinate
 from cruxible_client.contracts.authoring.models import (
@@ -49,7 +51,9 @@ from cruxible_client.contracts.captures import FOREIGN_SOURCE_MAX_BYTES
 from cruxible_client.contracts.codes import CurrentCode, code_told_union
 from cruxible_client.contracts.doc_sections import SectionPath, section_digest
 from cruxible_client.contracts.get_reads import GetCoordinate, ReadSurface
+from cruxible_client.contracts.proposal_models import CHANGE_SET_RATIONALE_MAX_LENGTH
 from cruxible_client.contracts.read_values import ShownValue
+from cruxible_client.contracts.shapes import CLAIM_RATIONALE_MAX, claim_rationale_problems
 from cruxible_client.contracts.subject_kinds import SubjectKeyValue, key_value_problem
 
 #: The kind part of a Subject reference: a canonical Subject kind.
@@ -509,6 +513,12 @@ class RetireChange(_StrictWriteModel):
         description="Subject target: also retire its live Claims.",
     )
 
+    @field_validator("because")
+    @classmethod
+    def _because(cls, value: str | None) -> str | None:
+        # It joins the change set's rationale as a retire note.
+        return None if value is None else change_set_because(value)
+
     @model_validator(mode="after")
     def _subject_claims(self) -> RetireChange:
         _with_claims_target(self.target, self.with_claims)
@@ -617,6 +627,78 @@ Change = Annotated[
 
 # -- requests -------------------------------------------------------------------
 
+#: The refusal of a ``because`` that cannot be the rationale of the Claims a write states.
+RATIONALE_INVALID = "cruxible.claim.rationale_invalid"
+#: Its repair: where reasoning longer than a rationale goes.
+RATIONALE_REPAIR = (
+    f"Shorten because to one line of at most {CLAIM_RATIONALE_MAX} characters, and put the "
+    "longer reasoning in a Document section the Claim cites as its evidence (in a write "
+    "file: a docs op with an id, then evidence {kind: section, ref: ID})."
+)
+#: The refusal of a change set's rationale (``because`` and its retire notes) over its limit.
+RATIONALE_TOO_LONG = "cruxible.write.rationale_too_long"
+#: Its repair.
+RATIONALE_TOO_LONG_REPAIR = (
+    f"Shorten because and any retire because to at most {CHANGE_SET_RATIONALE_MAX_LENGTH} "
+    "characters together, and put the longer account in a Document section."
+)
+#: The typed refusals a write request model raises, each with its repair. The
+#: daemon answers one as a 422 carrying the code, before any work.
+WRITE_REQUEST_REFUSAL_REPAIRS: Mapping[str, str] = {
+    RATIONALE_INVALID: RATIONALE_REPAIR,
+    RATIONALE_TOO_LONG: RATIONALE_TOO_LONG_REPAIR,
+}
+
+
+def change_set_rationale(because: str, retire_notes: tuple[str, ...] = ()) -> str:
+    """The change set's rationale: ``because`` trimmed, then each retire note.
+
+    The one join the planner lowers with, so the request check measures the
+    text the change set will carry.
+    """
+
+    return "\n\n".join((because.strip(), *retire_notes))
+
+
+def change_set_rationale_too_long(rationale: str) -> str | None:
+    """The refusal message when ``rationale`` exceeds the change set's limit."""
+
+    if len(rationale) <= CHANGE_SET_RATIONALE_MAX_LENGTH:
+        return None
+    return (
+        f"{RATIONALE_TOO_LONG}: because and its retire notes form the change set's "
+        f"rationale, which holds at most {CHANGE_SET_RATIONALE_MAX_LENGTH} characters; "
+        f"this one has {len(rationale)}. {RATIONALE_TOO_LONG_REPAIR}"
+    )
+
+
+def change_set_because(value: str) -> str:
+    """``because`` (trimmed) is the change set's rationale: text, no NUL, within its limit."""
+
+    if not value.strip():
+        raise ValueError("because must hold text, not only whitespace")
+    if "\x00" in value:
+        raise ValueError("because must not contain a NUL byte")
+    # Retire notes the daemon resolves can only lengthen it; it refuses those itself.
+    if (message := change_set_rationale_too_long(change_set_rationale(value))) is not None:
+        raise PydanticCustomError(RATIONALE_TOO_LONG, "{message}", {"message": message})
+    return value
+
+
+def claim_because(value: str) -> str:
+    """``because`` is also the rationale of every Claim the write states."""
+
+    problems = claim_rationale_problems(value)
+    if problems:
+        message = (
+            f"{RATIONALE_INVALID}: because is the rationale of each Claim this write states, "
+            f"so it must be one line of at most {CLAIM_RATIONALE_MAX} characters; this one "
+            f"has {' and '.join(problems)}. {RATIONALE_REPAIR}"
+        )
+        # The text travels as context: the repair's braces are not a template.
+        raise PydanticCustomError(RATIONALE_INVALID, "{message}", {"message": message})
+    return change_set_because(value)
+
 
 class _WriteRequestBase(_StrictWriteModel):
     because: str = Field(min_length=1, description="Why: the change set's rationale.")
@@ -656,6 +738,11 @@ class SetRequest(_WriteRequestBase):
     contend: bool = False
     expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
 
+    @model_validator(mode="after")
+    def _because_states_a_claim(self) -> SetRequest:
+        claim_because(self.because)
+        return self
+
     def change(self) -> SetChange:
         return SetChange(
             subject=self.subject,
@@ -678,6 +765,8 @@ class RetireRequest(_WriteRequestBase):
     @model_validator(mode="after")
     def _subject_claims(self) -> RetireRequest:
         _with_claims_target(self.target, self.with_claims)
+        # A retire states no Claim: because is only the change set's rationale.
+        change_set_because(self.because)
         return self
 
     def change(self) -> RetireChange:
@@ -714,6 +803,11 @@ class WriteRequest(_WriteRequestBase):
                 raise ValueError("document confirmations cannot accompany edits or a dry run")
         elif not self.changes and not self.docs:
             raise ValueError("write requires at least one change or document operation")
+        # Every change but a retire or an about link states a Claim on because.
+        if any(not isinstance(change, RetireChange | AboutChange) for change in self.changes):
+            claim_because(self.because)
+        else:
+            change_set_because(self.because)
         return self
 
     @model_serializer(mode="wrap")

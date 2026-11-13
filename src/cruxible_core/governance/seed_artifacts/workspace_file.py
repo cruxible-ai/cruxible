@@ -1,16 +1,18 @@
 """Compiler-owned ``workspace.file`` operation and built-in Provider.
 
 New instances start with the ``cruxible-builtin`` Provider at genesis
-(``GENESIS_SEEDS`` in ``ledger/bootstrap.py``): its one operation,
+(``GENESIS_SEEDS`` in ``ledger/bootstrap.py``). Its one operation,
 ``workspace.file``, is core's in-process adapter
-(``cruxible_core.providers.builtin_workspace_file``). The handoff Contracts the
-operation's signature pins (``cruxible_client.contracts.workspace_file``) are no
-longer genesis seeds: the ``workspace.file`` and ``workspace.files``
-capabilities and their authored request and result Contracts arrive with the
-base kit (``cruxible_core.kits``). The handoff shapes are to travel inside the
-builtin Provider as its own copies (note §7.4.7); until it carries them, a
-binding to this operation resolves its pins only where an instance holds those
-Contracts. Core recognizes the operation by its exact signature, never by name.
+(``cruxible_core.providers.builtin_workspace_file``) and serves the reserved
+capabilities ``workspace.file`` and ``workspace.files``. Like any provider build
+it carries its own shapes in ``declares``: the four handoff Contracts (source,
+content, request, result) and its three refusal Contracts
+(``cruxible_client.contracts.workspace_file``), each nested Contract pinned by
+digest. Its operation pins resolve inside the build, so it needs no instance
+Contract, whether or not an instance also holds Contracts of the same names.
+The ``workspace.file`` and ``workspace.files`` capabilities, with their
+authored request and result Contracts, arrive with the base kit
+(``cruxible_core.kits``); the handoff Contracts are no longer genesis seeds.
 
 Identity. The implementation digest is the ordinary
 ``provider_implementation_digest(entrypoint, distribution_sha256)``
@@ -32,7 +34,10 @@ from dataclasses import dataclass
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.provider_operations import ProviderOperation
+from cruxible_client.contracts.provider_registration import (
+    DeclaredOperation,
+    ProviderDeclares,
+)
 from cruxible_client.contracts.providers import (
     Provider,
     ProviderDistributionRef,
@@ -51,6 +56,7 @@ from cruxible_client.contracts.workspace_file import (
     workspace_file_contracts,
     workspace_file_refusal_contracts,
 )
+from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
 
 WORKSPACE_FILE_BUILTIN_PROVIDER_ID = "cruxible-builtin"
 WORKSPACE_FILE_BUILTIN_ENTRYPOINT = "cruxible_core.providers.builtin_workspace_file:WorkspaceFile"
@@ -126,7 +132,34 @@ WORKSPACE_FILE_BUILTIN_ENVIRONMENT_MANIFEST_DIGEST = (
 WORKSPACE_FILE_BUILTIN_LOCK_DIGEST = WORKSPACE_FILE_BUILTIN_IDENTITY.lock_digest
 
 
-def workspace_file_operation() -> ProviderOperation:
+#: Where the builtin's code is, as its operation's ``source`` records it.
+WORKSPACE_FILE_BUILTIN_SOURCE = {
+    "path": "src/cruxible_core/providers/builtin_workspace_file.py",
+    "repository": "https://github.com/cruxible-ai/cruxible",
+}
+WORKSPACE_FILE_BUILTIN_DESCRIPTION = (
+    "Reads a workspace file (or the files a glob names) in the daemon's own process and "
+    "returns each as a Capture of its exact bytes. Core's built-in; no other provider may "
+    "serve a workspace. capability."
+)
+
+
+def workspace_file_declares() -> ProviderDeclares:
+    """The shapes the builtin carries: its four handoff and three refusal Contracts."""
+
+    contracts = (*workspace_file_contracts(), *workspace_file_refusal_contracts())
+    assert all(isinstance(item, Contract) for item in contracts)
+    return ProviderDeclares(
+        contracts=tuple(
+            sorted(
+                (item for item in contracts if isinstance(item, Contract)),
+                key=lambda item: (item.name.encode("utf-8"), item.version),
+            )
+        )
+    )
+
+
+def workspace_file_operation() -> DeclaredOperation:
     """The ``workspace.file`` operation with its exact Contract pins.
 
     Declares the built-in's own typed refusals (``providers/
@@ -143,9 +176,12 @@ def workspace_file_operation() -> ProviderOperation:
         and isinstance(invalid, Contract)
         and isinstance(mismatched, Contract)
     )
-    return ProviderOperation.model_validate(
+    return DeclaredOperation.model_validate(
         {
             "name": WORKSPACE_FILE_OPERATION,
+            "description": WORKSPACE_FILE_BUILTIN_DESCRIPTION,
+            "source": WORKSPACE_FILE_BUILTIN_SOURCE,
+            "serves": sorted(BUILTIN_CAPABILITY_NAMES, key=lambda name: name.encode("utf-8")),
             "in": {
                 "name": request.name,
                 "version": request.version,
@@ -235,6 +271,7 @@ def workspace_file_builtin_provider(
         runtime_artifact=runtime_artifact,
         implementations=provider_expected_implementation_records(runtime_artifact),
         operations=(workspace_file_operation(),),
+        declares=workspace_file_declares(),
     )
     (record,) = provider.implementations
     if record.implementation_digest != WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST:
@@ -255,6 +292,9 @@ __all__ = [
     "WORKSPACE_FILE_BUILTIN_PROVIDER_ID",
     "WORKSPACE_FILE_BUILTIN_REVISION",
     "workspace_file_builtin_identity",
+    "WORKSPACE_FILE_BUILTIN_DESCRIPTION",
+    "WORKSPACE_FILE_BUILTIN_SOURCE",
     "workspace_file_builtin_provider",
+    "workspace_file_declares",
     "workspace_file_operation",
 ]

@@ -145,7 +145,7 @@ def test_the_provider_child_chokepoint_refuses_before_popen(
     with pytest.raises(CustomerCodeExecutionUnsupportedError):
         runtime_module._run_child(
             Path("/nonexistent/python"),
-            entrypoint="cruxible_provider_workspace.child",
+            entrypoint="demo_package.child",
             context=b"{}",
             budgets=None,  # type: ignore[arg-type]
             secret_fd=None,

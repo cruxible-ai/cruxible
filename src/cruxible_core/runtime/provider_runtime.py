@@ -23,7 +23,7 @@ from pydantic import (
 from cruxible_client.contracts import ProviderLaneUnavailableCode
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.provider_execution import VerifiedProviderBinding
-from cruxible_client.contracts.provider_operations import ProviderOperation
+from cruxible_client.contracts.provider_registration import DeclaredOperation
 from cruxible_client.contracts.providers import AcceptedProvider
 from cruxible_core.providers.builtin_runtime import (
     BuiltinDispatchingInvoker,
@@ -770,7 +770,7 @@ class ProviderRuntimeOperator:
     def admit_line_provider(
         self,
         accepted_provider: AcceptedProvider,
-        operation: ProviderOperation,
+        operation: DeclaredOperation,
         implementation_digest: str,
         *,
         eligible_environment_pin_keys: tuple[str, ...],
