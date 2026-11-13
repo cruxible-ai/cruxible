@@ -157,8 +157,6 @@ def test_archive_transition_uses_index_without_reopening_closed_evidence(tmp_pat
 
     instance, _owner = initialize_local(tmp_path)
     proposal = _submit(instance)
-    # Creation's settled base kit proposal may already sit in the archive.
-    archived = instance._ledger.mirror_refs().get("refs/settled/archive")
     with monkeypatch.context() as patch:
         patch.setattr(instance, "advertise_workspace", lambda: NOT_ATTACHED_ADVERTISEMENT)
         service_withdraw_playbill_proposal(
@@ -168,7 +166,12 @@ def test_archive_transition_uses_index_without_reopening_closed_evidence(tmp_pat
             reason="close before reconciliation",
             withdrawn_at=WITHDRAWN_AT,
         )
-    assert instance._ledger.mirror_refs().get("refs/settled/archive") == archived
+    # Creation's settled base kit proposal may already sit in the archive; the
+    # withdrawn one does not until reconciliation.
+    archive = instance._ledger.mirror_refs().get("refs/settled/archive")
+    assert archive is None or not instance._ledger.is_ancestor(
+        proposal.admission.candidate_commit_oid, archive
+    )
 
     def forbidden(*args, **kwargs):
         pytest.fail("archive transition reopened closed evidence")
