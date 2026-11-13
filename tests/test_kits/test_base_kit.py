@@ -12,6 +12,7 @@ byte; later versions are the adopter's.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import socket
 from collections.abc import Iterator
@@ -42,6 +43,7 @@ from cruxible_core.governance.keys import GeneratedKeyMaterial
 from cruxible_core.kits import BundledKitPin
 from cruxible_core.kits import base_kit as base_kit_module
 from cruxible_core.kits.base_kit import (
+    BASE_KIT_PENDING_FILE,
     BASE_KIT_PIN,
     BUNDLED_KIT_SOURCE,
     base_kit_directory,
@@ -479,3 +481,159 @@ def test_init_says_whether_the_base_kit_landed_or_awaits_approval() -> None:
     assert waiting is not None
     assert (waiting.status, waiting.proposal_id) == ("proposed", "sha256:" + "a" * 64)
     assert _init_base_kit(None) is None
+
+
+# -- an interrupted creation resumes on the next open -------------------------------------
+
+_DIE_DURING_CREATION = """
+import json, os, sys
+from pathlib import Path
+
+from cruxible_core.governance.keys import generate_client_principal_key
+from cruxible_core.kits import base_kit
+from cruxible_core.runtime.instance import PlaybillInstance
+
+root, point, independent = Path(sys.argv[1]), sys.argv[2], sys.argv[3] == "1"
+managed = root / "managed"
+keys = [
+    generate_client_principal_key(
+        root / f"{name}-key", principal_id=name, kind="ordinary", forbidden_roots=(managed,)
+    )
+    for name in ("owner", "reviewer")
+]
+original = base_kit.install_bundled_base_kit
+
+
+def die(instance, **kwargs):
+    # The process dies: before the add, or after it produced its proposal or receipt
+    # but before the record was removed.
+    found = {"trust_root": instance.trust_root.model_dump(mode="json")}
+    if point == "after":
+        found["proposal_id"] = original(instance, **kwargs).proposal_id
+    (root / "died.json").write_text(json.dumps(found))
+    os._exit(73)
+
+
+base_kit.install_bundled_base_kit = die
+PlaybillInstance.initialize(
+    managed,
+    instance_id="inst_base_kit",
+    client_principals=tuple(key.principal for key in keys),
+    workspace_roots=(),
+    require_independent_approval=independent,
+    timestamp="2026-08-10T12:00:00+00:00",
+)
+raise SystemExit("creation finished; the process was meant to die in it")
+"""
+
+
+def _die_during_creation(
+    tmp_path: Path, *, point: str, independent: bool = False
+) -> tuple[Path, Any, str | None]:
+    import subprocess
+    import sys
+
+    from cruxible_client.contracts.types import TrustRoot
+
+    repo = Path(__file__).resolve().parents[2]
+    script = tmp_path / "die.py"
+    script.write_text(_DIE_DURING_CREATION)
+    completed = subprocess.run(
+        [sys.executable, str(script), str(tmp_path), point, "1" if independent else "0"],
+        cwd=repo,
+        env={
+            **os.environ,
+            "PYTHONPATH": f"{repo / 'src'}:{repo / 'packages/cruxible-client/src'}",
+        },
+        capture_output=True,
+        timeout=300,
+    )
+    assert completed.returncode == 73, completed.stderr.decode()[-2000:]
+    died = json.loads((tmp_path / "died.json").read_text())
+    managed = tmp_path / "managed"
+    assert (managed / BASE_KIT_PENDING_FILE).is_file()
+    return managed, TrustRoot.model_validate(died["trust_root"]), died.get("proposal_id")
+
+
+def _open_proposals(instance: PlaybillInstance) -> list[str]:
+    from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
+
+    listed = service_list_playbill_proposals(instance, status="open")
+    return [entry.proposal_id for entry in listed.entries]
+
+
+def test_a_creation_that_died_before_the_add_finishes_on_the_next_open(tmp_path: Path) -> None:
+    managed, trust_root, _proposal = _die_during_creation(tmp_path, point="before")
+
+    reopened = PlaybillInstance.open(managed, trust_root=trust_root)
+    assert reopened.base_kit_install is not None
+    assert reopened.base_kit_install.status == "accepted"
+    assert [item.sequence for item in reopened.accepted_history()] == [0, 1]
+    (installed,) = service_kit_status(reopened).kits
+    assert (installed.kit_id, installed.source) == ("base", "bundled")
+    assert not (managed / BASE_KIT_PENDING_FILE).exists()
+
+    again = PlaybillInstance.open(managed, trust_root=trust_root)
+    assert again.base_kit_install is None
+    assert [item.sequence for item in again.accepted_history()] == [0, 1]
+
+
+def test_a_creation_that_died_after_the_kit_landed_adds_nothing_more(tmp_path: Path) -> None:
+    managed, trust_root, _proposal = _die_during_creation(tmp_path, point="after")
+
+    reopened = PlaybillInstance.open(managed, trust_root=trust_root)
+    assert reopened.base_kit_install is not None
+    assert reopened.base_kit_install.status == "unchanged"
+    assert [item.sequence for item in reopened.accepted_history()] == [0, 1]
+    assert not (managed / BASE_KIT_PENDING_FILE).exists()
+
+
+def test_a_creation_that_died_after_its_proposal_reuses_that_proposal(tmp_path: Path) -> None:
+    managed, trust_root, proposal_id = _die_during_creation(
+        tmp_path, point="after", independent=True
+    )
+    assert proposal_id is not None
+
+    reopened = PlaybillInstance.open(managed, trust_root=trust_root)
+    assert reopened.base_kit_install is not None
+    assert (reopened.base_kit_install.status, reopened.base_kit_install.proposal_id) == (
+        "proposed",
+        proposal_id,
+    )
+    assert _open_proposals(reopened) == [proposal_id]
+    assert [item.sequence for item in reopened.accepted_history()] == [0]
+    assert not (managed / BASE_KIT_PENDING_FILE).exists()
+
+
+def test_a_pending_proposal_under_independent_approval_is_not_duplicated_on_reopen(
+    tmp_path: Path,
+) -> None:
+    instance, _owner, _reviewer = _create(tmp_path, independent=True)
+    assert instance.base_kit_install is not None
+    proposal_id = instance.base_kit_install.proposal_id
+    assert not (instance.root / BASE_KIT_PENDING_FILE).exists()
+
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    assert reopened.base_kit_install is None
+    assert _open_proposals(reopened) == [proposal_id]
+
+
+def test_a_base_kit_removed_on_purpose_stays_removed_on_reopen(tmp_path: Path) -> None:
+    from cruxible_client.contracts.kits import KitRemoveRequest
+    from cruxible_core.service.kits import service_remove_kit
+
+    instance, _owner, _reviewer = _create(tmp_path)
+    removed = service_remove_kit(
+        instance,
+        KitRemoveRequest(kit_id="base", dry_run=False),
+        actor_id="owner",
+        timestamp=STAMP,
+    )
+    assert removed.status == "accepted", removed
+    assert service_kit_status(instance).kits == ()
+    history = [item.sequence for item in instance.accepted_history()]
+
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    assert reopened.base_kit_install is None
+    assert service_kit_status(reopened).kits == ()
+    assert [item.sequence for item in reopened.accepted_history()] == history
