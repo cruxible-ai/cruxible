@@ -170,6 +170,15 @@ def dependency_pins(
                         role=CONTRACT_PIN_ROLE, target=contract_identity(row.name, row.version)
                     )
                 )
+    if kind == "CaptureContract":
+        # A kind's layout names the row Contract of each record set; the kind
+        # depends on them (a kit carrying the kind carries its rows).
+        layout = getattr(artifact, "layout", None)
+        for record_set in () if layout is None else layout.records.values():
+            row = record_set.row
+            pins.append(
+                ArtifactRef(role=CONTRACT_PIN_ROLE, target=contract_identity(row.name, row.version))
+            )
     if kind == "Provider":
         for operation in getattr(artifact, "operations", ()):
             for ref in operation.contract_refs():

@@ -108,7 +108,7 @@ def _watcher(instance: Any) -> None:
 
     raw = override_spec().model_dump(mode="python", by_alias=True)
     raw["procedure"] = WATCHER
-    raw["steps"][1]["header"] = {"first": {"at": "/entries/0/cve", "type": "string{max_len: 256}"}}
+    raw["steps"][1]["header"] = ["first"]
     raw["steps"].insert(0, {"read": "affected", "query": "test.affected"})
     raw["steps"].insert(1, {"read": "noted", "query": "test.noted"})
     raw["steps"].insert(2, {"read": "subjects", "query": "test.cve-subjects"})

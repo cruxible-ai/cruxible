@@ -199,8 +199,11 @@ def test_external_capture_admission_refuses_retired_format_or_requires_exact_con
     )
     from tests.core_support._light_capture_support import record_contract
     from tests.core_support._support import initialize_local
+    from tests.test_procedures.test_procedure_source_runs import world_layout
 
-    contract = record_contract() if light else capture_contract()
+    # The light world accepts its kind with the record sets its extracts read; the
+    # Claim's change set restates that same accepted kind.
+    contract = world_layout(record_contract()) if light else capture_contract()
     coordinate_type = "database-snapshot-v1" if light else "postgres-lsn-v1"
     shell = _subject()
     subject_address = SemanticAddress.whole_artifact(

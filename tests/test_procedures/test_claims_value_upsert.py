@@ -99,7 +99,11 @@ def _capture_contract(*, minted: bool = False) -> Any:
     return with_layout(
         bare,
         records,
-        {"queried": {"at": "/queried", "type": "list<string{max_len: 256}>{max_items: 8}"}},
+        {
+            "queried": {"at": "/queried", "type": "list<string{max_len: 256}>{max_items: 8}"},
+            # The first entry's CVE: a header a late read can key on (D-R38).
+            "first": {"at": "/entries/0/cve", "type": "string{max_len: 256}"},
+        },
     )
 
 
