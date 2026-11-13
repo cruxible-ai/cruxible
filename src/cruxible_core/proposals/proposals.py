@@ -153,6 +153,7 @@ from cruxible_client.contracts.policies import (
 )
 from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
+    parse_principal_record,
     principal_registry_from_tree,
 )
 from cruxible_client.contracts.procedure_mandates import (
@@ -455,6 +456,31 @@ _SEMANTIC_MEMBER_PATTERNS: Final = (
     *_DEPENDENCY_CLOSED_PATTERNS,
 )
 """Every member kind that participates in dependency closure, in one place."""
+
+_UNINDEXED_MEMBER_FORMATS: Final[
+    Mapping[str, tuple[Callable[..., object], type[CruxibleError], str]]
+] = {
+    "approval-policy": (
+        parse_approval_policy,
+        ApprovalPolicyFormatError,
+        "cruxible.approval_policy.format_invalid",
+    ),
+    "procedure-runtime-policy": (
+        parse_procedure_runtime_policy,
+        ProcedureRuntimePolicyFormatError,
+        "cruxible.procedure_runtime_policy.format_invalid",
+    ),
+    "principal": (
+        parse_principal_record,
+        PrincipalIntegrityError,
+        "cruxible.principal.format_invalid",
+    ),
+}
+"""Member kinds the dependency parse does not read: parser, its error, the law's code.
+
+Advancing the carried index parses every scoped member, so each of these is
+proven parseable first and a malformed one refused under its own law's code.
+"""
 
 _AUTHORABLE_MEMBER_PATTERNS: Final = (
     re.compile(r"^compiler-upgrade\.json$"),
@@ -4723,6 +4749,18 @@ def _evaluate_scoped_members(
         kind = _member_kind(path)
         if proposed is None or kind is None:
             continue
+        unindexed = _UNINDEXED_MEMBER_FORMATS.get(kind.name)
+        if unindexed is not None:
+            parse, format_error, format_code = unindexed
+            try:
+                parse(proposed, path=path)
+            except format_error as exc:
+                return CandidateEvaluation(
+                    candidate_tree,
+                    None,
+                    (_diagnostic(format_code, str(exc), path),),
+                    rebased,
+                )
         try:
             if any(pattern.fullmatch(path) for pattern in _SEMANTIC_MEMBER_PATTERNS):
                 dependency_artifacts({path: proposed})
