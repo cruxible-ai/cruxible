@@ -194,15 +194,15 @@ def procedure_capture_problem(
                 if capability is None or contract_lookup is None
                 else contract_lookup(capability.in_)
             )
-            field = next(iter(node.captures), None) if len(node.captures) == 1 else None
-            kind = None if field is None else capture_lookup(node.captures[field].target.name)
+            only = next(iter(node.captures), None) if len(node.captures) == 1 else None
+            landed = None if only is None else capture_lookup(node.captures[only].target.name)
             problem = workspace_read_problem(
                 builtin,
                 capability=slot.capability.spelling if slot is not None else builtin,
                 request=request,
                 result=out,
-                capture_kind=kind,
-                capture_field=field,
+                capture_kind=landed,
+                capture_field=only,
             )
             if problem is not None:
                 return (
