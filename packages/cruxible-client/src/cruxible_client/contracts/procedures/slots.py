@@ -1,9 +1,14 @@
 """Procedure slots.
 
 A Procedure never names a provider. Each provider-calling node names a slot,
-and the Procedure declares every slot's signature ``{in, out, effect}``
-(:class:`~cruxible_client.contracts.provider_operations.ProcedureSlot`). A Line
-binds each slot to one exact provider build and operation when it is accepted.
+and each slot is a named field of the Procedure that points at one capability
+version, ``{capability, may_truncate}``: wave 0's
+:class:`~cruxible_client.contracts.capabilities.CapabilitySlot`, which this
+module names :data:`ProcedureSlot` on the Procedure side. A slot is never a
+thing to define or look up; its signature ``{in, out, effect}`` is derived from
+its capability (:func:`~cruxible_client.contracts.capabilities.capability_slot_signature`).
+Authoring pins the capability by digest; a Line binds each slot to one exact
+provider build and operation when it is accepted.
 
 Moved out of :mod:`~cruxible_client.contracts.procedures.models`, which
 re-exports every name here.
@@ -13,7 +18,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from cruxible_client.contracts.provider_operations import ProcedureSlot, validate_slot_name
+from cruxible_client.contracts.capabilities import CapabilitySlot
+from cruxible_client.contracts.provider_operations import validate_slot_name
+
+#: A Procedure's slot: wave 0's capability slot, ``{capability, may_truncate}``.
+ProcedureSlot = CapabilitySlot
 
 #: The most slots one Procedure may declare.
 MAX_PROCEDURE_SLOTS = 256

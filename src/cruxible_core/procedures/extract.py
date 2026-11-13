@@ -42,15 +42,21 @@ from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
+from cruxible_client.contracts.artifacts import ArtifactNameRef
 from cruxible_client.contracts.canonical import canonical_bytes, normalize_canonical
-from cruxible_client.contracts.captures import CaptureDecoding
+from cruxible_client.contracts.captures import CaptureDecoding, capture_contract_digest
 from cruxible_client.contracts.claim_evidence import CompleteWhenResult
+from cruxible_client.contracts.content_memo import seal, sealed_derive
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.extract import (
     EXTRACTOR_VERSIONS,
     ExtractField,
     ExtractNode,
     extract_spec_digest,
+)
+from cruxible_client.contracts.procedures.layout_extract import (
+    LayoutExtractNode,
+    resolve_layout_extract,
 )
 from cruxible_client.contracts.shapes import (
     BoolType,
@@ -102,6 +108,111 @@ class ExtractRefused(ExecutionError):
         self.code = code
         self.details = dict(details or {})
         super().__init__(f"{code}: {message}")
+
+
+# -- resolution: the one place a stored extract node becomes the engine's spec ---------
+
+#: An extract node as a Procedure stores it. The thin node reads through its
+#: CaptureKind's layout; today's full node is already the engine's spec and
+#: resolves to itself until the authoring lowering emits only the thin node.
+StoredExtractNode = ExtractNode | LayoutExtractNode
+#: ``isinstance`` spelling of :data:`StoredExtractNode`.
+STORED_EXTRACT_NODES: tuple[type[ExtractNode], type[LayoutExtractNode]] = (
+    ExtractNode,
+    LayoutExtractNode,
+)
+
+#: A Procedure's capture reference (a call's ``captures[field]``) to the kind it names.
+KindLookup = Callable[[ArtifactNameRef], Any]
+
+
+#: The key of a sealed node's one resolution slot (see :func:`extract_spec`).
+_SPEC_SLOT_KEY = ("cruxible.procedures.extract_spec",)
+
+
+class _ResolvedSpecSlot:
+    """A sealed node's one remembered resolution: the kind digest and the spec it gave."""
+
+    __slots__ = ("entry",)
+
+    def __init__(self) -> None:
+        self.entry: tuple[str | None, ExtractNode] | None = None
+
+
+def extract_spec(node: StoredExtractNode, kind: Any) -> ExtractNode:
+    """The full extract spec ``node`` reads: the one resolution every reader goes through.
+
+    ``kind`` is the accepted CaptureKind the node's capture field is committed
+    as. A node reads one capture field, so a sealed node (part of a sealed
+    accepted Procedure) remembers exactly one resolution: the spec for the kind
+    digest it last read. Runs of an unchanged Procedure over an unchanged kind
+    never resolve again; a successor kind replaces the entry, so the memo holds
+    at most one spec per node and lives as long as the node. An unsealed node
+    resolves on every call. A layout refusal raises ``LayoutExtractRefused`` (a
+    ``ValueError`` carrying its ``code``) and is never remembered.
+    """
+
+    if isinstance(node, ExtractNode):
+        return node
+    kind_digest = None if kind is None else capture_contract_digest(kind).tagged
+    slot = sealed_derive(node, _SPEC_SLOT_KEY, _ResolvedSpecSlot)
+    entry = slot.entry
+    if entry is not None and entry[0] == kind_digest:
+        return entry[1]
+    resolved = resolve_layout_extract(node, getattr(kind, "layout", None))
+    # Sealed, so its receipt digest is also computed once.
+    seal(resolved)
+    # One tuple assignment: a concurrent reader sees the old entry or the new one.
+    slot.entry = (kind_digest, resolved)
+    return resolved
+
+
+def extract_capture_ref(
+    node: StoredExtractNode, aliases: Mapping[str | None, object]
+) -> ArtifactNameRef | None:
+    """The CaptureKind reference of the call field ``node`` reads, or ``None``."""
+
+    captures = getattr(aliases.get(node.capture_alias), "captures", None)
+    if not isinstance(captures, Mapping):
+        return None
+    found = captures.get(node.capture_field)
+    return found if isinstance(found, ArtifactNameRef) else None
+
+
+def extract_specs(
+    nodes: Iterable[object], kind_of: KindLookup
+) -> Callable[[StoredExtractNode], ExtractNode]:
+    """Resolve one Procedure's extract nodes against the kinds ``kind_of`` reads.
+
+    ``kind_of`` is asked only for a thin node, once per node and call: the full
+    node needs no kind. A capture field no call commits resolves with no kind,
+    which a thin node refuses (``extract_layout_undeclared``).
+    """
+
+    aliases = {getattr(item, "as_", None): item for item in nodes}
+
+    def spec(node: StoredExtractNode) -> ExtractNode:
+        if isinstance(node, ExtractNode):
+            return node
+        reference = extract_capture_ref(node, aliases)
+        return extract_spec(node, None if reference is None else kind_of(reference))
+
+    return spec
+
+
+def plan_kind_lookup(plan: Any, kinds: Mapping[str, Any]) -> KindLookup:
+    """At run, a capture reference's kind is the one the admitted plan pinned.
+
+    ``kinds`` holds the run's accepted CaptureKinds by digest. A reference the
+    plan did not resolve has no kind.
+    """
+
+    def kind_of(reference: ArtifactNameRef) -> Any:
+        if plan is None or reference.target.qualified not in plan.resolved:
+            return None
+        return kinds.get(plan.pin(reference).artifact_digest)
+
+    return kind_of
 
 
 # -- decoding -------------------------------------------------------------------------
@@ -1362,7 +1473,14 @@ __all__ = [
     "ExtractOutcome",
     "ExtractRefused",
     "Extractor",
+    "KindLookup",
+    "STORED_EXTRACT_NODES",
+    "StoredExtractNode",
     "clear_extract_cache",
+    "extract_capture_ref",
+    "extract_spec",
+    "extract_specs",
+    "plan_kind_lookup",
     "held_result",
     "held_wire",
     "merge_outcomes",

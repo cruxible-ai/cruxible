@@ -18,12 +18,14 @@ from cruxible_client.contracts.artifacts import (
     ArtifactNameRef,
     ArtifactPin,
 )
+from cruxible_client.contracts.capabilities import Capability, CapabilityRef
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
     procedure_artifact_digest,
 )
+from cruxible_client.contracts.procedures.line_specs import provisional_slot_signatures
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     ProcedureDefinition,
@@ -227,6 +229,29 @@ def bind_procedure_references(
         return resolved[identity.qualified]
 
     slot_declarations: dict[str, ProcedureSlot] = dict(authored.definition.slots)
+
+    def capability(ref: CapabilityRef) -> Capability | None:
+        selected = resolve(ref.identity)
+        return (
+            selected[0]
+            if isinstance(selected[0], Capability) and selected[1] == ref.digest
+            else None
+        )
+
+    from cruxible_core.procedures.declared_inputs import builtin_slot_signatures
+
+    # The provisional signature key (line_specs.provisional_slot_signatures, which
+    # the binding slice replaces). A replay rebinds the bindings its admission
+    # recorded and checked, from recorded pins only, so it derives none.
+    signatures = (
+        {}
+        if frozen_pins is not None
+        else provisional_slot_signatures(
+            {name: slot for name, slot in slot_declarations.items() if name in (bindings or {})},
+            capability,
+            builtin=builtin_slot_signatures(),
+        )
+    )
     validate_slot_names(bindings or {}, slot_declarations)
     source_only_slots = _source_only_slot_names(authored.definition)
     references: dict[str, str] = {}
@@ -247,7 +272,7 @@ def bind_procedure_references(
 
             raise RequestRefusedError(
                 "cruxible.line.slot_unbound",
-                f"Slot {name!r} ({slot.spelling()}) has no binding.",
+                f"Slot {name!r} ({slot.capability.spelling}) has no binding.",
                 repair=HandEditRepair(
                     hand_edit=HandEditInstruction(
                         target="bindings",
@@ -266,14 +291,16 @@ def bind_procedure_references(
         )
         if operation is None:
             raise ExecutionError(f"Slot {name!r}: {binding.spelling} declares no such operation")
+        signature = signatures.get(name)
         try:
-            fits = operation.signature().same_as(slot)
+            fits = signature is None or operation.signature().same_as(signature)
         except ValueError:
             fits = False
         if not fits:
+            assert signature is not None
             raise ExecutionError(
-                f"Slot {name!r} needs {slot.spelling()}; {binding.spelling} serves "
-                f"{operation.signature().spelling()}"
+                f"Slot {name!r} needs {slot.capability.spelling} ({signature.spelling()}); "
+                f"{binding.spelling} serves {operation.signature().spelling()}"
             )
         closure: tuple[Contract, ...] = ()
         if contracts is not None:

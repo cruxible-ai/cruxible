@@ -1,6 +1,6 @@
 """Capture outputs: which call fields commit Captures, and the laws that pin them.
 
-A call acquires when its slot's out Contract carries ``capture<K>`` fields (or
+A call acquires when its slot's capability's out Contract carries ``capture<K>`` fields (or
 when its operation returns its whole output as Capture wire). Each such field
 is one capture output, described by ``{node_path, field, capture_kind,
 acquisition_key}``, and keyed ``<alias>.<field>``: its acquisition rule, its
@@ -18,10 +18,11 @@ over it merges its members' records and declares no header or
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 
 from pydantic import BaseModel, ConfigDict
 
+from cruxible_client.contracts.capabilities import CapabilityLookup
 from cruxible_client.contracts.captures import CAPTURE_FIELD, CaptureContractAny
 from cruxible_client.contracts.procedures.models import (
     CallNode,
@@ -30,7 +31,6 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.provider_operations import capture_fields, capture_list_fields
 from cruxible_client.contracts.shapes import ANY_CAPTURE_KIND, Contract, ContractRef
-from cruxible_client.contracts.workspace_file import is_workspace_file_signature
 
 ContractLookup = Callable[[ContractRef], Contract | None]
 CaptureLookup = Callable[[str], CaptureContractAny | None]
@@ -130,21 +130,23 @@ def procedure_capture_problem(
     *,
     contract_lookup: ContractLookup | None,
     capture_lookup: CaptureLookup,
+    capability_lookup: CapabilityLookup | None,
+    builtin_capabilities: Collection[str],
 ) -> tuple[str, str] | None:
-    """``(code, message)`` for the first capture law the graph breaks, or ``None``."""
+    """``(code, message)`` for the first capture law the graph breaks, or ``None``.
 
-    from cruxible_client.contracts.provider_operations import operation_signature_digest
+    A call's out Contract is its slot's capability's ``out``
+    (``capability_lookup``). A slot naming one of ``builtin_capabilities`` (the
+    capability names core's builtin serves) is a workspace read: core commits
+    the bytes it read as the call's one capture field.
+    """
 
     calls = {node.as_: node for node in definition.nodes if isinstance(node, CallNode)}
     #: Per call alias, its ``list<capture<K>>`` fields: each member is a Capture (D-R37 a1).
     list_fields: dict[str, frozenset[str]] = {}
     for node in calls.values():
         slot = definition.slots.get(node.slot)
-        if (
-            slot is not None
-            and node.acquires
-            and is_workspace_file_signature(operation_signature_digest(slot))
-        ):
+        if slot is not None and node.acquires and slot.capability.name in builtin_capabilities:
             # Core reads the workspace bytes itself: its one capture field is core's.
             if set(node.captures) != {CAPTURE_FIELD}:
                 return (
@@ -154,7 +156,16 @@ def procedure_capture_problem(
                 )
             declared: dict[str, str] | None = None
         else:
-            out = None if slot is None or contract_lookup is None else contract_lookup(slot.out)
+            capability = (
+                None
+                if slot is None or capability_lookup is None
+                else capability_lookup(slot.capability)
+            )
+            out = (
+                None
+                if capability is None or contract_lookup is None
+                else contract_lookup(capability.out)
+            )
             listed = () if out is None else capture_list_fields(out)
             list_fields[node.as_] = frozenset(name for name, _kind, _cap in listed)
             declared = (

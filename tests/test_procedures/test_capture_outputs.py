@@ -35,6 +35,7 @@ from cruxible_client.contracts.procedures.capture_outputs import (
     capture_output_descriptors,
     trigger_capture_output,
 )
+from tests.support.capabilities import capability, capability_files
 from tests.support.operation_world import Invoker
 from tests.support.procedures import procedure_limits, procedure_spec
 from tests.test_procedures.test_b2_operations import run_line
@@ -145,6 +146,9 @@ def _paired_world(
             **contract_files(),
             contract_path(request.name, request.version): render_contract(request),
             contract_path(result.name, result.version): render_contract(result),
+            **capability_files(
+                capability("demo.pair", in_=request, out=result, effect="external_read")
+            ),
             **{
                 capture_contract_path(item.identity.name): render_capture_contract(item)
                 for item in (capture_contract, other_contract)
@@ -160,13 +164,7 @@ def _paired_world(
             procedure="test.paired",
             input={},
             output={name: result.fields[name].spelling for name in returned},
-            slots={
-                "pair": {
-                    "in": "demo.pair.request@1",
-                    "out": "demo.pair.result@1",
-                    "effect": "external_read",
-                }
-            },
+            slots={"pair": {"capability": "demo.pair@1"}},
             steps=[
                 CallStep(
                     call="doc",

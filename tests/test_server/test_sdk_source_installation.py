@@ -118,11 +118,21 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
             "fields": {"unit": {"type": "string"}, "station": {"type": "string"}},
         }
     )
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+    from tests.support.capabilities import head_tree, missing_capability_files
+
+    head = head_tree(get_playbill_manager().get(instance_id))
     _accept(
         http,
         instance_id,
         reviewer,
-        {contract_path(fetched.name, fetched.version): render_contract(fetched)},
+        {
+            contract_path(fetched.name, fetched.version): render_contract(fetched),
+            # Unless the instance holds it (base kit).
+            **missing_capability_files(
+                head, ("web.fetch", "web.fetch.request@1", "web.fetch.result@1", "external_read")
+            ),
+        },
         name="fetch-document",
     )
 
@@ -137,13 +147,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         items=100,
     )
 
-    fetch_slot = ProcedureSlot.model_validate(
-        {
-            "in": "web.fetch.request@1",
-            "out": "web.fetch.result@1",
-            "effect": "external_read",
-        }
-    )
+    fetch_slot = ProcedureSlot.model_validate({"capability": "web.fetch@1"})
 
     def sequence(name: str) -> Sequence:
         return Sequence(

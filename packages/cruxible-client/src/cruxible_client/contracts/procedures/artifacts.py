@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from typing import ClassVar, Literal
 
 from pydantic import (
@@ -24,6 +24,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
+from cruxible_client.contracts.capabilities import CapabilityLookup
 from cruxible_client.contracts.captures import CaptureContractAny
 from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
@@ -43,7 +44,6 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     RepeatNode,
 )
-from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
     Contract,
@@ -299,15 +299,21 @@ def evaluate_procedure_law(
     contract_lookup: Callable[[ContractRef], Contract | None] | None = None,
     capture_lookup: Callable[[str], CaptureContractAny | None] | None = None,
     enum_members: EnumResolver | None = None,
+    capability_lookup: CapabilityLookup | None = None,
+    builtin_capabilities: Collection[str] = (),
 ) -> ProcedureLawResult:
-    """Evaluate stable identity, predecessor, and slot signatures.
+    """Evaluate stable identity, predecessor, and slot capabilities.
 
-    ``contracts`` maps each accepted Contract ``(name, version)`` the slots
-    name to its digest; every slot must pin both Contracts exactly, and every
-    extract its row Contract. With ``contract_lookup`` and ``capture_lookup``
-    (candidate Contracts and CaptureContracts by name), each acquiring call's
-    captures must match its slot's out Contract and each extract must read a
-    CaptureContract that declares its decoding. A Procedure never names a
+    Every slot must pin a capability version that ``capability_lookup``
+    resolves at that exact digest (candidate tree first; the capability pins
+    its own two Contracts), and each slotted node must suit its slot's effect.
+    ``contracts`` maps each accepted Contract ``(name, version)`` an extract
+    row or inbox item names to its digest; each must be pinned exactly. With
+    ``contract_lookup`` and ``capture_lookup`` (candidate Contracts and
+    CaptureContracts by name), each acquiring call's captures must match its
+    slot's capability's out Contract and each extract must read a
+    CaptureContract that declares its decoding. ``builtin_capabilities`` are
+    the capability names core's builtin serves. A Procedure never names a
     provider: a Line binds its slots.
     """
 
@@ -347,9 +353,9 @@ def evaluate_procedure_law(
                 "The proposal changes no registered semantic member.",
                 path=path,
             )
-    problem = slot_contract_problem(procedure.definition.slots, contracts or {})
-    if problem is not None:
-        return _refusal("cruxible.procedure.slot_contract_unresolved", problem, path=path)
+    slot_problem = slot_capability_problem(procedure.definition, capability_lookup)
+    if slot_problem is not None:
+        return _refusal(slot_problem[0], slot_problem[1], path=path)
     problem = extract_row_problem(procedure.definition, contracts or {})
     if problem is not None:
         return _refusal("cruxible.procedure.extract_row_unresolved", problem, path=path)
@@ -368,6 +374,8 @@ def evaluate_procedure_law(
             procedure.definition,
             contract_lookup=contract_lookup,
             capture_lookup=capture_lookup,
+            capability_lookup=capability_lookup,
+            builtin_capabilities=builtin_capabilities,
         )
         if found is not None:
             return _refusal(found[0], found[1], path=path)
@@ -445,13 +453,12 @@ def _node_contracts(definition: ProcedureDefinition) -> tuple[tuple[str, str, Co
 
 
 def procedure_contract_refs(definition: ProcedureDefinition) -> tuple[ContractRef, ...]:
-    """Every Contract version the graph pins: slot signatures, extract rows, inbox items."""
+    """Every Contract version the graph pins itself: extract rows and inbox items.
 
-    refs: list[ContractRef] = [
-        ref for slot in definition.slots.values() for ref in (slot.in_, slot.out)
-    ]
-    refs.extend(ref for _label, _node_id, ref in _node_contracts(definition))
-    return tuple(refs)
+    A slot pins a capability, which pins its own two Contracts.
+    """
+
+    return tuple(ref for _label, _node_id, ref in _node_contracts(definition))
 
 
 def extract_row_problem(
@@ -471,22 +478,30 @@ def extract_row_problem(
     return None
 
 
-def slot_contract_problem(
-    slots: Mapping[str, ProcedureSlot], contracts: Mapping[tuple[str, int], str]
-) -> str | None:
-    """Why a slot's Contracts are not pinned to accepted versions, or ``None``."""
+SLOT_CAPABILITY_UNRESOLVED = "cruxible.procedure.slot_capability_unresolved"
+SLOT_EFFECT_MISMATCH = "cruxible.procedure.slot_effect_mismatch"
 
-    for name, slot in slots.items():
-        for side, ref in (("in", slot.in_), ("out", slot.out)):
-            accepted = contracts.get((ref.name, ref.version))
-            if accepted is None:
-                return f"slot {name!r} {side} Contract {ref.spelling} is not accepted"
-            if ref.digest != accepted:
-                return (
-                    f"slot {name!r} {side} Contract {ref.spelling} must pin {accepted}, "
-                    f"not {ref.digest}"
-                )
-    return None
+
+def slot_capability_problem(
+    definition: ProcedureDefinition, capabilities: CapabilityLookup | None
+) -> tuple[str, str] | None:
+    """``(code, message)`` when a slot's capability pin does not resolve exactly, or
+    a slotted node does not suit its slot's effect; else ``None``."""
+
+    effects: dict[str, str] = {}
+    for name, slot in definition.slots.items():
+        pin = slot.capability
+        capability = None if capabilities is None or pin.digest is None else capabilities(pin)
+        if capability is None:
+            stated = "" if pin.digest is None else f" at {pin.digest}"
+            return (
+                SLOT_CAPABILITY_UNRESOLVED,
+                f"slot {name!r} names capability {pin.spelling}{stated}, which is not "
+                "accepted at that exact digest",
+            )
+        effects[name] = capability.effect
+    problem = definition.slot_effect_problem(effects)
+    return None if problem is None else (SLOT_EFFECT_MISMATCH, problem)
 
 
 def acquisition_keys(definition: ProcedureDefinition) -> set[str]:
@@ -516,7 +531,9 @@ __all__ = [
     "procedure_artifact_digest",
     "procedure_contract_refs",
     "procedure_path",
-    "slot_contract_problem",
+    "SLOT_CAPABILITY_UNRESOLVED",
+    "SLOT_EFFECT_MISMATCH",
+    "slot_capability_problem",
     "LineAcquisitionRule",
     "render_procedure",
 ]

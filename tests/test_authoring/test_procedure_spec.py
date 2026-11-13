@@ -64,7 +64,7 @@ def _gt(left, right):
 def test_typed_extra_forbidden_and_no_numeric_coercion():
     with pytest.raises(ValidationError):
         spec(
-            slots={"compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}},
+            slots={"compute": {"capability": "test.compute@1"}},
             steps=[{"call": "result", "slot": "compute", "input": {}, "typo": 1}],
         )
     with pytest.raises(ValidationError):
@@ -305,11 +305,12 @@ def _corpus_resolver(original):
             return None
         if kind == "contract":
             return CORPUS_CONTRACTS.get(value.name)
-        signature = original.definition.slots[value.slot]
+        # The corpus names each slot's capability after its request Contract.
+        capability = original.definition.slots[value.slot].capability
         entry = next(
             entry
             for entry in OPERATIONS.values()
-            if entry["signature"]["in"]["name"] == signature.in_.name
+            if entry["signature"]["in"]["name"] == capability.name + ".request"
         )
         acquiring = bool(getattr(value, "captures", None))
         names = (entry.get("source_view") or entry["output"]) if acquiring else entry["output"]
@@ -349,16 +350,8 @@ def _inventory_import_worked_example():
         procedure="security.inventory-import",
         description=original.definition.description,
         slots={
-            "inventory": {
-                "in": "fixture.workspace.file.request@1",
-                "out": "fixture.workspace.file.result@1",
-                "effect": "external_read",
-            },
-            "parse": {
-                "in": "fixture.security.runtime-inventory.request@1",
-                "out": "fixture.security.runtime-inventory.result@1",
-                "effect": "pure",
-            },
+            "inventory": {"capability": "fixture.workspace.file@1"},
+            "parse": {"capability": "fixture.security.runtime-inventory@1"},
         },
         input={},
         input_contract="security-inventory-import-input@1",
@@ -688,15 +681,7 @@ def test_named_schema_refusals_keep_authored_path_and_nearest_candidate(
     _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="named-candidates")
 
     authored = spec(
-        slots={
-            "read": {
-                "in": "workspace.file.request@1",
-                "out": "workspace.file.result@1",
-                "effect": "external_read",
-            }
-        }
-        if "captures" in step
-        else {},
+        slots={"read": {"capability": "workspace.file@1"}} if "captures" in step else {},
         steps=[step, {"project": "result", "fields": {"value": 1}}],
     )
     result = AuthoringIntentCoordinator.for_instance(instance).compile(
@@ -912,13 +897,7 @@ def test_repeat_bodies_are_typed_calls_and_transforms():
     authored = spec(
         input={},
         output={"value": "string"},
-        slots={
-            "compute": {
-                "in": "test.compute-input@1",
-                "out": "test.compute-output@1",
-                "effect": "pure",
-            }
-        },
+        slots={"compute": {"capability": "test.compute@1"}},
         hard_caps={"repeat_attempts": 3, "provider_calls": 3},
         steps=[
             {
@@ -1112,13 +1091,7 @@ def test_handwritten_slotted_procedure_round_trips_without_provider_selection():
             "procedure": "test.slotted",
             "input": {"value": "int"},
             "output": {"value": "int"},
-            "slots": {
-                "compute": {
-                    "in": "test.compute-input@1",
-                    "out": "test.compute-output@1",
-                    "effect": "pure",
-                }
-            },
+            "slots": {"compute": {"capability": "test.compute@1"}},
             "steps": [
                 {
                     "call": "result",
@@ -1132,9 +1105,8 @@ def test_handwritten_slotted_procedure_round_trips_without_provider_selection():
     lowered = lower_procedure_spec(authored)
     definition = ProcedureDefinition.model_validate(lowered.definition)
     assert tuple(definition.slots) == ("compute",)
-    assert definition.slots["compute"].in_.spelling == "test.compute-input@1"
-    assert definition.slots["compute"].out.spelling == "test.compute-output@1"
-    assert definition.slots["compute"].effect == "pure"
+    assert definition.slots["compute"].capability.spelling == "test.compute@1"
+    assert definition.slots["compute"].may_truncate is False
     original = _stored(lowered)
     restored = decompile_procedure(original)
     assert restored.slots == authored.slots
@@ -1153,13 +1125,7 @@ def test_slots_cannot_stand_in_non_provider_positions():
             {
                 **lower_procedure_spec(spec()).definition,
                 "contract_in": {"slot_name": "compute"},
-                "slots": {
-                    "compute": {
-                        "in": "test.compute-input@1",
-                        "out": "test.compute-output@1",
-                        "effect": "pure",
-                    }
-                },
+                "slots": {"compute": {"capability": "test.compute@1"}},
             }
         )
     locations = {item["loc"] for item in refused.value.errors()}

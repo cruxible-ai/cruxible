@@ -269,13 +269,7 @@ def pair_spec(
         input={},
         output={},
         **({"params": {"within": "list<string{max_len: 512}>{max_items: 64}"}} if within else {}),
-        slots={
-            "fetch": {
-                "in": "workspace.file.request@1",
-                "out": "workspace.file.result@1",
-                "effect": "pure",
-            }
-        },
+        slots={"fetch": {"capability": "workspace.file@1"}},
         hard_caps=procedure_limits(
             provider_calls=1, capture_bytes=4_194_304, items=items or 20_000, wall_clock="PT10M"
         ),

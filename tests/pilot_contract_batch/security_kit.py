@@ -29,6 +29,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from tests.pilot_contract_batch.harness import RUNS, Scenario, Stopwatch
+from tests.pilot_contract_batch.kit_capabilities import accept_kit_capabilities, converted_kit
 
 AFFECTED_BY = "security.component.affected_by"
 OSV_STEP_IDS = ("matched", "affected")
@@ -156,6 +157,17 @@ def start_run(
 
         return wrapper
 
+    def with_capabilities(original: Callable[..., Any]) -> Callable[..., Any]:
+        def wrapper(instance: Any, payload: Any, *, name: str) -> Any:
+            result = original(instance, payload, name=name)
+            if name == "vocabulary":
+                # The pilot's copy of the kit: its slots name capabilities (slots
+                # slice), authored here once every Contract they pin is accepted.
+                accept_kit_capabilities(instance)
+            return result
+
+        return wrapper
+
     def timed_line(original: Callable[..., Any]) -> Callable[..., Any]:
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             with Stopwatch() as watch:
@@ -169,9 +181,11 @@ def start_run(
     gate = kit.start_gate
     sbom = (kit.root / "examples/sboms/log4j-demo-app.cdx.json").read_bytes()
     with (
+        converted_kit(kit),
         _patched(core_support, "initialize_local", timed_open),
         _patched(gate, "kit_world", timed_kit),
         _patched(gate, "submit", timed_submit),
+        _patched(kit.pilot_gate, "submit", with_capabilities),
     ):
         instance = gate.adopted_world(root / "world", sbom)
     with _patched(procedure_runs, "service_run_playbill_line", timed_line):
@@ -249,6 +263,7 @@ def slot_binding_seconds(instance: Any, kit: SimpleNamespace) -> dict[str, float
 
     import statistics
 
+    from cruxible_core.capabilities.lookup import capability_in_projection
     from cruxible_core.providers.operation_index import line_slot_map, resolve_slot_bindings
 
     template = json.loads(kit.template.TEMPLATE.read_text())
@@ -263,7 +278,11 @@ def slot_binding_seconds(instance: Any, kit: SimpleNamespace) -> dict[str, float
 
         for line in lines:
             procedure = typed.source(f"Procedure:{line['procedure_name']}")
-            slots = line_slot_map(procedure.definition, child)
+            slots = line_slot_map(
+                procedure.definition,
+                child,
+                lambda ref: capability_in_projection(projection, ref),
+            )
             for slot, reference in sorted(line["bindings"].items()):
                 samples = []
                 for _ in range(RUNS):

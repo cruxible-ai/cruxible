@@ -5,6 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from cruxible_client.contracts.capabilities import (
+    Capability,
+    capability_pin,
+    tree_capability_resolver,
+)
 from cruxible_client.contracts.captures import capture_components
 from cruxible_client.contracts.procedures.authored import (
     CallStep,
@@ -14,11 +19,8 @@ from cruxible_client.contracts.procedures.authored import (
     refuse_closed_steps,
 )
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
-from cruxible_client.contracts.provider_operations import (
-    operation_signature_digest,
-)
 from cruxible_client.contracts.shapes import Contract, ContractRef, contract_digest
-from cruxible_client.contracts.workspace_file import is_workspace_file_signature
+from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
 from cruxible_core.indexes.evaluated_state import EvaluationRows
 
 
@@ -29,11 +31,13 @@ def resolve_procedure_spec(
     spec: ProcedureSpec,
     candidate_paths: tuple[str, ...],
 ) -> Any:
-    """Resolve only named artifacts and the slot Contracts a Procedure pins.
+    """Resolve only named artifacts and the slot capabilities a Procedure pins.
 
-    A Procedure names no provider: a slot is its signature, pinned here to the
-    exact accepted Contract versions; a Line binds it. A step outside the
-    Procedure template is refused first, for every Procedure (D-R37 h1).
+    A Procedure names no provider: a slot names one capability version, pinned
+    here to its exact digest in ``tree`` (the base plus this change set), and a
+    call step is typed against that capability's request and result Contracts;
+    a Line binds the slot. A step outside the Procedure template is refused
+    first, for every Procedure (D-R37 h1).
     """
     refuse_closed_steps(spec)
     with instance.bind_accepted_projection(base) as projection:
@@ -83,25 +87,41 @@ def resolve_procedure_spec(
                 )
             return value
 
-        def pinned(slot: ProcedureSlot, path: str) -> ProcedureSlot:
-            pins = {}
-            for side, ref in (("in", slot.in_), ("out", slot.out)):
-                digest = contract_digest(contract(ref, f"{path}.{side}")).tagged
-                if ref.digest is not None and ref.digest != digest:
-                    raise ProcedureSpecError(
-                        "artifact_reference_unresolved",
-                        f"{path}.{side}",
-                        f"{ref.spelling} pins {ref.digest}; the accepted version is {digest}",
-                    )
-                pins[side] = ref.model_copy(update={"digest": digest})
-            return ProcedureSlot.model_validate(
-                {
-                    "in": pins["in"],
-                    "out": pins["out"],
-                    "effect": slot.effect,
-                    "may_truncate": slot.may_truncate,
-                }
+        capability_at = tree_capability_resolver(tree)
+
+        def slot_capability(name: str, slot: ProcedureSlot) -> Capability:
+            """The capability ``slot`` names, at the base or in this change set."""
+
+            path = f"$.slots.{name}.capability"
+            ref = slot.capability
+            found = capability_at(ref.model_copy(update={"digest": None}))
+            if found is None:
+                raise ProcedureSpecError(
+                    "slot_capability_unresolved",
+                    path,
+                    f"Slot {name!r} names capability {ref.spelling}, which is not accepted "
+                    "at the base or authored in this change set.",
+                    repair=f"Author capability {ref.spelling} first (or in the same change "
+                    "set), or name an accepted capability version.",
+                )
+            digest = capability_pin(found).digest
+            if ref.digest is not None and ref.digest != digest:
+                raise ProcedureSpecError(
+                    "slot_capability_digest_mismatch",
+                    path,
+                    f"Slot {name!r} pins capability {ref.spelling} at {ref.digest}; the "
+                    f"accepted version is {digest}.",
+                    repair="Name the capability as name@N without a digest; authoring pins it.",
+                )
+            return found
+
+        def pinned(name: str, slot: ProcedureSlot) -> ProcedureSlot:
+            return slot.model_copy(
+                update={"capability": capability_pin(slot_capability(name, slot))}
             )
+
+        def slot_name_of(slot: ProcedureSlot) -> str:
+            return next(key for key, value in spec.slots.items() if value is slot)
 
         def resolve_ref(ref: ContractRef) -> Contract | None:
             from cruxible_client.contracts.shapes import contract_identity
@@ -151,7 +171,7 @@ def resolve_procedure_spec(
                 return {"output": claim_view_contract(shape).fields, "subject_kind": subject_kind}
             if kind == "slot":
                 assert isinstance(name, ProcedureSlot)
-                return pinned(name, "$.slots")
+                return pinned(slot_name_of(name), name)
             if kind == "extract_row":
                 from cruxible_client.contracts.shapes import parse_contract_ref
 
@@ -179,15 +199,16 @@ def resolve_procedure_spec(
                 else []
             )
             capture = captures[0] if len(captures) == 1 else None
-            slot = pinned(spec.slots[step.slot], "$.slots." + step.slot)
-            input_view: Contract | None = contract(slot.in_, authored_path)
-            output_view = contract(slot.out, authored_path)
+            slot = spec.slots[step.slot]
+            capability = slot_capability(step.slot, slot)
+            input_view: Contract | None = contract(capability.in_, authored_path)
+            output_view = contract(capability.out, authored_path)
             request_defaults: dict[str, Any] = {}
             output_fields: Any = output_view.fields
-            output_contract: Any = dict(contract(slot.out, authored_path).fields)
-            workspace_source = acquiring and is_workspace_file_signature(
-                operation_signature_digest(slot)
-            )
+            output_contract: Any = dict(output_view.fields)
+            # Provisional builtin recognition: by capability name. Glob reads keep
+            # today's request handling until the file-read slice moves them.
+            workspace_source = acquiring and slot.capability.name in BUILTIN_CAPABILITY_NAMES
             from cruxible_client.contracts.procedures.capture_outputs import CAPTURE_FIELD
             from cruxible_client.contracts.shapes import (
                 ANY_CAPTURE_KIND,
@@ -210,7 +231,7 @@ def resolve_procedure_spec(
                 )
                 from cruxible_client.contracts.shapes import ListType
 
-                out_view = contract(slot.out, authored_path)
+                out_view = output_view
                 listed = capture_list_fields(out_view)
                 if not capture_fields(out_view) and not listed:
                     # The operation returns one Capture as its whole output: the

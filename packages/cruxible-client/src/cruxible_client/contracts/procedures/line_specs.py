@@ -28,6 +28,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
+from cruxible_client.contracts.capabilities import CapabilityLookup, capability_slot_signature
 from cruxible_client.contracts.claim_evidence import FindingKind
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
@@ -45,6 +46,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     ProcedureHardCaps,
 )
+from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.procedures.trigger_rules import (
     validate_trigger_input,
 )
@@ -334,13 +336,13 @@ def ephemeral_line_spec_digest(spec: EphemeralLineSpec) -> str:
     ).tagged
 
 
-def line_slot_signatures(
+def line_slots(
     definition: ProcedureDefinition,
     *,
     child: Mapping[str, ProcedureDefinition] | None = None,
     prefix: str = "",
     depth: int = 0,
-) -> dict[str, OperationSignature]:
+) -> dict[str, ProcedureSlot]:
     """Every slot a Line must bind: this Procedure's, then each invoked child's.
 
     ``child`` maps an invoke node path (``a``, ``a.b``) to the definition it
@@ -351,7 +353,7 @@ def line_slot_signatures(
 
     if depth > 16:
         raise ValueError("invoked Procedures nest too deeply to bind")
-    found: dict[str, OperationSignature] = {
+    found: dict[str, ProcedureSlot] = {
         prefix + name: slot for name, slot in definition.slots.items()
     }
     for node in definition.nodes:
@@ -360,10 +362,66 @@ def line_slot_signatures(
             nested = (child or {}).get(path)
             if nested is None:
                 raise ValueError(f"invoked Procedure at {path!r} is unavailable for binding")
-            found.update(
-                line_slot_signatures(nested, child=child, prefix=path + ".", depth=depth + 1)
-            )
+            found.update(line_slots(nested, child=child, prefix=path + ".", depth=depth + 1))
     return found
+
+
+class SlotCapabilityUnresolved(ValueError):
+    """A slot's capability pin does not resolve where the slot is being bound."""
+
+    code = "cruxible.procedure.slot_capability_unresolved"
+
+
+# PROVISIONAL (contract batch, slots slice): the binding slice replaces this
+# function with binding by capability and fit (note §2.2, §2.4). Until then a
+# Line binds a slot by the exact ``(in, out, effect)`` signature today's index
+# keys, derived here from the slot's capability. Every binding path (Line
+# authoring and acceptance, direct runs, run admission, the kit default-provider
+# check) reaches the slot's signature through this one function.
+def provisional_slot_signatures(
+    slots: Mapping[str, ProcedureSlot],
+    capabilities: CapabilityLookup,
+    *,
+    builtin: Mapping[str, OperationSignature],
+) -> dict[str, OperationSignature]:
+    """Each slot's derived signature (its capability's ``in``, ``out`` and ``effect``).
+
+    ``builtin`` maps each capability name core's builtin serves to the builtin
+    operation's own signature: such a slot binds by name (note §7.4.7), so its key
+    is the builtin's whatever Contracts the capability's own version pins (the
+    base kit's ``workspace.file`` request is the authored one, not the handoff).
+    Raises :class:`SlotCapabilityUnresolved` naming the slot when its pinned
+    capability does not resolve through ``capabilities``.
+    """
+
+    found: dict[str, OperationSignature] = {}
+    for name, slot in slots.items():
+        served = builtin.get(slot.capability.name)
+        if served is not None:
+            found[name] = served
+            continue
+        signature = capability_slot_signature(slot, capabilities)
+        if signature is None:
+            raise SlotCapabilityUnresolved(
+                f"slot {name!r} names capability {slot.capability.spelling}, which is not "
+                "accepted here at its pinned digest"
+            )
+        found[name] = signature
+    return found
+
+
+def line_slot_signatures(
+    definition: ProcedureDefinition,
+    *,
+    capabilities: CapabilityLookup,
+    builtin: Mapping[str, OperationSignature],
+    child: Mapping[str, ProcedureDefinition] | None = None,
+) -> dict[str, OperationSignature]:
+    """Every slot a Line must bind (:func:`line_slots`), with its derived signature."""
+
+    return provisional_slot_signatures(
+        line_slots(definition, child=child), capabilities, builtin=builtin
+    )
 
 
 def line_capture_outputs(
@@ -375,7 +433,7 @@ def line_capture_outputs(
 
     The Procedure's own are ``<alias>.<field>``; an invoked child's are keyed
     ``<invoke node path>.<alias>.<field>`` (``child`` maps each invoke node
-    path to the definition it invokes, as for :func:`line_slot_signatures`).
+    path to the definition it invokes, as for :func:`line_slots`).
     """
 
     from cruxible_client.contracts.procedures.artifacts import acquisition_keys
@@ -545,7 +603,7 @@ def evaluate_line_spec_law(
             return _refusal("cruxible.line.parameters_invalid", str(exc), path=path)
     binding_problem = line_binding_problem(
         line.bindings,
-        slots=slots if slots is not None else dict(definition.slots),
+        slots=_law_slots(slots, definition),
         providers=providers or {},
     )
     if binding_problem is not None:
@@ -619,6 +677,23 @@ def evaluate_line_spec_law(
     )
 
 
+def _law_slots(
+    slots: Mapping[str, OperationSignature] | None, definition: ProcedureDefinition
+) -> Mapping[str, OperationSignature]:
+    """The slots the law checks: as given, or none for a Procedure that declares none.
+
+    A slot's signature comes from its capability, which only the caller can
+    resolve (:func:`line_slot_signatures`); omitting ``slots`` is valid only for
+    a Procedure with no slots.
+    """
+
+    if slots is not None:
+        return slots
+    if definition.slots:
+        raise ValueError("a Line over a slotted Procedure is judged with its slot signatures")
+    return {}
+
+
 def bound_operation_of(
     binding: LineBinding, providers: Mapping[str, AcceptedProvider]
 ) -> ProviderOperation | None:
@@ -688,6 +763,9 @@ __all__ = [
     "ephemeral_line_spec_digest",
     "line_binding_problem",
     "line_slot_signatures",
+    "line_slots",
+    "provisional_slot_signatures",
+    "SlotCapabilityUnresolved",
     "AcceptedLineSpec",
     "LineAuthority",
     "LineSpec",

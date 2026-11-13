@@ -406,10 +406,12 @@ def declare_boundaries(*contracts: Contract) -> tuple[Contract, ...]:
 
 
 def procedure_members(procedure: Any) -> dict[str, bytes]:
-    """A Procedure's tree file and each declared governed Contract its boundaries name."""
+    """A Procedure's tree file, each declared governed Contract its boundaries name, and
+    each declared fixture capability its slots name."""
 
     from cruxible_client.contracts.procedures.artifacts import render_procedure
     from cruxible_core.procedures.reference_binding import authored_procedure
+    from tests.support.capabilities import capability_files, declared_capability
 
     artifact = (
         procedure if isinstance(procedure, ProcedureArtifact) else authored_procedure(procedure)
@@ -426,7 +428,13 @@ def procedure_members(procedure: Any) -> dict[str, bytes]:
             continue
         declared[identity] = _DECLARED[identity]
         pending.extend(ref.identity for ref in declared[identity].refs())
+    capabilities = [
+        found[0]
+        for slot in definition.slots.values()
+        if (found := declared_capability(slot.capability.identity)) is not None
+    ]
     return {
+        **capability_files(*capabilities),
         procedure_path(artifact.identity.name): render_procedure(artifact),
         **contract_files(*declared.values()),
     }
@@ -564,6 +572,11 @@ def bind_fixture(
             found = lookup(identity)
             if found is not None:
                 return found
+        from tests.support.capabilities import declared_capability
+
+        capability = declared_capability(identity)
+        if capability is not None:
+            return capability
         declared = _DECLARED.get(identity)
         if declared is not None and identity.qualified not in digests:
             return declared, contract_digest(declared).tagged

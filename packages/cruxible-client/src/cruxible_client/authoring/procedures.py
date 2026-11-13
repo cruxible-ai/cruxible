@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.authoring.inputs import ProcedureInput
+from cruxible_client.contracts.capabilities import Capability
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
 )
@@ -260,7 +261,7 @@ class ProcedurePreview(BaseModel):
     returns: str | None = None
     errors: tuple[CompositionDiagnostic, ...] = ()
     pending_checks: tuple[str, ...] = (
-        "Resolve accepted references and pin slot Contracts at the intent base.",
+        "Resolve accepted references and pin slot capabilities at the intent base.",
         "Validate runtime values against contracts; preview does not execute any path.",
         "Check authority, installation availability and effective policy budgets at admission.",
     )
@@ -279,11 +280,12 @@ def _contract_fields(contract: Contract | None) -> tuple[str, ...] | None:
 class Sequence:
     """Build one ProcedureSpec, step by step, with typed handles and predicates.
 
-    ``slots`` declares each slot's ``{in, out, effect}`` signature; a Line binds
-    it. ``contracts`` optionally supplies accepted Contracts by ``name@N`` (a
-    slot's out Contract) so call handles check their field names; without one,
-    a call's fields are checked at prepare. ``hard_caps`` is the most any run
-    may use; the operating budget is the Line's.
+    ``slots`` names each slot's capability, ``{"capability": "name@N"}`` (plus
+    ``may_truncate``); authoring pins it and a Line binds it. ``capabilities``
+    and ``contracts`` optionally supply accepted capabilities and Contracts by
+    ``name@N`` (a slot's capability and its out Contract) so call handles check
+    their field names; without them, a call's fields are checked at prepare.
+    ``hard_caps`` is the most any run may use; the operating budget is the Line's.
     """
 
     def __init__(
@@ -294,6 +296,7 @@ class Sequence:
         params: Mapping[str, FieldType | str] | None = None,
         output: Mapping[str, FieldType | str] | None = None,
         slots: Mapping[str, ProcedureSlot | Mapping[str, object]] | None = None,
+        capabilities: Mapping[str, Capability] | None = None,
         contracts: Mapping[str, Contract] | None = None,
         description: str | None = None,
         activation: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot",
@@ -306,6 +309,7 @@ class Sequence:
         self._slots = {
             name: ProcedureSlot.model_validate(slot) for name, slot in (slots or {}).items()
         }
+        self._capabilities = dict(capabilities or {})
         self._contracts = dict(contracts or {})
         self._description = description
         self._activation = activation
@@ -382,8 +386,11 @@ class Sequence:
             id=id,
             next=next,
         )
-        signature = self._slots.get(slot)
-        out = None if signature is None else self._contracts.get(signature.out.spelling)
+        declared = self._slots.get(slot)
+        capability = (
+            None if declared is None else self._capabilities.get(declared.capability.spelling)
+        )
+        out = None if capability is None else self._contracts.get(capability.out.spelling)
         return self._add(step, name, _contract_fields(out))
 
     def extract(

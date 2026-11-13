@@ -34,13 +34,23 @@ BUILTIN_CAPABILITY_NAMES: Final = frozenset({WORKSPACE_FILE_BUILTIN, "workspace.
 
 
 def capability_pins(capability: Capability) -> tuple[ArtifactPin, ...]:
-    """The capability's exact pins on its two Contracts (an accepted capability pins both)."""
+    """The capability's exact pins on its Contracts: one per distinct Contract version.
 
-    return tuple(
-        ArtifactPin(role=role, target=ref.identity, artifact_digest=ref.digest)
-        for role, ref in zip(CAPABILITY_CONTRACT_PIN_ROLES, capability.contract_refs(), strict=True)
-        if ref.digest is not None
-    )
+    The request pin comes first. A capability whose request and result are the
+    same Contract pins it once, as ``contract-in``: the projection keeps one pin
+    row per (source, target) and the dependency closure must name the same edges
+    the projection does, or a later generation's replay diverges. The projection
+    and the closure both take their pins from here.
+    """
+
+    pins: dict[str, ArtifactPin] = {}
+    for role, ref in zip(CAPABILITY_CONTRACT_PIN_ROLES, capability.contract_refs(), strict=True):
+        if ref.digest is not None:
+            pins.setdefault(
+                ref.identity.qualified,
+                ArtifactPin(role=role, target=ref.identity, artifact_digest=ref.digest),
+            )
+    return tuple(pins.values())
 
 
 def bundled_version_problems(capability: Capability) -> tuple[LawProblem, ...]:

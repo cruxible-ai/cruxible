@@ -52,7 +52,9 @@ def _predicate(alias: str) -> Predicate:
 
 
 def _slot_signature(*, effect: str = "external_mutation") -> dict[str, object]:
-    return {"in": "test.worker-input@1", "out": "test.worker-output@1", "effect": effect}
+    """A slot naming a worker capability; its effect is the capability's, checked by the law."""
+
+    return {"capability": f"test.worker-{effect.replace('_', '-')}@1"}
 
 
 def _definition(

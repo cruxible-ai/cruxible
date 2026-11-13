@@ -120,16 +120,8 @@ def sbom_pairs_spec() -> Any:
         input={},
         output={},
         slots={
-            "read": {
-                "in": "workspace.file.request@1",
-                "out": "workspace.file.result@1",
-                "effect": "pure",
-            },
-            "derive": {
-                "in": "test.sbom-derive.request@1",
-                "out": "web.fetch.result@1",
-                "effect": "pure",
-            },
+            "read": {"capability": "workspace.file@1"},
+            "derive": {"capability": "test.sbom-derive@1"},
         },
         hard_caps=procedure_limits(provider_calls=2, capture_bytes=2_097_152),
         steps=[

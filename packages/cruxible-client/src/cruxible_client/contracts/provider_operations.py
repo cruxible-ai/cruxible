@@ -6,12 +6,13 @@ build is accepted), its effect, the typed refusals it may return, an optional
 enumeration declaration (recorded, never verified), and the package
 entrypoint that serves it.
 
-A Procedure never names a provider. Its calling nodes name a **slot**, and the
-Procedure declares each slot's signature ``{in, out, effect}``. A Line binds
-every slot to one exact ``{build, operation}`` when it is accepted; runs use
-that binding as given. The signature index maps ``(in, out, effect)`` to the
-live ``(build, operation)`` pairs that serve it, so fitting a slot is one
-lookup.
+A Procedure never names a provider. Its calling nodes name a **slot**, and each
+slot names one capability version
+(:class:`~cruxible_client.contracts.capabilities.CapabilitySlot`); the slot's
+signature ``{in, out, effect}`` is the capability's. A Line binds every slot to
+one exact ``{build, operation}`` when it is accepted; runs use that binding as
+given. The signature index maps ``(in, out, effect)`` to the live
+``(build, operation)`` pairs that serve it, so fitting a slot is one lookup.
 
 ``validate_operation_value`` checks one value against an operation Contract:
 the value must be exactly the Contract's shape (no undeclared keys, every
@@ -216,12 +217,6 @@ def validate_operations(operations: tuple[ProviderOperation, ...]) -> tuple[Prov
     if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
         raise ValueError("provider operations must be sorted by name and unique")
     return operations
-
-
-class ProcedureSlot(OperationSignature):
-    """One binding point a Procedure declares: the signature its operation must serve."""
-
-    may_truncate: bool = False
 
 
 def validate_slot_name(value: str) -> str:
@@ -705,7 +700,6 @@ __all__ = [
     "OperationRefusal",
     "OperationSignature",
     "OperationValueRefused",
-    "ProcedureSlot",
     "ProviderOperation",
     "binding_pin",
     "capture_fields",

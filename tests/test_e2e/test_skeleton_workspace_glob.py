@@ -52,13 +52,7 @@ def glob_spec(*, glob: str = "inventories/*.json", max_files: int = 100) -> Any:
         reference_text=True,
         input={},
         output={},
-        slots={
-            "read": {
-                "in": "workspace.file.request@1",
-                "out": "workspace.file.result@1",
-                "effect": "pure",
-            }
-        },
+        slots={"read": {"capability": "workspace.file@1"}},
         hard_caps=procedure_limits(provider_calls=64, capture_bytes=4_194_304, read_rows=500),
         steps=[
             {"read": "held", "query": EVERY},

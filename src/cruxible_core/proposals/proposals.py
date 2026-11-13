@@ -56,6 +56,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.capture_erasure import RecordedCaptureErasure
+from cruxible_client.contracts.capture_layouts import LAYOUT_REF_UNRESOLVED
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
     CaptureContractV1,
@@ -2045,6 +2046,9 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
                     ),
                 )
             )
+    from cruxible_client.contracts.capabilities import tree_capability_resolver
+    from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
+
     law = evaluate_procedure_law(
         procedure,
         path=context.path,
@@ -2055,6 +2059,8 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
         contract_lookup=candidate_contract,
         capture_lookup=candidate_capture_contract,
         enum_members=tree_enum_resolver(context.candidate_tree),
+        capability_lookup=tree_capability_resolver(context.candidate_tree),
+        builtin_capabilities=BUILTIN_CAPABILITY_NAMES,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -2216,11 +2222,20 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
         accepted = context.resolved.procedures.get(identity.qualified)
         return None if accepted is None else accepted.procedure.definition
 
+    from cruxible_client.contracts.capabilities import tree_capability_resolver
+    from cruxible_client.contracts.procedures.line_specs import SlotCapabilityUnresolved
+
     try:
-        slots = line_slot_map(accepted_procedure.procedure.definition, child)
+        slots = line_slot_map(
+            accepted_procedure.procedure.definition,
+            child,
+            tree_capability_resolver(context.candidate_tree),
+        )
         capture_outputs = line_capture_output_map(accepted_procedure.procedure.definition, child)
     except RequestRefusedError as exc:
         return _MemberVerdict(diagnostics=(_diagnostic(exc.error_code, str(exc), context.path),))
+    except SlotCapabilityUnresolved as exc:
+        return _MemberVerdict(diagnostics=(_diagnostic(exc.code, str(exc), context.path),))
     law = evaluate_line_spec_law(
         line,
         path=context.path,
@@ -3264,6 +3279,48 @@ def _capture_contract_dependents(
     return tuple(sorted(stranded, key=lambda item: item.encode("utf-8")))
 
 
+def _candidate_pinned_contract(context: _MemberContext, ref: Any) -> Any:
+    """The candidate Contract ``ref`` names, at its pinned digest when it pins one."""
+
+    from cruxible_client.contracts.shapes import contract_digest
+
+    found = _candidate_contract(context, f"{ref.name}/v{ref.version}")
+    if found is None or (ref.digest is not None and contract_digest(found).tagged != ref.digest):
+        return None
+    return found
+
+
+def _candidate_capture_kind_exists(context: _MemberContext, name: str) -> bool:
+    from cruxible_client.contracts.captures import capture_contract_path
+
+    try:
+        return capture_contract_path(name) in context.candidate_tree
+    except CaptureFormatError:
+        return False
+
+
+def _layout_key_problems(context: _MemberContext, layout: Any) -> tuple[str, ...]:
+    """Every key type a layout rule states names a live keyed SubjectKind (and its part).
+
+    Every effective rule is read: header fields, record key parts and record
+    field rules, with key types nested in lists and field results. Each is
+    judged by the rule a Contract field's key type follows
+    (``cruxible.contract.key_kind_invalid``), through direct candidate-tree
+    reads: O(rules), never a scan.
+    """
+
+    from cruxible_client.contracts.capture_layouts import layout_rule_types
+    from cruxible_client.contracts.shapes import key_type_problem, key_types
+
+    problems: list[str] = []
+    for entry, field_type in layout_rule_types(layout):
+        for found in key_types(field_type):
+            problem = key_type_problem(found, context.candidate_tree.get)
+            if problem is not None:
+                problems.append(f"{entry}: {problem}")
+    return tuple(dict.fromkeys(problems))
+
+
 def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
     contract = parse_capture_contract(context.content, path=context.path)
     if (
@@ -3285,9 +3342,21 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
         contract,
         path=context.path,
         predecessor=predecessor,
+        contract_lookup=lambda ref: _candidate_pinned_contract(context, ref),
+        capture_kind_exists=lambda name: _candidate_capture_kind_exists(context, name),
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    layout = getattr(contract, "layout", None)
+    if layout is not None and contract.lifecycle.state == "live":
+        key_problems = _layout_key_problems(context, layout)
+        if key_problems:
+            return _MemberVerdict(
+                diagnostics=tuple(
+                    _diagnostic(LAYOUT_REF_UNRESOLVED, message, context.path)
+                    for message in key_problems
+                )
+            )
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted CaptureContract law result is incomplete")
     if predecessor is not None:
