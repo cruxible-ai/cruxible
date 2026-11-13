@@ -11,11 +11,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "provider repository offers."
     ),
     "cruxible_provider_install": (
-        "Use when you want to install a provider package by name (from the configured "
-        "repository or the provider index) and register its definitions. The registration "
-        "lands at once when the approval policy requires no approval, otherwise it stops at "
-        "proposed (awaiting_approval). Requires admin permission; installation grants no "
-        "execution permissions."
+        "Install a provider package by name (from the configured repository or the provider "
+        "index) and register its definitions, landing at once when the approval policy "
+        "requires no approval, otherwise stopping at awaiting_approval. Admin only; "
+        "installation grants no execution permission."
     ),
     "cruxible_provider_retire": (
         "Retire an exact provider build when no live definition pins it. Preview by default; "
@@ -35,39 +34,33 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "kit's default provider, installed by name only where nothing implements it."
     ),
     "cruxible_kit_status": (
-        "Use when you need the installed kits, the kit paths edited since install, what was "
-        "kept on purpose, and (for registry kits) the latest available version."
+        "List the installed kits, the kit paths edited since install, what was kept on "
+        "purpose, and (for registry kits) the latest available version."
     ),
     "cruxible_kit_add": (
-        "Use when you want to install or upgrade a kit. It always proposes: a definition "
-        "held differently takes the release's version unless "
-        "kept (keep, keep_local_edits); the plan says what each change does and counts "
-        "dependents. It lands at once when the approval policy requires no approval. A kit "
-        "bundling provider packages installs them first (admin; a commit stages their files), "
-        "and a default provider by name unless something here implements it (satisfied), "
-        "then proposes the definitions; an install awaiting approval stops at "
-        "awaiting_providers, and its activation proposes them on their own. Every Line "
-        "bound to another build of a shipped provider moves to that exact build; "
-        "keep_build opts out by Line identity. The preview lists re-pins, disabled "
-        "Line successors and propose-only Mandates; Triggers stay unchanged. "
-        "Old builds stay installed."
+        "Install or upgrade a kit. It always proposes, landing at once when the approval "
+        "policy requires no approval. A definition held differently takes the release's "
+        "version unless kept (keep, keep_local_edits); the plan says what each change does "
+        "and counts dependents. Bundled provider packages install first (admin; a commit "
+        "stages their files), and a default provider by name unless something here "
+        "implements it (satisfied); an install awaiting approval stops at awaiting_providers "
+        "and its activation proposes the definitions. Lines bound to another build of a "
+        "shipped provider move to that build unless kept (keep_build). The preview lists "
+        "re-pins, disabled Line successors and propose-only Mandates; Triggers stay "
+        "unchanged. Old builds stay installed."
     ),
     "cruxible_kit_remove": (
         "Use when you want to retire what a kit installed. It lands at once when the approval "
         "policy requires no approval; live Claims that depend on those definitions block it."
     ),
-    "cruxible_server_info": (
-        "Use when you need adapter and daemon versions with state, auth, and host metadata."
-    ),
+    "cruxible_server_info": ("Adapter and daemon versions with state, auth, and host metadata."),
     "cruxible_body_store": (
         "Use when you need to store exact Document bytes inertly before proposing them."
     ),
     "cruxible_document_propose": (
         "Use when you need to propose a governed Document create or supersession."
     ),
-    "cruxible_proposal_review": (
-        "Use when you need a structured candidate review and permission-filtered diff."
-    ),
+    "cruxible_proposal_review": ("A structured candidate review and permission-filtered diff."),
     "cruxible_proposal_approve_prepare": (
         "Use when a client-held signer needs the exact immutable approval statement."
     ),
@@ -90,16 +83,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "predicates (type, enum members, accepted evidence), artifact counts, named queries, "
         "Claims by status, whether you can author, what needs attention, and runnable next "
         "calls. Pass kind for one kind in full with sample Subject IDs, or section to page "
-        "documents, procedures, claim_types, queries, interfaces, principals, policies, or an "
-        "operational family (runs, lines, captures, ...)."
+        "one family."
     ),
     "cruxible_whoami": (
-        "Use when you need which instance this server acts on, who you are there, and "
-        "whether you can author (and the repair when not)."
+        "Which instance this server acts on, who you are there, and whether you can "
+        "author (and the repair when not)."
     ),
     "cruxible_proposal_list": (
-        "Use when you need to find open proposals or inspect terminal proposal outcomes. "
-        "Returns one page (default limit 50); when truncated, pass next_cursor back as cursor."
+        "Find open proposals or inspect terminal outcomes, one page at a time (default "
+        "limit 50); when truncated, pass next_cursor back as cursor."
     ),
     "cruxible_proposal_readmit": (
         "Use when a stale proposal should be re-admitted against the current coordinate."
@@ -182,7 +174,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need a complete binding check of an existing authoring intent."
     ),
     "cruxible_next": (
-        "Use when you need what to work on next: ranked repair work, conflicts, and stale "
+        "What to work on next: ranked repair work, conflicts, and stale "
         "evidence, each with its exact next operation."
     ),
     "cruxible_authoring_submit": (
@@ -239,14 +231,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "section. Section rows say drift: changed_since_cited, unchanged or unknown."
     ),
     "cruxible_get": (
-        "Use when you have a reference to one thing -- a Claim id or prefix, kind/id, a "
-        "predicate, ClaimType:/Document:/Procedure:/query:/Trigger:/Principal:/"
-        "Provider:NAME[/BUILD]/Contract:<name>/v<N>, "
-        "ApprovalPolicy:instance, "
-        "ProcedureRuntimePolicy:instance, or a proposal id -- and want its values. detail: summary "
-        "(default card), evidence, why, history, incoming, runs, backlinks (notes, "
-        "Documents and cited sections pointing at a Subject; guidance Documents of a "
-        "ClaimType or Procedure), proof (full envelope), body (Document bytes by range). "
+        "Use when you have a reference to one thing (any form ref lists, or Trigger:/"
+        "Principal:/Provider:NAME[/BUILD], ApprovalPolicy:instance, "
+        "ProcedureRuntimePolicy:instance) and want its values. detail: summary "
+        "(default card), evidence, why, history, incoming, runs, backlinks (what points at "
+        "a Subject, ClaimType or Procedure), proof (full envelope), body (Document bytes by "
+        "range). "
         "A wrong name refuses with the nearest names."
     ),
     "cruxible_query": (
@@ -387,9 +377,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Beta curation (detection only with an authored curation-detect Trigger). "
         "Lift a suppression on an item, so what it hid is listed again."
     ),
-    "cruxible_since": (
-        "Use when you need the exact accepted ChangeSet members after a known generation."
-    ),
+    "cruxible_since": ("The exact accepted ChangeSet members after a known generation."),
     "cruxible_floor_export": (
         "Use when you need the accepted floor as greppable files: return the bytes, write "
         "them to the workspace, or check that copy's status."
