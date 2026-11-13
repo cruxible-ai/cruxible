@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, NoReturn, TypeVar, cast
+from typing import TYPE_CHECKING, Any, NoReturn, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -210,9 +210,12 @@ def _validate_absence_bindings(
     ]
     if not selected:
         return
+    from cruxible_client.contracts.captures import capture_contract_path, parse_capture_contract
     from cruxible_client.contracts.procedures.artifacts import parse_procedure
-    from cruxible_client.contracts.procedures.models import ClaimsNode, ExtractNode
+    from cruxible_client.contracts.procedures.extract import ExtractNode
+    from cruxible_client.contracts.procedures.models import ClaimsNode
     from cruxible_core.procedures.claims_terminal import _receipt_extract_digest
+    from cruxible_core.procedures.extract import extract_specs
 
     content = instance.blob_at(admission.bound_coordinate.git_oid, admission.procedure_path)
     procedure = None if content is None else parse_procedure(content, path=admission.procedure_path)
@@ -232,11 +235,18 @@ def _validate_absence_bindings(
         refuse()
     from cruxible_core.procedures.claims_typing import ClaimsTypingRefused, absence_enumeration
 
+    def kind_of(reference: Any) -> Any:
+        # The kind as accepted at the run's bound coordinate: one path read.
+        path = capture_contract_path(reference.target.name)
+        found = instance.blob_at(admission.bound_coordinate.git_oid, path)
+        return None if found is None else parse_capture_contract(found, path=path)
+
+    extracting: ExtractNode | None
     try:
-        extracting: ExtractNode | None = absence_enumeration(
-            node, {getattr(n, "as_", None): n for n in nodes}
+        extracting = extract_specs(nodes, kind_of)(
+            absence_enumeration(node, {getattr(n, "as_", None): n for n in nodes})
         )
-    except ClaimsTypingRefused:
+    except (ClaimsTypingRefused, ValueError):
         extracting = None
     for item, change, receipt in selected:
         witness = (

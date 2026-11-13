@@ -6273,7 +6273,7 @@ def get_by_ref(
 
     REF is any reference form: CLM-... (or a unique prefix), kind/id, a predicate,
     ClaimType:/Document:/Procedure:/query:/CaptureContract:<name>, Provider:NAME
-    or Provider:NAME/BUILD, an artifact
+    or Provider:NAME/BUILD, Contract:/Capability:<name>[@N], an artifact
     path, a proposal id or prefix, or an operational reference: Line:<name> (or
     the Line identity digest next names), CAP-<12+ hex> or Capture:<digest>,
     ResolutionContract:<name>, Mandate:<name>.
@@ -6501,7 +6501,9 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
     """
 
     if result.card is not None:
-        card = result.card.model_dump(mode="json", by_alias=result.kind == "procedure")
+        card = result.card.model_dump(
+            mode="json", by_alias=result.kind in {"procedure", "capability"}
+        )
         if isinstance(card.get("evidence"), list):
             card["evidence"] = [_public_name(str(name)) for name in card["evidence"]]
         for rule in card.get("evidence_rules") or ():
@@ -10239,6 +10241,10 @@ def _render_orient(result: Mapping[str, Any]) -> str:
             )
             if row.get("description"):
                 lines.append(f"  {row['description']}")
+    if section == "capabilities":
+        for row in result["capabilities"]:
+            lines.append(f"{row['capability']}  {row['effect']}  {row['in']} -> {row['out']}")
+            lines.append(f"  {row['description']}")
     if section == "subject_kinds":
         for row in result["subject_kinds"]:
             rule = (

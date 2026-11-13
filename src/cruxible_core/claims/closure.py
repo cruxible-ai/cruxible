@@ -137,6 +137,7 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
         "query-definition",
         "exhaust-promotion",
         "contract",
+        "capability",
     ]
     artifact_tag: str
     identity: ArtifactIdentity
@@ -227,6 +228,24 @@ def _parse_dependency_artifact(
                     if ref.digest is not None
                 ),
                 lifecycle=shape.lifecycle,
+            )
+        if path.startswith("capabilities/"):
+            from cruxible_client.contracts.capabilities import (
+                capability_digest,
+                parse_capability,
+            )
+            from cruxible_core.capabilities.artifact import capability_pins
+
+            capability = parse_capability(content, path=path)
+            # Exact pins on its two Contracts; the capability law verifies them.
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="capability",
+                artifact_tag=capability.artifact_format,
+                identity=capability.identity,
+                artifact_digest=capability_digest(capability).tagged,
+                pins=capability_pins(capability),
+                lifecycle=capability.lifecycle,
             )
         if path.startswith("notes/"):
             from cruxible_client.contracts.notes import NOTE_PATH_RE, note_digest, parse_note

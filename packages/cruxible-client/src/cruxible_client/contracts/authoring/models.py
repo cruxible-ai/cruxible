@@ -35,6 +35,11 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
+from cruxible_client.contracts.capabilities import (
+    MAX_CAPABILITY_DESCRIPTION,
+    capability_identity,
+    validate_capability_name,
+)
 from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
 from cruxible_client.contracts.captures import (
     CaptureContract,
@@ -81,6 +86,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalReceiveLimits,
     validate_change_set_rationale,
 )
+from cruxible_client.contracts.provider_operations import OperationEffect
 from cruxible_client.contracts.query.authored import QuerySpecInput
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
@@ -91,6 +97,7 @@ from cruxible_client.contracts.resolution_contracts import ResolutionContract
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
     ContractField,
+    ContractRef,
     claim_rationale,
     contract_identity,
     contract_path,
@@ -138,7 +145,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:938a48da4e70e2b7ba3262480ce7309606e113b81e8fbdede5e4cb3cd952c011"
+    "sha256:d40e606bae2951f5e43628b2c57264f31c7f65044f7ef1be7b079ce633e201f9"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -1288,6 +1295,33 @@ class ContractAuthoringPayload(_StrictAuthoringModel):
         return value
 
 
+class CapabilityAuthoringPayload(_StrictAuthoringModel):
+    """One Capability version: a named, immutable kind of call a Procedure slot names.
+
+    ``in`` is the Contract a slot sends and ``out`` the Contract it receives,
+    each written ``name@N``. Lowering writes ``capabilities/<name>/v<version>.json``,
+    pins both to the accepted Contract versions' digests, and names version N-1
+    as the predecessor of every later version. Every version of one name has the
+    same ``effect``. An accepted version never changes; author the next.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, populate_by_name=True, serialize_by_alias=True
+    )
+
+    tag: Literal["cruxible-capability-authoring-payload-v1"] = (
+        "cruxible-capability-authoring-payload-v1"
+    )
+    name: str
+    version: int = Field(ge=1, le=999_999_999)
+    description: str = Field(min_length=1, max_length=MAX_CAPABILITY_DESCRIPTION)
+    effect: OperationEffect
+    in_: ContractRef = Field(alias="in")
+    out: ContractRef
+
+    _name = field_validator("name")(validate_capability_name)
+
+
 class ProcedureAuthoringPayload(_StrictAuthoringModel):
     """A lowered Procedure: its stored graph and the boundary Contracts core co-proposes.
 
@@ -1608,6 +1642,7 @@ AuthoringChangeSetMember: TypeAlias = Annotated[
     | RunbookAuthoringPayload
     | SubjectKindAuthoringPayload
     | ContractAuthoringPayload
+    | CapabilityAuthoringPayload
     | ProcedureAuthoringPayload,
     Field(discriminator="tag"),
 ]
@@ -1684,6 +1719,8 @@ def authoring_member_identity(payload: AuthoringChangeSetMember) -> str:
         return f"SubjectKind:{payload.name}"
     if isinstance(payload, ContractAuthoringPayload):
         return contract_identity(payload.name, payload.version).qualified
+    if isinstance(payload, CapabilityAuthoringPayload):
+        return capability_identity(payload.name, payload.version).qualified
     return f"Procedure:{payload.definition['name']}"
 
 
@@ -1772,6 +1809,7 @@ AuthoringPayload = Annotated[
     | RunbookAuthoringPayload
     | SubjectKindAuthoringPayload
     | ContractAuthoringPayload
+    | CapabilityAuthoringPayload
     | ChangeSetAuthoringPayload,
     Field(discriminator="tag"),
 ]
@@ -2722,6 +2760,7 @@ __all__ = [
     "WindowCloseAuthoringSchedule",
     "AuthoringTriggerSchedule",
     "SubjectKindAuthoringPayload",
+    "CapabilityAuthoringPayload",
     "ContractAuthoringPayload",
     "SubjectCreationAuthoringPayload",
     "QueryDefinitionAuthoringPayload",

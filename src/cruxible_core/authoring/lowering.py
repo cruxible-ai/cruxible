@@ -37,6 +37,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntent,
     AuthoringNoneClaimObject,
     AuthoringTriggerSchedule,
+    CapabilityAuthoringPayload,
     CaptureContractAuthoringPayload,
     CaptureLandingByNameSchedule,
     ChangeSetAuthoringPayload,
@@ -80,6 +81,7 @@ from cruxible_client.contracts.canonical_forms import (
     CanonicalFormDidNotConverge,
     canonicalize_literal,
 )
+from cruxible_client.contracts.capabilities import capability_path
 from cruxible_client.contracts.capture_contract_inputs import (
     CaptureContractInputRecord,
     lower_capture_contract_input,
@@ -3461,6 +3463,30 @@ def _render_contract_member(
         )
 
 
+def _render_capability_member(
+    payload: CapabilityAuthoringPayload,
+    *,
+    tree: Mapping[str, bytes],
+) -> tuple[str, bytes, str]:
+    """Lower one Capability version; capability_lowering owns pinning, succession and law."""
+
+    from cruxible_core.authoring.capability_lowering import (
+        CapabilityLoweringRefusal,
+        render_capability_member,
+    )
+
+    try:
+        return render_capability_member(payload, tree=tree)
+    except CapabilityLoweringRefusal as exc:
+        _refuse(
+            exc.code,
+            "definition",
+            exc.message,
+            repair_kind="replace_definition",
+            repair_description=exc.repair,
+        )
+
+
 def _contract_fields_summary(
     contract: ArtifactPin | ArtifactNameRef, tree: Mapping[str, bytes]
 ) -> dict[str, str]:
@@ -5156,6 +5182,7 @@ def _stage_subject_creation(
 
 MEMBER_STAGING_ORDER = (
     "definition",
+    "capability",
     "claim_type_succession",
     "query",
     "subject_creation",
@@ -5220,6 +5247,8 @@ def _member_stage(member: AuthoringChangeSetMember) -> str:
         return "runbook"
     if isinstance(member, TriggerAuthoringPayload):
         return "trigger"
+    if isinstance(member, CapabilityAuthoringPayload):
+        return "capability"
     return "definition"
 
 
@@ -5245,6 +5274,21 @@ def _stage_member_order(
     member keeps its canonical position.
     """
 
+    capability_indices = [
+        i for i in stage_indices if isinstance(members[i], CapabilityAuthoringPayload)
+    ]
+    if capability_indices:
+        # A capability pins only Contracts (all staged in the definition pass)
+        # and its own predecessor version: version order within a name, never
+        # identity byte order (".../v10" sorts before ".../v2").
+        def version_key(index: int) -> tuple[str, int]:
+            member = members[index]
+            assert isinstance(member, CapabilityAuthoringPayload)
+            return member.name, member.version
+
+        ordered_capabilities = iter(sorted(capability_indices, key=version_key))
+        capability_set = set(capability_indices)
+        return [next(ordered_capabilities) if i in capability_set else i for i in stage_indices]
     contract_indices = [
         i for i in stage_indices if isinstance(members[i], ContractAuthoringPayload)
     ]
@@ -5331,6 +5375,8 @@ def _member_primary_path(
         return subject_kind_path(member.name)
     if isinstance(member, ContractAuthoringPayload):
         return contract_path(member.name, member.version)
+    if isinstance(member, CapabilityAuthoringPayload):
+        return capability_path(member.name, member.version)
     if isinstance(member, QueryDefinitionAuthoringPayload):
         return query_definition_path(member.query_definition.identity.name)
     if isinstance(member, NoteAuthoringPayload):
@@ -5812,6 +5858,15 @@ def _stage_change_set_member(
         contract_member_path, content, digest = _render_contract_member(member, tree=staged_tree)
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[contract_member_path] = content
+        return candidate_tree, {"artifact_digest": digest}, set(), {}
+    if isinstance(member, CapabilityAuthoringPayload):
+        # The staged tree holds every Contract this set stages (capabilities
+        # stage after the definitions) and every earlier version of this name.
+        capability_member_path, content, digest = _render_capability_member(
+            member, tree=staged_tree
+        )
+        candidate_tree = fork_tree(staged_tree)
+        candidate_tree[capability_member_path] = content
         return candidate_tree, {"artifact_digest": digest}, set(), {}
     _path, content, digest = _render_non_procedure_member(
         member,
@@ -6727,8 +6782,12 @@ def _lower_authoring(
             derivation_procedure=derivation_procedure,
             captures=captures,
         )
-    if isinstance(intent.payload, ContractAuthoringPayload):
-        path, content, digest = _render_contract_member(intent.payload, tree=base_tree)
+    if isinstance(intent.payload, CapabilityAuthoringPayload | ContractAuthoringPayload):
+        path, content, digest = (
+            _render_capability_member(intent.payload, tree=base_tree)
+            if isinstance(intent.payload, CapabilityAuthoringPayload)
+            else _render_contract_member(intent.payload, tree=base_tree)
+        )
         candidate_tree = fork_tree(base_tree)
         candidate_tree[path] = content
         changed = () if base_tree.get(path) == content else ((path, content),)

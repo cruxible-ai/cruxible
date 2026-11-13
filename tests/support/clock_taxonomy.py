@@ -626,6 +626,8 @@ NON_CLOCK_DECLARED_FIELDS: frozenset[tuple[str, str]] = frozenset(
         ("CompleteWhen", "count_at"),
         ("CompleteWhenResult", "count_at"),
         ("ExtractCompleteWhen", "count_at"),
+        # A CaptureKind layout record set's JSON Pointer to its declared count; no time.
+        ("LayoutRecordSet", "count_at"),
     }
 )
 

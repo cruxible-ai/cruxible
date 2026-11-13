@@ -19,7 +19,11 @@ from typing import Any, Literal, Protocol
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_digest, pretty_canonical_bytes
-from cruxible_client.contracts.capabilities import CAPABILITY_IDENTITY_KIND
+from cruxible_client.contracts.capabilities import (
+    CAPABILITY_IDENTITY_KIND,
+    Capability,
+    capability_path,
+)
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import parse_claim_type
 from cruxible_client.contracts.documents import (
@@ -107,6 +111,7 @@ from cruxible_client.contracts.shapes import (
     evaluate_contract_law,
 )
 from cruxible_core.claims.artifact_references import (
+    immutable_capability_error,
     immutable_contract_error,
     movable_references,
     move_references,
@@ -240,7 +245,7 @@ def _snapshot(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     if _is_document(path):
         payload["predecessor_digest"] = None
         payload["lifecycle"] = {**payload["lifecycle"], "revision": 1}
-    elif not path.startswith("contracts/"):
+    elif not path.startswith(("contracts/", "capabilities/")):
         payload["lifecycle"] = dict(_SNAPSHOT_LIFECYCLE)
     return payload
 
@@ -941,6 +946,9 @@ def _successor_payload(
     if payload.get("artifact_format") == "cruxible-contract-v1":
         contract = Contract.model_validate(payload)
         raise immutable_contract_error(contract_path_for_identity(contract.identity.name))
+    if payload.get("artifact_format") == "cruxible-capability-v1":
+        capability = Capability.model_validate(payload)
+        raise immutable_capability_error(capability_path(capability.name, capability.version))
     successor = dict(payload)
     if payload.get("kind") == "document":
         # A Document's lineage: its predecessor digest and the next revision.
@@ -1081,6 +1089,8 @@ def _diff_release(
         current_payload = json.loads(current)
         if path.startswith("contracts/") and current != contents[path]:
             raise immutable_contract_error(path)
+        if path.startswith("capabilities/") and current != contents[path]:
+            raise immutable_capability_error(path)
         live = current_state.lifecycle.state == "live"
         if live and _without_lifecycle(current_payload) == _without_lifecycle(payload):
             diff.plan.append(KitPathPlan(path=path, action="unchanged", identity=identity))
@@ -1294,7 +1304,7 @@ def _settle_dropped(
         # Counted against the post-diff tree, including semantic consumers.
         diff.semantic_counts[identity] = dependents
         named_retire = identity in retire_dependents
-        immutable = state.artifact_kind in ("contract", "document")
+        immutable = state.artifact_kind in ("contract", "capability", "document")
         if (
             immutable
             or identity in keep
@@ -2845,7 +2855,7 @@ def _remove_kit(
         state = _artifact_state(entry.path, current)
         if state.lifecycle.state != "live":
             continue
-        if state.artifact_kind in ("contract", "document"):
+        if state.artifact_kind in ("contract", "capability", "document"):
             diff.plan.append(
                 KitPathPlan(
                     path=entry.path,
@@ -2853,6 +2863,8 @@ def _remove_kit(
                     identity=state.identity.qualified,
                     detail=_DOCUMENT_KEPT
                     if state.artifact_kind == "document"
+                    else "Capability versions are immutable and remain accepted"
+                    if state.artifact_kind == "capability"
                     else "Contract versions are immutable and remain accepted",
                 )
             )

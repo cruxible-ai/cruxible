@@ -89,6 +89,7 @@ ARTIFACT_KINDS = ArtifactKindRegistry(
         for kind, pattern in (
             ("approval-policy", r"^governance/approval-policy\.json$"),
             ("attestation", r"^attestations/[0-9a-f]{2}/[0-9a-f]{64}\.json$"),
+            ("capability", r"^capabilities/[a-z][a-z0-9_.-]{0,127}/v[1-9][0-9]{0,8}\.json$"),
             ("capture-contract", rf"^capture-contracts/{_NAME}\.json$"),
             ("changeset", r"^changesets/cs-[0-9]{20}\.json$"),
             ("claim", r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.json$"),
@@ -126,6 +127,7 @@ RegisteredPathKind = Literal[
     "resolution-contract",
     "attestation",
     "approval-policy",
+    "capability",
     "contract",
     "procedure-runtime-policy",
     "capture-contract",
@@ -733,6 +735,46 @@ def parse_projection_tree(
                         role=CONTRACT_PIN_ROLE,
                     )
                     for ref in shape.refs()
+                )
+                continue
+            if kind == "capability":
+                from cruxible_client.contracts.capabilities import (
+                    capability_digest,
+                    parse_capability,
+                )
+                from cruxible_core.capabilities.artifact import CAPABILITY_CONTRACT_PIN_ROLES
+
+                capability = parse_capability(content, path=path)
+                identity = capability.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                digest = capability_digest(capability).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity,
+                        kind,
+                        capability.artifact_format,
+                        path,
+                        digest,
+                        capability.predecessor_digest,
+                        projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            artifact_digest=digest,
+                        ),
+                    )
+                )
+                pins.extend(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=ref.identity.qualified,
+                        target_digest=ref.digest,
+                        role=role,
+                    )
+                    for role, ref in zip(
+                        CAPABILITY_CONTRACT_PIN_ROLES, capability.contract_refs(), strict=True
+                    )
                 )
                 continue
             if kind == "subject-kind":

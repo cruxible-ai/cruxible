@@ -59,6 +59,12 @@ from cruxible_core.procedures.claims_units import (
     slot_unit_holders,
     unit_holders,
 )
+from cruxible_core.procedures.extract import (
+    STORED_EXTRACT_NODES,
+    StoredExtractNode,
+    extract_specs,
+    plan_kind_lookup,
+)
 from cruxible_core.procedures.terminal_dependencies import DependencyToken
 
 if TYPE_CHECKING:
@@ -133,7 +139,7 @@ def expand_claims(
             item=row,
         )
 
-    enumeration: ExtractNode | None = None
+    enumeration: StoredExtractNode | None = None
     if node.expect is not None:
         from cruxible_core.procedures.claims_typing import (
             ClaimsTypingRefused,
@@ -273,8 +279,14 @@ def expand_claims(
     )
     # Runtime execution plans carry their accepted artifact separately on some paths.
     source_cache: dict[str, tuple[tuple[Any, ...], tuple[str, ...], bool]] = {}
+    # Each extract's receipt digests its one resolved spec (its kind's layout applied).
+    spec_of = extract_specs(
+        nodes.values(), plan_kind_lookup(executor.plan, executor.capture_contracts)
+    )
     extract_digests = {
-        n.node_id: _receipt_extract_digest(n) for n in nodes.values() if isinstance(n, ExtractNode)
+        n.node_id: _receipt_extract_digest(spec_of(n))
+        for n in nodes.values()
+        if isinstance(n, STORED_EXTRACT_NODES)
     }
     #: Each list extract's members, indexed once for every Claim it roots (D-R37 a5).
     listed_members: dict[str, frozenset[str]] = {}
@@ -296,7 +308,7 @@ def expand_claims(
         if alias in source_cache:
             return source_cache[alias]
         producer = nodes.get(alias)
-        if isinstance(producer, ExtractNode):
+        if isinstance(producer, STORED_EXTRACT_NODES):
             found: tuple[tuple[Any, ...], tuple[str, ...], bool] = ((producer,), (), False)
         elif producer is None or isinstance(producer, ReadNode | InvokeNode | RepeatNode):
             # Accepted-state reads and opaque computations cannot be receipted
@@ -691,7 +703,7 @@ def expand_claims(
                     "extract_refused", target, field=str(mapping.value), problem="basis_unsupported"
                 )
                 continue
-            extractors = [n for n in sources.values() if isinstance(n, ExtractNode)]
+            extractors = [n for n in sources.values() if isinstance(n, STORED_EXTRACT_NODES)]
             computed = any(
                 isinstance(n, TransformNode)
                 and n.node_id in transforms
@@ -793,14 +805,6 @@ def expand_claims(
                         "capture_digest": capture,
                         "operation": binding.operation.name,
                         "build": binding.build.model_dump(mode="json"),
-                        "enumerates": None
-                        if binding.operation.enumerates is None
-                        else binding.operation.enumerates.selector,
-                        "declared_fields": {}
-                        if binding.operation.enumerates is None
-                        else {
-                            name: f.at for name, f in binding.operation.enumerates.fields.items()
-                        },
                         "field_path": str(mapping.value),
                         "transform_node_ids": list(transforms),
                     }

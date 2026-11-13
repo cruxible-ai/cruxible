@@ -253,7 +253,8 @@
         "pins",
         "activity",
         "sources",
-        "contracts"
+        "contracts",
+        "capabilities"
       ]
     },
     "OrientSurface": {
@@ -4711,6 +4712,7 @@
             "discriminator": {
               "mapping": {
                 "approval_policy": "#/$defs/ApprovalPolicyInput",
+                "capability": "#/$defs/CapabilityInput",
                 "change_set": "#/$defs/ChangeSetInput",
                 "claim": "#/$defs/ClaimInput",
                 "contract": "#/$defs/ContractInput",
@@ -4766,6 +4768,9 @@
               },
               {
                 "$ref": "#/$defs/ContractInput"
+              },
+              {
+                "$ref": "#/$defs/CapabilityInput"
               },
               {
                 "$ref": "#/$defs/ChangeSetInput"
@@ -5420,6 +5425,64 @@
             "title": "CanonicalDuration",
             "type": "object"
           },
+          "CapabilityInput": {
+            "additionalProperties": false,
+            "description": "One Capability version: a named, immutable kind of call a Procedure slot names.\n\n``in`` is the request Contract a slot sends and ``out`` the result Contract\nit receives back, each an accepted Contract written ``name@N`` (accepted\nearlier or in the same change set). ``effect`` is the same for every version\nof one name; a different effect is a different capability. Version 1 starts\na capability; version N names version N-1 as its predecessor. An accepted\nversion never changes: author the next.",
+            "properties": {
+              "description": {
+                "description": "What the capability does, led by its result; covered by its digest.",
+                "title": "Description",
+                "type": "string"
+              },
+              "effect": {
+                "description": "pure, external_read or external_write; fixed across versions.",
+                "enum": [
+                  "pure",
+                  "external_read",
+                  "external_mutation"
+                ],
+                "title": "Effect",
+                "type": "string"
+              },
+              "in": {
+                "description": "The request Contract, 'name@N'.",
+                "title": "In",
+                "type": "string"
+              },
+              "kind": {
+                "const": "capability",
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "description": "The capability name, e.g. 'security.osv.match'.",
+                "title": "Name",
+                "type": "string"
+              },
+              "out": {
+                "description": "The result Contract, 'name@N'.",
+                "title": "Out",
+                "type": "string"
+              },
+              "version": {
+                "description": "The version this declares, starting at 1.",
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "name",
+              "version",
+              "description",
+              "effect",
+              "in",
+              "out"
+            ],
+            "title": "CapabilityInput",
+            "type": "object"
+          },
           "CaptureContractAdmission": {
             "additionalProperties": false,
             "description": "One named contract, optionally restricted to provider-declared sources.",
@@ -5546,6 +5609,7 @@
                   "discriminator": {
                     "mapping": {
                       "approval_policy": "#/$defs/ApprovalPolicyInput",
+                      "capability": "#/$defs/CapabilityInput",
                       "claim": "#/$defs/ClaimInput",
                       "claim_retirement": "#/$defs/ClaimRetirementInput",
                       "claim_type": "#/$defs/ClaimTypeInput",
@@ -5609,6 +5673,9 @@
                     },
                     {
                       "$ref": "#/$defs/ContractInput"
+                    },
+                    {
+                      "$ref": "#/$defs/CapabilityInput"
                     },
                     {
                       "$ref": "#/$defs/ProcedureInput"
@@ -14653,6 +14720,7 @@
             "discriminator": {
               "mapping": {
                 "approval_policy": "#/$defs/ApprovalPolicyInput",
+                "capability": "#/$defs/CapabilityInput",
                 "change_set": "#/$defs/ChangeSetInput",
                 "claim": "#/$defs/ClaimInput",
                 "contract": "#/$defs/ContractInput",
@@ -14708,6 +14776,9 @@
               },
               {
                 "$ref": "#/$defs/ContractInput"
+              },
+              {
+                "$ref": "#/$defs/CapabilityInput"
               },
               {
                 "$ref": "#/$defs/ChangeSetInput"
@@ -20616,6 +20687,26 @@
             "title": "Grade"
           }
         },
+        "layout": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "layout",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CaptureLayout"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The documents' declared shape, which an extract names: {header?: {<name>: <field rule>}, records: {<set>: {at, key?: {<part>: <field rule>}, row: 'name@N', fields: {<row field>: <field rule>}, count_at?}}}. A field rule is {at, type?, parse?, project?, canonicalize?, presence?}. Needs a json or csv decoding; a successor may only add header fields, record sets and optional row fields."
+          }
+        },
         "lifecycle": {
           "default": null,
           "default_json_serializable": true,
@@ -20870,6 +20961,214 @@
             ],
             "title": "CaptureDecodingLimits",
             "type": "object"
+          },
+          "CaptureLayout": {
+            "additionalProperties": false,
+            "description": "A CaptureKind's declared document shape: header fields and named record sets.",
+            "properties": {
+              "header": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/ExtractField"
+                },
+                "maxProperties": 64,
+                "title": "Header",
+                "type": "object"
+              },
+              "records": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/LayoutRecordSet"
+                },
+                "maxProperties": 64,
+                "minProperties": 1,
+                "title": "Records",
+                "type": "object"
+              }
+            },
+            "required": [
+              "records"
+            ],
+            "title": "CaptureLayout",
+            "type": "object"
+          },
+          "ContractRef": {
+            "additionalProperties": false,
+            "description": "A pin to one Contract version. Authors write ``name@N``; acceptance adds the digest.",
+            "properties": {
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Digest"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "maximum": 999999999,
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "title": "ContractRef",
+            "type": "object"
+          },
+          "ExtractField": {
+            "additionalProperties": false,
+            "description": "Where one field is read, and how its lexeme becomes a typed value.\n\n``at`` is a JSON Pointer relative to the record (or to the document, for a\nheader field), or a CSV column name. ``parse`` converts a text lexeme\n(``date``, ``datetime``, ``int``, ``decimal``, ``bool``); ``type`` states\nthe field's type where no row Contract does (keys and header fields);\n``canonicalize: claim_type`` matches an enum member case-insensitively.\n``presence`` overrides the row Contract's optionality. ``project`` reshapes\nthe parsed value: ``utc_date`` (``parse: datetime``) keeps its UTC calendar\nday; ``utc_start_of_day`` (``parse: date``) is that day at 00:00 UTC.",
+            "properties": {
+              "at": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "At",
+                "type": "string"
+              },
+              "canonicalize": {
+                "anyOf": [
+                  {
+                    "const": "claim_type",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Canonicalize"
+              },
+              "parse": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "date",
+                      "datetime",
+                      "int",
+                      "decimal",
+                      "bool"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Parse"
+              },
+              "presence": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "required",
+                      "optional"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Presence"
+              },
+              "project": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "utc_date",
+                      "utc_start_of_day"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Project"
+              },
+              "type": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Type"
+              }
+            },
+            "required": [
+              "at"
+            ],
+            "title": "ExtractField",
+            "type": "object"
+          },
+          "LayoutRecordSet": {
+            "additionalProperties": false,
+            "description": "One named record set: where its records are, their key, row Contract and field rules.\n\n``count_at`` names a document field that states how many records the set\nholds; a read is complete only when it equals the records read.",
+            "properties": {
+              "at": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "At",
+                "type": "string"
+              },
+              "count_at": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Count At"
+              },
+              "fields": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/ExtractField"
+                },
+                "maxProperties": 256,
+                "minProperties": 1,
+                "title": "Fields",
+                "type": "object"
+              },
+              "key": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/ExtractField"
+                },
+                "maxProperties": 16,
+                "title": "Key",
+                "type": "object"
+              },
+              "row": {
+                "$ref": "#/$defs/ContractRef"
+              }
+            },
+            "required": [
+              "at",
+              "row",
+              "fields"
+            ],
+            "title": "LayoutRecordSet",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -20932,6 +21231,18 @@
             ],
             "default": null,
             "title": "Grade"
+          },
+          "layout": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CaptureLayout"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The documents' declared shape, which an extract names: {header?: {<name>: <field rule>}, records: {<set>: {at, key?: {<part>: <field rule>}, row: 'name@N', fields: {<row field>: <field rule>}, count_at?}}}. A field rule is {at, type?, parse?, project?, canonicalize?, presence?}. Needs a json or csv decoding; a successor may only add header fields, record sets and optional row fields."
           },
           "lifecycle": {
             "anyOf": [
@@ -43464,6 +43775,29 @@
             "default": null
           }
         },
+        "capabilities": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "capabilities",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/OrientCapability"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Capabilities"
+          }
+        },
         "capture_contracts": {
           "default": null,
           "default_json_serializable": true,
@@ -44117,7 +44451,8 @@
                   "pins",
                   "activity",
                   "sources",
-                  "contracts"
+                  "contracts",
+                  "capabilities"
                 ],
                 "type": "string"
               },
@@ -45433,8 +45768,14 @@
           },
           "OrientArtifactCounts": {
             "additionalProperties": false,
-            "description": "How many of each family exist; each operational family is its own section.\n\n``lines``, ``runbooks``, ``capture_contracts``, ``resolution_contracts`` and\n``mandates`` count live accepted artifacts, ``captures`` the Captures accepted Claims cite,\nand ``runs`` / ``running`` the Procedure runs admitted and still running.",
+            "description": "How many of each family exist; each operational family is its own section.\n\n``lines``, ``runbooks``, ``capture_contracts``, ``resolution_contracts`` and\n``mandates`` count live accepted artifacts, ``capabilities`` the accepted\ncapability versions, ``captures`` the Captures accepted Claims cite,\nand ``runs`` / ``running`` the Procedure runs admitted and still running.",
             "properties": {
+              "capabilities": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Capabilities",
+                "type": "integer"
+              },
               "capture_contracts": {
                 "default": 0,
                 "minimum": 0,
@@ -45583,6 +45924,41 @@
               "open_proposals"
             ],
             "title": "OrientAttention",
+            "type": "object"
+          },
+          "OrientCapability": {
+            "additionalProperties": false,
+            "description": "One accepted capability version: a kind of call a Procedure slot names.\n\n``capability`` is ``<name>@<version>``; ``get(\"Capability:<name>@<version>\")``\nreads it. ``in`` and ``out`` are its request and result Contracts\n(``<name>@<version>``).",
+            "properties": {
+              "capability": {
+                "title": "Capability",
+                "type": "string"
+              },
+              "description": {
+                "title": "Description",
+                "type": "string"
+              },
+              "effect": {
+                "title": "Effect",
+                "type": "string"
+              },
+              "in": {
+                "title": "In",
+                "type": "string"
+              },
+              "out": {
+                "title": "Out",
+                "type": "string"
+              }
+            },
+            "required": [
+              "capability",
+              "effect",
+              "in",
+              "out",
+              "description"
+            ],
+            "title": "OrientCapability",
             "type": "object"
           },
           "OrientCapture": {
@@ -47571,6 +47947,21 @@
             ],
             "default": null
           },
+          "capabilities": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/OrientCapability"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Capabilities"
+          },
           "capture_contracts": {
             "anyOf": [
               {
@@ -47977,7 +48368,8 @@
                   "pins",
                   "activity",
                   "sources",
-                  "contracts"
+                  "contracts",
+                  "capabilities"
                 ],
                 "type": "string"
               },
