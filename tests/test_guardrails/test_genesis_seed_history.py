@@ -113,7 +113,15 @@ def seed_history_problems(pins: SeedSetPins, checked_in: dict[str, str]) -> list
                 f"pin, or add entry {following}."
             )
 
-    pinned = {pin.ordinal: pin for pin in pins.entries}
+    pin_ordinals = [pin.ordinal for pin in pins.entries]
+    for ordinal in sorted({o for o in pin_ordinals if pin_ordinals.count(o) > 1}):
+        problems.append(
+            f"{PIN_PATH.name} pins entry {ordinal} more than once: an entry has one pin, and a "
+            "frozen entry's pin never changes."
+        )
+    pinned: dict[int, SeedSetPin] = {}
+    for pin in pins.entries:
+        pinned.setdefault(pin.ordinal, pin)
     for entry in history:
         pin = pinned.get(entry.ordinal)
         if pin is None:
@@ -185,6 +193,18 @@ def test_moved_seeds_without_a_new_entry_fail_after_the_release(
     (problem,) = seed_history_problems(_pins(), moved)
     assert f"History entry {entry.ordinal} (0.5.0) was edited" in problem
     assert f"Do not edit entry {entry.ordinal}" in problem
+
+    # ... and a second pin for the same ordinal does not hide the edit.
+    edited = _edited(entry, moved)
+    doubled = SeedSetPins(
+        entries=(
+            *_pins().entries,
+            SeedSetPin(ordinal=entry.ordinal, name=entry.name, set_digest=edited.set_digest()),
+        )
+    )
+    problems = seed_history_problems(doubled, moved)
+    assert any("more than once" in problem for problem in problems), problems
+    assert any("was edited" in problem for problem in problems), problems
 
 
 def test_a_new_entry_with_its_pin_passes(monkeypatch: pytest.MonkeyPatch) -> None:
