@@ -178,7 +178,13 @@ def test_pinner_replacement_is_batched_and_matches_cold_rows(tmp_path):
     accepted = world(tmp_path / "accepted", operation_build())
     author_procedure(accepted, slotted_spec())
     author_line(accepted)
-    tree = dict(accepted.tree_at(accepted.accepted_coordinate().git_oid))
+    # The minimal warm projection below has no Document tables: leave out the
+    # base kit's receipt Document every instance holds from creation.
+    tree = {
+        path: content
+        for path, content in accepted.tree_at(accepted.accepted_coordinate().git_oid).items()
+        if not path.startswith("documents/")
+    }
     path = line_spec_path(LINE)
     prototype = parse_line_spec(tree.pop(path), path=path)
     lines = [
