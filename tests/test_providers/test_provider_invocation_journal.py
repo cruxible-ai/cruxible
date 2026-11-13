@@ -46,7 +46,7 @@ from cruxible_client.contracts.provider_execution import (
     provider_invocation_receipt_digest,
     provider_secret_binding_identity_digest,
 )
-from cruxible_client.contracts.provider_operations import ProcedureSlot, operation_signature_digest
+from cruxible_client.contracts.provider_operations import operation_signature_digest
 from cruxible_client.contracts.providers import AcceptedProvider, provider_digest, provider_path
 from cruxible_client.contracts.refs import step_ref
 from cruxible_client.contracts.shapes import Presence
@@ -70,6 +70,7 @@ from cruxible_core.providers.provider_runtime_contract import (
 )
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._p2b1_support import accepted_provider, pin
+from tests.support.capabilities import declared_capability, pinned_slot, signature_capability
 from tests.support.operation_world import VALUE, operation, operation_build
 from tests.support.procedures import (
     accepted_procedure,
@@ -195,7 +196,7 @@ def _bind(accepted: AcceptedProcedure, provider: AcceptedProvider) -> AcceptedPr
             return object(), _p2b1_digest(identity.name)
         if identity.kind == "EffectPolicy":
             return object(), _digest("effect-policy")
-        return None
+        return declared_capability(identity)
 
     return bind_procedure_references(
         accepted,
@@ -268,7 +269,9 @@ def _accepted_one_provider(
         contract_out=named(contract_out),
         nodes=(graph_node,),
         returns=returns,
-        slots={SLOT: ProcedureSlot.model_validate(operation_signature.model_dump(by_alias=True))},
+        slots={
+            SLOT: pinned_slot(signature_capability(operation_signature, name="test.invocation"))
+        },
         hard_caps=procedure_hard_caps(preset="provider", max_wall_clock=max_wall_clock),
     )
     return _bind(accepted_procedure(definition, activation_policy="drain", bound=False), provider)

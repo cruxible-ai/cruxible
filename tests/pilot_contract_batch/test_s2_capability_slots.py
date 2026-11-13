@@ -46,10 +46,12 @@ def _search_only(capability: str, name: str) -> dict[str, object]:
     )
 
 
-@pytest.mark.xfail(strict=True, raises=NotImplementedError, reason=f"owner: {surfaces.SLOTS}")
+# The slots slice built ``author_capability_procedure``; the first step, listing the
+# base kit's capabilities, waits for the base kit (slice 9).
+@pytest.mark.xfail(strict=True, raises=NotImplementedError, reason=f"owner: {surfaces.BASE_KIT}")
 @pytest.mark.pilot(
     "s2-capability-slots",
-    owner=surfaces.SLOTS,
+    owner=surfaces.BASE_KIT,
     title="a slot names a capability: accepted as one pin; an unknown capability is refused "
     "at authoring",
 )
@@ -95,7 +97,8 @@ def test_a_slot_is_one_capability_pin_and_an_unknown_capability_is_refused(
                 "name": providers.SEARCH,
                 "version": 1,
                 "digest": listed[providers.SEARCH].digest,
-            }
+            },
+            "may_truncate": False,
         }
     }
     assert code.startswith("cruxible.")

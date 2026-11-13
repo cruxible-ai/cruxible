@@ -62,7 +62,6 @@ from cruxible_client.contracts.uploads import (
     upload_id,
     upload_part_count,
 )
-from cruxible_client.contracts.workspace_file import is_workspace_file_signature
 from cruxible_core.service.procedures.procedure_runs import ProcedureSurfaceError
 
 if TYPE_CHECKING:
@@ -513,16 +512,13 @@ def check_upload_procedure(
 
     coordinate = accepted_coordinate_at(instance, at)
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate, bind_references=True)
-    from cruxible_client.contracts.provider_operations import operation_signature_digest
+    from cruxible_core.procedures.declared_inputs import reads_workspace
 
     slots = accepted.procedure.definition.slots
     reads = tuple(
         node
         for node in accepted.procedure.definition.nodes
-        if isinstance(node, CallNode)
-        and node.acquires
-        and node.slot in slots
-        and is_workspace_file_signature(operation_signature_digest(slots[node.slot]))
+        if isinstance(node, CallNode) and node.acquires and reads_workspace(slots.get(node.slot))
     )
     if not reads:
         raise CaptureUploadRefused(

@@ -54,6 +54,7 @@ from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from tests.core_support._light_capture_support import JSON_DECODING, http_contract
+from tests.support.capabilities import capability, capability_files, pinned_slot
 from tests.support.procedures import (
     named,
     procedure_definition,
@@ -235,9 +236,19 @@ _FETCH_OPERATION = ProviderOperation.model_validate(
 _ALIAS = "fetched"
 
 
+#: The capability the fetch slot names, over the fetch request and result Contracts.
+_FETCH_CAPABILITY = capability(
+    "test.sdk-fetch", in_=_FETCH_INPUT, out=_FETCH_OUTPUT, effect="external_read"
+)
+
+
 def _fetch_contract_files() -> dict[str, bytes]:
     return {
-        contract_path(item.name, item.version): render_contract(item) for item in _FETCH_CONTRACTS
+        **capability_files(_FETCH_CAPABILITY),
+        **{
+            contract_path(item.name, item.version): render_contract(item)
+            for item in _FETCH_CONTRACTS
+        },
     }
 
 
@@ -299,13 +310,7 @@ def _fetch_procedure(contract: CaptureContract, *, request: dict[str, object]) -
         description="Fetch one external record and shape its severity.",
         contract_in=named(run_input_pin),
         contract_out=named(run_output_pin),
-        slots={
-            "fetch": {
-                "in": f"{_FETCH_INPUT.name}@{_FETCH_INPUT.version}",
-                "out": f"{_FETCH_OUTPUT.name}@{_FETCH_OUTPUT.version}",
-                "effect": "external_read",
-            }
-        },
+        slots={"fetch": pinned_slot(_FETCH_CAPABILITY)},
         nodes=(
             CallNode(
                 node_id="fetch",
@@ -562,6 +567,9 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
             provider_path(provider.identity.name): render_provider(provider),
             contract_path(call_input.name, call_input.version): render_contract(call_input),
             contract_path(call_output.name, call_output.version): render_contract(call_output),
+            **capability_files(
+                capability("test.sdk-call", in_=call_input, out=call_output, effect="external_read")
+            ),
         },
         actor_id="operator",
         proposal_name="call-deployment",
@@ -583,13 +591,7 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
                 procedure="replace-me",
                 input={},
                 output={"size": "int"},
-                slots={
-                    "invoke": {
-                        "in": f"{call_input.name}@{call_input.version}",
-                        "out": f"{call_output.name}@{call_output.version}",
-                        "effect": "external_read",
-                    }
-                },
+                slots={"invoke": {"capability": "test.sdk-call@1"}},
                 steps=[CallStep(call="result", id="invoke", slot="invoke", input={"size": 1})],
                 returns="result",
                 hard_caps=procedure_limits(

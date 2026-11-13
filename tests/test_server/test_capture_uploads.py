@@ -28,7 +28,6 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     ProjectNode,
 )
-from cruxible_client.contracts.shapes import contract_digest
 from cruxible_client.contracts.uploads import (
     UPLOAD_PART_SIZE,
     CaptureUploadCompleteRequest,
@@ -36,7 +35,6 @@ from cruxible_client.contracts.uploads import (
 )
 from cruxible_client.contracts.workspace_file import (
     WorkspaceFileSourceRequestV2,
-    workspace_file_contracts,
 )
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
@@ -556,27 +554,13 @@ def _definition(contract_pin: ArtifactPin) -> ProcedureDefinition:
         replayability="exact",
     ).model_dump(mode="json")
     request["relative_path"] = "$input.relative_path"
-    _wf_source, _wf_content, wf_request, wf_result = workspace_file_contracts()
     return procedure_definition(
         name=PROCEDURE,
         description="Read an uploaded advisory and return its severity.",
         contract_in=named(pin("contract-in", input_contract)),
         contract_out=named(pin("contract-out", output_contract)),
-        slots={
-            "read": {
-                "in": {
-                    "name": "workspace.file.request",
-                    "version": 1,
-                    "digest": contract_digest(wf_request).tagged,
-                },
-                "out": {
-                    "name": "workspace.file.result",
-                    "version": 1,
-                    "digest": contract_digest(wf_result).tagged,
-                },
-                "effect": "pure",
-            }
-        },
+        # Authoring pins it to the version the instance holds.
+        slots={"read": {"capability": {"name": "workspace.file", "version": 1}}},
         nodes=(
             CallNode(
                 node_id="read",
@@ -652,6 +636,27 @@ def upload_host(
     reset_permissions()
 
 
+def _workspace_file_members(instance_id: str) -> list[dict[str, Any]]:
+    """The ``workspace.file@1`` authoring member, or none when the instance holds it."""
+
+    from tests.support.capabilities import WORKSPACE_FILE, head_tree, held_capability
+
+    instance = get_playbill_manager().get(instance_id)
+    if held_capability(head_tree(instance), WORKSPACE_FILE) is not None:
+        return []
+    return [
+        {
+            "tag": "cruxible-capability-authoring-payload-v1",
+            "name": WORKSPACE_FILE,
+            "version": 1,
+            "description": "Read one workspace file; core's builtin serves it.",
+            "effect": "pure",
+            "in": {"name": "workspace.file.request", "version": 1},
+            "out": {"name": "workspace.file.result", "version": 1},
+        }
+    ]
+
+
 def _author_acquire(transport: CruxibleClient, instance_id: str) -> None:
     from pydantic import TypeAdapter
 
@@ -675,6 +680,8 @@ def _author_acquire(transport: CruxibleClient, instance_id: str) -> None:
         lower_authoring_input(_authored(definition, contracts=_contracts())).model_dump(
             mode="json", by_alias=True
         ),
+        # The capability the read slot names, unless the instance holds it (base kit).
+        *_workspace_file_members(instance_id),
     ]
     adapter = TypeAdapter(AuthoringChangeSetMember)
     members.sort(

@@ -227,13 +227,13 @@ def _install(world: Any, project: Path, *, control_domain: str = "operator") -> 
 
 def _graph(world: Any, *, provider: str | None) -> Any:
     """One open operation slot; provider selection belongs to a consumer Line."""
-    from tests.support.provider_installation import LOCAL_CALL_IN, LOCAL_CALL_OUT
+    from tests.support.provider_installation import LOCAL_CALL_SLOT
 
     return procedure_spec(
         procedure=PROCEDURE if provider is not None else BLUEPRINT,
         params={"n": "int"},
         output={"n": "int"},
-        slots={"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
+        slots={"increment": LOCAL_CALL_SLOT},
         steps=[
             CallStep(call="result", slot="increment", input={"n": {"$ref": "param", "path": ["n"]}})
         ],
@@ -250,8 +250,18 @@ def _author(world: Any, *, procedure: bool = True) -> None:
 
     # Ownership/downgrade tests concern governed definition ownership, not the
     # removed acquisition-policy artifact. Keep a real typed shape in that role.
+    from tests.support.provider_installation import (
+        local_call_capability_files,
+        local_call_contract_files,
+    )
+
     shape = Contract.model_validate({"name": POLICY, "version": 1, "fields": {"n": "int"}})
-    members = {contract_path(shape.name, 1): render_contract(shape)}
+    # The capability the open Procedures' slot names, beside the Contract it pins.
+    members = {
+        contract_path(shape.name, 1): render_contract(shape),
+        **local_call_contract_files(),
+        **local_call_capability_files(),
+    }
     instance = get_playbill_manager().get(world.instance_id)
     proposed = submit_member_candidate(
         instance,
@@ -485,6 +495,8 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
 
         manifest = release.manifest
         assert [item.path for item in manifest.artifacts] == [
+            # The capability the open Procedures' slot names, carried with them.
+            "capabilities/local.increment/v1.json",
             f"contracts/{PROCEDURE}.input/v1.json",
             f"contracts/{PROCEDURE}.output/v1.json",
             f"contracts/{PROCEDURE}.params/v1.json",

@@ -16,6 +16,10 @@ import pytest
 LOCAL_CALL_VALUE = {"name": "local.increment.value", "version": 1, "fields": {"n": {"type": "int"}}}
 LOCAL_CALL_IN = "local.increment.value@1"
 LOCAL_CALL_OUT = "local.increment.value@1"
+#: The capability a Procedure's slot names to call ``local.increment`` (pure).
+LOCAL_CALL_CAPABILITY = "local.increment@1"
+#: The authored slot naming it.
+LOCAL_CALL_SLOT = {"capability": LOCAL_CALL_CAPABILITY}
 
 #: A REFUSAL Contract an operation's own registration pins (``build_local_call``'s
 #: ``refusal=``), never a Procedure slot's in/out: outside every namespace a
@@ -33,6 +37,21 @@ def local_call_contract_files() -> dict[str, bytes]:
 
     contract = Contract.model_validate(LOCAL_CALL_VALUE)
     return {contract_path(contract.name, contract.version): render_contract(contract)}
+
+
+def local_call_capability_files() -> dict[str, bytes]:
+    """The accepted-tree member of the capability a slot names to call ``local.increment``.
+
+    Accepted beside or after ``local_call_contract_files``: it pins that Contract.
+    """
+
+    from cruxible_client.contracts.shapes import Contract
+    from tests.support.capabilities import capability, capability_files
+
+    contract = Contract.model_validate(LOCAL_CALL_VALUE)
+    return capability_files(
+        capability("local.increment", in_=contract, out=contract, effect="pure")
+    )
 
 
 def other_declined_contract_files() -> dict[str, bytes]:

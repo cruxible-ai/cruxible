@@ -396,10 +396,13 @@ class RunbookPreviewWrite(_StrictRunbookModel):
 
 
 class RunbookPreviewCall(_StrictRunbookModel):
-    """One provider call: its slot's signature and the binding the Line pins."""
+    """One provider call: its slot's capability, the signature derived from it, and the
+    binding the Line pins."""
 
     node_id: str
     slot: str
+    #: The capability the slot names, ``name@N``.
+    capability: str | None = None
     signature_in: str | None = None
     signature_out: str | None = None
     effect: str | None = None

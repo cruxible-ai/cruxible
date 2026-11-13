@@ -19,6 +19,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequest,
     service_run_playbill_line,
 )
+from tests.support.capabilities import WORKSPACE_FILE, capability, capability_files, slot
 from tests.support.claim_types import claim_type_changes
 from tests.support.lines import line_budgets_input
 from tests.support.operation_world import (
@@ -33,6 +34,7 @@ from tests.support.operation_world import (
     author_line,
     author_procedure,
     build_files,
+    compute_slot,
     contract_files,
     operation,
     operation_build,
@@ -626,7 +628,7 @@ def _call_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
         **{
             **spec.model_dump(mode="json", by_alias=True),
             "input": {"value": "int"},
-            "slots": {"compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}},
+            "slots": {"compute": compute_slot()},
             "steps": (
                 CallStep(call="result", slot="compute", input={"value": "$input.value"}),
                 *spec.steps,
@@ -656,7 +658,7 @@ def _direct_propose_or_settle_delivers(tmp_path, *, verb, with_call):  # type: i
     if build is not None:
         from tests.core_support._identity_support import accept_tree
 
-        accept_tree(instance, contract_files(VALUE, REFUSAL), name="operation-contracts")
+        accept_tree(instance, contract_files(), name="operation-contracts")
         install(instance, build)
     name = f"test.{verb}-{'called' if with_call else 'plain'}-direct"
     spec = (
@@ -793,13 +795,7 @@ def sourced_spec(*, description=None):  # type: ignore[no-untyped-def]
         description=description,
         input={},
         output={"length": "int"},
-        slots={
-            "read": {
-                "in": "workspace.file.request@1",
-                "out": "workspace.file.result@1",
-                "effect": "pure",
-            }
-        },
+        slots={"read": slot(f"{WORKSPACE_FILE}@1")},
         steps=[
             CallStep(
                 call="doc",
@@ -1062,6 +1058,9 @@ def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
             "fields": {"severity": {"type": "enum_of:test.severity"}},
         }
     )
+    severity_capability = capability(
+        "test.compute.severity", in_=VALUE, out=severity_value, effect="pure"
+    )
     served = (
         operation(
             "compute",
@@ -1119,6 +1118,7 @@ def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
                 severity_value
             ),
             claim_type_path(severity_type.predicate): render_claim_type(severity_type),
+            **capability_files(severity_capability),
         },
         name="severity",
     )
@@ -1131,13 +1131,7 @@ def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
             procedure="test.slotted",
             params={"value": "int"},
             output={"severity": {"type": "enum_of:test.severity"}},
-            slots={
-                "compute": {
-                    "in": "test.value@1",
-                    "out": "test.severity_value@1",
-                    "effect": "pure",
-                }
-            },
+            slots={"compute": slot(severity_capability)},
             steps=[
                 CallStep(
                     call="result",
@@ -1262,6 +1256,9 @@ def _fetch_world(
             },
         }
     )
+    fetch_capability = capability(
+        "demo.fetch", in_=fetch_request, out=fetch_result, effect="external_read"
+    )
     served = (
         operation(
             "fetch",
@@ -1322,6 +1319,7 @@ def _fetch_world(
             capture_contract_path(capture_contract.identity.name): render_capture_contract(
                 capture_contract
             ),
+            **capability_files(fetch_capability),
         },
         name="fetch-contracts",
     )
@@ -1336,13 +1334,7 @@ def _fetch_world(
             procedure="test.fetched",
             input={},
             output={"ok": "bool"},
-            slots={
-                "fetch": {
-                    "in": "demo.fetch.request@1",
-                    "out": "demo.fetch.result@1",
-                    "effect": "external_read",
-                }
-            },
+            slots={"fetch": slot(fetch_capability)},
             steps=[
                 CallStep(
                     call="doc",

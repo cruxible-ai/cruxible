@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from cruxible_client.contracts.procedures.authored import CallStep, ReturnFields
+from tests.support.capabilities import capability, capability_files
 from tests.support.operation_world import Invoker
 from tests.support.procedures import procedure_limits, procedure_spec
 from tests.test_procedures.test_b2_operations import run_line
@@ -131,6 +132,9 @@ def pages_world(
             contract_path(request.name, request.version): render_contract(request),
             contract_path(result.name, result.version): render_contract(result),
             capture_contract_path(KIND): render_capture_contract(kind),
+            **capability_files(
+                capability("demo.pages", in_=request, out=result, effect="external_read")
+            ),
         },
         name="pages-contracts",
     )
@@ -145,13 +149,7 @@ def pages_world(
                 "pages": f"list<capture<*>>{{max_items: {max_items}}}",
                 "note": "string",
             },
-            slots={
-                "pages": {
-                    "in": "demo.pages.request@1",
-                    "out": "demo.pages.result@1",
-                    "effect": "external_read",
-                }
-            },
+            slots={"pages": {"capability": "demo.pages@1"}},
             steps=[
                 CallStep(call="doc", captures={"pages": KIND}, slot="pages", input={"feed": "kev"}),
             ],

@@ -1869,17 +1869,39 @@ def _default_implementers(
     signature index (one seek per slot), never a walk of every Provider.
     """
 
+    from cruxible_client.contracts.capabilities import (
+        CapabilityRef,
+        tree_capability_resolver,
+    )
     from cruxible_client.contracts.procedures.artifacts import parse_procedure
+    from cruxible_client.contracts.procedures.line_specs import (
+        SlotCapabilityUnresolved,
+        provisional_slot_signatures,
+    )
+    from cruxible_core.procedures.declared_inputs import builtin_slot_signatures
     from cruxible_core.providers.operation_index import fitting_operations
 
     if provider.delivery != "index" or not provider.operations:
         return ()
-    signatures = {
-        slot.key(): slot
-        for path, content in sorted(contents.items())
-        if path.startswith("procedures/")
-        for slot in parse_procedure(content, path=path).definition.slots.values()
-    }
+    # A slot's capability is the kit's own (carried) or already accepted here.
+    from_kit, from_tree = tree_capability_resolver(contents), tree_capability_resolver(tree)
+
+    def capabilities(ref: CapabilityRef) -> Capability | None:
+        return from_kit(ref) or from_tree(ref)
+
+    try:
+        signatures = {
+            signature.key(): signature
+            for path, content in sorted(contents.items())
+            if path.startswith("procedures/")
+            for signature in provisional_slot_signatures(
+                parse_procedure(content, path=path).definition.slots,
+                capabilities,
+                builtin=builtin_slot_signatures(),
+            ).values()
+        }
+    except SlotCapabilityUnresolved:
+        return ()  # the kit's own add refuses the Procedure; no provider stands in
     if not signatures:
         return ()
     found: set[str] = set()

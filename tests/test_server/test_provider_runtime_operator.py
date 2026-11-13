@@ -43,10 +43,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
     render_line_spec,
 )
-from cruxible_client.contracts.procedures.models import (
-    CallNode,
-    ProcedureSlot,
-)
+from cruxible_client.contracts.procedures.models import CallNode
 from cruxible_client.contracts.procedures.results import procedure_acquisition_plan_digest
 from cruxible_client.contracts.provider_execution import ProviderSecretResolutionPlan
 from cruxible_client.contracts.provider_operations import (
@@ -110,6 +107,12 @@ from cruxible_core.service.procedures.procedure_runs import ProcedureRunRecovery
 from cruxible_core.service.procedures.procedures import service_execute_direct_procedure
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._provider_seal_support import write_test_provider_seal_v2
+from tests.support.capabilities import (
+    declared_capability,
+    declared_capability_lookup,
+    pinned_slot,
+    signature_capability,
+)
 from tests.support.invocation_ids import unique_invocation_id
 from tests.support.lines import line_budgets, line_spec
 from tests.support.mandates import procedure_mandate
@@ -282,7 +285,7 @@ def _procedure_bound_to_provider(accepted_provider: AcceptedProvider):  # type: 
             return accepted_provider.provider, accepted_provider.artifact_digest
         if identity.kind == "Contract":
             return object(), _p2b1_digest(identity.name)
-        return None
+        return declared_capability(identity)
 
     return bind_procedure_references(
         unbound,
@@ -326,7 +329,9 @@ def _complete_line_for_admission(
         path=path,
         procedure=accepted_procedure,
         predecessor=None,
-        slots=line_slot_signatures(definition),
+        slots=line_slot_signatures(
+            definition, capabilities=declared_capability_lookup(), builtin={}
+        ),
         providers={accepted_provider.provider.identity.qualified: accepted_provider},
     )
     assert law.verdict == "accepted", law.diagnostics
@@ -889,7 +894,7 @@ def _provider_line_procedure(accepted_provider: AcceptedProvider) -> AcceptedPro
             ),
         ),
         slots={
-            "ask": ProcedureSlot.model_validate(operation.signature().model_dump(by_alias=True))
+            "ask": pinned_slot(signature_capability(operation.signature(), name="test.served-ask"))
         },
         hard_caps=procedure_hard_caps(preset="provider", max_repeat_attempts=1),
         terminal_capability=2,

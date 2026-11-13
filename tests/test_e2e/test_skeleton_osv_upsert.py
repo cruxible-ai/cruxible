@@ -40,6 +40,7 @@ from cruxible_client.contracts.subject_kinds import render_subject_kind, subject
 from tests.core_support._identity_support import accept_tree
 from tests.core_support._light_capture_support import JSON_DECODING, http_contract
 from tests.core_support._subject_kind_support import keyed_subject_kind
+from tests.support.capabilities import ensure_capabilities
 from tests.support.operation_world import NOW, Invoker, author, build_files
 from tests.support.procedures import boundary_contract, contract_files, procedure_limits
 from tests.support.procedures import procedure_spec as build_spec
@@ -213,6 +214,7 @@ def osv_world(tmp_path: Path) -> Any:
         },
         name="osv-vocabulary",
     )
+    ensure_capabilities(instance, *OSV_CAPABILITIES, name="osv-capabilities")
     accept_tree(instance, build_files(_osv_build(require_provider_checkout())), name="osv")
     for index, purl in enumerate((A, B, DISTRO)):
         author(
@@ -296,7 +298,12 @@ def matches(
     return json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-DERIVE_SLOT = {"in": "test.osv-derive.request@1", "out": "web.fetch.result@1", "effect": "pure"}
+DERIVE_SLOT = {"capability": "test.osv-derive@1"}
+#: The capability each slot names: ``(name, in, out, effect)``.
+OSV_CAPABILITIES = (
+    ("test.osv", "test.osv.request@1", "test.osv.result@1", "external_read"),
+    ("test.osv-derive", "test.osv-derive.request@1", "web.fetch.result@1", "pure"),
+)
 
 
 def _extract_and_claims() -> list[dict[str, Any]]:
@@ -346,14 +353,7 @@ def osv_spec() -> Any:
         reference_text=True,
         input={},
         output={},
-        slots={
-            "osv": {
-                "in": "test.osv.request@1",
-                "out": "test.osv.result@1",
-                "effect": "external_read",
-            },
-            "derive": DERIVE_SLOT,
-        },
+        slots={"osv": {"capability": "test.osv@1"}, "derive": DERIVE_SLOT},
         hard_caps=procedure_limits(provider_calls=2, capture_bytes=1_048_576, read_rows=500),
         steps=[
             {"read": "components", "query": "test.components"},

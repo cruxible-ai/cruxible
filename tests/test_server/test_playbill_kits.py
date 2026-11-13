@@ -2008,15 +2008,18 @@ def test_a_template_binding_a_bundled_provider_operation_builds(
     from tests.core_support._identity_support import accept_tree
     from tests.support.procedures import procedure_limits, procedure_spec
     from tests.support.provider_installation import (
-        LOCAL_CALL_IN,
-        LOCAL_CALL_OUT,
+        LOCAL_CALL_SLOT,
+        local_call_capability_files,
         local_call_contract_files,
     )
 
     publisher, _consumer = worlds
     instance = get_playbill_manager().get(publisher.instance_id)
     accept_tree(
-        instance, local_call_contract_files(), name="local-call-contract", actor_id="operator"
+        instance,
+        {**local_call_contract_files(), **local_call_capability_files()},
+        name="local-call-contract",
+        actor_id="operator",
     )
     _author_as(
         instance,
@@ -2026,7 +2029,7 @@ def test_a_template_binding_a_bundled_provider_operation_builds(
                 procedure="acme.increment",
                 params={"n": "int"},
                 output={"n": "int"},
-                slots={"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
+                slots={"increment": LOCAL_CALL_SLOT},
                 steps=[
                     CallStep(
                         call="result",
@@ -2101,9 +2104,9 @@ def test_a_bundled_providers_refusal_contract_outside_owns_builds_and_installs(
     from tests.core_support._identity_support import accept_tree
     from tests.support.procedures import procedure_limits, procedure_spec
     from tests.support.provider_installation import (
-        LOCAL_CALL_IN,
-        LOCAL_CALL_OUT,
+        LOCAL_CALL_SLOT,
         OTHER_DECLINED_REF,
+        local_call_capability_files,
         local_call_contract_files,
     )
 
@@ -2141,7 +2144,10 @@ def test_a_bundled_providers_refusal_contract_outside_owns_builds_and_installs(
     publisher, consumer = worlds
     instance = get_playbill_manager().get(publisher.instance_id)
     accept_tree(
-        instance, local_call_contract_files(), name="local-call-contract", actor_id="operator"
+        instance,
+        {**local_call_contract_files(), **local_call_capability_files()},
+        name="local-call-contract",
+        actor_id="operator",
     )
     accept_tree(
         instance,
@@ -2157,7 +2163,7 @@ def test_a_bundled_providers_refusal_contract_outside_owns_builds_and_installs(
                 procedure="acme.increment",
                 params={"n": "int"},
                 output={"n": "int"},
-                slots={"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
+                slots={"increment": LOCAL_CALL_SLOT},
                 steps=[
                     CallStep(
                         call="result",
@@ -2247,16 +2253,19 @@ def test_a_template_binding_a_publisher_local_provider_not_in_the_bundle_refuses
     from tests.core_support._identity_support import accept_tree
     from tests.support.procedures import procedure_limits, procedure_spec
     from tests.support.provider_installation import (
-        LOCAL_CALL_IN,
-        LOCAL_CALL_OUT,
+        LOCAL_CALL_SLOT,
         build_local_call,
+        local_call_capability_files,
         local_call_contract_files,
     )
 
     publisher, _consumer = worlds
     instance = get_playbill_manager().get(publisher.instance_id)
     accept_tree(
-        instance, local_call_contract_files(), name="local-call-contract", actor_id="operator"
+        instance,
+        {**local_call_contract_files(), **local_call_capability_files()},
+        name="local-call-contract",
+        actor_id="operator",
     )
     _author_as(
         instance,
@@ -2266,7 +2275,7 @@ def test_a_template_binding_a_publisher_local_provider_not_in_the_bundle_refuses
                 procedure="acme.increment",
                 params={"n": "int"},
                 output={"n": "int"},
-                slots={"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
+                slots={"increment": LOCAL_CALL_SLOT},
                 steps=[
                     CallStep(
                         call="result",

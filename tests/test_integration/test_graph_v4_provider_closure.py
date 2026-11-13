@@ -27,12 +27,12 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.provider_operations import LineBinding, binding_pin
 from cruxible_client.contracts.providers import render_provider
-from cruxible_client.contracts.shapes import contract_digest
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from tests.core_support._p2b1_support import accepted_provider, pin
 from tests.core_support._support import initialize_local
+from tests.support.capabilities import capability_lookup, pinned_slot
 from tests.support.lines import line_budgets, line_spec
-from tests.support.operation_world import VALUE, contract_files
+from tests.support.operation_world import compute_capability, contract_files
 from tests.support.procedures import (
     accepted_procedure,
     boundary_contract,
@@ -49,10 +49,6 @@ _BOUNDARIES = (
 )
 
 
-def _value_ref() -> dict[str, object]:
-    return {"name": VALUE.name, "version": VALUE.version, "digest": contract_digest(VALUE).tagged}
-
-
 def _definition() -> ProcedureDefinition:
     contract_in = pin("contract-in", "Contract", "provider-input/v1")
     contract_out = pin("contract-out", "Contract", "provider-output/v1")
@@ -60,7 +56,7 @@ def _definition() -> ProcedureDefinition:
         name="provider-v4",
         contract_in=named(contract_in),
         contract_out=named(contract_out),
-        slots={"compute": {"in": _value_ref(), "out": _value_ref(), "effect": "pure"}},
+        slots={"compute": pinned_slot(compute_capability())},
         nodes=(
             CallNode(
                 node_id="direct",
@@ -104,22 +100,24 @@ def contracted_demo() -> None:
     """The demo fixtures already declare typed operations; nothing to patch."""
 
 
-def test_procedure_law_checks_slot_contracts_against_accepted_versions() -> None:
+def test_procedure_law_checks_slot_capabilities_against_accepted_versions() -> None:
     procedure = _accepted_procedure().procedure
     accepted = evaluate_procedure_law(
         procedure,
         path=procedure_path(procedure.identity.name),
         predecessor=None,
-        contracts={(VALUE.name, VALUE.version): contract_digest(VALUE).tagged},
+        capability_lookup=capability_lookup(compute_capability()),
     )
     assert accepted.verdict == "accepted", accepted.diagnostics
     refused = evaluate_procedure_law(
         procedure,
         path=procedure_path(procedure.identity.name),
         predecessor=None,
-        contracts={},
+        capability_lookup=capability_lookup(),
     )
     assert refused.verdict == "refused"
+    assert refused.diagnostics[0].code == "cruxible.procedure.slot_capability_unresolved"
+    assert "test.compute@1" in refused.diagnostics[0].message
 
 
 def test_real_proposal_path_closes_contracts_build_procedure_and_line(tmp_path) -> None:
@@ -157,6 +155,7 @@ def test_real_proposal_path_closes_contracts_build_procedure_and_line(tmp_path) 
     assert result.evaluation.verdict == "candidate", result.evaluation.diagnostics
     assert result.candidate is not None
     assert {member.artifact_kind for member in result.candidate.members} == {
+        "capability",
         "contract",
         "line",
         "procedure",

@@ -501,7 +501,7 @@ def measured_line(tmp_path: Path) -> tuple[Any, Path, Any]:
         tmp_path, {"entries": [{"id": "CVE-2026-0001", "status": "open"}]}, types=(score,)
     )
     base = claims_spec().model_dump(mode="python", by_alias=True)
-    base["slots"]["compute"] = {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}
+    base["slots"]["compute"] = {"capability": "test.compute@1"}
     base["hard_caps"]["provider_calls"] = 2
     base["steps"].insert(-1, {"call": "computed", "slot": "compute", "input": {"value": 1}})
     base["steps"].insert(
