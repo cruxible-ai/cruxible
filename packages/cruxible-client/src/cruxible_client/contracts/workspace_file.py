@@ -57,6 +57,8 @@ WorkspaceFilePathClass = Literal[
     "workspace_unknown",
     # A glob read matches more files than its cap (D-R41).
     "glob_over_cap",
+    # A glob read examines more directory entries than its scan budget.
+    "glob_scan_budget",
 ]
 
 #: The builtin's two operations, named as the capabilities they serve (ruling O2):

@@ -73,6 +73,72 @@ def test_more_matches_than_the_cap_refuse(tmp_path: Path) -> None:
     assert refused.value.path_class == "glob_over_cap"
 
 
+def _examined(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Count the directory entries the glob scan examines, across every scandir."""
+
+    import cruxible_core.documents.workspace_file as module
+
+    counted = [0]
+    real = os.scandir
+
+    class _Counting:
+        def __init__(self, path: Any) -> None:
+            self._inner = real(path)
+
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            self._inner.close()
+
+        def __iter__(self) -> Any:
+            for entry in self._inner:
+                counted[0] += 1
+                yield entry
+
+    monkeypatch.setattr(module.os, "scandir", _Counting)
+    return counted
+
+
+def test_an_over_cap_glob_refuses_as_soon_as_it_passes_the_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """max_files is fixed; the scan stops at the second match, not at the last file."""
+
+    for index in range(3000):
+        (tmp_path / f"{index:04d}.json").write_text("{}")
+    examined = _examined(monkeypatch)
+    with pytest.raises(WorkspaceFileReadRefused) as refused:
+        _reader(tmp_path).expand(_request("*.json", max_files=1))
+    assert refused.value.path_class == "glob_over_cap"
+    assert examined[0] == 2
+
+
+def test_glob_work_is_bounded_by_the_scan_budget_not_the_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same glob over a small and a large directory: the large one stops at the
+    scan budget and refuses typed, never returning a partial list."""
+
+    from cruxible_core.documents.workspace_file import MAX_GLOB_SCAN_ENTRIES
+
+    assert MAX_GLOB_SCAN_ENTRIES == 16_000
+    small, large = tmp_path / "small", tmp_path / "large"
+    for root, count in ((small, 50), (large, MAX_GLOB_SCAN_ENTRIES + 500)):
+        root.mkdir()
+        (root / "wanted.json").write_text("{}")
+        for index in range(count):
+            (root / f"other-{index}.txt").touch()
+    examined = _examined(monkeypatch)
+    assert _reader(small).expand(_request("want*.json", max_files=5)) == ("wanted.json",)
+    assert examined[0] == 51
+    examined[0] = 0
+    with pytest.raises(WorkspaceFileReadRefused) as refused:
+        _reader(large).expand(_request("want*.json", max_files=5))
+    assert refused.value.path_class == "glob_scan_budget"
+    assert examined[0] == MAX_GLOB_SCAN_ENTRIES + 1
+
+
 @pytest.mark.parametrize("glob", ["data/**/x.json", "data/x.json", "../*.json", "/abs/*.json"])
 def test_a_glob_names_a_pattern_within_its_workspace(glob: str) -> None:
     with pytest.raises(ValidationError):
