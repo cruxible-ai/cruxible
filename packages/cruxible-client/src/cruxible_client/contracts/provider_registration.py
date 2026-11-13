@@ -27,8 +27,9 @@ import re
 import unicodedata
 from collections import deque
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import PurePosixPath
-from typing import Annotated, Final, Literal, TypeAlias
+from typing import Annotated, Final, Literal, TypeAlias, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -51,10 +52,20 @@ from cruxible_client.contracts.provider_operations import (
     OperationEffect,
     OperationRefusal,
     OperationSignature,
+    capture_fields,
+    capture_list_fields,
 )
 from cruxible_client.contracts.shapes import (
     Contract,
     ContractRef,
+    DateTimeType,
+    DecimalType,
+    EnumOfType,
+    EnumType,
+    FieldType,
+    IntType,
+    NumberType,
+    StringType,
     all_field_refs,
     contract_digest,
     parse_contract_ref,
@@ -448,23 +459,60 @@ class PackageRegistration(_Strict):
 # -- the registration law ------------------------------------------------------------------
 
 
-def spells_capture_wire(contract: Contract) -> bool:
-    """Whether ``contract`` spells core's Capture wire as its own fields.
+def _admits_literal(field_type: FieldType, value: str) -> bool:
+    if isinstance(field_type, EnumType):
+        return value in field_type.members
+    if isinstance(field_type, EnumOfType):
+        return True  # its members live on a ClaimType; it may admit the value
+    if isinstance(field_type, StringType):
+        return (
+            (field_type.pattern is None or re.fullmatch(field_type.pattern, value) is not None)
+            and (field_type.min_len is None or len(value) >= field_type.min_len)
+            and (field_type.max_len is None or len(value) <= field_type.max_len)
+        )
+    return False
 
-    That is a result Contract that is itself a Capture: it declares every
+
+def _admits_wire_value(field_type: FieldType, annotation: object) -> bool:
+    """Whether a wire field's value (typed ``annotation`` in the wire model) could
+    validate against ``field_type``; anything the model leaves open admits."""
+
+    if get_origin(annotation) is Literal:
+        return any(_admits_literal(field_type, str(member)) for member in get_args(annotation))
+    if annotation is str:
+        return isinstance(field_type, StringType | EnumType | EnumOfType)
+    if annotation is int:
+        return isinstance(field_type, IntType | NumberType | DecimalType)
+    if annotation is datetime:
+        return isinstance(field_type, DateTimeType | StringType)
+    return True
+
+
+def spells_capture_wire(contract: Contract) -> bool:
+    """Whether ``contract`` could itself be a Capture's wire, rather than carry one.
+
+    That is a result Contract with no ``capture<K>`` field that declares every
     required field of the wire a provider returns a Capture in
-    (``ProviderResultToExternalCapture``). A Capture is a named ``capture<K>``
-    field of a result Contract instead, and its wire travels in that field.
+    (``ProviderResultToExternalCapture``), each with a type the wire's value could
+    validate against, and whose other wire fields it declares (``tag``,
+    ``content_encoding``) admit the wire's values. A record with a different tag,
+    an incompatible field type, or a named Capture field is an ordinary record.
+    Cost: linear in the Contract's fields.
     """
 
     from cruxible_client.contracts.captures import ProviderResultToExternalCapture
 
-    required = {
-        name
-        for name, info in ProviderResultToExternalCapture.model_fields.items()
-        if info.is_required()
-    }
-    return required <= set(contract.fields)
+    if capture_fields(contract) or capture_list_fields(contract):
+        return False
+    for name, info in ProviderResultToExternalCapture.model_fields.items():
+        declared = contract.fields.get(name)
+        if declared is None:
+            if info.is_required():
+                return False
+            continue
+        if not _admits_wire_value(declared.type, info.annotation):
+            return False
+    return True
 
 
 def evaluate_declared_operations(
