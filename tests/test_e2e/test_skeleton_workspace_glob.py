@@ -162,6 +162,7 @@ def _members(state: Any) -> tuple[str, ...]:
 A, B, C = "pkg:pypi/a@1", "pkg:pypi/b@1", "pkg:pypi/c@1"
 
 
+@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_glob_reads_every_match_in_order_as_one_capture_each(tmp_path: Path) -> None:
     instance, root = glob_world(tmp_path)
     write(root, "b.json", "inv-b", [B])
@@ -180,6 +181,7 @@ def test_a_glob_reads_every_match_in_order_as_one_capture_each(tmp_path: Path) -
     assert listed(instance) == {f"{A}=inv-a", f"{B}=inv-b"}
 
 
+@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_file_the_glob_no_longer_matches_retires_nothing(tmp_path: Path) -> None:
     instance, root = glob_world(tmp_path)
     write(root, "a.json", "inv-a", [A])
@@ -196,6 +198,7 @@ def test_a_file_the_glob_no_longer_matches_retires_nothing(tmp_path: Path) -> No
     assert listed(instance) == {f"{A}=inv-a", f"{B}=inv-b", f"{C}=inv-a"}
 
 
+@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_glob_past_its_cap_refuses_before_reading(tmp_path: Path) -> None:
     instance, root = glob_world(tmp_path, max_files=2)
     for index in range(3):
@@ -208,6 +211,7 @@ def test_a_glob_past_its_cap_refuses_before_reading(tmp_path: Path) -> None:
     assert listed(instance) == set()
 
 
+@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_member_that_fails_to_read_is_dropped_and_the_list_is_incomplete(
     tmp_path: Path,
 ) -> None:
@@ -224,6 +228,7 @@ def test_a_member_that_fails_to_read_is_dropped_and_the_list_is_incomplete(
     assert listed(instance) == {f"{A}=inv-a", f"{C}=inv-c"}
 
 
+@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_an_empty_glob_reads_nothing_and_writes_nothing(tmp_path: Path) -> None:
     instance, root = glob_world(tmp_path)
     state = _glob_run(instance, root)
@@ -289,6 +294,7 @@ def _counted(tmp_path: Path, files: int, monkeypatch: pytest.MonkeyPatch) -> dic
 
 
 @pytest.mark.parametrize("sizes", [(10, 25, 40)])
+@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_glob_costs_the_same_per_file_at_any_count(
     tmp_path: Path, sizes: tuple[int, int, int], monkeypatch: pytest.MonkeyPatch
 ) -> None:

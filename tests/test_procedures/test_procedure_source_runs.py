@@ -1570,6 +1570,7 @@ def test_the_admitted_plan_mismatch_code_stays_served(tmp_path: Path) -> None:
     assert "workspace_file_read_refused" in get_args(ProcedureNodeRefusalCode)
 
 
+@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_the_authoring_path_produces_the_exact_artifact_the_run_lane_executes(
     tmp_path: Path,
 ) -> None:

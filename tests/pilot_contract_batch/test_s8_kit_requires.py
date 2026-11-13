@@ -78,47 +78,12 @@ def _kits(instance: Any) -> list[str]:
     return [kit.kit_id for kit in service_kit_status(instance).kits]
 
 
-def _stand_in_base() -> Any:
-    """Kit ``base`` 1.0.0 from the wave 0 example Contracts under ``web.``.
-
-    Stands in for the bundled base kit until it ships (slice 9): the same kit
-    id, version and prefixes, and the Contracts this scenario nests. The
-    example capabilities and kind are left out (this core cannot hold them yet).
-    """
-
-    from cruxible_client.contracts.kits import KitBuildRequest
-    from cruxible_core.service.kits import build_kit
-    from tests.pilot_contract_batch.fixtures.providers import EXAMPLE_BASE_KIT
-
-    root = EXAMPLE_BASE_KIT
-    tree = {
-        path.relative_to(root).as_posix(): path.read_bytes()
-        for path in sorted((root / "contracts").glob("web.*/v*.json"))
-    }
-    return build_kit(
-        tree, KitBuildRequest(kit_id="base", version="1.0.0", owns=("web.", "workspace."))
-    )
-
-
 def _instance_with_base(tmp_path: Path) -> Any:
-    """A fresh instance holding kit ``base``: the bundled one once slice 9 installs it
-    at creation, the stand-in until then."""
+    """A fresh instance: creation installs the bundled base kit."""
 
     instance = search_world.fresh_instance(tmp_path)
-    if "base" not in _kits(instance):
-        assert _add(instance, _stand_in_base()).status == "accepted"
+    assert "base" in _kits(instance)
     return instance
-
-
-def _show_base(pilot: Scenario, instance: Any) -> None:
-    """``cruxible list Capability`` once slice 9 lists them; until then the stand-in."""
-
-    try:
-        search_world.show_capabilities(pilot, instance)
-    except surfaces.SurfaceMissing as missing:
-        pilot.say(f"(stand-in for the base kit until {missing.owner}: kit base 1.0.0)")
-        pilot.call("cruxible kit status --offline")
-        pilot.got(", ".join(_kits(instance)))
 
 
 @pytest.mark.pilot(
@@ -136,7 +101,7 @@ def test_a_kit_requiring_base_installs_only_beside_it_and_holds_it(
     from tests.support.operation_world import author
 
     publisher = _instance_with_base(tmp_path / "publisher")
-    _show_base(pilot, publisher)
+    search_world.show_capabilities(pilot, publisher)
 
     pilot.call(f"cruxible authoring submit {ROW}@1   (hit: web.search-result@1)")
     author(

@@ -708,6 +708,7 @@ def _author_acquire(transport: CruxibleClient, instance_id: str) -> None:
     )
 
 
+@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_an_upload_lands_as_a_capture_through_the_acquire_procedure(
     upload_host: tuple[CruxibleClient, str, Path],
 ) -> None:

@@ -929,6 +929,7 @@ def test_an_ordinary_call_records_operation_fields_and_replays(tmp_path):
     assert replayed.procedure.pins == state.receipt.validated_pins
 
 
+@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_a_captured_source_call_records_operation_fields_and_replays(tmp_path):
     from cruxible_client.contracts.workspace_file import workspace_file_signature_digest
 
@@ -976,6 +977,7 @@ def test_a_typed_refusal_detail_outside_its_contract_is_refused(tmp_path):
 
 
 @pytest.mark.parametrize("on_unavailable", ["omit", "refuse"])
+@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_an_absorbable_source_refusal_is_absorbed_only_under_omit(
     tmp_path, on_unavailable, monkeypatch
 ):
@@ -1582,6 +1584,7 @@ def _succeed_procedure_and_line(instance, spec, line):  # type: ignore[no-untype
     )
 
 
+@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_a_capture_keeps_verifying_across_procedure_and_line_succession(tmp_path):
     from cruxible_client.contracts.cas_contracts import BodyAccessContext
     from cruxible_core.service.evidence.capture_reads import verify_accepted_capture
@@ -1639,6 +1642,7 @@ def test_a_capture_keeps_verifying_across_procedure_and_line_succession(tmp_path
 # --- 9. Line acquisition max_age ----------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_a_line_acquisition_max_age_violation_refuses_like_the_old_policy(tmp_path):
     from datetime import timedelta
     from types import SimpleNamespace

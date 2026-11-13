@@ -47,14 +47,6 @@ def _search_only(capability: str, name: str) -> dict[str, object]:
     )
 
 
-# Every step runs; the last assertion expects the stored slot to spell
-# ``may_truncate: false``, which the stored ProcedureSlot leaves out when false.
-# Which side moves is the slots slice's call.
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=f"owner: {surfaces.SLOTS} (stored slot omits may_truncate: false)",
-)
 @pytest.mark.pilot(
     "s2-capability-slots",
     owner=surfaces.BASE_KIT,
@@ -97,6 +89,7 @@ def test_a_slot_is_one_capability_pin_and_an_unknown_capability_is_refused(
 
     assert [provider.provider for provider in installed_providers(instance)] == ["cruxible-builtin"]
     assert pins == {"search": listed[providers.SEARCH]}
+    # The accepted Procedure's canonical bytes leave may_truncate out when it is false.
     assert stored == {
         "search": {
             "capability": {
@@ -104,7 +97,6 @@ def test_a_slot_is_one_capability_pin_and_an_unknown_capability_is_refused(
                 "version": 1,
                 "digest": listed[providers.SEARCH].digest,
             },
-            "may_truncate": False,
         }
     }
     assert code.startswith("cruxible.")

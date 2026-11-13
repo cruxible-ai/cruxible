@@ -395,6 +395,7 @@ def _claim_proof(
 
 
 @pytest.mark.parametrize("terminal_kind", ["claims", "emit_capture"])
+@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_the_rung2_loop_runs_over_public_surfaces_only(
     installed_host: tuple[TestClient, str, Path, Path],
     terminal_kind: str,

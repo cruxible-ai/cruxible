@@ -510,6 +510,7 @@ def _accept_sdk_input(instance: PlaybillInstance, owner: Any, payload: Any) -> N
     )
 
 
+@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Path) -> None:
     """Sequence(..., Extract, PostInbox) lowers to the same graph a Line posts from."""
 

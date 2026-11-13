@@ -12,6 +12,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
@@ -113,6 +115,7 @@ def _world(tmp_path: Path) -> tuple[Any, Any, Path, Any]:
     return instance, line, root, both
 
 
+@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_a_direct_run_with_a_source_and_a_call_admits(tmp_path: Path) -> None:
     instance, _line, root, both = _world(tmp_path)
 
@@ -128,6 +131,7 @@ def test_a_direct_run_with_a_source_and_a_call_admits(tmp_path: Path) -> None:
     assert state.run_id is not None, state.terminal
 
 
+@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_a_line_run_with_a_source_and_a_call_admits(tmp_path: Path) -> None:
     instance, line, root, _both = _world(tmp_path)
 

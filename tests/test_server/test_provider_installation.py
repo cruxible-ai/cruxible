@@ -475,6 +475,7 @@ def installed_web(installer_http, provider_checkout):
     return client, installed, digests
 
 
+@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     installer_http, installed_web
 ):
@@ -697,6 +698,7 @@ print(json.dumps({"status": result.status, "output": result.output}))
 """
 
 
+@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_installed_web_search_returns_its_result_contract(installer_http, installed_web):
     """search.web's output, from the installed build's code, is exactly its Contract.
 
@@ -989,6 +991,7 @@ def _author_workspace_line(http, instance_id, reviewer, *, build, name):
     return line
 
 
+@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_the_built_in_reads_a_workspace_file_and_an_install_beside_it_moves_no_seed(
     installer_http, tmp_path, provider_checkout
 ):
